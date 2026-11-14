@@ -164,7 +164,9 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
                 Vec::new,
                 |list| {
                     launcher_releases_in_with(list, |url| {
-                        assert!(url.starts_with("https://api.github.com/repos/sunrise-org/sunrise/"));
+                        assert!(
+                            url.starts_with("https://api.github.com/repos/sunrise-org/sunrise/")
+                        );
                         Ok(missing.clone())
                     })
                 },

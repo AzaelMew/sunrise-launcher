@@ -3,8 +3,8 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=HORIZON_LAUNCHER_REPOSITORY");
     println!("cargo:rustc-check-cfg=cfg(horizon_fork_launcher)");
-    let repository =
-        std::env::var("HORIZON_LAUNCHER_REPOSITORY").unwrap_or_else(|_| "sunrise-org/sunrise".into());
+    let repository = std::env::var("HORIZON_LAUNCHER_REPOSITORY")
+        .unwrap_or_else(|_| "sunrise-org/sunrise".into());
     match repository.as_str() {
         "sunrise-org/sunrise" => println!("cargo:rustc-cfg=horizon_fork_launcher"),
         "horizon-rust/horizon" => {}
