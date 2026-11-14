@@ -98,6 +98,62 @@ fn digest_tree(root: &Path, hash: &mut Sha256) -> Result<(), String> {
 /// (it is not an executable, so it has no `EXE_SUFFIX`).
 const WASM_STD: &str = "sunrise-wasm-std.wasm";
 
+/// Where a checkout keeps the resources its own preparation made, one folder per Minecraft version.
+const CHECKOUT_RESOURCES: &str = ".local/sunrise-client";
+
+/// Names the folder [`copy_prepared`] builds beside a base; one call's own, as an install and a
+/// started game can both copy.
+static PARTIAL: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Puts a prepared resources folder, `from`, where `to` expects it, which the caller found without
+/// resources. A copy, not a link: preparing `to` again rewrites files where they are, which would
+/// change `from` too (`backend::reuse_prepared` copies between versions for that same reason), and
+/// the base then keeps working once the checkout moves or is deleted. The copy is made beside `to`
+/// and renamed when complete, so one that stops never counts as prepared. Returns whether it put
+/// the folder there; false when `to` was prepared meanwhile.
+fn copy_prepared(from: &Path, to: &Path) -> std::io::Result<bool> {
+    // Without the data file: it names its own root, so a copy of it could not be read.
+    let data_file = from.join(sunrise_platform::prepared_files::FILE_NAME);
+    let version = to.file_name().unwrap_or_default().to_string_lossy();
+    let partial = to.with_file_name(format!(
+        ".{version}.partial-{}-{}",
+        std::process::id(),
+        PARTIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&partial);
+    let copied = backend::copy_dir_except(from, &partial, Some(&data_file)).and_then(|()| {
+        if backend::prepared_at(to) {
+            return Ok(false); // Prepared meanwhile, by Play or another command.
+        }
+        let _ = fs::remove_dir_all(to);
+        fs::rename(&partial, to).map(|()| true)
+    });
+    let _ = fs::remove_dir_all(&partial);
+    copied
+}
+
+/// Gives the developer base `tag` the resources the checkout it was built from prepared in its own
+/// folder, so the base is ready to play without the official launcher's folder, a signed-in account
+/// or a `prepare` that has no Minecraft install to read (#4315). Does nothing when the base has
+/// resources already, or when the checkout has none prepared. Returns whether it copied them.
+pub(crate) fn reuse_checkout_resources(checkout: &Path, tag: &str) -> std::io::Result<bool> {
+    let to = backend::resources(tag);
+    if backend::prepared_at(&to) {
+        return Ok(false);
+    }
+    // The packager ships the checkout's pin, so both name the same Minecraft version.
+    let Some(version) = to.file_name() else {
+        return Ok(false);
+    };
+    let from = checkout.join(CHECKOUT_RESOURCES).join(version);
+    if !backend::prepared_at(&from) {
+        return Ok(false);
+    }
+    let copied = copy_prepared(&from, &to)?;
+    backend::forget_prepared();
+    Ok(copied)
+}
+
 pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String, String> {
     if !trusted {
         return Err(tr("Developer installation runs the checkout's build code and an unsigned game with your rights. Pass --trust-unsigned only if you trust both.").into());
@@ -177,6 +233,18 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
         fs::write(package.join(".installed"), "").map_err(|e| e.to_string())?;
         fs::rename(package, destination).map_err(|e| e.to_string())?;
     }
+    // A checkout that prepared its own resources hands them over, so the base needs no separate
+    // `prepare` and no official launcher folder (#4315). Run again for the same checkout to pick
+    // them up after preparing it; the tag has not changed, so nothing else is installed.
+    if let Err(error) = reuse_checkout_resources(&checkout, &tag) {
+        eprintln!(
+            "{}",
+            trf(
+                "{tag}: the checkout's prepared resources were not copied: {error}",
+                &[("tag", &tag), ("error", &error.to_string())]
+            )
+        );
+    }
     Ok(tag)
 }
 
@@ -232,12 +300,14 @@ mod tests {
     fn dirty_tracked_checkout_is_refused_but_local_commit_is_snapshotted() {
         let folder = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
-            assert!(Command::new("git")
-                .current_dir(folder.path())
-                .args(args)
-                .status()
-                .unwrap()
-                .success());
+            assert!(
+                Command::new("git")
+                    .current_dir(folder.path())
+                    .args(args)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
         };
         git(&["init", "-q"]);
         fs::write(folder.path().join("input"), "committed").unwrap();
@@ -262,9 +332,11 @@ mod tests {
             "committed"
         );
         fs::write(folder.path().join("input"), "dirty").unwrap();
-        assert!(committed_snapshot(folder.path())
-            .unwrap_err()
-            .contains("Commit your changes first"));
+        assert!(
+            committed_snapshot(folder.path())
+                .unwrap_err()
+                .contains("Commit your changes first")
+        );
     }
     /// A checkout with the exporters manifest, and a game program beside the given companions.
     fn packaging_inputs(
@@ -385,5 +457,84 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink("/etc/passwd", folder.path().join("outside")).unwrap();
         assert!(digest_tree(folder.path(), &mut Sha256::new()).is_err());
+    }
+    /// A prepared folder as `sunrise-prepare` leaves one: the manifest, its tables and the run-time
+    /// data file that names the folder it was written for.
+    fn prepared_folder(root: &Path, table: &str) {
+        fs::create_dir_all(root.join("assets/minecraft")).unwrap();
+        fs::write(root.join("sunrise-resources.json"), r#"{"version":1}"#).unwrap();
+        fs::write(root.join("registries.json"), table).unwrap();
+        fs::write(root.join("assets/minecraft/sounds.json"), "sounds").unwrap();
+        fs::write(
+            root.join(sunrise_platform::prepared_files::FILE_NAME),
+            root.display().to_string(),
+        )
+        .unwrap();
+    }
+    #[test]
+    fn a_checkout_prepared_folder_lands_beside_the_base_without_its_data_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let from = folder
+            .path()
+            .join("CHECKOUT")
+            .join(CHECKOUT_RESOURCES)
+            .join("26.3");
+        prepared_folder(&from, "checkout tables");
+        let to = folder
+            .path()
+            .join("versions/developer-abc/.local/sunrise-client/26.3");
+        assert!(copy_prepared(&from, &to).unwrap());
+        // What `prepare` counts as prepared: the manifest and its tables (`backend::prepared_at`).
+        assert!(backend::prepared_at(&to));
+        assert_eq!(
+            fs::read_to_string(to.join("registries.json")).unwrap(),
+            "checkout tables"
+        );
+        assert_eq!(
+            fs::read_to_string(to.join("assets/minecraft/sounds.json")).unwrap(),
+            "sounds"
+        );
+        // The data file names its own root, so the base writes its own (the game does it on start).
+        assert!(
+            !to.join(sunrise_platform::prepared_files::FILE_NAME)
+                .exists()
+        );
+        // A copy, not a link: preparing the base again rewrites its files only.
+        fs::write(to.join("registries.json"), "reprepared").unwrap();
+        assert_eq!(
+            fs::read_to_string(from.join("registries.json")).unwrap(),
+            "checkout tables"
+        );
+        assert!(
+            from.join(sunrise_platform::prepared_files::FILE_NAME)
+                .exists()
+        );
+    }
+    #[test]
+    fn resources_the_base_gained_meanwhile_are_left_alone() {
+        let folder = tempfile::tempdir().unwrap();
+        let from = folder
+            .path()
+            .join("CHECKOUT")
+            .join(CHECKOUT_RESOURCES)
+            .join("26.3");
+        prepared_folder(&from, "checkout tables");
+        let to = folder
+            .path()
+            .join("versions/developer-abc/.local/sunrise-client/26.3");
+        prepared_folder(&to, "the base's own tables");
+        assert!(!copy_prepared(&from, &to).unwrap());
+        assert_eq!(
+            fs::read_to_string(to.join("registries.json")).unwrap(),
+            "the base's own tables"
+        );
+        // No partial copy is left beside it.
+        let beside: Vec<_> = fs::read_dir(to.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "26.3")
+            .collect();
+        assert_eq!(beside, Vec::<String>::new());
     }
 }
