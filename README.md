@@ -23,7 +23,7 @@ warnings. macOS packages are **ad-hoc signed**, without an Apple Developer ID an
 **not notarized**. Gatekeeper may block them or say Apple cannot check them for
 malicious software. No OS trust bypass is implied by a checksum signature.
 
-Build identity defaults to `arismoko/horizon`, consistently with the fork's release
+Build identity defaults to `sunrise-org/sunrise`, consistently with the fork's release
 repository. Set `HORIZON_LAUNCHER_REPOSITORY=horizon-rust/horizon` at build time to
 retain upstream identity. Other values fail the build. Stage packaging with
 `python3 tools/stage_launcher_packaging.py OUTPUT --repository REPOSITORY` using

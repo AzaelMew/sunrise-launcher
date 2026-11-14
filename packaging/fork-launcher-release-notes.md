@@ -2,7 +2,7 @@
 
 This is the arismoko fork, not the official Horizon launcher. It uses separate
 settings, game data and account storage and installs and updates only from
-[arismoko/horizon](https://github.com/arismoko/horizon).
+[sunrise-org/sunrise](https://github.com/sunrise-org/sunrise).
 
 Microsoft sign-in is configured using the application ID upstream authorized the
 fork to use. Signed Nightly builds require a signed-in account that owns Minecraft.
@@ -30,9 +30,9 @@ release tag; comparing a checksum alone does not authenticate the download.
 With Rust installed, use the verifier from the fork's tagged source checkout:
 
 ```sh
-git clone --branch '{tag}' --depth 1 https://github.com/arismoko/horizon.git horizon-fork-source
+git clone --branch '{tag}' --depth 1 https://github.com/sunrise-org/sunrise.git horizon-fork-source
 cd horizon-fork-source
-cargo run --locked -p horizon-release-sign -- verify --repository arismoko/horizon --tag '{tag}' --publishing /absolute/path/to/downloads
+cargo run --locked -p horizon-release-sign -- verify --repository sunrise-org/sunrise --tag '{tag}' --publishing /absolute/path/to/downloads
 ```
 
 The verifier uses the fork's built-in public keys and checks all four packages

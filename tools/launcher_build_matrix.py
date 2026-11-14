@@ -12,10 +12,10 @@ PLATFORMS = [
 ]
 
 def matrix(repository):
-    if repository not in ('arismoko/horizon', 'horizon-rust/horizon'):
+    if repository not in ('sunrise-org/sunrise', 'horizon-rust/horizon'):
         raise ValueError(f'Unsupported launcher repository: {repository}')
     entries = [dict(entry) for entry in PLATFORMS]
-    if repository == 'arismoko/horizon':
+    if repository == 'sunrise-org/sunrise':
         entries = [entry for entry in entries if entry['name'] in ('linux', 'macos', 'windows')]
         for entry in entries:
             for key in ('asset', 'binary', 'setup_asset'):
@@ -24,4 +24,4 @@ def matrix(repository):
     return {'include': entries}
 
 if __name__ == '__main__':
-    print(json.dumps(matrix(os.environ.get('GITHUB_REPOSITORY', 'arismoko/horizon')), separators=(',', ':')))
+    print(json.dumps(matrix(os.environ.get('GITHUB_REPOSITORY', 'sunrise-org/sunrise')), separators=(',', ':')))

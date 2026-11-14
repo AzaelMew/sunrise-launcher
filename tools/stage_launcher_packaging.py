@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 UPSTREAM = 'horizon-rust/horizon'
-FORK = 'arismoko/horizon'
+FORK = 'sunrise-org/sunrise'
 
 def stage(source: Path, destination: Path, repository: str):
     if repository not in (UPSTREAM, FORK):

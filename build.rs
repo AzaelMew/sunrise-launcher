@@ -4,9 +4,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=HORIZON_LAUNCHER_REPOSITORY");
     println!("cargo:rustc-check-cfg=cfg(horizon_fork_launcher)");
     let repository =
-        std::env::var("HORIZON_LAUNCHER_REPOSITORY").unwrap_or_else(|_| "arismoko/horizon".into());
+        std::env::var("HORIZON_LAUNCHER_REPOSITORY").unwrap_or_else(|_| "sunrise-org/sunrise".into());
     match repository.as_str() {
-        "arismoko/horizon" => println!("cargo:rustc-cfg=horizon_fork_launcher"),
+        "sunrise-org/sunrise" => println!("cargo:rustc-cfg=horizon_fork_launcher"),
         "horizon-rust/horizon" => {}
         _ => panic!("unsupported launcher repository: {repository}"),
     }
@@ -17,7 +17,7 @@ fn main() {
         println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
     }
     let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
-    let icon = if repository == "arismoko/horizon" {
+    let icon = if repository == "sunrise-org/sunrise" {
         "fork/launcher.ico"
     } else {
         "horizon.ico"
@@ -28,7 +28,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
         resource.set_icon(&ico);
-        if repository == "arismoko/horizon" {
+        if repository == "sunrise-org/sunrise" {
             resource.set("FileDescription", "Horizon Fork Launcher (arismoko)");
             resource.set("ProductName", "Horizon Fork Launcher (arismoko)");
             resource.set("InternalName", "horizon-fork-launcher");
