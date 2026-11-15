@@ -281,7 +281,7 @@ impl Setup {
                         tr(if cfg!(sunrise_fork_launcher) {
                             "Installs Sunrise Launcher for this account. No administrator needed."
                         } else {
-                            "Installs Sunrise Launcher for this account. No administrator needed."
+                            "Installs Horizon Launcher for this account. No administrator needed."
                         })
                         .to_string(),
                     ))
@@ -314,7 +314,7 @@ impl Setup {
                         tr(if cfg!(sunrise_fork_launcher) {
                             "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay."
                         } else {
-                            "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay."
+                            "Removes Horizon Launcher from this computer. Your worlds and the game's folder stay."
                         })
                         .to_string(),
                     ))
@@ -357,13 +357,13 @@ impl Setup {
                     Mode::Install => tr(if cfg!(sunrise_fork_launcher) {
                         "Sunrise Launcher is installed."
                     } else {
-                        "Sunrise Launcher is installed."
+                        "Horizon Launcher is installed."
                     })
                     .to_string(),
                     Mode::Uninstall => tr(if cfg!(sunrise_fork_launcher) {
                         "Sunrise Launcher was removed."
                     } else {
-                        "Sunrise Launcher was removed."
+                        "Horizon Launcher was removed."
                     })
                     .to_string(),
                 };
@@ -391,7 +391,7 @@ impl Setup {
                                 tr(if cfg!(sunrise_fork_launcher) {
                                     "Launch Sunrise Launcher"
                                 } else {
-                                    "Launch Sunrise"
+                                    "Launch Horizon"
                                 }),
                                 Kind::Primary,
                                 &t,

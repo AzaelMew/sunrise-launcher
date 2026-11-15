@@ -1187,7 +1187,7 @@ impl SecretStore for SystemStore {
                     if cfg!(sunrise_fork_launcher) {
                         "Sunrise Launcher: Minecraft account"
                     } else {
-                        "Sunrise launcher: Minecraft account"
+                        "Horizon launcher: Minecraft account"
                     },
                     &attributes,
                     secret.as_bytes(),

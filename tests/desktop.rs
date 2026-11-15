@@ -39,12 +39,12 @@ fn menu_registration_preserves_the_package_wrapper() {
         .join(if cfg!(sunrise_fork_launcher) {
             "net.playsunrise.launcher.desktop"
         } else {
-            "sunrise-launcher.desktop"
+            "horizon-launcher.desktop"
         });
     let other = home
         .join("data/applications")
         .join(if cfg!(sunrise_fork_launcher) {
-            "sunrise-launcher.desktop"
+            "horizon-launcher.desktop"
         } else {
             "net.playsunrise.launcher.desktop"
         });

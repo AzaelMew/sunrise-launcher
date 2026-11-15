@@ -452,7 +452,7 @@ const fn game_fallback_for(os: &str, arch: &str) -> Option<&'static str> {
 pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = Some(if cfg!(sunrise_fork_launcher) {
     "sunrise-launcher-linux-x86_64.AppImage"
 } else {
-    "sunrise-launcher-linux-x86_64.AppImage"
+    "horizon-launcher-linux-x86_64.AppImage"
 });
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = None;
@@ -4805,7 +4805,7 @@ pub fn {f}("
                 if cfg!(sunrise_fork_launcher) {
                     "sunrise-launcher-macos-arm64.zip"
                 } else {
-                    "sunrise-launcher-macos-arm64.zip"
+                    "horizon-launcher-macos-arm64.zip"
                 }
             ))
         );
@@ -4816,7 +4816,7 @@ pub fn {f}("
                 if cfg!(sunrise_fork_launcher) {
                     "sunrise-launcher-macos-x64.zip"
                 } else {
-                    "sunrise-launcher-macos-x64.zip"
+                    "horizon-launcher-macos-x64.zip"
                 }
             ))
         );
@@ -4827,7 +4827,7 @@ pub fn {f}("
                 if cfg!(sunrise_fork_launcher) {
                     "sunrise-launcher-windows-x64.zip"
                 } else {
-                    "sunrise-launcher-windows-x64.zip"
+                    "horizon-launcher-windows-x64.zip"
                 }
             ))
         );
@@ -4838,7 +4838,7 @@ pub fn {f}("
                 if cfg!(sunrise_fork_launcher) {
                     "sunrise-launcher-windows-arm64.zip"
                 } else {
-                    "sunrise-launcher-windows-arm64.zip"
+                    "horizon-launcher-windows-arm64.zip"
                 }
             ))
         );
@@ -5164,12 +5164,12 @@ pub fn {f}("
             if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher-windows-arm64.zip"
             } else {
-                "sunrise-launcher-windows-arm64.zip"
+                "horizon-launcher-windows-arm64.zip"
             },
             if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher-windows-x64.zip"
             } else {
-                "sunrise-launcher-windows-x64.zip"
+                "horizon-launcher-windows-x64.zip"
             },
         );
         let asset = |name: &str| serde_json::json!({"name": name, "browser_download_url": format!("https://example.test/{name}"), "size": 1});
@@ -5347,7 +5347,7 @@ pub fn {f}("
         assert_eq!(launcher_version("launcher-vx"), None);
         let list = serde_json::json!([
             {"tag_name": "v2026.10.12", "assets": [{"name": "sunrise-linux-x86_64.tar.gz", "browser_download_url": "u", "size": 1}]},
-            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(sunrise_fork_launcher) { "sunrise-launcher-linux-x86_64.tar.gz" } else { "sunrise-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
+            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(sunrise_fork_launcher) { "sunrise-launcher-linux-x86_64.tar.gz" } else { "horizon-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
             {"tag_name": "v2026.10.13", "assets": []},
             {"tag_name": "launcher-v0.0.1", "draft": true, "assets": []},
         ]);
@@ -5721,7 +5721,7 @@ pub fn {f}("
             Some(if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher-linux-x86_64.AppImage"
             } else {
-                "sunrise-launcher-linux-x86_64.AppImage"
+                "horizon-launcher-linux-x86_64.AppImage"
             })
         );
     }
@@ -6973,7 +6973,7 @@ pub fn {f}("
             parse_version_output(if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher 0.1.5\n"
             } else {
-                "sunrise-launcher 0.1.5\n"
+                "horizon-launcher 0.1.5\n"
             }),
             Some("0.1.5")
         );

@@ -56,13 +56,13 @@ const LAUNCHER_ENTRY: &str = crate::identity::DESKTOP_ENTRY;
 const GAME_ENTRY: &str = if cfg!(sunrise_fork_launcher) {
     "net.playsunrise.game.desktop"
 } else {
-    "sunrise.desktop"
+    "horizon.desktop"
 };
 /// The icon's name in the icon theme and in both entries.
 const ICON: &str = if cfg!(sunrise_fork_launcher) {
     "net.playsunrise.launcher"
 } else {
-    "sunrise"
+    "horizon"
 };
 const GAME_ENTRY_TEXT: &str = include_str!("../../packaging/linux/sunrise.desktop");
 
@@ -292,7 +292,7 @@ mod tests {
         assert!(entry.contains(if cfg!(sunrise_fork_launcher) {
             "Icon=net.playsunrise.launcher\n"
         } else {
-            "Icon=sunrise\n"
+            "Icon=horizon\n"
         }));
     }
 
@@ -305,14 +305,14 @@ mod tests {
         let png = data.join(if cfg!(sunrise_fork_launcher) {
             "icons/hicolor/48x48/apps/net.playsunrise.launcher.png"
         } else {
-            "icons/hicolor/48x48/apps/sunrise.png"
+            "icons/hicolor/48x48/apps/horizon.png"
         });
         assert!(fs::read(&png).unwrap().starts_with(b"\x89PNG"));
         assert!(data
             .join(if cfg!(sunrise_fork_launcher) {
                 "icons/hicolor/scalable/apps/net.playsunrise.launcher.svg"
             } else {
-                "icons/hicolor/scalable/apps/sunrise.svg"
+                "icons/hicolor/scalable/apps/horizon.svg"
             })
             .exists());
         assert!(install_in(&data, Path::new("/opt/b/sunrise-launcher")).unwrap());
