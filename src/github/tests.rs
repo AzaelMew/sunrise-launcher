@@ -17,6 +17,24 @@ fn list(tag: &str) -> serde_json::Value {
     serde_json::json!([{ "tag_name": tag }])
 }
 
+/// [`super::json_with`] with a mirror configured, as `HORIZON_GITHUB_MIRROR` would.
+fn json_with(
+    url: &str,
+    cache: &Path,
+    now: u64,
+    github: impl Fn(&str, Option<&str>) -> Answer,
+    mirror: impl Fn(&str) -> Answer,
+) -> Result<Option<serde_json::Value>, String> {
+    super::json_with(
+        url,
+        cache,
+        now,
+        "https://mcp.example/github/public",
+        github,
+        mirror,
+    )
+}
+
 fn no_mirror(_: &str) -> Answer {
     panic!("the mirror is only asked when GitHub can't answer")
 }
@@ -300,6 +318,23 @@ fn other_repositories_have_no_mirror() {
         "https://api.github.com/repos/someone/mod/commits/abc",
         &cache,
         T0,
+        |_, _| Answer::RateLimited,
+        no_mirror,
+    )
+    .unwrap_err();
+    assert!(err.contains("rate limit"), "{err}");
+    assert!(!err.contains("mirror"), "{err}");
+    let _ = fs::remove_dir_all(cache);
+}
+
+#[test]
+fn no_mirror_is_built_in() {
+    let cache = scratch("built-in");
+    let err = super::json_with(
+        RELEASES,
+        &cache,
+        T0,
+        MIRROR,
         |_, _| Answer::RateLimited,
         no_mirror,
     )
