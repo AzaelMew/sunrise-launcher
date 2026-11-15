@@ -7,9 +7,9 @@
 //! account names.
 use std::path::Path;
 
-/// mclo.gs's API; `HORIZON_LAUNCHER_PASTE_URL` points it elsewhere for tests.
+/// mclo.gs's API; `SUNRISE_LAUNCHER_PASTE_URL` points it elsewhere for tests.
 const API: &str = "";
-const PASTE_ENV: &str = "HORIZON_LAUNCHER_PASTE_URL";
+const PASTE_ENV: &str = "SUNRISE_LAUNCHER_PASTE_URL";
 /// mclo.gs keeps at most 25,000 lines and 10 MiB: the end of a longer log is sent.
 const MAX_LINES: usize = 25_000;
 const MAX_BYTES: usize = 10 << 20;
@@ -30,12 +30,12 @@ pub fn matches(line: &str, search: &str) -> bool {
 }
 
 /// The names to take out of a log: the account names, the offline player name kept in each game
-/// folder (`horizon-player.txt`), and the computer's user name.
+/// folder (`sunrise-player.txt`), and the computer's user name.
 pub fn names(homes: &[&Path]) -> Vec<String> {
     let accounts = crate::account::Accounts::load();
     let mut names: Vec<String> = accounts.accounts.into_iter().map(|a| a.name).collect();
     for home in homes {
-        if let Ok(name) = std::fs::read_to_string(home.join("horizon-player.txt")) {
+        if let Ok(name) = std::fs::read_to_string(home.join("sunrise-player.txt")) {
             names.push(name.trim().to_string());
         }
     }
@@ -126,7 +126,7 @@ pub fn share(text: &str) -> Result<Shared, String> {
     if api().is_empty() {
         return Err("Log sharing is not configured for this build.".into());
     }
-    let body = serde_json::json!({ "content": fit(text), "source": "Horizon launcher" });
+    let body = serde_json::json!({ "content": fit(text), "source": "Sunrise launcher" });
     let answer: serde_json::Value = ureq::post(&format!("{}/log", api()))
         .send_json(body)
         .map_err(|e| format!("mclo.gs didn't take the log: {e}"))?

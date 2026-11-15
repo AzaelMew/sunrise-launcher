@@ -5,13 +5,13 @@
 //! icon, name, line, summary, what it may do, downloads, and Install in or Remove from the
 //! instance).
 //!
-//! The mockup's tabs are its sources (Horizon, Modrinth, CurseForge soon); the launcher's page
+//! The mockup's tabs are its sources (Sunrise, Modrinth, CurseForge soon); the launcher's page
 //! is by kind (mods, modpacks, resource packs, shader packs, data packs), each with its sources,
-//! so the tabs are the kinds and the sources are a switch under the search: Horizon's registry
+//! so the tabs are the kinds and the sources are a switch under the search: Sunrise's registry
 //! or Modrinth, CurseForge beside them as coming soon, on the kinds both serve (`switches`):
-//! shader packs are Horizon's registry's only, and a Java
-//! instance's files always Modrinth's. Modrinth's Java mods are offered to a Horizon instance
-//! too, each marked Works, Partly or Doesn't run in Horizon. Not in the mockup, kept in its
+//! shader packs are Sunrise's registry's only, and a Java
+//! instance's files always Modrinth's. Modrinth's Java mods are offered to a Sunrise instance
+//! too, each marked Works, Partly or Doesn't run in Sunrise. Not in the mockup, kept in its
 //! patterns: Show everything, the filters, which instance or world installs go to (under the
 //! search); the
 //! project's page, its rating and why it runs or not (in the project's card); adding a native mod
@@ -20,7 +20,7 @@
 
 use super::*;
 use crate::glass_ui::{self as ui, white};
-use horizon_theme::glass::{ink, radius};
+use sunrise_theme::glass::{ink, radius};
 
 /// The project card's width (`lg:grid-cols-[minmax(0,1fr)_360px]`).
 const DETAIL: f32 = 360.;
@@ -29,7 +29,7 @@ impl Launcher {
     /// The search's placeholder: the registry's count when it is listed whole.
     pub(super) fn mods_placeholder(&self) -> SharedString {
         let m = &self.mods;
-        let registry = m.source == SourceId::Horizon && m.java.is_none();
+        let registry = m.source == SourceId::Sunrise && m.java.is_none();
         if registry
             && m.kind == PackKind::Mod
             && m.searched
@@ -38,10 +38,10 @@ impl Launcher {
         {
             // Results come in pages: only a last page gives the real count.
             if m.more {
-                return tr("Search Horizon mods").into();
+                return tr("Search Sunrise mods").into();
             }
             trf(
-                "Search {count} Horizon mods",
+                "Search {count} Sunrise mods",
                 &[("count", &m.results.len().to_string())],
             )
             .into()
@@ -58,7 +58,7 @@ impl Launcher {
         let t = self.theme;
         let instance = self
             .selected_instance()
-            .map_or_else(|| "Horizon".to_owned(), |i| i.name.clone());
+            .map_or_else(|| "Sunrise".to_owned(), |i| i.name.clone());
         let head = ui::page_head(
             tr("Mods"),
             trf(
@@ -130,7 +130,7 @@ impl Launcher {
         }
 
         let java = self.mods.java_for(self.mods.kind).is_some();
-        let registry = self.mods.source == SourceId::Horizon && !java;
+        let registry = self.mods.source == SourceId::Sunrise && !java;
         let everything = self.mods.everything;
         let extras = div()
             .flex()
@@ -223,7 +223,7 @@ impl Launcher {
         )
     }
 
-    /// The source switch (`switches`): Horizon's registry or Modrinth as small tabs, CurseForge
+    /// The source switch (`switches`): Sunrise's registry or Modrinth as small tabs, CurseForge
     /// after them as coming soon, shown, inert, never searched, as in the mockup.
     fn glass_source_switch(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
@@ -302,7 +302,7 @@ impl Launcher {
                 .bg(white(if open { 0.11 } else { 0.07 }))
                 .hover(|s| s.bg(white(0.11)))
                 .cursor_pointer()
-                .font_family(horizon_theme::glass::FONT)
+                .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(14.))
                 .text_color(white(ink::FULL))
                 .child(trf("Sort by: {order}", &[("order", tr(name))]))
@@ -359,15 +359,15 @@ impl Launcher {
         wrap
     }
 
-    /// A quiet line under Horizon's mod list when the registry holds mods this Horizon can't
+    /// A quiet line under Sunrise's mod list when the registry holds mods this Sunrise can't
     /// use yet (made for the earlier mod system), with how many.
     fn mods_left_out_note(&self) -> Option<Div> {
         let m = &self.mods;
-        if m.source != SourceId::Horizon || m.kind != PackKind::Mod || m.java_for(m.kind).is_some()
+        if m.source != SourceId::Sunrise || m.kind != PackKind::Mod || m.java_for(m.kind).is_some()
         {
             return None;
         }
-        let count = browser::horizon::projects_left_out().filter(|n| *n > 0)?;
+        let count = browser::sunrise::projects_left_out().filter(|n| *n > 0)?;
         Some(
             div()
                 .flex()
@@ -376,7 +376,7 @@ impl Launcher {
                 .px(px(4.))
                 .child(ui::icon("information-circle", 14., white(ink::QUIET)))
                 .child(ui::text(13., FontWeight::NORMAL, ink::QUIET).child(trf(
-                    "{count} more mods made for Horizon's earlier mod system are hidden until their authors update them.",
+                    "{count} more mods made for Sunrise's earlier mod system are hidden until their authors update them.",
                     &[("count", &count.to_string())],
                 ))),
         )
@@ -388,11 +388,11 @@ impl Launcher {
         let m = &self.mods;
         if let Some(e) = &m.error {
             // A failed search stays as an amber card: what happened in plain words, Try again,
-            // Modrinth while Horizon's own list is down, and the error's own words on request.
+            // Modrinth while Sunrise's own list is down, and the error's own words on request.
             let details = m.error_details;
-            let horizon = m.source == SourceId::Horizon && m.java_for(m.kind).is_none();
-            let what = if horizon {
-                tr("Couldn't load Horizon's mod list.")
+            let sunrise = m.source == SourceId::Sunrise && m.java_for(m.kind).is_none();
+            let what = if sunrise {
+                tr("Couldn't load Sunrise's mod list.")
             } else {
                 tr("The search didn't go through.")
             };
@@ -404,7 +404,7 @@ impl Launcher {
                     },
                 )),
             );
-            if horizon {
+            if sunrise {
                 actions = actions.child(
                     button(
                         "mods-to-modrinth",
@@ -472,12 +472,12 @@ impl Launcher {
                     "Nothing matches “{query}”.",
                     &[("query", m.text.text().trim())],
                 )
-            } else if m.source == SourceId::Horizon {
-                tr("Nothing in Horizon's registry matches yet.").to_string()
+            } else if m.source == SourceId::Sunrise {
+                tr("Nothing in Sunrise's registry matches yet.").to_string()
             } else if m.everything {
                 tr("Nothing found.").to_string()
             } else {
-                tr("Nothing found that runs in Horizon. Show everything lists the rest.")
+                tr("Nothing found that runs in Sunrise. Show everything lists the rest.")
                     .to_string()
             };
             return ui::text(14., FontWeight::NORMAL, 0.6)
@@ -548,7 +548,7 @@ impl Launcher {
                 div().flex_none().w(px(20.)).into_any_element()
             };
             // The registry's rows end with downloads, the others' with how they run (`compat`).
-            let right = if p.source == SourceId::Horizon {
+            let right = if p.source == SourceId::Sunrise {
                 ui::text(13., FontWeight::NORMAL, 0.5)
                     .flex()
                     .items_center()
@@ -696,7 +696,7 @@ impl Launcher {
         let about = m
             .about
             .get(&p.id)
-            .filter(|_| p.source == SourceId::Horizon)
+            .filter(|_| p.source == SourceId::Sunrise)
             .map(|lines| lines.join(" · "));
         let registry = about.is_some();
 
@@ -780,7 +780,7 @@ impl Launcher {
                 .child(
                     div()
                         .mt(px(20.))
-                        .font_family(horizon_theme::glass::DISPLAY_FONT)
+                        .font_family(sunrise_theme::glass::DISPLAY_FONT)
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_size(px(24.))
                         .line_height(px(30.))
@@ -793,7 +793,7 @@ impl Launcher {
                         .child(by.join(" · ")),
                 )
                 .children(
-                    (p.source == SourceId::Horizon)
+                    (p.source == SourceId::Sunrise)
                         .then(|| stars(&p.id, &t))
                         .flatten()
                         .map(|s| s.mt(px(8.))),
@@ -817,7 +817,7 @@ impl Launcher {
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(tone)
                         .child(trf(
-                            "{support} in Horizon",
+                            "{support} in Sunrise",
                             &[("support", tr(support.label()))],
                         )),
                 )
@@ -853,8 +853,8 @@ impl Launcher {
                 .when(registry, |d| {
                     d.child(
                         div().flex().justify_center().mt(px(4.)).child(
-                            ui::link("mods-detail-policy", tr("Horizon's mod policy"))
-                                .on_click(|_, _, cx| cx.open_url(browser::horizon::POLICY)),
+                            ui::link("mods-detail-policy", tr("Sunrise's mod policy"))
+                                .on_click(|_, _, cx| cx.open_url(browser::sunrise::POLICY)),
                         ),
                     )
                 }),

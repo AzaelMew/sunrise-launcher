@@ -1,7 +1,7 @@
 # Sunrise Launcher
 
 This is Sunrise's launcher. It keeps its own
-settings, game data and account storage; on its first start it copies the Horizon
+settings, game data and account storage; on its first start it copies the Sunrise
 launcher's (or the arismoko fork launcher's) settings, accounts and worlds, leaving
 theirs as they are. It installs and updates only from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise).
@@ -39,7 +39,7 @@ With Rust installed, use the verifier from Sunrise's tagged source checkout:
 ```sh
 git clone --branch '{tag}' --depth 1 https://github.com/sunrise-org/sunrise.git sunrise-source
 cd sunrise-source
-cargo run --locked -p horizon-release-sign -- verify --repository sunrise-org/sunrise --tag '{tag}' --publishing /absolute/path/to/downloads
+cargo run --locked -p sunrise-release-sign -- verify --repository sunrise-org/sunrise --tag '{tag}' --publishing /absolute/path/to/downloads
 ```
 
 The verifier uses Sunrise's built-in public keys and checks every package

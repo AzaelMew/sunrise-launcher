@@ -4,7 +4,7 @@ use super::*;
 
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        horizon_launcher::storage::eviction::cleanup_after_start();
+        sunrise_launcher::storage::eviction::cleanup_after_start();
         let (tx, rx) = channel();
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
@@ -54,14 +54,14 @@ impl Launcher {
         }
         // Release builds on Linux put their entry back in the applications menu when there is
         // none or it starts a program that is gone (a moved or deleted binary), never over one
-        // that works; `HORIZON_LAUNCHER_DESKTOP_ENTRY=1` does it in a development build.
+        // that works; `SUNRISE_LAUNCHER_DESKTOP_ENTRY=1` does it in a development build.
         if cfg!(target_os = "linux")
             && settings.desktop_entry()
             && (!cfg!(debug_assertions)
-                || std::env::var_os("HORIZON_LAUNCHER_DESKTOP_ENTRY").is_some())
+                || std::env::var_os("SUNRISE_LAUNCHER_DESKTOP_ENTRY").is_some())
         {
             std::thread::spawn(|| {
-                let _ = horizon_launcher::desktop::repair(backend::exe_path());
+                let _ = sunrise_launcher::desktop::repair(backend::exe_path());
             });
         }
         let installed = backend::installed();
@@ -111,7 +111,7 @@ impl Launcher {
             checked: None,
             update_error: None,
             // The installer the last Update started could not put the new launcher in place.
-            self_update: horizon_launcher::update_handoff::take_failure()
+            self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
             self_update_hidden: false,
             update_install: None,
@@ -164,7 +164,7 @@ impl Launcher {
             row_menu: Default::default(),
             rail: Default::default(),
             sheet_tab: Default::default(),
-            look: horizon_theme::glass::Glass::default_look(),
+            look: sunrise_theme::glass::Glass::default_look(),
             menu_closed_at: None,
             wardrobe: None,
             wardrobe_marks: Default::default(),
@@ -283,7 +283,7 @@ impl Launcher {
             console: Default::default(),
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
-            side_servers: horizon_launcher::servers::list(),
+            side_servers: sunrise_launcher::servers::list(),
             sky,
             scene,
             rain,
@@ -326,11 +326,11 @@ impl Launcher {
                 .cloned()
                 .zip(this.selected_instance().map(|i| i.id.clone()));
         }
-        // `HORIZON_LAUNCHER_PAGE=new-instance`: the dialog open on Modded, for screenshots
-        // (`new-instance-horizon`, `new-instance-vanilla`: on those).
-        let kind = match std::env::var("HORIZON_LAUNCHER_PAGE").as_deref() {
+        // `SUNRISE_LAUNCHER_PAGE=new-instance`: the dialog open on Modded, for screenshots
+        // (`new-instance-sunrise`, `new-instance-vanilla`: on those).
+        let kind = match std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() {
             Ok("new-instance") => Some(new_instance::NewKind::Modded),
-            Ok("new-instance-horizon") => Some(new_instance::NewKind::Horizon),
+            Ok("new-instance-sunrise") => Some(new_instance::NewKind::Sunrise),
             Ok("new-instance-vanilla") => Some(new_instance::NewKind::Vanilla),
             _ => None,
         };
@@ -338,13 +338,13 @@ impl Launcher {
             this.open_instance_dialog(None);
             this.pick_kind(kind, cx);
         }
-        if std::env::var("HORIZON_LAUNCHER_PAGE").as_deref() == Ok("edit-instance") {
+        if std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() == Ok("edit-instance") {
             this.sheet_tab = glass_sheet::SheetTab::from_env().unwrap_or_default();
             this.open_instance_dialog(this.selected_instance().cloned());
         }
         if cfg!(debug_assertions)
             && matches!(
-                std::env::var("HORIZON_LAUNCHER_PAGE").as_deref(),
+                std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref(),
                 Ok("wardrobe" | "shop")
             )
         {
@@ -513,7 +513,7 @@ impl Launcher {
     /// Update: the window closes, the installer puts the new launcher in place and starts it.
     /// When another launcher already put it there, this one only restarts.
     pub(crate) fn apply_launcher_update(&mut self, cx: &mut App) {
-        match horizon_launcher::update_handoff::start_now() {
+        match sunrise_launcher::update_handoff::start_now() {
             Ok(true) => {
                 servers_page::keep_running_through_update();
                 shut_down(cx)
@@ -523,10 +523,10 @@ impl Launcher {
         }
     }
 
-    /// Installs the Horizon version the last check found, keeping the player's choice of
+    /// Installs the Sunrise version the last check found, keeping the player's choice of
     /// version unless they were on the newest one.
     pub(crate) fn install_update(&mut self) {
-        let Some(release) = self.updates.horizon.clone() else {
+        let Some(release) = self.updates.sunrise.clone() else {
             return;
         };
         if self.installing.is_some() || self.removing.contains(&release.tag) {

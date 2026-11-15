@@ -1,9 +1,9 @@
 //! Export… on Home's Instance row: the selected instance as a `.mrpack` or a `.zip`, with the
 //! worlds the player switches on, written to the launcher's `exports/` folder
-//! (`horizon_launcher::export`).
+//! (`sunrise_launcher::export`).
 use super::*;
-use horizon_launcher::export::{self, Format};
 use std::path::PathBuf;
+use sunrise_launcher::export::{self, Format};
 
 pub(super) struct ExportPanel {
     /// The instance it is for: picking another closes it.
@@ -30,7 +30,7 @@ impl Launcher {
         let Some(i) = self.selected_instance() else {
             return;
         };
-        let worlds = horizon_launcher::worlds::list(&i.home)
+        let worlds = sunrise_launcher::worlds::list(&i.home)
             .into_iter()
             .map(|w| (w.folder, w.name, false))
             .collect();
@@ -213,7 +213,7 @@ impl Launcher {
                 .child(caps(tr("Worlds")).text_color(t.muted))
                 .child(worlds)
                 .child(text(theme::CAPTION).text_color(t.muted).child(tr(
-                    "Settings, packs and Horizon mods go in; logs, screenshots, backups and \
+                    "Settings, packs and Sunrise mods go in; logs, screenshots, backups and \
                          your account never do. Worlds go without their per-player files.",
                 )))
                 .child(

@@ -1,7 +1,7 @@
 //! The worker pauses before Cargo can execute dependency build code.
 use gpui::{AnyWindowHandle, AppContext, Context, PromptLevel};
-use horizon_launcher::{i18n::tr, native_mods::RegistryInventory};
 use std::sync::mpsc::Sender;
+use sunrise_launcher::{i18n::tr, native_mods::RegistryInventory};
 
 pub fn show(
     window: AnyWindowHandle,

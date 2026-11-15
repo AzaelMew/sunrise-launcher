@@ -1,4 +1,4 @@
-//! Automatic updates of what the browser installed from Horizon's registry (Settings: "Update
+//! Automatic updates of what the browser installed from Sunrise's registry (Settings: "Update
 //! registry mods automatically", on by default): at the launcher's start and before Play, each
 //! installed registry project moves to its newest version for this game ([`Index::installable`]),
 //! checked as an install is. What it never touches:
@@ -17,12 +17,12 @@
 use super::{install_version_guarded, Index};
 use crate::browser::{installed, Kind, SourceId, GAME};
 use crate::i18n::trf;
-use horizon_mod_package::index;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use sunrise_mod_package::index;
 
 /// Where replaced files wait for the next start, and their list.
 const KEPT_DIR: &str = "mod-browser/replaced";
@@ -74,7 +74,7 @@ pub fn in_pack(home: &Path) -> bool {
 /// Whether `entry` updates automatically, and to what.
 pub fn decide<'a>(index: &'a Index, entry: &installed::Entry, ctx: &Context) -> Decision<'a> {
     let skip_native = crate::native_status::is_native_file(&entry.file);
-    if entry.source != SourceId::Horizon
+    if entry.source != SourceId::Sunrise
         || ctx.in_pack
         || skip_native
         || entry.kind == Kind::DataPack
@@ -102,8 +102,8 @@ pub fn decide<'a>(index: &'a Index, entry: &installed::Entry, ctx: &Context) -> 
 
 /// The blocks, items, entities, effects, menus and creative tabs a content mod adds.
 pub fn content_ids(path: &Path) -> Result<BTreeSet<String>, String> {
-    let manifest = horizon_mod_package::Package::read(path)?.manifest;
-    let c = horizon_mod_package::Content::read(path, &manifest)?;
+    let manifest = sunrise_mod_package::Package::read(path)?.manifest;
+    let c = sunrise_mod_package::Content::read(path, &manifest)?;
     let ids = c.blocks.iter().map(|b| format!("block {}", b.id));
     let ids = ids.chain(c.items.iter().map(|i| format!("item {}", i.id)));
     let ids = ids.chain(c.entity_types.iter().map(|e| format!("entity {}", e.id)));
@@ -178,7 +178,7 @@ fn save_kept(home: &Path, list: &[Kept]) -> Result<(), String> {
 /// Whether the browser's list has `kept`'s project at a newer version whose file is in place.
 fn finished(home: &Path, kept: &Kept) -> bool {
     let list = installed::Installed::load(home);
-    let Some(now) = list.find(SourceId::Horizon, &kept.entry.project) else {
+    let Some(now) = list.find(SourceId::Sunrise, &kept.entry.project) else {
         return false;
     };
     let hash = now.checksum.strip_prefix("SHA-256:").unwrap_or_default();
@@ -197,7 +197,7 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
     fs::copy(&copy, &target).map_err(|e| format!("{}: {e}", target.display()))?;
     let mut list = installed::Installed::load(home);
     let ours =
-        |e: &installed::Entry| e.source == SourceId::Horizon && e.project == kept.entry.project;
+        |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == kept.entry.project;
     if let Some(now) = list.entries.iter().find(|e| ours(e)) {
         if now.file != kept.entry.file {
             if let Some(path) = now.path(home) {
@@ -351,10 +351,10 @@ fn update(
         if !content {
             return Ok(());
         }
-        let new_package = horizon_mod_package::Package::read(new)?;
+        let new_package = sunrise_mod_package::Package::read(new)?;
         let old_wasm = old
             .as_deref()
-            .map(horizon_mod_package::Package::read)
+            .map(sunrise_mod_package::Package::read)
             .transpose()?
             .is_some_and(|package| package.manifest.wasm.is_some());
         if old_wasm || new_package.manifest.wasm.is_some() {

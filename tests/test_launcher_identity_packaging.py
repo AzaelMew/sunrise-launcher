@@ -31,12 +31,12 @@ class PackagingIdentity(unittest.TestCase):
             source = temporary / 'metadata.rs'
             source.write_text(program)
             outputs = []
-            addresses = temporary / 'libhorizon_addresses.rlib'
-            subprocess.run(['rustc', '--edition=2024', '--crate-name=horizon_addresses', '--crate-type=rlib', str(ROOT / 'crates/horizon-addresses/src/lib.rs'), '-o', str(addresses)], check=True)
+            addresses = temporary / 'libsunrise_addresses.rlib'
+            subprocess.run(['rustc', '--edition=2024', '--crate-name=sunrise_addresses', '--crate-type=rlib', str(ROOT / 'crates/sunrise-addresses/src/lib.rs'), '-o', str(addresses)], check=True)
             build_script = temporary / 'build-script'
             subprocess.run(['rustc', '--edition=2021', str(ROOT / 'launcher/build.rs'), '-o', str(build_script)], check=True)
             for repository in (STAGE.UPSTREAM, STAGE.FORK):
-                env = dict(os.environ, HORIZON_LAUNCHER_REPOSITORY=repository,
+                env = dict(os.environ, SUNRISE_LAUNCHER_REPOSITORY=repository,
                            CARGO_CFG_TARGET_OS='linux', CARGO_CFG_TARGET_ENV='gnu',
                            CARGO_MANIFEST_DIR=str(ROOT / 'launcher'))
                 directives = subprocess.check_output([str(build_script)], env=env, text=True)
@@ -45,13 +45,13 @@ class PackagingIdentity(unittest.TestCase):
                     if line.startswith('cargo:rustc-cfg='):
                         flags += ['--cfg', line.removeprefix('cargo:rustc-cfg=')]
                 binary = temporary / 'metadata'
-                subprocess.run(['rustc', '--edition=2021', str(source), '-o', str(binary), '--extern', f'horizon_addresses={addresses}', *flags], check=True)
+                subprocess.run(['rustc', '--edition=2021', str(source), '-o', str(binary), '--extern', f'sunrise_addresses={addresses}', *flags], check=True)
                 output = subprocess.check_output([str(binary)], text=True)
                 outputs.append(dict(line.split('\t', 1) for line in output.splitlines()))
             upstream, fork = outputs
             self.assertEqual(upstream, expected)
             # A Sunrise build has its own name, data folders, saved accounts and install: none of it
-            # takes a Horizon launcher's place (it only opens Horizon's folders while its own are missing).
+            # takes a Sunrise launcher's place (it only opens Sunrise's folders while its own are missing).
             self.assertTrue(all(fork[name] != upstream[name] for name in expected))
             self.assertEqual(fork['WINDOW_TITLE'], 'Sunrise Launcher')
             self.assertEqual(fork['APP_ID'], 'net.playsunrise.launcher')
@@ -61,7 +61,7 @@ class PackagingIdentity(unittest.TestCase):
 
     def test_real_workflow_repository_input_and_matrix(self):
         workflow = (ROOT / '.github/workflows/launcher.yml').read_text()
-        self.assertIn('HORIZON_LAUNCHER_REPOSITORY: ${{ github.repository }}', workflow)
+        self.assertIn('SUNRISE_LAUNCHER_REPOSITORY: ${{ github.repository }}', workflow)
         self.assertIn('--repository "$GITHUB_REPOSITORY" --tag', workflow)
         original = (ROOT / 'launcher/tests/fixtures-launcher-workflow-upstream.yml').read_text()
         block = original.split('      matrix:\n', 1)[1].split('    runs-on:', 1)[0]
@@ -109,8 +109,8 @@ class PackagingIdentity(unittest.TestCase):
             plist = (destination / 'macos/Info.plist').read_text()
             self.assertIn('<string>net.playsunrise.launcher</string>', plist)
             self.assertIn('<string>sunrise-launcher</string>', plist)
-            self.assertNotIn('<string>Horizon</string>', plist)
-            self.assertEqual((destination / 'icons/horizon.icns').read_bytes(),
+            self.assertNotIn('<string>Sunrise</string>', plist)
+            self.assertEqual((destination / 'icons/sunrise.icns').read_bytes(),
                              (source / 'icons/fork/launcher.icns').read_bytes())
             script = (destination / 'macos/package.sh').read_text()
             self.assertIn('identity=-', script)
@@ -123,7 +123,7 @@ class PackagingIdentity(unittest.TestCase):
             self.assertIn('StartupWMClass=net.playsunrise.launcher\n', desktop)
             for script in ('linux/appimage.sh', 'macos/package.sh'):
                 subprocess.run(['bash', '-n', str(destination / script)], check=True)
-            self.assertNotEqual((destination / 'icons/horizon.ico').read_bytes(), (source / 'icons/horizon.ico').read_bytes())
+            self.assertNotEqual((destination / 'icons/sunrise.ico').read_bytes(), (source / 'icons/sunrise.ico').read_bytes())
         self.assertEqual(before, {p.relative_to(source): p.read_bytes() for p in source.rglob('*') if p.is_file()})
 
 if __name__ == '__main__':

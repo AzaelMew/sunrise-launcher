@@ -7,9 +7,9 @@ use super::*;
 use crate::glass_ui::{self as ui, white};
 use crate::picture_cache::Look;
 use gpui::RenderImage;
-use horizon_theme::glass::{fill, radius};
 use std::path::Path;
 use std::sync::Arc;
+use sunrise_theme::glass::{fill, radius};
 
 /// The blurred copy is made this wide (and 16:9 tall), its blur this many of its pixels: about
 /// the mockup's 40 px over its tiles (163 to 335 px wide).
@@ -73,7 +73,7 @@ impl Launcher {
 /// Read already shrunk (`pictures::load_fitted`): never the whole screenshot.
 pub(super) fn blurred(path: &Path) -> Option<Arc<RenderImage>> {
     let picture = image::DynamicImage::ImageRgba8(
-        horizon_launcher::pictures::load_fitted(path, SMALL.0 * 4).ok()?,
+        sunrise_launcher::pictures::load_fitted(path, SMALL.0 * 4).ok()?,
     );
     let small = picture
         .resize_to_fill(SMALL.0, SMALL.1, image::imageops::FilterType::Triangle)

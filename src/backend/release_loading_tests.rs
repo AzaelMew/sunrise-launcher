@@ -33,7 +33,7 @@ fn baseline(load: impl Fn() -> Result<serde_json::Value, String>) -> (Vec<Releas
     let releases = parse_releases(&load().unwrap(), ASSET, is_game_tag);
     let list = load().unwrap();
     let updates = Updates {
-        horizon: horizon_update(
+        sunrise: sunrise_update(
             &parse_releases(&list, ASSET, is_game_tag),
             &installed_fixture(),
         ),
@@ -153,7 +153,7 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
         serde_json::json!([{
             "tag_name": "prebuilt-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "prerelease": true,
-            "assets": [{"name": "horizon-prebuilt-v3-x86_64-unknown-linux-gnu.tar.gz",
+            "assets": [{"name": "sunrise-prebuilt-v3-x86_64-unknown-linux-gnu.tar.gz",
                         "browser_download_url": "https://example.test/sdk", "size": 9}]
         }]),
     ] {
@@ -174,7 +174,7 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
             )
             .unwrap();
             assert!(games.unwrap().is_empty());
-            assert!(updates.horizon.is_none());
+            assert!(updates.sunrise.is_none());
             assert!(updates.launcher.is_none());
         }
     }
@@ -186,31 +186,31 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
         (
             "linux",
             "x86_64",
-            "horizon-linux-x86_64.tar.gz",
-            if cfg!(horizon_fork_launcher) {
+            "sunrise-linux-x86_64.tar.gz",
+            if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher-linux-x86_64.tar.gz"
             } else {
-                "horizon-launcher-linux-x86_64.tar.gz"
+                "sunrise-launcher-linux-x86_64.tar.gz"
             },
         ),
         (
             "windows",
             "x86_64",
-            "horizon-windows-x64.zip",
-            if cfg!(horizon_fork_launcher) {
+            "sunrise-windows-x64.zip",
+            if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher-windows-x64.zip"
             } else {
-                "horizon-launcher-windows-x64.zip"
+                "sunrise-launcher-windows-x64.zip"
             },
         ),
         (
             "macos",
             "aarch64",
-            "horizon-macos-arm64.zip",
-            if cfg!(horizon_fork_launcher) {
+            "sunrise-macos-arm64.zip",
+            if cfg!(sunrise_fork_launcher) {
                 "sunrise-launcher-macos-arm64.zip"
             } else {
-                "horizon-launcher-macos-arm64.zip"
+                "sunrise-launcher-macos-arm64.zip"
             },
         ),
     ];
@@ -250,7 +250,7 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
 
 #[test]
 fn decoy_asset_names_never_replace_the_exact_platform_asset() {
-    let asset = "horizon-linux-x86_64.tar.gz";
+    let asset = "sunrise-linux-x86_64.tar.gz";
     for decoy in [
         format!("../{asset}"),
         format!("prefix-{asset}"),
@@ -322,7 +322,7 @@ fn benchmark_shared_startup_response() {
             let updates = scope.spawn(|| {
                 let list = load(Duration::from_millis(5)).unwrap();
                 Updates {
-                    horizon: horizon_update(
+                    sunrise: sunrise_update(
                         &parse_releases(&list, ASSET, is_game_tag),
                         &installed_fixture(),
                     ),

@@ -1,17 +1,17 @@
 //! The redesign's specimen: every motion the mockup asks of the launcher, drawn by the launcher
 //! itself, for checking the effects in the real renderer before the pages take them
-//! (`HORIZON_LAUNCHER_PAGE=specimen`; not a page players reach). Hover everything: the point of
+//! (`SUNRISE_LAUNCHER_PAGE=specimen`; not a page players reach). Hover everything: the point of
 //! this page is what happens under the pointer.
 use crate::glass_ui::{self as ui};
 use crate::theme::Theme;
 use gpui::{div, prelude::*, px};
-use horizon_theme::glass::Glass;
 use std::sync::LazyLock;
+use sunrise_theme::glass::Glass;
 
 /// Whether the launcher was opened on the specimen.
 pub fn wanted() -> bool {
     static WANTED: LazyLock<bool> =
-        LazyLock::new(|| std::env::var("HORIZON_LAUNCHER_PAGE").as_deref() == Ok("specimen"));
+        LazyLock::new(|| std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() == Ok("specimen"));
     *WANTED
 }
 

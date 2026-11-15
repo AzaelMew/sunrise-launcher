@@ -41,7 +41,7 @@ class LauncherVerification(unittest.TestCase):
                                  "EPHEMERAL": ephemeral},
                             capture_output=True, text=True, check=True,
                         )
-                        expected = ["run", "--locked", "--quiet", "-p", "horizon-release-sign",
+                        expected = ["run", "--locked", "--quiet", "-p", "sunrise-release-sign",
                                     "--", "verify", "--repository", repository,
                                     "--tag", "launcher@0.2.7", "--publishing"]
                         if ephemeral:

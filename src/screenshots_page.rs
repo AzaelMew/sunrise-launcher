@@ -1,12 +1,12 @@
-//! The selected instance's screenshots on Home (`horizon_launcher::screenshots`): the newest as
+//! The selected instance's screenshots on Home (`sunrise_launcher::screenshots`): the newest as
 //! thumbnails, all of them on request, and a viewer (← and → step through) with Copy, Open,
 //! Show in folder and Delete (to the trash, after a confirmation). Pictures are made at their
 //! shown size (`picture_cache`), never decoded whole.
 use super::*;
 use crate::picture_cache::Look;
 use gpui::{ClipboardItem, Image, ImageFormat};
-use horizon_launcher::screenshots::{self, Shot};
 use std::path::PathBuf;
+use sunrise_launcher::screenshots::{self, Shot};
 
 /// Thumbnails shown before "Show all".
 pub(super) const FIRST: usize = 8;

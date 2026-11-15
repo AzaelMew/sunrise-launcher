@@ -1,19 +1,19 @@
-//! Horizon's own registry (docs/modding/src/reference/registry-index.md): mods, modpacks and resource packs made for
-//! Horizon, reviewed as pull requests in horizon-rust/horizon-mods. One file lists them all,
+//! Sunrise's own registry (docs/modding/src/reference/registry-index.md): mods, modpacks and resource packs made for
+//! Sunrise, reviewed as pull requests in horizon-rust/horizon-mods. One file lists them all,
 //! `index.json`; every download is checked against it before it reaches the game folder
-//! (`horizon_mod_package::index::check_file`: size, SHA-256, the author's signature, the file's own
+//! (`sunrise_mod_package::index::check_file`: size, SHA-256, the author's signature, the file's own
 //! manifest), and files the index says were taken down are refused and turned off.
 use super::{
     details::{Details, GitHub, Link},
     download, installed, java, FileRef, Kind, Project, Query, Source, SourceId, Version, GAME,
 };
 use crate::i18n::{tr, trf};
-use horizon_mod_package::index::{self, Index, Trust};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use sunrise_mod_package::index::{self, Index, Trust};
 
 /// Where the registry publishes its index (GitHub Pages of horizon-rust/horizon-mods).
 pub const INDEX_URL: &str = "";
@@ -22,23 +22,23 @@ const SITE: &str = "";
 /// The report form of a project.
 const REPORT: &str = "https://github.com/horizon-rust/horizon-mods/issues/new?template=report.yml";
 /// The loader name the browser gives registry versions, so `support` and `pick` know them.
-pub const LOADER: &str = "horizon";
+pub const LOADER: &str = "sunrise";
 /// How long a fetched index is used before it is fetched again.
 const FRESH: Duration = Duration::from_secs(600);
 /// Larger than any index should be.
 const MAX_INDEX: u64 = 16 << 20;
 /// The last index fetched, kept in the game folder for when the registry can't be reached.
-const CACHE: &str = "mod-browser/horizon-index.json";
-/// Players' ratings of every project (the registry service, crates/horizon-mod-registry).
+const CACHE: &str = "mod-browser/sunrise-index.json";
+/// Players' ratings of every project (the registry service, crates/sunrise-mod-registry).
 const RATINGS_URL: &str = "";
 /// Where a player rates a project: the site's GitHub sign-in, which comes back to its page.
 /// The launcher has no GitHub account of its own.
 const RATE: &str = "";
 
-/// Where the index comes from: `HORIZON_MOD_INDEX` (a file or an `https://` address, for a
+/// Where the index comes from: `SUNRISE_MOD_INDEX` (a file or an `https://` address, for a
 /// test registry), else [`INDEX_URL`].
 fn location() -> String {
-    std::env::var("HORIZON_MOD_INDEX")
+    std::env::var("SUNRISE_MOD_INDEX")
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| INDEX_URL.to_owned())
@@ -69,7 +69,7 @@ pub fn is_native_mod(id: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// How many of the registry's projects this Horizon left out because none of their versions
+/// How many of the registry's projects this Sunrise left out because none of their versions
 /// passes the index's rules (mods published for the earlier mod system), by the index already
 /// read (never the network): None when no index was read.
 pub fn projects_left_out() -> Option<usize> {
@@ -189,7 +189,7 @@ pub fn rate_url(id: &str) -> String {
     format!("{RATE}{id}")
 }
 
-/// Fetches the ratings again when the last try is ten minutes old: from `HORIZON_MOD_RATINGS`
+/// Fetches the ratings again when the last try is ten minutes old: from `SUNRISE_MOD_RATINGS`
 /// (a file or an `https://` address, for a test registry), else [`RATINGS_URL`]; a local test
 /// registry has none unless given. After a failure the browser shows downloads only.
 fn refresh_ratings() {
@@ -201,7 +201,7 @@ fn refresh_ratings() {
     {
         return;
     }
-    let given = std::env::var("HORIZON_MOD_RATINGS")
+    let given = std::env::var("SUNRISE_MOD_RATINGS")
         .ok()
         .filter(|v| !v.is_empty());
     if given.is_none() && local() {
@@ -319,15 +319,15 @@ fn tags_of(index: &Index, kind: Kind) -> Vec<String> {
 }
 
 /// Where the registry's mod policy is: who owns and answers for a project, takedowns.
-pub const POLICY: &str = horizon_addresses::MOD_POLICY;
+pub const POLICY: &str = sunrise_addresses::MOD_POLICY;
 
-/// Whether the Horizon project made `p` (the mod policy's "Official": author Horizon, source in
+/// Whether the Sunrise project made `p` (the mod policy's "Official": author Sunrise, source in
 /// the horizon-rust organisation).
 pub fn official(p: &index::Project) -> bool {
-    p.authors == ["Horizon"] && p.source.starts_with("https://github.com/horizon-rust/")
+    p.authors == ["Sunrise"] && p.source.starts_with("https://github.com/horizon-rust/")
 }
 
-/// Whether the registry's project `id` is Horizon's own ([`official`]), by the index already read
+/// Whether the registry's project `id` is Sunrise's own ([`official`]), by the index already read
 /// (never the network); false when none was read.
 pub fn is_official(id: &str) -> bool {
     official_in(known_index().as_deref(), id)
@@ -339,7 +339,7 @@ fn official_in(index: Option<&Index>, id: &str) -> bool {
 
 /// What the player reads about a registry project before installing it: who made it, whether its
 /// files are signed, and for a mod what it may do, in the game's words (Options > Mods). A native
-/// mod says it runs with the player's rights, and how it fits the Horizon `instance` plays.
+/// mod says it runs with the player's rights, and how it fits the Sunrise `instance` plays.
 pub fn trust_and_capabilities(
     id: &str,
     instance: Option<&crate::instances::Instance>,
@@ -353,17 +353,17 @@ pub fn trust_and_capabilities(
     // Shown to players: in their words, through `tr`; the policy is a link beside them
     // ([`POLICY`]), not a bare address in the text.
     let mut lines = vec![if official(p) {
-        tr("Made by Horizon").to_string()
+        tr("Made by Sunrise").to_string()
     } else {
         trf(
-            "Made by {authors}, not by the Horizon project",
+            "Made by {authors}, not by the Sunrise project",
             &[("authors", &p.authors.join(", "))],
         )
     }];
     lines.push(match &p.key {
-        Some(_) => tr("Signed by its author: Horizon checks it really is theirs").to_string(),
+        Some(_) => tr("Signed by its author: Sunrise checks it really is theirs").to_string(),
         None => tr(
-            "Not signed by its author: Horizon checks the download arrives complete and unchanged",
+            "Not signed by its author: Sunrise checks the download arrives complete and unchanged",
         )
         .to_string(),
     });
@@ -392,7 +392,7 @@ pub fn trust_and_capabilities(
                 .iter()
                 .map(|c| trf("May {what}", &[("what", tr(c.describe()))])),
         );
-        // Capabilities this Horizon lacks are the project's verdict (`Project::blocked`), said once.
+        // Capabilities this Sunrise lacks are the project's verdict (`Project::blocked`), said once.
         if v.capabilities.is_empty() {
             lines.push(tr("Asks for nothing beyond its own log").to_string());
         }
@@ -414,9 +414,9 @@ fn summary(text: &str) -> String {
     }
 }
 
-/// Why a project has versions for this game but none this Horizon may install.
+/// Why a project has versions for this game but none this Sunrise may install.
 enum Blocked {
-    /// They ask for capabilities this Horizon doesn't have: made for the earlier mod system.
+    /// They ask for capabilities this Sunrise doesn't have: made for the earlier mod system.
     EarlierSystem,
     /// They were taken down, for this reason.
     TakenDown(String),
@@ -441,17 +441,17 @@ fn blocked(index: &Index, p: &index::Project) -> Option<Blocked> {
 fn project_of(index: &Index, p: &index::Project) -> Option<Project> {
     let mut game_versions: Vec<String> = p.versions.iter().map(|v| v.game.clone()).collect();
     game_versions.dedup();
-    // Versions for this game, none of which this Horizon may install: say why, once, here.
+    // Versions for this game, none of which this Sunrise may install: say why, once, here.
     let blocked = blocked(index, p).map(|why| match why {
         Blocked::TakenDown(reason) => {
             trf("Taken down: {reason}", &[("reason", &reason)]).to_string()
         }
         Blocked::EarlierSystem => {
-            tr("Made for Horizon's earlier mod system: it can't be installed yet.").to_string()
+            tr("Made for Sunrise's earlier mod system: it can't be installed yet.").to_string()
         }
     });
     Some(Project {
-        source: SourceId::Horizon,
+        source: SourceId::Sunrise,
         id: p.id.clone(),
         slug: p.id.clone(),
         title: p.name.clone(),
@@ -497,7 +497,7 @@ fn unsupported_capabilities(capabilities: &index::Capabilities) -> Option<String
     let unknown = capabilities.unknown();
     (!unknown.is_empty()).then(|| {
         trf(
-            "Can't install: it was made for Horizon's earlier mod system ({names})",
+            "Can't install: it was made for Sunrise's earlier mod system ({names})",
             &[("names", &unknown.join(", "))],
         )
     })
@@ -631,7 +631,7 @@ pub struct Registry;
 
 impl Source for Registry {
     fn id(&self) -> SourceId {
-        SourceId::Horizon
+        SourceId::Sunrise
     }
 
     fn search(&self, query: &Query) -> Result<Vec<Project>, String> {
@@ -644,10 +644,10 @@ impl Source for Registry {
         let index = index()?;
         let p = index
             .project(id)
-            .ok_or_else(|| format!("{id} isn't in Horizon's registry."))?;
+            .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
         project_of(&index, p).ok_or_else(|| {
             format!(
-                "{} is a {} in Horizon's registry: this launcher can't install those yet.",
+                "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
                 p.name,
                 p.kind.name()
             )
@@ -658,14 +658,14 @@ impl Source for Registry {
         let index = index()?;
         let p = index
             .project(&project.id)
-            .ok_or_else(|| format!("{} isn't in Horizon's registry.", project.title))?;
+            .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
         Ok(p.versions
             .iter()
             .map(|v| version_of(&index, p, v))
             .collect())
     }
 
-    /// Only categories and tags: every registry file is for Horizon on the version it plays. The
+    /// Only categories and tags: every registry file is for Sunrise on the version it plays. The
     /// tags come from the index the search already read (never the network).
     fn tags(&self, kind: Kind) -> Result<super::details::Tags, String> {
         Ok(super::details::Tags {
@@ -686,7 +686,7 @@ impl Source for Registry {
         let index = index()?;
         let p = index
             .project(&project.id)
-            .ok_or_else(|| format!("{} isn't in Horizon's registry.", project.title))?;
+            .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
         let newest = p.versions.first();
         let mut body = p.description.clone();
         if let Some(v) = newest.filter(|v| !v.capabilities.is_empty()) {
@@ -822,8 +822,8 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
 
 /// Installs a registry project into the game folder `home`: its newest version for this game that
 /// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
-/// the index, then moved into place. A mod is `horizon-mods/<id>.hmod`, turned on in
-/// `horizon-mods.txt`.
+/// the index, then moved into place. A mod is `sunrise-mods/<id>.hmod`, turned on in
+/// `sunrise-mods.txt`.
 pub fn install(
     project: &Project,
     home: &Path,
@@ -842,7 +842,7 @@ fn install_from(
 ) -> Result<Vec<installed::Entry>, String> {
     let p = index
         .project(&project.id)
-        .ok_or_else(|| format!("{} isn't in Horizon's registry.", project.title))?;
+        .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
     let v = newest(index, p)?;
     install_version(index, local, p, v, home, progress).map(|e| vec![e])
 }
@@ -868,7 +868,7 @@ fn fetch_datapack_from(
     let p = index
         .project(&project.id)
         .filter(|p| p.kind == index::Kind::DataPack)
-        .ok_or_else(|| format!("{} isn't a data pack in Horizon's registry.", project.title))?;
+        .ok_or_else(|| format!("{} isn't a data pack in Sunrise's registry.", project.title))?;
     let v = newest(index, p)?;
     let file = &version_of(index, p, v).files[0];
     let path = fetch(file, folder, local, progress)?;
@@ -937,7 +937,7 @@ fn install_version_guarded(
         false => relative(project.kind, &p.id, &v.file.name)?,
     };
     let mut list = installed::Installed::load(home);
-    let ours = |e: &installed::Entry| e.source == SourceId::Horizon && e.project == p.id;
+    let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
     let old = list.entries.iter().find(|e| ours(e)).cloned();
     if let Some(old) = &old {
         let mut different = old.kind != project.kind;
@@ -1014,7 +1014,7 @@ fn install_version_guarded(
         let _ = fs::remove_file(old);
     }
     let entry = installed::Entry {
-        source: SourceId::Horizon,
+        source: SourceId::Sunrise,
         project: p.id.clone(),
         slug: p.id.clone(),
         title: p.name.clone(),
@@ -1035,8 +1035,8 @@ fn install_version_guarded(
     Ok(entry)
 }
 
-/// The mod id of an installed mod (`horizon-mods/<id>`, `horizon-mods/<id>.hmod` or
-/// `horizon-native-mods/<id>.hmod`).
+/// The mod id of an installed mod (`sunrise-mods/<id>`, `sunrise-mods/<id>.hmod` or
+/// `sunrise-native-mods/<id>.hmod`).
 pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
     if let Some(rest) = entry.file.strip_prefix(crate::native_mods::INSTALLED) {
         return rest.strip_prefix('/')?.strip_suffix(".hmod");
@@ -1058,7 +1058,7 @@ pub fn turn_off_revoked(index: &Index, home: &Path) -> Vec<String> {
     let mut out = Vec::new();
     for e in installed::Installed::load(home).entries {
         let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
-        let Some(r) = (e.source == SourceId::Horizon)
+        let Some(r) = (e.source == SourceId::Sunrise)
             .then(|| index.revoked(&e.project, hash))
             .flatten()
         else {
@@ -1088,7 +1088,7 @@ pub fn before_play(home: &Path) {
     let from_registry = installed::Installed::load(home)
         .entries
         .iter()
-        .any(|e| e.source == SourceId::Horizon);
+        .any(|e| e.source == SourceId::Sunrise);
     if !from_registry {
         return;
     }

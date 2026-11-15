@@ -28,7 +28,7 @@ impl Launcher {
                         self.perf.record_since("launcher.release_list_ms", checked);
                     }
                     if let Ok(list) = &r {
-                        horizon_launcher::nightly::note_published(list);
+                        sunrise_launcher::nightly::note_published(list);
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready)
                 }
@@ -158,14 +158,14 @@ impl Launcher {
                     match result {
                         Ok(()) => {
                             if as_update.is_some()
-                                && horizon_launcher::nightly::date_of(&tag).is_some()
+                                && sunrise_launcher::nightly::date_of(&tag).is_some()
                             {
                                 if let Err(e) = backend::mark_auto_installed(&tag) {
                                     eprintln!("Could not mark updated Nightly {tag}: {e}");
                                 }
                             }
-                            if self.updates.horizon.as_ref().is_some_and(|r| r.tag == tag) {
-                                self.updates.horizon = None;
+                            if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
+                                self.updates.sunrise = None;
                             }
                             // An instance's own version leaves the other instances on theirs.
                             // Judged now, not when the download started: a version picked on
@@ -305,7 +305,7 @@ impl Launcher {
                     };
                     self.self_update = match result {
                         Ok(staged) => {
-                            horizon_launcher::update_handoff::set_pending(staged);
+                            sunrise_launcher::update_handoff::set_pending(staged);
                             SelfUpdate::Ready(version)
                         }
                         Err(e) => SelfUpdate::Failed(e),
@@ -387,7 +387,7 @@ impl Launcher {
                                 }
                                 if let Some(i) = instances::list().into_iter().find(|i| i.id == id)
                                 {
-                                    horizon_launcher::launch::run_after_exit(
+                                    sunrise_launcher::launch::run_after_exit(
                                         &i.launch, &i.home, &vars,
                                     );
                                 }
@@ -406,7 +406,7 @@ impl Launcher {
                             };
                             if let Some(api) = switched {
                                 self.client_error = Some(trf(
-                                    "Horizon's Vulkan renderer crashed while starting on this \
+                                    "Sunrise's Vulkan renderer crashed while starting on this \
                                      graphics card, so the game now uses {api}. Press Play to \
                                      start it again. Video Settings > Graphics API switches back.",
                                     &[("api", api)],

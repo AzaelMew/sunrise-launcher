@@ -6,10 +6,10 @@
 use super::*;
 use crate::glass_instance::section;
 use crate::glass_ui::{self as ui, white};
-use horizon_launcher::instances::{Channel, Icon, Instance, Kind as InstanceKind, Plays};
-use horizon_theme::glass::{ink, radius};
 use new_instance::NewKind;
 use servers_page::Field;
+use sunrise_launcher::instances::{Channel, Icon, Instance, Kind as InstanceKind, Plays};
+use sunrise_theme::glass::{ink, radius};
 
 /// The sheet's sections.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -32,7 +32,7 @@ impl SheetTab {
     ];
 
     /// The sections `instance` has something to set in: the Launch section is for a Java instance
-    /// (Horizon's own edition runs without Java).
+    /// (Sunrise's own edition runs without Java).
     fn shown(instance: &Instance) -> impl Iterator<Item = SheetTab> + '_ {
         SheetTab::ALL
             .into_iter()
@@ -70,9 +70,9 @@ impl SheetTab {
         }
     }
 
-    /// `HORIZON_LAUNCHER_SHEET` (screenshots): the section the sheet opens on.
+    /// `SUNRISE_LAUNCHER_SHEET` (screenshots): the section the sheet opens on.
     pub(super) fn from_env() -> Option<SheetTab> {
-        let name = std::env::var("HORIZON_LAUNCHER_SHEET").ok()?;
+        let name = std::env::var("SUNRISE_LAUNCHER_SHEET").ok()?;
         SheetTab::ALL
             .into_iter()
             .find(|t| t.about().0.eq_ignore_ascii_case(&name))
@@ -114,8 +114,8 @@ struct Draft {
     icon: Option<Icon>,
     /// A picture chosen, or the saved one removed.
     picture: bool,
-    /// Horizon's version and builds, for an instance that plays Horizon.
-    horizon: Option<(Option<String>, Channel)>,
+    /// Sunrise's version and builds, for an instance that plays Sunrise.
+    sunrise: Option<(Option<String>, Channel)>,
     plays: Plays,
     /// A Java instance's arguments and window size.
     java: (String, (String, String)),
@@ -134,7 +134,7 @@ impl Draft {
             saved.launch.pre_launch.clone(),
             saved.launch.wrapper.clone(),
             saved.launch.post_exit.clone(),
-            horizon_launcher::launch::env_line(&saved.launch.env),
+            sunrise_launcher::launch::env_line(&saved.launch.env),
         ];
         let general = self.name != saved.name
             || self.group != saved.group.clone().unwrap_or_default()
@@ -142,7 +142,7 @@ impl Draft {
             || self.picture;
         let installation = self.plays != Plays::of(saved)
             || self
-                .horizon
+                .sunrise
                 .as_ref()
                 .is_some_and(|(pin, channel)| *pin != saved.version || *channel != saved.channel);
         let launch = saved.java.as_ref().is_some_and(|j| {
@@ -205,7 +205,7 @@ impl Launcher {
                 Some(None) => saved.home.join(instances::PICTURE).is_file(),
                 None => false,
             },
-            horizon: (d.java.kind == NewKind::Horizon).then(|| (d.pin.clone(), d.channel)),
+            sunrise: (d.java.kind == NewKind::Sunrise).then(|| (d.pin.clone(), d.channel)),
             plays: self.draft_plays(saved).unwrap_or_else(|| Plays::of(saved)),
             java: (
                 self.servers.value(Field::JavaArgs).trim().to_string(),
@@ -271,7 +271,7 @@ impl Launcher {
             cx.notify();
         });
         let what = match kind {
-            NewKind::Horizon => tr("Horizon"),
+            NewKind::Sunrise => tr("Sunrise"),
             NewKind::Vanilla => tr("Vanilla"),
             NewKind::Modded => tr("Modded"),
         };
@@ -295,7 +295,7 @@ impl Launcher {
                     .min_w_0()
                     .child(
                         div()
-                            .font_family(horizon_theme::glass::DISPLAY_FONT)
+                            .font_family(sunrise_theme::glass::DISPLAY_FONT)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(20.))
                             .line_height(px(26.))
@@ -403,7 +403,7 @@ impl Launcher {
                     .gap(px(3.))
                     .child(
                         div()
-                            .font_family(horizon_theme::glass::DISPLAY_FONT)
+                            .font_family(sunrise_theme::glass::DISPLAY_FONT)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(19.))
                             .line_height(px(23.))
@@ -441,8 +441,8 @@ impl Launcher {
             }
             SheetTab::Installation => {
                 pane = pane.children(self.switch_notice(&editing));
-                if kind == NewKind::Horizon {
-                    pane = pane.child(self.horizon_versions(cx));
+                if kind == NewKind::Sunrise {
+                    pane = pane.child(self.sunrise_versions(cx));
                 } else {
                     self.load_versions(cx);
                     pane = pane.child(self.minecraft_versions(cx));
@@ -658,7 +658,7 @@ impl Launcher {
                             .gap(px(6.))
                             .child(
                                 div()
-                                    .font_family(horizon_theme::glass::DISPLAY_FONT)
+                                    .font_family(sunrise_theme::glass::DISPLAY_FONT)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(18.))
                                     .text_color(white(ink::FULL))
@@ -833,7 +833,7 @@ impl Launcher {
             self.sheet_size = Some((editing.id.clone(), None));
             let (id, home) = (editing.id.clone(), editing.home.clone());
             let size = cx.background_spawn(async move {
-                horizon_launcher::storage::allocated_bytes(&home).unwrap_or(0)
+                sunrise_launcher::storage::allocated_bytes(&home).unwrap_or(0)
             });
             cx.spawn(async move |this, cx| {
                 let bytes = size.await;
@@ -875,11 +875,11 @@ impl Launcher {
         )
     }
 
-    /// General's danger zone: delete the instance (to the Trash), asked once more. Horizon's own
+    /// General's danger zone: delete the instance (to the Trash), asked once more. Sunrise's own
     /// instance, the game's home, has none.
     fn sheet_danger(&mut self, editing: &Instance, cx: &mut Context<Self>) -> Option<Div> {
         let delete = self.delete_button(editing, cx)?;
-        let danger = ui::color(horizon_theme::glass::DANGER_HOVER);
+        let danger = ui::color(sunrise_theme::glass::DANGER_HOVER);
         Some(
             div()
                 .flex()
@@ -1008,8 +1008,8 @@ mod tests {
             group: String::new(),
             icon: None,
             picture: false,
-            horizon: Some((None, Channel::Stable)),
-            plays: Plays::Horizon,
+            sunrise: Some((None, Channel::Stable)),
+            plays: Plays::Sunrise,
             java: (String::new(), (String::new(), String::new())),
             hooks: None,
             switches: None,
@@ -1062,10 +1062,10 @@ mod tests {
             (|d| d.icon = Some(Icon::Colour("#6b4bff".into())), general),
             (|d| d.picture = true, general),
             (
-                |d| d.horizon = Some((Some("nightly-2026-11-13-aaaaaaa".into()), Channel::Stable)),
+                |d| d.sunrise = Some((Some("nightly-2026-11-13-aaaaaaa".into()), Channel::Stable)),
                 installation,
             ),
-            (|d| d.horizon = Some((None, Channel::Nightly)), installation),
+            (|d| d.sunrise = Some((None, Channel::Nightly)), installation),
             // The Hooks section was opened and a command typed.
             (
                 |d| {

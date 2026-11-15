@@ -18,15 +18,15 @@ def stage(source: Path, destination: Path, repository: str):
     if repository == UPSTREAM:
         return
     replacements = {
-        'horizon-launcher': 'sunrise-launcher',
+        'sunrise-launcher': 'sunrise-launcher',
         'sunrise-launcher.desktop': 'net.playsunrise.launcher.desktop',
-        'dev.horizon.launcher': 'net.playsunrise.launcher',
-        'Horizon.app': 'Sunrise Launcher.app',
-        '<string>Horizon</string>': '<string>Sunrise Launcher</string>',
-        'Name=Horizon\n': 'Name=Sunrise Launcher\n',
+        'dev.sunrise.launcher': 'net.playsunrise.launcher',
+        'Sunrise.app': 'Sunrise Launcher.app',
+        '<string>Sunrise</string>': '<string>Sunrise Launcher</string>',
+        'Name=Sunrise\n': 'Name=Sunrise Launcher\n',
         'StartupWMClass=sunrise-launcher': 'StartupWMClass=net.playsunrise.launcher',
     }
-    for name in ('linux/appimage.sh', 'linux/horizon-launcher.desktop', 'macos/package.sh', 'macos/Info.plist'):
+    for name in ('linux/appimage.sh', 'linux/sunrise-launcher.desktop', 'macos/package.sh', 'macos/Info.plist'):
         path = destination / name
         text = path.read_text()
         for old, new in replacements.items():
@@ -36,15 +36,15 @@ def stage(source: Path, destination: Path, repository: str):
             text = text.replace('app=$out/Sunrise Launcher.app', 'app="$out/Sunrise Launcher.app"')
             text = text.replace('--keepParent Sunrise Launcher.app', '--keepParent "Sunrise Launcher.app"')
             text = text.replace('identity=${MACOS_SIGN_IDENTITY:--}', 'identity=-')
-            text = text.replace('"title": "Horizon"', '"title": "Sunrise Launcher"')
-            text = text.replace('"$out/dmg.json" Horizon "$dmg"', '"$out/dmg.json" "Sunrise Launcher" "$dmg"')
+            text = text.replace('"title": "Sunrise"', '"title": "Sunrise Launcher"')
+            text = text.replace('"$out/dmg.json" Sunrise "$dmg"', '"$out/dmg.json" "Sunrise Launcher" "$dmg"')
         path.write_text(text)
-    (destination / 'linux/horizon-launcher.desktop').rename(destination / 'linux/net.playsunrise.launcher.desktop')
-    shutil.copyfile(source / 'icons/fork/launcher.ico', destination / 'icons/horizon.ico')
-    shutil.copyfile(source / 'icons/fork/launcher.icns', destination / 'icons/horizon.icns')
+    (destination / 'linux/sunrise-launcher.desktop').rename(destination / 'linux/net.playsunrise.launcher.desktop')
+    shutil.copyfile(source / 'icons/fork/launcher.ico', destination / 'icons/sunrise.ico')
+    shutil.copyfile(source / 'icons/fork/launcher.icns', destination / 'icons/sunrise.icns')
     for size in (16, 24, 32, 48, 64, 128, 256, 512):
-        shutil.copyfile(source / f'icons/fork/{size}.png', destination / f'icons/hicolor/{size}x{size}/apps/horizon.png')
-    shutil.copyfile(source / 'icons/fork/launcher.svg', destination / 'icons/hicolor/scalable/apps/horizon.svg')
+        shutil.copyfile(source / f'icons/fork/{size}.png', destination / f'icons/hicolor/{size}x{size}/apps/sunrise.png')
+    shutil.copyfile(source / 'icons/fork/launcher.svg', destination / 'icons/hicolor/scalable/apps/sunrise.svg')
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

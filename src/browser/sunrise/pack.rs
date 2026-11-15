@@ -1,22 +1,22 @@
-//! Horizon modpacks from the registry (`.hpack`, docs/modding/src/reference/registry-index.md), each played as its own
-//! profile: `horizon-packs/<id>/` in the game's home holds the pack's file, `pack.json` (what
+//! Sunrise modpacks from the registry (`.hpack`, docs/modding/src/reference/registry-index.md), each played as its own
+//! profile: `sunrise-packs/<id>/` in the game's home holds the pack's file, `pack.json` (what
 //! was installed) and `home/`, the profile's game folder: its saves, its options, and the pack's
-//! mods in `home/horizon-mods/`, each downloaded and checked against the index like any
+//! mods in `home/sunrise-mods/`, each downloaded and checked against the index like any
 //! registry mod, turned on or off as the pack says. The pack's overrides (settings, resource
 //! packs, a mod's saved settings) are copied in once, when it is installed.
 use super::{fetch, index, install_version, local, newest, Index};
 use crate::browser::{java, FileRef};
-use horizon_mod_package::{index as idx, modpack::Modpack};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use sunrise_mod_package::{index as idx, modpack::Modpack};
 
 const RECORD: &str = "pack.json";
 
 /// Where registry modpacks live.
 pub fn packs_dir() -> PathBuf {
-    crate::backend::game_home().join("horizon-packs")
+    crate::backend::game_home().join("sunrise-packs")
 }
 
 /// What `pack.json` keeps of an installed pack.
@@ -81,7 +81,7 @@ fn install_in(
 ) -> Result<Installed, String> {
     let p = index
         .project(id)
-        .ok_or_else(|| format!("{id} isn't in Horizon's registry."))?;
+        .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
     if p.kind != idx::Kind::Modpack {
         return Err(format!("{} is a {}, not a modpack.", p.name, p.kind.name()));
     }
@@ -179,7 +179,7 @@ pub fn apply(cmd: &mut Command, work: &Path) -> Result<(), String> {
         let _ = fs::copy(own, &options);
     }
     super::before_play(&home);
-    cmd.current_dir(&home).env("HORIZON_HOME", &home);
+    cmd.current_dir(&home).env("SUNRISE_HOME", &home);
     Ok(())
 }
 
@@ -204,14 +204,14 @@ mod tests {
     /// [`registry`] with the pack at `pack_version`.
     fn registry_at(dir: &Path, pack_version: &str, on: bool, extra: &str) -> Index {
         let hmod_src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../crates/horizon-mod-package/tests/index/coords_hud-0.1.0.hmod");
+            .join("../crates/sunrise-mod-package/tests/index/coords_hud-0.1.0.hmod");
         let hmod = dir.join("coords_hud-0.1.0.hmod");
         fs::copy(hmod_src, &hmod).unwrap();
         let hmod_sha = idx::sha256_file(&hmod).unwrap();
         let hpack = dir.join(format!("cozy-{pack_version}.hpack"));
         let mut zip = zip::ZipWriter::new(fs::File::create(&hpack).unwrap());
         let o = zip::write::SimpleFileOptions::default();
-        zip.start_file("horizon-modpack.toml", o).unwrap();
+        zip.start_file("sunrise-modpack.toml", o).unwrap();
         write!(
             zip,
             "format = 1\nid = \"cozy\"\nname = \"Cozy\"\nversion = \"{pack_version}\"\ngame = \"26.3\"\n\
@@ -254,7 +254,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "horizon-launcher-hpack-{name}-{}",
+            "sunrise-launcher-hpack-{name}-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
@@ -266,11 +266,11 @@ mod tests {
     fn a_pack_installs_as_a_profile_with_its_mods() {
         let dir = scratch("install");
         let index = registry(&dir, false, "");
-        let packs = dir.join("horizon-packs");
+        let packs = dir.join("sunrise-packs");
         let pack = install_in(&index, true, "cozy", &packs, &|_, _| {}).unwrap();
         assert_eq!(pack.mods, ["coords_hud 0.1.0"]);
         let home = home(&packs.join("cozy"));
-        assert!(home.join("horizon-mods/coords_hud.hmod").is_file());
+        assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
         assert!(
             !java::is_enabled(&home, "coords_hud"),
             "the pack turns it off"
@@ -306,7 +306,7 @@ mod tests {
     #[test]
     fn a_pack_update_keeps_the_players_mod_choices() {
         let dir = scratch("keep-choice");
-        let packs = dir.join("horizon-packs");
+        let packs = dir.join("sunrise-packs");
         let first = registry_at(&dir, "1.0.0", true, "");
         install_in(&first, true, "cozy", &packs, &|_, _| {}).unwrap();
         let home = home(&packs.join("cozy"));
@@ -341,7 +341,7 @@ mod tests {
             true,
             r#", "revoked": [{"id": "coords_hud", "reason": "Test."}]"#,
         );
-        let packs = dir.join("horizon-packs");
+        let packs = dir.join("sunrise-packs");
         let e = install_in(&index, true, "cozy", &packs, &|_, _| {}).unwrap_err();
         assert!(e.contains("taken down: Test."), "{e}");
         assert!(!packs.join("cozy").exists(), "nothing left behind");

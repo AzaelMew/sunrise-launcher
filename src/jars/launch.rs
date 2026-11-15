@@ -4,13 +4,13 @@ use crate::{
     i18n::trf,
     launch::{self, Launch},
 };
-use horizon_mod_package::{
+use std::{fmt, io, path::PathBuf, process::Command};
+use sunrise_mod_package::{
     manifest::{collect_jar_requirements, JarConflict},
     mod_list::ModList,
     packages,
     selection::{self, LaunchArguments},
 };
-use std::{fmt, io, path::PathBuf, process::Command};
 
 #[derive(Debug)]
 #[non_exhaustive]

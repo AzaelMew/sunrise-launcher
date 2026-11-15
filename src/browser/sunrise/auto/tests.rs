@@ -1,7 +1,7 @@
 //! Automatic updates against fixture indexes: a content mod `ruby` whose versions are real
 //! `.hmod` files on disk, listed in an index the way the registry lists them.
 use super::*;
-use crate::browser::horizon::tests::{sample, scratch};
+use crate::browser::sunrise::tests::{sample, scratch};
 
 const MANIFEST: &str = "id = \"ruby\"\nname = \"Ruby\"\napi = \"0.2\"\nside = \"both\"\n\
                         capabilities = [\"registries\"]\n";
@@ -12,16 +12,16 @@ const ITEM: &[u8] = br#"{"template": "minecraft:diamond"}"#;
 fn ruby(dir: &Path, version: &str, blocks: &[&str], items: &[&str]) -> PathBuf {
     let names: Vec<(String, &[u8])> = blocks
         .iter()
-        .map(|b| (format!("data/ruby/horizon/block/{b}.json"), BLOCK))
+        .map(|b| (format!("data/ruby/sunrise/block/{b}.json"), BLOCK))
         .chain(
             items
                 .iter()
-                .map(|i| (format!("data/ruby/horizon/item/{i}.json"), ITEM)),
+                .map(|i| (format!("data/ruby/sunrise/item/{i}.json"), ITEM)),
         )
         .collect();
     let files: Vec<(&str, &[u8])> = names.iter().map(|(n, b)| (n.as_str(), *b)).collect();
     let manifest = format!("{MANIFEST}version = \"{version}\"\n");
-    let bytes = horizon_mod_package::Package::write_files(&manifest, &files).unwrap();
+    let bytes = sunrise_mod_package::Package::write_files(&manifest, &files).unwrap();
     let path = dir.join(format!("ruby-{version}.hmod"));
     fs::write(&path, bytes).unwrap();
     path
@@ -38,7 +38,7 @@ fn index_of(versions: &[(&str, &str, &Path)]) -> Index {
             version: (*version).into(),
             api: "0.2".into(),
             side: Some(mod_vocab::Side::Both),
-            capabilities: vec![horizon_mod_package::Capability::Registries].into(),
+            capabilities: vec![sunrise_mod_package::Capability::Registries].into(),
             game: (*game).into(),
             requires: Vec::new(),
             file: index::File {
@@ -66,14 +66,14 @@ const PLAY: Context = Context { in_pack: false };
 /// The browser's entry for `ruby` at `version`.
 fn entry(version: &str) -> installed::Entry {
     installed::Entry {
-        source: SourceId::Horizon,
+        source: SourceId::Sunrise,
         project: "ruby".into(),
         slug: "ruby".into(),
         title: "Ruby".into(),
         kind: Kind::Mod,
         version: version.into(),
         number: version.into(),
-        file: "horizon-mods/ruby.hmod".into(),
+        file: "sunrise-mods/ruby.hmod".into(),
         checksum: String::new(),
         page: String::new(),
         dependency: false,
@@ -114,7 +114,7 @@ fn updates_forward_on_the_same_game_only() {
     let in_pack = Context { in_pack: true };
     assert_eq!(to(&entry("1.0.0"), &in_pack), None, "a modpack's profile");
     let native = installed::Entry {
-        file: "horizon-native-mods/ruby.hmod".into(),
+        file: "sunrise-native-mods/ruby.hmod".into(),
         ..entry("1.0.0")
     };
     assert_eq!(
@@ -165,7 +165,7 @@ fn a_new_version_that_drops_content_is_named() {
 /// The installed ruby: the browser's entry and the file's bytes.
 fn installed_ruby(home: &Path) -> (String, Vec<u8>) {
     let list = installed::Installed::load(home);
-    let e = list.find(SourceId::Horizon, "ruby").unwrap();
+    let e = list.find(SourceId::Sunrise, "ruby").unwrap();
     (e.version.clone(), fs::read(home.join(&e.file)).unwrap())
 }
 
@@ -251,28 +251,28 @@ fn wasm_update_waits_for_the_player() {
     let home = dir.join("home");
     let old = ruby(&dir, "1.0.0", &["lamp"], &[]);
     // The smallest shared group member the package check accepts, as bytes: header, `dylink.0` with
-    // memory info, one `() -> ()` type, three functions exported as `horizon_layout`, `horizon_in`
-    // and `horizon_hook`, and their empty bodies.
+    // memory info, one `() -> ()` type, three functions exported as `sunrise_layout`, `sunrise_in`
+    // and `sunrise_hook`, and their empty bodies.
     let module: &[u8] = &[
         b'\0', b'a', b's', b'm', 1, 0, 0, 0, //
         0, 15, 8, b'd', b'y', b'l', b'i', b'n', b'k', b'.', b'0', 1, 4, 0, 0, 0, 0, //
         1, 4, 1, 0x60, 0, 0, //
         3, 4, 3, 0, 0, 0, //
         7, 46, 3, //
-        14, b'h', b'o', b'r', b'i', b'z', b'o', b'n', b'_', b'l', b'a', b'y', b'o', b'u', b't', 0,
+        14, b's', b'u', b'n', b'r', b'i', b's', b'e', b'_', b'l', b'a', b'y', b'o', b'u', b't', 0,
         0, //
-        10, b'h', b'o', b'r', b'i', b'z', b'o', b'n', b'_', b'i', b'n', 0, 1, //
-        12, b'h', b'o', b'r', b'i', b'z', b'o', b'n', b'_', b'h', b'o', b'o', b'k', 0, 2, //
+        10, b's', b'u', b'n', b'r', b'i', b's', b'e', b'_', b'i', b'n', 0, 1, //
+        12, b's', b'u', b'n', b'r', b'i', b's', b'e', b'_', b'h', b'o', b'o', b'k', 0, 2, //
         10, 10, 3, 2, 0, 0x0b, 2, 0, 0x0b, 2, 0, 0x0b,
     ];
     let manifest = format!(
         "{MANIFEST}version = \"1.1.0\"\n[wasm]\nsha512 = \"{}\"\ntoolchain = \"1.99.1\"\nbuilt_with = \"test\"\n",
-        horizon_mod_package::manifest::sha512_of(module)
+        sunrise_mod_package::manifest::sha512_of(module)
     );
     let new = dir.join("ruby-1.1.0.hmod");
     fs::write(
         &new,
-        horizon_mod_package::Package::write_files(&manifest, &[("mod.wasm", module)]).unwrap(),
+        sunrise_mod_package::Package::write_files(&manifest, &[("mod.wasm", module)]).unwrap(),
     )
     .unwrap();
     let first = index_of(&[("1.0.0", GAME, &old)]);
@@ -398,7 +398,7 @@ fn an_update_cut_short_is_rolled_back_at_the_next_start() {
     )
     .unwrap();
     let before = installed::Installed::load(&home);
-    let old = before.find(SourceId::Horizon, "ruby").unwrap().clone();
+    let old = before.find(SourceId::Sunrise, "ruby").unwrap().clone();
     // An earlier launcher kept 1.0.0, then stopped with a half-written file and the list still
     // naming 1.0.0.
     let mut k = keep(&home, &old).unwrap();
@@ -432,8 +432,8 @@ fn the_report_says_what_changed_and_nothing_otherwise() {
 /// the file without undoing it (#10071). A new install and the player's own install turn it on.
 #[test]
 fn an_automatic_update_keeps_a_disabled_mod_off() {
-    use crate::browser::horizon::install_version;
     use crate::browser::java;
+    use crate::browser::sunrise::install_version;
     let dir = scratch("auto-disabled");
     let home = dir.join("home");
     let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
@@ -554,11 +554,11 @@ fn auto_update_and_manual_mutation_do_not_race_or_lose_entries() {
         final_installed.entries
     );
     let ruby_entry = final_installed
-        .find(SourceId::Horizon, "ruby")
+        .find(SourceId::Sunrise, "ruby")
         .expect("ruby present");
     assert_eq!(ruby_entry.version, "1.1.0");
     let coords_entry = final_installed
-        .find(SourceId::Horizon, "coords_hud")
+        .find(SourceId::Sunrise, "coords_hud")
         .expect("coords_hud present");
     assert_eq!(coords_entry.version, "0.1.0");
 
@@ -633,10 +633,10 @@ fn auto_update_does_not_revive_concurrently_removed_mod() {
     let final_installed = installed::Installed::load(&home);
     assert_eq!(final_installed.entries.len(), 1);
     assert!(final_installed
-        .find(SourceId::Horizon, "coords_hud")
+        .find(SourceId::Sunrise, "coords_hud")
         .is_none());
     let ruby_entry = final_installed
-        .find(SourceId::Horizon, "ruby")
+        .find(SourceId::Sunrise, "ruby")
         .expect("ruby present");
     assert_eq!(ruby_entry.version, "1.1.0");
 

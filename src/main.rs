@@ -1,9 +1,9 @@
-//! Horizon launcher: installs Horizon builds, prepares them from the player's own Minecraft,
+//! Sunrise launcher: installs Sunrise builds, prepares them from the player's own Minecraft,
 //! and starts the client or a dedicated server.
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use horizon_launcher_scenery::{art, glass, rain, scene, sky};
+use sunrise_launcher_scenery::{art, glass, rain, scene, sky};
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
@@ -103,15 +103,6 @@ use gpui::{
     KeyBinding, KeyDownEvent, Menu, MenuItem, MouseDownEvent, PathPromptOptions, Pixels, Point,
     SharedString, Stateful, Subscription, Window, WindowBounds, WindowOptions,
 };
-use horizon_launcher::account::{self, Accounts, SignIn, SignInState};
-use horizon_launcher::backend::{self, Job, Msg, Release, Running, Settings, Updates};
-use horizon_launcher::i18n::{self, tr, trf};
-use horizon_launcher::instances;
-use horizon_launcher::native_mods;
-use horizon_launcher::native_status;
-use horizon_launcher::storage;
-use horizon_launcher::telemetry;
-use horizon_launcher::{build_import, identity};
 use native_consent::PendingConsent;
 use scrollbar::Scrollbar;
 use std::borrow::Cow;
@@ -120,6 +111,15 @@ use std::sync::atomic::Ordering;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use sunrise_launcher::account::{self, Accounts, SignIn, SignInState};
+use sunrise_launcher::backend::{self, Job, Msg, Release, Running, Settings, Updates};
+use sunrise_launcher::i18n::{self, tr, trf};
+use sunrise_launcher::instances;
+use sunrise_launcher::native_mods;
+use sunrise_launcher::native_status;
+use sunrise_launcher::storage;
+use sunrise_launcher::telemetry;
+use sunrise_launcher::{build_import, identity};
 use theme::Theme;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -138,26 +138,26 @@ enum Page {
 }
 
 impl Page {
-    /// `HORIZON_LAUNCHER_PAGE=mods` (or `modpacks`, `resourcepacks`, `shaders`, `servers`, `versions`,
+    /// `SUNRISE_LAUNCHER_PAGE=mods` (or `modpacks`, `resourcepacks`, `shaders`, `servers`, `versions`,
     /// `settings`) opens on that page, for screenshots; Home otherwise (`getting-ready`: Home
     /// preparing, `home::getting_ready_preview`; `sign-in`: the owner gate's sheet with a
     /// made-up code, `owner_page::sign_in_preview`; `new-instance`: Home with the New instance
     /// dialog open on Modded; `edit-instance`: the selected one's Edit dialog; `worlds`, `packs`...: Home on that tab, `HomeTab::from_env`).
     fn from_env() -> Page {
-        let page = match std::env::var("HORIZON_LAUNCHER_PAGE").as_deref() {
+        let page = match std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() {
             Ok("mods" | "modpacks" | "resourcepacks" | "shaders" | "datapacks") => Page::Mods,
             Ok("servers") => Page::Servers,
-            Ok("wardrobe") if horizon_cosmetics::forced() => Page::Wardrobe,
-            Ok("shop") if horizon_cosmetics::forced() => Page::Shop,
+            Ok("wardrobe") if sunrise_cosmetics::forced() => Page::Wardrobe,
+            Ok("shop") if sunrise_cosmetics::forced() => Page::Shop,
             Ok("versions") => Page::Versions,
             Ok("settings") => Page::Settings,
             _ => Page::Play,
         };
         // The data folder did not open: start on Settings, where the message and the two
-        // recoveries are (an explicit HORIZON_LAUNCHER_PAGE still wins, for screenshots).
+        // recoveries are (an explicit SUNRISE_LAUNCHER_PAGE still wins, for screenshots).
         page_after_startup(
             page,
-            horizon_launcher::data_location::startup_error().is_some(),
+            sunrise_launcher::data_location::startup_error().is_some(),
         )
     }
 
@@ -211,9 +211,9 @@ struct Crash {
 
 /// The opening: the wordmark holds at least `OPENING_HOLD` (until the release
 /// list is in, at most `OPENING_MAX`), then the launcher appears over `OPENING_REVEAL`.
-const OPENING_HOLD: Duration = horizon_theme::OPENING_HOLD;
-const OPENING_MAX: Duration = horizon_theme::OPENING_MAX;
-const OPENING_REVEAL: Duration = horizon_theme::OPENING_REVEAL;
+const OPENING_HOLD: Duration = sunrise_theme::OPENING_HOLD;
+const OPENING_MAX: Duration = sunrise_theme::OPENING_MAX;
+const OPENING_REVEAL: Duration = sunrise_theme::OPENING_REVEAL;
 
 /// The phase of the opening at one moment: how far the reveal has gone, 0 to 1.
 struct Opening {
@@ -224,7 +224,7 @@ struct Opening {
 }
 
 fn ease_out_cubic(x: f32) -> f32 {
-    horizon_theme::ease_out_cubic(x)
+    sunrise_theme::ease_out_cubic(x)
 }
 
 enum Load<T> {
@@ -270,10 +270,10 @@ struct Launcher {
     update_error: Option<String>,
     self_update: SelfUpdate,
     self_update_hidden: bool,
-    /// The Horizon version being installed as an update: whether it becomes the selected one is
+    /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.
     update_install: Option<String>,
-    /// The Horizon version being installed because an instance was made or saved to play it: it
+    /// The Sunrise version being installed because an instance was made or saved to play it: it
     /// becomes the launcher's version only when the launcher has none.
     instance_install: Option<String>,
     /// One for an instance waiting for the install running now to end.
@@ -372,8 +372,8 @@ struct Launcher {
     rail: frame::Rail,
     /// The instance sheet's open section (`glass_sheet.rs`).
     sheet_tab: glass_sheet::SheetTab,
-    /// The glass look's colours for the player's accent (`horizon_theme::glass`).
-    look: horizon_theme::glass::Glass,
+    /// The glass look's colours for the player's accent (`sunrise_theme::glass`).
+    look: sunrise_theme::glass::Glass,
     /// Where the mouse went down to close a menu by pressing outside it, so that the
     /// same press, ending on the menu's own button, doesn't open it again.
     menu_closed_at: Option<Point<Pixels>>,
@@ -387,10 +387,10 @@ struct Launcher {
     shop: wardrobe_page::Shop,
     /// The cosmetics service's last word on the founder set's window (`GET /v1/shop`): whether
     /// the top bar has the Wardrobe page with cosmetics off (`wardrobe_shown`).
-    shop_status: Option<horizon_launcher::wardrobe::Claim>,
+    shop_status: Option<sunrise_launcher::wardrobe::Claim>,
     /// The selected account's own answer on it from its last Wardrobe visit, kept on disk (a
     /// preview the service grants it, its claim).
-    shop_kept: Option<horizon_launcher::wardrobe::Claim>,
+    shop_kept: Option<sunrise_launcher::wardrobe::Claim>,
     /// Work the look out again on the next frame (a launcher theme put on or taken off).
     restyle: bool,
     /// Why the last picture for Home's background was refused.
@@ -469,7 +469,7 @@ struct Launcher {
     /// The instance the running game plays and when it started: its play time grows on exit.
     client_run: Option<(String, Instant)>,
     /// The running game's instance variables, for its post-exit command.
-    client_vars: horizon_launcher::launch::Vars,
+    client_vars: sunrise_launcher::launch::Vars,
     /// Settings' Game arguments field: the line, whether it has focus, and its focus handle.
     args_input: line_edit::LineEdit,
     args_focused: bool,
@@ -482,7 +482,7 @@ struct Launcher {
     collection: collection::Collection,
     /// Settings' "Connect an AI agent" (`agents_page`).
     agents: agents_page::AgentsUi,
-    /// How many play Horizon now, while the server answers ("N playing now" on the Play page).
+    /// How many play Sunrise now, while the server answers ("N playing now" on the Play page).
     playing: Option<u64>,
     /// How many play on the official server now, while it answers ("M on the official SMP").
     official_players: Option<u64>,
@@ -520,22 +520,22 @@ struct Launcher {
     /// Modrinth projects' icon URLs (`instance_mods.rs`).
     project_icons: instance_mods::ProjectIcons,
     play_pressed: Option<Instant>,
-    /// `horizon-launcher benchmark` started this window to measure it.
+    /// `sunrise-launcher benchmark` started this window to measure it.
     bench: Option<perf::Bench>,
     /// The Modpacks page: the imported packs (read when the page first opens), the one shown,
     /// the report's filter, and the pipeline step running now with its log.
-    packs: Vec<horizon_launcher::modpacks::Imported>,
-    /// Modpacks installed from Horizon's registry, each its own profile.
-    registry_packs: Vec<horizon_launcher::browser::horizon::pack::Installed>,
+    packs: Vec<sunrise_launcher::modpacks::Imported>,
+    /// Modpacks installed from Sunrise's registry, each its own profile.
+    registry_packs: Vec<sunrise_launcher::browser::sunrise::pack::Installed>,
     packs_loaded: Option<Instant>,
     pack_open: Option<String>,
-    pack_filter: Option<horizon_port_pack::report::Status>,
+    pack_filter: Option<sunrise_port_pack::report::Status>,
     pack_busy: bool,
     pack_log: VecDeque<String>,
     pack_error: Option<String>,
     /// Other launchers' modpacks on this computer, offered above the imported ones, and whether
     /// the scan for them runs now.
-    found_packs: Vec<horizon_launcher::other_launchers::Found>,
+    found_packs: Vec<sunrise_launcher::other_launchers::Found>,
     found_scanning: bool,
     /// The game starting now plays this pack's profile (its work folder).
     starting_pack: Option<std::path::PathBuf>,
@@ -564,7 +564,7 @@ struct Launcher {
     /// The selected instance's desktop shortcut (`shortcut_page.rs`).
     shortcuts: shortcut_page::Shortcuts,
     /// The player's servers, for the sidebar until the Servers page has read them.
-    side_servers: Vec<horizon_launcher::servers::Entry>,
+    side_servers: Vec<sunrise_launcher::servers::Entry>,
     /// The pixel art made for this window (`art.rs`), and pictures downloaded by URL.
     sky: gpui::Entity<sky::SkyView>,
     /// The pixel sunset of the new design (dark appearance): its own view, so a frame of it
@@ -580,7 +580,7 @@ struct Launcher {
     scale: f32,
 }
 
-actions!(horizon_launcher, [Quit, CloseWindow]);
+actions!(sunrise_launcher, [Quit, CloseWindow]);
 
 /// What closing the last window does: stop the servers this launcher started, send the telemetry,
 /// exit. A game that is running keeps running. Cmd+Q goes through here too.
@@ -588,7 +588,7 @@ fn shut_down(cx: &mut App) {
     servers_page::stop_on_quit();
     telemetry::send_before_exit();
     // A downloaded launcher update goes in only when the player presses Update: closing drops it.
-    horizon_launcher::update_handoff::forget();
+    sunrise_launcher::update_handoff::forget();
     cx.quit()
 }
 
@@ -728,7 +728,7 @@ mod tests {
             &installed,
             None,
             &[],
-            &["Horizon"],
+            &["Sunrise"],
             "v0.2.97"
         ));
         assert!(super::removable(&installed, None, &[], &[], "v0.2.97"));
@@ -738,21 +738,21 @@ mod tests {
     fn a_press_on_a_sidebar_row_opens_its_menu_or_closes_it() {
         let open = |id: &str| Some((id.to_string(), false));
         assert_eq!(
-            super::row_menu_after_press(None, "Horizon"),
-            open("Horizon")
+            super::row_menu_after_press(None, "Sunrise"),
+            open("Sunrise")
         );
         assert_eq!(
-            super::row_menu_after_press(open("Other"), "Horizon"),
-            open("Horizon")
+            super::row_menu_after_press(open("Other"), "Sunrise"),
+            open("Sunrise")
         );
         assert_eq!(
-            super::row_menu_after_press(open("Horizon"), "Horizon"),
+            super::row_menu_after_press(open("Sunrise"), "Sunrise"),
             None
         );
         // A Delete… already pressed on another row does not carry over.
         assert_eq!(
-            super::row_menu_after_press(Some(("Other".into(), true)), "Horizon"),
-            open("Horizon")
+            super::row_menu_after_press(Some(("Other".into(), true)), "Sunrise"),
+            open("Sunrise")
         );
     }
 
@@ -800,7 +800,7 @@ mod tests {
     }
 
     /// A server's Join (and every other shortcut) waits like Play: not while the version's
-    /// first download and preparation run (#horizon-bugs, 0.2.23: a white window opened).
+    /// first download and preparation run (#sunrise-bugs, 0.2.23: a white window opened).
     #[test]
     fn shortcuts_start_only_when_play_would() {
         use super::starts_now;
@@ -818,7 +818,7 @@ mod tests {
     fn a_completed_sign_in_is_handled_once_across_ui_polls() {
         use super::{sign_in_change, SignInState};
         let mut shown = None;
-        let completed = SignInState::Done(Ok(horizon_launcher::account::Account {
+        let completed = SignInState::Done(Ok(sunrise_launcher::account::Account {
             uuid: "11111111111111111111111111111111".into(),
             name: "TestAccount".into(),
             skin: None,
@@ -847,10 +847,10 @@ mod tests {
     #[test]
     fn the_app_menu_has_quit() {
         let menus = super::menus();
-        assert_eq!(menus[0].name, horizon_launcher::identity::DISPLAY_NAME);
+        assert_eq!(menus[0].name, sunrise_launcher::identity::DISPLAY_NAME);
         assert!(matches!(
             &menus[0].items[0],
-            gpui::MenuItem::Action { name, .. } if name == horizon_launcher::identity::QUIT_LABEL
+            gpui::MenuItem::Action { name, .. } if name == sunrise_launcher::identity::QUIT_LABEL
         ));
     }
 

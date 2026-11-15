@@ -1,9 +1,9 @@
-//! The registry source against the sample index of `horizon_mod_package::index`
-//! (`crates/horizon-mod-package/tests/index/`), its files served from disk.
+//! The registry source against the sample index of `sunrise_mod_package::index`
+//! (`crates/sunrise-mod-package/tests/index/`), its files served from disk.
 use super::*;
 
 fn fixtures() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/horizon-mod-package/tests/index")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../crates/sunrise-mod-package/tests/index")
 }
 
 /// The sample index with its files on disk, as a local test registry lists them.
@@ -21,7 +21,7 @@ pub(super) fn sample() -> Index {
 
 pub(super) fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "horizon-launcher-registry-{name}-{}",
+        "sunrise-launcher-registry-{name}-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&dir);
@@ -49,38 +49,38 @@ fn native_registry_entries_are_mods_that_say_they_run_native_code() {
     assert!(found.iter().any(|p| p.id == index.projects[0].id));
     let entry = |file: &str| {
         serde_json::from_value::<installed::Entry>(serde_json::json!({
-            "source": "horizon", "project": "p", "slug": "p", "title": "P", "kind": "mod",
+            "source": "sunrise", "project": "p", "slug": "p", "title": "P", "kind": "mod",
             "version": "1", "number": "1", "file": file, "checksum": "", "page": ""
         }))
         .unwrap()
     };
     assert_eq!(
-        mod_id(&entry("horizon-native-mods/veinminer.hmod")),
+        mod_id(&entry("sunrise-native-mods/veinminer.hmod")),
         Some("veinminer")
     );
-    assert_eq!(mod_id(&entry("horizon-mods/zoom.hmod")), Some("zoom"));
+    assert_eq!(mod_id(&entry("sunrise-mods/zoom.hmod")), Some("zoom"));
 }
 
 #[test]
-fn only_horizons_own_projects_go_without_the_not_endorsed_line() {
+fn only_sunrises_own_projects_go_without_the_not_endorsed_line() {
     let mut p = sample().projects[0].clone();
-    p.authors = vec!["Horizon".into()];
+    p.authors = vec!["Sunrise".into()];
     p.source = "https://github.com/horizon-rust/horizon-mod-zoom".into();
     assert!(official(&p));
-    p.source = "https://github.com/someone/horizon-mod-zoom".into();
+    p.source = "https://github.com/someone/sunrise-mod-zoom".into();
     assert!(!official(&p), "the name alone doesn't make it official");
     p.authors = vec!["levzzz5154".into()];
     assert!(!official(&p));
 }
 
 #[test]
-fn only_horizons_own_projects_say_they_come_from_horizon() {
+fn only_sunrises_own_projects_say_they_come_from_sunrise() {
     let mut index = sample();
     let id = index.projects[0].id.clone();
     index.projects[0].authors = vec!["levzzz5154".into()];
-    index.projects[0].source = "https://github.com/levzzz5154/horizon-mod-zoom".into();
+    index.projects[0].source = "https://github.com/levzzz5154/sunrise-mod-zoom".into();
     assert!(!official_in(Some(&index), &id), "a contributor's project");
-    index.projects[0].authors = vec!["Horizon".into()];
+    index.projects[0].authors = vec!["Sunrise".into()];
     index.projects[0].source = "https://github.com/horizon-rust/horizon-mod-zoom".into();
     assert!(official_in(Some(&index), &id));
     assert!(!official_in(Some(&index), "not_listed"));
@@ -161,7 +161,7 @@ fn update_rejects_a_changed_kind_without_removing_the_installed_file() {
         .find(|p| p.id == "coords_hud")
         .unwrap();
     project.kind = index::Kind::NativeMod;
-    let path = home.join("horizon-mods/coords_hud.hmod");
+    let path = home.join("sunrise-mods/coords_hud.hmod");
     let before = fs::read(&path).unwrap();
     let modified = fs::metadata(&path).unwrap().modified().unwrap();
     let p = index.project("coords_hud").unwrap();
@@ -185,16 +185,16 @@ fn installed_kind_comes_from_the_archive_not_its_folder() {
         let mut list = installed::Installed::load(&home);
         let old = home.join(&list.entries[0].file);
         let folder = if native {
-            "horizon-mods"
+            "sunrise-mods"
         } else {
-            "horizon-native-mods"
+            "sunrise-native-mods"
         };
         fs::create_dir_all(home.join(folder)).unwrap();
         let file = format!("{folder}/misplaced.hmod");
         let path = home.join(&file);
         if native {
             let manifest = format!(
-                "id='coords_hud'\nname='HUD'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='26.3'\nhorizon='{}'\nmixins='{}'\n",
+                "id='coords_hud'\nname='HUD'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{}'\nmixins='{}'\n",
                 "a".repeat(40),
                 "b".repeat(40)
             );
@@ -204,7 +204,7 @@ fn installed_kind_comes_from_the_archive_not_its_folder() {
             ];
             fs::write(
                 &path,
-                horizon_mod_package::Package::write_files(&manifest, files).unwrap(),
+                sunrise_mod_package::Package::write_files(&manifest, files).unwrap(),
             )
             .unwrap();
             index::native::Bundle::read(&path).unwrap();
@@ -232,7 +232,7 @@ fn corrupt_installed_archive_is_not_treated_as_content() {
     let index = sample();
     let home = scratch("corrupt-installed");
     put(&index, true, &home).unwrap();
-    let path = home.join("horizon-mods/coords_hud.hmod");
+    let path = home.join("sunrise-mods/coords_hud.hmod");
     fs::write(&path, b"not a zip").unwrap();
     let before = fs::read(&path).unwrap();
     let modified = fs::metadata(&path).unwrap().modified().unwrap();
@@ -250,13 +250,13 @@ fn removing_native_mod_does_not_remove_a_separate_content_file() {
     let home = scratch("native-remove");
     put(&index, true, &home).unwrap();
     let mut list = installed::Installed::load(&home);
-    list.entries[0].file = "horizon-native-mods/coords_hud.hmod".into();
+    list.entries[0].file = "sunrise-native-mods/coords_hud.hmod".into();
     list.save(&home).unwrap();
-    fs::create_dir_all(home.join("horizon-native-mods")).unwrap();
-    fs::write(home.join("horizon-native-mods/coords_hud.hmod"), "").unwrap();
+    fs::create_dir_all(home.join("sunrise-native-mods")).unwrap();
+    fs::write(home.join("sunrise-native-mods/coords_hud.hmod"), "").unwrap();
     installed::remove(&home, "coords_hud").unwrap();
-    assert!(home.join("horizon-mods/coords_hud.hmod").is_file());
-    assert!(!home.join("horizon-native-mods/coords_hud.hmod").exists());
+    assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
+    assert!(!home.join("sunrise-native-mods/coords_hud.hmod").exists());
     fs::remove_dir_all(&home).unwrap();
 }
 
@@ -426,7 +426,7 @@ fn installs_combined_native_content_as_one_hmod() {
     for (name, text) in [
         ("Cargo.toml", "[package]\nname='coords_hud'\nversion='0.1.0'\n".into()),
         ("src/lib.rs", "fn hook() {}".into()),
-        ("horizon-mod.toml", format!("id='coords_hud'\nname='Sound proof'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{GAME}'\nhorizon='{a}'\nmixins='{b}'\n")),
+        ("sunrise-mod.toml", format!("id='coords_hud'\nname='Sound proof'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{GAME}'\nsunrise='{a}'\nmixins='{b}'\n")),
         ("assets/coords_hud/sounds.json", "{}".into()),
     ] {
         zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
@@ -452,7 +452,7 @@ fn installs_combined_native_content_as_one_hmod() {
     v.file.signature = None;
     let p = &index.projects[0];
     let entry = install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert_eq!(entry.file, "horizon-native-mods/coords_hud.hmod");
+    assert_eq!(entry.file, "sunrise-native-mods/coords_hud.hmod");
     assert_eq!(mod_id(&entry), Some("coords_hud"));
     let bundle = index::native::Bundle::read(&home.join(&entry.file)).unwrap();
     assert_eq!(bundle.files["assets/coords_hud/sounds.json"], b"{}");
@@ -468,15 +468,15 @@ fn installs_checked_turns_on_and_removes() {
     let home = scratch("install");
     let p = hud(&index);
     let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
-    assert_eq!(done[0].file, "horizon-mods/coords_hud.hmod");
+    assert_eq!(done[0].file, "sunrise-mods/coords_hud.hmod");
     assert!(done[0].skipped.is_empty());
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
         done[0].checksum,
         "SHA-256:f891bde88f4b841fd35c4f3305bc8904b671ebe9d5ad28d5aecc57e8b23fc3ce"
     );
-    assert!(home.join("horizon-mods/coords_hud.hmod").is_file());
-    let list = fs::read_to_string(home.join("horizon-mods.txt")).unwrap();
+    assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
+    let list = fs::read_to_string(home.join("sunrise-mods.txt")).unwrap();
     assert_eq!(list, "mod.coords_hud:true\n");
     assert_eq!(
         fs::read_dir(home.join("mod-browser/downloads"))
@@ -498,12 +498,12 @@ fn installs_checked_turns_on_and_removes() {
     let said = turn_off_revoked(&revoked, &home);
     assert_eq!(said, ["Coordinates HUD was taken down and is off: Test."]);
     assert_eq!(
-        fs::read_to_string(home.join("horizon-mods.txt")).unwrap(),
+        fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
         ""
     );
 
     installed::remove(&home, "coords_hud").unwrap();
-    assert!(!home.join("horizon-mods/coords_hud.hmod").exists());
+    assert!(!home.join("sunrise-mods/coords_hud.hmod").exists());
     assert!(installed::Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(&home).unwrap();
 }
@@ -534,7 +534,7 @@ fn executable_content_is_refused_without_installing_or_skipping_code() {
     v.file.signature = None;
     let e = put(&index, true, &home).unwrap_err();
     assert_eq!(e, "mod.wasm needs a [wasm] section");
-    assert!(!home.join("horizon-mods/coords_hud.hmod").exists());
+    assert!(!home.join("sunrise-mods/coords_hud.hmod").exists());
     assert!(installed::Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(home).unwrap();
 }
@@ -549,8 +549,8 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.hshader");
     assert_eq!(done[0].kind, Kind::Shader);
     assert!(home.join("shaderpacks/glow-1.0.0.hshader").is_file());
-    // Not a mod: nothing turns on in horizon-mods.txt; the game's Shader Packs page picks it.
-    assert!(!home.join("horizon-mods.txt").exists());
+    // Not a mod: nothing turns on in sunrise-mods.txt; the game's Shader Packs page picks it.
+    assert!(!home.join("sunrise-mods.txt").exists());
 
     let mut revoked = index.clone();
     revoked.revoked.push(index::Revoked {
@@ -584,14 +584,14 @@ fn refuses_a_changed_file_a_taken_id_and_local_files_from_the_real_registry() {
     tampered.projects[0].versions[0].file.url = cozy;
     let e = put(&tampered, true, &home).unwrap_err();
     assert!(e.contains("larger than its source says"), "{e}");
-    assert!(!home.join("horizon-mods").exists());
+    assert!(!home.join("sunrise-mods").exists());
 
     let e = put(&index, false, &home).unwrap_err();
     assert!(e.contains("file servers"), "{e}");
 
-    fs::create_dir_all(home.join("horizon-mods/coords_hud")).unwrap();
+    fs::create_dir_all(home.join("sunrise-mods/coords_hud")).unwrap();
     let e = put(&index, true, &home).unwrap_err();
-    assert!(e.contains("already in horizon-mods"), "{e}");
+    assert!(e.contains("already in sunrise-mods"), "{e}");
 
     let mut taken_down = index.clone();
     taken_down.revoked.push(index::Revoked {
@@ -609,9 +609,9 @@ fn refuses_a_changed_file_a_taken_id_and_local_files_from_the_real_registry() {
 fn registry_versions_run_when_made_for_this_game() {
     use super::super::{pick, support, Support};
     let v = |game: &str| vec![game.to_owned()];
-    let horizon = vec![LOADER.to_owned()];
-    assert_eq!(support(Kind::Mod, &v(GAME), &horizon), Support::Works);
-    assert!(!support(Kind::Mod, &v("26.2"), &horizon).installable());
+    let sunrise = vec![LOADER.to_owned()];
+    assert_eq!(support(Kind::Mod, &v(GAME), &sunrise), Support::Works);
+    assert!(!support(Kind::Mod, &v("26.2"), &sunrise).installable());
     let index = sample();
     let versions = |id: &str| -> Vec<Version> {
         let p = index.project(id).unwrap();
@@ -667,7 +667,7 @@ fn a_project_made_for_the_earlier_mod_system_says_it_cant_be_installed() {
     let order = ids(true);
     let at = |id: &str| order.iter().position(|o| o == id).unwrap();
     assert!(at("lanterns_plus") < at("coords_hud"), "{order:?}");
-    // The same project with a version this Horizon can use installs as before.
+    // The same project with a version this Sunrise can use installs as before.
     let mut fine = sample();
     fine.projects
         .iter_mut()
@@ -737,15 +737,15 @@ fn ratings_keep_only_what_is_well_formed() {
 #[test]
 fn a_project_is_starred_on_the_repository_its_source_is_in() {
     let repo = |s: &str| github_repo(s);
-    let daybreak = Some("https://github.com/hildlabs/horizon-shaders".to_owned());
+    let daybreak = Some("https://github.com/hildlabs/sunrise-shaders".to_owned());
     // A folder of it, a trailing slash, `.git`, a query or an anchor: the same repository.
     for source in [
-        "https://github.com/hildlabs/horizon-shaders",
-        "https://github.com/hildlabs/horizon-shaders/tree/main/pack",
-        "https://github.com/hildlabs/horizon-shaders/",
-        "https://github.com/hildlabs/horizon-shaders.git",
-        "https://github.com/hildlabs/horizon-shaders?tab=readme",
-        "https://github.com/hildlabs/horizon-shaders#readme",
+        "https://github.com/hildlabs/sunrise-shaders",
+        "https://github.com/hildlabs/sunrise-shaders/tree/main/pack",
+        "https://github.com/hildlabs/sunrise-shaders/",
+        "https://github.com/hildlabs/sunrise-shaders.git",
+        "https://github.com/hildlabs/sunrise-shaders?tab=readme",
+        "https://github.com/hildlabs/sunrise-shaders#readme",
     ] {
         assert_eq!(repo(source), daybreak, "{source:?}");
     }
@@ -755,14 +755,14 @@ fn a_project_is_starred_on_the_repository_its_source_is_in() {
     );
     // Not GitHub, no repository, or a name GitHub doesn't allow: no star button.
     for source in [
-        "https://gitlab.com/hildlabs/horizon-shaders",
-        "http://github.com/hildlabs/horizon-shaders",
-        "https://github.com.evil.example/hildlabs/horizon-shaders",
+        "https://gitlab.com/hildlabs/sunrise-shaders",
+        "http://github.com/hildlabs/sunrise-shaders",
+        "https://github.com.evil.example/hildlabs/sunrise-shaders",
         "https://github.com/hildlabs",
         "https://github.com/hildlabs/",
-        "https://github.com/-hildlabs/horizon-shaders",
+        "https://github.com/-hildlabs/sunrise-shaders",
         "https://github.com/hildlabs/..",
-        "https://github.com/hildlabs/horizon shaders",
+        "https://github.com/hildlabs/sunrise shaders",
         "",
     ] {
         assert_eq!(repo(source), None, "{source:?}");

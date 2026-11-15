@@ -7,9 +7,9 @@
 
 use super::*;
 use crate::glass_ui::{self as ui, white};
-use horizon_theme::glass::ink;
 use std::path::Path;
 use std::sync::Mutex;
+use sunrise_theme::glass::ink;
 
 /// How long a line stays (`setTimeout(…, 4200)`).
 const SHOWN: Duration = Duration::from_millis(4200);

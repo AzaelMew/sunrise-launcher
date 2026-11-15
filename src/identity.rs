@@ -1,7 +1,7 @@
 //! Repository-selected identity. An upstream build retains its original namespaces.
 macro_rules! identity {
     ($($name:ident: $upstream:literal => $fork:literal),* $(,)?) => {$ (
-        pub const $name: &str = if cfg!(horizon_fork_launcher) { $fork } else { $upstream };
+        pub const $name: &str = if cfg!(sunrise_fork_launcher) { $fork } else { $upstream };
     )*};
 }
 identity! {
@@ -36,7 +36,7 @@ identity! {
 /// is (launcher folder, game folder, location folder) under the same bases as this launcher's.
 /// A Sunrise build copies its first data from the first of them that has any (`carry_over`);
 /// it never writes to them, and the uninstaller never removes them.
-pub const EARLIER: &[(&str, &str, &str)] = if cfg!(horizon_fork_launcher) {
+pub const EARLIER: &[(&str, &str, &str)] = if cfg!(sunrise_fork_launcher) {
     &[
         ("horizon-launcher", "horizon", "horizon-launcher-location"),
         (
@@ -51,7 +51,7 @@ pub const EARLIER: &[(&str, &str, &str)] = if cfg!(horizon_fork_launcher) {
 
 /// The keychain services of the launchers before this one ([`EARLIER`]): a sign-in saved there is
 /// copied under [`KEYCHAIN_SERVICE`] the first time it is read.
-pub const EARLIER_KEYCHAIN_SERVICES: &[&str] = if cfg!(horizon_fork_launcher) {
+pub const EARLIER_KEYCHAIN_SERVICES: &[&str] = if cfg!(sunrise_fork_launcher) {
     &["dev.playhorizon.launcher"]
 } else {
     &[]
@@ -68,10 +68,10 @@ pub fn game_folder_in(base: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Product home used by the Windows installer's About link.
-pub const ABOUT_URL: &str = if cfg!(horizon_fork_launcher) {
-    horizon_addresses::FORK_LAUNCHER_ABOUT
+pub const ABOUT_URL: &str = if cfg!(sunrise_fork_launcher) {
+    sunrise_addresses::FORK_LAUNCHER_ABOUT
 } else {
-    horizon_addresses::LAUNCHER_ABOUT
+    sunrise_addresses::LAUNCHER_ABOUT
 };
 
 /// Whether the uninstaller may remove `path` as this launcher's own data: the complete owned

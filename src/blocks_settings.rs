@@ -28,29 +28,29 @@ impl Launcher {
                 cx.notify();
             },
         ));
-        // Linux: the launcher's entry in the applications menu (`horizon_launcher::desktop`).
+        // Linux: the launcher's entry in the applications menu (`sunrise_launcher::desktop`).
         let menu_entry = switch("desktop-entry", self.settings.desktop_entry(), &t).on_click(
             cx.listener(|this, _: &ClickEvent, _, cx| {
                 let on = !this.settings.desktop_entry();
                 this.settings.desktop_entry = Some(on);
                 this.save_settings();
                 let _ = if on {
-                    horizon_launcher::desktop::install(backend::exe_path()).map(|_| ())
+                    sunrise_launcher::desktop::install(backend::exe_path()).map(|_| ())
                 } else {
-                    horizon_launcher::desktop::remove()
+                    sunrise_launcher::desktop::remove()
                 };
                 cx.notify();
             }),
         );
-        let horizon = match (&self.updates.horizon, &self.update_error) {
+        let sunrise = match (&self.updates.sunrise, &self.update_error) {
             (Some(r), _) => trf("{version} available", &[("version", update_name(r))]),
             (None, Some(e)) => e.clone(),
             (None, None) if self.checked.is_some() => tr("Up to date").to_string(),
             _ => tr("Checking…").to_string(),
         };
-        let horizon_action = self
+        let sunrise_action = self
             .updates
-            .horizon
+            .sunrise
             .as_ref()
             .filter(|_| self.installing.is_none())
             .map(|_| {
@@ -179,8 +179,8 @@ impl Launcher {
                     prune,
                     opening,
                     menu_entry,
-                    horizon,
-                    horizon_action,
+                    sunrise,
+                    sunrise_action,
                     launcher,
                     launcher_action,
                 },
@@ -207,7 +207,7 @@ impl Launcher {
                     .child(group("Account", "user").mt_0())
                     .child(accounts)
                     .child(group("Updates", "reload"))
-                    .child(index_row(n + 1, "Horizon", Some(plain(&horizon)), horizon_action, &t))
+                    .child(index_row(n + 1, "Sunrise", Some(plain(&sunrise)), sunrise_action, &t))
                     .child(index_row(
                         n + 1,
                         tr("Launcher"),
@@ -246,7 +246,7 @@ impl Launcher {
                     .child(self.while_playing_row(n + 3, cx))
                     .child(index_row(
                         n + 3,
-                        tr("Show the Horizon logo at startup"),
+                        tr("Show the Sunrise logo at startup"),
                         Some(plain("Shown for a moment while the version list loads.")),
                         Some(opening.into_any_element()),
                         &t,
@@ -284,7 +284,7 @@ impl Launcher {
                             n + 11,
                             tr("Applications menu"),
                             Some(plain(if self.settings.desktop_entry() {
-                                "Horizon and its icon are in your desktop's menu."
+                                "Sunrise and its icon are in your desktop's menu."
                             } else {
                                 "Not in your desktop's menu."
                             })),
@@ -333,7 +333,7 @@ impl Launcher {
             .map(PendingConsent::name)
             .filter(|name| !name.is_empty());
         let build = matches!(self.pending_consent, Some(PendingConsent::Build(_)));
-        let bytes = horizon_launcher::rust_toolchain::host().map(|host| host.download_bytes());
+        let bytes = sunrise_launcher::rust_toolchain::host().map(|host| host.download_bytes());
         let size = bytes
             .map(storage::format_bytes)
             .unwrap_or_else(|| tr("Unavailable on this platform").into());
@@ -343,7 +343,7 @@ impl Launcher {
                 .child(div().text_size(px(24.)).font_weight(FontWeight::BOLD).child(tr("Allow native mods?")))
                 .children(name.map(|name| div().font_weight(FontWeight::BOLD).child(name)))
                 .child(tr("These mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them."))
-                .children(horizon_launcher::rust_toolchain::installed().is_none().then(|| trf("Horizon will first download a compiler ({size}) to build them.", &[("size", &size)])))
+                .children(sunrise_launcher::rust_toolchain::installed().is_none().then(|| trf("Sunrise will first download a compiler ({size}) to build them.", &[("size", &size)])))
                 .child(tr("You can take this permission back in Settings > Storage."))
                 .children(self.consent_error.clone().map(|error| div().text_color(t.danger).child(error)))
                 .children(bytes.is_none().then(|| div().text_color(t.danger).child(tr("Native mods can't be built on this computer, so they can't be allowed here."))))
@@ -369,7 +369,7 @@ impl Launcher {
                                 PendingConsent::Install(source, id, known) => this.mods_install(source, id, known),
                                 PendingConsent::Github(found, only) => this.github_install(found, only),
                                 PendingConsent::Local(id) => {
-                                    this.mods.message = horizon_launcher::browser::java::set_enabled(&this.mods.home(), &id, true).err().map(Err);
+                                    this.mods.message = sunrise_launcher::browser::java::set_enabled(&this.mods.home(), &id, true).err().map(Err);
                                     this.instance_mods_changed();
                                 }
                             } }
@@ -545,7 +545,7 @@ impl Launcher {
         // A half-typed address is no reason to complain; one left behind is.
         let detail = match (
             focused,
-            horizon_launcher::proxy::refuse(self.proxy_input.text()),
+            sunrise_launcher::proxy::refuse(self.proxy_input.text()),
         ) {
             (false, Some(why)) => div().text_color(t.danger).child(why).into_any_element(),
             _ => div()
@@ -573,12 +573,12 @@ impl Launcher {
     }
 
     /// Keeps the Proxy field in `settings.json`, and tells the parts that build their own agents
-    /// (`horizon-port-pack`) which proxy to use.
+    /// (`sunrise-port-pack`) which proxy to use.
     pub(crate) fn save_proxy(&mut self) {
         let value = self.proxy_input.text().trim().to_owned();
         self.settings.proxy = (!value.is_empty()).then_some(value);
         self.save_settings();
-        horizon_launcher::proxy::announce(self.settings.proxy.clone());
+        sunrise_launcher::proxy::announce(self.settings.proxy.clone());
     }
 
     /// Settings' Microsoft accounts: who is signed in and plays, the sign-in with its code. The
@@ -775,7 +775,7 @@ impl Launcher {
             }
             Some(SignInState::Done(Err(e))) => div().text_color(t.danger).child(e.clone()),
             None if self.accounts.accounts.is_empty() => div().child(tr(
-                "Horizon needs a Microsoft account that owns Minecraft: Java Edition, like other launchers. It also plays online servers with your name and skin.",
+                "Sunrise needs a Microsoft account that owns Minecraft: Java Edition, like other launchers. It also plays online servers with your name and skin.",
             )),
             None => div().child(tr("Add another account.")),
         };

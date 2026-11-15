@@ -4,7 +4,7 @@ use super::*;
 impl Launcher {
     pub(crate) fn play_page(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        // A Java instance plays Mojang's game: no Horizon version, nothing of Horizon's to prepare.
+        // A Java instance plays Mojang's game: no Sunrise version, nothing of Sunrise's to prepare.
         let java = self.selected_instance().and_then(|i| i.java.clone());
         let Some(tag) = self
             .selected()
@@ -18,12 +18,12 @@ impl Launcher {
             let failed = match (&self.installing, &self.install_error, &self.releases) {
                 (Some(_), _, _) => None,
                 (None, Some((tag, e)), _) => Some((
-                    tr("Couldn't download Horizon.").to_string(),
+                    tr("Couldn't download Sunrise.").to_string(),
                     e.clone(),
                     Some(tag.clone()),
                 )),
                 (None, None, Load::Failed(e)) => Some((
-                    tr("Couldn't get the list of Horizon versions.").to_string(),
+                    tr("Couldn't get the list of Sunrise versions.").to_string(),
                     e.clone(),
                     None,
                 )),
@@ -116,7 +116,7 @@ impl Launcher {
         let left = self.download_left();
         let steps = self.preparing.then(|| self.steps(&version, left));
 
-        // Not prepared: an owner can have Horizon download Minecraft from Mojang; without an
+        // Not prepared: an owner can have Sunrise download Minecraft from Mojang; without an
         // owner there is nothing to play, so signing in comes first.
         let first = (!prepared && !self.preparing)
             .then_some(self.owner)
@@ -130,7 +130,7 @@ impl Launcher {
                 &[("version", &version)],
             ),
             Some(true) => trf(
-                "Not prepared. Horizon can download Minecraft {version} from Mojang for your account, or use your own install.",
+                "Not prepared. Sunrise can download Minecraft {version} from Mojang for your account, or use your own install.",
                 &[("version", &version)],
             ),
             Some(false) => trf(
@@ -206,7 +206,7 @@ impl Launcher {
             || {
                 div()
                     .child(if owner {
-                        tr("None needed: Horizon downloads Minecraft from Mojang for your account.")
+                        tr("None needed: Sunrise downloads Minecraft from Mojang for your account.")
                     } else {
                         tr("Not found. Choose the folder where your launcher keeps Minecraft.")
                     })
@@ -324,7 +324,7 @@ impl Launcher {
                 .children(self.glass_build_notice(cx))
         } else {
             let hero = match &java {
-                // Its own game: the Minecraft version and the loader, never Horizon's.
+                // Its own game: the Minecraft version and the loader, never Sunrise's.
                 Some(j) => {
                     let game = match &j.loader {
                         Some(l) => format!("{version} · {} {}", l.kind.name(), l.version),
@@ -399,7 +399,7 @@ impl Launcher {
                                 // after pressing it, not below the fold (#666).
                                 .children(steps),
                         )
-                        // Notes and friends are Horizon's.
+                        // Notes and friends are Sunrise's.
                         .children(java.is_none().then(|| self.home_card(&tag, cx))),
                 )
         };
@@ -423,7 +423,7 @@ impl Launcher {
         page
     }
 
-    /// "Horizon crashed": the report and the logs, and where to report it.
+    /// "Sunrise crashed": the report and the logs, and where to report it.
     pub(crate) fn crash_notice(&self, crash: Crash, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let mut actions = div().flex().flex_wrap().gap(px(8.)).mt(px(8.));
@@ -499,7 +499,7 @@ impl Launcher {
             .child(
                 text(theme::HEADING)
                     .text_color(t.ink)
-                    .child(tr("Horizon crashed")),
+                    .child(tr("Sunrise crashed")),
             );
         if !crash.summary.is_empty() {
             body = body.child(div().text_color(t.ink_soft).child(crash.summary));

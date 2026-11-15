@@ -1,6 +1,6 @@
 //! Function replacement (fn-replace): `[[native.mixin]]` rows built against the prebuilt game, with no
 //! game rebuild. Each function the rows target is copied out of the pinned source into one patch
-//! crate (`horizon_mod_api_gen::patch`), horizon-mixins applies every mod's rows to those copies
+//! crate (`sunrise_mod_api_gen::patch`), sunrise-mixins applies every mod's rows to those copies
 //! in one pass (one combined copy per function, in the tool's order), rustc compiles the crate
 //! against the prebuilt game and the mods, and the generated `main` installs each copy through
 //! its point's replacement slot. What can't take this route is refused by name; nothing here
@@ -8,16 +8,16 @@
 use super::{api, prebuilt::Identity, Bundle};
 use crate::i18n::trf;
 use crate::rust_toolchain::Toolchain;
-use horizon_platform::mod_build::api_gen;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use sunrise_platform::mod_build::api_gen;
 
 /// The patch crates' name (a lower game crate's is `<name>_<crate>`): the copies' ids and the library entry's
-/// `--extern` use it. It is not `horizon_patch`, the name of the library built from them: a library and a crate
+/// `--extern` use it. It is not `sunrise_patch`, the name of the library built from them: a library and a crate
 /// it links with one crate name are indistinguishable to rustc (E0519), and a registry workspace refuses two
 /// packages of one name.
-pub(super) const CRATE: &str = "horizon_patched";
+pub(super) const CRATE: &str = "sunrise_patched";
 
 /// The compiled patch crates, `(crate name, rlib)`, and the installation result expressions the
 /// generated `main` installs.
@@ -104,7 +104,7 @@ fn extras(bundles: &[&Bundle]) -> Result<api_gen::patch::Extras, String> {
             extras.bridges.push(api_gen::patch::Bridge {
                 id: format!("{id}:{}", bridge.id),
                 method: format!(
-                    "__horizon_mixins_{}_{}",
+                    "__sunrise_mixins_{}_{}",
                     normalize(id),
                     normalize(&bridge.id)
                 ),
@@ -215,11 +215,11 @@ pub(super) fn build(
 pub(super) fn sdk_externs(game: &Path, sdk: &Identity) -> Result<Vec<(String, PathBuf)>, String> {
     let deps = game.join("deps");
     let mut externs = vec![(
-        "horizon_client".to_owned(),
-        super::prebuilt::library(&deps, "horizon_client")?,
+        "sunrise_client".to_owned(),
+        super::prebuilt::library(&deps, "sunrise_client")?,
     )];
     for krate in sdk.facade_crates() {
-        if krate != "horizon_client" {
+        if krate != "sunrise_client" {
             externs.push((
                 krate.to_owned(),
                 super::prebuilt::facade_library(&deps, krate, sdk)?,
@@ -233,7 +233,7 @@ impl Prepared<'_> {
     /// The build log's line for this mixin build.
     pub(super) fn log(&self) -> Result<(), String> {
         super::append_log(&trf(
-            "Function replacement: {count} functions patched by {rows} mixins, without rebuilding the game (copy {copy} ms, horizon-mixins {tool} ms, compile {compile} ms, total {total} ms)",
+            "Function replacement: {count} functions patched by {rows} mixins, without rebuilding the game (copy {copy} ms, sunrise-mixins {tool} ms, compile {compile} ms, total {total} ms)",
             &[
                 ("count", &self.count.to_string()),
                 ("rows", &self.rows.to_string()),
@@ -251,8 +251,8 @@ impl Prepared<'_> {
 /// replaces or redirects a filled loop's entry (anything but `HEAD` and `RETURN`, which compose
 /// around the loop), are refused by name.
 fn loop_slots(game: &Path, bundles: &[&Bundle]) -> Result<Vec<api_gen::patch::LoopSlots>, String> {
-    use horizon_mod_package::manifest::mixin::Kind;
-    let rows: Vec<(&Bundle, &horizon_mod_package::manifest::loops::Loop)> = bundles
+    use sunrise_mod_package::manifest::mixin::Kind;
+    let rows: Vec<(&Bundle, &sunrise_mod_package::manifest::loops::Loop)> = bundles
         .iter()
         .flat_map(|bundle| bundle.native().r#loop.iter().map(move |row| (*bundle, row)))
         .collect();
@@ -264,7 +264,7 @@ fn loop_slots(game: &Path, bundles: &[&Bundle]) -> Result<Vec<api_gen::patch::Lo
     }
     let published = match fs::read_to_string(&path) {
         Ok(text) => {
-            horizon_mod_package::build_data::read::<Loops>(api_gen::loops::FILE, &text)
+            sunrise_mod_package::build_data::read::<Loops>(api_gen::loops::FILE, &text)
                 .map_err(|e| format!("{}: {e}", path.display()))?
                 .1
                 .loops
@@ -369,7 +369,7 @@ fn function_index(game: &Path, commit: &str) -> Result<api_gen::functions::Funct
         )
     })?;
     let (build, index): (_, api_gen::functions::FunctionIndex) =
-        horizon_mod_package::build_data::read(FILE, &text)
+        sunrise_mod_package::build_data::read(FILE, &text)
             .map_err(|e| format!("E_MIXIN_INDEX: {e}"))?;
     if build.commit != commit {
         return Err(format!(
@@ -460,7 +460,7 @@ pub(super) fn prepare<'a>(
         .iter()
         .map(|p| (p.target.as_str(), p.id.as_str()))
         .collect();
-    // The workspace horizon-mixins plans against: one patch crate per game crate with copies.
+    // The workspace sunrise-mixins plans against: one patch crate per game crate with copies.
     let workspace = out.join("patch-workspace");
     let _ = fs::remove_dir_all(&workspace);
     let write = |path: PathBuf, text: &str| {
@@ -493,7 +493,7 @@ pub(super) fn prepare<'a>(
                 .collect::<String>()
         ),
     )?;
-    write(workspace.join(".horizon-revision"), sdk.commit())?;
+    write(workspace.join(".sunrise-revision"), sdk.commit())?;
     for (name, lib) in &generated.libs {
         let package = workspace.join(name);
         fs::create_dir_all(package.join("src")).map_err(|e| e.to_string())?;
@@ -527,7 +527,7 @@ pub(super) fn prepare<'a>(
         manifest.insert(
             "compatibility".into(),
             toml::Value::Table(toml::Table::from_iter([(
-                "horizon_revision".into(),
+                "sunrise_revision".into(),
                 sdk.commit().to_owned().into(),
             )])),
         );
@@ -536,7 +536,7 @@ pub(super) fn prepare<'a>(
             toml::Value::try_from(&rows).map_err(|e| e.to_string())?,
         );
         write(
-            dir.join("horizon-mixin.toml"),
+            dir.join("sunrise-mixin.toml"),
             &toml::to_string(&manifest).map_err(|e| e.to_string())?,
         )?;
     }
@@ -630,13 +630,13 @@ mod refusal_tests {
         std::fs::write(
             game.path().join("functions.json"),
             format!(
-                r#"{{"schema":1,"build":{{"commit":"{commit}"}},"crates":{{"horizon_client":{{"library":"horizon_client","modules":{{"horizon_client::game":[]}}}}}},"functions":{{"horizon_client::game::f":{{"module":"horizon_client::not a path!","file":"crates/horizon-client/src/game.rs","span":[0,1],"signature_hash":"","sha256":""}}}},"refused":{{}}}}"#
+                r#"{{"schema":1,"build":{{"commit":"{commit}"}},"crates":{{"sunrise_client":{{"library":"sunrise_client","modules":{{"sunrise_client::game":[]}}}}}},"functions":{{"sunrise_client::game::f":{{"module":"sunrise_client::not a path!","file":"crates/sunrise-client/src/game.rs","span":[0,1],"signature_hash":"","sha256":""}}}},"refused":{{}}}}"#
             ),
         )
         .unwrap();
         let error = super::function_index(game.path(), &commit).unwrap_err();
         assert!(
-            error.starts_with("E_MIXIN_INDEX: functions.json: function `horizon_client::game::f` is in `horizon_client::not a path!`"),
+            error.starts_with("E_MIXIN_INDEX: functions.json: function `sunrise_client::game::f` is in `sunrise_client::not a path!`"),
             "{error}"
         );
     }
@@ -650,7 +650,7 @@ mod refusal_tests {
         // The patch library's entry module hands its installs to the loader, which passes them
         // to the startup gate before any mod's entries are registered.
         let template =
-            include_str!("../../../crates/horizon-client/src/native_mod_entry.rs.template");
+            include_str!("../../../crates/sunrise-client/src/native_mod_entry.rs.template");
         let installs = template.find("fn installs()").unwrap();
         assert!(template[installs..].find("/* MOD_REDIRECTS */").is_some());
     }

@@ -15,19 +15,19 @@ on:
     branches: [main]
     paths:
       - 'launcher/**'
-      - 'crates/horizon-server-files/**'
-      - 'crates/horizon-java-properties/**'
-      - 'crates/horizon-client/src/carrier_store.rs'
-      - 'crates/horizon-client/src/carrier_store_tests.rs'
+      - 'crates/sunrise-server-files/**'
+      - 'crates/sunrise-java-properties/**'
+      - 'crates/sunrise-client/src/carrier_store.rs'
+      - 'crates/sunrise-client/src/carrier_store_tests.rs'
       - '.github/workflows/launcher-windows-check.yml'
   pull_request:
     paths:
       - 'launcher/**'
-      - 'crates/horizon-mod-package/**'
-      - 'crates/horizon-server-files/**'
-      - 'crates/horizon-java-properties/**'
-      - 'crates/horizon-client/src/carrier_store.rs'
-      - 'crates/horizon-client/src/carrier_store_tests.rs'
+      - 'crates/sunrise-mod-package/**'
+      - 'crates/sunrise-server-files/**'
+      - 'crates/sunrise-java-properties/**'
+      - 'crates/sunrise-client/src/carrier_store.rs'
+      - 'crates/sunrise-client/src/carrier_store_tests.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/launcher-windows-check.yml'
@@ -94,7 +94,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Debug builds: no launcher test depends on a release-only path (cfg!(debug_assertions) gates only the
       # self-update switch and development overrides, which no test reaches), and debug adds overflow checks.
-      - run: "cargo test --no-fail-fast --locked -p horizon-mod-package --features runtime-process --lib output::"
+      - run: "cargo test --no-fail-fast --locked -p sunrise-mod-package --features runtime-process --lib output::"
         working-directory: .
       # The library, the binary's own tests, the docs, and the tests/ targets that start no process.
       # Targets that start the debug launcher binary run in the daily launcher-processes job.
@@ -126,10 +126,10 @@ jobs:
           workspaces: .
           shared-key: runtime-leases-windows-check
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo build --release --locked -p horizon-mod-package --features runtime-process --example holder_actor
+      - run: cargo build --release --locked -p sunrise-mod-package --features runtime-process --example holder_actor
         working-directory: .
         shell: bash
-      - run: cargo test --no-fail-fast --release --locked -p horizon-mod-package --features runtime-process --lib
+      - run: cargo test --no-fail-fast --release --locked -p sunrise-mod-package --features runtime-process --lib
         working-directory: .
         shell: bash
       # The package's daily tests (its rows in tools/ci/ignored-tests/, the ones that start processes among them) run
@@ -139,13 +139,13 @@ jobs:
         shell: bash
         # bash -eo pipefail: a failure of the policy reader fails the step, never an empty selection.
         run: |
-          listed=$(python tools/ci/ignored_tests.py --daily-tests horizon-mod-package lib | tr -d '\r')
+          listed=$(python tools/ci/ignored_tests.py --daily-tests sunrise-mod-package lib | tr -d '\r')
           if [ -z "$listed" ]; then
-            echo "horizon-mod-package's library has no daily rows: nothing to run"
+            echo "sunrise-mod-package's library has no daily rows: nothing to run"
             exit 0
           fi
           mapfile -t tests <<< "$listed"
-          cargo test --no-fail-fast --release --locked -p horizon-mod-package --features runtime-process --lib \
+          cargo test --no-fail-fast --release --locked -p sunrise-mod-package --features runtime-process --lib \
             -- --ignored --exact "${tests[@]}"
 
   launcher-processes:

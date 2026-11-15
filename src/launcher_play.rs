@@ -19,7 +19,7 @@ impl Launcher {
         for home in homes {
             match backend::switch_from_auto(&home, api) {
                 Ok(changed) => switched |= changed,
-                Err(e) => eprintln!("Horizon launcher: could not switch to {label}: {e}"),
+                Err(e) => eprintln!("Sunrise launcher: could not switch to {label}: {e}"),
             }
         }
         switched.then_some(label)
@@ -152,12 +152,12 @@ impl Launcher {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
-        horizon_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
+        sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
             .minecraft_dir
             .clone()
-            .unwrap_or_else(|| horizon_platform::prepare::artifacts::minecraft_dir(None));
+            .unwrap_or_else(|| sunrise_platform::prepare::artifacts::minecraft_dir(None));
         self.prepare_log.clear();
         self.prepare_error = None;
         self.prepare_log
@@ -204,8 +204,8 @@ impl Launcher {
             .filter(|i| i.java.is_some())
             .cloned();
         if let Some(instance) = java {
-            // Mojang's game: no Horizon version or preparation, only no game already running.
-            // It joins a server; a friend's code and opening a world are Horizon's.
+            // Mojang's game: no Sunrise version or preparation, only no game already running.
+            // It joins a server; a friend's code and opening a world are Sunrise's.
             self.joining = None;
             let server = self
                 .quick_play
@@ -247,7 +247,7 @@ impl Launcher {
             let cmd = backend::java_game(&instance, server.as_deref(), &log).map(|mut cmd| {
                 let vars = instance.vars(cmd.get_program());
                 cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-                (horizon_launcher::launch::wrap(cmd, &instance.launch), vars)
+                (sunrise_launcher::launch::wrap(cmd, &instance.launch), vars)
             });
             let _ = tx.send(Msg::JavaGame(instance.id, instance.home, cmd));
         });
@@ -261,7 +261,7 @@ impl Launcher {
     }
 
     /// Whether the selected instance's version can start now, from a shortcut (a server's Join,
-    /// a world's Play, a friend's code): Horizon's only, never a Java instance.
+    /// a world's Play, a friend's code): Sunrise's only, never a Java instance.
     pub(crate) fn can_start_selected(&self) -> bool {
         self.selected_instance().is_none_or(|i| i.java.is_none())
             && self.selected().is_some_and(|tag| self.can_start(tag))
@@ -315,7 +315,7 @@ impl Launcher {
                 }
             }
             backend::play_step("reading the sign-in");
-            let session = if horizon_launcher::developer_offline::enabled(&tag) {
+            let session = if sunrise_launcher::developer_offline::enabled(&tag) {
                 Ok(None)
             } else {
                 account::session_for_game(&backend::game_home()).map(Some)
@@ -422,7 +422,7 @@ impl Launcher {
         self.cancel_sign_in();
         // The code page offers a private window: find the default browser meanwhile.
         std::thread::spawn(|| {
-            horizon_launcher::private_window::detected();
+            sunrise_launcher::private_window::detected();
         });
         self.sign_in = Some(match &target {
             Some(account) => SignIn::start_for(account.clone()),

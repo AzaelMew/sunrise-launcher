@@ -6,9 +6,9 @@
 //!   [`FRESH_SECS`]: a launcher started a few times in a row, or several pages asking for the same
 //!   list, spend one call. After that the read is a conditional request with the saved ETag. An
 //!   anonymous 304 still counts against the hour (measured 2026-11-01), so that only saves the
-//!   download; with `HORIZON_GITHUB_TOKEN` (CI) a 304 is free;
-//! - when GitHub answers with its rate limit (or not at all), Horizon's own repository is read
-//!   through the mirror `HORIZON_GITHUB_MIRROR` names, if any ([`MIRROR`]: none built in);
+//!   download; with `SUNRISE_GITHUB_TOKEN` (CI) a 304 is free;
+//! - when GitHub answers with its rate limit (or not at all), Sunrise's own repository is read
+//!   through the mirror `SUNRISE_GITHUB_MIRROR` names, if any ([`MIRROR`]: none built in);
 //! - when both fail, the last answer kept on disk is used, else the error says what happened.
 //!
 //! Release files are not read here: their `browser_download_url` (github.com, then
@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const API: &str = "https://api.github.com";
-/// The built-in read-only mirror of Horizon's release reads: none. `HORIZON_GITHUB_MIRROR` names one.
+/// The built-in read-only mirror of Sunrise's release reads: none. `SUNRISE_GITHUB_MIRROR` names one.
 pub const MIRROR: &str = "";
 
 /// How long a saved answer is used without asking again: the launcher looks for releases every
@@ -111,7 +111,7 @@ pub(crate) fn json_with(
     }
     Err(match from_mirror {
         Some(m) => format!(
-            "{why}, and Horizon's mirror of GitHub couldn't help either ({m}). Try again in a few minutes."
+            "{why}, and Sunrise's mirror of GitHub couldn't help either ({m}). Try again in a few minutes."
         ),
         None => why,
     })
@@ -119,7 +119,7 @@ pub(crate) fn json_with(
 
 const RATE_LIMITED: &str = "GitHub's rate limit was reached for your network";
 
-/// The mirror's URL for an API URL it serves (Horizon's own repository), or None.
+/// The mirror's URL for an API URL it serves (Sunrise's own repository), or None.
 fn mirror_url_with(url: &str, base: &str) -> Option<String> {
     let path = url.strip_prefix(API)?;
     let repo = format!("/repos/{}/", backend::REPO);
@@ -128,14 +128,14 @@ fn mirror_url_with(url: &str, base: &str) -> Option<String> {
 }
 
 fn mirror_base() -> String {
-    std::env::var("HORIZON_GITHUB_MIRROR").unwrap_or_else(|_| MIRROR.to_owned())
+    std::env::var("SUNRISE_GITHUB_MIRROR").unwrap_or_else(|_| MIRROR.to_owned())
 }
 
 /// GitHub itself, with the saved ETag when there is one.
 fn github(url: &str, etag: Option<&str>) -> Answer {
     let mut request = backend::agent(url).get(url);
     // CI runners share addresses and hit GitHub's anonymous rate limit; they pass their own token.
-    if let Some(token) = std::env::var("HORIZON_GITHUB_TOKEN")
+    if let Some(token) = std::env::var("SUNRISE_GITHUB_TOKEN")
         .ok()
         .filter(|t| !t.is_empty())
     {

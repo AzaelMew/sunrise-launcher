@@ -1,4 +1,4 @@
-//! A Sunrise build's first start. The launcher before it (Horizon's own, then the arismoko
+//! A Sunrise build's first start. The launcher before it (Sunrise's own, then the arismoko
 //! fork's: `identity::EARLIER`) left the player's settings, accounts and instances; they are
 //! copied into Sunrise's own folders, never moved, so the player keeps them and the earlier
 //! launcher keeps working. The earlier launcher's folders are only read.
@@ -24,7 +24,7 @@ const LAUNCHER_STATE: [&str; 8] = [
 /// override or a moved Sunrise location decides where the data is. A failure is reported and
 /// leaves the launcher to start empty: the earlier launcher's data is untouched either way.
 pub fn at_start() {
-    let overridden = ["HORIZON_LAUNCHER_HOME", "HORIZON_HOME"]
+    let overridden = ["SUNRISE_LAUNCHER_HOME", "SUNRISE_HOME"]
         .iter()
         .any(|name| std::env::var_os(name).is_some_and(|v| !v.is_empty()));
     if crate::identity::EARLIER.is_empty()

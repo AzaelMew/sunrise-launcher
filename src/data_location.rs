@@ -31,7 +31,7 @@ struct Location {
 
 pub fn bootstrap_path() -> Result<PathBuf> {
     // Portable installs and tests can keep their location pointer separate from the user profile.
-    if let Some(path) = std::env::var_os("HORIZON_LAUNCHER_LOCATION_FILE").filter(|p| !p.is_empty())
+    if let Some(path) = std::env::var_os("SUNRISE_LAUNCHER_LOCATION_FILE").filter(|p| !p.is_empty())
     {
         return pointer_path(Path::new(&path));
     }
@@ -47,7 +47,7 @@ pub fn bootstrap_path() -> Result<PathBuf> {
 }
 
 /// Where the library's own tests keep the launcher's and the game's data (`launcher`, `game`,
-/// `location.json` inside) unless `HORIZON_LAUNCHER_HOME` or `HORIZON_HOME` name another:
+/// `location.json` inside) unless `SUNRISE_LAUNCHER_HOME` or `SUNRISE_HOME` name another:
 /// never a player's install. A fixed path, not an environment change, so it holds from the
 /// first call on any thread, and a test that runs its own binary again shares it.
 ///
@@ -56,7 +56,7 @@ pub fn bootstrap_path() -> Result<PathBuf> {
 /// compares under one spelling.
 pub fn test_home() -> PathBuf {
     let temp = std::env::temp_dir();
-    crate::backend::plain(temp.canonicalize().unwrap_or(temp)).join("horizon-launcher-lib-tests")
+    crate::backend::plain(temp.canonicalize().unwrap_or(temp)).join("sunrise-launcher-lib-tests")
 }
 
 fn overridden(name: &str) -> bool {
@@ -64,7 +64,7 @@ fn overridden(name: &str) -> bool {
 }
 
 fn has_override() -> bool {
-    overridden("HORIZON_LAUNCHER_HOME") || overridden("HORIZON_HOME")
+    overridden("SUNRISE_LAUNCHER_HOME") || overridden("SUNRISE_HOME")
 }
 
 /// Roots resolved once per process. `retry` clears it so a repaired location is read again.
@@ -98,9 +98,9 @@ pub fn configured_roots() -> Result<Option<Roots>> {
     }
     // A unit test never reaches the player's real folders: unless it points at a location file
     // of its own, its roots are this test process's, under the temporary folder.
-    if cfg!(test) && !overridden("HORIZON_LAUNCHER_LOCATION_FILE") {
+    if cfg!(test) && !overridden("SUNRISE_LAUNCHER_LOCATION_FILE") {
         let home =
-            std::env::temp_dir().join(format!("horizon-launcher-test-{}", std::process::id()));
+            std::env::temp_dir().join(format!("sunrise-launcher-test-{}", std::process::id()));
         return Ok(Some(Roots {
             launcher: home.join("launcher"),
             game: home.join("game"),
@@ -109,7 +109,7 @@ pub fn configured_roots() -> Result<Option<Roots>> {
     }
     let mut slot = location();
     if slot.is_none() {
-        let resolved = if overridden("HORIZON_LAUNCHER_HOME") && overridden("HORIZON_HOME") {
+        let resolved = if overridden("SUNRISE_LAUNCHER_HOME") && overridden("SUNRISE_HOME") {
             Ok(None)
         } else {
             match bootstrap_path() {
@@ -247,7 +247,7 @@ pub fn resolve_at(bootstrap: &Path) -> Result<Option<Roots>> {
 /// Hold until process exit. Workers must enter before acquiring this shared lease.
 /// Override-based isolated runs do not touch the user's bootstrap lock.
 pub fn acquire_startup_lock() -> Result<Option<File>> {
-    if overridden("HORIZON_LAUNCHER_HOME") && overridden("HORIZON_HOME") {
+    if overridden("SUNRISE_LAUNCHER_HOME") && overridden("SUNRISE_HOME") {
         Ok(None)
     } else {
         acquire_lock_at(&bootstrap_path()?).map(Some)
@@ -298,7 +298,7 @@ pub fn migrate_current_with_prepare(
     prepare: impl FnOnce(&Roots, &Roots) -> Result<()>,
 ) -> Result<Roots> {
     if has_override() {
-        return Err("Unset HORIZON_LAUNCHER_HOME and HORIZON_HOME before moving data".into());
+        return Err("Unset SUNRISE_LAUNCHER_HOME and SUNRISE_HOME before moving data".into());
     }
     let bootstrap = bootstrap_path()?;
     let deadline = Instant::now() + Duration::from_secs(10);

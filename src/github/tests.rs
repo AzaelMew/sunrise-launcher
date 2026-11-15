@@ -2,7 +2,7 @@ use super::*;
 use std::cell::RefCell;
 
 fn scratch(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("horizon-github-{name}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("sunrise-github-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     root
@@ -17,7 +17,7 @@ fn list(tag: &str) -> serde_json::Value {
     serde_json::json!([{ "tag_name": tag }])
 }
 
-/// [`super::json_with`] with a mirror configured, as `HORIZON_GITHUB_MIRROR` would.
+/// [`super::json_with`] with a mirror configured, as `SUNRISE_GITHUB_MIRROR` would.
 fn json_with(
     url: &str,
     cache: &Path,
@@ -40,7 +40,7 @@ fn no_mirror(_: &str) -> Answer {
 }
 
 #[test]
-fn mirror_serves_only_horizons_repository() {
+fn mirror_serves_only_sunrises_repository() {
     let base = "https://mcp.example/github/public";
     assert_eq!(
         mirror_url_with(RELEASES, base).as_deref(),

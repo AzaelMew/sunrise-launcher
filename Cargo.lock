@@ -2804,520 +2804,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-addresses"
-version = "0.1.0"
-
-[[package]]
-name = "horizon-anticheat"
-version = "0.1.0"
-dependencies = [
- "serde",
- "toml 1.1.8+spec-1.1.0",
-]
-
-[[package]]
-name = "horizon-assets"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "horizon-core",
- "log",
- "serde",
- "serde_json",
- "zip",
-]
-
-[[package]]
-name = "horizon-bench"
-version = "0.1.0"
-dependencies = [
- "horizon-system",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "horizon-chat-filter"
-version = "0.1.0"
-dependencies = [
- "horizon-server-files",
- "serde",
- "serde_json",
- "toml 1.1.8+spec-1.1.0",
-]
-
-[[package]]
-name = "horizon-core"
-version = "0.1.0"
-dependencies = [
- "libm",
- "serde",
- "serde_json",
- "unicode_names2",
-]
-
-[[package]]
-name = "horizon-cosmetics"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "glam",
- "horizon-addresses",
- "png 0.18.1",
- "serde",
- "serde_json",
- "ureq",
-]
-
-[[package]]
-name = "horizon-friends"
-version = "0.1.0"
-dependencies = [
- "chacha20poly1305",
- "getrandom 0.3.4",
- "hkdf",
- "horizon-addresses",
- "if-addrs",
- "serde",
- "serde_json",
- "sha2",
- "socket2 0.6.5",
- "spake2",
-]
-
-[[package]]
-name = "horizon-game-discovery"
-version = "0.1.0"
-dependencies = [
- "horizon-mod-source",
- "proc-macro2",
- "quote",
- "serde_json",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "horizon-guest-stack"
-version = "0.1.0"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "horizon-hooks"
-version = "0.1.0"
-
-[[package]]
-name = "horizon-java-properties"
-version = "0.1.0"
-
-[[package]]
-name = "horizon-launcher"
-version = "1.0.0"
-dependencies = [
- "base64 0.22.1",
- "cap-fs-ext",
- "cap-std",
- "chacha20poly1305",
- "chrono",
- "clap",
- "clap_complete",
- "dirs",
- "flate2",
- "futures-lite",
- "futures-util",
- "getrandom 0.3.4",
- "glam",
- "gpui-fast",
- "gpui-fast-platform",
- "horizon-addresses",
- "horizon-core",
- "horizon-cosmetics",
- "horizon-friends",
- "horizon-launcher-scenery",
- "horizon-mcp",
- "horizon-mod-api-gen",
- "horizon-mod-package",
- "horizon-mod-point-emit",
- "horizon-mod-vocab",
- "horizon-platform",
- "horizon-port-pack",
- "horizon-prepare",
- "horizon-protocol",
- "horizon-release-sign",
- "horizon-server-launch",
- "horizon-shader-api",
- "horizon-system",
- "horizon-telemetry",
- "horizon-theme",
- "httpdate",
- "image",
- "keyring",
- "libc",
- "objc2-app-kit 0.3.2",
- "object 0.39.1",
- "oo7",
- "png 0.18.1",
- "proc-macro2",
- "pulldown-cmark",
- "quote",
- "raw-window-handle",
- "reqwest",
- "security-framework 3.7.0",
- "semver",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "syn 2.0.119",
- "sys-locale",
- "tar",
- "tempfile",
- "tokio",
- "toml 1.1.8+spec-1.1.0",
- "trash",
- "ureq",
- "wgpu",
- "windows 0.62.2",
- "windows-sys 0.61.2",
- "winreg",
- "winresource",
- "zip",
-]
-
-[[package]]
-name = "horizon-launcher-scenery"
-version = "0.1.0"
-dependencies = [
- "gpui-fast",
- "horizon-theme",
- "image",
- "objc2-app-kit 0.3.2",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "horizon-mcp"
-version = "0.1.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "horizon-mod-api-gen"
-version = "0.1.0"
-dependencies = [
- "heck 0.5.0",
- "horizon-game-discovery",
- "horizon-mod-point-shape",
- "horizon-mod-source",
- "horizon-mod-surface",
- "prettyplease",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
- "toml 1.1.8+spec-1.1.0",
- "wit-parser",
-]
-
-[[package]]
-name = "horizon-mod-api-macros"
-version = "0.1.0"
-dependencies = [
- "horizon-mod-point-shape",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "horizon-mod-package"
-version = "0.1.0"
-dependencies = [
- "cap-fs-ext",
- "cap-std",
- "getrandom 0.4.3",
- "horizon-core",
- "horizon-mod-api-macros",
- "horizon-mod-point-shape",
- "horizon-mod-surface",
- "horizon-mod-vocab",
- "horizon-shader-api",
- "libc",
- "log",
- "minisign-verify",
- "os_pipe",
- "png 0.18.1",
- "rustix",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "socket2 0.6.5",
- "subtle",
- "tar",
- "toml 1.1.8+spec-1.1.0",
- "wasmparser",
- "windows-sys 0.61.2",
- "xz4rust",
- "zip",
-]
-
-[[package]]
-name = "horizon-mod-point-emit"
-version = "0.1.0"
-dependencies = [
- "horizon-mod-package",
- "serde",
-]
-
-[[package]]
-name = "horizon-mod-point-shape"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "horizon-mod-runtime"
-version = "0.1.0"
-dependencies = [
- "horizon-core",
-]
-
-[[package]]
-name = "horizon-mod-source"
-version = "0.1.0"
-dependencies = [
- "horizon-mod-surface",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
- "toml 1.1.8+spec-1.1.0",
-]
-
-[[package]]
-name = "horizon-mod-surface"
-version = "0.1.0"
-dependencies = [
- "libc",
- "proc-macro2",
- "serde",
- "serde_json",
- "sha2",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "horizon-mod-vocab"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "glam",
- "horizon-core",
- "horizon-mod-api-gen",
- "horizon-mod-api-macros",
- "horizon-mod-runtime",
- "log",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "horizon-perf-format"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "prost",
- "prost-build",
- "protox",
-]
-
-[[package]]
-name = "horizon-platform"
-version = "0.1.0"
-dependencies = [
- "horizon-bench",
- "horizon-core",
- "horizon-guest-stack",
- "horizon-hooks",
- "horizon-java-properties",
- "horizon-mod-api-gen",
- "horizon-mod-point-shape",
- "horizon-perf-format",
- "horizon-prepare",
- "horizon-protocol",
- "horizon-server-files",
- "horizon-system",
- "horizon-world",
-]
-
-[[package]]
-name = "horizon-port-pack"
-version = "0.1.0"
-dependencies = [
- "horizon-mod-api-gen",
- "horizon-mod-package",
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "toml 1.1.8+spec-1.1.0",
- "ureq",
- "url",
- "zip",
-]
-
-[[package]]
-name = "horizon-prepare"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "libc",
- "regex",
- "sha1",
- "sha2",
- "zip",
-]
-
-[[package]]
-name = "horizon-protocol"
-version = "0.1.0"
-dependencies = [
- "aes",
- "flate2",
- "getrandom 0.3.4",
- "horizon-core",
- "horizon-mod-runtime",
- "horizon-world",
- "ipconfig",
- "log",
- "serde_json",
- "sha1",
- "sha2",
- "socket2 0.5.10",
-]
-
-[[package]]
-name = "horizon-release-sign"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "ring",
-]
-
-[[package]]
-name = "horizon-server-files"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "getrandom 0.3.4",
- "horizon-core",
- "horizon-java-properties",
- "horizon-protocol",
- "horizon-world",
- "log",
- "serde",
- "ureq",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "horizon-server-launch"
-version = "0.1.0"
-dependencies = [
- "dunce",
- "horizon-anticheat",
- "horizon-chat-filter",
- "horizon-core",
- "horizon-platform",
- "horizon-server-files",
- "serde",
- "toml 1.1.8+spec-1.1.0",
- "toml_edit 0.25.17+spec-1.1.0",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "horizon-shader-api"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "naga",
- "png 0.18.1",
- "serde",
- "serde_json",
- "sha2",
- "toml 1.1.8+spec-1.1.0",
- "zip",
-]
-
-[[package]]
-name = "horizon-system"
-version = "0.1.0"
-
-[[package]]
-name = "horizon-telemetry"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "horizon-addresses",
- "horizon-platform",
- "ruzstd",
- "serde",
- "serde_json",
- "ureq",
-]
-
-[[package]]
-name = "horizon-theme"
-version = "0.1.0"
-
-[[package]]
-name = "horizon-threads"
-version = "0.1.0"
-dependencies = [
- "addr2line 0.26.1",
- "framehop",
- "horizon-guest-stack",
- "libc",
- "libmimalloc-sys",
- "memmap2",
- "mimalloc",
- "object 0.39.1",
- "rustc-demangle",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "horizon-world"
-version = "0.1.0"
-dependencies = [
- "cap-fs-ext",
- "cap-std",
- "flate2",
- "horizon-assets",
- "horizon-core",
- "horizon-threads",
- "libm",
- "log",
- "lz4_flex",
- "postcard",
- "rustix",
- "serde",
- "serde_json",
- "sha2",
- "xxhash-rust",
-]
-
-[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6586,6 +6072,520 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "sunrise-addresses"
+version = "0.1.0"
+
+[[package]]
+name = "sunrise-anticheat"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
+name = "sunrise-assets"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "log",
+ "serde",
+ "serde_json",
+ "sunrise-core",
+ "zip",
+]
+
+[[package]]
+name = "sunrise-bench"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sunrise-system",
+]
+
+[[package]]
+name = "sunrise-chat-filter"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sunrise-server-files",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
+name = "sunrise-core"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "serde",
+ "serde_json",
+ "unicode_names2",
+]
+
+[[package]]
+name = "sunrise-cosmetics"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "glam",
+ "png 0.18.1",
+ "serde",
+ "serde_json",
+ "sunrise-addresses",
+ "ureq",
+]
+
+[[package]]
+name = "sunrise-friends"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "getrandom 0.3.4",
+ "hkdf",
+ "if-addrs",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.6.5",
+ "spake2",
+ "sunrise-addresses",
+]
+
+[[package]]
+name = "sunrise-game-discovery"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_json",
+ "sunrise-mod-source",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "sunrise-guest-stack"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "sunrise-hooks"
+version = "0.1.0"
+
+[[package]]
+name = "sunrise-java-properties"
+version = "0.1.0"
+
+[[package]]
+name = "sunrise-launcher"
+version = "1.0.0"
+dependencies = [
+ "base64 0.22.1",
+ "cap-fs-ext",
+ "cap-std",
+ "chacha20poly1305",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "dirs",
+ "flate2",
+ "futures-lite",
+ "futures-util",
+ "getrandom 0.3.4",
+ "glam",
+ "gpui-fast",
+ "gpui-fast-platform",
+ "httpdate",
+ "image",
+ "keyring",
+ "libc",
+ "objc2-app-kit 0.3.2",
+ "object 0.39.1",
+ "oo7",
+ "png 0.18.1",
+ "proc-macro2",
+ "pulldown-cmark",
+ "quote",
+ "raw-window-handle",
+ "reqwest",
+ "security-framework 3.7.0",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "sunrise-addresses",
+ "sunrise-core",
+ "sunrise-cosmetics",
+ "sunrise-friends",
+ "sunrise-launcher-scenery",
+ "sunrise-mcp",
+ "sunrise-mod-api-gen",
+ "sunrise-mod-package",
+ "sunrise-mod-point-emit",
+ "sunrise-mod-vocab",
+ "sunrise-platform",
+ "sunrise-port-pack",
+ "sunrise-prepare",
+ "sunrise-protocol",
+ "sunrise-release-sign",
+ "sunrise-server-launch",
+ "sunrise-shader-api",
+ "sunrise-system",
+ "sunrise-telemetry",
+ "sunrise-theme",
+ "syn 2.0.119",
+ "sys-locale",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 1.1.8+spec-1.1.0",
+ "trash",
+ "ureq",
+ "wgpu",
+ "windows 0.62.2",
+ "windows-sys 0.61.2",
+ "winreg",
+ "winresource",
+ "zip",
+]
+
+[[package]]
+name = "sunrise-launcher-scenery"
+version = "0.1.0"
+dependencies = [
+ "gpui-fast",
+ "image",
+ "objc2-app-kit 0.3.2",
+ "sunrise-theme",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sunrise-mcp"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "sunrise-mod-api-gen"
+version = "0.1.0"
+dependencies = [
+ "heck 0.5.0",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sunrise-game-discovery",
+ "sunrise-mod-point-shape",
+ "sunrise-mod-source",
+ "sunrise-mod-surface",
+ "syn 2.0.119",
+ "toml 1.1.8+spec-1.1.0",
+ "wit-parser",
+]
+
+[[package]]
+name = "sunrise-mod-api-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "sunrise-mod-point-shape",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "sunrise-mod-package"
+version = "0.1.0"
+dependencies = [
+ "cap-fs-ext",
+ "cap-std",
+ "getrandom 0.4.3",
+ "libc",
+ "log",
+ "minisign-verify",
+ "os_pipe",
+ "png 0.18.1",
+ "rustix",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.6.5",
+ "subtle",
+ "sunrise-core",
+ "sunrise-mod-api-macros",
+ "sunrise-mod-point-shape",
+ "sunrise-mod-surface",
+ "sunrise-mod-vocab",
+ "sunrise-shader-api",
+ "tar",
+ "toml 1.1.8+spec-1.1.0",
+ "wasmparser",
+ "windows-sys 0.61.2",
+ "xz4rust",
+ "zip",
+]
+
+[[package]]
+name = "sunrise-mod-point-emit"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sunrise-mod-package",
+]
+
+[[package]]
+name = "sunrise-mod-point-shape"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "sunrise-mod-runtime"
+version = "0.1.0"
+dependencies = [
+ "sunrise-core",
+]
+
+[[package]]
+name = "sunrise-mod-source"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "sunrise-mod-surface",
+ "syn 2.0.119",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
+name = "sunrise-mod-surface"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "sha2",
+ "syn 2.0.119",
+]
+
+[[package]]
+name = "sunrise-mod-vocab"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "log",
+ "serde",
+ "serde_json",
+ "sunrise-core",
+ "sunrise-mod-api-gen",
+ "sunrise-mod-api-macros",
+ "sunrise-mod-runtime",
+]
+
+[[package]]
+name = "sunrise-perf-format"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "prost",
+ "prost-build",
+ "protox",
+]
+
+[[package]]
+name = "sunrise-platform"
+version = "0.1.0"
+dependencies = [
+ "sunrise-bench",
+ "sunrise-core",
+ "sunrise-guest-stack",
+ "sunrise-hooks",
+ "sunrise-java-properties",
+ "sunrise-mod-api-gen",
+ "sunrise-mod-point-shape",
+ "sunrise-perf-format",
+ "sunrise-prepare",
+ "sunrise-protocol",
+ "sunrise-server-files",
+ "sunrise-system",
+ "sunrise-world",
+]
+
+[[package]]
+name = "sunrise-port-pack"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "sunrise-mod-api-gen",
+ "sunrise-mod-package",
+ "toml 1.1.8+spec-1.1.0",
+ "ureq",
+ "url",
+ "zip",
+]
+
+[[package]]
+name = "sunrise-prepare"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "libc",
+ "regex",
+ "sha1",
+ "sha2",
+ "zip",
+]
+
+[[package]]
+name = "sunrise-protocol"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "flate2",
+ "getrandom 0.3.4",
+ "ipconfig",
+ "log",
+ "serde_json",
+ "sha1",
+ "sha2",
+ "socket2 0.5.10",
+ "sunrise-core",
+ "sunrise-mod-runtime",
+ "sunrise-world",
+]
+
+[[package]]
+name = "sunrise-release-sign"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "ring",
+]
+
+[[package]]
+name = "sunrise-server-files"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.3.4",
+ "log",
+ "serde",
+ "sunrise-core",
+ "sunrise-java-properties",
+ "sunrise-protocol",
+ "sunrise-world",
+ "ureq",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sunrise-server-launch"
+version = "0.1.0"
+dependencies = [
+ "dunce",
+ "serde",
+ "sunrise-anticheat",
+ "sunrise-chat-filter",
+ "sunrise-core",
+ "sunrise-platform",
+ "sunrise-server-files",
+ "toml 1.1.8+spec-1.1.0",
+ "toml_edit 0.25.17+spec-1.1.0",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sunrise-shader-api"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "naga",
+ "png 0.18.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml 1.1.8+spec-1.1.0",
+ "zip",
+]
+
+[[package]]
+name = "sunrise-system"
+version = "0.1.0"
+
+[[package]]
+name = "sunrise-telemetry"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "ruzstd",
+ "serde",
+ "serde_json",
+ "sunrise-addresses",
+ "sunrise-platform",
+ "ureq",
+]
+
+[[package]]
+name = "sunrise-theme"
+version = "0.1.0"
+
+[[package]]
+name = "sunrise-threads"
+version = "0.1.0"
+dependencies = [
+ "addr2line 0.26.1",
+ "framehop",
+ "libc",
+ "libmimalloc-sys",
+ "memmap2",
+ "mimalloc",
+ "object 0.39.1",
+ "rustc-demangle",
+ "sunrise-guest-stack",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "sunrise-world"
+version = "0.1.0"
+dependencies = [
+ "cap-fs-ext",
+ "cap-std",
+ "flate2",
+ "libm",
+ "log",
+ "lz4_flex",
+ "postcard",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sunrise-assets",
+ "sunrise-core",
+ "sunrise-threads",
+ "xxhash-rust",
+]
 
 [[package]]
 name = "svg_fmt"
