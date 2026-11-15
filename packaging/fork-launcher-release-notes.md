@@ -6,7 +6,10 @@ launcher's (or the arismoko fork launcher's) settings, accounts and worlds, leav
 theirs as they are. It installs and updates only from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise).
 
-Sign in with a Microsoft account that owns Minecraft: Java Edition. Signed Nightly builds require a signed-in account that owns Minecraft.
+Sign in with a Microsoft account that owns Minecraft: Java Edition.
+Online sign-in waits on Mojang's approval of Sunrise's Microsoft app.
+
+Signed Nightly builds require a signed-in account that owns Minecraft.
 Accounts it signs in are stored under its own name, apart from the official launcher's.
 
 ## Downloads

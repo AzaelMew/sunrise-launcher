@@ -15,7 +15,8 @@ needed. Explicit home overrides still work for developers.
 
 Microsoft sign-in uses the application ID in the repository's
 `HORIZON_MSA_CLIENT_ID` variable, which release builds read; it is not in the
-source. Accounts and tokens stay in Sunrise's own storage. A build without a
+source. Online sign-in waits on Mojang's approval of Sunrise's Microsoft app.
+Accounts and tokens stay in Sunrise's own storage. A build without a
 configured ID cannot sign in. Unsigned local developer builds retain the explicit
 offline single-player switch. Signed builds retain account and ownership checks.
 
@@ -34,7 +35,7 @@ left unchanged. The workflow passes `github.repository` to the real build select
 and generates the corresponding build matrix. Existing signing, signature
 verification and publication gates are retained: dry runs use an ephemeral key,
 while publication uses Sunrise's signing key and still requires separate
-approval. The workflow must remain disabled until root authorizes a dispatch.
+approval.
 Sunrise's packages are Linux x86_64, Windows x64 and macOS Apple Silicon; macOS
 builds run on GitHub-hosted runners, never the upstream private runner.
 
@@ -539,9 +540,8 @@ Tailscale access token never goes to that file: without a keychain it lasts unti
 closes. When the game starts, it gets the session in a private file it
 deletes as soon as it has read it. Sign out removes the tokens.
 
-Sign-in needs Horizon's own Azure app registration: its client ID is built in from
-`HORIZON_MSA_CLIENT_ID` (and `HORIZON_MSA_CLIENT_ID` at run time overrides it; empty = not
-configured). How it works: [docs/microsoft-account.md](../docs/microsoft-account.md).
+Sign-in needs an Azure app registration: its client ID is configuration, built in from
+`HORIZON_MSA_CLIENT_ID` (the same variable at run time overrides it; empty = not configured). How it works: [docs/microsoft-account.md](../docs/microsoft-account.md).
 
 ## Logs and crash reports
 

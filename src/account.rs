@@ -10,8 +10,9 @@
 //! Minecraft: Java Edition, as other launchers do, and the game plays as the selected account.
 //! The game binary itself, its harnesses and the servers don't go through the launcher's gate.
 //!
-//! The Azure app (client ID) is Horizon's own and is configuration: `HORIZON_MSA_CLIENT_ID` at
-//! build time, or at run time to override it. Without one, sign-in says it is not configured.
+//! The Azure app (client ID) is configuration read at build time: `HORIZON_MSA_CLIENT_ID`
+//! (release builds take it from the repository variable), which the same variable at run time
+//! overrides. Without one, sign-in says it is not configured.
 pub mod session;
 
 use serde_json::{json, Value};
