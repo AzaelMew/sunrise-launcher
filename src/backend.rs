@@ -6214,7 +6214,7 @@ pub fn {f}("
     #[test]
     fn links_fall_back_to_the_built_in_ones() {
         let defaults = Links::default();
-        assert_eq!(defaults.discord, "");
+        assert_eq!(defaults.discord, "https://discord.gg/eswQcHfRKC");
         assert_eq!(defaults.sponsor, "");
         assert_eq!(defaults.website, "https://playsunrise.net");
         assert_eq!(defaults.roadmap, "");

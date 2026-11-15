@@ -654,7 +654,7 @@ impl Launcher {
             foot = foot.children(self.rail_update_card(soft, cx));
             // Sculk's card (a sponsor), only where the rail is wide enough to show it.
             // When the instances already overflow the rail, the list keeps the room.
-            if !self.settings.partner_hidden && p > 0.98 && !overflows {
+            if !self.settings.partner_hidden && !partner::URL.is_empty() && p > 0.98 && !overflows {
                 let free = f32::from(window.viewport_size().height) - 420. - 52. * rows as f32;
                 let mut side = div().relative().mb(px(6.)).child(partner::card(
                     "partner-side",

@@ -17,7 +17,7 @@ use crate::wardrobe::{Catalogue, Claim, Set};
 use std::collections::{BTreeMap, HashSet};
 
 /// Where the website opens Paddle's checkout for a transaction the service started.
-pub const PAY_URL: &str = "https://playhorizon.dev/shop/pay";
+pub const PAY_URL: &str = "";
 
 /// The founder set's id in an order: the free claim, through the same checkout.
 pub const FOUNDER_SET: &str = "founder_set";
@@ -40,8 +40,11 @@ pub fn in_top_bar(forced: bool, status: Option<&Claim>, kept: Option<&Claim>) ->
 /// one of Paddle's transaction ids (it goes into a URL).
 pub fn pay_url(txn: &str) -> Option<String> {
     let id = txn.strip_prefix("txn_")?;
-    (!id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric()))
-        .then(|| format!("{PAY_URL}?_ptxn={txn}"))
+    (!PAY_URL.is_empty()
+        && !id.is_empty()
+        && id.len() <= 64
+        && id.bytes().all(|b| b.is_ascii_alphanumeric()))
+    .then(|| format!("{PAY_URL}?_ptxn={txn}"))
 }
 
 /// A price as the shop writes it, in cents of `currency`: `$4.99`, `€4.99`, `£4.49`,

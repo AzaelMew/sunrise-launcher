@@ -8,7 +8,7 @@
 use std::path::Path;
 
 /// mclo.gs's API; `HORIZON_LAUNCHER_PASTE_URL` points it elsewhere for tests.
-const API: &str = "https://api.mclo.gs/1";
+const API: &str = "";
 const PASTE_ENV: &str = "HORIZON_LAUNCHER_PASTE_URL";
 /// mclo.gs keeps at most 25,000 lines and 10 MiB: the end of a longer log is sent.
 const MAX_LINES: usize = 25_000;
@@ -123,6 +123,9 @@ pub struct Shared {
 
 /// Uploads `text` (already [`private`]) and returns its link.
 pub fn share(text: &str) -> Result<Shared, String> {
+    if api().is_empty() {
+        return Err("Log sharing is not configured for this build.".into());
+    }
     let body = serde_json::json!({ "content": fit(text), "source": "Horizon launcher" });
     let answer: serde_json::Value = ureq::post(&format!("{}/log", api()))
         .send_json(body)

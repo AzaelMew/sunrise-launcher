@@ -15,6 +15,7 @@
 # (launcher/src/desktop.rs). Both only work for an AppImage built here.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+repo=$(git -C "$here" rev-parse --show-toplevel)
 binary=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 version=$2
 out=$(mkdir -p "$3" && cd "$3" && pwd)
@@ -25,6 +26,11 @@ trap 'rm -rf "$work"' EXIT
 appdir=$work/AppDir
 mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" \
   "$appdir/usr/share/applications" "$appdir/usr/share/icons"
+
+# Both source licences travel inside the image.
+mkdir -p "$appdir/LICENSES"
+cp "$repo/LICENSE" "$appdir/LICENSE"
+cp "$repo/LICENSES/MIT-Horizon.txt" "$appdir/LICENSES/"
 
 # The program.
 cp "$binary" "$appdir/usr/bin/horizon-launcher"

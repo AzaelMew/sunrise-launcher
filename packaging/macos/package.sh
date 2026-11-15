@@ -15,6 +15,7 @@
 # see packaging/macos/README.md).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
+repo=$(git -C "$here" rev-parse --show-toplevel)
 binary=$1
 version=$2
 out=$(mkdir -p "$3" && cd "$3" && pwd)
@@ -31,7 +32,9 @@ dmg=$out/horizon-launcher-macos-$arch.dmg
 app=$out/Horizon.app
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/LICENSES"
+cp "$repo/LICENSE" "$app/Contents/Resources/LICENSE"
+cp "$repo/LICENSES/MIT-Horizon.txt" "$app/Contents/Resources/LICENSES/"
 cp "$binary" "$app/Contents/MacOS/horizon-launcher"
 chmod 755 "$app/Contents/MacOS/horizon-launcher"
 cp "$here/../icons/horizon.icns" "$app/Contents/Resources/horizon.icns"

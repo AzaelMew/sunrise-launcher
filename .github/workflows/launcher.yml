@@ -333,10 +333,13 @@ jobs:
             fi
             mkdir -p dist
             cp "$BIN/${{ matrix.binary }}" dist/
+            cp ../LICENSE dist/
+            mkdir -p dist/LICENSES
+            cp ../LICENSES/MIT-Horizon.txt dist/LICENSES/
             if [[ "${{ matrix.asset }}" == *.tar.gz ]]; then
-              (cd dist && tar czf ../out/${{ matrix.asset }} ${{ matrix.binary }})
+              (cd dist && tar czf ../out/${{ matrix.asset }} ${{ matrix.binary }} LICENSE LICENSES)
             else
-              (cd dist && 7z a ../out/${{ matrix.asset }} ${{ matrix.binary }})
+              (cd dist && 7z a ../out/${{ matrix.asset }} ${{ matrix.binary }} LICENSE LICENSES)
             fi
           fi
           ls -l out

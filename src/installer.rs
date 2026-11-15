@@ -338,6 +338,14 @@ pub fn install(options: &Options, progress: impl Fn(Step, f32)) -> Result<PathBu
     if !same_path(&source, &exe) {
         place(&source, &exe).map_err(|e| format!("{}: {e}", exe.display()))?;
     }
+    fs::write(dir.join("LICENSE"), include_str!("../../LICENSE"))
+        .map_err(|e| format!("The licence: {e}"))?;
+    fs::create_dir_all(dir.join("LICENSES")).map_err(|e| format!("The licences: {e}"))?;
+    fs::write(
+        dir.join("LICENSES/MIT-Horizon.txt"),
+        include_str!("../../LICENSES/MIT-Horizon.txt"),
+    )
+    .map_err(|e| format!("The MIT notice: {e}"))?;
     progress(Step::Shortcuts, 0.6);
     if let Some(link) = start_menu_link() {
         write_link(&link, &exe).map_err(|e| format!("{}: {e}", link.display()))?;
@@ -511,6 +519,10 @@ pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<
             left.push(format!("{}: {e}", own.display()));
         }
     }
+    for notice in ["LICENSE", "LICENSES/MIT-Horizon.txt"] {
+        remove_file(&dir.join(notice), &mut left);
+    }
+    let _ = fs::remove_dir(dir.join("LICENSES"));
     // Only what setup and self-updates put there: the launcher and what they moved aside.
     for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().to_lowercase();

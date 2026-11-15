@@ -310,7 +310,7 @@ impl Launcher {
         // its wide banner. Tall where the sidebar has the height for it besides the wordmark, its rows
         // (52 high each, under headings of 40) and the links, compact otherwise. After a while on
         // screen a "Hide" beside its label puts it away for good.
-        if self.page != Page::Servers && !self.settings.partner_hidden {
+        if self.page != Page::Servers && !self.settings.partner_hidden && !partner::URL.is_empty() {
             let free = f32::from(window.viewport_size().height)
                 - theme::TOPBAR
                 - 40. * headings as f32

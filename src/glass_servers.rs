@@ -810,7 +810,7 @@ impl Launcher {
     /// Sculk's banner (sponsor, not in the mockup) on a glass card: "Partner" as the cards' small
     /// headings, Hide once it has been on screen a while, the banner Sculk made.
     fn glass_sculk(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        if self.settings.partner_hidden {
+        if self.settings.partner_hidden || super::partner::URL.is_empty() {
             return None;
         }
         let t = self.theme;

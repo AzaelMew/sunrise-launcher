@@ -147,7 +147,7 @@ fn searches_by_kind_and_words() {
     );
     let p = hud(&index);
     assert_eq!(p.support(), super::super::Support::Works);
-    assert_eq!(p.page, "https://playhorizon.dev/mods/coords_hud");
+    assert_eq!(p.page, "/coords_hud");
 }
 
 #[test]
@@ -731,10 +731,7 @@ fn ratings_keep_only_what_is_well_formed() {
     );
     assert!(parse_ratings("not json").is_empty());
     assert!(parse_ratings(r#"{"projects": []}"#).is_empty());
-    assert_eq!(
-        rate_url("zoom"),
-        "https://playhorizon.dev/api/mods/auth/login?back=/mods/zoom"
-    );
+    assert_eq!(rate_url("zoom"), "");
 }
 
 #[test]

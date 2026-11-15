@@ -476,6 +476,9 @@ impl Launcher {
     /// answer, or the selected account's own (a preview for it, a claim), from this visit or kept
     /// on disk.
     pub(super) fn wardrobe_shown(&self) -> bool {
+        if horizon_cosmetics::API.is_empty() && !horizon_cosmetics::forced() {
+            return false;
+        }
         let own = (self.wardrobe.as_ref())
             .and_then(|w| w.saved.me.as_ref())
             .map(|m| &m.claim)
@@ -491,6 +494,9 @@ impl Launcher {
     /// (`GET /v1/shop`, no session, nothing about the player), and read the selected account's
     /// own last answer from disk. Offline, the last answer stands.
     pub(super) fn watch_shop(&self, cx: &mut Context<Self>) {
+        if horizon_cosmetics::API.is_empty() && !horizon_cosmetics::forced() {
+            return;
+        }
         cx.spawn(async move |this, cx| loop {
             let Ok(uuid) = this.update(cx, |this, _| this.wardrobe_account().map(|a| a.uuid))
             else {

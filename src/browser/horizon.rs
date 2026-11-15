@@ -16,9 +16,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Where the registry publishes its index (GitHub Pages of horizon-rust/horizon-mods).
-pub const INDEX_URL: &str = "https://horizon-rust.github.io/horizon-mods/index.json";
+pub const INDEX_URL: &str = "";
 /// The registry's pages on the website, `<SITE>/<id>`.
-const SITE: &str = "https://playhorizon.dev/mods";
+const SITE: &str = "";
 /// The report form of a project.
 const REPORT: &str = "https://github.com/horizon-rust/horizon-mods/issues/new?template=report.yml";
 /// The loader name the browser gives registry versions, so `support` and `pick` know them.
@@ -30,10 +30,10 @@ const MAX_INDEX: u64 = 16 << 20;
 /// The last index fetched, kept in the game folder for when the registry can't be reached.
 const CACHE: &str = "mod-browser/horizon-index.json";
 /// Players' ratings of every project (the registry service, crates/horizon-mod-registry).
-const RATINGS_URL: &str = "https://playhorizon.dev/api/mods/ratings";
+const RATINGS_URL: &str = "";
 /// Where a player rates a project: the site's GitHub sign-in, which comes back to its page.
 /// The launcher has no GitHub account of its own.
-const RATE: &str = "https://playhorizon.dev/api/mods/auth/login?back=/mods/";
+const RATE: &str = "";
 
 /// Where the index comes from: `HORIZON_MOD_INDEX` (a file or an `https://` address, for a
 /// test registry), else [`INDEX_URL`].
@@ -106,6 +106,9 @@ pub fn github_stars(id: &str) -> Option<u64> {
 /// The index: the one fetched in the last ten minutes, else fetched again (and kept in the game
 /// folder), else the copy kept last time.
 pub fn index() -> Result<Arc<Index>, String> {
+    if location().is_empty() {
+        return Err("The Sunrise mod registry is not available yet.".into());
+    }
     if let Some((at, index)) = LOADED.lock().unwrap().as_ref() {
         if at.elapsed() < FRESH {
             return Ok(index.clone());
@@ -180,6 +183,9 @@ pub fn rating(id: &str) -> Option<Option<Rating>> {
 
 /// The page that signs the player in with GitHub on the site and lets them rate `id`.
 pub fn rate_url(id: &str) -> String {
+    if RATE.is_empty() {
+        return String::new();
+    }
     format!("{RATE}{id}")
 }
 
