@@ -43,9 +43,9 @@ mod picker;
 mod prebuilt;
 pub mod sdk_cache;
 
-pub use isolate::LeftOut;
+pub use isolate::{LeftOut, Why};
 pub use picker::{Route, Routes};
-pub use prebuilt::Refusal;
+pub use prebuilt::{compiling as compiling_mod, Refusal};
 pub use registry_inventory::Inventory as RegistryInventory;
 
 // Settings and logs are shared by native-build and diagnostics tests.
@@ -243,14 +243,6 @@ impl Plan {
         match self {
             Self::UpToDate => tr("Up to date (no build needed)").into(),
             Self::Prebuilt => tr("Prebuilt game: only the mods compile").into(),
-        }
-    }
-
-    /// The plan's short name in a completed build's status.
-    fn kind(&self) -> &'static str {
-        match self {
-            Self::UpToDate => "up to date",
-            Self::Prebuilt => "prebuilt",
         }
     }
 }
@@ -726,7 +718,7 @@ pub fn revision_of(version: &str) -> Result<String, String> {
     sdk_cache::build_of(
         version,
         &sdk_cache::Base::from_env(),
-        &horizon_release_sign::trusted_keys_for(backend::REPO),
+        &horizon_release_sign::sdk_keys_for(backend::REPO),
     )
     .map_err(|refusal| refusal.to_string())
 }
@@ -955,12 +947,22 @@ pub enum Step {
         done: u64,
         total: u64,
     },
+    /// The mod tools of a build were all kept from an earlier build: nothing is downloaded.
+    ToolsKept {
+        build: String,
+    },
     /// Each mod is checked against the build: how many.
     Checking(usize),
     /// A world was backed up before the mods saved in it were switched off: where.
     BackedUp(String),
     /// The mods compile against the prebuilt game.
     PrebuiltMods,
+    /// One mod's own library starts compiling: which, and how far through the mods.
+    Mod {
+        id: String,
+        done: usize,
+        total: usize,
+    },
     Install,
     /// This mod was left out of the build.
     LeftOut(LeftOut),
@@ -989,7 +991,7 @@ impl Stage {
     pub fn label(self) -> &'static str {
         match self {
             Self::Prepare => tr("Prepare"),
-            Self::Compile => tr("Compile"),
+            Self::Compile => tr("Build"),
             Self::Install => tr("Install"),
         }
     }
@@ -1016,6 +1018,7 @@ impl Step {
             | Self::LeftOut(_)
             | Self::Checking(_)
             | Self::BackedUp(_) => (Stage::Prepare, None),
+            Self::ToolsKept { .. } => (Stage::Prepare, Some(1.)),
             Self::Tools { done, total, .. } => (
                 Stage::Prepare,
                 (*total > 0).then_some(*done as f32 / *total as f32),
@@ -1025,6 +1028,10 @@ impl Step {
                 total.filter(|t| *t > 0).map(|t| *done as f32 / t as f32),
             ),
             Self::PrebuiltMods => (Stage::Compile, None),
+            Self::Mod { done, total, .. } => (
+                Stage::Compile,
+                (*total > 0).then(|| done.saturating_sub(1) as f32 / *total as f32),
+            ),
             Self::Install => (Stage::Install, None),
             Self::Done { .. } => (Stage::Install, Some(1.)),
         };
@@ -1056,12 +1063,24 @@ impl Step {
                     ("total", &total.div_ceil(1_000_000).max(1).to_string()),
                 ],
             ),
+            Self::ToolsKept { build } => trf(
+                "Using the mod tools for {build} kept from an earlier build",
+                &[("build", build)],
+            ),
             Self::BackedUp(said) => said.clone(),
             Self::Checking(count) => match count {
                 1 => tr("Checking 1 mod").into(),
                 count => trf("Checking {count} mods", &[("count", &count.to_string())]),
             },
             Self::PrebuiltMods => tr("Compiling the mods against the prebuilt game").into(),
+            Self::Mod { id, done, total } => trf(
+                "Compiling {mod} ({done} of {total})",
+                &[
+                    ("mod", id),
+                    ("done", &done.to_string()),
+                    ("total", &total.to_string()),
+                ],
+            ),
             Self::Plan(plan, profile) => format!("{} ({})", plan.label(), profile.name()),
             Self::Compile {
                 done,
@@ -1089,10 +1108,42 @@ impl Step {
             },
             Self::Install => tr("Installing the build").into(),
             Self::LeftOut(left) => left.label(),
-            Self::Done { profile, plan, .. } => trf(
-                "Built ({profile}, {plan})",
-                &[("profile", profile.name()), ("plan", tr(plan.kind()))],
+            Self::Done { secs, .. } => trf(
+                "Your mods are built (took {secs} s).",
+                &[("secs", &secs.to_string())],
             ),
+        }
+    }
+
+    /// The step as the window's build card says it, in a player's words: the compiler and the
+    /// mod tools by what they are, the toolchain's own steps as getting ready. The command line
+    /// and the log keep [`Self::label`].
+    pub fn shown(&self) -> String {
+        match self {
+            Self::Rust(_) => tr("Downloading the compiler").into(),
+            Self::Tool => tr("Getting the mod tools ready").into(),
+            Self::Source(_) | Self::Crates | Self::Plan(..) => tr("Getting ready to build").into(),
+            Self::Mixins | Self::CachedMixins | Self::PrebuiltMods => {
+                tr("Preparing your mods").into()
+            }
+            Self::Tools { done, total, .. } => trf(
+                "Downloading the mod tools: {done} of {total} MB",
+                &[
+                    ("done", &(done / 1_000_000).to_string()),
+                    ("total", &total.div_ceil(1_000_000).max(1).to_string()),
+                ],
+            ),
+            Self::ToolsKept { .. } => tr("Using the mod tools already downloaded").into(),
+            Self::Compile { .. } => tr("Building the game with your mods").into(),
+            Self::Mod { id, done, total } => trf(
+                "Building {mod} ({done} of {total})",
+                &[
+                    ("mod", id),
+                    ("done", &done.to_string()),
+                    ("total", &total.to_string()),
+                ],
+            ),
+            _ => self.label(),
         }
     }
 }
@@ -1259,7 +1310,7 @@ fn with_app_control(error: String) -> String {
 }
 
 /// [`run`]'s error: the `errors` lines not already among the last ones (`tail`), then those.
-fn failure(what: &str, status: &str, errors: &[String], tail: &[String]) -> String {
+pub fn failure(what: &str, status: &str, errors: &[String], tail: &[String]) -> String {
     let end = diagnostic(&tail.join("\n")).unwrap_or_else(|| tail.join("\n"));
     let first: Vec<&str> = errors
         .iter()
@@ -1278,6 +1329,26 @@ fn failure(what: &str, status: &str, errors: &[String], tail: &[String]) -> Stri
         "{what} failed ({status}). {shown}, the whole of it in {}:\n{first}{end}",
         log_path().display()
     )
+}
+
+/// The mod among `ids` whose own compile `error` reports ([`failure`] led by `prebuilt::compiling`).
+pub fn compile_failed_mod<'a>(error: &str, ids: &'a [String]) -> Option<&'a String> {
+    ids.iter()
+        .find(|id| error.contains(&format!("{} failed (", compiling_mod(id))))
+}
+
+/// The mod among `ids` whose build script or features stopped the build `error` describes, and
+/// why: `error` holds that refusal word for word (the build log keeps it).
+pub fn refused_mod<'a>(error: &str, ids: &'a [String]) -> Option<(&'a String, Refusal)> {
+    ids.iter().find_map(|id| {
+        [
+            Refusal::BuildScript { mod_id: id.clone() },
+            Refusal::Features { mod_id: id.clone() },
+        ]
+        .into_iter()
+        .find(|refusal| error.contains(&refusal.to_string()))
+        .map(|refusal| (id, refusal))
+    })
 }
 
 /// Extracts the mod id from a mixin manifest or mod file path (e.g. `.../mixins.incoming/<mod_id>/...`
@@ -1887,7 +1958,7 @@ fn pipeline(
     let revision = build_revision(base, built_on.as_ref())?;
     let developer = crate::developer_install::is_developer(origin);
     let sdk_base = sdk_cache::Base::from_env();
-    let keys = horizon_release_sign::trusted_keys_for(backend::REPO);
+    let keys = horizon_release_sign::sdk_keys_for(backend::REPO);
     // A developer install's checkout has no published surface to test against: its mods are
     // made for it exactly. Any other build tests each mod made for another build (SDK design §10).
     let sdk = if developer {
@@ -1981,7 +2052,7 @@ fn pipeline(
     let blame = |e: String| -> Failed {
         let failed = fitted.iter().find_map(|id| {
             let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
-            e.contains(&format!("{} failed", prebuilt::compiling(id)))
+            e.contains(&format!("{} failed", compiling_mod(id)))
                 .then(|| LeftOut::new(bundle, isolate::Why::DidNotBuild))
         });
         let Some(left) = failed else {
@@ -2068,11 +2139,18 @@ fn pipeline(
                     &sdk_base,
                     prebuilt::Route::of(&projects),
                     target,
+                    // Nothing to fetch (every slice kept from an earlier build) is said as such,
+                    // never as a download of nothing.
                     &|got: sdk_cache::Fetched| {
-                        progress(Step::Tools {
-                            build: shown.clone(),
-                            done: got.done,
-                            total: got.total,
+                        progress(match got.total {
+                            0 => Step::ToolsKept {
+                                build: shown.clone(),
+                            },
+                            total => Step::Tools {
+                                build: shown.clone(),
+                                done: got.done,
+                                total,
+                            },
                         })
                     },
                 )
@@ -2162,6 +2240,13 @@ fn pipeline(
             &declared,
             &resolution,
             options.registry_consent,
+            &|id, done, total| {
+                progress(Step::Mod {
+                    id: id.to_owned(),
+                    done,
+                    total,
+                })
+            },
         )
         .map_err(blame)?;
         // The whole step; the tool's own build and the function replacement have their lines.
@@ -2327,8 +2412,14 @@ pub fn build(
             other => other,
         })?;
         check_cancelled()?;
+        // A version or channel the player saved while this built wins: the build stays
+        // available, the instance keeps their choice.
         instances::edit(&instance.id, |meta| {
-            meta.version = Some(built.version.clone())
+            let unchanged = meta.version == instance.version
+                && meta.channel.unwrap_or_default() == instance.channel;
+            if unchanged {
+                meta.version = Some(built.version.clone());
+            }
         })?;
         // logged() runs central eviction under the retained build lease.
         if built.plan != Plan::UpToDate {
@@ -2552,6 +2643,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_window_says_build_steps_in_player_words() {
+        let rust = Step::Rust(0.42).shown();
+        assert!(!rust.contains("Rust") && !rust.contains('%'), "{rust}");
+        assert!(!Step::Tool.shown().contains("mixins"));
+        assert!(!Step::Mixins.shown().contains("mixins"));
+        // A step already in plain words reads the same in both.
+        let done = Step::Done {
+            secs: 41,
+            profile: Profile::Optimized,
+            plan: Plan::Prebuilt,
+        };
+        assert_eq!(done.shown(), done.label());
+    }
+
+    #[test]
     fn source_archive_escape_is_refused_without_writing_outside() {
         let folder = tempfile::tempdir().unwrap();
         let mut header = tar::Header::new_gnu();
@@ -2697,7 +2803,7 @@ mod tests {
 
     #[test]
     fn isolation_keeps_cancellation_exact_after_a_retry() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let mut attempts = 0;
         let result = isolated(
             |skip| {
@@ -2725,7 +2831,7 @@ mod tests {
     #[test]
     fn a_mod_saved_into_a_world_is_never_switched_off_without_the_players_choice() {
         use horizon_platform::world::nbt::{self, Limits, Tag};
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let home = dir("guard-worlds");
         let world = home.join("saves").join("Home");
         fs::create_dir_all(&world).unwrap();
@@ -2825,7 +2931,7 @@ mod tests {
 
     #[test]
     fn isolation_bounds_recompiles_and_keeps_the_failure() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let mut attempts = 0;
         let result = isolated(
             |skip| {
@@ -2949,6 +3055,31 @@ mod tests {
         );
         assert!(!carried_over(OsStr::new(backend::CLIENT), Target::Server));
         assert!(carried_over(OsStr::new("resources"), Target::Server));
+    }
+
+    /// Takes the shared test lock after checking that settings, build log and builds resolve
+    /// under the lib tests' scratch home, never a real install (no env changes: they race). A
+    /// home the developer set with `HORIZON_LAUNCHER_HOME` / `HORIZON_HOME` is theirs to choose.
+    pub(super) fn scratch_state() -> std::sync::MutexGuard<'static, ()> {
+        let scratch = crate::data_location::test_home();
+        let set = |name| std::env::var_os(name).is_some();
+        if !set("HORIZON_LAUNCHER_HOME") {
+            assert!(
+                backend::data_dir().starts_with(&scratch),
+                "settings outside the scratch home"
+            );
+            assert!(
+                backend::build_dir().starts_with(&scratch),
+                "builds outside the scratch home"
+            );
+        }
+        if !set("HORIZON_HOME") {
+            assert!(
+                backend::game_home().starts_with(&scratch),
+                "game outside the scratch home"
+            );
+        }
+        TEST_STATE.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub(super) fn dir(name: &str) -> PathBuf {
@@ -3428,7 +3559,7 @@ mod tests {
 
     #[test]
     fn a_native_build_without_a_record_is_refused_before_preparation() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
         let Err(error) = pipeline(
             &lease,
@@ -3755,7 +3886,7 @@ mod tests {
     /// and no instance is edited or version selected.
     #[test]
     fn a_server_build_refuses_an_existing_output_before_building() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         backend::Settings::load().allow_native_mods().unwrap();
         let output = dir("server-output");
         let folder = dir("server-mods");
@@ -3802,7 +3933,7 @@ mod tests {
 
     #[test]
     fn automatic_build_does_not_save_its_effective_profile() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let original = backend::Settings::load();
         backend::Settings::load().allow_native_mods().unwrap();
         let file = backend::data_dir().join("instances.json");
@@ -3834,7 +3965,7 @@ mod tests {
 
     #[test]
     fn folder_planning_reuses_the_build_snapshot_without_restaging_packages() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let original = backend::Settings::load();
         backend::Settings::load().allow_native_mods().unwrap();
         let folder = dir("profile-snapshot");
@@ -3864,7 +3995,7 @@ mod tests {
     #[test]
     fn missing_consent_blocks_all_build_routes_before_http_or_staging() {
         use std::net::TcpListener;
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         let original = backend::Settings::load();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -3936,7 +4067,7 @@ mod tests {
     /// one log file.
     #[test]
     fn the_log_is_fresh_per_attempt_and_keeps_early_failures() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         backend::Settings::load().allow_native_mods().unwrap();
         clear_log().unwrap();
         append_log("the last build's output").unwrap();
@@ -4206,6 +4337,20 @@ mod tests {
     }
 
     #[test]
+    fn a_mods_own_compile_failure_is_traced_to_that_mod() {
+        let ids = ["greeter".to_owned(), "fast-ore".to_owned()];
+        let error = failure(
+            &compiling_mod("fast-ore"),
+            "exit status: 101",
+            &["error[E0425]: cannot find value `speed`".into()],
+            &[],
+        );
+        assert_eq!(compile_failed_mod(&error, &ids), Some(&ids[1]));
+        let game = failure("Compiling the game", "exit status: 101", &[], &[]);
+        assert_eq!(compile_failed_mod(&game, &ids), None);
+    }
+
+    #[test]
     fn a_failed_build_names_the_crate_its_output_pushed_out() {
         // cargo's output on Linux without ALSA's development files (Rust 1.99.1, 2026-10-31):
         // the build script's report fills the last lines.
@@ -4233,7 +4378,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_build_smart_app_control_blocked_says_how_to_build() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         clear_log().unwrap();
         // cargo's output on Windows 11 25H2 with Smart App Control on (the report in #5911).
         let mut cmd = Command::new("sh");
@@ -4264,7 +4409,7 @@ mod tests {
     #[test]
     #[ignore = "daily"]
     fn each_command_logs_its_time() {
-        let _guard = TEST_STATE.lock().unwrap();
+        let _guard = scratch_state();
         clear_log().unwrap();
         // Its stdout, which goes to the log, does not end its line.
         let mut cmd = Command::new("sh");

@@ -15,13 +15,14 @@ const BIN: &str = "bin";
 /// closure. Return the unchanged executable and its runtime libraries, followed by mod dylibs.
 pub(super) fn compile(
     rust: &Toolchain,
-    runtime: &Path,
-    api: &Path,
+    package: &prebuilt::Package,
     out: &Path,
     projects: &[api::Project<'_>],
     declared: &[Vec<dependencies::Dependency>],
     resolution: &dependencies::Resolution,
+    on_mod: &dyn Fn(&str, usize, usize),
 ) -> Result<(PathBuf, Vec<PathBuf>), String> {
+    let (runtime, api) = (package.runtime.as_path(), package.api.as_path());
     let sdk = prebuilt::identity(runtime)?;
     fs::create_dir_all(out).map_err(|e| e.to_string())?;
     let deps = api.join("deps");
@@ -37,8 +38,9 @@ pub(super) fn compile(
     }
     libraries.insert("mod_vocab", prebuilt::library(&runtime_deps, "mod_vocab")?);
     let mut rlibs: HashMap<&str, PathBuf> = HashMap::new();
-    for &index in &resolution.order {
+    for (n, &index) in resolution.order.iter().enumerate() {
         let project = &projects[index];
+        on_mod(&project.bundle.manifest.id, n + 1, resolution.order.len());
         let (rlib, _) = prebuilt::compile_mod(
             project,
             &declared[index],

@@ -47,6 +47,28 @@ impl std::fmt::Display for Refusal {
     }
 }
 
+impl Refusal {
+    /// What the player reads about it, in the words of a mod that doesn't compile: the code and
+    /// its remedy for the mod's author stay in the build log ([`Display`](std::fmt::Display)).
+    pub fn plain(&self) -> String {
+        let why = match self {
+            Self::BuildScript { mod_id } => trf(
+                "{mod} can't be built here: it brings build steps of its own, which Horizon doesn't run.",
+                &[("mod", mod_id)],
+            ),
+            Self::Features { mod_id } => trf(
+                "{mod} can't be built here: it asks for build options Horizon's game doesn't offer.",
+                &[("mod", mod_id)],
+            ),
+            Self::Sdk(refusal) => return refusal.to_string(),
+        };
+        format!(
+            "{why} {}",
+            tr("The problem is in the mod, not in your game. Switch it off to play, or send the log to its author.")
+        )
+    }
+}
+
 /// The first structural reason these projects cannot use the prebuilt game.
 pub(super) fn refusal(projects: &[api::Project<'_>]) -> Option<Refusal> {
     projects.iter().find_map(project_refusal)
@@ -406,11 +428,10 @@ pub(super) fn library(deps: &Path, krate: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// Both compiler routes link the same SDK-owned executable template.
-pub(super) fn wrapper_externs(
-    deps: &Path,
-    template: &str,
-) -> Result<BTreeMap<String, PathBuf>, String> {
+/// Both compiler routes link the same SDK-owned executable template, and the patch library, so `horizon_mod_host`
+/// is always an extern: the game crates it carries (`horizon_client` and its closure, metadata only in `deps/`) are
+/// code only inside that dylib.
+pub(super) fn wrapper_externs(deps: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
     let mut externs = BTreeMap::new();
     for name in [
         "horizon_client",
@@ -421,12 +442,10 @@ pub(super) fn wrapper_externs(
     ] {
         externs.insert(name.to_owned(), library(deps, name)?);
     }
-    if template.contains("horizon_mod_host::") {
-        externs.insert(
-            "horizon_mod_host".into(),
-            library(deps, "horizon_mod_host")?,
-        );
-    }
+    externs.insert(
+        "horizon_mod_host".into(),
+        library(deps, "horizon_mod_host")?,
+    );
     Ok(externs)
 }
 
@@ -436,6 +455,10 @@ fn facade_refused(krate: &str) -> String {
         &[("crate", krate)],
     )
 }
+
+/// What the patch library's source ends with: edition 2024 loads an `--extern` only when the source names it, and
+/// the dylib links the game's crates only through `horizon_mod_host`.
+pub(super) const PATCH_HOST_LINK: &str = "\nextern crate horizon_mod_host as _;\n";
 
 pub(super) fn facade_library(deps: &Path, krate: &str, sdk: &Identity) -> Result<PathBuf, String> {
     if !sdk.facade_crates.contains(krate) {
@@ -629,6 +652,8 @@ pub(super) fn compile(
     declared: &[Vec<dependencies::Dependency>],
     resolution: &dependencies::Resolution,
     consent: Option<&dyn Fn(&super::RegistryInventory) -> bool>,
+    // Each mod is its own library: told which one starts, and how far through them.
+    on_mod: &dyn Fn(&str, usize, usize),
 ) -> Result<(PathBuf, Vec<PathBuf>), String> {
     let mut names = std::collections::HashSet::new();
     names.insert(dylib_name("horizon_patch").to_ascii_lowercase());
@@ -652,15 +677,8 @@ pub(super) fn compile(
     let key = kept_build(rust, package)?;
     if route == Route::Api {
         let out = &builds.join(format!("api-{key}"));
-        let built = super::api_route::compile(
-            rust,
-            &package.runtime,
-            &package.api,
-            out,
-            projects,
-            declared,
-            resolution,
-        );
+        let built =
+            super::api_route::compile(rust, package, out, projects, declared, resolution, on_mod);
         // Stamped after the route has made its folder again, failed or not.
         if out.exists() {
             crate::storage::mark_used(out).map_err(super::cache_error)?;
@@ -714,9 +732,10 @@ pub(super) fn compile(
     libraries.insert("mod_vocab", library(&deps, "mod_vocab")?);
     let mut rlibs: std::collections::HashMap<&str, PathBuf> = std::collections::HashMap::new();
     let mut crate_names: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
-    for &index in &resolution.order {
+    for (n, &index) in resolution.order.iter().enumerate() {
         let project = &projects[index];
         let id = project.bundle.manifest.id.as_str();
+        on_mod(id, n + 1, resolution.order.len());
         let api_dependencies = project.api_dependencies();
         if internals::needed(&project.bundle.manifest)
             || api_dependencies
@@ -793,7 +812,7 @@ pub(super) fn compile(
     if let Some(patch) = patch {
         let source = out.join("horizon_patch.rs");
         let template = api::template(&game.join(super::api_route::TEMPLATE))?;
-        let entry = library_entry(
+        let mut entry = library_entry(
             &template,
             &[],
             &catalog,
@@ -802,6 +821,7 @@ pub(super) fn compile(
             "0",
             &patch.installs,
         );
+        entry.push_str(PATCH_HOST_LINK);
         fs::write(&source, &entry).map_err(|e| e.to_string())?;
         let library = out.join(dylib_name("horizon_patch"));
         let mut hash = Sha256::new();
@@ -815,7 +835,7 @@ pub(super) fn compile(
             library.is_file() && fs::read_to_string(&saved).ok().as_deref() == Some(&fingerprint);
         let mut cmd = rustc(rust, game, out, "2024", &sdk.link_args);
         cmd.args(["--crate-type", "dylib", "--crate-name", "horizon_patch"]);
-        for (name, path) in wrapper_externs(&deps, &template)? {
+        for (name, path) in wrapper_externs(&deps)? {
             cmd.arg("--extern")
                 .arg(format!("{name}={}", path.display()));
         }
@@ -857,7 +877,6 @@ pub(super) fn dylib_name(krate: &str) -> String {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn library_entry(
     template: &str,
     mods: &[&horizon_mod_package::Manifest],
@@ -1028,7 +1047,7 @@ fn forbids_unsafe(meta: &syn::Meta) -> bool {
 
 /// What the build log and a failure call compiling mod `id`: a failure starts
 /// "Compiling <id> failed".
-pub(super) fn compiling(id: &str) -> String {
+pub fn compiling(id: &str) -> String {
     trf("Compiling {mod}", &[("mod", id)])
 }
 
