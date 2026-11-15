@@ -2,6 +2,9 @@ use super::*;
 use crate::backend::Links;
 use std::path::PathBuf;
 
+// A configured server fixture, independent of Sunrise's disabled default.
+const OFFICIAL_ADDRESS: &str = "play.playhorizon.dev";
+
 fn scratch(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
         "horizon-launcher-servers-{name}-{}",
@@ -143,7 +146,7 @@ fn a_server_without_a_name_gets_the_games_default() {
     );
 }
 
-/// The official server at the game's built-in address, moved from its built-in previous ones.
+/// A configured official server, moved from its built-in previous addresses.
 fn add_official_default(home: &Path) -> Result<(), String> {
     let previous: Vec<String> = OFFICIAL_PREVIOUS.iter().map(|a| a.to_string()).collect();
     add_official(home, OFFICIAL_ADDRESS, &previous)
