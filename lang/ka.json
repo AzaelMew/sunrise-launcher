@@ -1367,8 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "გამშვების იერსახე ჯერჯერობით აღდგენილია, მაგრამ ვერ შეინახა",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "მინა და გაბუნდოვნება ქმნის მუქი იერსახის ბუნდოვან პანელებს; ღია ხატავს მყარ თეთრ პანელებს.",
   "Performance mode draws solid panels, without glass or blur.": "შესრულების რეჟიმი ხატავს მყარ პანელებს, მინის და გაბუნდოვნების გარეშე.",
-  "This theme's night draws solid panels, without glass or blur.": "ამ თემის ღამე ხატავს მყარ პანელებს, მინის და გაბუნდოვნების გარეშე.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "დააინსტალირებს Sunrise Launcher ამ ანგარიშისთვის. არ არის საჭირო ადმინისტრატორი.",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "შლის Sunrise Launcher ამ კომპიუტერიდან. თქვენი სამყარო და თამაშის საქაღალდე რჩება.",
-  "Sunrise Launcher is installed.": "Sunrise Launcher დაინსტალირებულია."
+  "This theme's night draws solid panels, without glass or blur.": "ამ თემის ღამე ხატავს მყარ პანელებს, მინის და გაბუნდოვნების გარეშე."
 }

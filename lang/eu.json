@@ -1367,7 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "Abiarazlearen itxura oraingoz berrezarri da, baina ezin izan da gorde",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Beirak eta Lausotzeak itxura ilunaren beiraztatutako panelak osatzen dituzte; argiak panel zuri solidoak marrazten ditu.",
   "Performance mode draws solid panels, without glass or blur.": "Errendimendu moduak panel solidoak marrazten ditu, beira edo lausotzerik gabe.",
-  "This theme's night draws solid panels, without glass or blur.": "Gai honen gauak panel solidoak marrazten ditu, beira edo lausotzerik gabe.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "Sunrise Launcher instalatzen du kontu honetarako. Ez da administratzailerik behar.",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Sunrise Launcher ordenagailu honetatik kentzen du. Zure munduak eta jokoaren karpeta geratzen dira."
+  "This theme's night draws solid panels, without glass or blur.": "Gai honen gauak panel solidoak marrazten ditu, beira edo lausotzerik gabe."
 }

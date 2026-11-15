@@ -1367,9 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "ໜ້າຕາຂອງຕົວເປີດຖືກຣີເຊັດໄປກ່ອນ, ແຕ່ບໍ່ສາມາດບັນທຶກໄດ້",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ແກ້ວ ແລະ ຄວາມມົວ ປັບຮູບແບບແຜງຝ້າມົວຂອງໂໝດມືດ; ໂໝດແຈ້ງວາດແຜງສີຂາວທັນໆ.",
   "Performance mode draws solid panels, without glass or blur.": "ໂໝດປະສິດທິພາບວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ.",
-  "This theme's night draws solid panels, without glass or blur.": "ກາງຄືນຂອງຮູບແບບນີ້ວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "ຕິດຕັ້ງ Sunrise Launcher ສໍາລັບບັນຊີນີ້. ບໍ່ຈໍາເປັນຕ້ອງມີຜູ້ເບິ່ງແຍງລະບົບ.",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "ເອົາ Sunrise Launcher ອອກຈາກຄອມພິວເຕີເຄື່ອງນີ້. ໂລກຂອງທ່ານແລະໂຟນເດີຂອງເກມຈະຢູ່.",
-  "Sunrise Launcher is installed.": "Sunrise Launcher ຖືກຕິດຕັ້ງ.",
-  "Sunrise Launcher was removed.": "Sunrise Launcher ຖືກລຶບອອກແລ້ວ."
+  "This theme's night draws solid panels, without glass or blur.": "ກາງຄືນຂອງຮູບແບບນີ້ວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ."
 }

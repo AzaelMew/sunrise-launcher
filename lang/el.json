@@ -1367,9 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "Η εμφάνιση του launcher επαναφέρθηκε προς το παρόν, αλλά δεν μπόρεσε να αποθηκευτεί",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Γυαλί και Θόλωμα διαμορφώνουν τα θαμπά πάνελ της σκούρας εμφάνισης· η φωτεινή σχεδιάζει συμπαγή λευκά πάνελ.",
   "Performance mode draws solid panels, without glass or blur.": "Η λειτουργία Performance σχεδιάζει συμπαγή πάνελ, χωρίς γυαλί ή θόλωμα.",
-  "This theme's night draws solid panels, without glass or blur.": "Η νύχτα αυτού του θέματος σχεδιάζει συμπαγή πάνελ, χωρίς γυαλί ή θόλωμα.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "Εγκαθιστά το Sunrise Launcher για αυτόν τον λογαριασμό. Δεν χρειάζεται διαχειριστής.",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Καταργεί το Sunrise Launcher από αυτόν τον υπολογιστή. Οι κόσμοι σας και ο φάκελος του παιχνιδιού παραμένουν.",
-  "Sunrise Launcher is installed.": "Το Sunrise Launcher έχει εγκατασταθεί.",
-  "Sunrise Launcher was removed.": "Το Sunrise Launcher καταργήθηκε."
+  "This theme's night draws solid panels, without glass or blur.": "Η νύχτα αυτού του θέματος σχεδιάζει συμπαγή πάνελ, χωρίς γυαλί ή θόλωμα."
 }

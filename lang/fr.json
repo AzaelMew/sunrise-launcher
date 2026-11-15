@@ -1367,9 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "L'apparence du launcher est réinitialisée pour le moment, mais elle n'a pas pu être enregistrée",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Verre et Flou façonnent les panneaux dépolis de l'apparence sombre ; la claire dessine des panneaux blancs unis.",
   "Performance mode draws solid panels, without glass or blur.": "Mode performance dessine des panneaux unis, sans verre ni flou.",
-  "This theme's night draws solid panels, without glass or blur.": "La nuit de ce thème dessine des panneaux unis, sans verre ni flou.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "Installe Sunrise Launcher pour ce compte. Aucun administrateur requis.",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Supprime Sunrise Launcher de cet ordinateur. Vos mondes et le dossier du jeu sont conservés.",
-  "Sunrise Launcher is installed.": "Sunrise Launcher est installé.",
-  "Sunrise Launcher was removed.": "Sunrise Launcher a été supprimé."
+  "This theme's night draws solid panels, without glass or blur.": "La nuit de ce thème dessine des panneaux unis, sans verre ni flou."
 }

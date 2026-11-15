@@ -1367,9 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "ランチャーの見た目は一時的にリセットされましたが、保存できませんでした",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ガラスとぼかしはダークの外観のすりガラス パネルを形づくり、ライトは無地の白いパネルを描きます。",
   "Performance mode draws solid panels, without glass or blur.": "パフォーマンスモードは、ガラスやぼかしのない無地のパネルを描きます。",
-  "This theme's night draws solid panels, without glass or blur.": "このテーマの夜は、ガラスやぼかしのない無地のパネルを描きます。",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "このアカウントにSunrise Launcherをインストールします。管理者権限は不要です。",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "このコンピューターからSunrise Launcherを削除します。ワールドとゲームのフォルダーは残ります。",
-  "Sunrise Launcher is installed.": "Sunrise Launcherをインストールしました。",
-  "Sunrise Launcher was removed.": "Sunrise Launcherを削除しました。"
+  "This theme's night draws solid panels, without glass or blur.": "このテーマの夜は、ガラスやぼかしのない無地のパネルを描きます。"
 }

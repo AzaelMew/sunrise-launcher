@@ -1375,9 +1375,5 @@
   "The launcher's look is reset for now, but it could not be saved": "หน้าตาของลันเชอร์ถูกรีเซ็ตไว้ชั่วคราว แต่บันทึกไม่สำเร็จ",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "กระจกและความเบลอกำหนดแผงแบบกระจกฝ้าของหน้าตามืด ส่วนแบบสว่างวาดแผงสีขาวทึบ",
   "Performance mode draws solid panels, without glass or blur.": "โหมดประสิทธิภาพวาดแผงทึบ ไม่มีกระจกหรือความเบลอ",
-  "This theme's night draws solid panels, without glass or blur.": "กลางคืนของธีมนี้วาดแผงทึบ ไม่มีกระจกหรือความเบลอ",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "ติดตั้ง Sunrise Launcher ให้บัญชีผู้ใช้นี้ ไม่ต้องใช้สิทธิ์ผู้ดูแลระบบ",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "ลบ Sunrise Launcher ออกจากคอมพิวเตอร์เครื่องนี้ โลกของคุณและโฟลเดอร์เกมจะยังอยู่",
-  "Sunrise Launcher is installed.": "ติดตั้ง Sunrise Launcher แล้ว",
-  "Sunrise Launcher was removed.": "ลบ Sunrise Launcher แล้ว"
+  "This theme's night draws solid panels, without glass or blur.": "กลางคืนของธีมนี้วาดแผงทึบ ไม่มีกระจกหรือความเบลอ"
 }

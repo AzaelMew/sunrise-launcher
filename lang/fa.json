@@ -1367,9 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "ظاهر لانچر فعلاً بازنشانی شده، اما ذخیره نشد",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "شیشه و تاری پنل‌های مات ظاهر تیره را شکل می‌دهند؛ ظاهر روشن پنل‌های سفید یکدست می‌کشد.",
   "Performance mode draws solid panels, without glass or blur.": "حالت عملکرد پنل‌های یکدست می‌کشد، بدون شیشه یا تاری.",
-  "This theme's night draws solid panels, without glass or blur.": "شب این پوسته پنل‌های یکدست می‌کشد، بدون شیشه یا تاری.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "Sunrise Launcher را برای این حساب نصب می کند. بدون نیاز به مدیر",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Sunrise Launcher را از این رایانه حذف می کند. دنیای شما و پوشه بازی باقی می ماند.",
-  "Sunrise Launcher is installed.": "Sunrise Launcher نصب شده است.",
-  "Sunrise Launcher was removed.": "Sunrise Launcher حذف شد."
+  "This theme's night draws solid panels, without glass or blur.": "شب این پوسته پنل‌های یکدست می‌کشد، بدون شیشه یا تاری."
 }

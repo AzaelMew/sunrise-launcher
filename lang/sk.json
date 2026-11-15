@@ -1367,9 +1367,5 @@
   "The launcher's look is reset for now, but it could not be saved": "Vzhľad launchera je zatiaľ obnovený, ale nepodarilo sa ho uložiť",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Sklo a Rozmazanie formujú matné panely tmavého vzhľadu; svetlý kreslí plné biele panely.",
   "Performance mode draws solid panels, without glass or blur.": "Režim výkonu kreslí plné panely, bez skla a rozmazania.",
-  "This theme's night draws solid panels, without glass or blur.": "Noc tohto motívu kreslí plné panely, bez skla a rozmazania.",
-  "Installs Sunrise Launcher for this account. No administrator needed.": "Nainštaluje Sunrise Launcher pre tento účet. Nie je potrebný žiadny správca.",
-  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Odstráni Sunrise Launcher z tohto počítača. Vaše svety a priečinok hry zostanú.",
-  "Sunrise Launcher is installed.": "Sunrise Launcher je nainštalovaný.",
-  "Sunrise Launcher was removed.": "Sunrise Launcher bol odstránený."
+  "This theme's night draws solid panels, without glass or blur.": "Noc tohto motívu kreslí plné panely, bez skla a rozmazania."
 }
