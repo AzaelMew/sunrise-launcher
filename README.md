@@ -23,7 +23,7 @@ warnings. macOS packages are **ad-hoc signed**, without an Apple Developer ID an
 **not notarized**. Gatekeeper may block them or say Apple cannot check them for
 malicious software. No OS trust bypass is implied by a checksum signature.
 
-Build identity defaults to `arismoko/horizon`, consistently with the fork's release
+Build identity defaults to `sunrise-org/sunrise`, consistently with the fork's release
 repository. Set `HORIZON_LAUNCHER_REPOSITORY=horizon-rust/horizon` at build time to
 retain upstream identity. Other values fail the build. Stage packaging with
 `python3 tools/stage_launcher_packaging.py OUTPUT --repository REPOSITORY` using
@@ -338,9 +338,8 @@ Release lists and commits come from GitHub's API, which allows 60 anonymous call
 address: players behind a shared one (a school, a dorm, a carrier's NAT) spend them together.
 So each answer is kept in `cache/github/` in the data folder and used again for 5 minutes without
 asking, then revalidated with its ETag. When GitHub answers with its rate limit, or not at all,
-Horizon's own releases are read through Kira's read-only mirror
-(`https://mcp.playhorizon.dev/github/public`; `HORIZON_GITHUB_MIRROR` replaces it, empty turns it
-off); when both fail the last saved answer is used, else the error names both. The release files
+Horizon's own releases are read through the read-only mirror `HORIZON_GITHUB_MIRROR` names (none
+by default); when both fail the last saved answer is used, else the error names both. The release files
 themselves come from their download links, which that limit doesn't cover.
 
 It also updates itself from GitHub releases tagged `launcher@X.Y.Z` (the game's are `nightly`, and

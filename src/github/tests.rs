@@ -11,10 +11,28 @@ fn scratch(name: &str) -> PathBuf {
 const T0: u64 = 1_800_000_000;
 const LATER: u64 = T0 + FRESH_SECS;
 
-const RELEASES: &str = "https://api.github.com/repos/arismoko/horizon/releases?per_page=100";
+const RELEASES: &str = "https://api.github.com/repos/sunrise-org/sunrise/releases?per_page=100";
 
 fn list(tag: &str) -> serde_json::Value {
     serde_json::json!([{ "tag_name": tag }])
+}
+
+/// [`super::json_with`] with a mirror configured, as `HORIZON_GITHUB_MIRROR` would.
+fn json_with(
+    url: &str,
+    cache: &Path,
+    now: u64,
+    github: impl Fn(&str, Option<&str>) -> Answer,
+    mirror: impl Fn(&str) -> Answer,
+) -> Result<Option<serde_json::Value>, String> {
+    super::json_with(
+        url,
+        cache,
+        now,
+        "https://mcp.example/github/public",
+        github,
+        mirror,
+    )
 }
 
 fn no_mirror(_: &str) -> Answer {
@@ -26,22 +44,22 @@ fn mirror_serves_only_horizons_repository() {
     let base = "https://mcp.example/github/public";
     assert_eq!(
         mirror_url_with(RELEASES, base).as_deref(),
-        Some("https://mcp.example/github/public/repos/arismoko/horizon/releases?per_page=100")
+        Some("https://mcp.example/github/public/repos/sunrise-org/sunrise/releases?per_page=100")
     );
     assert_eq!(
         mirror_url_with(
-            "https://api.github.com/repos/arismoko/horizon/releases/tags/launcher@0.2.33",
+            "https://api.github.com/repos/sunrise-org/sunrise/releases/tags/launcher@0.2.33",
             &format!("{base}/")
         )
         .as_deref(),
-        Some("https://mcp.example/github/public/repos/arismoko/horizon/releases/tags/launcher@0.2.33")
+        Some("https://mcp.example/github/public/repos/sunrise-org/sunrise/releases/tags/launcher@0.2.33")
     );
     assert_eq!(
         mirror_url_with("https://api.github.com/repos/someone/mod/commits/abc", base),
         None
     );
     assert_eq!(
-        mirror_url_with("https://github.com/arismoko/horizon/releases", base),
+        mirror_url_with("https://github.com/sunrise-org/sunrise/releases", base),
         None
     );
     for url in [
@@ -148,7 +166,7 @@ fn etag_is_kept_and_a_304_reads_the_saved_copy() {
     );
     assert_eq!(back.unwrap(), Some(list("v9")));
     // Another URL doesn't read this one's copy.
-    let other = "https://api.github.com/repos/arismoko/horizon/releases/latest";
+    let other = "https://api.github.com/repos/sunrise-org/sunrise/releases/latest";
     let etag_sent = RefCell::new(Some(String::new()));
     let _ = json_with(
         other,
@@ -183,7 +201,7 @@ fn rate_limited_reads_go_through_the_mirror() {
         .borrow()
         .as_deref()
         .unwrap()
-        .ends_with("/github/public/repos/arismoko/horizon/releases?per_page=100"));
+        .ends_with("/github/public/repos/sunrise-org/sunrise/releases?per_page=100"));
     // The mirror's answer is kept like GitHub's.
     let kept = json_with(RELEASES, &cache, T0 + 1, |_, _| panic!("fresh"), no_mirror);
     assert_eq!(kept.unwrap(), Some(list("nightly")));
@@ -202,7 +220,7 @@ fn rate_limited_reads_go_through_the_mirror() {
 #[test]
 fn a_404_is_not_retried_on_the_mirror() {
     let cache = scratch("404");
-    let latest = "https://api.github.com/repos/arismoko/horizon/releases/latest";
+    let latest = "https://api.github.com/repos/sunrise-org/sunrise/releases/latest";
     let absent = json_with(
         latest,
         &cache,
@@ -300,6 +318,23 @@ fn other_repositories_have_no_mirror() {
         "https://api.github.com/repos/someone/mod/commits/abc",
         &cache,
         T0,
+        |_, _| Answer::RateLimited,
+        no_mirror,
+    )
+    .unwrap_err();
+    assert!(err.contains("rate limit"), "{err}");
+    assert!(!err.contains("mirror"), "{err}");
+    let _ = fs::remove_dir_all(cache);
+}
+
+#[test]
+fn no_mirror_is_built_in() {
+    let cache = scratch("built-in");
+    let err = super::json_with(
+        RELEASES,
+        &cache,
+        T0,
+        MIRROR,
         |_, _| Answer::RateLimited,
         no_mirror,
     )

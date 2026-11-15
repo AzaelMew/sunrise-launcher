@@ -13,7 +13,7 @@ const FILE: &str = "servers.dat";
 /// Horizon's official survival server, named as the game lists it. Its address comes from
 /// `launcher/links.json` on main (`backend::Links`), so a move to a new host needs no release.
 pub const OFFICIAL_NAME: &str = "Horizon Official";
-/// The official server's address until links.json is read, and when it can't be.
+/// The game's built-in official server address; the launcher offers only the one links.json names.
 pub const OFFICIAL_ADDRESS: &str = horizon_telemetry::server_status::OFFICIAL_ADDRESS;
 /// Addresses the official server had before: lists that still hold one are moved to the current one.
 pub const OFFICIAL_PREVIOUS: &[&str] = horizon_telemetry::server_status::OFFICIAL_PREVIOUS;

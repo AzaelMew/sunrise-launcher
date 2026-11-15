@@ -67,10 +67,10 @@ env:
   # Test runs never reach the telemetry server: no live-count ping, no uploads (docs/telemetry.md).
   HORIZON_TELEMETRY_URL: "off"
   HORIZON_LAUNCHER_REPOSITORY: ${{ github.repository }}
-  LAUNCHER_PREFIX: ${{ github.repository == 'arismoko/horizon' && 'horizon-fork-launcher' || 'horizon-launcher' }}
-  LAUNCHER_INSTALL_FOLDER: ${{ github.repository == 'arismoko/horizon' && 'Horizon Fork Launcher (arismoko)' || 'Horizon Launcher' }}
-  LAUNCHER_APP_BUNDLE: ${{ github.repository == 'arismoko/horizon' && 'Horizon Fork Launcher (arismoko).app' || 'Horizon.app' }}
-  LAUNCHER_PACKAGING: ${{ github.repository == 'arismoko/horizon' && '../.local/fork-launcher-packaging' || '../packaging' }}
+  LAUNCHER_PREFIX: ${{ github.repository == 'sunrise-org/sunrise' && 'horizon-fork-launcher' || 'horizon-launcher' }}
+  LAUNCHER_INSTALL_FOLDER: ${{ github.repository == 'sunrise-org/sunrise' && 'Horizon Fork Launcher (arismoko)' || 'Horizon Launcher' }}
+  LAUNCHER_APP_BUNDLE: ${{ github.repository == 'sunrise-org/sunrise' && 'Horizon Fork Launcher (arismoko).app' || 'Horizon.app' }}
+  LAUNCHER_PACKAGING: ${{ github.repository == 'sunrise-org/sunrise' && '../.local/fork-launcher-packaging' || '../packaging' }}
 jobs:
   decide:
     runs-on: ubuntu-latest
@@ -139,7 +139,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.decide.outputs.matrix) }}
-    runs-on: ${{ matrix.mac && (github.repository == 'arismoko/horizon' && 'macos-latest' || vars.MAC_RUNNER || 'ludovics-mac-mini') || matrix.os }}
+    runs-on: ${{ matrix.mac && (github.repository == 'sunrise-org/sunrise' && 'macos-latest' || vars.MAC_RUNNER || 'ludovics-mac-mini') || matrix.os }}
     # Notarizing the app and then the .dmg can take a few minutes each.
     timeout-minutes: ${{ matrix.mac && 60 || 40 }}
     env:
@@ -209,11 +209,11 @@ jobs:
       - run: cargo build --release --locked ${{ matrix.target && format('--target {0}', matrix.target) || '' }} ${LAUNCHER_FEATURES:+--features "$LAUNCHER_FEATURES"}
       - name: Stage repository-selected packaging and executable
         run: |
-          if [[ "$HORIZON_LAUNCHER_REPOSITORY" == arismoko/horizon ]]; then
+          if [[ "$HORIZON_LAUNCHER_REPOSITORY" == sunrise-org/sunrise ]]; then
             python3 ../tools/stage_launcher_packaging.py "$LAUNCHER_PACKAGING" --repository "$HORIZON_LAUNCHER_REPOSITORY"
           fi
       - name: Name the fork executable
-        if: github.repository == 'arismoko/horizon'
+        if: github.repository == 'sunrise-org/sunrise'
         run: mv "$BIN/horizon-launcher${{ runner.os == 'Windows' && '.exe' || '' }}" "$BIN/${{ matrix.binary }}"
       - name: Release binary retains the game-holder capability marker
         run: |
@@ -307,7 +307,7 @@ jobs:
           fi
           rm -rf "$HORIZON_LAUNCHER_HOME"
       - name: The signing keychain, unlocked
-        if: runner.os == 'macOS' && github.repository != 'arismoko/horizon' && vars.MACOS_SIGN_IDENTITY != ''
+        if: runner.os == 'macOS' && github.repository != 'sunrise-org/sunrise' && vars.MACOS_SIGN_IDENTITY != ''
         env:
           MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
         run: ../packaging/macos/keychain.sh unlock
@@ -352,7 +352,7 @@ jobs:
           path: launcher/out/*
           retention-days: 3
       - name: The signing keychain, locked again
-        if: always() && runner.os == 'macOS' && github.repository != 'arismoko/horizon' && vars.MACOS_SIGN_IDENTITY != ''
+        if: always() && runner.os == 'macOS' && github.repository != 'sunrise-org/sunrise' && vars.MACOS_SIGN_IDENTITY != ''
         run: ../packaging/macos/keychain.sh lock
 
   sign:
@@ -424,7 +424,7 @@ jobs:
           cargo run --locked --quiet -p horizon-release-sign -- verify --repository "$GITHUB_REPOSITORY" --tag "$TAG" --publishing "${key[@]}" dist
       # Never marked latest: Horizon's own releases stay the repository's latest.
       - name: The Windows ARM64 launcher, if it built
-        if: github.repository != 'arismoko/horizon'
+        if: github.repository != 'sunrise-org/sunrise'
         # Its build may fail without holding the release (continue-on-error): the release then has no ARM64
         # files, and ARM64 launchers stay on their version until one has (backend::launcher_update_from).
         run: |

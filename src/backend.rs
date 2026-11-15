@@ -11,15 +11,15 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 /// Authority for game, launcher and native SDK release reads on this fork.
-pub const REPO: &str = "arismoko/horizon";
+pub const REPO: &str = "sunrise-org/sunrise";
 
 /// Where a crash is reported.
 pub fn issues_url() -> String {
     format!("https://github.com/{REPO}/issues")
 }
-pub const README_URL: &str = "https://github.com/arismoko/horizon/blob/main/launcher/README.md";
+pub const README_URL: &str = "https://github.com/sunrise-org/sunrise/blob/main/launcher/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
-pub const AGENT_DOCS_URL: &str = "https://playhorizon.dev/docs/agents";
+pub const AGENT_DOCS_URL: &str = horizon_addresses::AGENT_DOCS;
 /// This launcher's version: the release workflow sets `HORIZON_LAUNCHER_VERSION` from the
 /// tag it builds (no version-bump commits); other builds say Cargo.toml's.
 pub const VERSION: &str = version_or(option_env!("HORIZON_LAUNCHER_VERSION"));
@@ -651,7 +651,7 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Every published release of the repository, both kinds, as GitHub's JSON (kept on disk with its
-/// ETag, and read through Kira's mirror past GitHub's rate limit: [`crate::github`]).
+/// ETag, and read through a configured mirror past GitHub's rate limit: [`crate::github`]).
 fn release_list() -> Result<serde_json::Value, String> {
     Ok(crate::github::json_optional(&format!(
         "https://api.github.com/repos/{REPO}/releases?per_page=100"
@@ -6211,9 +6211,11 @@ pub fn {f}("
     #[test]
     fn links_fall_back_to_the_built_in_ones() {
         let defaults = Links::default();
-        assert_eq!(defaults.discord, "https://discord.gg/playhorizon");
-        assert_eq!(defaults.sponsor, "https://github.com/sponsors/ludovic111");
-        assert_eq!(defaults.website, "https://playhorizon.dev");
+        assert_eq!(defaults.discord, "");
+        assert_eq!(defaults.sponsor, "");
+        assert_eq!(defaults.website, "https://playsunrise.net");
+        assert_eq!(defaults.roadmap, "");
+        assert_eq!(defaults.docs, "");
         assert_eq!(
             Links::parse(r#"{"roadmap":"https://example.org/tasks","docs":" "}"#),
             Links {
@@ -6238,10 +6240,10 @@ pub fn {f}("
             }
         );
         assert_eq!(
-            Links::parse(r#"{"discord": "", "sponsor": " "}"#),
+            Links::parse(r#"{"discord": "https://x.y/z", "website": " "}"#),
             Links {
-                discord: String::new(),
-                sponsor: String::new(),
+                discord: "https://x.y/z".into(),
+                website: String::new(),
                 ..defaults.clone()
             }
         );

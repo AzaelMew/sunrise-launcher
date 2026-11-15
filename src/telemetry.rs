@@ -75,7 +75,7 @@ pub fn watch_playing(tx: std::sync::mpsc::Sender<backend::Msg>) {
 }
 
 /// The official server's address from links.json once read (`set_official_server`; empty: none),
-/// the built-in one until then.
+/// the built-in links' until then.
 static OFFICIAL_SERVER: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
 /// The official server [`watch_official`] asks from now on: `Links::official_server`.
@@ -88,7 +88,7 @@ fn official_server() -> String {
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
-        .unwrap_or_else(|| crate::server_list::OFFICIAL_ADDRESS.to_owned())
+        .unwrap_or_else(|| backend::Links::default().official_server)
 }
 
 /// A server's players by its server-list status ping, as the game's Multiplayer list sends it

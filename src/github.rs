@@ -8,8 +8,7 @@
 //!   anonymous 304 still counts against the hour (measured 2026-11-01), so that only saves the
 //!   download; with `HORIZON_GITHUB_TOKEN` (CI) a 304 is free;
 //! - when GitHub answers with its rate limit (or not at all), Horizon's own repository is read
-//!   through Kira's public mirror ([`MIRROR`], kira's `src/launcher-github.js`), which caches
-//!   GitHub's answers for everyone;
+//!   through the mirror `HORIZON_GITHUB_MIRROR` names, if any ([`MIRROR`]: none built in);
 //! - when both fail, the last answer kept on disk is used, else the error says what happened.
 //!
 //! Release files are not read here: their `browser_download_url` (github.com, then
@@ -20,9 +19,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub(crate) const API: &str = "https://api.github.com";
-/// Kira's read-only mirror of Horizon's release reads. `HORIZON_GITHUB_MIRROR` replaces it (an
-/// empty value turns it off).
-pub const MIRROR: &str = "https://mcp.playhorizon.dev/github/public";
+/// The built-in read-only mirror of Horizon's release reads: none. `HORIZON_GITHUB_MIRROR` names one.
+pub const MIRROR: &str = "";
 
 /// How long a saved answer is used without asking again: the launcher looks for releases every
 /// [`backend::CHECK_EVERY`], so a few minutes late at worst.
@@ -53,14 +51,16 @@ pub fn json_optional(url: &str) -> Result<Option<serde_json::Value>, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    json_with(url, &cache_dir(), now, github, mirror)
+    json_with(url, &cache_dir(), now, &mirror_base(), github, mirror)
 }
 
-/// [`json`] with its cache folder, the time (Unix seconds) and its two sources given (tests).
+/// [`json`] with its cache folder, the time (Unix seconds), the mirror's base and its two sources
+/// given (tests).
 pub(crate) fn json_with(
     url: &str,
     cache: &Path,
     now: u64,
+    mirror_base: &str,
     github: impl Fn(&str, Option<&str>) -> Answer,
     mirror: impl Fn(&str) -> Answer,
 ) -> Result<Option<serde_json::Value>, String> {
@@ -93,7 +93,7 @@ pub(crate) fn json_with(
         Answer::RateLimited => RATE_LIMITED.to_owned(),
         Answer::Failed(e) => e,
     };
-    let from_mirror = match mirror_url(url) {
+    let from_mirror = match mirror_url_with(url, mirror_base) {
         Some(m) => match mirror(&m) {
             Answer::Fresh(body, _) => {
                 write_kept(&file, url, "", &body, now);
@@ -120,10 +120,6 @@ pub(crate) fn json_with(
 const RATE_LIMITED: &str = "GitHub's rate limit was reached for your network";
 
 /// The mirror's URL for an API URL it serves (Horizon's own repository), or None.
-pub(crate) fn mirror_url(url: &str) -> Option<String> {
-    mirror_url_with(url, &mirror_base())
-}
-
 fn mirror_url_with(url: &str, base: &str) -> Option<String> {
     let path = url.strip_prefix(API)?;
     let repo = format!("/repos/{}/", backend::REPO);

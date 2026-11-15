@@ -287,7 +287,7 @@ fn tags_of(index: &Index, kind: Kind) -> Vec<String> {
 }
 
 /// Where the registry's mod policy is: who owns and answers for a project, takedowns.
-pub const POLICY: &str = "https://playhorizon.dev/mods/policy";
+pub const POLICY: &str = horizon_addresses::MOD_POLICY;
 
 /// Whether the Horizon project made `p` (the mod policy's "Official": author Horizon, source in
 /// the horizon-rust organisation).

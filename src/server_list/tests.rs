@@ -143,14 +143,10 @@ fn a_server_without_a_name_gets_the_games_default() {
     );
 }
 
-/// The official server as the launcher knows it before links.json is read.
+/// The official server at the game's built-in address, moved from its built-in previous ones.
 fn add_official_default(home: &Path) -> Result<(), String> {
-    let links = Links::default();
-    add_official(
-        home,
-        &links.official_server,
-        &links.official_server_previous,
-    )
+    let previous: Vec<String> = OFFICIAL_PREVIOUS.iter().map(|a| a.to_string()).collect();
+    add_official(home, OFFICIAL_ADDRESS, &previous)
 }
 
 fn ips(home: &Path) -> Vec<String> {
@@ -325,13 +321,26 @@ fn a_moved_official_server_moves_the_players_entry_once() {
 
 #[test]
 fn the_official_address_comes_from_links_json() {
-    // The defaults: the new host, and the old one to move from.
+    // The defaults: no official server, and nothing to move from.
     let defaults = Links::default();
-    assert_eq!(defaults.official_server, "play.playhorizon.dev");
-    assert_eq!(defaults.official_server_previous, ["horizon.bunchy7s.dev"]);
+    assert_eq!(defaults.official_server, "");
+    assert!(defaults.official_server_previous.is_empty());
     // The file on main says the same.
     let file = Links::parse(include_str!("../../links.json"));
     assert_eq!(file, defaults);
+    // No official server: a list is left as it is and no marker is written.
+    let home = scratch("links-none");
+    let mut list = List::load(&home);
+    list.add("SMP", "horizon.bunchy7s.dev").unwrap();
+    list.save(&home).unwrap();
+    add_official(
+        &home,
+        &defaults.official_server,
+        &defaults.official_server_previous,
+    )
+    .unwrap();
+    assert_eq!(ips(&home), ["horizon.bunchy7s.dev"]);
+    assert!(!home.join(OFFICIAL_MARKER).exists());
     // A later move is a links.json edit: the list follows it, from either earlier address.
     let links = Links::parse(
         r#"{"official_server": " next.example ",
