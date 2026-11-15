@@ -39,7 +39,7 @@ pub fn classify(args: &[String], is_setup_exe: bool) -> Invocation {
     }
 }
 
-/// The ids in `tasklist /FO CSV /NH` output (`"sunrise-launcher.exe","1234","Console",...`),
+/// The ids in `tasklist /FO CSV /NH` output (`"horizon-launcher.exe","1234","Console",...`),
 /// other than `own`: the launchers still running while this process removes their files.
 /// `tasklist` prints a sentence instead of rows when nothing matches; that gives no ids.
 pub fn other_launcher_pids(tasklist_csv: &str, own: u32) -> Vec<u32> {
@@ -131,13 +131,13 @@ mod tests {
     const TASKLIST: &str = "\"sunrise-launcher.exe\",\"4120\",\"Console\",\"1\",\"212,044 K\"\r\n\
         \"Sunrise-Launcher.exe\",\"9988\",\"Console\",\"1\",\"80,000 K\"\r\n\
         \"sunrise-launcher.exe\",\"4120\",\"Console\",\"1\",\"212,044 K\"\r\n\
-        \"sunrise-launcher-setup.exe\",\"77\",\"Console\",\"1\",\"9,000 K\"\r\n";
+        \"horizon-launcher-setup.exe\",\"77\",\"Console\",\"1\",\"9,000 K\"\r\n";
 
     fn tasklist() -> String {
         if cfg!(sunrise_fork_launcher) {
             TASKLIST
-                .replace("sunrise-launcher", "sunrise-launcher")
-                .replace("Sunrise-Launcher", "Sunrise-Launcher")
+                .replace("horizon-launcher", "sunrise-launcher")
+                .replace("Horizon-Launcher", "Sunrise-Launcher")
         } else {
             TASKLIST.into()
         }
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn a_running_launcher_is_found_but_not_this_process() {
-        // The uninstaller is itself `sunrise-launcher.exe`: it must not ask itself to quit.
+        // The uninstaller is itself `horizon-launcher.exe`: it must not ask itself to quit.
         assert_eq!(other_launcher_pids(&tasklist(), 9988), vec![4120]);
         assert_eq!(other_launcher_pids(&tasklist(), 1), vec![4120, 9988]);
         assert_eq!(other_launcher_pids(&tasklist(), 4120), vec![9988]);
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn another_identity_is_never_terminated() {
         let other = if cfg!(sunrise_fork_launcher) {
-            "\"sunrise-launcher.exe\",\"42\""
+            "\"horizon-launcher.exe\",\"42\""
         } else {
             "\"sunrise-launcher.exe\",\"42\""
         };
@@ -168,7 +168,7 @@ mod tests {
         assert!(other_launcher_pids("", 1).is_empty());
         // The setup exe and other programs are not launchers.
         let other = "\"sunrise-launcher-setup.exe\",\"77\",\"Console\",\"1\",\"9 K\"\r\n\
-            \"sunrise-client.exe\",\"78\",\"Console\",\"1\",\"9 K\"\r\n";
+            \"horizon-client.exe\",\"78\",\"Console\",\"1\",\"9 K\"\r\n";
         assert!(other_launcher_pids(other, 1).is_empty());
     }
 }
