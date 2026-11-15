@@ -136,8 +136,8 @@ pub const NORD: Theme = Theme {
     look: Look::Solid,
 };
 
-/// Sunrise's night: the website's Dawn palette (plum canvas, rose and peach, warm white text).
-pub const SUNRISE_DARK: Night = Night {
+/// Dawn's night: the Sunrise website's Dawn palette (plum canvas, rose and peach, warm white text).
+pub const DAWN_DARK: Night = Night {
     sky: [0x170c19, 0x1f0f20, 0x2c1229, 0x5a1d3a, 0x9c3a5a, 0xf08a6a],
     page: 0x170c19,
     side: 0x130a15,
@@ -208,14 +208,14 @@ pub const HYPR_DARK: Night = Night {
     },
 };
 
-/// Sunrise: the Sunrise website's warm dawn, on Sunrise's glass pages.
-pub const SUNRISE: Theme = Theme {
-    id: "sunrise",
-    name: "Sunrise",
+/// Dawn: the Sunrise website's warm dawn, on Sunrise's glass pages.
+pub const DAWN_THEME: Theme = Theme {
+    id: "dawn",
+    name: "Dawn",
     description: "A warm dawn",
-    sky: SUNRISE_DARK.sky,
+    sky: DAWN_DARK.sky,
     accent: ThemeAccent::Colour(0xc2366f),
-    palette: Some(&SUNRISE_DARK),
+    palette: Some(&DAWN_DARK),
     look: Look::Glass,
 };
 
@@ -517,7 +517,7 @@ pub const SUNRISE_DESCRIPTION: &str = "The pixel sunset";
 
 /// The launcher themes past Sunrise's own sky: the featured families first, then the older ones.
 pub const THEMES: [Theme; 10] = [
-    SUNRISE,
+    DAWN_THEME,
     HYPR_NEON,
     DEEP_OCEAN,
     AUTUMN_FOREST,

@@ -7028,7 +7028,7 @@ pub fn {f}("
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         names.sort();
-        assert_eq!(names, ["sunrise-launcher", "new"]);
+        assert_eq!(names, ["new", "sunrise-launcher"]);
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn the_new_families_keep_the_glass_pages() {
         for (id, oled, dark) in [
-            ("sunrise", false, true),
+            ("dawn", false, true),
             ("hypr_neon", true, true),
             ("overworld", false, true),
             ("taiga", false, true),

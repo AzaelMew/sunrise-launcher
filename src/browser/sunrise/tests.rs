@@ -473,7 +473,7 @@ fn installs_checked_turns_on_and_removes() {
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
         done[0].checksum,
-        "SHA-256:f891bde88f4b841fd35c4f3305bc8904b671ebe9d5ad28d5aecc57e8b23fc3ce"
+        "SHA-256:cb6e658445269b2a4d2eb104e83e4b993586bc2e56814fd56454244139f08364"
     );
     assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
     let list = fs::read_to_string(home.join("sunrise-mods.txt")).unwrap();

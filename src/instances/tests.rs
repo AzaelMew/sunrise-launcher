@@ -163,7 +163,7 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     let empty_files: Vec<PathBuf> = files(&empty.home).into_keys().collect();
     assert_eq!(
         empty_files,
-        [PathBuf::from("sunrise-player.txt"), "options.txt".into()]
+        [PathBuf::from("options.txt"), "sunrise-player.txt".into()]
     );
     let copied = files(&copy.home);
     for kept in [

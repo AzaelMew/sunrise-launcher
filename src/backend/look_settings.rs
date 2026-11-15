@@ -50,7 +50,7 @@ mod tests {
     #[test]
     fn theme_accents_and_motion_survive_bad_entries() {
         let s = Settings::parse(
-            r##"{"theme_accents": {"sunrise": "#c2366f", "nord": 12, "sunrise": "teal"},
+            r##"{"theme_accents": {"dawn": "#c2366f", "nord": 12, "sunrise": "teal"},
                 "reduce_motion": "yes", "game_args": "--x"}"##,
         );
         assert_eq!(s.game_args, "--x");

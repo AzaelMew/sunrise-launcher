@@ -977,7 +977,7 @@ mod tests {
             assert!(!unused(painted, false), "{painted}");
             assert!(unused(painted, true), "{painted} performance");
         }
-        assert!(!unused("sunrise", false));
+        assert!(!unused("dawn", false));
         assert!(!unused("hypr_neon", false));
         assert!(unused("hypr_neon", true));
     }
@@ -990,7 +990,7 @@ mod tests {
             glass: Some(3.),
             blur: Some(9.),
             background: Some("mine.png".into()),
-            theme_accents: [("sunrise".to_string(), Accent::TEAL)].into(),
+            theme_accents: [("dawn".to_string(), Accent::TEAL)].into(),
             reduce_motion: Some(true),
             language: Some(i18n::Language::French),
             skip_opening: true,
