@@ -485,12 +485,12 @@ fn a_link_above_the_root_is_followed() {
 }
 
 /// No unit test reaches the player's real folders: a test's launcher data, build folders and
-/// native build log are all under the temporary folder, or under the `HORIZON_LAUNCHER_HOME` the
+/// native build log are all under the temporary folder, or under the `SUNRISE_LAUNCHER_HOME` the
 /// run names (launcher.yml points it at a scratch folder).
 #[test]
 fn unit_tests_never_resolve_the_real_profile() {
     // The data folder keeps the named spelling; the build folder is its real one.
-    let homes = match std::env::var_os("HORIZON_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
+    let homes = match std::env::var_os("SUNRISE_LAUNCHER_HOME").filter(|h| !h.is_empty()) {
         Some(home) => {
             let home = PathBuf::from(home);
             let real = crate::backend::plain(home.canonicalize().unwrap_or(home.clone()));
