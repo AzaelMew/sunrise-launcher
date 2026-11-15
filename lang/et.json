@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Käivitaja välimus on praegu lähtestatud, aga seda ei õnnestunud salvestada",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Klaas ja Udustus kujundavad tumeda välimuse hägusad paneelid; heled joonib ühtlaselt valged paneelid.",
   "Performance mode draws solid panels, without glass or blur.": "Jõudlusrežiim joonib ühtlased paneelid, ilma klaasi ja udustuseta.",
-  "This theme's night draws solid panels, without glass or blur.": "Selle teema öö joonib ühtlased paneelid, ilma klaasi ja udustuseta."
+  "This theme's night draws solid panels, without glass or blur.": "Selle teema öö joonib ühtlased paneelid, ilma klaasi ja udustuseta.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Installib selle konto jaoks Sunrise Launcheri. Administraatorit pole vaja.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Eemaldab sellest arvutist Sunrise Launcheri. Teie maailmad ja mängu kaust jäävad alles.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher on installitud.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher eemaldati."
 }

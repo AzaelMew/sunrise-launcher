@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Launcherens udseende er nulstillet lige nu, men det kunne ikke gemmes",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas og Sløring former de matte paneler i det mørke udseende; det lyse tegner massieve hvide paneler.",
   "Performance mode draws solid panels, without glass or blur.": "Ydeevnetilstand tegner massive paneler, uden glas eller sløring.",
-  "This theme's night draws solid panels, without glass or blur.": "Denne temas nattegner massive paneler, uden glas eller sløring."
+  "This theme's night draws solid panels, without glass or blur.": "Denne temas nattegner massive paneler, uden glas eller sløring.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Installerer Sunrise Launcher for denne konto. Ingen administrator nødvendig.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Fjerner Sunrise Launcher fra denne computer. Dine verdener og spillets mappe bliver.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher er installeret.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher blev fjernet."
 }

@@ -54,9 +54,15 @@ const ICONS: [(&str, &[u8]); 9] = [
 
 const LAUNCHER_ENTRY: &str = crate::identity::DESKTOP_ENTRY;
 const GAME_ENTRY: &str = if cfg!(horizon_fork_launcher) {
-    "horizon-fork-arismoko.desktop"
+    "net.playsunrise.game.desktop"
 } else {
     "horizon.desktop"
+};
+/// The icon's name in the icon theme and in both entries.
+const ICON: &str = if cfg!(horizon_fork_launcher) {
+    "net.playsunrise.launcher"
+} else {
+    "horizon"
 };
 const GAME_ENTRY_TEXT: &str = include_str!("../../packaging/linux/horizon.desktop");
 
@@ -101,11 +107,11 @@ pub fn launcher_entry(exe: &Path) -> String {
     );
     if cfg!(horizon_fork_launcher) {
         entry
-            .replace("Name=Horizon\n", "Name=Horizon Launcher\n")
-            .replace("Icon=horizon\n", "Icon=horizon-fork-arismoko\n")
+            .replace("Name=Horizon\n", "Name=Sunrise Launcher\n")
+            .replace("Icon=horizon\n", &format!("Icon={ICON}\n"))
             .replace(
                 "StartupWMClass=horizon-launcher\n",
-                "StartupWMClass=io.github.arismoko.horizonfork.launcher\n",
+                &format!("StartupWMClass={}\n", crate::identity::APP_ID),
             )
     } else {
         entry
@@ -123,7 +129,7 @@ fn files(data: &Path, exe: &Path) -> Vec<(PathBuf, Vec<u8>)> {
             data.join("applications").join(GAME_ENTRY),
             if cfg!(horizon_fork_launcher) {
                 GAME_ENTRY_TEXT
-                    .replace("Icon=horizon", "Icon=horizon-fork-arismoko")
+                    .replace("Icon=horizon", &format!("Icon={ICON}"))
                     .into_bytes()
             } else {
                 GAME_ENTRY_TEXT.as_bytes().to_vec()
@@ -132,17 +138,9 @@ fn files(data: &Path, exe: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     ];
     for (size, bytes) in ICONS {
         let name = if size == "scalable" {
-            if cfg!(horizon_fork_launcher) {
-                "horizon-fork-arismoko.svg"
-            } else {
-                "horizon.svg"
-            }
+            format!("{ICON}.svg")
         } else {
-            if cfg!(horizon_fork_launcher) {
-                "horizon-fork-arismoko.png"
-            } else {
-                "horizon.png"
-            }
+            format!("{ICON}.png")
         };
         out.push((
             data.join("icons/hicolor")
@@ -292,7 +290,7 @@ mod tests {
         assert!(entry.contains("Exec=\"/home/a b/Horizon \\\"x\\\"/horizon-launcher\"\n"));
         assert!(entry.contains("TryExec=/home/a b/Horizon \"x\"/horizon-launcher\n"));
         assert!(entry.contains(if cfg!(horizon_fork_launcher) {
-            "Icon=horizon-fork-arismoko\n"
+            "Icon=net.playsunrise.launcher\n"
         } else {
             "Icon=horizon\n"
         }));
@@ -305,14 +303,14 @@ mod tests {
         assert!(install_in(&data, Path::new("/opt/a/horizon-launcher")).unwrap());
         assert!(!install_in(&data, Path::new("/opt/a/horizon-launcher")).unwrap());
         let png = data.join(if cfg!(horizon_fork_launcher) {
-            "icons/hicolor/48x48/apps/horizon-fork-arismoko.png"
+            "icons/hicolor/48x48/apps/net.playsunrise.launcher.png"
         } else {
             "icons/hicolor/48x48/apps/horizon.png"
         });
         assert!(fs::read(&png).unwrap().starts_with(b"\x89PNG"));
         assert!(data
             .join(if cfg!(horizon_fork_launcher) {
-                "icons/hicolor/scalable/apps/horizon-fork-arismoko.svg"
+                "icons/hicolor/scalable/apps/net.playsunrise.launcher.svg"
             } else {
                 "icons/hicolor/scalable/apps/horizon.svg"
             })

@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Paleidyklės išvaizda kol kas atkurta, bet jos nepavyko išsaugoti",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Stiklas ir Suliejimas formuoja tamsios išvaizdos matinius skydus; šviesioji piešia vientisus baltus skydus.",
   "Performance mode draws solid panels, without glass or blur.": "Našumo režimas piešia vientisus skydus, be stiklo ir suliejimo.",
-  "This theme's night draws solid panels, without glass or blur.": "Šios temos naktis piešia vientisus skydus, be stiklo ir suliejimo."
+  "This theme's night draws solid panels, without glass or blur.": "Šios temos naktis piešia vientisus skydus, be stiklo ir suliejimo.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Šioje paskyroje įdiegiama „Sunrise Launcher“. Nereikia administratoriaus.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Pašalina Sunrise Launcher iš šio kompiuterio. Jūsų pasauliai ir žaidimo aplankas išlieka.",
+  "Sunrise Launcher is installed.": "Įdiegta „Sunrise Launcher“.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher buvo pašalintas."
 }

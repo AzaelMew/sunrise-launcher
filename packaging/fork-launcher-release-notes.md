@@ -1,12 +1,13 @@
-# Horizon Fork Launcher (arismoko)
+# Sunrise Launcher
 
-This is the arismoko fork, not the official Horizon launcher. It uses separate
-settings, game data and account storage and installs and updates only from
+This is Sunrise's launcher, not the official Horizon launcher. It keeps its own
+settings, game data and account storage, opening the Horizon launcher's where it has
+none of its own yet, and installs and updates only from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise).
 
 Microsoft sign-in is configured using the application ID upstream authorized the
 fork to use. Signed Nightly builds require a signed-in account that owns Minecraft.
-Account and token storage remain separate from the official launcher.
+Accounts it signs in are stored under its own name, apart from the official launcher's.
 
 ## Downloads
 

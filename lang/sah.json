@@ -1367,5 +1367,7 @@
   "The launcher's look is reset for now, but it could not be saved": "Запускник көрүҥэ кыратык уларытылла сылдьар, ол эрээри хараллыбата",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Өстүөкүлэ уонна Дьүһүннээһин хараҥа тас көстүү матовай панелларын түһэрэллэр; сырдьык үрүҥ толору панеллары уурар.",
   "Performance mode draws solid panels, without glass or blur.": "Үлэ көрдөрүү режимэ өстүөкүлэ уонна дьүһүннээһин суох толору панеллары уурар.",
-  "This theme's night draws solid panels, without glass or blur.": "Бу тиэмэ түүнэ өстүөкүлэ уонна дьүһүннээһин суох толору панеллары уурар."
+  "This theme's night draws solid panels, without glass or blur.": "Бу тиэмэ түүнэ өстүөкүлэ уонна дьүһүннээһин суох толору панеллары уурар.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Бу аккаунҥа Sunrise Launcher туруорар. Администратор наадата суох.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Бу көмпүүтэртэн Sunrise Launcher-ы суох оҥорор. Эн аан дойдуларыҥ уонна оонньуу папката хаалаллар."
 }

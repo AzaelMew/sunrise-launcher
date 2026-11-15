@@ -1,12 +1,15 @@
 # Horizon launcher
 
-## arismoko fork builds
+## Sunrise builds
 
-**Horizon Fork Launcher (arismoko)** is not the official Horizon launcher. Fork
-builds start with empty settings and accounts; they do not import official tokens.
-Their launcher and game data live under `horizon-fork-arismoko/launcher` and
-`horizon-fork-arismoko/game`. Relocation metadata and the OS keychain service are
-separate. Explicit home overrides still work for developers.
+**Sunrise Launcher** is not the official Horizon launcher. Its launcher and game data
+live under `sunrise-launcher` and `sunrise`, its relocation metadata under
+`sunrise-launcher-location`, and its accounts under the keychain service
+`net.playsunrise.launcher`. Where one of those doesn't exist yet, it opens the Horizon
+launcher's (`horizon-launcher`, `horizon`, `horizon-launcher-location`,
+`dev.playhorizon.launcher`), then the arismoko fork's (`horizon-fork-arismoko/…`), so
+instances, worlds and sign-ins carry over; it never removes those on uninstall.
+Explicit home overrides still work for developers.
 
 A source-built launcher can install fork builds today. Configured Microsoft
 sign-in and signed Nightly Play arrive with the fork launcher; no release date is

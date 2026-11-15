@@ -1367,5 +1367,7 @@
   "The launcher's look is reset for now, but it could not be saved": "Na-reset muna ang hitsura ng launcher, pero hindi na-save",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Hinuhubog ng Glass at Blur ang mga frosted panel ng dark na hitsura; ang light naman, solid na puting panel ang ginagamit.",
   "Performance mode draws solid panels, without glass or blur.": "Gumagamit ang Mode ng performance ng solid na panel, walang glass o blur.",
-  "This theme's night draws solid panels, without glass or blur.": "Solid na panel ang gabi ng temang ito, walang glass o blur."
+  "This theme's night draws solid panels, without glass or blur.": "Solid na panel ang gabi ng temang ito, walang glass o blur.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Nag-install ng Sunrise Launcher para sa account na ito. Hindi kailangan ng administrator.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Inaalis ang Sunrise Launcher mula sa computer na ito. Mananatili ang iyong mundo at ang folder ng laro."
 }

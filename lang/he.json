@@ -1367,5 +1367,7 @@
   "The launcher's look is reset for now, but it could not be saved": "המראה של המשגר אופס לעת עתה, אך לא ניתן היה לשמור אותו",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "זכוכית וטשטוש מעצבים את הפאנלים המטושטשים של המראה הכהה; הבהיר מצייר פאנלים לבנים אחידים.",
   "Performance mode draws solid panels, without glass or blur.": "מצב ביצועים מצייר פאנלים אחידים, בלי זכוכית ובלי טשטוש.",
-  "This theme's night draws solid panels, without glass or blur.": "הלילה של ערכת הנושא הזו מצייר פאנלים אחידים, בלי זכוכית ובלי טשטוש."
+  "This theme's night draws solid panels, without glass or blur.": "הלילה של ערכת הנושא הזו מצייר פאנלים אחידים, בלי זכוכית ובלי טשטוש.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "מתקין את Sunrise Launcher עבור חשבון זה. אין צורך במנהל מערכת.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "מסיר את Sunrise Launcher מהמחשב הזה. העולמות שלך והתיקיה של המשחק נשארים."
 }

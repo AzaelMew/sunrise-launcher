@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Útlit ræsiforritsins hefur verið endurstillt í bili, en það tókst ekki að vista það",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Gler og Móða forma hrímuðu spjöldin í dökka útlitinu; það ljósa teiknar gegnsæi hvít spjöld.",
   "Performance mode draws solid panels, without glass or blur.": "Afkastastilling teiknar gegnsæi spjöld, án glers og móðu.",
-  "This theme's night draws solid panels, without glass or blur.": "Nótt þessa þema teiknar gegnsæi spjöld, án glers og móðu."
+  "This theme's night draws solid panels, without glass or blur.": "Nótt þessa þema teiknar gegnsæi spjöld, án glers og móðu.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Setur upp Sunrise Launcher fyrir þennan reikning. Enginn stjórnandi þarf.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Fjarlægir Sunrise Launcher af þessari tölvu. Heimir þínir og mappa leiksins verða áfram.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher er sett upp.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher var fjarlægður."
 }

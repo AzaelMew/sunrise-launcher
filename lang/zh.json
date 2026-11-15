@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "启动器外观已暂时重置，但未能保存",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "玻璃和模糊塑造深色外观的磨砂面板；浅色外观绘制纯白面板。",
   "Performance mode draws solid panels, without glass or blur.": "性能模式绘制纯色面板，不带玻璃或模糊效果。",
-  "This theme's night draws solid panels, without glass or blur.": "此主题的夜间模式绘制纯色面板，不带玻璃或模糊效果。"
+  "This theme's night draws solid panels, without glass or blur.": "此主题的夜间模式绘制纯色面板，不带玻璃或模糊效果。",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "为此账户安装 Sunrise Launcher，无需管理员权限。",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "从此电脑移除 Sunrise Launcher。你的世界和游戏文件夹会保留。",
+  "Sunrise Launcher is installed.": "Sunrise Launcher 已安装。",
+  "Sunrise Launcher was removed.": "Sunrise Launcher 已移除。"
 }

@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "लॉन्चर का रूप अभी के लिए रीसेट हो गया है, लेकिन सहेजा नहीं जा सका",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ग्लास और ब्लर डार्क रूप के फ्रॉस्टेड पैनल बनाते हैं; लाइट रूप ठोस सफ़ेद पैनल बनाता है।",
   "Performance mode draws solid panels, without glass or blur.": "प्रदर्शन मोड बिना ग्लास या ब्लर के ठोस पैनल बनाता है।",
-  "This theme's night draws solid panels, without glass or blur.": "इस थीम की रात बिना ग्लास या ब्लर के ठोस पैनल बनाती है।"
+  "This theme's night draws solid panels, without glass or blur.": "इस थीम की रात बिना ग्लास या ब्लर के ठोस पैनल बनाती है।",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "इस खाते के लिए Sunrise Launcher इंस्टॉल करता है। किसी प्रशासक की आवश्यकता नहीं है।",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "इस कंप्यूटर से Sunrise Launcher को हटाता है। आपकी दुनिया और गेम का फ़ोल्डर रहता है।",
+  "Sunrise Launcher is installed.": "Sunrise Launcher इंस्टॉल हो गया है।",
+  "Sunrise Launcher was removed.": "Sunrise Launcher हटा दिया गया था।"
 }

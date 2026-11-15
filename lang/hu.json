@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Az indító megjelenése egyelőre vissza lett állítva, de nem sikerült menteni",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Üveg és Elmosás formálja a sötét megjelenés fakó paneleit; a világos tömör fehér paneleket rajzol.",
   "Performance mode draws solid panels, without glass or blur.": "Teljesítmény mód tömör paneleket rajzol, üveg és elmosás nélkül.",
-  "This theme's night draws solid panels, without glass or blur.": "Ezen téma éjszakája tömör paneleket rajzol, üveg és elmosás nélkül."
+  "This theme's night draws solid panels, without glass or blur.": "Ezen téma éjszakája tömör paneleket rajzol, üveg és elmosás nélkül.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Telepíti a Sunrise Launcher programot ehhez a fiókhoz. Nincs szükség rendszergazdára.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Eltávolítja a Sunrise Launcher programot erről a számítógépről. A világok és a játék mappája megmarad.",
+  "Sunrise Launcher is installed.": "A Sunrise Launcher telepítve van.",
+  "Sunrise Launcher was removed.": "A Sunrise Launcher eltávolítva."
 }

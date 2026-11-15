@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "L'aspecte del llançador s'ha restablert de moment, però no s'ha pogut desar",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Vidre i Desenfocament donen forma als panells esmerilats de l'aspecte fosc; el clar dibuixa panells blancs sòlids.",
   "Performance mode draws solid panels, without glass or blur.": "Mode rendiment dibuixa panells sòlids, sense vidre ni desenfocament.",
-  "This theme's night draws solid panels, without glass or blur.": "La nit d'aquest tema dibuixa panells sòlids, sense vidre ni desenfocament."
+  "This theme's night draws solid panels, without glass or blur.": "La nit d'aquest tema dibuixa panells sòlids, sense vidre ni desenfocament.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Instal·la Sunrise Launcher per a aquest compte. No cal administrador.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Elimina Sunrise Launcher d'aquest ordinador. Els teus mons i la carpeta del joc es mantenen.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher està instal·lat.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher s'ha eliminat."
 }

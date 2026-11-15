@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Launcher ko'rinishi hozircha tiklandi, lekin saqlanmadi",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Shisha va Xiralash qorong'i ko'rinishning xira panellarini shakllantiradi; yorug'i qattiq oq panellar chizadi.",
   "Performance mode draws solid panels, without glass or blur.": "Unumdorlik rejimi shisha va xiralashsiz qattiq panellar chizadi.",
-  "This theme's night draws solid panels, without glass or blur.": "Bu mavzuning tuni shisha va xiralashsiz qattiq panellar chizadi."
+  "This theme's night draws solid panels, without glass or blur.": "Bu mavzuning tuni shisha va xiralashsiz qattiq panellar chizadi.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Ushbu hisob uchun Sunrise Launcher o'rnatadi. Administrator kerak emas.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Sunrise Launcherni ushbu kompyuterdan olib tashlaydi. Sizning dunyolaringiz va o'yin papkasi qoladi.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher o'rnatildi.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher olib tashlandi."
 }

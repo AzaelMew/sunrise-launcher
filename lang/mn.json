@@ -1367,5 +1367,6 @@
   "The launcher's look is reset for now, but it could not be saved": "Эхлүүлэгчийн харагдах байдал одоогоор сэргээгдсэн, гэхдээ хадгалагдаагүй",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Шил болон Бүдгэрүүлэлт бараан төрхийн бүдэгрүүлсэн панелийг хэлбэржүүлнэ; гэрэлт нь цагаан хатуу панель зурна.",
   "Performance mode draws solid panels, without glass or blur.": "Гүйцэтгэлийн горим шил, бүдгэрүүлэлтгүй хатуу панель зурна.",
-  "This theme's night draws solid panels, without glass or blur.": "Энэ сэдэвийн шөнө шил, бүдгэрүүлэлтгүй хатуу панель зурна."
+  "This theme's night draws solid panels, without glass or blur.": "Энэ сэдэвийн шөнө шил, бүдгэрүүлэлтгүй хатуу панель зурна.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Энэ бүртгэлд Sunrise Launcher суулгана. Администратор шаардлагагүй."
 }

@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "'t Uterlik vaan de launcher is veur noe trökgesjtèld, mer 't kos neet weure opgeslage",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glaas en Vervaag vörme de matte panneel van 't duustere uterlik; 't liechte teikent massief witte panneel.",
   "Performance mode draws solid panels, without glass or blur.": "Prestatiemodus teikent massief panneel, zoonder glaas of vervaag.",
-  "This theme's night draws solid panels, without glass or blur.": "De nach van dit thema teikent massief panneel, zoonder glaas of vervaag."
+  "This theme's night draws solid panels, without glass or blur.": "De nach van dit thema teikent massief panneel, zoonder glaas of vervaag.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Installeert Sunrise Launcher veur dit account. Gein behierder nuudig.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Verwijdert Sunrise Launcher vaan deze computer. Dien werelde en de map vaan ‘t spel blieve.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher is geïnstalleerd.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher is verwijderd."
 }

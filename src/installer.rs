@@ -433,12 +433,10 @@ fn named(path: &Path, name: &str) -> bool {
 }
 
 /// Whether `data`, the folder [`backend::data_dir`] names, is one the launcher made, so that
-/// `--remove-data` may delete it: the default `horizon-launcher` folder, or the `launcher` folder
+/// `--remove-data` may delete it: the default launcher folder (`identity::LAUNCHER_FOLDER`), or the `launcher` folder
 /// of a moved data location, which the move lays out as `<folder>\launcher`, `\game` and `\build`.
 fn made_by_launcher(data: &Path, location: Option<&Roots>) -> bool {
-    // A moved location is shared too when the folders are (`location.json` is read by both).
-    let laid_out = !crate::identity::SHARES_DATA
-        && location.is_some_and(|r| r.launcher == data && named(&r.launcher, "launcher"));
+    let laid_out = location.is_some_and(|r| r.launcher == data && named(&r.launcher, "launcher"));
     crate::identity::owns_launcher_data_dir(data) || laid_out
 }
 
@@ -453,7 +451,7 @@ pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<
     let dir = registered()
         .ok_or_else(|| {
             crate::i18n::tr(if cfg!(horizon_fork_launcher) {
-                "Horizon Fork Launcher (arismoko) is not installed for this account."
+                "Sunrise Launcher is not installed for this account."
             } else {
                 "Horizon Launcher is not installed for this account."
             })
@@ -545,11 +543,6 @@ pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<
                     builds.display()
                 ));
             }
-        } else if crate::identity::SHARES_DATA {
-            left.push(format!(
-                "{} (shared with the Horizon launcher, kept)",
-                data.display()
-            ));
         } else {
             left.push(format!(
                 "{} (not the launcher's own folder)",
@@ -636,19 +629,19 @@ mod tests {
         assert_eq!(
             folder_for(Path::new(r"C:\Games")),
             PathBuf::from(if cfg!(horizon_fork_launcher) {
-                r"C:\Games\Horizon Fork Launcher (arismoko)"
+                r"C:\Games\Sunrise Launcher"
             } else {
                 r"C:\Games\Horizon Launcher"
             })
         );
         assert_eq!(
             folder_for(Path::new(if cfg!(horizon_fork_launcher) {
-                r"C:\Games\horizon fork launcher (arismoko)"
+                r"C:\Games\sunrise launcher"
             } else {
                 r"C:\Games\horizon launcher"
             })),
             PathBuf::from(if cfg!(horizon_fork_launcher) {
-                r"C:\Games\horizon fork launcher (arismoko)"
+                r"C:\Games\sunrise launcher"
             } else {
                 r"C:\Games\horizon launcher"
             })
@@ -666,24 +659,24 @@ mod tests {
 
     #[test]
     fn uninstall_deletes_only_folders_the_launcher_made() {
-        let shares = crate::identity::SHARES_DATA;
-        // The default folder, and one `HORIZON_LAUNCHER_HOME` names the same: the Horizon
-        // launcher's own; a fork build shares it and never removes it.
+        // The default folder, and one `HORIZON_LAUNCHER_HOME` names the same: the launcher's own.
         let default = Path::new("profile").join(crate::identity::LAUNCHER_FOLDER);
-        assert_eq!(made_by_launcher(&default, None), !shares);
+        assert!(made_by_launcher(&default, None));
         assert!(builds_are_launchers(&default, &default, None));
-        // The fork's own older folder goes with a fork build.
-        let fork = Path::new("profile")
-            .join("horizon-fork-arismoko")
-            .join("launcher");
-        assert_eq!(made_by_launcher(&fork, None), shares);
+        // An earlier launcher's folder stays.
+        for (old, _, _) in crate::identity::EARLIER {
+            assert!(
+                !made_by_launcher(&Path::new("profile").join(old), None),
+                "{old}"
+            );
+        }
         assert!(!made_by_launcher(Path::new(r"D:\Documents"), None));
         assert!(!made_by_launcher(Path::new(r"D:\Games\launcher"), None));
 
         // Data moved to D:\Horizon (`data_location::layout`): its launcher and build folders go,
         // the game folder never.
         let moved = moved_to(r"D:\Horizon");
-        assert_eq!(made_by_launcher(&moved.launcher, Some(&moved)), !shares);
+        assert!(made_by_launcher(&moved.launcher, Some(&moved)));
         assert!(builds_are_launchers(
             &moved.build,
             &moved.launcher,

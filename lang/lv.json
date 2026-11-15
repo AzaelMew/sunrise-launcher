@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Palaišanas programmas izskats pagaidām atiestatīts, bet to neizdevās saglabāt",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Stikls un Aizmiglojums veido tumšā izskata matētos paneļus; gaišais zīmē viendabīgus baltus paneļus.",
   "Performance mode draws solid panels, without glass or blur.": "Veiktspējas režīms zīmē viendabīgus paneļus, bez stikla un aizmiglojuma.",
-  "This theme's night draws solid panels, without glass or blur.": "Šīs tēmas nakts zīmē viendabīgus paneļus, bez stikla un aizmiglojuma."
+  "This theme's night draws solid panels, without glass or blur.": "Šīs tēmas nakts zīmē viendabīgus paneļus, bez stikla un aizmiglojuma.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Instalē Sunrise Launcher šim kontam. Nav nepieciešams administrators.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "No šī datora noņem programmu Sunrise Launcher. Jūsu pasaules un spēles mape paliek.",
+  "Sunrise Launcher is installed.": "Ir instalēts Sunrise Launcher.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher tika noņemts."
 }

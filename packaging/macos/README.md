@@ -17,12 +17,11 @@
 ## Fork packages
 
 The arismoko fork ships Apple Silicon (arm64) only, not Intel. Its staged packaging
-uses `Horizon Fork Launcher (arismoko).app`, bundle id
-`io.github.arismoko.horizonfork.launcher`, the fork icon and executable
-`horizon-fork-launcher`. The volume is named `Horizon Fork Launcher (arismoko)`.
+uses `Sunrise Launcher.app`, bundle id `net.playsunrise.launcher`, the fork icon and
+executable `horizon-fork-launcher`. The volume is named `Sunrise Launcher`.
 The installer is `horizon-fork-launcher-macos-arm64.dmg`; self-update uses
-`horizon-fork-launcher-macos-arm64.zip` from arismoko/horizon. Settings, accounts
-and game data use the separate fork namespace.
+`horizon-fork-launcher-macos-arm64.zip` from sunrise-org/sunrise. Settings, accounts
+and game data use Sunrise's own namespace.
 
 The app is **ad hoc signed, not notarized**. Drag it to Applications. On macOS 14
 and earlier, right-click the app and choose **Open**, then confirm **Open**. On

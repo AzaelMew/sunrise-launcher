@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Pamja e lëshuesit është rivendosur për tani, por nuk u ruajt",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Xhami dhe Mjegullimi formojnë panelet e mjelmëta të pamjes së errët; e çelëta vizaton panele të bardha të ngurta.",
   "Performance mode draws solid panels, without glass or blur.": "Modaliteti i performancës vizaton panele të ngurta, pa xhami as mjegullim.",
-  "This theme's night draws solid panels, without glass or blur.": "Nata e kësaj teme vizaton panele të ngurta, pa xhami as mjegullim."
+  "This theme's night draws solid panels, without glass or blur.": "Nata e kësaj teme vizaton panele të ngurta, pa xhami as mjegullim.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Instalon Sunrise Launcher për këtë llogari. Nuk ka nevojë për administrator.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Heq Sunrise Launcher nga ky kompjuter. Botët tuaja dhe dosja e lojës qëndrojnë.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher është instaluar.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher u hoq."
 }

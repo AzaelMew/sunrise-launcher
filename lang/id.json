@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Tampilan launcher sudah diatur ulang untuk sementara, tetapi tidak bisa disimpan",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Kaca dan Blur membentuk panel buram pada tampilan gelap; tampilan terang menggambar panel putih solid.",
   "Performance mode draws solid panels, without glass or blur.": "Mode performa menggambar panel solid, tanpa kaca atau blur.",
-  "This theme's night draws solid panels, without glass or blur.": "Malam pada tema ini menggambar panel solid, tanpa kaca atau blur."
+  "This theme's night draws solid panels, without glass or blur.": "Malam pada tema ini menggambar panel solid, tanpa kaca atau blur.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Menginstal Sunrise Launcher untuk akun ini. Tidak memerlukan hak administrator.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Menghapus Sunrise Launcher dari komputer ini. Dunia dan folder game Anda akan tetap aman.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher berhasil diinstal.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher telah dihapus."
 }

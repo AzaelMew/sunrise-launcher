@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Вигляд лаунчера поки скинуто, але не вдалося зберегти",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Скло і Розмиття формують матові панелі темного вигляду; світлий малює суцільні білі панелі.",
   "Performance mode draws solid panels, without glass or blur.": "Режим продуктивності малює суцільні панелі, без скла і розмиття.",
-  "This theme's night draws solid panels, without glass or blur.": "Ніч цієї теми малює суцільні панелі, без скла і розмиття."
+  "This theme's night draws solid panels, without glass or blur.": "Ніч цієї теми малює суцільні панелі, без скла і розмиття.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Встановлює Sunrise Launcher для цього облікового запису. Права адміністратора не потрібні.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Видаляє Sunrise Launcher з цього комп’ютера. Ваші світи та папка гри залишаються.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher встановлено.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher видалено."
 }

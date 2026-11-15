@@ -1367,5 +1367,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Изглед покретача је за сада ресетован, али није могао бити сачуван",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Стакло и Замућење обликују мат панеле тамног изгледа; светли црта пуне беле панеле.",
   "Performance mode draws solid panels, without glass or blur.": "Режим перформанси црта пуне панеле, без стакла и замућења.",
-  "This theme's night draws solid panels, without glass or blur.": "Ноћ ове теме црта пуне панеле, без стакла и замућења."
+  "This theme's night draws solid panels, without glass or blur.": "Ноћ ове теме црта пуне панеле, без стакла и замућења.",
+  "Installs Sunrise Launcher for this account. No administrator needed.": "Инсталира Sunrise Launcher за овај налог. Није потребан администратор.",
+  "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.": "Уклања Sunrise Launcher са овог рачунара. Ваши светови и фасцикла игре остају.",
+  "Sunrise Launcher is installed.": "Sunrise Launcher је инсталиран.",
+  "Sunrise Launcher was removed.": "Sunrise Launcher је уклоњен."
 }
