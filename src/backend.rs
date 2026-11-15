@@ -6036,6 +6036,51 @@ pub fn {f}("
     }
 
     #[test]
+    fn tags_without_a_release_never_hide_the_newest_launcher() {
+        // Sunrise's repository carries Horizon's `launcher@0.2.x` tags without releases, and a
+        // draft's tag has none either: the 1.0 line sorts above them, and a tag that has no
+        // release is skipped, never an error.
+        let asset = launcher_asset().unwrap_or("unsupported");
+        let asked = std::cell::RefCell::new(Vec::new());
+        let lookup = |refs: serde_json::Value| {
+            asked.borrow_mut().clear();
+            launcher_releases_in_with(&serde_json::json!([]), |url| {
+                let last = url.rsplit('/').next().unwrap_or("").to_string();
+                asked.borrow_mut().push(last.clone());
+                if url.ends_with("matching-refs/tags/launcher@") {
+                    Ok(Some(refs.clone()))
+                } else if url.ends_with("matching-refs/tags/launcher-v") {
+                    Ok(Some(serde_json::json!([])))
+                } else if last == "launcher@1.0.0" {
+                    Ok(Some(serde_json::json!({"tag_name": last, "assets": [
+                        {"name": asset, "browser_download_url": "u", "size": 1}
+                    ]})))
+                } else {
+                    Ok(None)
+                }
+            })
+            .into_iter()
+            .map(|r| r.tag)
+            .collect::<Vec<_>>()
+        };
+        let tag = |name: &str| serde_json::json!({"ref": format!("refs/tags/{name}")});
+        let mut refs: Vec<_> = (0..=25)
+            .map(|n| tag(&format!("launcher@0.2.{n}")))
+            .collect();
+        refs.push(tag("launcher@1.0.0"));
+        refs.push(tag("launcher@1.0.1"));
+        assert_eq!(lookup(serde_json::json!(refs)), ["launcher@1.0.0"]);
+        assert_eq!(
+            *asked.borrow(),
+            ["launcher@", "launcher@1.0.1", "launcher@1.0.0"]
+        );
+        // Only the inherited tags, before Sunrise's first release: no update, and no error.
+        refs.truncate(26);
+        assert!(lookup(serde_json::json!(refs)).is_empty());
+        assert!(launcher_update_from(&[], "launcher@1.0.0").is_none());
+    }
+
+    #[test]
     fn launcher_tags_from_matching_refs_newest_first() {
         let refs = serde_json::json!([
             {"ref": "refs/tags/launcher-v0.1.9"},
