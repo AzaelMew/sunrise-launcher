@@ -1,8 +1,9 @@
 # Sunrise Launcher
 
 This is Sunrise's launcher, not the official Horizon launcher. It keeps its own
-settings, game data and account storage, opening the Horizon launcher's where it has
-none of its own yet, and installs and updates only from
+settings, game data and account storage; on its first start it copies the Horizon
+launcher's (or the arismoko fork launcher's) settings, accounts and worlds, leaving
+theirs as they are. It installs and updates only from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise).
 
 Microsoft sign-in is configured using the application ID upstream authorized the

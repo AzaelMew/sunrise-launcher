@@ -3,13 +3,15 @@
 ## Sunrise builds
 
 **Sunrise Launcher** is not the official Horizon launcher. Its launcher and game data
-live under `sunrise-launcher` and `sunrise`, its relocation metadata under
-`sunrise-launcher-location`, and its accounts under the keychain service
-`net.playsunrise.launcher`. Where one of those doesn't exist yet, it opens the Horizon
-launcher's (`horizon-launcher`, `horizon`, `horizon-launcher-location`,
-`dev.playhorizon.launcher`), then the arismoko fork's (`horizon-fork-arismoko/…`), so
-instances, worlds and sign-ins carry over; it never removes those on uninstall.
-Explicit home overrides still work for developers.
+live under `sunrise/launcher` and `sunrise/game`, its relocation metadata under
+`sunrise/location`, and its accounts under the keychain service
+`net.playsunrise.launcher`. On its first start, when neither data folder exists, it
+copies the settings, accounts, instances and worlds of the launcher before it: the
+Horizon launcher's (`horizon-launcher`, `horizon`, or where its `location.json` moved
+them), else the arismoko fork's (`horizon-fork-arismoko/…`). Their folders are only
+read, never changed or removed. A sign-in the Horizon launcher saved in the keychain
+(`dev.playhorizon.launcher`) is copied under Sunrise's service the first time it is
+needed. Explicit home overrides still work for developers.
 
 A source-built launcher can install fork builds today. Configured Microsoft
 sign-in and signed Nightly Play arrive with the fork launcher; no release date is
