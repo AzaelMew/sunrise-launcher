@@ -20,7 +20,7 @@ def matrix(repository):
         for entry in entries:
             for key in ('asset', 'binary', 'setup_asset'):
                 if key in entry:
-                    entry[key] = entry[key].replace('horizon-launcher', 'horizon-fork-launcher')
+                    entry[key] = entry[key].replace('horizon-launcher', 'sunrise-launcher')
     return {'include': entries}
 
 if __name__ == '__main__':

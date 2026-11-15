@@ -67,7 +67,7 @@ env:
   # Test runs never reach the telemetry server: no live-count ping, no uploads (docs/telemetry.md).
   HORIZON_TELEMETRY_URL: "off"
   HORIZON_LAUNCHER_REPOSITORY: ${{ github.repository }}
-  LAUNCHER_PREFIX: ${{ github.repository == 'sunrise-org/sunrise' && 'horizon-fork-launcher' || 'horizon-launcher' }}
+  LAUNCHER_PREFIX: ${{ github.repository == 'sunrise-org/sunrise' && 'sunrise-launcher' || 'horizon-launcher' }}
   LAUNCHER_INSTALL_FOLDER: ${{ github.repository == 'sunrise-org/sunrise' && 'Sunrise Launcher' || 'Horizon Launcher' }}
   LAUNCHER_APP_BUNDLE: ${{ github.repository == 'sunrise-org/sunrise' && 'Sunrise Launcher.app' || 'Horizon.app' }}
   LAUNCHER_PACKAGING: ${{ github.repository == 'sunrise-org/sunrise' && '../.local/fork-launcher-packaging' || '../packaging' }}

@@ -12,10 +12,10 @@ Accounts it signs in are stored under its own name, apart from the official laun
 
 ## Downloads
 
-- **Linux x86_64:** download `horizon-fork-launcher-linux-x86_64.AppImage`, make it
+- **Linux x86_64:** download `sunrise-launcher-linux-x86_64.AppImage`, make it
   executable and run it. The `.tar.gz` archive is also available.
-- **Windows x64:** download `horizon-fork-launcher-setup.exe`, or extract
-  `horizon-fork-launcher-windows-x64.zip` and run `horizon-fork-launcher.exe`.
+- **Windows x64:** download `sunrise-launcher-setup.exe`, or extract
+  `sunrise-launcher-windows-x64.zip` and run `sunrise-launcher.exe`.
   This fork is **not Authenticode-signed**. Expect a SmartScreen or unknown-publisher
   warning; signed checksums do not remove Windows warnings.
 

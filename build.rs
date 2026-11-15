@@ -50,8 +50,8 @@ fn main() {
         if repository == "sunrise-org/sunrise" {
             resource.set("FileDescription", "Sunrise Launcher");
             resource.set("ProductName", "Sunrise Launcher");
-            resource.set("InternalName", "horizon-fork-launcher");
-            resource.set("OriginalFilename", "horizon-fork-launcher.exe");
+            resource.set("InternalName", "sunrise-launcher");
+            resource.set("OriginalFilename", "sunrise-launcher.exe");
         }
         if let Err(e) = resource.compile() {
             panic!("embedding {ico}: {e}");

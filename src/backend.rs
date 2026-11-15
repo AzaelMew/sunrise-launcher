@@ -450,7 +450,7 @@ const fn game_fallback_for(os: &str, arch: &str) -> Option<&'static str> {
 /// needs this archive rather than the platform's `.tar.gz`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = Some(if cfg!(horizon_fork_launcher) {
-    "horizon-fork-launcher-linux-x86_64.AppImage"
+    "sunrise-launcher-linux-x86_64.AppImage"
 } else {
     "horizon-launcher-linux-x86_64.AppImage"
 });
@@ -4803,7 +4803,7 @@ pub fn {f}("
             Some((
                 "horizon-macos-arm64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-macos-arm64.zip"
+                    "sunrise-launcher-macos-arm64.zip"
                 } else {
                     "horizon-launcher-macos-arm64.zip"
                 }
@@ -4814,7 +4814,7 @@ pub fn {f}("
             Some((
                 "horizon-macos-x64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-macos-x64.zip"
+                    "sunrise-launcher-macos-x64.zip"
                 } else {
                     "horizon-launcher-macos-x64.zip"
                 }
@@ -4825,7 +4825,7 @@ pub fn {f}("
             Some((
                 "horizon-windows-x64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-windows-x64.zip"
+                    "sunrise-launcher-windows-x64.zip"
                 } else {
                     "horizon-launcher-windows-x64.zip"
                 }
@@ -4836,7 +4836,7 @@ pub fn {f}("
             Some((
                 "horizon-windows-arm64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-windows-arm64.zip"
+                    "sunrise-launcher-windows-arm64.zip"
                 } else {
                     "horizon-launcher-windows-arm64.zip"
                 }
@@ -5162,12 +5162,12 @@ pub fn {f}("
     fn an_arm64_launcher_skips_a_release_without_its_zip() {
         let (arm, x64) = (
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-windows-arm64.zip"
+                "sunrise-launcher-windows-arm64.zip"
             } else {
                 "horizon-launcher-windows-arm64.zip"
             },
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-windows-x64.zip"
+                "sunrise-launcher-windows-x64.zip"
             } else {
                 "horizon-launcher-windows-x64.zip"
             },
@@ -5347,7 +5347,7 @@ pub fn {f}("
         assert_eq!(launcher_version("launcher-vx"), None);
         let list = serde_json::json!([
             {"tag_name": "v2026.10.12", "assets": [{"name": "horizon-linux-x86_64.tar.gz", "browser_download_url": "u", "size": 1}]},
-            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(horizon_fork_launcher) { "horizon-fork-launcher-linux-x86_64.tar.gz" } else { "horizon-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
+            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(horizon_fork_launcher) { "sunrise-launcher-linux-x86_64.tar.gz" } else { "horizon-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
             {"tag_name": "v2026.10.13", "assets": []},
             {"tag_name": "launcher-v0.0.1", "draft": true, "assets": []},
         ]);
@@ -5719,7 +5719,7 @@ pub fn {f}("
         assert_eq!(
             launcher_asset_running_from(true),
             Some(if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-linux-x86_64.AppImage"
+                "sunrise-launcher-linux-x86_64.AppImage"
             } else {
                 "horizon-launcher-linux-x86_64.AppImage"
             })
@@ -6926,7 +6926,7 @@ pub fn {f}("
     fn launcher_versions_read_from_the_binary() {
         assert_eq!(
             parse_version_output(if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher 0.1.5\n"
+                "sunrise-launcher 0.1.5\n"
             } else {
                 "horizon-launcher 0.1.5\n"
             }),

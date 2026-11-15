@@ -188,7 +188,7 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
             "x86_64",
             "horizon-linux-x86_64.tar.gz",
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-linux-x86_64.tar.gz"
+                "sunrise-launcher-linux-x86_64.tar.gz"
             } else {
                 "horizon-launcher-linux-x86_64.tar.gz"
             },
@@ -198,7 +198,7 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
             "x86_64",
             "horizon-windows-x64.zip",
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-windows-x64.zip"
+                "sunrise-launcher-windows-x64.zip"
             } else {
                 "horizon-launcher-windows-x64.zip"
             },
@@ -208,7 +208,7 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
             "aarch64",
             "horizon-macos-arm64.zip",
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-macos-arm64.zip"
+                "sunrise-launcher-macos-arm64.zip"
             } else {
                 "horizon-launcher-macos-arm64.zip"
             },

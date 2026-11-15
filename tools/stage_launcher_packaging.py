@@ -18,13 +18,13 @@ def stage(source: Path, destination: Path, repository: str):
     if repository == UPSTREAM:
         return
     replacements = {
-        'horizon-launcher': 'horizon-fork-launcher',
-        'horizon-fork-launcher.desktop': 'net.playsunrise.launcher.desktop',
+        'horizon-launcher': 'sunrise-launcher',
+        'sunrise-launcher.desktop': 'net.playsunrise.launcher.desktop',
         'dev.horizon.launcher': 'net.playsunrise.launcher',
         'Horizon.app': 'Sunrise Launcher.app',
         '<string>Horizon</string>': '<string>Sunrise Launcher</string>',
         'Name=Horizon\n': 'Name=Sunrise Launcher\n',
-        'StartupWMClass=horizon-fork-launcher': 'StartupWMClass=net.playsunrise.launcher',
+        'StartupWMClass=sunrise-launcher': 'StartupWMClass=net.playsunrise.launcher',
     }
     for name in ('linux/appimage.sh', 'linux/horizon-launcher.desktop', 'macos/package.sh', 'macos/Info.plist'):
         path = destination / name

@@ -7,7 +7,7 @@ pub const PLATFORMS: [(&str, &str, &str, &str); 5] = [
         "x86_64",
         "horizon-linux-x86_64.tar.gz",
         if cfg!(horizon_fork_launcher) {
-            "horizon-fork-launcher-linux-x86_64.tar.gz"
+            "sunrise-launcher-linux-x86_64.tar.gz"
         } else {
             "horizon-launcher-linux-x86_64.tar.gz"
         },
@@ -17,7 +17,7 @@ pub const PLATFORMS: [(&str, &str, &str, &str); 5] = [
         "aarch64",
         "horizon-macos-arm64.zip",
         if cfg!(horizon_fork_launcher) {
-            "horizon-fork-launcher-macos-arm64.zip"
+            "sunrise-launcher-macos-arm64.zip"
         } else {
             "horizon-launcher-macos-arm64.zip"
         },
@@ -28,7 +28,7 @@ pub const PLATFORMS: [(&str, &str, &str, &str); 5] = [
         "x86_64",
         "horizon-macos-x64.zip",
         if cfg!(horizon_fork_launcher) {
-            "horizon-fork-launcher-macos-x64.zip"
+            "sunrise-launcher-macos-x64.zip"
         } else {
             "horizon-launcher-macos-x64.zip"
         },
@@ -38,7 +38,7 @@ pub const PLATFORMS: [(&str, &str, &str, &str); 5] = [
         "x86_64",
         "horizon-windows-x64.zip",
         if cfg!(horizon_fork_launcher) {
-            "horizon-fork-launcher-windows-x64.zip"
+            "sunrise-launcher-windows-x64.zip"
         } else {
             "horizon-launcher-windows-x64.zip"
         },
@@ -48,7 +48,7 @@ pub const PLATFORMS: [(&str, &str, &str, &str); 5] = [
         "aarch64",
         "horizon-windows-arm64.zip",
         if cfg!(horizon_fork_launcher) {
-            "horizon-fork-launcher-windows-arm64.zip"
+            "sunrise-launcher-windows-arm64.zip"
         } else {
             "horizon-launcher-windows-arm64.zip"
         },

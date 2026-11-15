@@ -56,7 +56,7 @@ class PackagingIdentity(unittest.TestCase):
             self.assertEqual(fork['WINDOW_TITLE'], 'Sunrise Launcher')
             self.assertEqual(fork['APP_ID'], 'net.playsunrise.launcher')
             self.assertEqual(fork['LAUNCHER_FOLDER'], 'sunrise/launcher')
-            self.assertEqual(fork['EXECUTABLE'], 'horizon-fork-launcher')
+            self.assertEqual(fork['EXECUTABLE'], 'sunrise-launcher')
             self.assertEqual(fork['INSTALL_KEY'], 'Software\\Sunrise\\Launcher')
 
     def test_real_workflow_repository_input_and_matrix(self):
@@ -81,10 +81,10 @@ class PackagingIdentity(unittest.TestCase):
             else:
                 self.assertEqual([entry['name'] for entry in entries], ['linux', 'macos', 'windows'])
                 self.assertEqual([entry['asset'] for entry in entries],
-                                 ['horizon-fork-launcher-linux-x86_64.tar.gz', 'horizon-fork-launcher-macos-arm64.zip', 'horizon-fork-launcher-windows-x64.zip'])
+                                 ['sunrise-launcher-linux-x86_64.tar.gz', 'sunrise-launcher-macos-arm64.zip', 'sunrise-launcher-windows-x64.zip'])
                 self.assertEqual(entries[1], json.loads(
                     (ROOT / 'tests/fixtures/launcher-fork-macos.json').read_text()))
-                self.assertEqual(entries[2]['setup_asset'], 'horizon-fork-launcher-setup.exe')
+                self.assertEqual(entries[2]['setup_asset'], 'sunrise-launcher-setup.exe')
 
     def test_upstream_metadata_is_byte_identical_to_base_objects(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -104,18 +104,18 @@ class PackagingIdentity(unittest.TestCase):
             STAGE.stage(source, destination, STAGE.FORK)
             plist = (destination / 'macos/Info.plist').read_text()
             self.assertIn('<string>net.playsunrise.launcher</string>', plist)
-            self.assertIn('<string>horizon-fork-launcher</string>', plist)
+            self.assertIn('<string>sunrise-launcher</string>', plist)
             self.assertNotIn('<string>Horizon</string>', plist)
             self.assertEqual((destination / 'icons/horizon.icns').read_bytes(),
                              (source / 'icons/fork/launcher.icns').read_bytes())
             script = (destination / 'macos/package.sh').read_text()
             self.assertIn('identity=-', script)
-            self.assertIn('zip=horizon-fork-launcher-macos-$arch.zip', script)
-            self.assertIn('dmg=$out/horizon-fork-launcher-macos-$arch.dmg', script)
+            self.assertIn('zip=sunrise-launcher-macos-$arch.zip', script)
+            self.assertIn('dmg=$out/sunrise-launcher-macos-$arch.dmg', script)
             self.assertIn('\"Sunrise Launcher\" \"$dmg\"', script)
             desktop = (destination / 'linux/net.playsunrise.launcher.desktop').read_text()
             self.assertIn('Name=Sunrise Launcher\n', desktop)
-            self.assertIn('Exec=horizon-fork-launcher\n', desktop)
+            self.assertIn('Exec=sunrise-launcher\n', desktop)
             self.assertIn('StartupWMClass=net.playsunrise.launcher\n', desktop)
             for script in ('linux/appimage.sh', 'macos/package.sh'):
                 subprocess.run(['bash', '-n', str(destination / script)], check=True)

@@ -5,7 +5,7 @@ macro_rules! identity {
     )*};
 }
 identity! {
-    VERSION_PREFIX: "horizon-launcher " => "horizon-fork-launcher ",
+    VERSION_PREFIX: "horizon-launcher " => "sunrise-launcher ",
     DESKTOP_ENTRY: "horizon-launcher.desktop" => "net.playsunrise.launcher.desktop",
     WINDOW_TITLE: "Horizon Launcher" => "Sunrise Launcher",
     QUIT_LABEL: "Quit Horizon Launcher" => "Quit Sunrise Launcher",
@@ -13,9 +13,9 @@ identity! {
     // The installed copy's folder, shortcuts and Add/Remove entry carry Sunrise's own name, so it
     // never takes a Horizon install's place.
     INSTALL_NAME: "Horizon Launcher" => "Sunrise Launcher",
-    EXECUTABLE: "horizon-launcher" => "horizon-fork-launcher",
-    WINDOWS_EXECUTABLE: "horizon-launcher.exe" => "horizon-fork-launcher.exe",
-    WINDOWS_EXECUTABLE_PREFIX: "horizon-launcher.exe." => "horizon-fork-launcher.exe.",
+    EXECUTABLE: "horizon-launcher" => "sunrise-launcher",
+    WINDOWS_EXECUTABLE: "horizon-launcher.exe" => "sunrise-launcher.exe",
+    WINDOWS_EXECUTABLE_PREFIX: "horizon-launcher.exe." => "sunrise-launcher.exe.",
     APP_ID: "horizon-launcher" => "net.playsunrise.launcher",
     // Sunrise's own data, game and location folders, all under `sunrise/`, and saved accounts.
     // On its first start they are copied from the launchers before it (`carry_over`).
@@ -27,9 +27,9 @@ identity! {
     UNINSTALL_KEY: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\HorizonLauncher" => "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SunriseLauncher",
     INSTALL_KEY: "Software\\Horizon\\Launcher" => "Software\\Sunrise\\Launcher",
     REGISTRY_PARENT: "Software\\Horizon" => "Software\\Sunrise",
-    UNINSTALL_PREFIX: "horizon-launcher-uninstall-" => "horizon-fork-launcher-uninstall-",
-    SETUP_PREFIX: "horizon-launcher-setup" => "horizon-fork-launcher-setup",
-    PROCESS_FILTER: "IMAGENAME eq horizon-launcher.exe" => "IMAGENAME eq horizon-fork-launcher.exe",
+    UNINSTALL_PREFIX: "horizon-launcher-uninstall-" => "sunrise-launcher-uninstall-",
+    SETUP_PREFIX: "horizon-launcher-setup" => "sunrise-launcher-setup",
+    PROCESS_FILTER: "IMAGENAME eq horizon-launcher.exe" => "IMAGENAME eq sunrise-launcher.exe",
 }
 
 /// The launchers before this one, newest first: Horizon's own, then the arismoko fork's. Each
