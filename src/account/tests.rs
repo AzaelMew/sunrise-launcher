@@ -2583,3 +2583,27 @@ fn a_launch_saving_late_keeps_sign_ins_and_outs_made_meanwhile() {
     assert_eq!(names, [std::ffi::OsString::from("accounts.json")]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A sign-in the launcher before this one saved is read once from its service, never written
+/// there, and kept under this launcher's own; this launcher's own secret always wins.
+#[test]
+fn an_earlier_launchers_secret_is_copied_and_the_own_one_wins() {
+    let Some(&earlier) = crate::identity::EARLIER_KEYCHAIN_SERVICES.first() else {
+        return;
+    };
+    let kept = std::cell::RefCell::new(Vec::new());
+    let read = |service: &'static str| Ok((service == earlier).then(|| "old".to_string()));
+    let got = get_carried(None, read, |secret| {
+        kept.borrow_mut().push(secret.to_string());
+        Ok(())
+    });
+    assert_eq!(got, Ok(Some("old".into())));
+    assert_eq!(*kept.borrow(), ["old"]);
+    let got = get_carried(Some("own".into()), read, |_| panic!("nothing to copy"));
+    assert_eq!(got, Ok(Some("own".into())));
+    // Nothing anywhere: no secret, nothing written.
+    assert_eq!(
+        get_carried(None, |_| Ok(None), |_| panic!("nothing to copy")),
+        Ok(None)
+    );
+}

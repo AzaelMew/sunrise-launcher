@@ -50,14 +50,14 @@ class PackagingIdentity(unittest.TestCase):
                 outputs.append(dict(line.split('\t', 1) for line in output.splitlines()))
             upstream, fork = outputs
             self.assertEqual(upstream, expected)
-            # A fork build presents as the Horizon launcher and opens its data folders and saved
-            # accounts, since it updates it; how it is installed keeps the fork's own names.
-            shared = {'WINDOW_TITLE', 'DISPLAY_NAME', 'KEYCHAIN_SERVICE', 'LOCATION_FOLDER', 'LAUNCHER_FOLDER', 'GAME_FOLDER'}
-            self.assertEqual({name: fork[name] for name in shared}, {name: upstream[name] for name in shared})
-            self.assertTrue(all(fork[name] != upstream[name] for name in expected.keys() - shared))
-            self.assertEqual(fork['APP_ID'], 'io.github.arismoko.horizonfork.launcher')
-            self.assertEqual(fork['EXECUTABLE'], 'horizon-fork-launcher')
-            self.assertEqual(fork['INSTALL_KEY'], 'Software\\ArismokoHorizonFork\\Launcher')
+            # A Sunrise build has its own name, data folders, saved accounts and install: none of it
+            # takes a Horizon launcher's place (it only opens Horizon's folders while its own are missing).
+            self.assertTrue(all(fork[name] != upstream[name] for name in expected))
+            self.assertEqual(fork['WINDOW_TITLE'], 'Sunrise Launcher')
+            self.assertEqual(fork['APP_ID'], 'net.playsunrise.launcher')
+            self.assertEqual(fork['LAUNCHER_FOLDER'], 'sunrise/launcher')
+            self.assertEqual(fork['EXECUTABLE'], 'sunrise-launcher')
+            self.assertEqual(fork['INSTALL_KEY'], 'Software\\Sunrise\\Launcher')
 
     def test_real_workflow_repository_input_and_matrix(self):
         workflow = (ROOT / '.github/workflows/launcher.yml').read_text()
@@ -81,10 +81,10 @@ class PackagingIdentity(unittest.TestCase):
             else:
                 self.assertEqual([entry['name'] for entry in entries], ['linux', 'macos', 'windows'])
                 self.assertEqual([entry['asset'] for entry in entries],
-                                 ['horizon-fork-launcher-linux-x86_64.tar.gz', 'horizon-fork-launcher-macos-arm64.zip', 'horizon-fork-launcher-windows-x64.zip'])
+                                 ['sunrise-launcher-linux-x86_64.tar.gz', 'sunrise-launcher-macos-arm64.zip', 'sunrise-launcher-windows-x64.zip'])
                 self.assertEqual(entries[1], json.loads(
                     (ROOT / 'tests/fixtures/launcher-fork-macos.json').read_text()))
-                self.assertEqual(entries[2]['setup_asset'], 'horizon-fork-launcher-setup.exe')
+                self.assertEqual(entries[2]['setup_asset'], 'sunrise-launcher-setup.exe')
 
     def test_upstream_metadata_is_byte_identical_to_base_objects(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -107,20 +107,20 @@ class PackagingIdentity(unittest.TestCase):
             destination = Path(temporary) / 'packaging'
             STAGE.stage(source, destination, STAGE.FORK)
             plist = (destination / 'macos/Info.plist').read_text()
-            self.assertIn('<string>io.github.arismoko.horizonfork.launcher</string>', plist)
-            self.assertIn('<string>horizon-fork-launcher</string>', plist)
+            self.assertIn('<string>net.playsunrise.launcher</string>', plist)
+            self.assertIn('<string>sunrise-launcher</string>', plist)
             self.assertNotIn('<string>Horizon</string>', plist)
             self.assertEqual((destination / 'icons/horizon.icns').read_bytes(),
                              (source / 'icons/fork/launcher.icns').read_bytes())
             script = (destination / 'macos/package.sh').read_text()
             self.assertIn('identity=-', script)
-            self.assertIn('zip=horizon-fork-launcher-macos-$arch.zip', script)
-            self.assertIn('dmg=$out/horizon-fork-launcher-macos-$arch.dmg', script)
-            self.assertIn('\"Horizon Fork Launcher (arismoko)\" \"$dmg\"', script)
-            desktop = (destination / 'linux/io.github.arismoko.horizonfork.launcher.desktop').read_text()
-            self.assertIn('Name=Horizon Fork Launcher (arismoko)\n', desktop)
-            self.assertIn('Exec=horizon-fork-launcher\n', desktop)
-            self.assertIn('StartupWMClass=io.github.arismoko.horizonfork.launcher\n', desktop)
+            self.assertIn('zip=sunrise-launcher-macos-$arch.zip', script)
+            self.assertIn('dmg=$out/sunrise-launcher-macos-$arch.dmg', script)
+            self.assertIn('\"Sunrise Launcher\" \"$dmg\"', script)
+            desktop = (destination / 'linux/net.playsunrise.launcher.desktop').read_text()
+            self.assertIn('Name=Sunrise Launcher\n', desktop)
+            self.assertIn('Exec=sunrise-launcher\n', desktop)
+            self.assertIn('StartupWMClass=net.playsunrise.launcher\n', desktop)
             for script in ('linux/appimage.sh', 'macos/package.sh'):
                 subprocess.run(['bash', '-n', str(destination / script)], check=True)
             self.assertNotEqual((destination / 'icons/horizon.ico').read_bytes(), (source / 'icons/horizon.ico').read_bytes())

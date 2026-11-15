@@ -57,6 +57,9 @@ fn run_launcher() {
     if let Some(code) = horizon_launcher::relocation::run_worker() {
         std::process::exit(code);
     }
+    // A Sunrise build's first start copies the settings, accounts and instances of the launcher
+    // before it into its own folders, before anything reads them.
+    horizon_launcher::carry_over::at_start();
     // A broken location must still open a window: startup() falls back to the default
     // folders and records the error, which Settings shows with Retry and Use the default folder.
     // It keeps the migration lease for the life of the process.

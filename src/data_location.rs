@@ -40,12 +40,8 @@ pub fn bootstrap_path() -> Result<PathBuf> {
     }
     dirs::config_dir()
         .map(|p| {
-            crate::identity::folder_in(
-                &p,
-                crate::identity::LOCATION_FOLDER,
-                crate::identity::LEGACY_LOCATION_FOLDER,
-            )
-            .join("location.json")
+            p.join(crate::identity::LOCATION_FOLDER)
+                .join("location.json")
         })
         .ok_or_else(|| "Cannot locate the platform configuration folder for location.json".into())
 }
@@ -609,7 +605,7 @@ fn new_file(path: &Path) -> Result<File> {
     options.open(path).map_err(|e| problem(path, e))
 }
 
-fn copy_tree(
+pub(crate) fn copy_tree(
     source: &Path,
     dest: &Path,
     bootstrap: &Path,

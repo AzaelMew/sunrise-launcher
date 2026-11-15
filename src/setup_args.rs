@@ -136,8 +136,8 @@ mod tests {
     fn tasklist() -> String {
         if cfg!(horizon_fork_launcher) {
             TASKLIST
-                .replace("horizon-launcher", "horizon-fork-launcher")
-                .replace("Horizon-Launcher", "Horizon-Fork-Launcher")
+                .replace("horizon-launcher", "sunrise-launcher")
+                .replace("Horizon-Launcher", "Sunrise-Launcher")
         } else {
             TASKLIST.into()
         }
@@ -156,7 +156,7 @@ mod tests {
         let other = if cfg!(horizon_fork_launcher) {
             "\"horizon-launcher.exe\",\"42\""
         } else {
-            "\"horizon-fork-launcher.exe\",\"42\""
+            "\"sunrise-launcher.exe\",\"42\""
         };
         assert!(other_launcher_pids(other, 1).is_empty());
     }

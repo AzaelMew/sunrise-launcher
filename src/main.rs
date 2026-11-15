@@ -847,7 +847,7 @@ mod tests {
     #[test]
     fn the_app_menu_has_quit() {
         let menus = super::menus();
-        assert_eq!(menus[0].name, "Horizon Launcher");
+        assert_eq!(menus[0].name, horizon_launcher::identity::DISPLAY_NAME);
         assert!(matches!(
             &menus[0].items[0],
             gpui::MenuItem::Action { name, .. } if name == horizon_launcher::identity::QUIT_LABEL

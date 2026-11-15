@@ -10,8 +10,9 @@
 //! Minecraft: Java Edition, as other launchers do, and the game plays as the selected account.
 //! The game binary itself, its harnesses and the servers don't go through the launcher's gate.
 //!
-//! The Azure app (client ID) is Horizon's own and is configuration: `HORIZON_MSA_CLIENT_ID` at
-//! build time, or at run time to override it. Without one, sign-in says it is not configured.
+//! The Azure app (client ID) is configuration read at build time: `HORIZON_MSA_CLIENT_ID`
+//! (release builds take it from the repository variable), which the same variable at run time
+//! overrides. Without one, sign-in says it is not configured.
 pub mod session;
 
 use serde_json::{json, Value};
@@ -1160,19 +1161,22 @@ impl SystemStore {
 impl SecretStore for SystemStore {
     fn get(&self, key: &str) -> Result<Option<String>, String> {
         let keyring = Self::keyring()?;
-        futures_lite::future::block_on(async {
-            let attributes = vec![("service", SERVICE), ("account", key)];
-            let items = keyring
-                .search_items(&attributes)
-                .await
-                .map_err(|e| e.to_string())?;
-            let Some(item) = items.into_iter().next() else {
-                return Ok(None);
-            };
-            item.unlock().await.map_err(|e| e.to_string())?;
-            let secret = item.secret().await.map_err(|e| e.to_string())?;
-            Ok(String::from_utf8(secret.to_vec()).ok())
-        })
+        let read = |service| {
+            futures_lite::future::block_on(async {
+                let attributes = vec![("service", service), ("account", key)];
+                let items = keyring
+                    .search_items(&attributes)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let Some(item) = items.into_iter().next() else {
+                    return Ok(None);
+                };
+                item.unlock().await.map_err(|e| e.to_string())?;
+                let secret = item.secret().await.map_err(|e| e.to_string())?;
+                Ok(String::from_utf8(secret.to_vec()).ok())
+            })
+        };
+        get_carried(read(SERVICE)?, read, |secret| self.set(key, secret))
     }
     fn set(&self, key: &str, secret: &str) -> Result<(), String> {
         let keyring = Self::keyring()?;
@@ -1180,7 +1184,11 @@ impl SecretStore for SystemStore {
             let attributes = vec![("service", SERVICE), ("account", key)];
             keyring
                 .create_item(
-                    "Horizon launcher: Minecraft account",
+                    if cfg!(horizon_fork_launcher) {
+                        "Sunrise Launcher: Minecraft account"
+                    } else {
+                        "Horizon launcher: Minecraft account"
+                    },
                     &attributes,
                     secret.as_bytes(),
                     true,
@@ -1252,7 +1260,7 @@ trait Items {
     fn remove(&self, key: &str) -> Result<bool, String>;
 }
 
-#[cfg(any(target_os = "windows", test))]
+#[cfg(any(target_os = "windows", target_os = "macos", test))]
 fn get_pieces(items: &dyn Items, key: &str) -> Result<Option<String>, String> {
     let Some(mut secret) = items.read(key)? else {
         return Ok(None);
@@ -1428,26 +1436,48 @@ fn write_error(e: keyring::Error) -> String {
     e.to_string()
 }
 
-/// The OS keychain's items, under [`SERVICE`].
+/// `own`, the secret under [`SERVICE`], or else the first an earlier launcher's service holds
+/// ([`crate::identity::EARLIER_KEYCHAIN_SERVICES`], read by `earlier` and never written), copied
+/// under [`SERVICE`] by `keep`: a sign-in saved by the launcher before this one carries over. An
+/// earlier service that fails reads as missing; a copy `keep` couldn't make is tried again on the
+/// next read.
+fn get_carried(
+    own: Option<String>,
+    earlier: impl Fn(&'static str) -> Result<Option<String>, String>,
+    keep: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    if own.is_some() {
+        return Ok(own);
+    }
+    let found = crate::identity::EARLIER_KEYCHAIN_SERVICES
+        .iter()
+        .find_map(|service| earlier(service).ok().flatten());
+    if let Some(secret) = &found {
+        let _ = keep(secret);
+    }
+    Ok(found)
+}
+
+/// The OS keychain's items under one service.
 #[cfg(any(target_os = "macos", target_os = "windows"))]
-struct KeyringItems;
+struct KeyringItems(&'static str);
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 impl Items for KeyringItems {
     fn read(&self, key: &str) -> Result<Option<String>, String> {
-        match keyring::Entry::new(SERVICE, key).and_then(|e| e.get_password()) {
+        match keyring::Entry::new(self.0, key).and_then(|e| e.get_password()) {
             Ok(secret) => Ok(Some(secret)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(e.to_string()),
         }
     }
     fn write(&self, key: &str, piece: &str) -> Result<(), String> {
-        keyring::Entry::new(SERVICE, key)
+        keyring::Entry::new(self.0, key)
             .and_then(|e| e.set_password(piece))
             .map_err(write_error)
     }
     fn remove(&self, key: &str) -> Result<bool, String> {
-        match keyring::Entry::new(SERVICE, key).and_then(|e| e.delete_credential()) {
+        match keyring::Entry::new(self.0, key).and_then(|e| e.delete_credential()) {
             Ok(()) => Ok(true),
             Err(keyring::Error::NoEntry) => Ok(false),
             Err(e) => Err(e.to_string()),
@@ -1459,22 +1489,30 @@ impl Items for KeyringItems {
 impl SecretStore for SystemStore {
     #[cfg(target_os = "macos")]
     fn get(&self, key: &str) -> Result<Option<String>, String> {
-        get_item(&KeyringItems, key)
+        get_carried(
+            get_item(&KeyringItems(SERVICE), key)?,
+            |service| get_pieces(&KeyringItems(service), key),
+            |secret| set_item(&KeyringItems(SERVICE), key, secret),
+        )
     }
     #[cfg(target_os = "windows")]
     fn get(&self, key: &str) -> Result<Option<String>, String> {
-        get_pieces(&KeyringItems, key)
+        get_carried(
+            get_pieces(&KeyringItems(SERVICE), key)?,
+            |service| get_pieces(&KeyringItems(service), key),
+            |secret| set_pieces(&KeyringItems(SERVICE), key, secret),
+        )
     }
     #[cfg(target_os = "macos")]
     fn set(&self, key: &str, secret: &str) -> Result<(), String> {
-        set_item(&KeyringItems, key, secret)
+        set_item(&KeyringItems(SERVICE), key, secret)
     }
     #[cfg(target_os = "windows")]
     fn set(&self, key: &str, secret: &str) -> Result<(), String> {
-        set_pieces(&KeyringItems, key, secret)
+        set_pieces(&KeyringItems(SERVICE), key, secret)
     }
     fn delete(&self, key: &str) -> Result<(), String> {
-        delete_pieces(&KeyringItems, key)
+        delete_pieces(&KeyringItems(SERVICE), key)
     }
     fn persistent(&self) -> bool {
         true

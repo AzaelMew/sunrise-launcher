@@ -450,7 +450,7 @@ const fn game_fallback_for(os: &str, arch: &str) -> Option<&'static str> {
 /// needs this archive rather than the platform's `.tar.gz`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = Some(if cfg!(horizon_fork_launcher) {
-    "horizon-fork-launcher-linux-x86_64.AppImage"
+    "sunrise-launcher-linux-x86_64.AppImage"
 } else {
     "horizon-launcher-linux-x86_64.AppImage"
 });
@@ -4803,7 +4803,7 @@ pub fn {f}("
             Some((
                 "horizon-macos-arm64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-macos-arm64.zip"
+                    "sunrise-launcher-macos-arm64.zip"
                 } else {
                     "horizon-launcher-macos-arm64.zip"
                 }
@@ -4814,7 +4814,7 @@ pub fn {f}("
             Some((
                 "horizon-macos-x64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-macos-x64.zip"
+                    "sunrise-launcher-macos-x64.zip"
                 } else {
                     "horizon-launcher-macos-x64.zip"
                 }
@@ -4825,7 +4825,7 @@ pub fn {f}("
             Some((
                 "horizon-windows-x64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-windows-x64.zip"
+                    "sunrise-launcher-windows-x64.zip"
                 } else {
                     "horizon-launcher-windows-x64.zip"
                 }
@@ -4836,7 +4836,7 @@ pub fn {f}("
             Some((
                 "horizon-windows-arm64.zip",
                 if cfg!(horizon_fork_launcher) {
-                    "horizon-fork-launcher-windows-arm64.zip"
+                    "sunrise-launcher-windows-arm64.zip"
                 } else {
                     "horizon-launcher-windows-arm64.zip"
                 }
@@ -5162,12 +5162,12 @@ pub fn {f}("
     fn an_arm64_launcher_skips_a_release_without_its_zip() {
         let (arm, x64) = (
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-windows-arm64.zip"
+                "sunrise-launcher-windows-arm64.zip"
             } else {
                 "horizon-launcher-windows-arm64.zip"
             },
             if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-windows-x64.zip"
+                "sunrise-launcher-windows-x64.zip"
             } else {
                 "horizon-launcher-windows-x64.zip"
             },
@@ -5347,7 +5347,7 @@ pub fn {f}("
         assert_eq!(launcher_version("launcher-vx"), None);
         let list = serde_json::json!([
             {"tag_name": "v2026.10.12", "assets": [{"name": "horizon-linux-x86_64.tar.gz", "browser_download_url": "u", "size": 1}]},
-            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(horizon_fork_launcher) { "horizon-fork-launcher-linux-x86_64.tar.gz" } else { "horizon-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
+            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(horizon_fork_launcher) { "sunrise-launcher-linux-x86_64.tar.gz" } else { "horizon-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
             {"tag_name": "v2026.10.13", "assets": []},
             {"tag_name": "launcher-v0.0.1", "draft": true, "assets": []},
         ]);
@@ -5719,7 +5719,7 @@ pub fn {f}("
         assert_eq!(
             launcher_asset_running_from(true),
             Some(if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher-linux-x86_64.AppImage"
+                "sunrise-launcher-linux-x86_64.AppImage"
             } else {
                 "horizon-launcher-linux-x86_64.AppImage"
             })
@@ -6033,6 +6033,51 @@ pub fn {f}("
             *asked.borrow(),
             ["launcher@", "launcher-v", "launcher-v0.17.0"]
         );
+    }
+
+    #[test]
+    fn tags_without_a_release_never_hide_the_newest_launcher() {
+        // Sunrise's repository carries Horizon's `launcher@0.2.x` tags without releases, and a
+        // draft's tag has none either: the 1.0 line sorts above them, and a tag that has no
+        // release is skipped, never an error.
+        let asset = launcher_asset().unwrap_or("unsupported");
+        let asked = std::cell::RefCell::new(Vec::new());
+        let lookup = |refs: serde_json::Value| {
+            asked.borrow_mut().clear();
+            launcher_releases_in_with(&serde_json::json!([]), |url| {
+                let last = url.rsplit('/').next().unwrap_or("").to_string();
+                asked.borrow_mut().push(last.clone());
+                if url.ends_with("matching-refs/tags/launcher@") {
+                    Ok(Some(refs.clone()))
+                } else if url.ends_with("matching-refs/tags/launcher-v") {
+                    Ok(Some(serde_json::json!([])))
+                } else if last == "launcher@1.0.0" {
+                    Ok(Some(serde_json::json!({"tag_name": last, "assets": [
+                        {"name": asset, "browser_download_url": "u", "size": 1}
+                    ]})))
+                } else {
+                    Ok(None)
+                }
+            })
+            .into_iter()
+            .map(|r| r.tag)
+            .collect::<Vec<_>>()
+        };
+        let tag = |name: &str| serde_json::json!({"ref": format!("refs/tags/{name}")});
+        let mut refs: Vec<_> = (0..=25)
+            .map(|n| tag(&format!("launcher@0.2.{n}")))
+            .collect();
+        refs.push(tag("launcher@1.0.0"));
+        refs.push(tag("launcher@1.0.1"));
+        assert_eq!(lookup(serde_json::json!(refs)), ["launcher@1.0.0"]);
+        assert_eq!(
+            *asked.borrow(),
+            ["launcher@", "launcher@1.0.1", "launcher@1.0.0"]
+        );
+        // Only the inherited tags, before Sunrise's first release: no update, and no error.
+        refs.truncate(26);
+        assert!(lookup(serde_json::json!(refs)).is_empty());
+        assert!(launcher_update_from(&[], "launcher@1.0.0").is_none());
     }
 
     #[test]
@@ -6926,7 +6971,7 @@ pub fn {f}("
     fn launcher_versions_read_from_the_binary() {
         assert_eq!(
             parse_version_output(if cfg!(horizon_fork_launcher) {
-                "horizon-fork-launcher 0.1.5\n"
+                "sunrise-launcher 0.1.5\n"
             } else {
                 "horizon-launcher 0.1.5\n"
             }),
