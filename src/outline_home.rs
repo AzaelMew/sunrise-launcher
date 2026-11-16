@@ -18,11 +18,14 @@ const HERO_WIDTH: f32 = 412.;
 const COLUMN: f32 = 168.;
 /// The faint arc around the left column line's top.
 const ARC: f32 = 620.;
-/// Home's background logo: px to a unit of its 16-unit grid, its white (a silhouette: the mark's
-/// colours turn muddy this faint on the dark page), and how far it rises once the page scrolls.
-const LOGO_UNIT: f32 = 16.;
-const LOGO_INK: f32 = 0.05;
-const LOGO_RISE: f32 = 28.;
+/// Home's background logo: its width, how strongly its colours show, and, once the page scrolls
+/// down, how much it grows and how far it rises. At rest its horizon (the lowest 3 of its 11
+/// rows) is under the floor.
+const LOGO_WIDTH: f32 = 480.;
+const LOGO_OPACITY: f32 = 0.35;
+const LOGO_GROW: f32 = 0.12;
+const LOGO_RISE: f32 = 40.;
+const LOGO_SUNK: f32 = 3. / 11.;
 
 impl Launcher {
     /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
@@ -186,36 +189,34 @@ impl Launcher {
             .child(self.home_logo())
     }
 
-    /// The logo, large and faint on the first screen's floor, centred like the hero. Scrolling down
-    /// eases it up [`LOGO_RISE`] px; back at the top it settles again.
-    fn home_logo(&self) -> Div {
-        let logo = crate::widgets::sunrise_glyph(LOGO_UNIT, Some(white(LOGO_INK)));
-        let logo = match self.home_logo_raised {
-            None => logo.into_any_element(),
+    /// The logo, large and faint behind the first screen, sunk to its horizon in the floor and
+    /// centred like the hero. Scrolling down eases it up and a little larger; back at the top it
+    /// settles again.
+    fn home_logo(&self) -> AnyElement {
+        let shift = self.outline_centre_shift();
+        let place = move |d: Div, raised: f32| {
+            let w = LOGO_WIDTH * (1. + LOGO_GROW * raised);
+            let h = w * 11. / 16.;
+            d.w(px(w))
+                .h(px(h))
+                .ml(px(-w / 2. - shift))
+                .bottom(px(-h * LOGO_SUNK + LOGO_RISE * raised))
+        };
+        let logo = div()
+            .absolute()
+            .left(gpui::relative(0.5))
+            .opacity(LOGO_OPACITY)
+            .child(crate::widgets::sunrise_glyph_fluid());
+        match self.home_logo_raised {
+            None => place(logo, 0.).into_any_element(),
             Some(up) => logo
                 .with_animation(
                     SharedString::from(format!("home-logo-{up}")),
                     crate::motion::eased(crate::motion::PAGE),
-                    move |d, t| {
-                        let raised = if up { t } else { 1. - t };
-                        d.top(px(-LOGO_RISE * raised))
-                    },
+                    move |d, t| place(d, if up { t } else { 1. - t }),
                 )
                 .into_any_element(),
-        };
-        div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom(px(1.))
-            .flex()
-            .justify_center()
-            .child(
-                div()
-                    .relative()
-                    .right(px(self.outline_centre_shift()))
-                    .child(logo),
-            )
+        }
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,

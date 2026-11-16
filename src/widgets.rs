@@ -186,42 +186,64 @@ pub(crate) fn mark(size: f32) -> Div {
         .flex_none()
         .items_center()
         .size(px(size))
-        .child(sunrise_glyph(unit, None))
+        .child(sunrise_glyph(unit))
 }
 
-/// The mark's pixels alone, `unit` px to a grid unit: 16 units wide and 11 tall, from the top
-/// ray to the horizon's foot. In its own colours, or all in `ink` as a silhouette.
-pub(crate) fn sunrise_glyph(unit: f32, ink: Option<Hsla>) -> Div {
-    const RAYS: u32 = 0xffe39a;
-    const SUN: u32 = 0xffcf5c;
-    const SUN_LOW: u32 = 0xffb48a;
-    const HORIZON: u32 = 0xe0458a;
+/// The mark's pixels on its 16-unit grid, from the top ray (row 3) to the horizon's foot (row 14):
+/// left, top, width, height, colour.
+const SUNRISE_PIXELS: [(f32, f32, f32, f32, u32); 8] = [
+    (7., 3., 2., 2., 0xffe39a),
+    (2., 5., 2., 2., 0xffe39a),
+    (12., 5., 2., 2., 0xffe39a),
+    (6., 7., 4., 1., 0xffcf5c),
+    (4., 8., 8., 1., 0xffcf5c),
+    (3., 9., 10., 1., 0xffcf5c),
+    (3., 10., 10., 1., 0xffb48a),
+    (1., 12., 14., 2., 0xe0458a),
+];
+
+/// The mark's pixels alone, `unit` px to a grid unit: 16 units wide and 11 tall.
+pub(crate) fn sunrise_glyph(unit: f32) -> Div {
     // Rounded to whole pixels, so neighbouring rows meet without a seam at any size.
-    let rect = |x: f32, y: f32, w: f32, h: f32, colour: u32| {
-        let y = y - 3.;
-        let (x0, y0) = ((x * unit).round(), (y * unit).round());
-        let (x1, y1) = (((x + w) * unit).round(), ((y + h) * unit).round());
+    SUNRISE_PIXELS.into_iter().fold(
         div()
-            .absolute()
-            .left(px(x0))
-            .top(px(y0))
-            .w(px(x1 - x0))
-            .h(px(y1 - y0))
-            .bg(ink.unwrap_or_else(|| gpui::rgb(colour).into()))
-    };
-    div()
-        .relative()
-        .flex_none()
-        .w(px((16. * unit).round()))
-        .h(px((11. * unit).round()))
-        .child(rect(7., 3., 2., 2., RAYS))
-        .child(rect(2., 5., 2., 2., RAYS))
-        .child(rect(12., 5., 2., 2., RAYS))
-        .child(rect(6., 7., 4., 1., SUN))
-        .child(rect(4., 8., 8., 1., SUN))
-        .child(rect(3., 9., 10., 1., SUN))
-        .child(rect(3., 10., 10., 1., SUN_LOW))
-        .child(rect(1., 12., 14., 2., HORIZON))
+            .relative()
+            .flex_none()
+            .w(px((16. * unit).round()))
+            .h(px((11. * unit).round())),
+        |d, (x, y, w, h, colour)| {
+            let y = y - 3.;
+            let (x0, y0) = ((x * unit).round(), (y * unit).round());
+            let (x1, y1) = (((x + w) * unit).round(), ((y + h) * unit).round());
+            d.child(
+                div()
+                    .absolute()
+                    .left(px(x0))
+                    .top(px(y0))
+                    .w(px(x1 - x0))
+                    .h(px(y1 - y0))
+                    .bg(gpui::rgb(colour)),
+            )
+        },
+    )
+}
+
+/// The mark's pixels as shares of whatever box holds them (16 by 11), so animating the box's size
+/// scales the mark.
+pub(crate) fn sunrise_glyph_fluid() -> Div {
+    SUNRISE_PIXELS
+        .into_iter()
+        .fold(div().relative().size_full(), |d, (x, y, w, h, colour)| {
+            d.child(
+                div()
+                    .absolute()
+                    .left(gpui::relative(x / 16.))
+                    .top(gpui::relative((y - 3.) / 11.))
+                    .w(gpui::relative(w / 16.))
+                    .h(gpui::relative(h / 11.))
+                    .bg(gpui::rgb(colour)),
+            )
+        })
 }
 
 /// The last thing the player did was press Tab: focused controls show a ring (a click focuses them
