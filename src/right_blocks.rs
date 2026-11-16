@@ -94,6 +94,7 @@ impl RightBlocks {
             Some((next, _)) => next,
             None => {
                 let can = self.moves_from_here();
+                let can = self.rng.mostly_sliding(can, |m| m == Move::Bounce);
                 let (moves, last) = (self.moves, self.last_moved);
                 self.rng.pick_waiting(&can, |m| {
                     Self::blocks_of(m)

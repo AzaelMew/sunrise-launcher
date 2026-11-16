@@ -14,6 +14,8 @@ const UNFOLD: sunrise_theme::Motion = sunrise_theme::Motion {
 };
 /// How near a folded sidebar the pointer opens it.
 const NEAR: f32 = 12.;
+/// A link icon's side at the sidebar's foot.
+const LINK: f32 = 30.;
 
 /// How wide `text` is drawn, so the bar fits each part in the language shown.
 fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text: &str) -> f32 {
@@ -379,20 +381,21 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let bar = |this: &mut Self, full: bool, cx: &mut Context<Self>| {
+        // Any of the way open, the sidebar draws its full self, cut to the width it has reached.
+        let bar = |this: &mut Self, open: f32, cx: &mut Context<Self>| {
             if left {
-                this.outline_sidebar(full, cx)
+                this.outline_sidebar(open > 0., open, cx)
             } else {
-                this.outline_right_sidebar(full, cx)
+                this.outline_right_sidebar(open > 0., cx)
             }
         };
         if self.outline_wide() {
-            return bar(self, true, cx).into_any_element();
+            return bar(self, 1., cx).into_any_element();
         }
         let side = usize::from(!left);
         let open = self.unfolded(side, window);
         let width = COMPACT + (frame::SIDEBAR - COMPACT) * open;
-        let content = bar(self, open > 0., cx);
+        let content = bar(self, open, cx);
         // The sidebar as wide as it has opened, its content held to the window's edge.
         let shown = div()
             .relative()
@@ -490,7 +493,12 @@ impl Launcher {
     /// faint dashed sketch stands behind its lower half; the top bar's line and the hero's floor
     /// run through it. On a narrow window it folds, as the right one does, to an icon column: the
     /// mark, the instances' icons and New instance's plus, the links' icons.
-    pub(super) fn outline_sidebar(&mut self, full: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn outline_sidebar(
+        &mut self,
+        full: bool,
+        unfold: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
         let width = if full { frame::SIDEBAR } else { COMPACT };
@@ -511,11 +519,11 @@ impl Launcher {
             .when(full, |d| {
                 d.child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
             });
-        let label = full.then(|| {
-            div()
-                .p(px(8.))
-                .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()))
-        });
+        // Folded, the label keeps its room unseen, so the rows don't jump as the sidebar opens.
+        let label = div()
+            .p(px(8.))
+            .when(!full, |d| d.invisible())
+            .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()));
         let new = hoverable("add-instance", fill::HOVER)
             .flex()
             .flex_none()
@@ -538,8 +546,10 @@ impl Launcher {
                 .tooltip(ui::tip(tr("New instance")))
         };
         let new = keyboard(new, &t);
+        // Open, the rows reach 6 px further out, so each icon stands where its folded one does.
         let list = div()
             .id("side-list")
+            .when(full, |d| d.mx(px(-6.)))
             .flex()
             .flex_col()
             .gap(px(4.))
@@ -553,7 +563,7 @@ impl Launcher {
             .flex_none()
             .gap(px(12.))
             .children(full.then(|| self.rail_update_card(soft, cx)).flatten())
-            .child(self.outline_side_links(full));
+            .child(self.outline_side_links(if full { unfold } else { 0. }));
         div()
             .relative()
             .flex()
@@ -594,7 +604,7 @@ impl Launcher {
                     .bg(white(0.10)),
             )
             .child(logo)
-            .children(label)
+            .child(label)
             .child(list)
             .child(div().flex_1())
             .child(foot)
@@ -602,7 +612,7 @@ impl Launcher {
 
     /// The sidebar's foot: Discord, Documentation and Website as icons, the launcher's version
     /// on the right; folded (not `full`), the icons alone, one above the other.
-    fn outline_side_links(&self, full: bool) -> Div {
+    fn outline_side_links(&self, unfold: f32) -> Div {
         let t = self.theme;
         let icon = |id: &'static str, icon: &'static str, url: String| {
             keyboard(
@@ -610,37 +620,55 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(30.))
+                    .size(px(LINK))
                     .cursor_pointer()
                     .child(ui::icon(icon, 18., white(ink::SOFT)).relative())
                     .on_click(move |_, _, cx| cx.open_url(&url)),
                 &t,
             )
         };
-        let mut links = div().flex().items_center().gap(px(2.));
-        if !full {
-            links = links.flex_col();
-        }
-        for (id, name, url) in [
+        let links: Vec<_> = [
             ("discord", "discord", &self.links.discord),
             ("docs", "book", &self.links.docs),
             ("website", "globe-02", &self.links.website),
-        ] {
-            if !url.is_empty() {
-                links = links.child(icon(id, name, url.clone()));
-            }
+        ]
+        .into_iter()
+        .filter(|(_, _, url)| !url.is_empty())
+        .collect();
+        // The first stays where it is; each next one stands above it while folded and beside it
+        // open, gliding between the two as the sidebar opens.
+        let step = LINK + 2.;
+        let more = links.len().saturating_sub(1) as f32;
+        let mut stack = div()
+            .relative()
+            .flex_none()
+            // Centred in the folded column, and in the same place open.
+            .ml(px(
+                (COMPACT - LINK) / 2. - if unfold > 0. { 12. } else { 10. }
+            ))
+            .w(px(LINK + step * more * unfold))
+            .h(px(LINK + step * more * (1. - unfold)));
+        for (i, (id, name, url)) in links.into_iter().enumerate() {
+            stack = stack.child(
+                div()
+                    .absolute()
+                    .left(px(step * i as f32 * unfold))
+                    .bottom(px(step * i as f32 * (1. - unfold)))
+                    .child(icon(id, name, url.clone())),
+            );
         }
-        if !full {
-            return links;
+        if unfold <= 0. {
+            return stack;
         }
         div()
             .flex()
-            .items_center()
+            .items_end()
             .justify_between()
-            .child(links)
+            .child(stack)
             .child(
                 mono(12., ink::DIM)
                     .id("launcher-version")
+                    .opacity(unfold)
                     .child(backend::VERSION),
             )
     }

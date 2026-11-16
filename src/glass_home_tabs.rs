@@ -117,11 +117,11 @@ impl Launcher {
             .when(full, |d| d.pr(px(24.)).justify_end())
             .when(!full, |d| d.justify_center())
             .child(in_cell);
-        let label = full.then(|| {
-            div()
-                .p(px(8.))
-                .child(mono(12., ink::QUIET).child(tr("This instance").to_uppercase()))
-        });
+        // Folded, the label keeps its room unseen, so the rows don't jump as the sidebar opens.
+        let label = div()
+            .p(px(8.))
+            .when(!full, |d| d.invisible())
+            .child(mono(12., ink::QUIET).child(tr("This instance").to_uppercase()));
         let foot = full
             .then(|| self.outline_playing())
             .flatten()
@@ -149,7 +149,7 @@ impl Launcher {
             .child(line(true))
             .child(line(false))
             .child(cell)
-            .children(label)
+            .child(label)
             .child(
                 div()
                     .id("side-sections")

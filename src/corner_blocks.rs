@@ -105,6 +105,24 @@ impl Rng {
         from[(self.next() % from.len() as u64) as usize]
     }
 
+    /// `from` mostly without its jumps (hops and bounces), so the blocks mostly slide; now and
+    /// then they may jump too. All of them if only jumps are left.
+    pub(crate) fn mostly_sliding<T: Copy>(
+        &mut self,
+        from: Vec<T>,
+        jumps: impl Fn(T) -> bool,
+    ) -> Vec<T> {
+        if self.next().is_multiple_of(5) {
+            return from;
+        }
+        let slides: Vec<T> = from.iter().copied().filter(|&m| !jumps(m)).collect();
+        if slides.is_empty() {
+            from
+        } else {
+            slides
+        }
+    }
+
     /// One of `from`, mostly one of those whose blocks have waited longest (`waited`), so every
     /// block gets its turn; now and then any of them.
     pub(crate) fn pick_waiting<T: Copy>(&mut self, from: &[T], waited: impl Fn(T) -> usize) -> T {
@@ -143,7 +161,25 @@ pub(crate) fn run(
     right: WeakEntity<crate::right_blocks::RightBlocks>,
     cx: &mut App,
 ) {
-    // Ferris keeps his own time: a little act every few seconds, whichever side is playing.
+    // Ferris keeps his own time: never quite still, and a little act every few seconds, whichever
+    // side is playing.
+    let breathing = left.clone();
+    cx.spawn(async move |cx| loop {
+        cx.background_executor().timer(crate::ferris::TICK).await;
+        if crate::motion::still() {
+            continue;
+        }
+        if breathing
+            .update(cx, |b, cx| {
+                b.ferris.idle();
+                cx.notify();
+            })
+            .is_err()
+        {
+            return;
+        }
+    })
+    .detach();
     let crab = left.clone();
     cx.spawn(async move |cx| {
         let mut rng = Rng::seeded();
@@ -322,10 +358,17 @@ impl CornerBlocks {
             Some((next, _)) => next,
             None => {
                 let can = self.moves_from_here();
+                let can = self
+                    .rng
+                    .mostly_sliding(can, |m| matches!(m, Move::Hop | Move::TopHop));
                 let (moves, last) = (self.moves, self.last_moved);
                 self.rng.pick_waiting(&can, |m| {
+                    // Covering the corner is the way to the small block's slide: it counts for
+                    // the small block's wait too.
+                    let opens: &[usize] = if m == Move::Cover { &[3] } else { &[] };
                     Self::blocks_of(m)
                         .iter()
+                        .chain(opens)
                         .map(|&b| moves - last[b])
                         .max()
                         .unwrap_or(0)
@@ -674,7 +717,7 @@ mod tests {
             // No block is left out for long.
             for (block, &last) in b.last_moved.iter().enumerate() {
                 assert!(
-                    b.moves - last <= 15,
+                    b.moves - last <= 16,
                     "block {block} waited {}",
                     b.moves - last
                 );
