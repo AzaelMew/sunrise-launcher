@@ -1047,7 +1047,7 @@ impl Step {
                     ("done", &format!("{:.0}", done * 100.0)),
                 ],
             ),
-            Self::Tool => tr("Building horizon-mixins (once)").into(),
+            Self::Tool => tr("Building sunrise-mixins (once)").into(),
             Self::Source(revision) => trf(
                 "Downloading Sunrise's source at {revision}",
                 &[("revision", &revision[..7])],
