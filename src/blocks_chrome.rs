@@ -351,7 +351,7 @@ impl Launcher {
                 .gap(px(10.))
                 .h(px(theme::TOPBAR))
                 .px(px(8.))
-                .child(mark(24., &t))
+                .child(mark(24.))
                 .child(
                     shell::text(theme::night::TITLE, shell::c(n.ink))
                         .font_family(theme::DISPLAY_FONT)

@@ -179,35 +179,38 @@ pub(crate) fn version_tag(tag: &str) -> Div {
         )
 }
 
-/// Sunrise's mark: two stems, their reflection below, and the horizon across in the accent.
-pub(crate) fn mark(size: f32, t: &Theme) -> Div {
+/// Sunrise's mark (`docs/media/brand/icon.svg`), cell for cell on its 16 grid: the rays, the sun
+/// and the horizon on the dark tile.
+pub(crate) fn mark(size: f32) -> Div {
+    const CELLS: [(f32, f32, f32, f32, u32); 8] = [
+        (7., 3., 2., 2., 0xffe39a),
+        (2., 5., 2., 2., 0xffe39a),
+        (12., 5., 2., 2., 0xffe39a),
+        (6., 7., 4., 1., 0xffcf5c),
+        (4., 8., 8., 1., 0xffcf5c),
+        (3., 9., 10., 1., 0xffcf5c),
+        (3., 10., 10., 1., 0xffb48a),
+        (1., 12., 14., 2., 0x6f58d9),
+    ];
     let u = size / 16.;
-    let stem = |x: f32, y: f32, color: Hsla| {
-        div()
-            .absolute()
-            .left(px(x * u))
-            .top(px(y * u))
-            .w(px(2. * u))
-            .h(px(4. * u))
-            .bg(color)
-    };
-    div()
+    let mut tile = div()
         .relative()
         .flex_none()
         .size(px(size))
-        .child(stem(4., 3., t.ink))
-        .child(stem(10., 3., t.ink))
-        .child(stem(4., 8., t.ink.opacity(0.36)))
-        .child(stem(10., 8., t.ink.opacity(0.36)))
-        .child(
+        .rounded(px(3. * u))
+        .bg(gpui::rgb(0x100a1f));
+    for (x, y, w, h, color) in CELLS {
+        tile = tile.child(
             div()
                 .absolute()
-                .left(px(u))
-                .top(px(7. * u))
-                .w(px(14. * u))
-                .h(px(u))
-                .bg(t.accent),
-        )
+                .left(px(x * u))
+                .top(px(y * u))
+                .w(px(w * u))
+                .h(px(h * u))
+                .bg(gpui::rgb(color)),
+        );
+    }
+    tile
 }
 
 /// The last thing the player did was press Tab: focused controls show a ring (a click focuses them

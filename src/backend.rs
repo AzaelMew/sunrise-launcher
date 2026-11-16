@@ -4189,7 +4189,8 @@ pub struct Settings {
     /// What the window does while the game runs. Stays by default.
     #[serde(default)]
     pub while_playing: WhilePlaying,
-    /// The accent colour on top of the appearance (`themes::Accent`). Sunrise's violet by default.
+    /// The accent colour on top of the appearance (`themes::Accent`). When absent from saved
+    /// settings, parsing uses the theme's own accent.
     #[serde(default)]
     pub accent: crate::themes::Accent,
     /// How much white the glass look's plates take, in percent (the mockup's Glass, 0 to 16).
@@ -4200,8 +4201,8 @@ pub struct Settings {
     /// the mockup's 24.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blur: Option<f32>,
-    /// The launcher theme (`themes::theme`): its sky behind the light appearance. Unset is
-    /// Sunrise's own.
+    /// The launcher theme (`themes::theme`): its sky behind the light appearance. Unset is Dawn;
+    /// Sunrise's own sky is `themes::SUNRISE`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
     /// The cheaper scene for older computers (a lower-resolution sky, a box blur, the scene
@@ -4252,9 +4253,12 @@ impl Settings {
         Self::parse(&fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default())
     }
     pub fn parse(text: &str) -> Self {
-        let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
-            return Self::default();
-        };
+        let mut value = serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .filter(serde_json::Value::is_object)
+            .unwrap_or_else(|| serde_json::json!({}));
+        // No accent saved: the theme's own (Dawn's for a new install).
+        let accent_saved = value.get("accent").is_some();
         if let Some(fields) = value.as_object_mut() {
             // An appearance from a newer launcher is Dark, not a reason to lose every setting.
             if fields
@@ -4295,6 +4299,10 @@ impl Settings {
             }
         }
         let mut settings: Self = serde_json::from_value(value).unwrap_or_default();
+        if !accent_saved {
+            settings.accent =
+                crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
+        }
         look_settings::settle(&mut settings);
         settings
     }
@@ -5473,9 +5481,19 @@ pub fn {f}("
     }
 
     #[test]
-    fn the_accent_is_violet_unless_picked_and_an_unknown_one_keeps_the_rest() {
+    fn a_new_install_is_dawn_and_an_unknown_accent_keeps_the_rest() {
         use crate::themes::Accent;
-        assert_eq!(Settings::parse("{}").accent, Accent::VIOLET);
+        let fresh = Settings::parse("{}");
+        assert_eq!(crate::themes::accent_key(fresh.theme.as_deref()), "dawn");
+        assert_eq!(
+            fresh.accent,
+            crate::themes::starting_accent(Some("dawn"), &Default::default())
+        );
+        assert_ne!(fresh.accent, Accent::VIOLET);
+        assert_eq!(
+            Settings::parse(r#"{"theme": "sunrise"}"#).accent,
+            Accent::VIOLET
+        );
         let teal =
             Settings::parse(r#"{"accent": "teal", "background": "background-0123456789ab.png"}"#);
         assert_eq!(

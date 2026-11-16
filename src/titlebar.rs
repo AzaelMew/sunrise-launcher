@@ -82,7 +82,7 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
         .gap(px(8.))
         .px(px(12.))
         .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
-        .child(mark(16., theme))
+        .child(mark(16.))
         .child(
             blocks::pixel(13., FontWeight::MEDIUM).child(sunrise_launcher::i18n::tr(
                 sunrise_launcher::identity::WINDOW_TITLE,
@@ -462,7 +462,7 @@ mod windows {
             .gap(px(8.))
             .px(px(12.))
             .window_control_area(WindowControlArea::Drag)
-            .child(mark(16., theme))
+            .child(mark(16.))
             .child(
                 blocks::pixel(13., FontWeight::MEDIUM).child(sunrise_launcher::i18n::tr(
                     sunrise_launcher::identity::WINDOW_TITLE,
