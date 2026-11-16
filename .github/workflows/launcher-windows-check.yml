@@ -128,10 +128,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.rust.outputs.version }}
+      # The test job's cache: both build the launcher's debug tests on Windows, and a second 1.1 GB copy pushed the
+      # release caches out of the repository's 10 GB.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: launcher
-          shared-key: launcher-windows-debug
+          shared-key: launcher-windows-check
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: >-
           cargo test --no-fail-fast --locked --test desktop --test hidden_processes --test logs
