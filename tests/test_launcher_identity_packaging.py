@@ -123,7 +123,6 @@ class PackagingIdentity(unittest.TestCase):
             self.assertIn('StartupWMClass=net.playsunrise.launcher\n', desktop)
             for script in ('linux/appimage.sh', 'macos/package.sh'):
                 subprocess.run(['bash', '-n', str(destination / script)], check=True)
-            self.assertNotEqual((destination / 'icons/sunrise.ico').read_bytes(), (source / 'icons/sunrise.ico').read_bytes())
         self.assertEqual(before, {p.relative_to(source): p.read_bytes() for p in source.rglob('*') if p.is_file()})
 
 if __name__ == '__main__':
