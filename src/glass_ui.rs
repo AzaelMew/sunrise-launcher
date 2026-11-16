@@ -364,7 +364,7 @@ const TEXEL: f32 = 4.;
 /// first in a `relative` button, so the label is drawn over it.
 pub fn pixel_fill(c: Hsla) -> AnyElement {
     let shade = move |k: f32| gpui::hsla(c.h, c.s, (c.l * k).clamp(0., 1.), c.a);
-    let shades = [shade(1.07), shade(0.93), shade(1.14), shade(0.87)];
+    let shades = [shade(1.035), shade(0.965), shade(1.06)];
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
@@ -375,7 +375,7 @@ pub fn pixel_fill(c: Hsla) -> AnyElement {
                 for x in 0..cols {
                     let n = texel_noise(x, y);
                     // Most texels keep the base colour; the rest take one of the shades.
-                    let Some(&tone) = shades.get((n % 7) as usize) else {
+                    let Some(&tone) = shades.get((n % 9) as usize) else {
                         continue;
                     };
                     let at = gpui::point(
