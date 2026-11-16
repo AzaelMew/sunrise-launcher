@@ -3,9 +3,10 @@
 //! edge (4, a diamond, on top; 3; then 2 on the floor) with 1 left of 2. 1 turns between a diamond
 //! and a block; as a block it slides right into 2's place, pushing 2 off the page; then 3 can drop
 //! onto it, carrying 4 down with it, and later rise again; then 1 slides back, 2 slides back in,
-//! and 1 turns into a diamond again.
+//! and 1 turns into a diamond again. Between those, 4 spins a quarter turn, and 3 bounces with 4
+//! riding on it.
 use crate::corner_blocks::{
-    block, block_side, turn_progress, turned_block, Rng, Show, MOVE, REST_CHAINED,
+    block, block_side, spun_block, turn_progress, turned_block, Rng, Show, MOVE, REST_CHAINED,
 };
 use gpui::{
     div, prelude::*, px, AnimationExt, Canvas, Context, ElementId, IntoElement, Render, Window,
@@ -29,6 +30,10 @@ enum Move {
     /// 3 drops onto 1 in the corner, 4 with it, or rises again.
     Drop,
     Lift,
+    /// 4 spins a quarter turn on top of 3.
+    Spin,
+    /// 3 bounces, 4 riding on it.
+    Bounce,
 }
 
 pub struct RightBlocks {
@@ -41,6 +46,8 @@ pub struct RightBlocks {
     playing: Option<(Move, usize, Instant)>,
     then: Option<(Move, u64)>,
     moves: usize,
+    /// When each block (1 to 4, from 0) last moved, by move number.
+    last_moved: [usize; 4],
     rng: Rng,
 }
 
@@ -53,27 +60,54 @@ impl RightBlocks {
             playing: None,
             then: None,
             moves: 0,
+            last_moved: [0; 4],
             rng: Rng::seeded(),
         }
     }
 
+    /// The blocks a move moves, numbered from 0 (1) to 3 (4).
+    fn blocks_of(m: Move) -> &'static [usize] {
+        match m {
+            Move::Unturn | Move::Turn => &[0],
+            Move::Push | Move::Unpush => &[0, 1],
+            Move::Drop | Move::Lift | Move::Bounce => &[2, 3],
+            Move::Spin => &[3],
+        }
+    }
+
     fn moves_from_here(&self) -> Vec<Move> {
-        match (self.pushed, self.dropped, self.turned) {
+        let mut can = match (self.pushed, self.dropped, self.turned) {
             (true, true, _) => vec![Move::Lift],
             (true, false, _) => vec![Move::Drop, Move::Unpush],
             (false, _, true) => vec![Move::Unturn],
             (false, _, false) => vec![Move::Push, Move::Turn],
+        };
+        can.push(Move::Spin);
+        if !self.dropped {
+            can.push(Move::Bounce);
         }
+        can
     }
 
     fn next_move(&mut self) -> Move {
-        match self.then.take() {
+        let pick = match self.then.take() {
             Some((next, _)) => next,
             None => {
                 let can = self.moves_from_here();
-                self.rng.pick(&can)
+                let (moves, last) = (self.moves, self.last_moved);
+                self.rng.pick_waiting(&can, |m| {
+                    Self::blocks_of(m)
+                        .iter()
+                        .map(|&b| moves - last[b])
+                        .max()
+                        .unwrap_or(0)
+                })
             }
+        };
+        for &b in Self::blocks_of(pick) {
+            self.last_moved[b] = self.moves;
         }
+        pick
     }
 
     fn apply(&mut self, done: Move) {
@@ -88,6 +122,7 @@ impl RightBlocks {
             }
             Move::Drop => self.dropped = true,
             Move::Lift => self.dropped = false,
+            Move::Spin | Move::Bounce => {}
         }
     }
 }
@@ -181,33 +216,49 @@ impl Render for RightBlocks {
             d.child(block(ONE, s, 0., 0.))
         };
 
-        // 3 and 4 move together: 3 on its row or down on the corner, 4 always on top of it.
+        // 3 and 4 move together: 3 on its row or down on the corner, 4 always on top of it; 3
+        // bounces with 4 riding, and 4 spins in its place.
         let (up, down) = (s, 0.);
+        let spin = playing
+            .filter(|(m, _, _)| *m == Move::Spin)
+            .map(|(_, _, at)| turn_progress(at, window));
         let four = |bottom: f32| -> Canvas<()> {
-            turned_block(FOUR, s, 1.)
-                .absolute()
-                .left(px(s))
-                .bottom(px(bottom))
-                .size(px(s))
+            match spin {
+                Some(t) => spun_block(FOUR, s, t),
+                None => turned_block(FOUR, s, 1.),
+            }
+            .absolute()
+            .left(px(s))
+            .bottom(px(bottom))
+            .size(px(s))
         };
         let falling = is(Move::Drop).map(|n| (n, up, down));
         let rising = is(Move::Lift).map(|n| (n, down, up));
-        match falling.or(rising) {
-            Some((n, from, to)) => d
-                .child(
-                    block(THREE, s, s, from).with_animation(key(n), eased(), move |d, t| {
-                        d.bottom(px(from + (to - from) * t))
-                    }),
-                )
-                .child(four(from + s).with_animation(
-                    ElementId::named_usize("right-block-four", n),
-                    eased(),
-                    move |d, t| d.bottom(px(from + s + (to - from) * t)),
-                )),
-            None => {
-                let at = if self.dropped { down } else { up };
-                d.child(block(THREE, s, s, at)).child(four(at + s))
-            }
+        let at = if self.dropped { down } else { up };
+        if let Some((n, from, to)) = falling.or(rising) {
+            d.child(
+                block(THREE, s, s, from).with_animation(key(n), eased(), move |d, t| {
+                    d.bottom(px(from + (to - from) * t))
+                }),
+            )
+            .child(four(from + s).with_animation(
+                ElementId::named_usize("right-block-four", n),
+                eased(),
+                move |d, t| d.bottom(px(from + s + (to - from) * t)),
+            ))
+        } else if let Some(n) = is(Move::Bounce) {
+            let bounce = move |t: f32| s / 5. * 4. * t * (1. - t);
+            d.child(
+                block(THREE, s, s, at)
+                    .with_animation(key(n), eased(), move |d, t| d.bottom(px(at + bounce(t)))),
+            )
+            .child(four(at + s).with_animation(
+                ElementId::named_usize("right-block-four", n),
+                eased(),
+                move |d, t| d.bottom(px(at + s + bounce(t))),
+            ))
+        } else {
+            d.child(block(THREE, s, s, at)).child(four(at + s))
         }
     }
 }
@@ -225,9 +276,11 @@ mod tests {
             playing: None,
             then: None,
             moves: 0,
+            last_moved: [0; 4],
             rng: Rng::seeded(),
         };
         for _ in 0..5000 {
+            b.moves += 1;
             let pick = b.next_move();
             match pick {
                 Move::Unturn => assert!(b.turned && !b.pushed),
@@ -236,8 +289,18 @@ mod tests {
                 Move::Unpush => assert!(b.pushed && !b.dropped),
                 Move::Drop => assert!(b.pushed && !b.dropped),
                 Move::Lift => assert!(b.dropped),
+                Move::Bounce => assert!(!b.dropped),
+                Move::Spin => {}
             }
             b.apply(pick);
+            // No block is left out for long.
+            for (block, &last) in b.last_moved.iter().enumerate() {
+                assert!(
+                    b.moves - last <= 15,
+                    "block {block} waited {}",
+                    b.moves - last
+                );
+            }
             if pick == Move::Unpush {
                 assert_eq!(b.then.map(|(m, _)| m), Some(Move::Turn));
             }

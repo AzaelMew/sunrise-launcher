@@ -32,6 +32,9 @@ const REST_MAX: u64 = 1400;
 pub(crate) const REST_CHAINED: u64 = 120;
 /// How long the right block stands as a diamond before it turns back.
 const REST_TURNED: u64 = 1500;
+/// How long Ferris rests between his acts, at least and at most.
+const FERRIS_REST_MIN: u64 = 1400;
+const FERRIS_REST_MAX: u64 = 3600;
 /// How many moves a side plays before the other side's turn, at least.
 const TURN_MOVES: u64 = 2;
 pub(crate) const MOVE: sunrise_theme::Motion = sunrise_theme::Motion {
@@ -45,6 +48,7 @@ enum Move {
     Tint,
     TopSink,
     TopRise,
+    TopHop,
     Cover,
     Uncover,
     Turn,
@@ -69,7 +73,11 @@ pub struct CornerBlocks {
     /// A move that must come next, and the rest before it.
     then: Option<(Move, u64)>,
     moves: usize,
+    /// When each block (corner, top, right, small) last moved, by move number.
+    last_moved: [usize; 4],
     rng: Rng,
+    /// Ferris, standing on the top block (or the corner block while it is down).
+    ferris: crate::ferris::Ferris,
 }
 
 /// A fixed pseudo-random sequence (xorshift), seeded from the clock.
@@ -96,6 +104,21 @@ impl Rng {
     pub(crate) fn pick<T: Copy>(&mut self, from: &[T]) -> T {
         from[(self.next() % from.len() as u64) as usize]
     }
+
+    /// One of `from`, mostly one of those whose blocks have waited longest (`waited`), so every
+    /// block gets its turn; now and then any of them.
+    pub(crate) fn pick_waiting<T: Copy>(&mut self, from: &[T], waited: impl Fn(T) -> usize) -> T {
+        if self.next() % 20 >= 17 {
+            return self.pick(from);
+        }
+        let longest = from.iter().map(|&m| waited(m)).max().unwrap_or(0);
+        let waiting: Vec<T> = from
+            .iter()
+            .copied()
+            .filter(|&m| waited(m) == longest)
+            .collect();
+        self.pick(&waiting)
+    }
 }
 
 /// A side's blocks, as [`run`] plays them.
@@ -120,6 +143,27 @@ pub(crate) fn run(
     right: WeakEntity<crate::right_blocks::RightBlocks>,
     cx: &mut App,
 ) {
+    // Ferris keeps his own time: a little act every few seconds, whichever side is playing.
+    let crab = left.clone();
+    cx.spawn(async move |cx| {
+        let mut rng = Rng::seeded();
+        loop {
+            let rest = FERRIS_REST_MIN + rng.next() % (FERRIS_REST_MAX - FERRIS_REST_MIN);
+            cx.background_executor()
+                .timer(Duration::from_millis(rest))
+                .await;
+            let act = rng.pick(&crate::ferris::Act::ALL);
+            let to = (rng.next() % 1000) as f32 / 1000.;
+            let Ok(length) = crab.update(cx, |b, cx| b.ferris_act(act, to, cx)) else {
+                return;
+            };
+            cx.background_executor().timer(length).await;
+            if crab.update(cx, |b, cx| b.ferris_done(cx)).is_err() {
+                return;
+            }
+        }
+    })
+    .detach();
     cx.spawn(async move |cx| {
         let mut rng = Rng::seeded();
         loop {
@@ -192,8 +236,38 @@ impl CornerBlocks {
             playing: None,
             then: None,
             moves: 0,
+            last_moved: [0; 4],
             rng: Rng::seeded(),
+            ferris: crate::ferris::Ferris::new(),
         }
+    }
+
+    /// The blocks a move moves or changes: 0 the corner, 1 the top, 2 the right, 3 the small one.
+    fn blocks_of(m: Move) -> &'static [usize] {
+        match m {
+            Move::Tint => &[0],
+            Move::TopSink | Move::TopRise | Move::TopHop => &[1],
+            // Covering it or sliding off it changes the corner block's colour too.
+            Move::Cover | Move::Uncover => &[0, 2],
+            Move::Turn | Move::Unturn => &[2],
+            Move::Attach | Move::Detach | Move::Hop => &[3],
+        }
+    }
+
+    /// Starts one of Ferris's acts (a scuttle goes `to` along his block); how long it lasts.
+    /// Under reduced motion he keeps still.
+    fn ferris_act(&mut self, act: crate::ferris::Act, to: f32, cx: &mut Context<Self>) -> Duration {
+        if crate::motion::still() {
+            return Duration::ZERO;
+        }
+        self.ferris.act = Some((act, Instant::now(), to));
+        cx.notify();
+        act.length()
+    }
+
+    fn ferris_done(&mut self, cx: &mut Context<Self>) {
+        self.ferris.finish();
+        cx.notify();
     }
 
     /// The moves the blocks can make from where they are.
@@ -202,11 +276,11 @@ impl CornerBlocks {
         if !self.settled() {
             return vec![Move::Attach, Move::Uncover];
         }
-        let mut can = vec![if self.top_up {
-            Move::TopSink
+        let mut can = if self.top_up {
+            vec![Move::TopSink, Move::TopHop]
         } else {
-            Move::TopRise
-        }];
+            vec![Move::TopRise]
+        };
         if !self.attached {
             can.push(Move::Hop);
         }
@@ -224,6 +298,7 @@ impl CornerBlocks {
             Move::Tint => self.corner = (self.corner + 1) % CORNER.len(),
             Move::TopSink => self.top_up = false,
             Move::TopRise => self.top_up = true,
+            Move::TopHop => {}
             Move::Cover => self.covered = true,
             Move::Uncover => {
                 self.covered = false;
@@ -243,13 +318,24 @@ impl CornerBlocks {
 
     /// The next move: the one that must follow, or one picked from those the blocks can make.
     fn next_move(&mut self) -> Move {
-        match self.then.take() {
+        let pick = match self.then.take() {
             Some((next, _)) => next,
             None => {
                 let can = self.moves_from_here();
-                self.rng.pick(&can)
+                let (moves, last) = (self.moves, self.last_moved);
+                self.rng.pick_waiting(&can, |m| {
+                    Self::blocks_of(m)
+                        .iter()
+                        .map(|&b| moves - last[b])
+                        .max()
+                        .unwrap_or(0)
+                })
             }
+        };
+        for &b in Self::blocks_of(pick) {
+            self.last_moved[b] = self.moves;
         }
+        pick
     }
 }
 
@@ -299,13 +385,30 @@ pub(crate) fn block(colour: u32, side: f32, left: f32, bottom: f32) -> Div {
 /// straight-edged shape in the block's colour, with the texture's texels wherever they lie wholly
 /// inside it. Place it in its cell, `side` px square.
 pub(crate) fn turned_block(colour: u32, side: f32, turn: f32) -> Canvas<()> {
+    let half = side / 2. * (1. - (1. - FRAC_1_SQRT_2) * turn);
+    rotated_block(colour, side, turn * FRAC_PI_4, half)
+}
+
+/// A diamond spun `spin` of a quarter turn past its own place: the same diamond after a whole
+/// quarter, so a spin begins and ends looking the same.
+pub(crate) fn spun_block(colour: u32, side: f32, spin: f32) -> Canvas<()> {
+    rotated_block(
+        colour,
+        side,
+        FRAC_PI_4 + spin * 2. * FRAC_PI_4,
+        side / 2. * FRAC_1_SQRT_2,
+    )
+}
+
+/// A square `half` px from its centre to each side, turned `angle` radians, in the middle of its
+/// cell, `side` px square.
+fn rotated_block(colour: u32, side: f32, angle: f32, half: f32) -> Canvas<()> {
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
             let base = color(colour);
             let shades = texel_shades(base, TEXTURE_BUTTON);
-            let (sin, cos) = (turn * FRAC_PI_4).sin_cos();
-            let half = side / 2. * (1. - (1. - FRAC_1_SQRT_2) * turn);
+            let (sin, cos) = angle.sin_cos();
             let centre = bounds.origin + gpui::point(px(side / 2.), px(side / 2.));
             // A point of the block's own frame (u along its side, v down it), on the page.
             let place =
@@ -361,6 +464,11 @@ pub(crate) fn turned_block(colour: u32, side: f32, turn: f32) -> Canvas<()> {
     )
 }
 
+/// How high the top block is `t` of the way through its hop.
+fn hop_top(side: f32, t: f32) -> f32 {
+    side / 5. * 4. * t * (1. - t)
+}
+
 /// The right block turned `turn` of the way, in its cell.
 fn right_turned(side: f32, turn: f32) -> Canvas<()> {
     turned_block(RIGHT, side, turn)
@@ -409,8 +517,55 @@ impl Render for CornerBlocks {
                 crate::motion::eased(MOVE),
                 move |d, t| d.h(px(side * t)),
             )),
-            _ if self.top_up => d.child(top(side)),
+            _ if self.top_up => match is(Move::TopHop) {
+                Some(n) => d.child(top(side).with_animation(
+                    key(n),
+                    crate::motion::eased(MOVE),
+                    move |d, t| d.bottom(px(side + hop_top(side, t))),
+                )),
+                None => d.child(top(side)),
+            },
             _ => d,
+        };
+
+        // Ferris, on the top block, riding it down into the corner block and back up.
+        let crab = {
+            use crate::ferris::{Ferris, ROWS};
+            let texel = Ferris::texel(side);
+            // Room above him for a hop.
+            let tall = (ROWS as f32 + 9.) * texel;
+            let stand = div()
+                .absolute()
+                .left_0()
+                .w(px(side))
+                .h(px(tall))
+                .child(self.ferris.draw(side, window).size_full());
+            let ride = |n: usize| ElementId::named_usize("corner-ferris", n);
+            match (is(Move::TopSink), is(Move::TopRise)) {
+                (Some(n), _) => stand
+                    .bottom(px(2. * side))
+                    .with_animation(ride(n), crate::motion::eased(MOVE), move |d, t| {
+                        d.bottom(px(side + side * (1. - t)))
+                    })
+                    .into_any_element(),
+                (_, Some(n)) => stand
+                    .bottom(px(side))
+                    .with_animation(ride(n), crate::motion::eased(MOVE), move |d, t| {
+                        d.bottom(px(side + side * t))
+                    })
+                    .into_any_element(),
+                _ => match is(Move::TopHop) {
+                    Some(n) => stand
+                        .bottom(px(2. * side))
+                        .with_animation(ride(n), crate::motion::eased(MOVE), move |d, t| {
+                            d.bottom(px(2. * side + hop_top(side, t)))
+                        })
+                        .into_any_element(),
+                    None => stand
+                        .bottom(px(if self.top_up { 2. * side } else { side }))
+                        .into_any_element(),
+                },
+            }
         };
 
         // The right block: sliding over the corner block or back out, turning, or at rest.
@@ -441,6 +596,8 @@ impl Render for CornerBlocks {
         } else {
             d
         };
+
+        let d = d.child(crab);
 
         // The small block: at home, or against the corner block, sliding between, or hopping.
         let (home, beside) = (2. * side, side);
@@ -483,7 +640,9 @@ mod tests {
             playing: None,
             then: None,
             moves: 0,
+            last_moved: [0; 4],
             rng: Rng(0x2545_f491_4f6c_dd1d),
+            ferris: crate::ferris::Ferris::new(),
         }
     }
 
@@ -493,6 +652,7 @@ mod tests {
         let mut unsettled = 0;
         for _ in 0..5000 {
             let then = b.then;
+            b.moves += 1;
             let pick = b.next_move();
             if let Some((next, _)) = then {
                 assert_eq!(pick, next);
@@ -508,8 +668,17 @@ mod tests {
                 Move::Hop => assert!(!b.attached),
                 Move::TopSink => assert!(b.top_up),
                 Move::TopRise => assert!(!b.top_up),
+                Move::TopHop => assert!(b.top_up),
             }
             b.apply(pick);
+            // No block is left out for long.
+            for (block, &last) in b.last_moved.iter().enumerate() {
+                assert!(
+                    b.moves - last <= 15,
+                    "block {block} waited {}",
+                    b.moves - last
+                );
+            }
             if pick == Move::Uncover {
                 assert_eq!(b.then.map(|(m, _)| m), Some(Move::Turn));
             }

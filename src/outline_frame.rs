@@ -429,11 +429,35 @@ impl Launcher {
                     cx.notify();
                 }
             }));
+        // The pointer can leave the window without leaving the sidebar first (straight into
+        // another window), and hover alone never hears of it: the window's exit folds it.
+        let this = cx.entity().downgrade();
+        let exit = gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, _| {
+                let this = this.clone();
+                window.on_mouse_event(move |_: &gpui::MouseExitEvent, phase, _, cx| {
+                    if phase != gpui::DispatchPhase::Bubble {
+                        return;
+                    }
+                    let _ = this.update(cx, |this, cx| {
+                        let open = this.side_folds[side].is_some_and(|(open, _)| open);
+                        if open {
+                            this.side_folds[side] = Some((false, Instant::now()));
+                            cx.notify();
+                        }
+                    });
+                });
+            },
+        )
+        .absolute()
+        .size_0();
         div()
             .relative()
             .flex_none()
             .w(px(COMPACT))
             .h_full()
+            .child(exit)
             .child(gpui::deferred(panel).with_priority(1))
             .into_any_element()
     }
@@ -598,7 +622,7 @@ impl Launcher {
             links = links.flex_col();
         }
         for (id, name, url) in [
-            ("discord", "chat", &self.links.discord),
+            ("discord", "discord", &self.links.discord),
             ("docs", "book", &self.links.docs),
             ("website", "globe-02", &self.links.website),
         ] {
