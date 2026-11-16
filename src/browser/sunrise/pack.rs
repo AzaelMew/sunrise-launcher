@@ -1,4 +1,4 @@
-//! Sunrise modpacks from the registry (`.hpack`, docs/modding/src/reference/registry-index.md), each played as its own
+//! Sunrise modpacks from the registry (`.spack`, docs/modding/src/reference/registry-index.md), each played as its own
 //! profile: `sunrise-packs/<id>/` in the game's home holds the pack's file, `pack.json` (what
 //! was installed) and `home/`, the profile's game folder: its saves, its options, and the pack's
 //! mods in `home/sunrise-mods/`, each downloaded and checked against the index like any
@@ -203,19 +203,19 @@ mod tests {
 
     /// [`registry`] with the pack at `pack_version`.
     fn registry_at(dir: &Path, pack_version: &str, on: bool, extra: &str) -> Index {
-        let hmod_src = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../crates/sunrise-mod-package/tests/index/coords_hud-0.1.0.hmod");
-        let hmod = dir.join("coords_hud-0.1.0.hmod");
-        fs::copy(hmod_src, &hmod).unwrap();
-        let hmod_sha = idx::sha256_file(&hmod).unwrap();
-        let hpack = dir.join(format!("cozy-{pack_version}.hpack"));
-        let mut zip = zip::ZipWriter::new(fs::File::create(&hpack).unwrap());
+        let smod_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/sunrise-mod-package/tests/index/coords_hud-0.1.0.smod");
+        let smod = dir.join("coords_hud-0.1.0.smod");
+        fs::copy(smod_src, &smod).unwrap();
+        let smod_sha = idx::sha256_file(&smod).unwrap();
+        let spack = dir.join(format!("cozy-{pack_version}.spack"));
+        let mut zip = zip::ZipWriter::new(fs::File::create(&spack).unwrap());
         let o = zip::write::SimpleFileOptions::default();
         zip.start_file("sunrise-modpack.toml", o).unwrap();
         write!(
             zip,
             "format = 1\nid = \"cozy\"\nname = \"Cozy\"\nversion = \"{pack_version}\"\ngame = \"26.3\"\n\
-             [[mods]]\nid = \"coords_hud\"\nversion = \"0.1.0\"\nsha256 = \"{hmod_sha}\"\non = {on}\n"
+             [[mods]]\nid = \"coords_hud\"\nversion = \"0.1.0\"\nsha256 = \"{smod_sha}\"\non = {on}\n"
         )
         .unwrap();
         zip.start_file("overrides/options.txt", o).unwrap();
@@ -236,25 +236,25 @@ mod tests {
             r#"{{"schema": 1, "projects": [
               {{"id": "coords_hud", "kind": "mod", "name": "Coordinates HUD", "summary": "", "license": "MIT",
                 "source": "https://x.test", "versions": [{{"version": "0.1.0", "api": "0.2", "side": "client",
-                "capabilities": ["registries"], "game": "26.3", "file": {{"name": "coords_hud-0.1.0.hmod",
-                "url": "file://{}", "size": {}, "sha256": "{hmod_sha}"}}}}]}},
+                "capabilities": ["registries"], "game": "26.3", "file": {{"name": "coords_hud-0.1.0.smod",
+                "url": "file://{}", "size": {}, "sha256": "{smod_sha}"}}}}]}},
               {{"id": "cozy", "kind": "modpack", "name": "Cozy", "summary": "", "license": "MIT",
                 "source": "https://x.test", "versions": [{{"version": "{pack_version}", "api": "1", "game": "26.3",
-                "requires": [{{"id": "coords_hud", "version": "0.1.0", "sha256": "{hmod_sha}"}}],
-                "file": {{"name": "cozy-{pack_version}.hpack", "url": "file://{}", "size": {}, "sha256": "{}"}}}}]}}
+                "requires": [{{"id": "coords_hud", "version": "0.1.0", "sha256": "{smod_sha}"}}],
+                "file": {{"name": "cozy-{pack_version}.spack", "url": "file://{}", "size": {}, "sha256": "{}"}}}}]}}
             ]{extra}}}"#,
-            url(&hmod),
-            size(&hmod),
-            url(&hpack),
-            size(&hpack),
-            idx::sha256_file(&hpack).unwrap()
+            url(&smod),
+            size(&smod),
+            url(&spack),
+            size(&spack),
+            idx::sha256_file(&spack).unwrap()
         );
         Index::parse_local(&text).unwrap()
     }
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "sunrise-launcher-hpack-{name}-{}",
+            "sunrise-launcher-spack-{name}-{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);
@@ -270,7 +270,7 @@ mod tests {
         let pack = install_in(&index, true, "cozy", &packs, &|_, _| {}).unwrap();
         assert_eq!(pack.mods, ["coords_hud 0.1.0"]);
         let home = home(&packs.join("cozy"));
-        assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
+        assert!(home.join("sunrise-mods/coords_hud.smod").is_file());
         assert!(
             !java::is_enabled(&home, "coords_hud"),
             "the pack turns it off"

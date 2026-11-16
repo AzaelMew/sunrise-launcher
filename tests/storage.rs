@@ -268,7 +268,7 @@ fn all_refuses_and_retains_caches_worlds_and_mod_packages() {
     home.installed_version();
     let cache = home.file("game/.sunrise-cache/output", b"cache");
     let world = home.file("game/worlds/precious/level.dat", b"world");
-    let package = home.file("game/sunrise-mods/precious.hmod", b"mod package");
+    let package = home.file("game/sunrise-mods/precious.smod", b"mod package");
     home.refuse("all");
     assert_eq!(fs::read(cache).unwrap(), b"cache");
     assert_eq!(

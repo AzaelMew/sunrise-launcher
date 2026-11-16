@@ -13,7 +13,7 @@ pub type Mod = (String, String, Option<String>);
 /// Whether an installed file (`installed::Entry::file`) is a native mod.
 pub fn is_native_file(file: &str) -> bool {
     file.strip_prefix(native_mods::INSTALLED)
-        .is_some_and(|rest| rest.starts_with('/') && rest.ends_with(".hmod"))
+        .is_some_and(|rest| rest.starts_with('/') && rest.ends_with(".smod"))
 }
 
 /// Where an instance's native mods stand.
@@ -31,7 +31,7 @@ pub enum State {
 
 /// The state for the mods turned on, `enabled`, and those of the version played, `built` (None
 /// when it is no native build). Order doesn't matter; a mod at another version, or with other
-/// files at the same version (a reinstalled local `.hmod`), needs a build.
+/// files at the same version (a reinstalled local `.smod`), needs a build.
 pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     if enabled.is_empty() {
         return State::NoMods;
@@ -58,7 +58,7 @@ pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     }
 }
 
-/// A `.hmod`'s digest as a build records it: its files without the uses table, which the
+/// A `.smod`'s digest as a build records it: its files without the uses table, which the
 /// mod tool packs beside the source but the build's own digest of the copied source never holds
 /// (else every mod packed with a uses table read Needs rebuild after each build).
 fn archive_digest<'a>(files: impl Iterator<Item = (&'a str, &'a [u8])>) -> String {
@@ -172,7 +172,7 @@ pub fn wasm_points(home: &Path) -> Vec<sunrise_mod_package::index::native::Bundl
         .collect()
 }
 
-/// The native mods turned on in game folder `home`, read from their `.hmod`s. One that can't be
+/// The native mods turned on in game folder `home`, read from their `.smod`s. One that can't be
 /// read always counts, with its file name and no version, so it needs a build (which says why):
 /// the on/off list is keyed by the manifest id, which an unreadable file can't give.
 pub fn enabled(home: &Path) -> Vec<Mod> {
@@ -323,7 +323,7 @@ fn parse_built(about: &serde_json::Value) -> Vec<Mod> {
 }
 
 /// What [`state`] depends on, cheap to read on every frame: the folder, the version, the on/off
-/// list and each `.hmod`'s size and time. The Mods page reads the mods again when it changes.
+/// list and each `.smod`'s size and time. The Mods page reads the mods again when it changes.
 pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     let mut out = format!("{}\n{version:?}\n", home.display());
     // The on/off list (`browser::java::is_enabled`).
@@ -347,7 +347,7 @@ fn wasm_hmods(home: &Path) -> Vec<std::path::PathBuf> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "hmod"))
+        .filter(|p| p.extension().is_some_and(|e| e == "smod"))
         .collect();
     paths.sort();
     paths
@@ -357,7 +357,7 @@ fn hmods(home: &Path) -> Vec<std::path::PathBuf> {
     let mut paths: Vec<_> = fs::read_dir(home.join(native_mods::INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
-    paths.retain(|p| p.extension().is_some_and(|e| e == "hmod"));
+    paths.retain(|p| p.extension().is_some_and(|e| e == "smod"));
     paths.sort();
     paths
 }
@@ -395,7 +395,7 @@ mod tests {
             m("tools", "1.0", None),
         ];
         assert_eq!(unbuilt(&enabled, Some(&built)), ["maps", "tools"]);
-        // Same version, other files (a reinstalled local `.hmod`): that one builds again.
+        // Same version, other files (a reinstalled local `.smod`): that one builds again.
         assert_eq!(
             unbuilt(&[m("ores", "1.0", Some("z"))], Some(&built)),
             ["ores"]
@@ -442,7 +442,7 @@ mod tests {
         fs::create_dir_all(home.join(sunrise_mod_package::mod_list::DIR)).unwrap();
         let package = home
             .join(sunrise_mod_package::mod_list::DIR)
-            .join("example.hmod");
+            .join("example.smod");
         fs::write(&package, b"a").unwrap();
         let before = fingerprint(&home, None);
         fs::write(&package, b"ab").unwrap();
@@ -454,7 +454,7 @@ mod tests {
         );
         let native = home.join(native_mods::INSTALLED);
         fs::create_dir_all(&native).unwrap();
-        fs::write(native.join("example.hmod"), b"a").unwrap();
+        fs::write(native.join("example.smod"), b"a").unwrap();
         assert_ne!(
             before,
             fingerprint(&home, None),
@@ -495,7 +495,7 @@ mod tests {
             let bytes =
                 sunrise_mod_package::Package::write_files(&manifest, &[("mod.wasm", &module)])
                     .unwrap();
-            fs::write(folder.join("test.hmod"), bytes).unwrap();
+            fs::write(folder.join("test.smod"), bytes).unwrap();
             java::set_enabled(home.path(), "wasm_test", true).unwrap();
             assert_eq!(enabled(home.path()).len(), usize::from(inject));
             if inject {
@@ -526,7 +526,7 @@ mod tests {
         ] {
             let path = home
                 .join(native_mods::INSTALLED)
-                .join(format!("{file}.hmod"));
+                .join(format!("{file}.smod"));
             let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
             let manifest = format!(
                 "id = '{id}'\nname = '{id}'\nversion = '1.2'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n"
@@ -569,7 +569,7 @@ mod tests {
                 kind: Kind::Mod,
                 version: "1.2".into(),
                 number: "1.2".into(),
-                file: format!("{}/registry.hmod", native_mods::INSTALLED),
+                file: format!("{}/registry.smod", native_mods::INSTALLED),
                 checksum: String::new(),
                 page: String::new(),
                 dependency: false,
@@ -621,7 +621,7 @@ mod tests {
             "a stale origin is not an installed mod"
         );
         fs::write(
-            home.join(native_mods::INSTALLED).join("broken.hmod"),
+            home.join(native_mods::INSTALLED).join("broken.smod"),
             b"broken",
         )
         .unwrap();
@@ -737,9 +737,9 @@ mod tests {
     /// A build from before pins were recorded that compiled another commit than its Nightly's
     #[test]
     fn only_hmods_in_the_native_folder_are_native() {
-        assert!(is_native_file("sunrise-native-mods/veinminer.hmod"));
-        assert!(!is_native_file("sunrise-native-mods-old/x.hmod"));
-        assert!(!is_native_file("sunrise-mods/zoom.hmod"));
+        assert!(is_native_file("sunrise-native-mods/veinminer.smod"));
+        assert!(!is_native_file("sunrise-native-mods-old/x.smod"));
+        assert!(!is_native_file("sunrise-mods/zoom.smod"));
         assert!(!is_native_file("resourcepacks/x.zip"));
     }
 

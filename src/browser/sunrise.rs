@@ -258,7 +258,7 @@ fn kind_of(kind: &index::Kind) -> Option<Kind> {
         index::Kind::Mod => Some(Kind::Mod),
         index::Kind::ResourcePack => Some(Kind::ResourcePack),
         index::Kind::Modpack => Some(Kind::Modpack),
-        // Both go in shaderpacks/: the game reads `.hshader` packs and shaders/-folder zips.
+        // Both go in shaderpacks/: the game reads `.sshader` packs and shaders/-folder zips.
         index::Kind::Shader | index::Kind::ShaderPack => Some(Kind::Shader),
         // Mixin mods: installed beside the others, compiled into the game by `native_mods`.
         index::Kind::NativeMod => Some(Kind::Mod),
@@ -812,7 +812,7 @@ fn trust_label(trust: Trust) -> &'static str {
 /// The game folder path a registry project's file goes to.
 fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
     match kind {
-        Kind::Mod => Ok(format!("{}/{id}.hmod", java::MODS_DIR)),
+        Kind::Mod => Ok(format!("{}/{id}.smod", java::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
         Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
@@ -822,7 +822,7 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
 
 /// Installs a registry project into the game folder `home`: its newest version for this game that
 /// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
-/// the index, then moved into place. A mod is `sunrise-mods/<id>.hmod`, turned on in
+/// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in
 /// `sunrise-mods.txt`.
 pub fn install(
     project: &Project,
@@ -933,7 +933,7 @@ fn install_version_guarded(
     }
     let native = p.kind == index::Kind::NativeMod;
     let relative = match native {
-        true => format!("{}/{}.hmod", crate::native_mods::INSTALLED, p.id),
+        true => format!("{}/{}.smod", crate::native_mods::INSTALLED, p.id),
         false => relative(project.kind, &p.id, &v.file.name)?,
     };
     let mut list = installed::Installed::load(home);
@@ -1035,14 +1035,14 @@ fn install_version_guarded(
     Ok(entry)
 }
 
-/// The mod id of an installed mod (`sunrise-mods/<id>`, `sunrise-mods/<id>.hmod` or
-/// `sunrise-native-mods/<id>.hmod`).
+/// The mod id of an installed mod (`sunrise-mods/<id>`, `sunrise-mods/<id>.smod` or
+/// `sunrise-native-mods/<id>.smod`).
 pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
     if let Some(rest) = entry.file.strip_prefix(crate::native_mods::INSTALLED) {
-        return rest.strip_prefix('/')?.strip_suffix(".hmod");
+        return rest.strip_prefix('/')?.strip_suffix(".smod");
     }
     let rest = entry.file.strip_prefix(java::MODS_DIR)?.strip_prefix('/')?;
-    Some(rest.strip_suffix(".hmod").unwrap_or(rest))
+    Some(rest.strip_suffix(".smod").unwrap_or(rest))
 }
 
 /// Turns the registry's files that were taken down off in the game folder `home`, and says

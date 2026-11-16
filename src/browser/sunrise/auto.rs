@@ -9,7 +9,7 @@
 //! - a data pack: it lives in a world, not in the browser's list;
 //! - a version for another Minecraft than the one installed, and anything older than what is installed.
 //!
-//! A content mod (`.hmod`) whose new version drops a block, item, entity, effect, menu or
+//! A content mod (`.smod`) whose new version drops a block, item, entity, effect, menu or
 //! creative tab the installed one has waits for the player (its blocks would vanish from their
 //! worlds): the notice says which. The file an update replaces is kept in
 //! `mod-browser/replaced/` until the next start: an update cut short (a crash between moving the
@@ -347,7 +347,7 @@ fn update(
     let held = RefCell::new(None);
     // Content mods: nothing the worlds may hold goes missing.
     let guard = |new: &Path| -> Result<(), String> {
-        let content = entry.file.ends_with(".hmod") && v.file.name.ends_with(".hmod");
+        let content = entry.file.ends_with(".smod") && v.file.name.ends_with(".smod");
         if !content {
             return Ok(());
         }

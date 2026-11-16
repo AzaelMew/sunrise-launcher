@@ -32,7 +32,7 @@ pub enum Kind {
     Modpack,
     /// A Java mod: its content is ported ([`java`]).
     Mod,
-    /// One of Sunrise's own shader packs (`.hshader`, docs/shaders.md), from Sunrise's registry
+    /// One of Sunrise's own shader packs (`.sshader`, docs/shaders.md), from Sunrise's registry
     /// only.
     Shader,
     /// A data pack: it goes into one world's `datapacks/` (`crate::datapacks`).

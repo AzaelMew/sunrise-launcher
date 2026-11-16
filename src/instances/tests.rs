@@ -479,15 +479,15 @@ fn switching_what_an_instance_plays_keeps_its_worlds_mods_and_settings() {
         &made
             .home
             .join(crate::browser::java::MODS_DIR)
-            .join("minimap.hmod"),
-        "content hmod",
+            .join("minimap.smod"),
+        "content smod",
     );
     put(
         &made
             .home
             .join(crate::native_mods::INSTALLED)
-            .join("treefall.hmod"),
-        "native hmod",
+            .join("treefall.smod"),
+        "native smod",
     );
     put(
         &made

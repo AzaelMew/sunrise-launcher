@@ -1,5 +1,5 @@
 //! Automatic updates against fixture indexes: a content mod `ruby` whose versions are real
-//! `.hmod` files on disk, listed in an index the way the registry lists them.
+//! `.smod` files on disk, listed in an index the way the registry lists them.
 use super::*;
 use crate::browser::sunrise::tests::{sample, scratch};
 
@@ -22,7 +22,7 @@ fn ruby(dir: &Path, version: &str, blocks: &[&str], items: &[&str]) -> PathBuf {
     let files: Vec<(&str, &[u8])> = names.iter().map(|(n, b)| (n.as_str(), *b)).collect();
     let manifest = format!("{MANIFEST}version = \"{version}\"\n");
     let bytes = sunrise_mod_package::Package::write_files(&manifest, &files).unwrap();
-    let path = dir.join(format!("ruby-{version}.hmod"));
+    let path = dir.join(format!("ruby-{version}.smod"));
     fs::write(&path, bytes).unwrap();
     path
 }
@@ -73,7 +73,7 @@ fn entry(version: &str) -> installed::Entry {
         kind: Kind::Mod,
         version: version.into(),
         number: version.into(),
-        file: "sunrise-mods/ruby.hmod".into(),
+        file: "sunrise-mods/ruby.smod".into(),
         checksum: String::new(),
         page: String::new(),
         dependency: false,
@@ -114,7 +114,7 @@ fn updates_forward_on_the_same_game_only() {
     let in_pack = Context { in_pack: true };
     assert_eq!(to(&entry("1.0.0"), &in_pack), None, "a modpack's profile");
     let native = installed::Entry {
-        file: "sunrise-native-mods/ruby.hmod".into(),
+        file: "sunrise-native-mods/ruby.smod".into(),
         ..entry("1.0.0")
     };
     assert_eq!(
@@ -241,7 +241,7 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
         ("1.1.0".into(), fs::read(&v2).unwrap())
     );
     assert!(kept_list(&home).is_empty());
-    assert!(!home.join("mod-browser/downloads/ruby-1.2.0.hmod").exists());
+    assert!(!home.join("mod-browser/downloads/ruby-1.2.0.smod").exists());
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -269,7 +269,7 @@ fn wasm_update_waits_for_the_player() {
         "{MANIFEST}version = \"1.1.0\"\n[wasm]\nsha512 = \"{}\"\ntoolchain = \"1.99.1\"\nbuilt_with = \"test\"\n",
         sunrise_mod_package::manifest::sha512_of(module)
     );
-    let new = dir.join("ruby-1.1.0.hmod");
+    let new = dir.join("ruby-1.1.0.smod");
     fs::write(
         &new,
         sunrise_mod_package::Package::write_files(&manifest, &[("mod.wasm", module)]).unwrap(),

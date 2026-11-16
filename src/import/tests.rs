@@ -136,7 +136,7 @@ fn says_what_a_dropped_file_is() {
             (p, Ok(Dropped::Pack(packs::Kind::Shader)))
         },
         {
-            let p = dir.join("glow.hshader");
+            let p = dir.join("glow.sshader");
             zip_file(&p, &[("sunrise-shaders.toml", b"")]);
             (p, Ok(Dropped::Pack(packs::Kind::Shader)))
         },
@@ -219,7 +219,7 @@ fn a_dropped_zip_reports_the_central_directory_limit() {
     bytes[size..size + 4].copy_from_slice(&(128_u32 << 20).to_le_bytes());
 
     let scratch = tempfile::tempdir().unwrap();
-    for name in ["oversized.zip", "oversized.hshader"] {
+    for name in ["oversized.zip", "oversized.sshader"] {
         let path = scratch.path().join(name);
         fs::write(&path, &bytes).unwrap();
         let error = what(&path).unwrap_err();

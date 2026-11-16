@@ -8,7 +8,7 @@
 //! - A `.mrpack` for a mod loader, or a CurseForge modpack zip (`manifest.json`): a Java
 //!   modpack, for the Modpacks import (`modpacks::import`).
 //! - A zip with `pack.mcmeta`: a data pack (`data/`) or a resource pack; with `shaders/`, or a
-//!   `.hshader`: a shader pack.
+//!   `.sshader`: a shader pack.
 //!
 //! Only what an instance holds is taken from a shared zip ([`crate::export::FILES`],
 //! [`crate::export::FOLDERS`], `saves/`), and every path is checked to stay inside its folder.
@@ -77,7 +77,7 @@ pub fn what(file: &Path) -> Result<Dropped, String> {
         .extension()
         .map(|e| e.to_string_lossy().to_ascii_lowercase());
     match ext.as_deref() {
-        Some("hshader") => return packs::kind_of(file).map(Dropped::Pack),
+        Some("sshader") => return packs::kind_of(file).map(Dropped::Pack),
         // A game build: the program itself, or a release archive around it.
         // Taken on the extension alone, unread, so that `build_import` is the
         // one to say why a file with this name is not a game -- a better answer
@@ -98,7 +98,7 @@ pub fn what(file: &Path) -> Result<Dropped, String> {
         // extension, so a file nothing else claims is read before giving up.
         _ if is_build(file) => return Ok(Dropped::Build),
         _ => {
-            let kinds = "a .mrpack, a .zip, a .hshader or a Sunrise game build";
+            let kinds = "a .mrpack, a .zip, a .sshader or a Sunrise game build";
             return Err(format!("{name} can't be imported: drop {kinds}."));
         }
     }

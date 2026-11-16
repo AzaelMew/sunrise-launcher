@@ -823,7 +823,7 @@ pub fn smart_app_control() -> String {
 It only lets signed programs run, and a native build runs programs no one has signed: the ones it \
 compiles on this computer and some of the compiler's own. To build native mods, turn it off in \
 Windows Security > App & browser control > Smart App Control settings, then build again. On some \
-Windows versions it can't be turned back on without reinstalling Windows. Content mods (.hmod) need \
+Windows versions it can't be turned back on without reinstalling Windows. Content mods (.smod) need \
 no build and work with it on.")
     .to_string()
 }

@@ -661,7 +661,7 @@ mod tests {
             ("broken", true, false, Some(b"not a PNG".as_slice())),
         ] {
             let folder = if code { native_mods::INSTALLED } else { "mods" };
-            let file = format!("{folder}/{id}.hmod");
+            let file = format!("{folder}/{id}.smod");
             let mut manifest = format!(
                 "id = '{id}'\nname = '{id}'\nversion = '1'\napi = '0.2'\ncapabilities = ['registries']\n"
             );
@@ -726,7 +726,7 @@ mod tests {
         let home = &scratch.0;
         let installed = home.join(native_mods::INSTALLED);
         std::fs::create_dir_all(&installed).unwrap();
-        std::fs::write(installed.join("first.hmod"), b"unreadable").unwrap();
+        std::fs::write(installed.join("first.smod"), b"unreadable").unwrap();
 
         let mut mods = InstanceMods {
             home: Some(home.clone()),
@@ -738,7 +738,7 @@ mod tests {
         let old_list = read(home, false);
         assert_eq!(old_list.len(), 1);
 
-        std::fs::write(installed.join("second.hmod"), b"unreadable").unwrap();
+        std::fs::write(installed.join("second.smod"), b"unreadable").unwrap();
         mods.observe_fingerprint(native_status::fingerprint(home, None));
         assert!(!mods.fresh);
         assert!(mods.reading, "the first read must still be pending");
@@ -751,8 +751,8 @@ mod tests {
         }
         let final_files: Vec<_> = mods.list.iter().map(|row| row.file.as_str()).collect();
         let final_listing_is_fresh = mods.fresh
-            && final_files.contains(&"sunrise-native-mods/first.hmod")
-            && final_files.contains(&"sunrise-native-mods/second.hmod");
+            && final_files.contains(&"sunrise-native-mods/first.smod")
+            && final_files.contains(&"sunrise-native-mods/second.smod");
         assert!(
             another_read_needed && final_listing_is_fresh,
             "a native change during a read must leave another read needed and deliver both files; another_read_needed={another_read_needed}, fresh={}, files={final_files:?}",
@@ -768,12 +768,12 @@ mod tests {
         std::fs::create_dir_all(home.join(native_mods::INSTALLED)).unwrap();
         for id in ["local", "registry"] {
             std::fs::write(
-                home.join(native_mods::INSTALLED).join(format!("{id}.hmod")),
+                home.join(native_mods::INSTALLED).join(format!("{id}.smod")),
                 b"unreadable",
             )
             .unwrap();
         }
-        let entry: installed::Entry = serde_json::from_value(serde_json::json!({"source":"sunrise","project":"registry","slug":"registry","title":"Registry mod","kind":"mod","version":"1","number":"1","file":"sunrise-native-mods/registry.hmod","checksum":"","page":""})).unwrap();
+        let entry: installed::Entry = serde_json::from_value(serde_json::json!({"source":"sunrise","project":"registry","slug":"registry","title":"Registry mod","kind":"mod","version":"1","number":"1","file":"sunrise-native-mods/registry.smod","checksum":"","page":""})).unwrap();
         installed::Installed {
             entries: vec![entry],
         }
