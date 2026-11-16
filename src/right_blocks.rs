@@ -158,11 +158,12 @@ impl Render for RightBlocks {
         let key = |n: usize| ElementId::named_usize("right-block", n);
         let s = block_side(window);
         let eased = || crate::motion::eased(MOVE);
-        // Two columns, three rows, standing on the floor; 2 leaves through the right edge.
+        // Two columns, three rows, standing on the floor, with room above for a bounce; 2 leaves
+        // through the right edge.
         let mut d = div()
             .relative()
             .w(px(2. * s))
-            .h(px(3. * s))
+            .h(px(3. * s + bounce_height(s)))
             .overflow_hidden();
 
         // 2, in the corner unless pushed off the page, or sliding out or back in.
@@ -247,7 +248,7 @@ impl Render for RightBlocks {
                 move |d, t| d.bottom(px(from + s + (to - from) * t)),
             ))
         } else if let Some(n) = is(Move::Bounce) {
-            let bounce = move |t: f32| s / 5. * 4. * t * (1. - t);
+            let bounce = move |t: f32| bounce_height(s) * 4. * t * (1. - t);
             d.child(
                 block(THREE, s, s, at)
                     .with_animation(key(n), eased(), move |d, t| d.bottom(px(at + bounce(t)))),
@@ -261,6 +262,11 @@ impl Render for RightBlocks {
             d.child(block(THREE, s, s, at)).child(four(at + s))
         }
     }
+}
+
+/// How high 3 bounces, carrying 4, on blocks `s` px wide.
+fn bounce_height(s: f32) -> f32 {
+    s / 5.
 }
 
 #[cfg(test)]
