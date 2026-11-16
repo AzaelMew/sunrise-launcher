@@ -242,7 +242,7 @@ The opening, then Play ([clip](docs/opening.webm)):
 - **Packs**: Home lists the selected instance's resource packs and shader packs, each with a switch.
   The choice is the game's own: `resourcePacks` in options.txt (a pack turned on goes on top, as
   the game's Resource Packs screen does) and `pickedShaderPack` in `sunrise-graphics.txt` (one shader
-  pack at a time). **Add pack…** or a `.zip` / `.hshader` dropped on the section copies it into the
+  pack at a time). **Add pack…** or a `.zip` / `.sshader` dropped on the section copies it into the
   right folder; **Remove** turns it off and moves it to the trash after a confirmation. From the
   command line: `sunrise-launcher packs [list|add|on|off|remove] [--kind resource|shader]
   [--instance <name>]`.

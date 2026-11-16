@@ -5,7 +5,7 @@
 //!   format, `"file/<name>"`, the bottom first), so the game's Resource Packs screen shows the
 //!   same choice. A pack turned on here goes on top, as the screen puts a newly picked one.
 //! - Shader packs: `shaderpacks/`, Sunrise's own (a folder with `sunrise-shaders.toml`, or a
-//!   `.hshader`) and those in the `shaders/` format (a `.zip`, or a folder with `shaders/`), as
+//!   `.sshader`) and those in the `shaders/` format (a `.zip`, or a folder with `shaders/`), as
 //!   the game's Shader Packs page lists them (`shader_pack_list`). One at most is on:
 //!   `pickedShaderPack` in `sunrise-graphics.txt`.
 //!
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 const OPTIONS: &str = "options.txt";
 const GRAPHICS: &str = "sunrise-graphics.txt";
 const SHADER_MANIFEST: &str = "sunrise-shaders.toml";
-const SHADER_PACKAGE: &str = "hshader";
+const SHADER_PACKAGE: &str = "sshader";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -83,7 +83,7 @@ fn migrate_shader_values(home: &Path, pack: &Path, key: &str) -> std::io::Result
                     && picked
                         .strip_prefix(&format!("{id}-"))
                         .is_some_and(|version| {
-                            version.len() > ".hshader".len() && version.ends_with(".hshader")
+                            version.len() > ".sshader".len() && version.ends_with(".sshader")
                         })))
     });
     // Changing the selection would discard the old filename needed to import its sidecar.
@@ -155,7 +155,7 @@ fn enabled(home: &Path, kind: Kind) -> Vec<String> {
                             if dir.join(&p).exists() {
                                 return None;
                             }
-                            let stem = p.strip_suffix(".hshader")?;
+                            let stem = p.strip_suffix(".sshader")?;
                             let mut paths: Vec<_> = fs::read_dir(&dir)
                                 .ok()?
                                 .flatten()
@@ -376,7 +376,7 @@ pub fn find(home: &Path, kind: Kind, query: &str) -> Result<Pack, String> {
 }
 
 /// What a dropped or picked file is: a resource pack (a zip with `pack.mcmeta`), a Sunrise
-/// shader pack (`.hshader`), or a shader pack in the `shaders/` format (a zip with `shaders/`).
+/// shader pack (`.sshader`), or a shader pack in the `shaders/` format (a zip with `shaders/`).
 pub fn kind_of(file: &Path) -> Result<Kind, String> {
     let name = file
         .file_name()
@@ -389,7 +389,7 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
         Some(SHADER_PACKAGE | "zip") => {}
         _ => {
             return Err(format!(
-                "{name} is not a pack: packs are .zip or .hshader files."
+                "{name} is not a pack: packs are .zip or .sshader files."
             ))
         }
     }

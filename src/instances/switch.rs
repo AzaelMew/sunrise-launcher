@@ -106,7 +106,7 @@ pub fn unkept(instance: &Instance, to: &Plays, sunrise: &str) -> Vec<Unkept> {
     out
 }
 
-/// The mods in `home`: a Sunrise instance's content and native `.hmod` packages, a Java
+/// The mods in `home`: a Sunrise instance's content and native `.smod` packages, a Java
 /// one's jars, on or off.
 fn mod_files(home: &Path, sunrise: bool) -> usize {
     let count = |dir: &str, ext: &dyn Fn(&str) -> bool| {
@@ -118,8 +118,8 @@ fn mod_files(home: &Path, sunrise: bool) -> usize {
         })
     };
     if sunrise {
-        count(crate::browser::java::MODS_DIR, &|n| n.ends_with(".hmod"))
-            + count(crate::native_mods::INSTALLED, &|n| n.ends_with(".hmod"))
+        count(crate::browser::java::MODS_DIR, &|n| n.ends_with(".smod"))
+            + count(crate::native_mods::INSTALLED, &|n| n.ends_with(".smod"))
     } else {
         count("mods", &|n| {
             n.ends_with(".jar") || n.ends_with(".jar.disabled")

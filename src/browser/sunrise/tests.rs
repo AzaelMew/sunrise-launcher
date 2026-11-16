@@ -44,7 +44,7 @@ fn native_registry_entries_are_mods_that_say_they_run_native_code() {
     assert_eq!(kind_of(&index::Kind::NativeMod), Some(Kind::Mod));
     let mut index = sample();
     index.projects[0].kind = index::Kind::NativeMod;
-    index.projects[0].versions[0].file.name = "coords_hud-0.1.0.hmod".into();
+    index.projects[0].versions[0].file.name = "coords_hud-0.1.0.smod".into();
     let found = search(&index, &Query::new("", Kind::Mod));
     assert!(found.iter().any(|p| p.id == index.projects[0].id));
     let entry = |file: &str| {
@@ -55,10 +55,10 @@ fn native_registry_entries_are_mods_that_say_they_run_native_code() {
         .unwrap()
     };
     assert_eq!(
-        mod_id(&entry("sunrise-native-mods/veinminer.hmod")),
+        mod_id(&entry("sunrise-native-mods/veinminer.smod")),
         Some("veinminer")
     );
-    assert_eq!(mod_id(&entry("sunrise-mods/zoom.hmod")), Some("zoom"));
+    assert_eq!(mod_id(&entry("sunrise-mods/zoom.smod")), Some("zoom"));
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn searches_by_kind_and_words() {
     // The index's download counts, most downloaded first (of native mods: the browser lists them).
     let mut counted = index.clone();
     counted.projects[0].kind = index::Kind::NativeMod;
-    counted.projects[0].versions[0].file.name = "coords_hud-0.1.0.hmod".into();
+    counted.projects[0].versions[0].file.name = "coords_hud-0.1.0.smod".into();
     counted.projects.push(index::Project {
         id: "zoom".into(),
         name: "Zoom".into(),
@@ -161,7 +161,7 @@ fn update_rejects_a_changed_kind_without_removing_the_installed_file() {
         .find(|p| p.id == "coords_hud")
         .unwrap();
     project.kind = index::Kind::NativeMod;
-    let path = home.join("sunrise-mods/coords_hud.hmod");
+    let path = home.join("sunrise-mods/coords_hud.smod");
     let before = fs::read(&path).unwrap();
     let modified = fs::metadata(&path).unwrap().modified().unwrap();
     let p = index.project("coords_hud").unwrap();
@@ -190,7 +190,7 @@ fn installed_kind_comes_from_the_archive_not_its_folder() {
             "sunrise-native-mods"
         };
         fs::create_dir_all(home.join(folder)).unwrap();
-        let file = format!("{folder}/misplaced.hmod");
+        let file = format!("{folder}/misplaced.smod");
         let path = home.join(&file);
         if native {
             let manifest = format!(
@@ -232,7 +232,7 @@ fn corrupt_installed_archive_is_not_treated_as_content() {
     let index = sample();
     let home = scratch("corrupt-installed");
     put(&index, true, &home).unwrap();
-    let path = home.join("sunrise-mods/coords_hud.hmod");
+    let path = home.join("sunrise-mods/coords_hud.smod");
     fs::write(&path, b"not a zip").unwrap();
     let before = fs::read(&path).unwrap();
     let modified = fs::metadata(&path).unwrap().modified().unwrap();
@@ -250,13 +250,13 @@ fn removing_native_mod_does_not_remove_a_separate_content_file() {
     let home = scratch("native-remove");
     put(&index, true, &home).unwrap();
     let mut list = installed::Installed::load(&home);
-    list.entries[0].file = "sunrise-native-mods/coords_hud.hmod".into();
+    list.entries[0].file = "sunrise-native-mods/coords_hud.smod".into();
     list.save(&home).unwrap();
     fs::create_dir_all(home.join("sunrise-native-mods")).unwrap();
-    fs::write(home.join("sunrise-native-mods/coords_hud.hmod"), "").unwrap();
+    fs::write(home.join("sunrise-native-mods/coords_hud.smod"), "").unwrap();
     installed::remove(&home, "coords_hud").unwrap();
-    assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
-    assert!(!home.join("sunrise-native-mods/coords_hud.hmod").exists());
+    assert!(home.join("sunrise-mods/coords_hud.smod").is_file());
+    assert!(!home.join("sunrise-native-mods/coords_hud.smod").exists());
     fs::remove_dir_all(&home).unwrap();
 }
 
@@ -416,10 +416,10 @@ fn screenshots_are_the_gallery_from_the_registry_only() {
 }
 
 #[test]
-fn installs_combined_native_content_as_one_hmod() {
+fn installs_combined_native_content_as_one_smod() {
     use std::io::Write;
     let home = scratch("native-content-install");
-    let archive = home.join("source.hmod");
+    let archive = home.join("source.smod");
     let a = "a".repeat(40);
     let b = "b".repeat(40);
     let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
@@ -445,14 +445,14 @@ fn installs_combined_native_content_as_one_hmod() {
     v.side = None;
     v.requires.clear();
     v.capabilities = Default::default();
-    v.file.name = "coords_hud.hmod".into();
+    v.file.name = "coords_hud.smod".into();
     v.file.url = format!("file://{}", archive.display());
     v.file.size = bytes.len() as u64;
     v.file.sha256 = index::sha256(&bytes);
     v.file.signature = None;
     let p = &index.projects[0];
     let entry = install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert_eq!(entry.file, "sunrise-native-mods/coords_hud.hmod");
+    assert_eq!(entry.file, "sunrise-native-mods/coords_hud.smod");
     assert_eq!(mod_id(&entry), Some("coords_hud"));
     let bundle = index::native::Bundle::read(&home.join(&entry.file)).unwrap();
     assert_eq!(bundle.files["assets/coords_hud/sounds.json"], b"{}");
@@ -468,14 +468,14 @@ fn installs_checked_turns_on_and_removes() {
     let home = scratch("install");
     let p = hud(&index);
     let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
-    assert_eq!(done[0].file, "sunrise-mods/coords_hud.hmod");
+    assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
     assert!(done[0].skipped.is_empty());
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
         done[0].checksum,
         "SHA-256:cb6e658445269b2a4d2eb104e83e4b993586bc2e56814fd56454244139f08364"
     );
-    assert!(home.join("sunrise-mods/coords_hud.hmod").is_file());
+    assert!(home.join("sunrise-mods/coords_hud.smod").is_file());
     let list = fs::read_to_string(home.join("sunrise-mods.txt")).unwrap();
     assert_eq!(list, "mod.coords_hud:true\n");
     assert_eq!(
@@ -503,7 +503,7 @@ fn installs_checked_turns_on_and_removes() {
     );
 
     installed::remove(&home, "coords_hud").unwrap();
-    assert!(!home.join("sunrise-mods/coords_hud.hmod").exists());
+    assert!(!home.join("sunrise-mods/coords_hud.smod").exists());
     assert!(installed::Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(&home).unwrap();
 }
@@ -512,8 +512,8 @@ fn installs_checked_turns_on_and_removes() {
 fn executable_content_is_refused_without_installing_or_skipping_code() {
     use std::io::Write;
     let home = scratch("executable");
-    let path = home.join("executable.hmod");
-    fs::copy(fixtures().join("coords_hud-0.1.0.hmod"), &path).unwrap();
+    let path = home.join("executable.smod");
+    fs::copy(fixtures().join("coords_hud-0.1.0.smod"), &path).unwrap();
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -534,7 +534,7 @@ fn executable_content_is_refused_without_installing_or_skipping_code() {
     v.file.signature = None;
     let e = put(&index, true, &home).unwrap_err();
     assert_eq!(e, "mod.wasm needs a [wasm] section");
-    assert!(!home.join("sunrise-mods/coords_hud.hmod").exists());
+    assert!(!home.join("sunrise-mods/coords_hud.smod").exists());
     assert!(installed::Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(home).unwrap();
 }
@@ -546,9 +546,9 @@ fn installs_a_shader_pack_into_shaderpacks() {
     let p = project_of(&index, index.project("glow").unwrap()).unwrap();
     assert_eq!(p.support(), super::super::Support::Works);
     let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
-    assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.hshader");
+    assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.sshader");
     assert_eq!(done[0].kind, Kind::Shader);
-    assert!(home.join("shaderpacks/glow-1.0.0.hshader").is_file());
+    assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
     // Not a mod: nothing turns on in sunrise-mods.txt; the game's Shader Packs page picks it.
     assert!(!home.join("sunrise-mods.txt").exists());
 
@@ -563,13 +563,13 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert_eq!(said, ["Soft Glow was taken down: Test. Remove it."]);
 
     installed::remove(&home, "glow").unwrap();
-    assert!(!home.join("shaderpacks/glow-1.0.0.hshader").exists());
+    assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
     // A file of the same name the registry didn't put there is left alone.
-    fs::write(home.join("shaderpacks/glow-1.0.0.hshader"), b"mine").unwrap();
+    fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
     let e = install_from(&index, true, &p, &home, &|_, _| {}).unwrap_err();
     assert_eq!(
         e,
-        "shaderpacks/glow-1.0.0.hshader is already there: move it away first."
+        "shaderpacks/glow-1.0.0.sshader is already there: move it away first."
     );
     fs::remove_dir_all(&home).unwrap();
 }

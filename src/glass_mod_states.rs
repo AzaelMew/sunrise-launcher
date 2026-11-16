@@ -64,7 +64,7 @@ fn unfit(name: &str, verdict: Verdict) -> Route {
 
 fn row(name: &str, kind: ModKind, error: Option<&str>) -> ModRow {
     ModRow {
-        file: format!("mods/{name}.hmod"),
+        file: format!("mods/{name}.smod"),
         name: name.into(),
         version: "1.2.0".into(),
         on: true,

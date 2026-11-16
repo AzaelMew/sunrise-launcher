@@ -465,7 +465,7 @@ enum PacksCmd {
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Copy a pack file in: a resource pack .zip, a shader pack .zip or a .hshader
+    /// Copy a pack file in: a resource pack .zip, a shader pack .zip or a .sshader
     Add {
         file: PathBuf,
         #[arg(long)]
@@ -823,7 +823,7 @@ enum Cmd {
         catalog_output: Option<PathBuf>,
         /// A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them
         /// (default: the native mods installed and turned on in the instance). Server exports
-        /// also read wasm internals declarations from .hmod packages directly in this folder
+        /// also read wasm internals declarations from .smod packages directly in this folder
         folder: Option<PathBuf>,
         /// Export mode: build a standalone dedicated-server engine into this folder instead of
         /// an instance's build. Needs a mod FOLDER; no instance is read or changed, and no
