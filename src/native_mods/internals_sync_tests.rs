@@ -71,7 +71,7 @@ impl Fixture {
                     ""
                 );
                 let payload = fs::read_to_string(input.join("example/src/ported.rs")).unwrap();
-                assert!(input.join("example/sunrise-mixin.toml").is_file());
+                assert!(input.join("example/horizon-mixin.toml").is_file());
                 super::super::sync(prepared, output)?;
                 fs::write(
                     output.join("crates/sunrise-client/src/game.rs"),

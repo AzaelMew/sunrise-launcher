@@ -118,7 +118,7 @@
   "Build mode": "ビルドモード",
   "Build now": "Build now",
   "Building": "ビルド中",
-  "Building sunrise-mixins (once)": "sunrise-mixins をビルド中（初回のみ）",
+  "Building horizon-mixins (once)": "horizon-mixins をビルド中（初回のみ）",
   "Builds from GitHub. Each one installs into its own folder.": "GitHub のビルドです。それぞれ専用のフォルダーにインストールされます。",
   "Builds on the Sunrise you play": "プレイ中の Sunrise でビルドできます",
   "Builds the game with your mods": "Builds the game with your mods",

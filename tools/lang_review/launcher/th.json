@@ -252,7 +252,7 @@
   "{from}'s worlds, options and packs are copied; {from} stays as it is.": "โลก ตัวเลือก และแพ็กของ {from} จะถูกคัดลอก ส่วน {from} ยังอยู่เหมือนเดิม",
   "Choose": "เลือก",
   "SERVERS": "เซิร์ฟเวอร์",
-  "Building sunrise-mixins (once)": "กำลังบิลด์ sunrise-mixins (ครั้งเดียว)",
+  "Building horizon-mixins (once)": "กำลังบิลด์ horizon-mixins (ครั้งเดียว)",
   "Needs rebuild": "ต้องบิลด์ใหม่",
   "Servers": "เซิร์ฟเวอร์",
   "Backups": "ข้อมูลสำรอง",

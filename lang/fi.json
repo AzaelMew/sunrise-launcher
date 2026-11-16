@@ -118,7 +118,7 @@
   "Build mode": "Käännöstila",
   "Build now": "Build now",
   "Building": "Rakennus",
-  "Building sunrise-mixins (once)": "Horisonttisekoitusten rakentaminen (kerran)",
+  "Building horizon-mixins (once)": "Horisonttisekoitusten rakentaminen (kerran)",
   "Builds from GitHub. Each one installs into its own folder.": "Rakentuu GitHubista. Jokainen asentuu omaan kansioonsa.",
   "Builds on the Sunrise you play": "Rakentuu pelaamasi Sunrisein päälle",
   "Builds the game with your mods": "Builds the game with your mods",

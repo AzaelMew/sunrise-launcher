@@ -859,7 +859,7 @@ enum Cmd {
         /// The game is never rebuilt by a mod build.
         #[arg(long, value_enum)]
         profile: Option<native_mods::Profile>,
-        /// Build the sunrise-mixins tool from its pinned source instead of downloading the
+        /// Build the horizon-mixins tool from its pinned source instead of downloading the
         /// prebuilt one: for CI, which keeps that path proven
         #[arg(long, hide = true)]
         mixins_from_source: bool,

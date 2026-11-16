@@ -1,4 +1,4 @@
-//! Validated flat packages and launcher-owned sunrise-mixins input.
+//! Validated flat packages and launcher-owned horizon-mixins input.
 use super::{Bundle, MANIFEST};
 use std::{fs, path::Path};
 use sunrise_mod_package::mod_surface::uses::USES_FILE;
@@ -7,7 +7,7 @@ use sunrise_mod_package::{manifest, Package};
 pub(super) fn read(dir: &Path) -> Result<Option<Bundle>, String> {
     for old in [
         "sunrise-native.json",
-        "sunrise-mixin.toml",
+        "horizon-mixin.toml",
         "native",
         "rust",
     ] {
@@ -55,7 +55,7 @@ pub(super) fn tool_manifest(bundle: &Bundle) -> Result<(), String> {
     manifest.insert(
         "compatibility".into(),
         toml::Value::Table(toml::Table::from_iter([(
-            "sunrise_revision".into(),
+            "horizon_revision".into(),
             bundle.native().sunrise.clone().into(),
         )])),
     );

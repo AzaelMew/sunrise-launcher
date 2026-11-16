@@ -292,7 +292,7 @@ fn a_flat_hmod_keeps_its_pins_and_ships_only_selected_files() {
     write(&root.join("evil.exe"), "MZ");
     let again = checked(&pack(bundle).unwrap(), &tree("unpacked-out2")).unwrap();
     assert_eq!(again.sha256, packed.sha256);
-    write(&root.join("sunrise-mixin.toml"), "[mod]\nid='zoom'\n");
+    write(&root.join("horizon-mixin.toml"), "[mod]\nid='zoom'\n");
     assert!(find_mods(&root).is_err());
     fs::remove_dir_all(root).unwrap();
 }

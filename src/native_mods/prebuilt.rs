@@ -1620,10 +1620,10 @@ mod tests {
 
     #[test]
     fn a_file_is_found_by_name_in_a_sums_listing() {
-        let name = "sunrise-mixins-x86_64-unknown-linux-gnu.tar.gz";
-        let listing = format!("AB12  sunrise-mixins-other.tar.gz\ncd34 *{name}\n");
+        let name = "horizon-mixins-x86_64-unknown-linux-gnu.tar.gz";
+        let listing = format!("AB12  horizon-mixins-other.tar.gz\ncd34 *{name}\n");
         assert_eq!(expected_sum(&listing, name).as_deref(), Some("cd34"));
-        assert_eq!(expected_sum(&listing, "sunrise-mixins-x.tar.gz"), None);
+        assert_eq!(expected_sum(&listing, "horizon-mixins-x.tar.gz"), None);
     }
 
     #[test]

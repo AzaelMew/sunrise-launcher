@@ -145,7 +145,7 @@ fn ensure_idle(source: &Roots) -> Result<(), String> {
         ) || (managed
             && matches!(
                 name,
-                "java" | "javaw" | "cargo" | "rustc" | "sunrise-mixins"
+                "java" | "javaw" | "cargo" | "rustc" | "horizon-mixins"
             ))
         {
             return Err(format!(

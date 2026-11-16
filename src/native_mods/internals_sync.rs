@@ -152,7 +152,7 @@ pub fn pinned_catalog_with_modules(folder: &Path) -> Result<DiscoveryCatalog, St
 
 /// Return the pinned game's discovery tree and catalog pair with only this mod's modules
 /// applied. Each module discovery starts from pristine pinned source, never a staged tree.
-/// The launcher owns source downloads, Rust installation and sunrise-mixins management.
+/// The launcher owns source downloads, Rust installation and horizon-mixins management.
 fn catalog_for_mod(folder: &Path, cache_root: &Path) -> Result<PathBuf, Error> {
     catalog_for_mod_with(
         folder,
@@ -163,7 +163,7 @@ fn catalog_for_mod(folder: &Path, cache_root: &Path) -> Result<PathBuf, Error> {
             let tool = super::tool(&rust, &bundle.native().mixins, &|_| {})?;
             super::run(
                 super::apply(&rust, &tool, prepared, input, fresh),
-                "sunrise-mixins",
+                "horizon-mixins",
                 |_| {},
             )
         },

@@ -940,7 +940,7 @@ fn tool_safe(path: &Path) -> bool {
 
 /// Where builds happen — the Rust toolchain, its Cargo home and `native_mods::root` — as a
 /// path every build tool can read: `data_dir()` resolved, so the tools are never handed a
-/// link (sunrise-mixins refuses one, and macOS's /tmp is one). On Windows, when the resolved
+/// link (horizon-mixins refuses one, and macOS's /tmp is one). On Windows, when the resolved
 /// path isn't [`tool_safe`], [`windows_build_dir`] names the same folder a way MinGW-w64 can open.
 pub fn build_dir() -> PathBuf {
     // Tests keep it inside their scratch launcher folder (`data_dir`).
@@ -4468,7 +4468,7 @@ mod tests {
         assert!(!dir.exists());
     }
 
-    /// A canonical path loses Windows' verbatim prefix on a drive (sunrise-mixins' output
+    /// A canonical path loses Windows' verbatim prefix on a drive (horizon-mixins' output
     /// check stats `\\?\C:`, the volume itself, which Windows refuses, os error 1), and keeps
     /// it where there is no drive form.
     #[test]
