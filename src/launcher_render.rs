@@ -376,15 +376,10 @@ impl Launcher {
             let size = (f32::from(at.size.width), f32::from(at.size.height));
             let performance = self.settings.performance();
             match cover {
-                window_root::Cover::Sunset => {
-                    // The mockup tints the sunset with any accent but its violet.
-                    let tint = (self.look.accent != sunrise_theme::glass::ACCENT)
-                        .then(|| sunrise_theme::glass::mix_oklab(self.look.accent, 0x767676, 0.58));
-                    self.scene.update(cx, |scene, cx| {
-                        scene.set_size(Some((f64::from(size.0), f64::from(size.1))), cx);
-                        scene.set_performance(performance, cx);
-                        scene.set_look(tint, self.look.blur, cx);
-                    });
+                window_root::Cover::Coast(palette) => {
+                    let (palette, scale) = (*palette, window.scale_factor());
+                    self.coast
+                        .update(cx, |coast, cx| coast.set(palette, size, scale, cx));
                 }
                 window_root::Cover::Sky { rains } => {
                     let (night, scale) = (t.night, window.scale_factor());

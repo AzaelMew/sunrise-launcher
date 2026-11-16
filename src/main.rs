@@ -3,7 +3,9 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, clock, glass, rain, scene, sky};
+#[cfg(windows)]
+use sunrise_launcher_scenery::scene;
+use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
@@ -537,8 +539,8 @@ struct Launcher {
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
     /// Home's scenery, each its own view, drawn by the backdrop behind the launcher
-    /// (`window_root.rs`): the sunset, a theme's painted sky, Hypr Neon's rain.
-    scene: gpui::Entity<scene::Scene>,
+    /// (`window_root.rs`): Sunrise's coast, a theme's painted sky, Hypr Neon's rain.
+    coast: gpui::Entity<coast::Coast>,
     sky: gpui::Entity<sky::SkyView>,
     rain: gpui::Entity<rain::Rain>,
     backdrop: gpui::Entity<window_root::Backdrop>,

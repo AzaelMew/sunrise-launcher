@@ -3,6 +3,7 @@
 //! launcher so its drawing compiles once and the launcher's own changes rebuild less.
 pub mod art;
 pub mod clock;
+pub mod coast;
 pub mod glass;
 pub mod rain;
 pub mod scene;

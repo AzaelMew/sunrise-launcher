@@ -51,11 +51,11 @@ impl Launcher {
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
         titlebar::apply_appearance(window, settings.appearance);
-        let scene = cx.new(|_| scene::Scene::new());
+        let coast = cx.new(|cx| coast::Coast::new(window, cx));
         let sky = cx.new(|cx| sky::SkyView::new(window, cx));
         let rain = cx.new(|_| rain::Rain::new());
         let backdrop =
-            cx.new(|_| window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone()));
+            cx.new(|_| window_root::Backdrop::new(coast.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
@@ -252,7 +252,7 @@ impl Launcher {
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
             side_servers: sunrise_launcher::servers::list(),
-            scene,
+            coast,
             sky,
             rain,
             backdrop,

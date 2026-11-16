@@ -2,7 +2,7 @@
 //! frame dirties the views it sits in, so a scene drifting inside the launcher would draw the
 //! whole launcher again on every frame of it. As siblings, a scene frame draws the scene and this
 //! thin root; the launcher is drawn from its last frame (GPUI Fast retains views).
-use crate::{rain, scene, sky, Launcher};
+use crate::{coast, rain, sky, Launcher};
 use gpui::{
     div, prelude::*, px, Bounds, Context, Entity, Hsla, IntoElement, Pixels, Render, Window,
 };
@@ -12,8 +12,8 @@ use std::path::PathBuf;
 /// player's own picture.
 #[derive(Clone, PartialEq)]
 pub enum Cover {
-    /// Sunrise's pixel sunset (Sunrise's own theme and Dawn), tinted by the accent.
-    Sunset,
+    /// Sunrise's coast at first light (Sunrise's own theme, and Dawn's in its colours).
+    Coast(coast::Palette),
     /// The theme's painted sky; Hypr Neon's rains.
     Sky {
         rains: bool,
@@ -32,20 +32,20 @@ pub struct Back {
 
 pub struct Backdrop {
     back: Option<Back>,
-    scene: Entity<scene::Scene>,
+    coast: Entity<coast::Coast>,
     sky: Entity<sky::SkyView>,
     rain: Entity<rain::Rain>,
 }
 
 impl Backdrop {
     pub fn new(
-        scene: Entity<scene::Scene>,
+        coast: Entity<coast::Coast>,
         sky: Entity<sky::SkyView>,
         rain: Entity<rain::Rain>,
     ) -> Self {
         Self {
             back: None,
-            scene,
+            coast,
             sky,
             rain,
         }
@@ -78,7 +78,7 @@ impl Render for Backdrop {
             .h(at.size.height)
             .overflow_hidden();
         let place = match cover {
-            Cover::Sunset => place.child(self.scene.clone()),
+            Cover::Coast(_) => place.child(self.coast.clone()),
             Cover::Sky { rains } => place
                 .child(self.sky.clone())
                 .when(rains, |d| d.child(self.rain.clone())),
@@ -95,7 +95,7 @@ impl Render for Backdrop {
             .left_0()
             .right_0()
             .bottom_0()
-            .h(px(f32::from(at.size.height) * 0.35))
+            .h(px(f32::from(at.size.height) * 0.18))
             .bg(gpui::linear_gradient(
                 0.,
                 gpui::linear_color_stop(b.side, 0.),
