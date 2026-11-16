@@ -146,7 +146,7 @@ impl Render for Launcher {
             self.backdrop.update(cx, |b, cx| b.set(pushed.back, cx));
         }
         // Dark: the glass frame over the scene; Light keeps the night one over the dawn.
-        let right_sidebar = t.glass.then(|| self.outline_right_sidebar(cx));
+        let right_sidebar = t.glass.then(|| self.outline_widebar(cx));
         let (topbar, sidebar) = if t.glass {
             (
                 self.outline_topbar(window, cx),

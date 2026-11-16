@@ -213,8 +213,11 @@ impl NavStrip {
                     }
                 });
             });
-        crate::glass::plate(radius::LARGE)
-            .p(px(4.))
+        // No plate: the tabs stand on the bar as they do when they fit over the hero.
+        div()
+            .relative()
+            .flex()
+            .items_center()
             .min_w_0()
             .flex_shrink(1.)
             .overflow_hidden()
@@ -275,11 +278,12 @@ impl NavStrip {
         // The plate's own colour: its solid fill in Performance mode, else what the glass is
         // tinted with.
         // The flat plate's own colour, so the fade hides the cut tabs.
-        let shade = ui::color(crate::glass::panel());
+        // The bar's own colour, so the arrow's backing reads as the bar, not a patch on it.
+        let shade = ui::color(t.night.side);
         div()
             .absolute()
-            .top(px(4.))
-            .bottom(px(4.))
+            .top_0()
+            .bottom_0()
             .w(px(EDGE))
             .flex()
             .items_center()

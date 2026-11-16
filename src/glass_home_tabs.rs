@@ -21,14 +21,15 @@ const PANEL_MIN: f32 = 320.;
 const SLIDE: f32 = 16.;
 
 impl Launcher {
-    /// Whether the right sidebar is full width (and holds the player's side of the top bar).
-    pub(super) fn outline_right_side(&self) -> bool {
+    /// Whether the window is wide enough for both sidebars at full width (the right one then
+    /// holds the player's side of the top bar); narrower, both fold to icon columns.
+    pub(super) fn outline_wide(&self) -> bool {
         self.window_width >= FULL_FROM
     }
 
-    /// How wide the right sidebar is.
-    pub(super) fn outline_right_width(&self) -> f32 {
-        if self.outline_right_side() {
+    /// How wide each sidebar is.
+    pub(super) fn outline_side_width(&self) -> f32 {
+        if self.outline_wide() {
             frame::SIDEBAR
         } else {
             COMPACT
@@ -36,9 +37,9 @@ impl Launcher {
     }
 
     /// The right sidebar.
-    pub(super) fn outline_right_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn outline_widebar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let full = self.outline_right_side();
+        let full = self.outline_wide();
         let tabs: Vec<_> = self
             .home_tab_list(cx)
             .into_iter()
@@ -92,7 +93,7 @@ impl Launcher {
                 d.bottom(px(24.)).bg(white(0.10))
             }
         };
-        let width = self.outline_right_width();
+        let width = self.outline_side_width();
         // The top cell holds the account alone: "Sign in with Microsoft" where it fits (mono 12,
         // uppercase, about 7.4 px a letter, beside the logo and padding), else "Sign in".
         let label = tr("Sign in with Microsoft").chars().count() as f32;

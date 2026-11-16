@@ -183,7 +183,13 @@ impl Launcher {
     }
 
     /// The instances by group (`sections` in the mockup): those without a group first.
-    pub(super) fn glass_instances(&mut self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The sidebar's instances, by group. `compact` (the folded sidebar): each its icon alone, the
+    /// name in a tooltip, no group names and no ⋮ (a right click still opens the menu).
+    pub(super) fn glass_instances(
+        &mut self,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let t = self.theme;
         let selected = self.selected_instance().map(|i| i.id.clone());
         let on_packs = self.page == Page::Mods && self.mods.on_modpacks();
@@ -198,7 +204,7 @@ impl Launcher {
             if i.group != group {
                 list = flush(list, &mut out);
                 group = i.group.clone();
-                if let Some(g) = &group {
+                if let Some(g) = group.as_ref().filter(|_| !compact) {
                     out.push(
                         ui::text(12., FontWeight::MEDIUM, ink::DIM)
                             .px(px(8.))
@@ -280,14 +286,17 @@ impl Launcher {
                     .child(measure(&self.row_menu.rows, i.id.clone()))
                     .child(
                         ui::row(format!("side-instance-{}", i.id), current, 40., &t)
+                            .when(compact, |d| d.justify_center().px_0())
                             .child(div().relative().flex_none().child(icon))
-                            .child(
-                                ui::row_text(i.name.clone(), state)
-                                    .overflow_hidden()
-                                    .child(ui::room(&self.rooms, room_key.clone())),
-                            )
-                            // A name too long for the row is cut: the full name on hover.
-                            .when(cut, |d| d.tooltip(ui::tip(i.name.clone())))
+                            .when(!compact, |d| {
+                                d.child(
+                                    ui::row_text(i.name.clone(), state)
+                                        .overflow_hidden()
+                                        .child(ui::room(&self.rooms, room_key.clone())),
+                                )
+                            })
+                            // A name cut short, or not shown at all: the full name on hover.
+                            .when(cut || compact, |d| d.tooltip(ui::tip(i.name.clone())))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 match clicked.kind {
                                     InstanceKind::Default | InstanceKind::Own => {
@@ -317,7 +326,7 @@ impl Launcher {
                                 }),
                             ),
                     )
-                    .child(more),
+                    .when(!compact, |d| d.child(more)),
             ));
         }
         out.push(list.into_any_element());

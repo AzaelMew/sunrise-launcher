@@ -106,10 +106,15 @@ pub(crate) trait Show: Render + Sized + 'static {
     fn play(&mut self, cx: &mut Context<Self>);
     /// Ends the move playing, leaving the blocks where it took them.
     fn finish(&mut self, cx: &mut Context<Self>);
+    /// Whether the blocks could rest here while the other side plays: no air gap between them.
+    fn settled(&self) -> bool {
+        true
+    }
 }
 
 /// Plays both sides' blocks for as long as they are there: a few moves on the left, then a few on
-/// the right (and any move one of them must still make), one at a time, with short rests.
+/// the right, one at a time, with short rests. A side hands over only once it has made any move
+/// it must still make and its blocks are settled, never leaving a gap while the other side plays.
 pub(crate) fn run(
     left: WeakEntity<CornerBlocks>,
     right: WeakEntity<crate::right_blocks::RightBlocks>,
@@ -122,16 +127,16 @@ pub(crate) fn run(
                 let count = TURN_MOVES + rng.next() % 2;
                 let mut played = 0;
                 loop {
-                    let chained = if on_left {
+                    let ready = if on_left {
                         step(&left, cx, &mut rng).await
                     } else {
                         step(&right, cx, &mut rng).await
                     };
-                    let Some(chained) = chained else {
+                    let Some(ready) = ready else {
                         return;
                     };
                     played += 1;
-                    if played >= count && !chained {
+                    if played >= count && ready {
                         break;
                     }
                 }
@@ -141,8 +146,8 @@ pub(crate) fn run(
     .detach();
 }
 
-/// Plays one move of `blocks` after its rest. Whether another must follow at once; none once the
-/// blocks are gone.
+/// Plays one move of `blocks` after its rest. Whether the side could hand over now (no move must
+/// follow and its blocks are settled); none once the blocks are gone.
 async fn step<T: Show>(blocks: &WeakEntity<T>, cx: &mut AsyncApp, rng: &mut Rng) -> Option<bool> {
     let rest = blocks
         .update(cx, |b, _| b.chained())
@@ -154,7 +159,9 @@ async fn step<T: Show>(blocks: &WeakEntity<T>, cx: &mut AsyncApp, rng: &mut Rng)
     blocks.update(cx, |b, cx| b.play(cx)).ok()?;
     cx.background_executor().timer(MOVE.duration()).await;
     blocks.update(cx, |b, cx| b.finish(cx)).ok()?;
-    blocks.update(cx, |b, _| b.chained().is_some()).ok()
+    blocks
+        .update(cx, |b, _| b.chained().is_none() && b.settled())
+        .ok()
 }
 
 /// How far a turn begun `at` has come, eased, asking for the next frame while it runs: a turn is
@@ -191,6 +198,10 @@ impl CornerBlocks {
 
     /// The moves the blocks can make from where they are.
     fn moves_from_here(&self) -> Vec<Move> {
+        // The right block inside the corner leaves its cell empty: the next move fills it.
+        if !self.settled() {
+            return vec![Move::Attach, Move::Uncover];
+        }
         let mut can = vec![if self.top_up {
             Move::TopSink
         } else {
@@ -263,6 +274,12 @@ impl Show for CornerBlocks {
             self.apply(done);
             cx.notify();
         }
+    }
+
+    /// The right block inside the corner block leaves its cell empty until the small block
+    /// moves up into it.
+    fn settled(&self) -> bool {
+        !self.covered || self.attached
     }
 }
 
@@ -473,6 +490,7 @@ mod tests {
     #[test]
     fn every_move_is_one_the_blocks_can_make_and_sliding_out_lands_turning() {
         let mut b = blocks();
+        let mut unsettled = 0;
         for _ in 0..5000 {
             let then = b.then;
             let pick = b.next_move();
@@ -502,6 +520,9 @@ mod tests {
                 !b.attached || b.covered,
                 "the small block only sits in a free place"
             );
+            // Its turn can always end soon: never long with a gap the other side would watch.
+            unsettled = if b.settled() { 0 } else { unsettled + 1 };
+            assert!(unsettled <= 1, "left gapped for {unsettled} moves");
         }
     }
 }

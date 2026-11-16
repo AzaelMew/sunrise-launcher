@@ -29,7 +29,7 @@ fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text
 impl Launcher {
     pub(super) fn outline_topbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let right_side = self.outline_right_side();
+        let right_side = self.outline_wide();
 
         let tight = self.window_width < 1280.;
         let (tab_size, tab_gap) = if tight { (14., 18.) } else { (15., 28.) };
@@ -96,7 +96,7 @@ impl Launcher {
             ));
         }
 
-        let side = crate::frame::SIDEBAR;
+        let side = self.outline_side_width();
         let signed_in = self.accounts.selected().is_some();
         let mono_width = |text: &str| {
             line_width(
@@ -123,10 +123,9 @@ impl Launcher {
             let count = count_width.filter(|_| count).map_or(0., |w| w + 14.);
             36. + 14. + account + count
         };
-        // Over the hero: on the window's centre, held off the sidebar the same way the hero is.
-        let shift = self.outline_centre_shift();
+        // Over the hero, on the page's centre, which is the window's.
         let end = side + self.outline_page_width();
-        let centre = side + self.outline_page_width() / 2. - shift;
+        let centre = side + self.outline_page_width() / 2.;
         let fits = |right: f32| {
             centre - tabs / 2. >= side + 24. && centre + tabs / 2. <= end - 24. - right - 16.
         };
@@ -175,8 +174,7 @@ impl Launcher {
                 self.scale,
             ))
             // Over the hero where the pages clear the buttons; else beside them, scrolling
-            // sideways when too long. The bar starts right of the sidebar, so the right padding
-            // moves the pages' centre left by `shift`.
+            // sideways when too long.
             .children(pages_layer.map(|pages| {
                 div()
                     .absolute()
@@ -184,7 +182,6 @@ impl Launcher {
                     .bottom_0()
                     .left_0()
                     .right_0()
-                    .pr(px(2. * shift))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -366,10 +363,13 @@ impl Launcher {
     /// colour, the mark and "Sunrise" in its top cell, Instances, the instances with their ⋮ and
     /// New instance, then the launcher's update and the links with the version at its foot. A
     /// faint dashed sketch stands behind its lower half; the top bar's line and the hero's floor
-    /// run through it.
+    /// run through it. On a narrow window it folds, as the right one does, to an icon column: the
+    /// mark, the instances' icons and New instance's plus, the links' icons.
     pub(super) fn outline_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
+        let full = self.outline_wide();
+        let width = self.outline_side_width();
         self.load_packs();
         let logo = div()
             .absolute()
@@ -380,32 +380,40 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(10.))
-            .pl(px(24.))
             .pt(px(14.))
+            .when(full, |d| d.pl(px(24.)))
+            .when(!full, |d| d.justify_center())
             .child(mark(22.))
-            .child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"));
-        let label = div()
-            .p(px(8.))
-            .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()));
-        let new = keyboard(
-            hoverable("add-instance", fill::HOVER)
-                .flex()
-                .flex_none()
-                .items_center()
-                .h(px(36.))
-                .px(px(14.))
-                .cursor_pointer()
-                .child(
-                    ui::text(14., FontWeight::MEDIUM, ink::BODY)
-                        .relative()
-                        .child(format!("+  {}", tr("New instance"))),
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.open_instance_dialog(None);
-                    cx.notify();
-                })),
-            &t,
-        );
+            .when(full, |d| {
+                d.child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
+            });
+        let label = full.then(|| {
+            div()
+                .p(px(8.))
+                .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()))
+        });
+        let new = hoverable("add-instance", fill::HOVER)
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(36.))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.open_instance_dialog(None);
+                cx.notify();
+            }));
+        let new = if full {
+            new.px(px(14.)).child(
+                ui::text(14., FontWeight::MEDIUM, ink::BODY)
+                    .relative()
+                    .child(format!("+  {}", tr("New instance"))),
+            )
+        } else {
+            new.justify_center()
+                .child(ui::icon("plus-sign", 18., white(ink::BODY)).relative())
+                .tooltip(ui::tip(tr("New instance")))
+        };
+        let new = keyboard(new, &t);
         let list = div()
             .id("side-list")
             .flex()
@@ -413,36 +421,36 @@ impl Launcher {
             .gap(px(4.))
             .min_h_0()
             .overflow_y_scroll()
-            .children(self.glass_instances(cx))
+            .children(self.glass_instances(!full, cx))
             .child(new);
         let foot = div()
             .flex()
             .flex_col()
             .flex_none()
             .gap(px(12.))
-            .children(self.rail_update_card(soft, cx))
-            .child(self.outline_side_links());
+            .children(full.then(|| self.rail_update_card(soft, cx)).flatten())
+            .child(self.outline_side_links(full));
         div()
             .relative()
             .flex()
             .flex_col()
             .flex_none()
             .gap(px(4.))
-            .w(px(frame::SIDEBAR))
+            .w(px(width))
             .h_full()
             .pt(px(82.))
-            .px(px(12.))
+            .px(px(if full { 12. } else { 10. }))
             .pb(px(32.))
             .border_r_1()
             .border_color(white(0.08))
             .child(ui::grain(
                 ui::color(t.night.side),
                 ui::TEXTURE_QUIET,
-                frame::SIDEBAR,
+                width,
                 self.window_height,
                 self.scale,
             ))
-            .child(sketch())
+            .when(full, |d| d.child(sketch()))
             .child(
                 div()
                     .absolute()
@@ -462,15 +470,15 @@ impl Launcher {
                     .bg(white(0.10)),
             )
             .child(logo)
-            .child(label)
+            .children(label)
             .child(list)
             .child(div().flex_1())
             .child(foot)
     }
 
     /// The sidebar's foot: Discord, Documentation and Website as icons, the launcher's version
-    /// on the right.
-    fn outline_side_links(&self) -> Div {
+    /// on the right; folded (not `full`), the icons alone, one above the other.
+    fn outline_side_links(&self, full: bool) -> Div {
         let t = self.theme;
         let icon = |id: &'static str, icon: &'static str, url: String| {
             keyboard(
@@ -486,6 +494,9 @@ impl Launcher {
             )
         };
         let mut links = div().flex().items_center().gap(px(2.));
+        if !full {
+            links = links.flex_col();
+        }
         for (id, name, url) in [
             ("discord", "chat", &self.links.discord),
             ("docs", "book", &self.links.docs),
@@ -494,6 +505,9 @@ impl Launcher {
             if !url.is_empty() {
                 links = links.child(icon(id, name, url.clone()));
             }
+        }
+        if !full {
+            return links;
         }
         div()
             .flex()

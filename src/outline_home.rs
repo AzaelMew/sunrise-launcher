@@ -24,22 +24,9 @@ const RUST_R: f32 = 62.;
 const RUST_R_DROP: f32 = 9.;
 
 impl Launcher {
-    /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
-    /// which centres them on the window, but never so far that the hero's widest row would come
-    /// closer than the gutter to the sidebar.
-    pub(super) fn outline_centre_shift(&self) -> f32 {
-        if self.outline_right_side() {
-            // Between two sidebars as wide as each other, the page's centre is the window's.
-            return 0.;
-        }
-        let page = self.outline_page_width();
-        let room = ((page - HERO_WIDTH) / 2. - theme::PAGE_GUTTER).max(0.);
-        (frame::SIDEBAR / 2.).min(room)
-    }
-
     /// The page's width between the sidebars.
     pub(super) fn outline_page_width(&self) -> f32 {
-        self.window_width - frame::SIDEBAR - self.outline_right_width()
+        self.window_width - 2. * self.outline_side_width()
     }
 
     /// How tall Home's first screen is: from the top bar down to the hero's floor.
@@ -101,7 +88,6 @@ impl Launcher {
             .children(self.folder_group(java.is_none(), cx));
         let hero = div()
             .relative()
-            .right(px(self.outline_centre_shift()))
             .flex()
             .flex_col()
             .items_center()
