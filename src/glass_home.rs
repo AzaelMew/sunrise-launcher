@@ -496,6 +496,7 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .size(px(TALL))
+                .rounded(px(ui::rad(0.)))
                 .cursor_pointer()
                 .hover(|s| s.bg(white(fill::HOVER)))
                 .active(|s| s.bg(white(fill::SELECTED)))
@@ -522,6 +523,7 @@ impl Launcher {
             .flex()
             .items_center()
             .h(px(TALL))
+            .rounded(px(ui::rad(0.)))
             .bg(white(fill::BUTTON))
             .child(
                 cell("home-folder")

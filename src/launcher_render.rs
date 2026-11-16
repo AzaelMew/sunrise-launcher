@@ -4,6 +4,7 @@ use super::*;
 impl Render for Launcher {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
+        widgets::set_hover_view(cx.entity_id());
         if specimen::wanted() {
             return div()
                 .flex()
@@ -18,7 +19,7 @@ impl Render for Launcher {
         }
         glass_ui::set_on(self.theme.glass);
         glass::set_panel(self.theme.night.card);
-        let corners = f32::from(self.settings.corners.min(backend::MAX_CORNERS));
+        let corners = f32::from(self.settings.corners());
         glass_ui::set_corners(corners);
         glass::set_corners(corners);
         glass_ui::set_light(!self.theme.dark);

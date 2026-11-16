@@ -278,6 +278,7 @@ impl Launcher {
                 .gap(px(8.))
                 .h(px(36.))
                 .px(px(6.))
+                .rounded(px(ui::rad(0.)))
                 .bg(white(if open { fill::ACTIVE } else { 0. }))
                 .cursor_pointer()
                 .child(

@@ -196,7 +196,7 @@ impl Launcher {
     pub(super) fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let this = cx.entity().downgrade();
-        let now = self.settings.corners.min(backend::MAX_CORNERS);
+        let now = self.settings.corners();
         let slider = crate::glass_ui::slider(
             "corners",
             f32::from(now),
@@ -205,8 +205,8 @@ impl Launcher {
             move |radius, _, cx| {
                 let _ = this.update(cx, |this, cx| {
                     let radius = radius as u8;
-                    if this.settings.corners != radius {
-                        this.settings.corners = radius;
+                    if this.settings.corners() != radius {
+                        this.settings.corners_px = Some(radius);
                         this.save_settings();
                         cx.notify();
                     }

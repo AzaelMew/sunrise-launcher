@@ -21,7 +21,24 @@ pub(crate) static HOVER: Mutex<HoverState> = Mutex::new(HoverState {
 });
 
 pub(crate) fn track_hover(el: Stateful<Div>, id: SharedString) -> Stateful<Div> {
-    el.on_hover(move |hovered, window, _| note_hover(&id, *hovered, window))
+    el.on_hover(move |hovered, window, cx| note_hover(&id, *hovered, window, cx))
+}
+
+/// The launcher's view, which every hover drawn from [`HOVER`] sits in.
+static HOVER_VIEW: std::sync::OnceLock<gpui::EntityId> = std::sync::OnceLock::new();
+
+/// Set as the launcher first draws: the view a hover change draws again.
+pub(crate) fn set_hover_view(view: gpui::EntityId) {
+    let _ = HOVER_VIEW.set(view);
+}
+
+/// Draws the launcher again for a hover change. GPUI Fast keeps a view's last frame, so
+/// refreshing the window alone repaints that frame and never runs the hover's easing.
+pub(crate) fn redraw_for_hover(window: &mut Window, cx: &mut App) {
+    if let Some(view) = HOVER_VIEW.get() {
+        cx.notify(*view);
+    }
+    window.refresh();
 }
 
 /// Whether `id` is the element [`hover_fade`] shows hovered now.
@@ -36,7 +53,7 @@ pub(crate) fn hover_is(id: &SharedString) -> bool {
 
 /// Records that `id` is now hovered or not, for [`hover_fade`]: an element whose own hover
 /// listener does more calls it.
-pub(crate) fn note_hover(id: &SharedString, hovered: bool, window: &mut Window) {
+pub(crate) fn note_hover(id: &SharedString, hovered: bool, window: &mut Window, cx: &mut App) {
     let mut state = HOVER.lock().unwrap();
     let is_on = state.on.as_ref().is_some_and(|(h, _)| h == id);
     if hovered && !is_on {
@@ -46,7 +63,8 @@ pub(crate) fn note_hover(id: &SharedString, hovered: bool, window: &mut Window) 
         state.off = Some((id.clone(), Instant::now()));
         state.on = None;
     }
-    window.refresh();
+    drop(state);
+    redraw_for_hover(window, cx);
 }
 
 /// A layer under an element's content that fades `color` in while it is hovered. `bleed` lets

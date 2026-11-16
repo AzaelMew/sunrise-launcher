@@ -214,6 +214,7 @@ impl Launcher {
                 .gap(px(6.))
                 .h(px(32.))
                 .px(px(12.))
+                .rounded(px(ui::rad(0.)))
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(13.))
                 .line_height(px(18.))

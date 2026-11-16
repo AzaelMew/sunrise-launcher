@@ -379,14 +379,31 @@ pub const TEXTURE_QUIET: f32 = 0.009;
 /// drawn over it.
 pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
     let shades = texel_shades(c, step);
+    // The look's corners, which a canvas can't clip to: the fill is drawn round, and texels
+    // outside the round corners are left out.
+    let r = rad(0.);
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
-            window.paint_quad(gpui::fill(bounds, c));
             let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            let r = r.min(w / 2.).min(h / 2.);
+            window.paint_quad(gpui::fill(bounds, c).corner_radii(px(r)));
             let (cols, rows) = ((w / TEXEL).ceil() as u32, (h / TEXEL).ceil() as u32);
+            let inside = |x: u32, y: u32| {
+                let (cx, cy) = ((x as f32 + 0.5) * TEXEL, (y as f32 + 0.5) * TEXEL);
+                let (dx, dy) = (
+                    (r - cx).max(cx - (w - r)).max(0.),
+                    (r - cy).max(cy - (h - r)).max(0.),
+                );
+                dx * dx + dy * dy <= r * r
+            };
             // Most texels keep the base colour; the rest take one of the shades.
-            let tone = |x: u32, y: u32| shades.get((texel_noise(x, y) % 9) as usize).copied();
+            let tone = |x: u32, y: u32| {
+                shades
+                    .get((texel_noise(x, y) % 9) as usize)
+                    .copied()
+                    .filter(|_| inside(x, y))
+            };
             for y in 0..rows {
                 let top = y as f32 * TEXEL;
                 let tall = TEXEL.min(h - top);
@@ -627,11 +644,11 @@ fn hover_back(inset: f32, r: f32, paint: impl Fn(Div, f32) -> Div + 'static) -> 
         .top_0()
         .left_0()
         .size_full()
-        .on_hover(move |hovered, window, _| {
+        .on_hover(move |hovered, window, cx| {
             BACK_HOVER.with_borrow_mut(|all| {
                 all.insert(key.clone(), (*hovered, std::time::Instant::now()));
             });
-            window.refresh();
+            crate::redraw_for_hover(window, cx);
         })
         .children(shown)
         .into_any_element()
@@ -1254,7 +1271,7 @@ pub fn list_row(
         .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .child(fill)
         .on_hover(move |hovered, window, cx| {
-            note_hover(&key, *hovered, window);
+            note_hover(&key, *hovered, window, cx);
             on_hover(hovered, window, cx);
         });
     keyboard(d, t)
@@ -1418,6 +1435,8 @@ pub fn slider(
                 .relative()
                 .w_full()
                 .h(px(4.))
+                .rounded(px(rad(0.).min(2.)))
+                .overflow_hidden()
                 .bg(white(fill::ACTIVE))
                 .child(
                     div()
