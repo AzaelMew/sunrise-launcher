@@ -356,19 +356,54 @@ fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement
     hover_edge(id, r, to - from, false)
 }
 
-/// How far in each step of a [`pixel_fill`]'s corners cuts.
-pub const PIXEL: f32 = 3.;
+/// The side of one texel in a [`pixel_fill`].
+const TEXEL: f32 = 4.;
 
-/// A coloured button's fill: `c` edge to edge, its corners cut in two [`PIXEL`] steps like a
-/// block's, for a little of the game's look. Put it first in a `relative` button with square
-/// corners, so the label is drawn over it.
+/// A coloured button's fill: `c` as a block texture, square texels in a few close shades of it,
+/// for a little of the game's look. The same texels every frame, so it never shimmers. Put it
+/// first in a `relative` button, so the label is drawn over it.
 pub fn pixel_fill(c: Hsla) -> AnyElement {
-    crate::plate::cut(PIXEL, 2, Some(c.into()), None)
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .into_any_element()
+    let shade = move |k: f32| gpui::hsla(c.h, c.s, (c.l * k).clamp(0., 1.), c.a);
+    let shades = [shade(1.07), shade(0.93), shade(1.14), shade(0.87)];
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            window.paint_quad(gpui::fill(bounds, c));
+            let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            let (cols, rows) = ((w / TEXEL).ceil() as u32, (h / TEXEL).ceil() as u32);
+            for y in 0..rows {
+                for x in 0..cols {
+                    let n = texel_noise(x, y);
+                    // Most texels keep the base colour; the rest take one of the shades.
+                    let Some(&tone) = shades.get((n % 7) as usize) else {
+                        continue;
+                    };
+                    let at = gpui::point(
+                        bounds.origin.x + px(x as f32 * TEXEL),
+                        bounds.origin.y + px(y as f32 * TEXEL),
+                    );
+                    let size = gpui::size(
+                        px(TEXEL.min(w - x as f32 * TEXEL)),
+                        px(TEXEL.min(h - y as f32 * TEXEL)),
+                    );
+                    window.paint_quad(gpui::fill(gpui::Bounds::new(at, size), tone));
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// A fixed scramble of a texel's place.
+fn texel_noise(x: u32, y: u32) -> u32 {
+    let mut n = x.wrapping_mul(0x9e37_79b1) ^ y.wrapping_mul(0x85eb_ca77);
+    n ^= n >> 15;
+    n = n.wrapping_mul(0x2c1b_3c6d);
+    n ^ (n >> 12)
 }
 
 /// `accent` a little lighter, for a coloured button under the pointer.
@@ -1228,8 +1263,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             } else {
                 color(look.accent)
             };
-            d.rounded_none()
-                .text_color(color(look.on_accent))
+            d.text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
                 .active(|s| s.opacity(0.92))
                 .child(pixel_fill(c))
