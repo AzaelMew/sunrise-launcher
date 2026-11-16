@@ -37,8 +37,66 @@ const GLINT: u32 = 0xffffff;
 const BLINK_ROW: usize = 8;
 const PINCER_ROWS: usize = 13;
 const PINCERS: [(usize, usize); 2] = [(7, 11), (16, 20)];
-/// His arms: the two columns at each side, from his shoulder to his foot.
+/// His lowered arm on each side: the two outer columns, from below his shoulder to his foot.
 const ARM_COLS: usize = 2;
+const ARM_ROWS: std::ops::RangeInclusive<usize> = 10..=14;
+/// His left arm raised to wave, as (column, row) on his grid, reaching past his edge and above
+/// his head: up from the shoulder, then the claw, open and swayed out, or shut and swayed in.
+/// The right arm is the same, mirrored.
+const RAISED: [(i32, i32); 16] = [
+    (1, 8),
+    (0, 8),
+    (0, 7),
+    (-1, 7),
+    (0, 6),
+    (-1, 6),
+    (-1, 5),
+    (-2, 5),
+    (-1, 4),
+    (-2, 4),
+    (-2, 3),
+    (-1, 3),
+    (-2, 2),
+    (-1, 2),
+    (-2, 1),
+    (-1, 1),
+];
+const CLAW_OPEN: [(i32, i32); 14] = [
+    (-4, -3),
+    (0, -3),
+    (-4, -2),
+    (-3, -2),
+    (-1, -2),
+    (0, -2),
+    (-4, -1),
+    (-3, -1),
+    (-2, -1),
+    (-1, -1),
+    (0, -1),
+    (-3, 0),
+    (-2, 0),
+    (-1, 0),
+];
+const CLAW_SHUT: [(i32, i32); 16] = [
+    (-2, -3),
+    (-1, -3),
+    (0, -3),
+    (-3, -2),
+    (-2, -2),
+    (-1, -2),
+    (0, -2),
+    (1, -2),
+    (-3, -1),
+    (-2, -1),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-2, 0),
+    (-1, 0),
+    (0, 0),
+];
+/// How far past his edge the raised arm reaches, in his pixels.
+const REACH: f32 = 4.;
 /// The rows above his pincers rise as he breathes; this is the first that doesn't.
 const CHEST: usize = 12;
 /// How often his idle loop steps.
@@ -147,13 +205,11 @@ impl Ferris {
                     };
                 }
                 Act::Hop => lift = HOP * 4. * t * (1. - t),
-                // His arm up beside him, waving up and down three times.
+                // One arm up beside his head, its claw swaying open and shut.
+                // The left arm only where there is room for it before the page's edge.
                 Act::Wave if t < 1. => {
-                    wave = Some(if ((t * 6.) as u32).is_multiple_of(2) {
-                        4.
-                    } else {
-                        3.
-                    })
+                    let left = to < 0.5 && x >= REACH * texel;
+                    wave = Some((left, ((t * 10.) as u32) % 2 == 1))
                 }
                 Act::Wave => {}
             }
@@ -163,12 +219,15 @@ impl Ferris {
             |_, _, _| {},
             move |bounds, (), window, _| {
                 let foot = bounds.origin.y + bounds.size.height;
-                let at = |col: usize, row: usize, up: f32| {
+                let at_i = |col: i32, row: i32, up: f32| {
                     gpui::point(
                         bounds.origin.x + px(x + col as f32 * texel),
-                        foot - px((ROWS - row) as f32 * texel + lift + up),
+                        foot - px((ROWS as i32 - row) as f32 * texel + lift + up),
                     )
                 };
+                let at = |col: usize, row: usize, up: f32| at_i(col as i32, row as i32, up);
+                let size = gpui::size(px(texel), px(texel));
+                let body: Hsla = gpui::rgb(BODY).into();
                 let colour = |ch: char, row: usize| -> Option<Hsla> {
                     let eye = matches!(ch, 'K' | 'W');
                     let c = match ch {
@@ -194,18 +253,22 @@ impl Ferris {
                         };
                         let pincer = row >= PINCER_ROWS
                             && PINCERS.iter().any(|&(a, b)| (a..=b).contains(&col));
-                        let arm = match self.act.map(|(_, _, to)| to < 0.5) {
-                            Some(true) => col < ARM_COLS,
-                            _ => col >= COLS - ARM_COLS,
-                        };
+                        // The waving arm is drawn raised below, so its lowered self goes.
+                        let lowered = ARM_ROWS.contains(&row)
+                            && match wave {
+                                Some((true, _)) => col < ARM_COLS,
+                                Some((false, _)) => col >= COLS - ARM_COLS,
+                                None => false,
+                            };
+                        if lowered {
+                            continue;
+                        }
                         let chest = row < CHEST;
-                        let up = match wave {
-                            Some(raise) if arm => raise * texel,
-                            _ if pincer && snap => texel,
-                            _ if chest && breath => texel,
-                            _ => 0.,
+                        let up = if (pincer && snap) || (chest && breath) {
+                            texel
+                        } else {
+                            0.
                         };
-                        let size = gpui::size(px(texel), px(texel));
                         window.paint_quad(gpui::fill(gpui::Bounds::new(at(col, row, up), size), c));
                         // Breathing in, his chest's lowest row stays put too, so he stretches
                         // rather than parting.
@@ -215,6 +278,21 @@ impl Ferris {
                                 c,
                             ));
                         }
+                    }
+                }
+                if let Some((left, shut)) = wave {
+                    let claw: &[(i32, i32)] = if shut { &CLAW_SHUT } else { &CLAW_OPEN };
+                    for &(col, row) in RAISED.iter().chain(claw) {
+                        let col = if left { col } else { COLS as i32 - 1 - col };
+                        let up = if breath && row < CHEST as i32 {
+                            texel
+                        } else {
+                            0.
+                        };
+                        window.paint_quad(gpui::fill(
+                            gpui::Bounds::new(at_i(col, row, up), size),
+                            body,
+                        ));
                     }
                 }
             },
