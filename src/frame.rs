@@ -396,8 +396,8 @@ impl Launcher {
 
     /// The rail: a strip of instance icons that opens into names, states and links while the
     /// pointer is on it (or one of its menus is open). It opens over the page, which keeps the
-    /// collapsed rail's room, so the page never moves or squeezes under the pointer. Its foot keeps the launcher's update, Discord,
-    /// the project's links, Settings and the version.
+    /// collapsed rail's room, so the page never moves or squeezes under the pointer. Its foot keeps
+    /// the launcher's update, Discord, the project's links, Settings and the version.
     pub(super) fn glass_rail(
         &mut self,
         window: &mut Window,
