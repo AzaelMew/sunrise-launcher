@@ -831,7 +831,7 @@ impl Launcher {
             .h(px(380.))
             .mx(px(12.))
             .mb(px(12.))
-            .rounded(px(12.))
+            .rounded(px(crate::glass_ui::rad(12.)))
             .overflow_hidden()
             .bg(gpui::black().opacity(0.42))
             .border_1()

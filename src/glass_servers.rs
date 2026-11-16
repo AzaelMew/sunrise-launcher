@@ -523,7 +523,7 @@ impl Launcher {
             .min_h(px(220.))
             .px(px(24.))
             .py(px(28.))
-            .rounded(px(radius::ROW))
+            .rounded(px(crate::glass_ui::rad(radius::ROW)))
             .border_1()
             .border_color(white(0.08))
             .bg(white(0.03))

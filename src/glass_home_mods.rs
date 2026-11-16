@@ -377,7 +377,7 @@ impl Launcher {
                 .items_center()
                 .h(px(28.))
                 .px(px(8.))
-                .rounded(px(radius::SMALL))
+                .rounded(px(crate::glass_ui::rad(radius::SMALL)))
                 .cursor_pointer()
                 .bg(facts.color().opacity(if open { 0.2 } else { 0. }))
                 .hover(|s| s.bg(white(0.07)))

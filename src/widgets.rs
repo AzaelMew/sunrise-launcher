@@ -662,7 +662,7 @@ pub(crate) fn slot_row(
             .gap(px(14.))
             .px(px(16.))
             .py(px(12.))
-            .children(slot.map(|s| s.rounded(px(8.)).overflow_hidden()))
+            .children(slot.map(|s| s.rounded(px(crate::glass_ui::rad(8.))).overflow_hidden()))
             .child(
                 glass_ui::setting_row(name, detail, right)
                     .p_0()

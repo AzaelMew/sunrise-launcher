@@ -94,7 +94,8 @@ impl Render for Launcher {
         // the blocky looks keep the baked sky. The sky is tiles that don't depend on the
         // window's size, so a resize costs no rebake.
         glass::begin_build(window);
-        let painted = (!sunset).then(|| {
+        // Only a theme with its own painted sky draws one; Sunrise's own is the plain Dusk page.
+        let painted = (!sunset && t.look.own_sky).then(|| {
             let (night, size) = (t.night, (size.width.into(), size.height.into()));
             // A new blur, size or theme is blurred on a worker; the plates keep the last one
             // until it is ready, so dragging Blur never holds a frame.
@@ -149,10 +150,7 @@ impl Render for Launcher {
         let (topbar, sidebar) = if t.glass {
             (
                 self.outline_topbar(window, cx),
-                self.glass_rail(window, cx)
-                    .ml(px(frame::MARGIN))
-                    .mb(px(frame::MARGIN))
-                    .into_any_element(),
+                self.outline_sidebar(cx).into_any_element(),
             )
         } else {
             (self.topbar(cx), self.sidebar(window, cx).into_any_element())
@@ -268,36 +266,8 @@ impl Render for Launcher {
             .font_family(theme::FONT)
             .text_color(t.ink)
             .overflow_hidden()
-            .child(if t.glass {
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .size_full()
-                    .opacity(ui)
-                    .top(px(theme::RISE * (1. - ui)))
-                    .child(topbar)
-                    // The page keeps the collapsed rail's room; the rail opens over it, so the
-                    // page never moves or squeezes when the pointer reaches for an instance.
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_1()
-                            .min_h_0()
-                            .child(div().flex_none().w(px(frame::MARGIN + frame::RAIL)))
-                            .child(div().flex().flex_col().flex_1().min_w_0().child(page))
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .left_0()
-                                    .flex()
-                                    .child(sidebar),
-                            ),
-                    )
-            } else {
+            // The sidebar down the left, the top bar and the page beside it.
+            .child(
                 div()
                     .relative()
                     .flex()
@@ -313,8 +283,8 @@ impl Render for Launcher {
                             .min_w_0()
                             .child(topbar)
                             .child(page),
-                    )
-            });
+                    ),
+            );
         root = root.children(row_menu);
         if self.page == Page::Servers {
             if let Some(dialog) = self.create_dialog(cx) {

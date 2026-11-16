@@ -73,7 +73,7 @@ impl Launcher {
                         .gap(px(12.))
                         .max_w(px(560.))
                         .p(px(20.))
-                        .rounded(px(16.))
+                        .rounded(px(crate::glass_ui::rad(16.)))
                         .border_1()
                         .border_color(t.danger.opacity(0.45))
                         .bg(t.danger.opacity(0.08))

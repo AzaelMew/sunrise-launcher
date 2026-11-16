@@ -318,7 +318,7 @@ impl Theme {
             accent_choice: accent,
             dark: p.dark,
             glass: false,
-            scene: true,
+            scene: false,
             edge: None,
         }
     }
@@ -378,7 +378,7 @@ mod tests {
                 painted || oled,
                 "{id}: frosts its own sky"
             );
-            assert_eq!(theme.scene, !oled && !painted, "{id}: scene");
+            assert!(!theme.scene, "{id}: Home's hero scene replaced the sunset");
             if oled {
                 assert_eq!(theme.night.page, 0x000000);
             }

@@ -158,7 +158,7 @@ impl Launcher {
             .items_center()
             .justify_center()
             .size(px(40.))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
             .cursor_pointer()
             .when(open, |d| d.bg(gpui::black().opacity(0.2)))
             .when(!open, |d| {
@@ -186,7 +186,7 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .size(px(40.))
-                .rounded(px(radius::CONTROL))
+                .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                 .cursor_pointer()
                 .hover(|s| s.bg(gpui::black().opacity(0.2)))
                 .child(ui::icon("stop", 18., glyph))
@@ -215,7 +215,7 @@ impl Launcher {
             .h(px(TALL))
             .overflow_hidden()
             .border_1()
-            .rounded(px(radius::LARGE));
+            .rounded(px(crate::glass_ui::rad(radius::LARGE)));
         let body = |label: SharedString, icon: &'static str| {
             div()
                 .flex()
@@ -540,22 +540,6 @@ impl Launcher {
         wrap
     }
 
-    /// What the instance plays, at the title's right: "Latest version", "Nov 11 update",
-    /// "26.3 · Fabric 0.17". Its versions are in instance settings, which a click opens on
-    /// Installation.
-    pub(super) fn version_chip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let instance = self.selected_instance()?.clone();
-        let label = self.sheet_version(&instance);
-        Some(
-            hero_button("home-version", "package-01", label.into())
-                .tooltip(ui::tip(tr("Change the version in instance settings")))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
-                    cx.notify();
-                })),
-        )
-    }
-
     /// The folder button and its ⋯ (`FolderGroup`), which shows under the pointer or while its
     /// menu is open: the instance's folder, its screenshots, and (Sunrise) the Minecraft folder.
     pub(super) fn folder_group(&self, sunrise: bool, cx: &mut Context<Self>) -> Option<Div> {
@@ -574,7 +558,7 @@ impl Launcher {
             .h(px(40.))
             .w(px(36.))
             .mr(px(8.))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
             .cursor_pointer()
             .when(open, |d| {
                 d.w(px(36.))
@@ -602,7 +586,7 @@ impl Launcher {
             .flex()
             .items_center()
             .h(px(TALL))
-            .rounded(px(radius::LARGE))
+            .rounded(px(crate::glass_ui::rad(radius::LARGE)))
             .bg(white(fill::BUTTON))
             .border_1()
             .border_color(white(if open {
@@ -727,7 +711,7 @@ impl Launcher {
             .size_full()
             .pl(px(48.))
             .pr(px(pr))
-            .rounded(px(radius::LARGE))
+            .rounded(px(crate::glass_ui::rad(radius::LARGE)))
             .bg(white(if focused { 0.09 } else { 0.06 }))
             .border_1()
             .border_color(if focused {
@@ -813,48 +797,6 @@ impl Launcher {
 fn friend_code_padding_right(join_label: &str) -> f32 {
     let btn_width = 28. + (join_label.chars().count() as f32 * 8.5).max(30.);
     (8. + btn_width + 12.).max(84.)
-}
-
-/// The instance of one edition (`java`) an edition tab goes to: of those the player can select,
-/// the one played last; among never played ones, the first listed.
-/// One of the two buttons at the hero title's right: 40 px glass with an 18 px icon and its
-/// label, the icons in one stroke and ink so the pair reads as one.
-fn hero_button(id: &'static str, icon: &'static str, label: SharedString) -> Stateful<Div> {
-    let id = SharedString::from(id);
-    let group = SharedString::from(format!("{id}-group"));
-    track_hover(
-        div()
-            .id(id.clone())
-            .group(group.clone())
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(8.))
-            .h(px(40.))
-            .pl(px(14.))
-            .pr(px(16.))
-            .rounded(px(radius::CONTROL))
-            .bg(white(fill::BUTTON))
-            .border_1()
-            .border_color(white(ui::edge::REST))
-            .cursor_pointer()
-            .font_family(sunrise_theme::glass::FONT)
-            .text_size(px(14.))
-            .line_height(px(20.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(white(ink::BODY))
-            .hover(|s| s.text_color(white(ink::FULL)))
-            .active(|s| s.bg(white(0.18)))
-            .child(ui::hover_edge(&id, radius::CONTROL, 0.06, true))
-            .child(
-                ui::icon(icon, 18., white(ink::STRONG))
-                    .group_hover(group, |s| s.text_color(white(ink::FULL)))
-                    .relative(),
-            )
-            .child(div().relative().child(label)),
-        id,
-    )
 }
 
 fn edition_pick(

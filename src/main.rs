@@ -70,6 +70,7 @@ mod multiplayer_page;
 mod native_consent;
 mod native_log_page;
 mod native_registry_consent;
+mod nav_strip;
 mod new_instance;
 mod outline_frame;
 mod outline_home;
@@ -354,8 +355,6 @@ struct Launcher {
     account_menu: bool,
     /// The glass sidebar's ⋮ menu (`frame.rs`).
     row_menu: frame::RowMenu,
-    /// The rail's hover: whether the pointer is on it, and since when (it eases open and shut).
-    rail: frame::Rail,
     /// The instance sheet's open section (`glass_sheet.rs`).
     sheet_tab: glass_sheet::SheetTab,
     /// The glass look's colours for the player's accent (`sunrise_theme::glass`).
@@ -430,6 +429,8 @@ struct Launcher {
     friend_focused: bool,
     friend_focus: FocusHandle,
     /// The window's width at the last frame: Home's head lays out by it, as the mockup's `xl`.
+    /// The top bar's pages, scrolling sideways when the window is too narrow for them.
+    nav_strip: nav_strip::NavStrip,
     window_width: f32,
     window_height: f32,
     /// The window's longer side in points, and the screen's pixels per point: the size pictures
@@ -474,6 +475,8 @@ struct Launcher {
     home_menu: glass_home::HomeMenu,
     /// Whether the pointer is over Home's folder button, which then shows its ⋯.
     folder_hovered: bool,
+    /// When the running game was first seen running, for Home's "Playing for…".
+    client_since: Option<Instant>,
     /// The list row under the pointer in Home's glass tabs (a world, a server): it shows its
     /// actions then.
     list_hover: Option<SharedString>,

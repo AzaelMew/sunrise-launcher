@@ -685,7 +685,7 @@ impl Launcher {
                         .gap(px(12.))
                         .p(px(12.))
                         .relative()
-                        .rounded(px(radius::LARGE))
+                        .rounded(px(crate::glass_ui::rad(radius::LARGE)))
                         .border_1()
                         .cursor_pointer()
                         .when(on, |d| {
@@ -704,7 +704,7 @@ impl Launcher {
                                 .items_center()
                                 .justify_center()
                                 .size(px(36.))
-                                .rounded(px(10.))
+                                .rounded(px(crate::glass_ui::rad(10.)))
                                 .bg(white(0.07))
                                 .child(ui::icon(
                                     icon,
@@ -1157,7 +1157,7 @@ impl Launcher {
                 .gap(px(12.))
                 .h(px(44.))
                 .px(px(14.))
-                .rounded(px(radius::CONTROL))
+                .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                 .border_1()
                 .border_color(white(ui::edge::REST))
                 .bg(white(if open { fill::ACTIVE } else { 0.06 }))

@@ -87,7 +87,7 @@ impl Launcher {
                 .relative()
                 .mt(px(10.))
                 .p(px(18.))
-                .rounded(px(theme::night::RADIUS_CONTROL))
+                .rounded(px(crate::glass_ui::rad(theme::night::RADIUS_CONTROL)))
                 .bg(plate::alpha(n.card_hi, n.card_hi_alpha))
                 .border_1()
                 .border_color(plate::alpha(n.stroke, n.stroke_alpha))
