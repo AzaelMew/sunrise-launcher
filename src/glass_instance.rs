@@ -1006,7 +1006,10 @@ impl Launcher {
                 .justify_center()
                 .h(px(48.))
                 .px(px(32.))
-                .child(ui::pixel_fill(ui::color(self.look.accent)))
+                .child(ui::pixel_fill(
+                    ui::color(self.look.accent),
+                    ui::TEXTURE_BUTTON,
+                ))
                 .cursor_pointer()
                 .hover(|s| s.opacity(0.92))
                 .font_family(sunrise_theme::glass::FONT)

@@ -238,7 +238,7 @@ impl Launcher {
         let busy_none = busy.is_none();
         let group = match busy {
             Some((label, progress)) => base
-                .child(ui::pixel_fill(accent.opacity(0.35)))
+                .child(ui::pixel_fill(accent.opacity(0.35), ui::TEXTURE_BUTTON))
                 .child(
                     div()
                         .absolute()
@@ -246,7 +246,7 @@ impl Launcher {
                         .left_0()
                         .h_full()
                         .w(gpui::relative(progress.unwrap_or(0.).clamp(0., 1.)))
-                        .child(ui::pixel_fill(accent)),
+                        .child(ui::pixel_fill(accent, ui::TEXTURE_BUTTON)),
                 )
                 .child(
                     div()
@@ -266,17 +266,19 @@ impl Launcher {
                             None => format!("{label}…"),
                         }),
                 ),
-            None if running => base.child(ui::pixel_fill(white(0.14))).child(
-                body(tr("Stop").into(), "stop")
-                    .id("play")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        if let Some(client) = &this.client {
-                            client.kill();
-                        }
-                        cx.notify();
-                    })),
-            ),
+            None if running => base
+                .child(ui::pixel_fill(white(0.14), ui::TEXTURE_BUTTON))
+                .child(
+                    body(tr("Stop").into(), "stop")
+                        .id("play")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if let Some(client) = &this.client {
+                                client.kill();
+                            }
+                            cx.notify();
+                        })),
+                ),
             None => {
                 let owner = if sunrise_launcher::developer_offline::selected() {
                     Some(true)
@@ -362,7 +364,7 @@ impl Launcher {
                     }
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
-                base.child(ui::pixel_fill(accent))
+                base.child(ui::pixel_fill(accent, ui::TEXTURE_BUTTON))
                     .text_color(on_accent)
                     .child(main)
             }

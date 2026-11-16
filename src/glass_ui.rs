@@ -359,13 +359,18 @@ fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement
 /// The side of one texel in a [`pixel_fill`].
 const TEXEL: f32 = 4.;
 
-/// A fill of `c` as a block texture: square texels a few steps of lightness off it, the same
-/// every frame, so it never shimmers. The steps are fixed, not a share of `c`'s lightness, so a
-/// near-black sidebar shows them as much as a coloured button does. Put it first in a `relative`
-/// element, so its content is drawn over it.
-pub fn pixel_fill(c: Hsla) -> AnyElement {
+/// How far a texel's lightness strays from its fill: on a coloured button, and on a sidebar,
+/// where it stays well under the rows.
+pub const TEXTURE_BUTTON: f32 = 0.02;
+pub const TEXTURE_QUIET: f32 = 0.009;
+
+/// A fill of `c` as a block texture: square texels `step` of lightness off it either way, the
+/// same every frame, so it never shimmers. The steps are fixed, not a share of `c`'s lightness, so
+/// a near-black sidebar shows them too. Put it first in a `relative` element, so its content is
+/// drawn over it.
+pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
     let shade = move |d: f32| gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a);
-    let shades = [shade(0.02), shade(-0.02), shade(0.035)];
+    let shades = [shade(step), shade(-step), shade(1.75 * step)];
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
@@ -1272,7 +1277,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             d.text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
                 .active(|s| s.opacity(0.92))
-                .child(pixel_fill(c))
+                .child(pixel_fill(c, TEXTURE_BUTTON))
         }
         Kind::Secondary => d
             .bg(white(fill::BUTTON))

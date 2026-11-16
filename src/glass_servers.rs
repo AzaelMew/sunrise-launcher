@@ -204,7 +204,7 @@ impl Launcher {
                     .justify_center()
                     .h(px(44.))
                     .px(px(28.))
-                    .child(ui::pixel_fill(ui::color(look.accent)))
+                    .child(ui::pixel_fill(ui::color(look.accent), ui::TEXTURE_BUTTON))
                     .text_color(ui::color(look.on_accent))
                     .font_family(sunrise_theme::glass::FONT)
                     .text_size(px(15.))
