@@ -346,7 +346,9 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
             .top_0()
             .left_0()
             .size_full()
-            .bg(rgb(panel()).opacity(if kind == Kind::Float { 0.96 } else { 0.78 }))
+            // Solid: the flat look has no frost, and a see-through panel lets what is under a
+            // dialog read through it.
+            .bg(rgb(panel()))
             .into_any_element();
     }
     // The light look's plates are flat white with no blur: a plain fill draws them exactly (its

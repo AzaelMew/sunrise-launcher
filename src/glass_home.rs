@@ -17,8 +17,6 @@ pub(super) const WIDE: f32 = 1280.;
 /// The window width from which pages put their head and cards side by side (Overview, Mods,
 /// Versions, Settings' About); under it they stack, and Home's tabs drop their icons.
 pub(super) const SIDE_BY_SIDE: f32 = 1200.;
-/// Under this window width the top bar's tabs tighten and Settings' sections go above the page.
-pub(super) const COMPACT: f32 = 1180.;
 
 /// The Version menu's state (Home's picker).
 #[derive(Default)]

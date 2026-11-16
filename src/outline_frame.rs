@@ -461,7 +461,12 @@ impl Launcher {
             .w(px(COMPACT))
             .h_full()
             .child(exit)
-            .child(gpui::deferred(panel).with_priority(1))
+            // Over the page only while it opens: folded, it stays in its place under dialogs.
+            .child(if open > 0. {
+                gpui::deferred(panel).with_priority(1).into_any_element()
+            } else {
+                panel.into_any_element()
+            })
             .into_any_element()
     }
 

@@ -196,6 +196,10 @@ fn note(s: &str) -> Option<AnyElement> {
     Some(div().child(tr(s).to_string()).into_any_element())
 }
 
+/// The window width from which Settings shows its section list beside the sections (the dialog
+/// is then at least 760 wide, past its 24 px margins); narrower, the list is a strip above them.
+const SETTINGS_LIST_BESIDE: f32 = 808.;
+
 impl Launcher {
     pub(super) fn glass_settings(&mut self, b: Built, cx: &mut Context<Self>) -> Div {
         if self.storage_report.is_none() && !self.storage_pending && self.storage_error.is_none() {
@@ -227,7 +231,9 @@ impl Launcher {
         } else {
             sections
         };
-        let wide = self.window_width >= crate::glass_home::COMPACT;
+        // The dialog's own width decides, not the window's: the list beside the sections fits
+        // from a little narrower than the dialog at its widest.
+        let wide = self.window_width >= SETTINGS_LIST_BESIDE;
         let items: Vec<Stateful<Div>> = if searching {
             hits.iter()
                 .enumerate()
@@ -309,6 +315,7 @@ impl Launcher {
                         .id("settings-nav-strip")
                         .flex_none()
                         .w_full()
+                        .flex()
                         .flex_row()
                         .overflow_x_scroll()
                         .on_scroll(|_, _, cx| cx.stop_propagation())
