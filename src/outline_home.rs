@@ -10,6 +10,9 @@ use sunrise_theme::glass::{fill, ink};
 /// under its floor.
 const TOP: f32 = 70.;
 const UNDER_FLOOR: f32 = 24.;
+/// The page's padding under the first screen (`launcher_render.rs`), which Home's logo reaches
+/// through to stand on the window's foot.
+const PAGE_FOOT: f32 = 48.;
 /// The first screen never squeezes shorter than this.
 const FIRST_SCREEN_MIN: f32 = 560.;
 /// Play and the folder side by side: the hero's widest row.
@@ -20,11 +23,11 @@ const COLUMN: f32 = 168.;
 const ARC: f32 = 620.;
 /// Home's background logo: its width, how strongly its colours show, and, once the page scrolls
 /// down, how much it grows and how far it rises. At rest its horizon (the lowest 3 of its 11
-/// rows) is under the floor.
+/// rows) is under the window's foot.
 const LOGO_WIDTH: f32 = 480.;
-const LOGO_OPACITY: f32 = 0.35;
-const LOGO_GROW: f32 = 0.12;
-const LOGO_RISE: f32 = 40.;
+const LOGO_OPACITY: f32 = 0.5;
+const LOGO_GROW: f32 = 0.35;
+const LOGO_RISE: f32 = 64.;
 const LOGO_SUNK: f32 = 3. / 11.;
 
 impl Launcher {
@@ -127,6 +130,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .h(px(self.first_screen()))
+            .child(self.home_logo())
             .child(self.home_lines())
             .child(hero)
             .children(self.home_section_panel(cx))
@@ -140,7 +144,7 @@ impl Launcher {
 
     /// The first screen's separator lines, part of the page so they scroll with it: the floor,
     /// and where the window has room beside the hero, a column line near each edge and a faint
-    /// arc around the left one's top. The logo stands faint on the floor under the hero.
+    /// arc around the left one's top.
     fn home_lines(&self) -> Div {
         let wide = self.home_wide();
         let column = |right: bool| {
@@ -186,28 +190,29 @@ impl Launcher {
                 .child(column(false))
                 .child(column(true))
             })
-            .child(self.home_logo())
     }
 
-    /// The logo, large and faint behind the first screen, sunk to its horizon in the floor and
-    /// centred like the hero. Scrolling down eases it up and a little larger; back at the top it
-    /// settles again.
-    fn home_logo(&self) -> AnyElement {
+    /// The logo, large and faint behind the first screen and its lines, centred like the hero and
+    /// standing on the window's foot with its horizon sunk below it. Scrolling down eases it up and
+    /// larger; back at the top it settles again.
+    fn home_logo(&self) -> Div {
         let shift = self.outline_centre_shift();
+        // The window's foot, from the page's end, while the page is at its top.
+        let foot = PAGE_FOOT - UNDER_FLOOR;
         let place = move |d: Div, raised: f32| {
             let w = LOGO_WIDTH * (1. + LOGO_GROW * raised);
             let h = w * 11. / 16.;
             d.w(px(w))
                 .h(px(h))
                 .ml(px(-w / 2. - shift))
-                .bottom(px(-h * LOGO_SUNK + LOGO_RISE * raised))
+                .bottom(px(foot - h * LOGO_SUNK + LOGO_RISE * raised))
         };
         let logo = div()
             .absolute()
             .left(gpui::relative(0.5))
             .opacity(LOGO_OPACITY)
             .child(crate::widgets::sunrise_glyph_fluid());
-        match self.home_logo_raised {
+        let logo = match self.home_logo_raised {
             None => place(logo, 0.).into_any_element(),
             Some(up) => logo
                 .with_animation(
@@ -216,7 +221,16 @@ impl Launcher {
                     move |d, t| place(d, if up { t } else { 1. - t }),
                 )
                 .into_any_element(),
-        }
+        };
+        // Down through the page's foot padding, so the logo meets the window's edge.
+        div()
+            .absolute()
+            .top_0()
+            .left(px(-theme::PAGE_GUTTER))
+            .right(px(-theme::PAGE_GUTTER))
+            .bottom(px(-PAGE_FOOT))
+            .overflow_hidden()
+            .child(logo)
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,
