@@ -522,6 +522,9 @@ impl Launcher {
         // Folded, the label keeps its room unseen, so the rows don't jump as the sidebar opens.
         let label = div()
             .p(px(8.))
+            // One line in either width: wrapped in the folded column it would stand taller.
+            .whitespace_nowrap()
+            .overflow_hidden()
             .when(!full, |d| d.invisible())
             .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()));
         let new = hoverable("add-instance", fill::HOVER)
