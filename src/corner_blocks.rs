@@ -10,15 +10,16 @@ use gpui::{
 use std::time::Duration;
 
 /// A block's side, and the small one's.
-const SIDE: f32 = 48.;
-const SMALL: f32 = 24.;
+const SIDE: f32 = 96.;
+const SMALL: f32 = 48.;
 /// How high the small block hops.
-const HOP: f32 = 10.;
-/// The corner block's own colours, in the order it takes them.
-const CORNER: [u32; 3] = [0x5cc4e8, 0x4cd08a, 0x93b4ff];
-const TOP: u32 = 0xb79bff;
-const RIGHT: u32 = 0xff8fb4;
-const SMALL_COLOUR: u32 = 0x4f60e6;
+const HOP: f32 = 18.;
+/// The corner block's own colours, in the order it takes them, and the others': the launcher's
+/// blues, from the deep indigo to the light accent text, and its slate.
+const CORNER: [u32; 3] = [0x4f60e6, 0x3d4cc4, 0x6a7af0];
+const TOP: u32 = 0x2c3a9e;
+const RIGHT: u32 = 0x93b4ff;
+const SMALL_COLOUR: u32 = 0x6b7399;
 /// How long the corner rests between moves, at least and at most.
 const REST_MIN: u64 = 1800;
 const REST_MAX: u64 = 4200;

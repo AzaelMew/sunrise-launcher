@@ -18,6 +18,10 @@ const HERO_WIDTH: f32 = 412.;
 const COLUMN: f32 = 168.;
 /// The faint arc around the left column line's top.
 const ARC: f32 = 620.;
+/// The Rust logo standing in for the title's r: its size, and how far above the line's foot it
+/// sits so it stands on the baseline.
+const RUST_R: f32 = 62.;
+const RUST_R_DROP: f32 = 18.;
 
 impl Launcher {
     /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
@@ -70,8 +74,19 @@ impl Launcher {
             .font_weight(FontWeight::BOLD)
             .text_size(px(88.))
             .line_height(px(92.))
-            .text_color(white(ink::FULL))
-            .child(name);
+            .text_color(white(ink::FULL));
+        let title = if name.eq_ignore_ascii_case("sunrise") {
+            // Sunrise's own name wears the Rust logo for its r: Minecraft, rewritten in Rust.
+            let (head, tail) = name.split_at(3);
+            title
+                .flex()
+                .items_end()
+                .child(head.to_owned())
+                .child(rust_logo())
+                .child(tail[1..].to_owned())
+        } else {
+            title.child(name)
+        };
         let tagline = java.is_none().then(|| {
             ui::text(18., FontWeight::NORMAL, ink::NOTE)
                 .pt(px(8.))
@@ -258,4 +273,21 @@ impl Launcher {
                 })),
         )
     }
+}
+
+/// The Rust logo in white (`assets/logos/rust.svg`), sized and set on the title's baseline where
+/// it stands in for Sunrise's r.
+fn rust_logo() -> gpui::Img {
+    static LOGO: std::sync::OnceLock<std::sync::Arc<gpui::Image>> = std::sync::OnceLock::new();
+    let logo = LOGO.get_or_init(|| {
+        std::sync::Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Svg,
+            include_bytes!("../assets/logos/rust.svg").to_vec(),
+        ))
+    });
+    gpui::img(logo.clone())
+        .flex_none()
+        .size(px(RUST_R))
+        .mx(px(3.))
+        .mb(px(RUST_R_DROP))
 }
