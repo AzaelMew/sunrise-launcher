@@ -86,6 +86,8 @@ pub(super) struct Mods {
     pub(super) report_list: cull::Cull,
     more: bool,
     error: Option<String>,
+    /// The failed search was Sunrise's own registry (its card offers Modrinth instead).
+    error_sunrise: bool,
     /// The failed search's own words are shown under its plain message.
     pub(super) error_details: bool,
     pub(super) installed: Vec<installed::Entry>,
@@ -210,6 +212,7 @@ impl Mods {
             report_list: cull::Cull::default(),
             more: false,
             error: None,
+            error_sunrise: false,
             error_details: false,
             installed: Vec::new(),
             chosen: Default::default(),
@@ -415,6 +418,8 @@ impl Launcher {
                                 m.more = false;
                                 m.results_list.reset();
                             }
+                            m.error_sunrise =
+                                m.source == SourceId::Sunrise && m.java_for(m.kind).is_none();
                             m.error = Some(e);
                         }
                     }
@@ -1099,7 +1104,8 @@ impl Launcher {
             self.mods.browse.filters = Default::default();
             self.mods.browse.open = None;
             self.mods.picked = None;
-            self.mods_search(0);
+            // What was shown stays until the new kind's answer replaces it.
+            self.mods_search_keeping(0, true);
         }
     }
 

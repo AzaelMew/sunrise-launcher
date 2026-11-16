@@ -755,10 +755,6 @@ impl Launcher {
         if self.servers.tab == Tab::Overview {
             self.servers.tab = Tab::Players;
         }
-        let active = LOWER_TABS
-            .iter()
-            .position(|&(tab, _)| tab == self.servers.tab)
-            .unwrap_or(0);
         let items: Vec<_> = LOWER_TABS
             .iter()
             .map(|&(tab, label)| {
@@ -779,14 +775,7 @@ impl Launcher {
                 }))
             })
             .collect();
-        let strip = ui::pill_strip(
-            "server-tabs",
-            active,
-            36.,
-            0.,
-            div().flex().items_center().gap(px(4.)),
-            items,
-        );
+        let strip = div().flex().items_center().gap(px(4.)).children(items);
         let players = !matches!(self.servers.tab, Tab::Settings | Tab::Backups);
         let body = match self.servers.tab {
             Tab::Settings => self.settings_tab(status, cx),

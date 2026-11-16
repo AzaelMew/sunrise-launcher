@@ -69,7 +69,6 @@ impl Launcher {
         .pt_0()
         .mb_0();
         let open = self.mods.kind;
-        let active = KINDS.iter().position(|(k, _, _)| *k == open).unwrap_or(0);
         let items: Vec<_> = KINDS
             .into_iter()
             .map(|(kind, label, _)| {
@@ -81,15 +80,12 @@ impl Launcher {
                     }))
             })
             .collect();
-        let tabs = ui::pill_strip(
-            "mods-kinds",
-            active,
-            32.,
-            0.,
-            div().flex().flex_none().items_center().gap(px(4.)),
-            items,
-        )
-        .flex_none();
+        let tabs = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .children(items);
         let wide = self.window_width >= crate::glass_home::SIDE_BY_SIDE;
         let header = if wide {
             div()
@@ -181,7 +177,9 @@ impl Launcher {
             .flex_col()
             .flex_1()
             .min_w_0()
+            .relative()
             .p(px(8.))
+            .when(self.mods.searching, |d| d.child(ui::loading_line()))
             .child(search)
             .child(extras)
             .child(self.glass_mods_list(cx));
@@ -228,7 +226,6 @@ impl Launcher {
     fn glass_source_switch(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let current = self.mods.source;
-        let active = SOURCES.iter().position(|(s, _)| *s == current).unwrap_or(0);
         let items: Vec<_> = SOURCES
             .into_iter()
             .map(|(source, label)| {
@@ -240,7 +237,7 @@ impl Launcher {
                             this.mods.browse.filters = Default::default();
                             this.mods.browse.open = None;
                             this.mods.picked = None;
-                            this.mods_search(0);
+                            this.mods_search_keeping(0, true);
                         }
                         cx.notify();
                     }))
@@ -250,14 +247,7 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(ui::pill_strip(
-                "mods-sources",
-                active,
-                32.,
-                0.,
-                div().flex().items_center().gap(px(4.)),
-                items,
-            ));
+            .child(div().flex().items_center().gap(px(4.)).children(items));
         row.child(
             div()
                 .flex()
@@ -390,7 +380,7 @@ impl Launcher {
             // A failed search stays as an amber card: what happened in plain words, Try again,
             // Modrinth while Sunrise's own list is down, and the error's own words on request.
             let details = m.error_details;
-            let sunrise = m.source == SourceId::Sunrise && m.java_for(m.kind).is_none();
+            let sunrise = m.error_sunrise;
             let what = if sunrise {
                 tr("Couldn't load Sunrise's mod list.")
             } else {
@@ -417,7 +407,7 @@ impl Launcher {
                         this.mods.browse.filters = Default::default();
                         this.mods.browse.open = None;
                         this.mods.picked = None;
-                        this.mods_search(0);
+                        this.mods_search_keeping(0, true);
                         cx.notify();
                     })),
                 );
@@ -434,7 +424,7 @@ impl Launcher {
                     cx.notify();
                 })),
             );
-            return div()
+            let card = div()
                 .flex()
                 .items_start()
                 .gap(px(10.))
@@ -458,6 +448,7 @@ impl Launcher {
                         }))
                         .child(actions),
                 );
+            return Self::while_searching(m, card);
         }
         if m.results.is_empty() {
             let line = if m.searching || !m.searched {
@@ -626,11 +617,11 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let mut list = div()
-            .flex()
-            .flex_col()
-            .when(refreshing, |d| d.opacity(0.45))
-            .child(rows.column(&scroll, total, 0., |_| false, row));
+        let mut list =
+            div()
+                .flex()
+                .flex_col()
+                .child(rows.column(&scroll, total, 0., |_| false, row));
         if self.mods.more {
             let searching = self.mods.searching;
             let offset = self.mods.results.len();
@@ -647,7 +638,19 @@ impl Launcher {
                 ),
             );
         }
+        if refreshing {
+            return div().child(ui::waiting(list, self.mods.search as usize));
+        }
         list
+    }
+
+    /// `d`, dimmed after a moment while a search runs.
+    fn while_searching(m: &Mods, d: Div) -> Div {
+        if m.searching {
+            div().child(ui::waiting(d, m.search as usize))
+        } else {
+            d
+        }
     }
 
     /// The picked result, else the first; when a search finds nothing, the card shown last stays
