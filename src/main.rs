@@ -8,6 +8,7 @@ mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
 mod blocks_versions;
+mod corner_blocks;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
@@ -539,6 +540,8 @@ struct Launcher {
     scene: gpui::Entity<scene::Scene>,
     /// Hypr Neon's rain over its black night (`rain.rs`).
     rain: gpui::Entity<rain::Rain>,
+    /// The playing blocks in Home's bottom-left corner.
+    corner_blocks: gpui::Entity<corner_blocks::CornerBlocks>,
     /// What is behind the launcher, drawn as its sibling (`window_root.rs`).
     backdrop: gpui::Entity<window_root::Backdrop>,
     /// What the views behind the launcher were last handed.

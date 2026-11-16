@@ -254,6 +254,7 @@ impl Launcher {
             sky,
             scene,
             rain,
+            corner_blocks: cx.new(corner_blocks::CornerBlocks::new),
             backdrop,
             pushed: None,
             scale: window.scale_factor(),

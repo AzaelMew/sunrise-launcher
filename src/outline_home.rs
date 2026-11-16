@@ -132,7 +132,7 @@ impl Launcher {
 
     /// The first screen's separator lines, part of the page so they scroll with it: the floor,
     /// and where the window has room beside the hero, a column line near each edge and a faint
-    /// arc around the left one's top.
+    /// arc around the left one's top. The playing blocks stand on the floor in its left corner.
     fn home_lines(&self) -> Div {
         let wide = self.home_wide();
         let column = |right: bool| {
@@ -178,6 +178,13 @@ impl Launcher {
                 .child(column(false))
                 .child(column(true))
             })
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .bottom(px(1.))
+                    .child(self.corner_blocks.clone()),
+            )
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,
