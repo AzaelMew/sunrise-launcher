@@ -545,6 +545,8 @@ struct Launcher {
     /// Where the page between the sidebars, under the top bar, was laid out last: Home's
     /// scenery goes there.
     cover_at: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// What the views behind the launcher were last handed (`launcher_render.rs`).
+    pushed: Option<launcher_render::Pushed>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }

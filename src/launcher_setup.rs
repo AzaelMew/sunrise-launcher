@@ -257,6 +257,7 @@ impl Launcher {
             rain,
             backdrop,
             cover_at: Default::default(),
+            pushed: None,
             scale: window.scale_factor(),
         };
         if this.location_error.is_some() || this.location_note.is_some() {
