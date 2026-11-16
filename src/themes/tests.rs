@@ -202,12 +202,15 @@ fn a_typed_colour_is_worn_as_is_and_survives_settings_json() {
 #[test]
 fn each_theme_brings_back_its_own_accent() {
     let mut kept = std::collections::BTreeMap::new();
-    assert_eq!(starting_accent(None, &kept), Accent::VIOLET);
+    // No theme saved is Dawn; Sunrise's own sky is picked by name.
+    assert_eq!(starting_accent(Some(SUNRISE), &kept), Accent::VIOLET);
+    assert_eq!(starting_accent(None, &kept).rgb(), 0xc2366f);
     assert_eq!(starting_accent(Some("dawn"), &kept).rgb(), 0xc2366f);
     kept.insert("dawn".to_string(), Accent::TEAL);
     kept.insert(SUNRISE.to_string(), Accent::PINK);
     assert_eq!(starting_accent(Some("dawn"), &kept), Accent::TEAL);
-    assert_eq!(starting_accent(None, &kept), Accent::PINK);
+    assert_eq!(starting_accent(None, &kept), Accent::TEAL);
+    assert_eq!(starting_accent(Some(SUNRISE), &kept), Accent::PINK);
     // A theme this launcher doesn't know is Sunrise's own.
     assert_eq!(accent_key(Some("from_the_future")), SUNRISE);
     assert_eq!(

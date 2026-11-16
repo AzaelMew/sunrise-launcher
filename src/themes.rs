@@ -548,10 +548,11 @@ pub fn starting_accent(
         .unwrap_or_else(|| theme(id).map_or(Accent::VIOLET, |t| t.accent.accent()))
 }
 
-/// The theme named `id` (`Settings::theme`); None for Sunrise's own sky or a name this launcher
-/// doesn't know.
+/// The theme named `id` (`Settings::theme`): Dawn while none is saved, None for Sunrise's own sky
+/// ([`SUNRISE`]) or a name this launcher doesn't know.
 pub fn theme(id: Option<&str>) -> Option<&'static Theme> {
-    THEMES.iter().find(|t| Some(t.id) == id)
+    let id = id.unwrap_or(DAWN_THEME.id);
+    THEMES.iter().find(|t| t.id == id)
 }
 
 /// The glass look's colour for each of [`Accent::ALL`]: the mockup's swatches.
