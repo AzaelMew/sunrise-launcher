@@ -332,7 +332,7 @@ impl Launcher {
                 .w_full()
                 .gap(px(8.))
                 .child(field)
-                .child(
+                .child(keyboard(
                     crate::glass::plate(radius::PANEL)
                         .id("settings-nav-current")
                         .flex()
@@ -362,7 +362,8 @@ impl Launcher {
                             this.settings_nav_open = true;
                             cx.notify();
                         })),
-                )
+                    &t,
+                ))
                 .into_any_element()
         };
         let sections = if found {

@@ -385,6 +385,12 @@ impl Launcher {
         if self.page == Page::Settings && page != Page::Settings {
             self.storage_revoke_error = None;
         }
+        // Settings opens on its first page, its list folded and its search empty.
+        if page == Page::Settings && self.page != Page::Settings {
+            self.settings_nav_open = false;
+            self.settings_pane.scroll_to_item(0);
+            self.settings_query.set(String::new());
+        }
         self.storage_counting = None;
         self.storage_visit += 1;
         // The glass look's Settings is a dialog over the page: opening or closing it keeps the
