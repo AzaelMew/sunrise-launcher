@@ -23,12 +23,8 @@ impl Render for Launcher {
         glass_ui::set_corners(corners);
         glass::set_corners(corners);
         glass_ui::set_light(!self.theme.dark);
-        glass::set_light(!self.theme.dark);
         self.look = self.theme.look;
         glass_ui::set_look(self.look);
-        glass::set_look(self.look);
-        // The plates are the theme's own solid card: nothing behind the pages to frost.
-        glass::set_plain(self.settings.performance() || self.theme.dark);
         // Reduced motion (the player's or the system's) holds GPUI's own animations too.
         clock::set_preference(self.settings.reduce_motion);
         cx.set_reduce_motion(motion::still());
@@ -80,7 +76,6 @@ impl Render for Launcher {
         if self.opening.is_none() && window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }
-        glass::begin_build(window);
         let sides = t.glass && self.outline_sides();
         let (right_sidebar, right_panel) = match sides.then(|| self.outline_side(false, window, cx))
         {

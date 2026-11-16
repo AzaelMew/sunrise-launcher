@@ -1031,7 +1031,7 @@ pub fn popover(width: f32) -> Div {
 /// GPUI can't blur what it drew, so the scene's blurred copy (a menu's, `hzl-float`) covers the
 /// page. The scrim goes over it.
 pub fn scrim_backdrop() -> impl IntoElement {
-    crate::glass::backdrop(crate::glass::Kind::Float, 0.)
+    crate::glass::backdrop(0.)
 }
 
 /// The scrim over [`scrim_backdrop`]: 50 % in the dark look, 20 % in light, so the dimmed

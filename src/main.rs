@@ -3,8 +3,6 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-#[cfg(windows)]
-use sunrise_launcher_scenery::scene;
 use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
 mod blocks_chrome;
 mod blocks_play;
