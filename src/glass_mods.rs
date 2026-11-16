@@ -62,7 +62,7 @@ impl Launcher {
         let head = ui::page_head(
             tr("Mods"),
             trf(
-                "Everything you install goes into {instance}. Pick another instance on the left to fill that one.",
+                "Everything you install goes into {instance}. Pick another instance on Home to fill that one.",
                 &[("instance", &instance)],
             ),
         )

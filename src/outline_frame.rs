@@ -41,7 +41,8 @@ fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text
 impl Launcher {
     pub(super) fn outline_topbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let right_side = self.outline_wide();
+        let sides = self.outline_sides();
+        let right_side = sides && self.outline_wide();
 
         let tight = self.window_width < 1280.;
         let (tab_size, tab_gap) = if tight { (14., 18.) } else { (15., 28.) };
@@ -109,6 +110,15 @@ impl Launcher {
         }
 
         let side = self.outline_side_width();
+        // Without the sidebars the bar starts with the mark and the name.
+        let name_width = line_width(
+            window,
+            sunrise_theme::glass::FONT,
+            FontWeight::BOLD,
+            17.,
+            "Sunrise",
+        );
+        let logo_width = if sides { 0. } else { 22. + 10. + name_width };
         let signed_in = self.accounts.selected().is_some();
         let mono_width = |text: &str| {
             line_width(
@@ -140,17 +150,21 @@ impl Launcher {
         let end = side + self.outline_page_width();
         let centre = side + self.outline_page_width() / 2.;
         let fits = |right: f32| {
-            centre - tabs / 2. >= side + 24. && centre + tabs / 2. <= end - 24. - right - 16.
+            centre - tabs / 2. >= side + 24. + logo_width + 16.
+                && centre + tabs / 2. <= end - 24. - right - 16.
         };
         // Narrower, the players count goes first, then "with Microsoft": the pages keep their
         // place over the hero.
         let count = count_width.is_some() && fits(right_of(true, false));
         let short = !signed_in && !fits(right_of(false, false));
-        // With the right sidebar, the account is in its top cell and only Settings stays here.
+        // With the right sidebar open, the account is in its top cell and only Settings stays
+        // here; folded, Settings is in its cell instead; without the sidebars, both are here.
         let right = if right_side {
             36.
-        } else {
+        } else if sides {
             right_of(count, short)
+        } else {
+            right_of(count, short) + 14. + 36.
         };
         let centred = fits(right);
         let (pages_layer, pages_flow) = if centred {
@@ -164,9 +178,18 @@ impl Launcher {
         let account = if right_side {
             self.outline_settings(cx).into_any_element()
         } else {
-            self.outline_account(count, short, false, cx)
+            self.outline_account(count, short, !sides, cx)
                 .into_any_element()
         };
+        let logo = (!sides).then(|| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(10.))
+                .child(mark(22.))
+                .child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
+        });
 
         div()
             .relative()
@@ -186,6 +209,7 @@ impl Launcher {
                 70.,
                 self.scale,
             ))
+            .children(logo)
             // Over the hero where the pages clear the buttons; else beside them, scrolling
             // sideways when too long.
             .children(pages_layer.map(|pages| {

@@ -27,9 +27,17 @@ impl Launcher {
         self.window_width >= FULL_FROM
     }
 
-    /// How wide each sidebar is.
+    /// Whether the sidebars show: on Home, and on Settings opened over it. The other pages have
+    /// the window to themselves.
+    pub(super) fn outline_sides(&self) -> bool {
+        self.page == Page::Play || (self.page == Page::Settings && self.behind == Page::Play)
+    }
+
+    /// How wide each sidebar is (none where they don't show).
     pub(super) fn outline_side_width(&self) -> f32 {
-        if self.outline_wide() {
+        if !self.outline_sides() {
+            0.
+        } else if self.outline_wide() {
             frame::SIDEBAR
         } else {
             COMPACT
