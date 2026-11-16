@@ -179,35 +179,32 @@ pub(crate) fn version_tag(tag: &str) -> Div {
         )
 }
 
-/// Sunrise's mark: two stems, their reflection below, and the horizon across in the accent.
-pub(crate) fn mark(size: f32, t: &Theme) -> Div {
-    let u = size / 16.;
-    let stem = |x: f32, y: f32, color: Hsla| {
+/// Sunrise's mark (Figma: Sunrise mark, 22 units): three sun dots, the stepped dome and the
+/// violet bar, `size` px square.
+pub(crate) fn mark(size: f32) -> Div {
+    let k = size / 22.;
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32, colour: u32| {
         div()
             .absolute()
-            .left(px(x * u))
-            .top(px(y * u))
-            .w(px(2. * u))
-            .h(px(4. * u))
-            .bg(color)
+            .left(px(x0 * k))
+            .top(px(y0 * k))
+            .w(px((x1 - x0) * k))
+            .h(px((y1 - y0) * k))
+            .bg(gpui::rgb(colour))
     };
+    const DOT: u32 = 0xfee39c;
+    const DOME: u32 = 0xffc94a;
     div()
         .relative()
         .flex_none()
         .size(px(size))
-        .child(stem(4., 3., t.ink))
-        .child(stem(10., 3., t.ink))
-        .child(stem(4., 8., t.ink.opacity(0.36)))
-        .child(stem(10., 8., t.ink.opacity(0.36)))
-        .child(
-            div()
-                .absolute()
-                .left(px(u))
-                .top(px(7. * u))
-                .w(px(14. * u))
-                .h(px(u))
-                .bg(t.accent),
-        )
+        .child(rect(9.30, 2.35, 12.69, 5.74, DOT))
+        .child(rect(1.54, 5.52, 4.93, 8.91, DOT))
+        .child(rect(17.07, 5.52, 20.46, 8.91, DOT))
+        .child(rect(7.87, 8.65, 14.13, 10.15, DOME))
+        .child(rect(4.60, 10.15, 17.40, 11.85, DOME))
+        .child(rect(3.16, 11.85, 18.84, 15.05, DOME))
+        .child(rect(0., 16.44, 22., 19.65, 0x6b5ce7))
 }
 
 /// The last thing the player did was press Tab: focused controls show a ring (a click focuses them
