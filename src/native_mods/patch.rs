@@ -1,6 +1,6 @@
 //! Function replacement (fn-replace): `[[native.mixin]]` rows built against the prebuilt game, with no
 //! game rebuild. Each function the rows target is copied out of the pinned source into one patch
-//! crate (`sunrise_mod_api_gen::patch`), sunrise-mixins applies every mod's rows to those copies
+//! crate (`sunrise_mod_api_gen::patch`), horizon-mixins applies every mod's rows to those copies
 //! in one pass (one combined copy per function, in the tool's order), rustc compiles the crate
 //! against the prebuilt game and the mods, and the generated `main` installs each copy through
 //! its point's replacement slot. What can't take this route is refused by name; nothing here
@@ -104,7 +104,7 @@ fn extras(bundles: &[&Bundle]) -> Result<api_gen::patch::Extras, String> {
             extras.bridges.push(api_gen::patch::Bridge {
                 id: format!("{id}:{}", bridge.id),
                 method: format!(
-                    "__sunrise_mixins_{}_{}",
+                    "__horizon_mixins_{}_{}",
                     normalize(id),
                     normalize(&bridge.id)
                 ),
@@ -233,7 +233,7 @@ impl Prepared<'_> {
     /// The build log's line for this mixin build.
     pub(super) fn log(&self) -> Result<(), String> {
         super::append_log(&trf(
-            "Function replacement: {count} functions patched by {rows} mixins, without rebuilding the game (copy {copy} ms, sunrise-mixins {tool} ms, compile {compile} ms, total {total} ms)",
+            "Function replacement: {count} functions patched by {rows} mixins, without rebuilding the game (copy {copy} ms, horizon-mixins {tool} ms, compile {compile} ms, total {total} ms)",
             &[
                 ("count", &self.count.to_string()),
                 ("rows", &self.rows.to_string()),
@@ -460,7 +460,7 @@ pub(super) fn prepare<'a>(
         .iter()
         .map(|p| (p.target.as_str(), p.id.as_str()))
         .collect();
-    // The workspace sunrise-mixins plans against: one patch crate per game crate with copies.
+    // The workspace horizon-mixins plans against: one patch crate per game crate with copies.
     let workspace = out.join("patch-workspace");
     let _ = fs::remove_dir_all(&workspace);
     let write = |path: PathBuf, text: &str| {
@@ -493,7 +493,7 @@ pub(super) fn prepare<'a>(
                 .collect::<String>()
         ),
     )?;
-    write(workspace.join(".sunrise-revision"), sdk.commit())?;
+    write(workspace.join(".horizon-revision"), sdk.commit())?;
     for (name, lib) in &generated.libs {
         let package = workspace.join(name);
         fs::create_dir_all(package.join("src")).map_err(|e| e.to_string())?;
@@ -527,7 +527,7 @@ pub(super) fn prepare<'a>(
         manifest.insert(
             "compatibility".into(),
             toml::Value::Table(toml::Table::from_iter([(
-                "sunrise_revision".into(),
+                "horizon_revision".into(),
                 sdk.commit().to_owned().into(),
             )])),
         );
@@ -536,7 +536,7 @@ pub(super) fn prepare<'a>(
             toml::Value::try_from(&rows).map_err(|e| e.to_string())?,
         );
         write(
-            dir.join("sunrise-mixin.toml"),
+            dir.join("horizon-mixin.toml"),
             &toml::to_string(&manifest).map_err(|e| e.to_string())?,
         )?;
     }

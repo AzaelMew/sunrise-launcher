@@ -55,11 +55,11 @@ pub(crate) static TEST_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const PREFIX: &str = "native-";
 // A staging change invalidates both installed builds and patched-source snapshots.
 const STAGING: &str = "area-aware-mixins-input-v1";
-/// sunrise-mixins, for bundles that don't name the revision they were tested with.
+/// horizon-mixins, for bundles that don't name the revision they were tested with.
 const MIXINS_GIT: &str = "https://github.com/horizon-rust/horizon-mixins";
 pub const MIXINS_REV: &str = sunrise_mod_package::mixins_tool::REV;
 
-/// `native-build --mixins-from-source`: this process builds the sunrise-mixins tool from its
+/// `native-build --mixins-from-source`: this process builds the horizon-mixins tool from its
 /// pinned source and never looks for the prebuilt one, so CI keeps that path proven.
 pub fn mixins_from_source(on: bool) {
     mixins_patch::FROM_SOURCE.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -419,7 +419,7 @@ pub fn cache_error(error: crate::storage::Error) -> String {
     }
 }
 
-const MANIFEST: &str = "sunrise-mixin.toml";
+const MANIFEST: &str = "horizon-mixin.toml";
 /// A registry download's `sunrise-mod.toml` at the `.hmod` package root.
 const NATIVE_MANIFEST: &str = sunrise_mod_package::manifest::MANIFEST;
 /// Where an instance keeps the native mods installed from the registry, `<id>.hmod`, each on or
@@ -494,7 +494,7 @@ impl Bundle {
             .expect("validated code package")
     }
 
-    /// Whether sunrise-mixins reads source to transform the game.
+    /// Whether horizon-mixins reads source to transform the game.
     fn needs_mixins(&self) -> bool {
         !self.native().mixin.is_empty()
             || !self.native().module.is_empty()
@@ -601,7 +601,7 @@ fn agreed(
 }
 
 /// The revision `bundles` build on for `which` when their pins differ: the newest of the pins and
-/// `also` (the launcher's own sunrise-mixins), by its commit's time (`date`), so no mod gets an
+/// `also` (the launcher's own horizon-mixins), by its commit's time (`date`), so no mod gets an
 /// older one than it was made for. With one pin or none, it is [`agreed`]'s.
 fn newest(
     bundles: &[Bundle],
@@ -812,7 +812,7 @@ pub fn newer_than(base: &str, installed: &[String]) -> Option<String> {
 }
 
 /// Every file under `dir`, by its path relative to `dir` (with `/`), sorted. A symlink is refused:
-/// sunrise-mixins refuses them too.
+/// horizon-mixins refuses them too.
 fn files(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
         for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
@@ -851,7 +851,7 @@ fn bundle_files(bundle: &Bundle) -> Result<Vec<(String, PathBuf)>, String> {
     package::files(bundle)
 }
 
-/// The installed version `bundles` built on Sunrise `revision` with sunrise-mixins `mixins`
+/// The installed version `bundles` built on Sunrise `revision` with horizon-mixins `mixins`
 /// become: `native-<7 digits of the revision>-<12 hex digits>`. The two targets' keys never mix:
 /// a server build salts its hash, so it is another version than the client build of the same
 /// mods.
@@ -1369,7 +1369,7 @@ fn mod_id_from_file(file: &str) -> Option<&str> {
     None
 }
 
-/// A sunrise-mixins diagnostic (`{"code", "message", "file"}`) in one line, led by the mod it
+/// A horizon-mixins diagnostic (`{"code", "message", "file"}`) in one line, led by the mod it
 /// names (`mod_id`, its `injection_id`, or extracted from its `file` path for `E_MODULE_CONFLICT`),
 /// so a player with several mods sees which one doesn't apply to the build's Sunrise: their files'
 /// paths are deep in the launcher's folder.
@@ -1395,13 +1395,13 @@ fn diagnostic(text: &str) -> Option<String> {
     Some(line)
 }
 
-/// sunrise-mixins at commit `rev`, built once with the launcher's cargo (`cargo install --locked`);
+/// horizon-mixins at commit `rev`, built once with the launcher's cargo (`cargo install --locked`);
 /// `progress` hears [`Step::Tool`] only when it is built.
 fn tool(rust: &Toolchain, rev: &str, progress: &impl Fn(Step)) -> Result<PathBuf, String> {
     let dir = root().join("tools").join(&rev[..12]);
     let bin = dir
         .join("bin")
-        .join(format!("sunrise-mixins{}", std::env::consts::EXE_SUFFIX));
+        .join(format!("horizon-mixins{}", std::env::consts::EXE_SUFFIX));
     if !bin.is_file() {
         progress(Step::Tool);
         let mut cmd = rust.command(&rust.cargo());
@@ -1411,8 +1411,8 @@ fn tool(rust: &Toolchain, rev: &str, progress: &impl Fn(Step)) -> Result<PathBuf
             "install", "--locked", "--git", MIXINS_GIT, "--rev", rev, "--root",
         ])
         .arg(&dir)
-        .arg("sunrise-mixins-cli");
-        run(cmd, "Building sunrise-mixins", |_| {})?;
+        .arg("horizon-mixins-cli");
+        run(cmd, "Building horizon-mixins", |_| {})?;
     }
     crate::storage::mark_used(&dir).map_err(cache_error)?;
     Ok(bin)
@@ -1434,7 +1434,7 @@ fn prepare_mixins_source(source: &Path, prepared: &Path) -> Result<(), String> {
     result
 }
 
-/// `sunrise-mixins apply`: the mods in `mods` applied to `source`, into `out`. It runs
+/// `horizon-mixins apply`: the mods in `mods` applied to `source`, into `out`. It runs
 /// `cargo metadata`, so it gets the launcher's toolchain like a build does: on a computer with no
 /// Rust of its own, a plain command found no cargo (E_METADATA).
 fn apply(rust: &Toolchain, tool: &Path, source: &Path, mods: &Path, out: &Path) -> Command {
@@ -1466,7 +1466,7 @@ fn read_lock(dir: &Path) -> Result<String, String> {
 
 fn source(revision: &str) -> Result<PathBuf, String> {
     let dir = root().join("source").join(revision);
-    if dir.join(".sunrise-revision").is_file() {
+    if dir.join(".horizon-revision").is_file() {
         crate::storage::mark_used(&dir).map_err(cache_error)?;
         return Ok(dir);
     }
@@ -1476,7 +1476,7 @@ fn source(revision: &str) -> Result<PathBuf, String> {
     );
     let partial = root().join("source").join(format!(".{revision}.partial"));
     let top = unpack_archive(&archive, &partial, u64::MAX)?;
-    fs::write(top.join(".sunrise-revision"), revision).map_err(|e| e.to_string())?;
+    fs::write(top.join(".horizon-revision"), revision).map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&dir);
     fs::rename(&top, &dir).map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&partial);
@@ -1492,7 +1492,7 @@ fn unpack_source(reader: impl std::io::Read, partial: &Path) -> Result<(), Strin
         let mut entry =
             entry.map_err(|e| trf("Source interrupted: {error}", &[("error", &e.to_string())]))?;
         let kind = entry.header().entry_type();
-        // Match downloaded sources: sunrise-mixins refuses links, which the build does not need.
+        // Match downloaded sources: horizon-mixins refuses links, which the build does not need.
         if !(kind.is_file() || kind.is_dir()) {
             continue;
         }
@@ -1554,7 +1554,7 @@ fn copy_bundle(bundle: &Bundle, to: &Path) -> Result<(), String> {
     package::copy(bundle, to)
 }
 
-/// Stage supporting modules for sunrise-mixins, before applying mixins.
+/// Stage supporting modules for horizon-mixins, before applying mixins.
 fn stage_mixins(mods: &[Bundle], to: &Path) -> Result<Vec<Bundle>, String> {
     if to.exists() {
         fs::remove_dir_all(to).map_err(|e| e.to_string())?;
@@ -2077,7 +2077,7 @@ fn pipeline(
     };
     let mixins = newest(
         &mods,
-        "sunrise-mixins",
+        "horizon-mixins",
         |b| Some(&b.native().mixins),
         || Ok(MIXINS_REV.into()),
         Some(MIXINS_REV),
@@ -2188,7 +2188,7 @@ fn pipeline(
         serde_json::json!({
             "base": origin,
             "sunrise": revision,
-            "sunrise_mixins": mixins,
+            "horizon_mixins": mixins,
             "rust": rust_toolchain::VERSION,
             "profile": profile.name(),
             "route": route,
@@ -2281,7 +2281,7 @@ fn pipeline(
 }
 
 /// How many times a build compiles again without the mods the compiler's errors were traced to:
-/// each costs a compile, where a mod that doesn't apply costs only sunrise-mixins' run.
+/// each costs a compile, where a mod that doesn't apply costs only horizon-mixins' run.
 const COMPILE_RETRIES: usize = 3;
 
 /// Runs `pipeline` until it builds, each time without the mods that stopped it before (they
@@ -3187,16 +3187,16 @@ mod tests {
     }
 
     #[test]
-    fn sunrise_mixins_finds_the_launchers_cargo() {
+    fn horizon_mixins_finds_the_launchers_cargo() {
         for rust in toolchains("/rust/1.99.1-x") {
-            sunrise_mixins_finds(&rust);
+            horizon_mixins_finds(&rust);
         }
     }
 
-    fn sunrise_mixins_finds(rust: &Toolchain) {
+    fn horizon_mixins_finds(rust: &Toolchain) {
         let cmd = apply(
             rust,
-            Path::new("/tools/sunrise-mixins"),
+            Path::new("/tools/horizon-mixins"),
             Path::new("/src"),
             Path::new("/mods"),
             Path::new("/out"),
@@ -3326,7 +3326,7 @@ mod tests {
         .unwrap();
         for old in [
             "sunrise-native.json",
-            "sunrise-mixin.toml",
+            "horizon-mixin.toml",
             "native",
             "rust",
         ] {
@@ -3381,7 +3381,7 @@ mod tests {
         assert_eq!(tool_mods.len(), 1);
         assert_eq!(tool_mods[0].manifest.id, "injected");
         assert!(!staged.join("veinminer").exists());
-        assert!(staged.join("injected/sunrise-mixin.toml").is_file());
+        assert!(staged.join("injected/horizon-mixin.toml").is_file());
         assert_eq!(
             fs::read(staged.join("injected/src/lib.rs")).unwrap(),
             b"pub fn marker() {}\n"
@@ -4271,12 +4271,12 @@ mod tests {
 
     #[test]
     fn a_tool_error_starts_with_the_mod_that_does_not_apply() {
-        // sunrise-mixins e8cd0aa on Sunrise 998b1d8 with fast_items 0.1.0 and appleskin 1.0.0
+        // horizon-mixins e8cd0aa on Sunrise 998b1d8 with fast_items 0.1.0 and appleskin 1.0.0
         // (made for ba6344a), as a player's build was on 2026-11-04.
         let err = r#"{
   "code": "E_TARGET_NOT_FOUND",
   "message": "no source function 'sunrise_client::game::titles::Game<'_>::draw_titles'",
-  "file": "/home/p/.local/share/sunrise-launcher/native/mixins.incoming/appleskin/sunrise-mixin.toml",
+  "file": "/home/p/.local/share/sunrise-launcher/native/mixins.incoming/appleskin/horizon-mixin.toml",
   "mod_id": "appleskin",
   "injection_id": "hud",
   "target": "sunrise_client::game::titles::Game<'_>::draw_titles"
@@ -4296,11 +4296,11 @@ mod tests {
 
     #[test]
     fn a_tool_error_without_mod_id_extracts_culprit_from_file_path() {
-        // sunrise-mixins e8cd0aa emits E_MODULE_CONFLICT without mod_id (issue #9391).
+        // horizon-mixins e8cd0aa emits E_MODULE_CONFLICT without mod_id (issue #9391).
         let err = r#"{
   "code": "E_MODULE_CONFLICT",
   "message": "conflict in module sunrise_physics",
-  "file": "/home/p/.local/share/sunrise-launcher/native/mixins.incoming/sunrise_physics/sunrise-mixin.toml"
+  "file": "/home/p/.local/share/sunrise-launcher/native/mixins.incoming/sunrise_physics/horizon-mixin.toml"
 }"#;
         let line = diagnostic(err).unwrap();
         assert!(
@@ -4314,7 +4314,7 @@ mod tests {
         let err_win = r#"{
   "code": "E_MODULE_CONFLICT",
   "message": "conflict in module biomecompass",
-  "file": "C:\\Users\\p\\AppData\\Local\\sunrise-launcher\\native\\mixins.incoming\\biomecompass\\sunrise-mixin.toml"
+  "file": "C:\\Users\\p\\AppData\\Local\\sunrise-launcher\\native\\mixins.incoming\\biomecompass\\horizon-mixin.toml"
 }"#;
         let line_win = diagnostic(err_win).unwrap();
         assert!(
@@ -4369,7 +4369,7 @@ mod tests {
             "{e}"
         );
         // An error still among the last lines isn't said twice.
-        let e = failure("sunrise-mixins", "exit status: 1", &errors, &errors);
+        let e = failure("horizon-mixins", "exit status: 1", &errors, &errors);
         assert!(e.contains("The end of its output") && e.matches("alsa-sys").count() == 1);
     }
 
@@ -4391,7 +4391,7 @@ mod tests {
             for i in 1 2 3 4 5 6 7 8 9 10 11 12 13; do echo "warning: build failed, waiting ($i)" >&2; done
             exit 101
         "#]);
-        let e = run(cmd, "Building sunrise-mixins", |_| {}).unwrap_err();
+        let e = run(cmd, "Building horizon-mixins", |_| {}).unwrap_err();
         assert!(e.starts_with(&rust_toolchain::smart_app_control()), "{e}");
         assert!(e.contains("quote v1.0.47"), "{e}");
         // Another failure says nothing about it.

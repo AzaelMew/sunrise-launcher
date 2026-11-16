@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The Rust release native mods build with: the one pin CI builds the game with and wasm mods
-/// build with (`tools/ci/rust-version`; sunrise-mixins needs 1.95 or newer). Bumping it also
+/// build with (`tools/ci/rust-version`; horizon-mixins needs 1.95 or newer). Bumping it also
 /// updates [`DIST`] and each platform's component checksums below.
 pub const VERSION: &str = include_str!("../../tools/ci/rust-version").trim_ascii();
 const DIST: &str = "https://static.rust-lang.org/dist/2026-10-15";
@@ -488,7 +488,7 @@ pub fn root() -> PathBuf {
     backend::build_dir().join("rust")
 }
 
-/// The Cargo home of native builds (downloaded crates, sunrise-mixins), never the player's own.
+/// The Cargo home of native builds (downloaded crates, horizon-mixins), never the player's own.
 pub fn cargo_home() -> PathBuf {
     backend::build_dir().join("cargo")
 }
@@ -814,7 +814,7 @@ fn link(full: bool) -> Result<(), String> {
 
 /// What to do when Windows' Smart App Control refused one of the build's programs (#5911). It
 /// lets only signed programs or ones Microsoft knows run, and a build runs programs it has just
-/// compiled (every crate's build script, sunrise-mixins, the game) and the toolchain's own
+/// compiled (every crate's build script, horizon-mixins, the game) and the toolchain's own
 /// (`dlltool.exe`). Windows refuses them with os error 4551 ("An Application Control policy has
 /// blocked this file"). Nothing is checked before the build: with Smart App Control on, a build
 /// whose programs already ran before it was turned on still succeeds.
