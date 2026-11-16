@@ -1,5 +1,5 @@
 //! The glass look's frame (the mockup's `launcher-app.tsx`): the sidebar plate with the
-//! instances, the launcher's update, Sculk's card, Discord and the links; the top bar with the
+//! instances, the launcher's update, Discord and the links; the top bar with the
 //! pages in a glass tab strip, the player, Microsoft sign-in and Settings; and the menus they open.
 //! Dark appearance only for now (`docs/design-system.md`, "Glass").
 use super::*;
@@ -396,7 +396,7 @@ impl Launcher {
 
     /// The rail: a strip of instance icons that opens into names, states and links while the
     /// pointer is on it (or one of its menus is open). It opens over the page, which keeps the
-    /// collapsed rail's room, so the page never moves or squeezes under the pointer. Its foot keeps the launcher's update, Sculk's card, Discord,
+    /// collapsed rail's room, so the page never moves or squeezes under the pointer. Its foot keeps the launcher's update, Discord,
     /// the project's links, Settings and the version.
     pub(super) fn glass_rail(
         &mut self,
@@ -652,27 +652,6 @@ impl Launcher {
         };
         if open {
             foot = foot.children(self.rail_update_card(soft, cx));
-            // Sculk's card (a sponsor), only where the rail is wide enough to show it.
-            // When the instances already overflow the rail, the list keeps the room.
-            if !self.settings.partner_hidden && !partner::URL.is_empty() && p > 0.98 && !overflows {
-                let free = f32::from(window.viewport_size().height) - 420. - 52. * rows as f32;
-                let mut side = div().relative().mb(px(6.)).child(partner::card(
-                    "partner-side",
-                    RAIL_OPEN - 24.,
-                    free < partner::TALL_HEIGHT,
-                    &t,
-                ));
-                if self.settings.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                    side = side.child(partner::hide_button("partner-hide", &t).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.settings.partner_hidden = true;
-                            this.save_settings();
-                            cx.notify();
-                        }),
-                    ));
-                }
-                foot = foot.child(side);
-            }
         }
 
         // Discord keeps its own blurple in every theme, as the icon at rest and the fill under the
@@ -724,12 +703,6 @@ impl Launcher {
             ));
         }
         let links = [
-            (
-                "sponsor",
-                tr("Sponsor"),
-                "favourite",
-                self.links.sponsor.clone(),
-            ),
             ("roadmap", tr("Roadmap"), "map", self.links.roadmap.clone()),
             ("docs", tr("Documentation"), "book", self.links.docs.clone()),
             (
@@ -967,7 +940,7 @@ impl Launcher {
             .items_center()
             .gap(px(if compact { 2. } else { 4. }))
             .min_w_0();
-        for (page, label, _) in Page::in_top_bar(self.wardrobe_shown()) {
+        for (page, label, _) in Page::in_top_bar() {
             let mut item = ui::nav_tab(format!("nav-{label}"), tr(label), self.page == page, &t);
             if compact {
                 item = item.px(px(8.));

@@ -829,23 +829,16 @@ pub fn installable_updates(releases: &[Release]) -> Vec<Release> {
 /// How often a launcher left open looks for new releases: they come out several times a day.
 pub const CHECK_EVERY: std::time::Duration = std::time::Duration::from_secs(30 * 60);
 
-/// The community, sponsor and website links and the official server's address, from
-/// `launcher/links.json` on main, so they can change without a launcher release. An empty address
-/// hides its button (an empty `official_server`: no official server offered).
+/// The community and website links, from `launcher/links.json` on main, so they can change
+/// without a launcher release. An empty address hides its button.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Links {
     pub discord: String,
-    pub sponsor: String,
     pub website: String,
     /// The fork project board.
     pub roadmap: String,
     /// The modding book.
     pub docs: String,
-    /// The official server's address, as servers.dat lists it (`server_list::add_official`).
-    pub official_server: String,
-    /// The addresses it had before: a list holding one moves to `official_server`. A move appends
-    /// the old address here.
-    pub official_server_previous: Vec<String>,
 }
 
 impl Default for Links {
@@ -864,25 +857,12 @@ impl Links {
         if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(text) {
             for (key, slot) in [
                 ("discord", &mut links.discord),
-                ("sponsor", &mut links.sponsor),
                 ("website", &mut links.website),
                 ("roadmap", &mut links.roadmap),
                 ("docs", &mut links.docs),
-                ("official_server", &mut links.official_server),
             ] {
                 if let Some(url) = map.get(key).and_then(|v| v.as_str()) {
                     *slot = url.trim().to_string();
-                }
-            }
-            // A list of addresses; anything else keeps the built-in one.
-            if let Some(serde_json::Value::Array(previous)) = map.get("official_server_previous") {
-                if previous.iter().all(serde_json::Value::is_string) {
-                    links.official_server_previous = previous
-                        .iter()
-                        .filter_map(|a| a.as_str())
-                        .map(|a| a.trim().to_string())
-                        .filter(|a| !a.is_empty())
-                        .collect();
                 }
             }
         }
@@ -4206,13 +4186,6 @@ pub struct Settings {
     /// one now (the owner gate's screen).
     #[serde(default)]
     pub owner_notice_seen: bool,
-    /// Seconds a partner banner (the sidebar's card or the Servers page's banner) has been on
-    /// screen, over every start, up to `partner::SEEN_BEFORE_HIDE`: only then can the player hide it.
-    #[serde(default)]
-    pub partner_seen_secs: u64,
-    /// The player hid a partner banner: the sidebar's card and the Servers page's banner are both gone for good.
-    #[serde(default)]
-    pub partner_hidden: bool,
     /// What the window does while the game runs. Stays by default.
     #[serde(default)]
     pub while_playing: WhilePlaying,
@@ -6260,7 +6233,6 @@ pub fn {f}("
     fn links_fall_back_to_the_built_in_ones() {
         let defaults = Links::default();
         assert_eq!(defaults.discord, "https://discord.gg/eswQcHfRKC");
-        assert_eq!(defaults.sponsor, "");
         assert_eq!(defaults.website, "https://playsunrise.net");
         assert_eq!(defaults.roadmap, "");
         assert_eq!(defaults.docs, "");

@@ -68,13 +68,9 @@ impl Render for Launcher {
             Page::Versions => self.versions_page(cx),
             Page::Mods => self.mods_page(cx),
             Page::Servers => self.servers_page(cx),
-            Page::Wardrobe => self.wardrobe_page(cx),
-            Page::Shop => self.shop_page(cx),
             Page::Settings => self.settings_page(cx),
         };
         self.pictures.free_retired(window);
-        self.wardrobe_marks.free_replaced(window);
-        self.shop.free_replaced(window);
         // The new page fades in and rises a few pixels, as the website's tabs do (`hzl-pop`).
         let content = div()
             .relative()

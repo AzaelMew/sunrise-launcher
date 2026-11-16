@@ -55,7 +55,6 @@ pub mod screenshots;
 pub mod server_list;
 pub mod servers;
 pub mod setup_args;
-pub mod shop;
 pub mod shortcut;
 pub mod signed;
 pub mod sources;
@@ -65,7 +64,6 @@ pub mod themes;
 pub mod uninstall_aside;
 pub mod update_handoff;
 pub mod update_recovery;
-pub mod wardrobe;
 #[cfg(windows)]
 mod windows_runtime;
 pub mod worlds;

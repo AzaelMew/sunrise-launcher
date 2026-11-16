@@ -7,9 +7,7 @@ impl Launcher {
         self.perf.tick();
         match self.bench.as_mut().map(|b| b.tick(&self.perf)) {
             Some(perf::Step::Go(page)) => {
-                let pages: Vec<Page> = (Page::ALL.iter().map(|p| p.0))
-                    .filter(|p| !matches!(p, Page::Wardrobe | Page::Shop) || self.wardrobe_shown())
-                    .collect();
+                let pages: Vec<Page> = Page::ALL.iter().map(|p| p.0).collect();
                 self.go(pages[page % pages.len()]);
                 changed = true;
             }
@@ -32,12 +30,7 @@ impl Launcher {
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready)
                 }
-                Msg::Links(links) => {
-                    // The official server may have moved: its list entry and its count follow.
-                    self.multiplayer.stale();
-                    telemetry::set_official_server(&links.official_server);
-                    self.links = links;
-                }
+                Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
                 Msg::Reused(_) => self.installed = backend::installed(),
                 Msg::Keychain(said) => self.keychain = said,
@@ -85,7 +78,6 @@ impl Launcher {
                     }
                 }
                 Msg::Playing(playing) => self.playing = playing,
-                Msg::OfficialPlayers(players) => self.official_players = players,
                 Msg::JavaGame(id, home, cmd) => {
                     self.starting_client = None;
                     let spawned = cmd.and_then(|(cmd, vars)| {

@@ -23,30 +23,6 @@ impl Launcher {
             }
         })
         .detach();
-        // Counts the time a partner banner is on screen, until it may be hidden.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(10))
-                .await;
-            let counting = this.update(cx, |this, cx| {
-                let s = &mut this.settings;
-                if s.partner_hidden || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE {
-                    return false;
-                }
-                // On screen on every page: the card in the sidebar, the banner on Servers.
-                s.partner_seen_secs += 10;
-                if s.partner_seen_secs % 60 == 0 || s.partner_seen_secs >= partner::SEEN_BEFORE_HIDE
-                {
-                    this.save_settings();
-                    cx.notify();
-                }
-                true
-            });
-            if !matches!(counting, Ok(true)) {
-                break;
-            }
-        })
-        .detach();
         let mut settings = Settings::load();
         i18n::set(settings.language());
         if settings.minecraft_dir.is_none() {
@@ -166,12 +142,6 @@ impl Launcher {
             sheet_tab: Default::default(),
             look: sunrise_theme::glass::Glass::default_look(),
             menu_closed_at: None,
-            wardrobe: None,
-            wardrobe_marks: Default::default(),
-            wardrobe_reload: false,
-            shop: Default::default(),
-            shop_status: None,
-            shop_kept: None,
             // The first draw takes the launcher theme from Settings.
             restyle: true,
             background_error: None,
@@ -234,7 +204,6 @@ impl Launcher {
             collection: collection::Collection::load(),
             agents: agents_page::AgentsUi::default(),
             playing: None,
-            official_players: None,
             tx,
             rx,
             _appearance: appearance,
@@ -318,7 +287,6 @@ impl Launcher {
         this.fetch_startup_releases();
         this.mods_auto_update();
         this.fetch_links();
-        this.watch_shop(cx);
         if home::getting_ready_preview() {
             this.preparing = true;
             this.play_when_prepared = this
@@ -342,19 +310,10 @@ impl Launcher {
             this.sheet_tab = glass_sheet::SheetTab::from_env().unwrap_or_default();
             this.open_instance_dialog(this.selected_instance().cloned());
         }
-        if cfg!(debug_assertions)
-            && matches!(
-                std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref(),
-                Ok("wardrobe" | "shop")
-            )
-        {
-            this.wardrobe_preview();
-        }
         // What the game and the launcher kept, if the player allows it and there is a server.
         this.mod_preview_from_env();
         telemetry::send_in_background();
         telemetry::watch_playing(this.tx.clone());
-        telemetry::watch_official(this.tx.clone());
         this
     }
 
@@ -427,7 +386,6 @@ impl Launcher {
         }
         self.storage_counting = None;
         self.storage_visit += 1;
-        self.wardrobe_reload |= matches!(page, Page::Wardrobe | Page::Shop);
         // The glass look's Settings is a dialog over the page: opening or closing it keeps the
         // page under it as it was (its scroll, no fade).
         let dialog = self.theme.glass

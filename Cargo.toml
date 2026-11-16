@@ -56,10 +56,8 @@ sunrise-theme = { path = "../crates/sunrise-theme" }
 # The sunset scene, painted skies, rain and frosted glass (`scenery/`).
 sunrise-launcher-scenery = { path = "scenery" }
 # The engine, through the platform's public API (docs/layers.md): the pinned version, No AI, the preparer,
-# level.dat and servers.dat (the worlds and server lists of instances), and the official server's SRV record.
+# level.dat and servers.dat (the worlds and server lists of instances), and servers' SRV records.
 sunrise-platform = { path = "../crates/sunrise-platform", features = ["prepare", "protocol", "world", "mod-build"] }
-sunrise-cosmetics = { path = "../crates/sunrise-cosmetics" }
-glam = "0.30"
 # `sunrise-launcher mcp`: the Model Context Protocol, shared with sunrise-ctl and sunrise-server.
 sunrise-mcp = { path = "../crates/sunrise-mcp" }
 # Join a friend: invite codes (the game does the joining).

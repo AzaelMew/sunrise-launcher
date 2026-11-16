@@ -1629,7 +1629,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     ("Roadmap", &links.roadmap),
                     ("Documentation", &links.docs),
                     ("Discord", &links.discord),
-                    ("Sponsor", &links.sponsor),
                 ] {
                     println!("{name:<8} {}", if url.is_empty() { "(none)" } else { url });
                 }

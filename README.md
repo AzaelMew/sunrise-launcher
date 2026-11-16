@@ -263,7 +263,7 @@ The opening, then Play ([clip](docs/opening.webm)):
   keeping every field the launcher doesn't show and the servers joined with Direct Connection. The
   same from the command line: `sunrise-launcher multiplayer [list|add|remove] [--instance <name>]`
   and `sunrise-launcher play --server <address or name>`.
-- **Patch notes**: each release's notes, newest first, with a link to GitHub Sponsors. Quiet "Sponsor", "Discord" and "Website" links sit in the sidebar footer.
+- **Patch notes**: each release's notes, newest first. Quiet "Discord" and "Website" links sit in the sidebar footer.
 
 Data lives in the platform's data directory (`~/.local/share/sunrise-launcher` on Linux,
 `~/Library/Application Support/sunrise-launcher` on macOS, `%APPDATA%\sunrise-launcher` on
@@ -319,8 +319,8 @@ page `servers.json` (the list), `servers/<name>/` (the servers created there) an
   Without one, `HTTPS_PROXY` and `HTTP_PROXY` are used when the launcher is started with them, and
   `NO_PROXY` names the hosts to reach directly, a modpack import's jars included. A server on this
   computer never goes through it.
-- **Links**: the Discord invite, the Sponsors page and the website come from `launcher/links.json` on main
-  (`{"discord": "...", "sponsor": "...", "website": "..."}`), so they change without a launcher release. Offline,
+- **Links**: the Discord invite and the website come from `launcher/links.json` on main
+  (`{"discord": "...", "website": "..."}`), so they change without a launcher release. Offline,
   the launcher uses the same values built in; an empty address hides its button.
 
 Long pages, dialogs, the server console and data previews have a visible scrollbar when
@@ -429,7 +429,7 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher play [--version <tag>] [--instance <name>] [--arg <ARG>]...   start the client; --arg passes an extra argument through (repeatable)
     sunrise-launcher server [--dir <dir>] [--version <tag>] [--accept-eula]
     sunrise-launcher notes [<tag>]                  patch notes as plain text
-    sunrise-launcher links                          the Discord, sponsor and website links
+    sunrise-launcher links                          the Discord and website links
     sunrise-launcher game-args [<line>]             show or set the extra arguments the game starts with
     sunrise-launcher update [--check]               Sunrise and the launcher
     sunrise-launcher logs [--lines N] [--crash]     the end of the game's log, or its newest crash report

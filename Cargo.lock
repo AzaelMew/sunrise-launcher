@@ -6127,19 +6127,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sunrise-cosmetics"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "glam",
- "png 0.18.1",
- "serde",
- "serde_json",
- "sunrise-addresses",
- "ureq",
-]
-
-[[package]]
 name = "sunrise-friends"
 version = "0.1.0"
 dependencies = [
@@ -6197,7 +6184,6 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "getrandom 0.3.4",
- "glam",
  "gpui-fast",
  "gpui-fast-platform",
  "httpdate",
@@ -6221,7 +6207,6 @@ dependencies = [
  "sha2",
  "sunrise-addresses",
  "sunrise-core",
- "sunrise-cosmetics",
  "sunrise-friends",
  "sunrise-launcher-scenery",
  "sunrise-mcp",

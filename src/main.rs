@@ -73,7 +73,6 @@ mod native_registry_consent;
 mod new_instance;
 mod owner_page;
 mod packs_page;
-mod partner;
 mod perf;
 mod picture_cache;
 mod plate;
@@ -91,7 +90,6 @@ mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
-mod wardrobe_page;
 mod welcome;
 mod while_playing;
 mod window_root;
@@ -129,11 +127,6 @@ enum Page {
     /// Mods, resource packs and modpacks (imported ones and the browser's).
     Mods,
     Servers,
-    /// What the player wears (`wardrobe_page.rs`), with the cosmetics flag on.
-    Wardrobe,
-    /// Cosmetics to try on and buy (`wardrobe_page/shop.rs`), beside the Wardrobe and under the
-    /// same rule. A plain tab: no badge, and it never opens by itself.
-    Shop,
     Settings,
 }
 
@@ -147,8 +140,6 @@ impl Page {
         let page = match std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() {
             Ok("mods" | "modpacks" | "resourcepacks" | "shaders" | "datapacks") => Page::Mods,
             Ok("servers") => Page::Servers,
-            Ok("wardrobe") if sunrise_cosmetics::forced() => Page::Wardrobe,
-            Ok("shop") if sunrise_cosmetics::forced() => Page::Shop,
             Ok("versions") => Page::Versions,
             Ok("settings") => Page::Settings,
             _ => Page::Play,
@@ -163,24 +154,19 @@ impl Page {
 
     /// Every page, with its name and icon: the top bar shows all but Settings, which has its
     /// own button.
-    const ALL: [(Page, &'static str, &'static str); 7] = [
+    const ALL: [(Page, &'static str, &'static str); 5] = [
         (Page::Play, "Home", "home"),
         (Page::Mods, "Mods", "package"),
         (Page::Servers, "Servers", "server"),
-        (Page::Wardrobe, "Wardrobe", "user"),
-        (Page::Shop, "Shop", "bag"),
         (Page::Versions, "Versions", "archive"),
         (Page::Settings, "Settings", "sliders"),
     ];
 
-    /// The pages the top bar shows: all but Settings, and the Wardrobe and the Shop only when
-    /// `wardrobe` (`Launcher::wardrobe_shown`).
-    fn in_top_bar(wardrobe: bool) -> impl Iterator<Item = (Page, &'static str, &'static str)> {
-        Self::ALL.into_iter().filter(move |(page, ..)| match page {
-            Page::Settings => false,
-            Page::Wardrobe | Page::Shop => wardrobe,
-            _ => true,
-        })
+    /// The pages the top bar shows: all but Settings.
+    fn in_top_bar() -> impl Iterator<Item = (Page, &'static str, &'static str)> {
+        Self::ALL
+            .into_iter()
+            .filter(|(page, ..)| *page != Page::Settings)
     }
 }
 
@@ -377,20 +363,6 @@ struct Launcher {
     /// Where the mouse went down to close a menu by pressing outside it, so that the
     /// same press, ending on the menu's own button, doesn't open it again.
     menu_closed_at: Option<Point<Pixels>>,
-    /// The Wardrobe page's account and outfit (`wardrobe_page.rs`).
-    wardrobe: Option<wardrobe_page::Wardrobe>,
-    /// Name tag styles' marks; they outlive the account's `wardrobe`.
-    wardrobe_marks: wardrobe_page::Marks,
-    /// Ask the service again on the next draw of the Wardrobe (set by each visit).
-    wardrobe_reload: bool,
-    /// The Shop page's basket and choices (`wardrobe_page/shop.rs`).
-    shop: wardrobe_page::Shop,
-    /// The cosmetics service's last word on the founder set's window (`GET /v1/shop`): whether
-    /// the top bar has the Wardrobe page with cosmetics off (`wardrobe_shown`).
-    shop_status: Option<sunrise_launcher::wardrobe::Claim>,
-    /// The selected account's own answer on it from its last Wardrobe visit, kept on disk (a
-    /// preview the service grants it, its claim).
-    shop_kept: Option<sunrise_launcher::wardrobe::Claim>,
     /// Work the look out again on the next frame (a launcher theme put on or taken off).
     restyle: bool,
     /// Why the last picture for Home's background was refused.
@@ -402,7 +374,7 @@ struct Launcher {
     settings: Settings,
     /// The last failed settings write, kept across page changes until a save succeeds.
     settings_save_error: Option<String>,
-    /// The Discord, sponsor and website links: built in until links.json on main has been read.
+    /// The Discord and website links: built in until links.json on main has been read.
     links: backend::Links,
     preparing: bool,
     prepare_log: VecDeque<String>,
@@ -484,8 +456,6 @@ struct Launcher {
     agents: agents_page::AgentsUi,
     /// How many play Sunrise now, while the server answers ("N playing now" on the Play page).
     playing: Option<u64>,
-    /// How many play on the official server now, while it answers ("M on the official SMP").
-    official_players: Option<u64>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     _appearance: Subscription,

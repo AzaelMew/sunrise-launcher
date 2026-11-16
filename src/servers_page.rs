@@ -77,10 +77,6 @@ pub(super) enum Field {
     DeleteServer,
     /// Settings' accent as hex (`themes_page.rs`).
     AccentHex,
-    /// The Shop's gift recipient (`wardrobe_page/shop/basket.rs`).
-    ShopGift,
-    /// The Wardrobe's search through what the player owns (`wardrobe_page.rs`).
-    WardrobeSearch,
     /// A Java instance's own JVM arguments and window size (the instance sheet's Launch).
     JavaArgs,
     WindowWidth,
@@ -1053,7 +1049,6 @@ impl Launcher {
                         f,
                         Field::InstanceModsFilter
                             | Field::ConsoleSearch
-                            | Field::WardrobeSearch
                             | Field::Motd
                             | Field::Port
                             | Field::Token
@@ -1110,7 +1105,6 @@ impl Launcher {
                             f,
                             Field::InstanceModsFilter
                                 | Field::ConsoleSearch
-                                | Field::WardrobeSearch
                                 | Field::AccentHex
                                 | Field::Motd
                                 | Field::Port
@@ -1244,7 +1238,6 @@ impl Launcher {
             | Field::InstanceVersion
             | Field::InstanceModsFilter
             | Field::ConsoleSearch
-            | Field::WardrobeSearch
             | Field::JavaArgs
             | Field::WindowWidth
             | Field::WindowHeight
@@ -1254,7 +1247,6 @@ impl Launcher {
                 self.save_launch()
             }
             Field::MemoryLimit => self.memory_enter(),
-            Field::ShopGift => self.shop.find_soon = true,
             Field::ServerName | Field::ServerAddress => self.add_server(),
         }
     }
@@ -1410,35 +1402,12 @@ impl Launcher {
         {
             page = page.child(self.problem_notice(p, cx));
         }
-        // The banner, with a "Hide" once it has been on screen a while: hiding it hides the
-        // sidebar's card too, for good. Nothing at all once hidden.
-        let partner =
-            (!self.settings.partner_hidden && !super::partner::URL.is_empty()).then(|| {
-                let mut slot = div().relative().w(px(600.)).child(super::partner::banner(
-                    "partner-servers",
-                    600.,
-                    &t,
-                ));
-                if self.settings.partner_seen_secs >= super::partner::SEEN_BEFORE_HIDE {
-                    slot = slot.child(
-                        super::partner::hide_button("partner-servers-hide", &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.settings.partner_hidden = true;
-                                this.save_settings();
-                                cx.notify();
-                            }),
-                        ),
-                    );
-                }
-                slot
-            });
         if self.servers.list.is_empty() {
             return page
                 .child(centered(
                     tr("No server yet. Create one: it takes a few seconds, and with the defaults (accept Minecraft's terms, press Create) you get a friends-only survival world."),
                     &t,
-                ))
-                .children(partner);
+                ));
         }
         let mut list = div().flex().flex_col().border_t_1().border_color(t.rule);
         for (i, e) in self.servers.list.clone().into_iter().enumerate() {
@@ -1484,7 +1453,7 @@ impl Launcher {
                 &t,
             ));
         }
-        page.child(list).children(partner)
+        page.child(list)
     }
 
     fn add_server_folder(&mut self, cx: &mut Context<Self>) {

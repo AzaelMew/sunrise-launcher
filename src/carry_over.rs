@@ -8,8 +8,8 @@ use std::path::Path;
 
 /// What a launcher folder holds that is the player's: settings, accounts (with the secrets file
 /// of a computer without a keychain), the instances' names and icons, the servers made in the
-/// launcher and the wardrobe. Game builds, downloads, caches and logs are made again.
-const LAUNCHER_STATE: [&str; 8] = [
+/// launcher. Game builds, downloads, caches and logs are made again.
+const LAUNCHER_STATE: [&str; 7] = [
     "settings.json",
     "accounts.json",
     crate::account::SECRETS_FILE,
@@ -17,7 +17,6 @@ const LAUNCHER_STATE: [&str; 8] = [
     "instances.json",
     "servers.json",
     "servers",
-    "wardrobe",
 ];
 
 /// Runs [`carry_over`] on the player's folders before anything reads them, unless a home
