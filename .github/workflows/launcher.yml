@@ -7,7 +7,7 @@ name: launcher
 # launcher-vX.Y.Z, the patch after the last launcher tag or the next minor when a merged pull request is labelled
 # feature. The version and the tag are given to the build (SUNRISE_LAUNCHER_VERSION, SUNRISE_LAUNCHER_TAG): no bump
 # commits.
-# Never marked latest. Pushes to launcher branches only build. RELEASES_PAUSED=1 stops releases.
+# A pre-release, never marked latest. Pushes to launcher branches only build. RELEASES_PAUSED=1 stops releases.
 # Linux ships two archives of one binary: the .tar.gz the launcher updates itself from, and an
 # AppImage (packaging/linux/appimage.sh) for players without a distribution package, which replaces
 # itself instead (launcher/src/backend.rs).
@@ -432,7 +432,7 @@ jobs:
         run: |
           key=(); [[ -n "$EPHEMERAL" ]] && key=(--key "$(cat dist/ephemeral.pub)")
           cargo run --locked --quiet -p sunrise-release-sign -- verify --repository "$GITHUB_REPOSITORY" --tag "$TAG" --publishing "${key[@]}" dist
-      # Never marked latest: Sunrise's own releases stay the repository's latest.
+      # A pre-release, never marked latest: Sunrise's own releases stay the repository's latest.
       - name: The Windows ARM64 launcher, if it built
         if: github.repository != 'sunrise-org/sunrise'
         # Its build may fail without holding the release (continue-on-error): the release then has no ARM64
@@ -449,7 +449,7 @@ jobs:
         run: |
           signature=(); [[ -f dist/SHA256SUMS.sig ]] && signature=(dist/SHA256SUMS.sig)
           gh release create "$TAG" --target "${{ needs.decide.outputs.head }}" --title "$(cat notes/title.txt)" \
-            --notes-file notes/body.md --latest=false dist/"$LAUNCHER_PREFIX"-* dist/SHA256SUMS "${signature[@]}"
+            --notes-file notes/body.md --prerelease --latest=false dist/"$LAUNCHER_PREFIX"-* dist/SHA256SUMS "${signature[@]}"
       - name: Dry run, the release that would be published
         if: needs.decide.outputs.dry_run == 'true'
         run: |
