@@ -169,7 +169,7 @@ impl Launcher {
             .h_full()
             .p(px(28.))
             .overflow_y_scroll()
-            .rounded_l(px(radius::MODAL))
+            .rounded_l(px(ui::rad(radius::MODAL)))
             .bg(white(0.035))
             .child(ui::text(13., FontWeight::MEDIUM, ink::QUIET).child(tr("New server")))
             .child(
@@ -852,7 +852,7 @@ impl Launcher {
             .gap(px(16.))
             .px(px(36.))
             .py(px(20.))
-            .rounded_br(px(radius::MODAL))
+            .rounded_br(px(ui::rad(radius::MODAL)))
             .bg(white(0.03))
             .child(
                 div()

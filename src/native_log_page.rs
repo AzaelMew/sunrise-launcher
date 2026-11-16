@@ -308,7 +308,7 @@ impl Launcher {
                         .min_h_0()
                         .overflow_scroll()
                         .p(px(12.))
-                        .rounded(px(radius::CONTROL))
+                        .rounded(px(ui::rad(radius::CONTROL)))
                         .border_1()
                         .border_color(white(ui::edge::STRONG))
                         .bg(gpui::black().opacity(0.25))

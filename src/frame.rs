@@ -49,7 +49,7 @@ impl Launcher {
         if let Some(picture) = self.instance_picture(i, size) {
             return instance_icons::centred(picture, size, self.scale).into_any_element();
         }
-        let r = px((size * 0.26).round());
+        let r = px(ui::rad((size * 0.26).round()).min(size / 2.));
         let mut colour = self.look.accent;
         match &i.icon {
             Some(Icon::Colour(hex)) => {

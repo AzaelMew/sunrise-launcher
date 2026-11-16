@@ -1300,7 +1300,11 @@ impl Launcher {
             .flex()
             .flex_col()
             .size(px(size))
-            .rounded(px(if self.theme.glass { size / 4. } else { 3. }))
+            .rounded(px(if self.theme.glass {
+                crate::glass_ui::rad(size / 4.).min(size / 2.)
+            } else {
+                3.
+            }))
             .overflow_hidden()
             .bg(self.theme.plate);
         if let Some(pixels) = face {
