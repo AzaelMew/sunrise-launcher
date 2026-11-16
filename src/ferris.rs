@@ -142,8 +142,8 @@ impl Act {
 #[derive(Clone, Copy)]
 pub(crate) struct Ferris {
     pub(crate) at: f32,
-    /// The act playing, when it began, and where a scuttle goes (for a wave, under a half his
-    /// left arm, else his right).
+    /// The act playing, when it began, and where a scuttle goes (for a wave, by thirds: his left
+    /// arm, his right, or both).
     pub(crate) act: Option<(Act, Instant, f32)>,
     /// His idle loop's step.
     pub(crate) tick: u32,
@@ -205,11 +205,16 @@ impl Ferris {
                     };
                 }
                 Act::Hop => lift = HOP * 4. * t * (1. - t),
-                // One arm up beside his head, its claw swaying open and shut.
-                // The left arm only where there is room for it before the page's edge.
+                // An arm up beside his head, or both, its claw swaying open and shut: a third of
+                // his waves each, the left only where the page's edge leaves it room.
                 Act::Wave if t < 1. => {
-                    let left = to < 0.5 && x >= REACH * texel;
-                    wave = Some((left, ((t * 10.) as u32) % 2 == 1))
+                    let room = x >= REACH * texel;
+                    let (left, right) = match to {
+                        to if to < 1. / 3. && room => (true, false),
+                        to if to >= 2. / 3. && room => (true, true),
+                        _ => (false, true),
+                    };
+                    wave = Some((left, right, ((t * 10.) as u32) % 2 == 1))
                 }
                 Act::Wave => {}
             }
@@ -255,11 +260,9 @@ impl Ferris {
                             && PINCERS.iter().any(|&(a, b)| (a..=b).contains(&col));
                         // The waving arm is drawn raised below, so its lowered self goes.
                         let lowered = ARM_ROWS.contains(&row)
-                            && match wave {
-                                Some((true, _)) => col < ARM_COLS,
-                                Some((false, _)) => col >= COLS - ARM_COLS,
-                                None => false,
-                            };
+                            && wave.is_some_and(|(left, right, _)| {
+                                (left && col < ARM_COLS) || (right && col >= COLS - ARM_COLS)
+                            });
                         if lowered {
                             continue;
                         }
@@ -280,10 +283,17 @@ impl Ferris {
                         }
                     }
                 }
-                if let Some((left, shut)) = wave {
+                if let Some((left, right, shut)) = wave {
                     let claw: &[(i32, i32)] = if shut { &CLAW_SHUT } else { &CLAW_OPEN };
-                    for &(col, row) in RAISED.iter().chain(claw) {
-                        let col = if left { col } else { COLS as i32 - 1 - col };
+                    let arms = RAISED.iter().chain(claw);
+                    // The right arm is the left mirrored.
+                    let sides = arms.flat_map(|&(col, row)| {
+                        [(left, col), (right, COLS as i32 - 1 - col)]
+                            .into_iter()
+                            .filter(|&(on, _)| on)
+                            .map(move |(_, col)| (col, row))
+                    });
+                    for (col, row) in sides {
                         let up = if breath && row < CHEST as i32 {
                             texel
                         } else {
