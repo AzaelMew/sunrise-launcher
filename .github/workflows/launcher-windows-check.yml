@@ -1,8 +1,8 @@
 name: launcher-windows-check
-# The launcher's tests on Windows x64, for pull requests that change it. Nothing is published: the release workflow
-# (launcher.yml) stays off. GitHub-hosted, so it needs no runner of ours. The runtime-leases and launcher-processes
-# jobs start child processes, so they run in the daily run (daily.yml calls this workflow with a commit) and by
-# dispatch, never on pushes or pull requests (CI tiers, owner 2026-11-13).
+# The launcher's tests on Windows x64, in the daily run (daily.yml calls this workflow with a commit) and by dispatch.
+# Nothing is published: the release workflow (launcher.yml) stays off. Windows needs GitHub's runners, and the gate
+# never waits on them (root, 2026-11-16), so no push, pull request, rollup or sync starts it; a Windows red becomes a
+# daily issue like any other leg's.
 on:
   workflow_call:
     inputs:
@@ -10,62 +10,20 @@ on:
         description: The commit to check (the daily run's)
         type: string
         default: ''
-  # Main pushes publish the cache that pull requests restore (pull requests never save one).
-  push:
-    branches: [main]
-    paths:
-      - 'launcher/**'
-      - 'crates/sunrise-server-files/**'
-      - 'crates/sunrise-java-properties/**'
-      - 'crates/sunrise-client/src/carrier_store.rs'
-      - 'crates/sunrise-client/src/carrier_store_tests.rs'
-      - '.github/workflows/launcher-windows-check.yml'
-  pull_request:
-    paths:
-      - 'launcher/**'
-      - 'crates/sunrise-mod-package/**'
-      - 'crates/sunrise-server-files/**'
-      - 'crates/sunrise-java-properties/**'
-      - 'crates/sunrise-client/src/carrier_store.rs'
-      - 'crates/sunrise-client/src/carrier_store_tests.rs'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - '.github/workflows/launcher-windows-check.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# Finish running main checks; keep only the newest pending push. Obsolete PR runs still cancel.
 concurrency:
-  # Each main push runs at once, beside any other (it publishes nothing that needs an order).
   # A daily run's call is grouped by that run.
-  group: launcher-windows-check-${{ github.event.pull_request.number || inputs.commit && github.run_id || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: launcher-windows-check-${{ inputs.commit && github.run_id || github.sha }}
+  cancel-in-progress: false
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
-    outputs:
-      heavy: ${{ steps.gate.outputs.heavy }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - name: Heavy checks for this event
-        id: gate
-        env:
-          EVENT: ${{ github.event_name }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: python3 tools/ci/pr_gate.py >> "$GITHUB_OUTPUT"
-
   test:
-    # Only same-repository rollups and syncs compile on PR events; main and dispatch stay unchanged. The daily run's
-    # call runs runtime-leases only.
-    needs: gate
-    if: inputs.commit == '' && needs.gate.outputs.heavy == 'true'
+    # The daily run's call (it passes a commit) and a hand dispatch.
+    if: inputs.commit != '' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 40
     defaults:
@@ -76,6 +34,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          ref: ${{ inputs.commit }}
       - name: The pinned Rust (tools/ci/rust-version)
         id: rust
         shell: bash
@@ -90,7 +49,7 @@ jobs:
         with:
           workspaces: launcher
           shared-key: launcher-windows-check
-          # One cache from main, read by every pull request: per-PR caches filled the 10 GB budget and evicted main's.
+          # One cache, from main's daily run.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Debug builds: no launcher test depends on a release-only path (cfg!(debug_assertions) gates only the
       # self-update switch and development overrides, which no test reaches), and debug adds overflow checks.
