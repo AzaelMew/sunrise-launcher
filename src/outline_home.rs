@@ -21,7 +21,7 @@ const ARC: f32 = 620.;
 /// The Rust logo standing in for the title's r: its size, and how far above the line's foot it
 /// sits so it stands on the baseline.
 const RUST_R: f32 = 62.;
-const RUST_R_DROP: f32 = 18.;
+const RUST_R_DROP: f32 = 9.;
 
 impl Launcher {
     /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
@@ -275,14 +275,16 @@ impl Launcher {
     }
 }
 
-/// The Rust logo in white (`assets/logos/rust.svg`), sized and set on the title's baseline where
-/// it stands in for Sunrise's r.
+/// The Rust logo in white, sized and set on the title's baseline where it stands in for Sunrise's
+/// r. It is `assets/logos/rust.png`, rendered from `rust.svg` beside it as one flat layer (GPUI
+/// draws the SVG's R and gear apart, with seams between them):
+/// `magick -background none -density 174 rust.svg -resize 256x256 PNG32:rust.png`.
 fn rust_logo() -> gpui::Img {
     static LOGO: std::sync::OnceLock<std::sync::Arc<gpui::Image>> = std::sync::OnceLock::new();
     let logo = LOGO.get_or_init(|| {
         std::sync::Arc::new(gpui::Image::from_bytes(
-            gpui::ImageFormat::Svg,
-            include_bytes!("../assets/logos/rust.svg").to_vec(),
+            gpui::ImageFormat::Png,
+            include_bytes!("../assets/logos/rust.png").to_vec(),
         ))
     });
     gpui::img(logo.clone())

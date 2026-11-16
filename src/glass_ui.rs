@@ -358,7 +358,7 @@ fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement
 }
 
 /// The side of one texel in a [`pixel_fill`].
-const TEXEL: f32 = 4.;
+pub(crate) const TEXEL: f32 = 4.;
 
 /// How far a texel's lightness strays from its fill: on a coloured button, and on a sidebar,
 /// where it stays well under the rows.
@@ -370,8 +370,7 @@ pub const TEXTURE_QUIET: f32 = 0.009;
 /// a near-black sidebar shows them too. Put it first in a `relative` element, so its content is
 /// drawn over it.
 pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
-    let shade = move |d: f32| gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a);
-    let shades = [shade(step), shade(-step), shade(1.75 * step)];
+    let shades = texel_shades(c, step);
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
@@ -471,8 +470,7 @@ fn grain_tile(c: Hsla, step: f32, scale: f32) -> Arc<gpui::RenderImage> {
         let rgba = gpui::Rgba::from(h);
         [rgba.r, rgba.g, rgba.b, rgba.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8)
     };
-    let shade = |d: f32| bytes(gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a));
-    let shades = [shade(step), shade(-step), shade(1.75 * step)];
+    let shades = texel_shades(c, step).map(bytes);
     let base = bytes(c);
     let texels: Vec<[u8; 4]> = (0..GRAIN_TILE * GRAIN_TILE)
         .map(|i| {
@@ -488,8 +486,45 @@ fn grain_tile(c: Hsla, step: f32, scale: f32) -> Arc<gpui::RenderImage> {
     tile
 }
 
+thread_local! {
+    /// Each fold chevron's last state (open or not) and how often it has changed, so it turns
+    /// only when its menu opens or closes, never as a page is first drawn.
+    static FOLDS: RefCell<HashMap<&'static str, (bool, usize)>> = RefCell::new(HashMap::new());
+}
+
+/// A menu's chevron: pointing down while it is closed, turning up on the spring while it opens,
+/// and back down as it closes. `id` names it among the others.
+pub fn fold_chevron(id: &'static str, open: bool, size: f32, ink: Hsla) -> AnyElement {
+    let turns = FOLDS.with_borrow_mut(|folds| {
+        let (was, turns) = folds.entry(id).or_insert((open, 0));
+        if *was != open {
+            *was = open;
+            *turns += 1;
+        }
+        *turns
+    });
+    let at = move |up: f32| gpui::Transformation::rotate(gpui::radians(std::f32::consts::PI * up));
+    let chevron = icon("arrow-down-01", size, ink);
+    if turns == 0 {
+        return chevron.with_transformation(at(0.)).into_any_element();
+    }
+    chevron
+        .with_animation(
+            ElementId::named_usize(id, turns),
+            crate::motion::eased(crate::motion::POP),
+            move |d, t| d.with_transformation(at(if open { t } else { 1. - t })),
+        )
+        .into_any_element()
+}
+
+/// The texture's three shades of `c`, `step` of lightness off it.
+pub(crate) fn texel_shades(c: Hsla, step: f32) -> [Hsla; 3] {
+    let shade = move |d: f32| gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a);
+    [shade(step), shade(-step), shade(1.75 * step)]
+}
+
 /// A fixed scramble of a texel's place.
-fn texel_noise(x: u32, y: u32) -> u32 {
+pub(crate) fn texel_noise(x: u32, y: u32) -> u32 {
     let mut n = x.wrapping_mul(0x9e37_79b1) ^ y.wrapping_mul(0x85eb_ca77);
     n ^= n >> 15;
     n = n.wrapping_mul(0x2c1b_3c6d);

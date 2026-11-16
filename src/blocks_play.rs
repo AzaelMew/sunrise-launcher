@@ -399,9 +399,9 @@ impl Launcher {
             page = page.child(self.crash_notice(crash, cx));
         }
         page = if t.glass {
-            // What Play still needs (and an open export or launch panel); the sections are on the
-            // first screen's rail.
-            page.child(rows)
+            // A Java instance's Game row; the sections are on the first screen's rail. Nothing
+            // else follows the first screen, so Home fits the window and never scrolls.
+            page.children(java.is_some().then_some(rows))
         } else {
             page.child(self.home_tabs(rows, cx))
         };

@@ -195,7 +195,12 @@ impl Render for Launcher {
                             } else {
                                 28.
                             }))
-                            .pb(px(48.))
+                            // Home's first screen fills the window and never scrolls.
+                            .pb(px(if self.page == Page::Play && t.glass {
+                                0.
+                            } else {
+                                48.
+                            }))
                             .child(content),
                     ),
                 &t,

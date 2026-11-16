@@ -165,7 +165,7 @@ impl Launcher {
             .border_l_1()
             .border_color(gpui::black().opacity(0.2))
             .when(!open, |d| d.opacity(0.85).hover(|s| s.opacity(1.)))
-            .child(ui::icon("more-horizontal", 20., glyph))
+            .child(ui::fold_chevron("play-more", open, 20., glyph))
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if !this.closed_by_this_press(event) {
@@ -504,7 +504,12 @@ impl Launcher {
         };
         let more = cell("folder-more")
             .when(open, |d| d.bg(white(fill::SELECTED)))
-            .child(ui::icon("more-horizontal", 20., white(ink::STRONG)))
+            .child(ui::fold_chevron(
+                "folder-more",
+                open,
+                20.,
+                white(ink::STRONG),
+            ))
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 if !this.closed_by_this_press(event) {
                     this.home_menu = match this.home_menu {
