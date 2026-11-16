@@ -18,6 +18,11 @@ const HERO_WIDTH: f32 = 412.;
 const COLUMN: f32 = 168.;
 /// The faint arc around the left column line's top.
 const ARC: f32 = 620.;
+/// Home's background logo: px to a unit of its 16-unit grid, its white (a silhouette: the mark's
+/// colours turn muddy this faint on the dark page), and how far it rises once the page scrolls.
+const LOGO_UNIT: f32 = 16.;
+const LOGO_INK: f32 = 0.05;
+const LOGO_RISE: f32 = 28.;
 
 impl Launcher {
     /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
@@ -132,7 +137,7 @@ impl Launcher {
 
     /// The first screen's separator lines, part of the page so they scroll with it: the floor,
     /// and where the window has room beside the hero, a column line near each edge and a faint
-    /// arc around the left one's top.
+    /// arc around the left one's top. The logo stands faint on the floor under the hero.
     fn home_lines(&self) -> Div {
         let wide = self.home_wide();
         let column = |right: bool| {
@@ -178,6 +183,39 @@ impl Launcher {
                 .child(column(false))
                 .child(column(true))
             })
+            .child(self.home_logo())
+    }
+
+    /// The logo, large and faint on the first screen's floor, centred like the hero. Scrolling down
+    /// eases it up [`LOGO_RISE`] px; back at the top it settles again.
+    fn home_logo(&self) -> Div {
+        let logo = crate::widgets::sunrise_glyph(LOGO_UNIT, Some(white(LOGO_INK)));
+        let logo = match self.home_logo_raised {
+            None => logo.into_any_element(),
+            Some(up) => logo
+                .with_animation(
+                    SharedString::from(format!("home-logo-{up}")),
+                    crate::motion::eased(crate::motion::PAGE),
+                    move |d, t| {
+                        let raised = if up { t } else { 1. - t };
+                        d.top(px(-LOGO_RISE * raised))
+                    },
+                )
+                .into_any_element(),
+        };
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(1.))
+            .flex()
+            .justify_center()
+            .child(
+                div()
+                    .relative()
+                    .right(px(self.outline_centre_shift()))
+                    .child(logo),
+            )
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,

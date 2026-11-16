@@ -214,6 +214,7 @@ impl Launcher {
             download_seen: None,
             home_tab: home_tabs::HomeTab::from_env(),
             home_panel: home_tabs::HomeTab::from_env() != home_tabs::HomeTab::Overview,
+            home_logo_raised: None,
             home_menu: Default::default(),
             list_hover: None,
             list_menu: None,

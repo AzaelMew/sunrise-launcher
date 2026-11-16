@@ -186,12 +186,12 @@ pub(crate) fn mark(size: f32) -> Div {
         .flex_none()
         .items_center()
         .size(px(size))
-        .child(sunrise_glyph(unit))
+        .child(sunrise_glyph(unit, None))
 }
 
 /// The mark's pixels alone, `unit` px to a grid unit: 16 units wide and 11 tall, from the top
-/// ray to the horizon's foot.
-pub(crate) fn sunrise_glyph(unit: f32) -> Div {
+/// ray to the horizon's foot. In its own colours, or all in `ink` as a silhouette.
+pub(crate) fn sunrise_glyph(unit: f32, ink: Option<Hsla>) -> Div {
     const RAYS: u32 = 0xffe39a;
     const SUN: u32 = 0xffcf5c;
     const SUN_LOW: u32 = 0xffb48a;
@@ -207,7 +207,7 @@ pub(crate) fn sunrise_glyph(unit: f32) -> Div {
             .top(px(y0))
             .w(px(x1 - x0))
             .h(px(y1 - y0))
-            .bg(gpui::rgb(colour))
+            .bg(ink.unwrap_or_else(|| gpui::rgb(colour).into()))
     };
     div()
         .relative()
