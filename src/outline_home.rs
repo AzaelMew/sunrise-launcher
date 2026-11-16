@@ -1,6 +1,8 @@
 //! The Outline look's Home (`docs/design-system.md`, "Outline"; Figma: Explorations → Home): the
 //! edition, the instance's name, the tagline, Play and the folder, the version and the invite code
-//! centred on the window, over the Sunny panel's banded sunrise, which fills the rest of the page.
+//! centred on the window. The name stands in a framed card of the Sunny panel's sunrise: the night
+//! sky over it, the hard bands and the pixel sun under it. Play and the rest sit on the plain page
+//! below the card.
 use super::*;
 use crate::glass_ui::{self as ui, mono, white};
 use sunrise_theme::glass::{fill, ink};
@@ -13,8 +15,13 @@ const PAGE_FOOT: f32 = 48.;
 const FIRST_SCREEN_MIN: f32 = 560.;
 /// Play and the folder side by side: the hero's widest row.
 const HERO_WIDTH: f32 = 412.;
-/// The sky under the hero never squeezes shorter than this.
-const SKY_MIN: f32 = 200.;
+/// The hero card at its widest, and the height of its banded sky.
+const CARD_MAX: f32 = 880.;
+const CARD_SKY: f32 = 200.;
+/// The night above the bands, where the card's name stands.
+const SKY_NIGHT: u32 = 0x0c1030;
+/// The card's 1 px edge (the panel's stroke).
+const CARD_EDGE: u32 = 0x2c3250;
 /// The sky's bands as the Sunny panel draws them, top down: each colour and where it ends, as a
 /// share of the sky's height. Hard edges, no blending.
 const SKY: [(u32, f32); 5] = [
@@ -71,18 +78,18 @@ impl Launcher {
             .map(|i| i.name.clone())
             .unwrap_or_default();
         let title = div()
-            .pt(px(20.))
+            .pt(px(16.))
             .max_w_full()
             .truncate()
             .font_family(sunrise_theme::glass::DISPLAY_FONT)
-            .font_weight(FontWeight::BOLD)
-            .text_size(px(88.))
-            .line_height(px(92.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_size(px(64.))
+            .line_height(px(68.))
             .text_color(white(ink::FULL))
             .child(name);
         let tagline = java.is_none().then(|| {
-            ui::text(18., FontWeight::NORMAL, ink::NOTE)
-                .pt(px(8.))
+            ui::text(16., FontWeight::NORMAL, ink::NOTE)
+                .pt(px(6.))
                 .child(tr("Minecraft. Rewritten in Rust."))
         });
         let actions = div()
@@ -92,6 +99,28 @@ impl Launcher {
             .gap(px(8.))
             .child(self.play_group(tag, prepared || java.is_some(), cx))
             .children(self.folder_group(java.is_none(), cx));
+        let night = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .min_w_0()
+            .pt(px(36.))
+            .pb(px(32.))
+            .px(px(24.))
+            .bg(gpui::rgb(SKY_NIGHT))
+            .child(self.edition_tabs(java.is_some(), cx))
+            .child(title)
+            .children(tagline);
+        let card = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .max_w(px(CARD_MAX))
+            .border_1()
+            .border_color(gpui::rgb(CARD_EDGE))
+            .overflow_hidden()
+            .child(night)
+            .child(home_sky());
         let hero = div()
             .relative()
             .right(px(self.outline_centre_shift()))
@@ -99,10 +128,8 @@ impl Launcher {
             .flex_col()
             .items_center()
             .min_w_0()
-            .pt(px(56.))
-            .child(self.edition_tabs(java.is_some(), cx))
-            .child(title)
-            .children(tagline)
+            .pt(px(32.))
+            .child(card)
             .child(actions)
             .children(
                 self.version_chip(cx)
@@ -128,54 +155,7 @@ impl Launcher {
             .flex_col()
             .min_h(px(self.first_screen()))
             .child(hero)
-            .child(self.home_sky())
             .children(self.home_section_panel(cx))
-    }
-
-    /// The sunrise under the hero, as on the Sunny panel: the sky in hard bands from night blue
-    /// down to orange, from sidebar to sidebar and down to the window's foot, and the pixel sun
-    /// coming up at its foot under the hero.
-    fn home_sky(&self) -> Div {
-        let mut sky = div()
-            .relative()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h(px(SKY_MIN))
-            .mt(px(48.))
-            .mx(px(-theme::PAGE_GUTTER))
-            .mb(px(-PAGE_FOOT));
-        let mut from = 0.;
-        for (colour, to) in SKY {
-            sky = sky.child(
-                div()
-                    .flex_basis(px(0.))
-                    .flex_grow(to - from)
-                    .bg(gpui::rgb(colour)),
-            );
-            from = to;
-        }
-        let sun = crate::widgets::sunrise_glyph(SUN_UNIT).with_animation(
-            "home-sun-rise",
-            crate::motion::eased(crate::motion::RISE),
-            |d, t| d.top(px(crate::motion::SUN_RISE * (1. - t))),
-        );
-        sky.child(
-            div()
-                .absolute()
-                .left_0()
-                .right_0()
-                .bottom_0()
-                .flex()
-                .justify_center()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .relative()
-                        .right(px(self.outline_centre_shift()))
-                        .child(sun),
-                ),
-        )
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,
@@ -249,4 +229,36 @@ impl Launcher {
                 })),
         )
     }
+}
+
+/// The hero card's sky, as on the Sunny panel: hard bands from night blue down to orange, and the
+/// pixel sun coming up onto the horizon at its foot.
+fn home_sky() -> Div {
+    let mut sky = div().relative().flex().flex_col().h(px(CARD_SKY));
+    let mut from = 0.;
+    for (colour, to) in SKY {
+        sky = sky.child(
+            div()
+                .flex_basis(px(0.))
+                .flex_grow(to - from)
+                .bg(gpui::rgb(colour)),
+        );
+        from = to;
+    }
+    let sun = crate::widgets::sunrise_glyph(SUN_UNIT).with_animation(
+        "home-sun-rise",
+        crate::motion::eased(crate::motion::RISE),
+        |d, t| d.top(px(crate::motion::SUN_RISE * (1. - t))),
+    );
+    sky.child(
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .flex()
+            .justify_center()
+            .overflow_hidden()
+            .child(sun),
+    )
 }

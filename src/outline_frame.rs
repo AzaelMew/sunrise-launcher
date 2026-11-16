@@ -346,9 +346,8 @@ pub(super) fn edge(id: impl Into<SharedString>) -> AnyElement {
 impl Launcher {
     /// The Outline look's sidebar (Figma: Explorations → Sidebar): a flush column on the page's
     /// colour, the mark and "Sunrise" in its top cell, Instances, the instances with their ⋮ and
-    /// New instance, then the launcher's update and the links with the version at its foot. A
-    /// faint dashed sketch stands behind its lower half; the top bar's line and the hero's floor
-    /// run through it.
+    /// New instance, then the launcher's update and the links with the version at its foot. The
+    /// top bar's line runs through it.
     pub(super) fn outline_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
@@ -418,7 +417,6 @@ impl Launcher {
             .bg(ui::color(t.night.side))
             .border_r_1()
             .border_color(white(0.08))
-            .child(sketch())
             .child(
                 div()
                     .absolute()
@@ -482,74 +480,4 @@ impl Launcher {
                     .child(backend::VERSION),
             )
     }
-}
-
-/// The sidebar's faint dashed sketch: a stair of blocks and a turned one on a short floor,
-/// standing on the line 76 px above the sidebar's foot.
-fn sketch() -> Div {
-    const S: f32 = 48.;
-    let line = white(0.09);
-    let square = |left: f32, up: usize| {
-        div()
-            .absolute()
-            .left(px(left))
-            .bottom(px(76. + up as f32 * S))
-            .size(px(S))
-            .border_1()
-            .border_dashed()
-            .border_color(line)
-    };
-    let mut d = div().absolute().top_0().bottom_0().left_0().right_0();
-    for up in 0..4 {
-        d = d.child(square(190., up));
-    }
-    for up in 0..2 {
-        d = d.child(square(142., up));
-    }
-    // The turned block's outline, dashed as the others, by its four sides.
-    d.child(
-        gpui::canvas(
-            |_, _, _| {},
-            move |bounds, (), window, _| {
-                let o = bounds.origin;
-                let (cx, cy, r) = (
-                    o.x + px(118.),
-                    o.y + bounds.size.height - px(76. + 24.),
-                    px(24.),
-                );
-                let corners = [
-                    gpui::point(cx, cy - r),
-                    gpui::point(cx + r, cy),
-                    gpui::point(cx, cy + r),
-                    gpui::point(cx - r, cy),
-                ];
-                // Dashes of 4 with gaps of 4 along each side.
-                for i in 0..4 {
-                    let (a, b) = (corners[i], corners[(i + 1) % 4]);
-                    let steps = 8;
-                    for k in (0..steps).step_by(2) {
-                        let p0 = a + (b - a) * (k as f32 / steps as f32);
-                        let p1 = a + (b - a) * ((k + 1) as f32 / steps as f32);
-                        let mut path = gpui::PathBuilder::stroke(px(1.));
-                        path.move_to(p0);
-                        path.line_to(p1);
-                        if let Ok(path) = path.build() {
-                            window.paint_path(path, line);
-                        }
-                    }
-                }
-            },
-        )
-        .absolute()
-        .size_full(),
-    )
-    .child(
-        div()
-            .absolute()
-            .left(px(24.))
-            .bottom(px(76.))
-            .w(px(214.))
-            .h(px(1.))
-            .bg(line),
-    )
 }
