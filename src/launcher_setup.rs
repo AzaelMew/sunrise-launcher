@@ -68,6 +68,7 @@ impl Launcher {
             settings_query_focused: false,
             whats_new_open: None,
             settings_marked: 0,
+            settings_nav_open: false,
             credit_asked: false,
             version_menu: false,
             credit_picture: None,
@@ -383,6 +384,12 @@ impl Launcher {
         // A Turn off error is read on the visit it shows in: leaving Settings settles it.
         if self.page == Page::Settings && page != Page::Settings {
             self.storage_revoke_error = None;
+        }
+        // Settings opens on its first page, its list folded and its search empty.
+        if page == Page::Settings && self.page != Page::Settings {
+            self.settings_nav_open = false;
+            self.settings_pane.scroll_to_item(0);
+            self.settings_query.set(String::new());
         }
         self.storage_counting = None;
         self.storage_visit += 1;

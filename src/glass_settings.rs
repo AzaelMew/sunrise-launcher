@@ -277,6 +277,7 @@ impl Launcher {
                     .on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             this.settings_pane.scroll_to_top_of_item(i);
+                            this.settings_nav_open = false;
                             cx.notify();
                         },
                     ))
@@ -300,7 +301,7 @@ impl Launcher {
                 })
                 .children(items)
                 .into_any_element()
-        } else {
+        } else if searching || self.settings_nav_open {
             div()
                 .flex()
                 .flex_col()
@@ -320,6 +321,49 @@ impl Launcher {
                         .p(px(6.))
                         .children(items),
                 )
+                .into_any_element()
+        } else {
+            // A category was picked: the list folds into one row naming it, which opens it again.
+            let (label, icon) = SECTIONS[active.min(SECTIONS.len() - 1)];
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .w_full()
+                .gap(px(8.))
+                .child(field)
+                .child(keyboard(
+                    crate::glass::plate(radius::PANEL)
+                        .id("settings-nav-current")
+                        .flex()
+                        .flex_none()
+                        .w_full()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.))
+                        .h(px(44.))
+                        .px(px(14.))
+                        .cursor_pointer()
+                        .font_family(sunrise_theme::glass::FONT)
+                        .text_size(px(14.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(white(ink::FULL))
+                        .hover(|s| s.bg(white(0.06)))
+                        .child(ui::icon(icon, 17., white(0.65)).flex_none())
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(tr(label).to_string()),
+                        )
+                        .child(ui::icon("arrow-down-01", 16., white(ink::NOTE)).flex_none())
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.settings_nav_open = true;
+                            cx.notify();
+                        })),
+                    &t,
+                ))
                 .into_any_element()
         };
         let sections = if found {
@@ -873,8 +917,7 @@ pub(super) fn nav_item(
     } else {
         d.border_color(gpui::transparent_black())
             .text_color(white(0.7))
-            .hover(|s| s.text_color(white(ink::FULL)))
-            .child(ui::hover_edge(&id, radius::ROW, 0.06, true))
+            .hover(|s| s.bg(white(0.06)).text_color(white(ink::FULL)))
     };
     let d = d
         .child(
