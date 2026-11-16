@@ -237,6 +237,24 @@ impl Launcher {
     }
 
     /// The picture behind Home, if the player keeps one.
+    /// Home's scenery, when it shows: the player's picture, else the theme's scene (Sunrise's
+    /// sunset for its own theme and Dawn's, the painted sky for the others).
+    pub(super) fn home_cover(&self) -> Option<crate::window_root::Cover> {
+        use crate::window_root::Cover;
+        if !self.theme.glass || !self.outline_sides() || !self.settings.scenery() {
+            return None;
+        }
+        if let Some(picture) = self.home_background() {
+            return Some(Cover::Picture(picture));
+        }
+        Some(match self.settings.theme.as_deref() {
+            None | Some("dawn") => Cover::Sunset,
+            Some(id) => Cover::Sky {
+                rains: id == "hypr_neon",
+            },
+        })
+    }
+
     pub(super) fn home_background(&self) -> Option<PathBuf> {
         themes::background(&backend::data_dir(), self.settings.background.as_deref())
     }
@@ -627,7 +645,22 @@ impl Launcher {
     pub(super) fn home_background_row(&self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let custom = self.home_background().is_some();
-        let mut actions = div().flex().gap(px(4.)).child(
+        let on = self.settings.scenery();
+        let this = cx.entity().downgrade();
+        let shown = crate::glass_ui::segments(
+            "home-scenery",
+            &[(true, "Scene"), (false, "Plain")],
+            on,
+            &t,
+            move |pick, _, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    this.settings.scenery_on = (!pick).then_some(false);
+                    this.save_settings();
+                    cx.notify();
+                });
+            },
+        );
+        let mut actions = div().flex().items_center().gap(px(8.)).child(shown).child(
             button(
                 "background-choose",
                 "Choose a picture…",
@@ -641,7 +674,7 @@ impl Launcher {
         );
         if custom {
             actions = actions.child(
-                button("background-reset", "Landscape", Kind::Ghost, &t).on_click(cx.listener(
+                button("background-reset", "Theme's scene", Kind::Ghost, &t).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         this.settings.background = None;
                         this.save_settings();
@@ -650,10 +683,14 @@ impl Launcher {
                 )),
             );
         }
-        let said = if custom {
-            tr("Your picture, behind Home, cropped to fill it.")
-        } else {
-            tr("Sunrise's landscape. Pick a PNG, JPEG or WebP picture of your own.")
+        let said = match (on, custom) {
+            (false, _) => tr("Plain: Home shows the page's own colour."),
+            (true, true) => {
+                tr("Your picture, behind Home between the sidebars, cropped to fill it.")
+            }
+            (true, false) => tr(
+                "An animated pixel scene in the theme's colours, behind Home between the sidebars.",
+            ),
         };
         let detail = div().flex().flex_col().child(said.to_string()).children(
             self.background_error
@@ -678,6 +715,7 @@ fn reset_look(s: &mut Settings) {
     s.glass = None;
     s.blur = None;
     s.background = None;
+    s.scenery_on = None;
     s.theme_accents.clear();
 }
 

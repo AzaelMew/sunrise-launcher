@@ -130,6 +130,10 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     if let Some(picked) = themes::theme(settings.theme.as_deref()) {
         theme = theme.with_launcher_theme(picked);
     }
+    // Performance mode keeps a painted sky's colours and drops what drifts over it.
+    if settings.performance() {
+        theme.night.art.mood = night::Mood::Plain;
+    }
     theme.with_glass(settings.glass_tint(), settings.glass_blur())
 }
 

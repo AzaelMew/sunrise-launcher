@@ -127,6 +127,11 @@ impl Clock {
         self.banked + self.running.map_or(Duration::ZERO, |since| now - since)
     }
 
+    /// Whether the clock is running.
+    pub fn running(&self) -> bool {
+        self.running.is_some()
+    }
+
     pub fn set(&mut self, run: bool, now: Instant) {
         match (run, self.running) {
             (true, None) => self.running = Some(now),

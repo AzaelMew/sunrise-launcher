@@ -3,9 +3,7 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-#[cfg(windows)]
-use sunrise_launcher_scenery::scene;
-use sunrise_launcher_scenery::{art, clock, glass};
+use sunrise_launcher_scenery::{art, clock, glass, rain, scene, sky};
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
@@ -98,6 +96,7 @@ mod themes_page;
 mod titlebar;
 mod welcome;
 mod while_playing;
+mod window_root;
 mod worlds_page;
 
 use gpui::{
@@ -537,6 +536,15 @@ struct Launcher {
     shortcuts: shortcut_page::Shortcuts,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
+    /// Home's scenery, each its own view, drawn by the backdrop behind the launcher
+    /// (`window_root.rs`): the sunset, a theme's painted sky, Hypr Neon's rain.
+    scene: gpui::Entity<scene::Scene>,
+    sky: gpui::Entity<sky::SkyView>,
+    rain: gpui::Entity<rain::Rain>,
+    backdrop: gpui::Entity<window_root::Backdrop>,
+    /// Where the page between the sidebars, under the top bar, was laid out last: Home's
+    /// scenery goes there.
+    cover_at: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }

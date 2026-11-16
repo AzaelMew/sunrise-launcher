@@ -820,6 +820,8 @@ pub struct Scene {
     /// Performance mode: a quarter-resolution sky, a box blur, resizes baked in the background
     /// and no frame per mouse move.
     fast: bool,
+    /// The size it is drawn at, when not the window's ([`Scene::set_size`]).
+    size: Option<(f64, f64)>,
 }
 
 impl Default for Scene {
@@ -845,6 +847,7 @@ impl Scene {
             baking: false,
             blurring: false,
             fast: false,
+            size: None,
         }
     }
 
@@ -866,6 +869,15 @@ impl Scene {
     /// Turns performance mode on or off: a quarter-resolution sky, a box blur, resizes baked in
     /// the background and the scene not restarted by every mouse move. The pictures are rebuilt
     /// once when it changes.
+    /// Draw the scene `size` logical pixels big instead of the window's size (Home's place for
+    /// it between the sidebars).
+    pub fn set_size(&mut self, size: Option<(f64, f64)>, cx: &mut Context<Self>) {
+        if self.size != size {
+            self.size = size;
+            cx.notify();
+        }
+    }
+
     pub fn set_performance(&mut self, fast: bool, cx: &mut Context<Self>) {
         if self.fast != fast {
             self.fast = fast;
@@ -948,10 +960,10 @@ impl Render for Scene {
             let _ = window.drop_image(image);
         }
         let viewport = window.viewport_size();
-        let (width, height) = (
+        let (width, height) = self.size.unwrap_or((
             f64::from(f32::from(viewport.width)),
             f64::from(f32::from(viewport.height)),
-        );
+        ));
         let scale = window.scale_factor();
         let size_key = key(width, height, scale);
         // The first frame is baked here, and in the default look a new window size too: a

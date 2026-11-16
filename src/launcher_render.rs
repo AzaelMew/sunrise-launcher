@@ -32,6 +32,7 @@ impl Render for Launcher {
         // Reduced motion (the player's or the system's) holds GPUI's own animations too.
         clock::set_preference(self.settings.reduce_motion);
         cx.set_reduce_motion(motion::still());
+        self.push_back(window, cx);
         self.scale = window.scale_factor();
         self.perf.frame();
         if self.bench.as_ref().is_some_and(perf::Bench::scrolling) {
@@ -239,7 +240,16 @@ impl Render for Launcher {
                             .flex_1()
                             .min_w_0()
                             .child(topbar)
-                            .child(page),
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(self.measure_cover(cx))
+                                    .child(page),
+                            ),
                     )
                     .children(right_sidebar)
                     // A narrow window's sidebars, opened over the page.
@@ -344,7 +354,6 @@ impl Render for Launcher {
             .flex_col()
             .relative()
             .size_full()
-            .bg(t.side)
             .children(titlebar::render(&t, window))
             .children(self.settings_save_notice(cx))
             .child(root.flex_1().min_h_0())
@@ -352,7 +361,75 @@ impl Render for Launcher {
     }
 }
 
+/// The room Home's hero takes at the top of the page (width, height), which drifting snow,
+/// leaves, petals and rain stay out of.
+const HERO_KEEP: (f32, f32) = (520., 440.);
+
 impl Launcher {
+    /// Hands the backdrop what goes behind the launcher: the page's colour, and on Home its
+    /// scenery where the page between the sidebars was laid out. Each view draws again only
+    /// when what it is handed changed.
+    fn push_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let t = self.theme;
+        let cover = self.home_cover().zip(self.cover_at.get());
+        if let Some((cover, at)) = &cover {
+            let size = (f32::from(at.size.width), f32::from(at.size.height));
+            let performance = self.settings.performance();
+            match cover {
+                window_root::Cover::Sunset => {
+                    // The mockup tints the sunset with any accent but its violet.
+                    let tint = (self.look.accent != sunrise_theme::glass::ACCENT)
+                        .then(|| sunrise_theme::glass::mix_oklab(self.look.accent, 0x767676, 0.58));
+                    self.scene.update(cx, |scene, cx| {
+                        scene.set_size(Some((f64::from(size.0), f64::from(size.1))), cx);
+                        scene.set_performance(performance, cx);
+                        scene.set_look(tint, self.look.blur, cx);
+                    });
+                }
+                window_root::Cover::Sky { rains } => {
+                    let (night, scale) = (t.night, window.scale_factor());
+                    // Snow, leaves, petals and rain keep off the hero: its column, from the
+                    // edition tabs down to the invite code.
+                    let mut keep = rain::Keep::default();
+                    keep.0[0] = [size.0 / 2. - HERO_KEEP.0 / 2., 0., HERO_KEEP.0, HERO_KEEP.1];
+                    self.sky
+                        .update(cx, |sky, cx| sky.set(night, size, scale, keep, cx));
+                    let (rains, accent) = (*rains && !performance, self.look.accent);
+                    self.rain
+                        .update(cx, |rain, cx| rain.set(rains, accent, keep, cx));
+                }
+                window_root::Cover::Picture(_) => {}
+            }
+        }
+        let back = window_root::Back {
+            side: t.side,
+            cover,
+        };
+        self.backdrop.update(cx, |b, cx| b.set(back, cx));
+    }
+
+    /// Records where the page between the sidebars is laid out, for Home's scenery: a frame
+    /// later when it moved (a resize, a sidebar folding).
+    fn measure_cover(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (at, this) = (self.cover_at.clone(), cx.entity().downgrade());
+        gpui::canvas(
+            move |bounds, _, cx| {
+                if at.get() != Some(bounds) {
+                    at.set(Some(bounds));
+                    let this = this.clone();
+                    cx.defer(move |cx| {
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    });
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    }
+
     /// Where the opening is: the reveal's progress (1 when there is no opening) and how long
     /// the wordmark has been showing, in seconds.
     pub(crate) fn opening_phase(&mut self, window: &mut Window) -> (f32, f32) {
