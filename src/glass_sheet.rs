@@ -318,7 +318,7 @@ impl Launcher {
                                     .flex_none()
                                     .px(px(8.))
                                     .py(px(1.))
-                                    .rounded_full()
+                                    .rounded(px(crate::glass_ui::rad(10.)))
                                     .bg(white(0.07))
                                     .border_1()
                                     .border_color(white(0.12))

@@ -64,7 +64,7 @@ impl Launcher {
                 .gap(px(8.))
                 .p(px(10.))
                 .h(px(92.))
-                .rounded(px(10.))
+                .rounded(px(crate::glass_ui::rad(10.)))
                 .bg(gpui::rgb(p.page))
                 .border_1()
                 .border_color(gpui::rgb(theme::night::over(p.stroke, 0.3, p.page)))
@@ -78,7 +78,7 @@ impl Launcher {
                     div()
                         .h(px(14.))
                         .w_full()
-                        .rounded(px(4.))
+                        .rounded(px(crate::glass_ui::rad(4.)))
                         .bg(gpui::rgb(theme::night::over(p.card, p.card_alpha, p.page)))
                         .border_1()
                         .border_color(gpui::rgb(theme::night::over(p.stroke, 0.4, p.page))),
@@ -90,7 +90,7 @@ impl Launcher {
                         .justify_center()
                         .h(px(22.))
                         .w(px(64.))
-                        .rounded(px(6.))
+                        .rounded(px(crate::glass_ui::rad(6.)))
                         .bg(gpui::rgb(accent))
                         .text_size(px(12.))
                         .text_color(gpui::rgb(label))
@@ -109,9 +109,9 @@ impl Launcher {
                 .gap(px(6.))
                 .w(px(136.))
                 .p(px(4.))
-                .rounded(px(14.))
+                .rounded(px(crate::glass_ui::rad(14.)))
                 .cursor_pointer()
-                .border_2()
+                .border_1()
                 .border_color(if chosen {
                     t.accent
                 } else {
@@ -273,14 +273,19 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .size(px(36.))
-                    .rounded(px(10.))
+                    .rounded(px(crate::glass_ui::rad(10.)))
                     .cursor_pointer()
                     .when(on, |d| d.bg(ui::white(0.18)))
                     .when(!on, |d| d.hover(|s| s.bg(ui::white(0.08)))),
                 &t,
             )
         };
-        let chip = |rgb: u32| div().size(px(24.)).rounded(px(7.)).bg(gpui::rgb(rgb));
+        let chip = |rgb: u32| {
+            div()
+                .size(px(24.))
+                .rounded(px(crate::glass_ui::rad(7.)))
+                .bg(gpui::rgb(rgb))
+        };
         let mut row = div().flex().flex_wrap().items_center().gap(px(4.));
         for (accent, rgb) in Accent::ALL.into_iter().zip(themes::SWATCHES) {
             row = row.child(
@@ -324,7 +329,7 @@ impl Launcher {
                     self.hue_strip(&t, cx)
                         .w(px(212.))
                         .h(px(24.))
-                        .rounded(px(6.))
+                        .rounded(px(crate::glass_ui::rad(6.)))
                         .overflow_hidden(),
                 )
             });

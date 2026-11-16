@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::glass_ui::{self as ui, white};
-use sunrise_theme::glass::{ink, radius};
+use sunrise_theme::glass::{fill, ink, radius};
 
 /// The list's entries: name and icon. The settings sections, in the mockup's order.
 const SECTIONS: [(&str, &str); 10] = [
@@ -826,7 +826,7 @@ impl Launcher {
 }
 
 /// An entry of the settings list: a section, or while searching a setting found (its section
-/// under it). The one being read is tinted with the accent, outlined in it and marked by a bar.
+/// under it). The one being read is lit as the sidebar's chosen instance is: a plain white fill.
 pub(super) fn nav_item(
     id: String,
     icon: &'static str,
@@ -837,8 +837,6 @@ pub(super) fn nav_item(
     t: &Theme,
 ) -> Stateful<Div> {
     let id = SharedString::from(id);
-    let accent = ui::look().accent;
-    let soft = ui::look().accent_soft;
     let d = div()
         .id(id.clone())
         .relative()
@@ -856,20 +854,10 @@ pub(super) fn nav_item(
         .text_size(px(14.))
         .active(|s| s.bg(white(0.1)));
     let d = if on {
-        d.bg(ui::color(accent).opacity(0.16))
-            .border_color(ui::color(accent))
+        d.bg(white(fill::SELECTED))
+            .border_color(gpui::transparent_black())
             .font_weight(FontWeight::MEDIUM)
             .text_color(white(ink::FULL))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(-1.))
-                    .top(px(10.))
-                    .bottom(px(10.))
-                    .w(px(3.))
-                    .rounded_full()
-                    .bg(ui::color(soft)),
-            )
     } else {
         d.border_color(gpui::transparent_black())
             .text_color(white(0.7))
@@ -878,7 +866,7 @@ pub(super) fn nav_item(
     };
     let d = d
         .child(
-            ui::icon(icon, 17., if on { ui::color(soft) } else { white(0.65) })
+            ui::icon(icon, 17., white(if on { ink::FULL } else { 0.65 }))
                 .relative()
                 .flex_none(),
         )

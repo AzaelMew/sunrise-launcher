@@ -605,7 +605,7 @@ fn kind_pill(kind: ModKind) -> Div {
         .items_center()
         .h(px(20.))
         .px(px(8.))
-        .rounded_full()
+        .rounded(px(ui::rad(10.)))
         .bg(white(0.07))
         .child(ui::text(11., FontWeight::MEDIUM, 0.6).child(kind.label()))
 }

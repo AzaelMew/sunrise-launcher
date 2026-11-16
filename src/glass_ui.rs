@@ -715,13 +715,13 @@ pub fn bar(value: f32, accent_soft: u32) -> Div {
     div()
         .h(px(4.))
         .w_full()
-        .rounded_full()
+        .rounded(px(rad(2.)))
         .overflow_hidden()
         .bg(white(fill::ACTIVE))
         .child(
             div()
                 .h_full()
-                .rounded_full()
+                .rounded(px(rad(2.)))
                 .w(gpui::relative(value.clamp(0., 1.)))
                 .bg(color(accent_soft)),
         )
