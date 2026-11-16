@@ -359,34 +359,40 @@ fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement
 /// The side of one texel in a [`pixel_fill`].
 const TEXEL: f32 = 4.;
 
-/// A coloured button's fill: `c` as a block texture, square texels in a few close shades of it,
-/// for a little of the game's look. The same texels every frame, so it never shimmers. Put it
-/// first in a `relative` button, so the label is drawn over it.
+/// A fill of `c` as a block texture: square texels a few steps of lightness off it, the same
+/// every frame, so it never shimmers. The steps are fixed, not a share of `c`'s lightness, so a
+/// near-black sidebar shows them as much as a coloured button does. Put it first in a `relative`
+/// element, so its content is drawn over it.
 pub fn pixel_fill(c: Hsla) -> AnyElement {
-    let shade = move |k: f32| gpui::hsla(c.h, c.s, (c.l * k).clamp(0., 1.), c.a);
-    let shades = [shade(1.035), shade(0.965), shade(1.06)];
+    let shade = move |d: f32| gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a);
+    let shades = [shade(0.02), shade(-0.02), shade(0.035)];
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
             window.paint_quad(gpui::fill(bounds, c));
             let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
             let (cols, rows) = ((w / TEXEL).ceil() as u32, (h / TEXEL).ceil() as u32);
+            // Most texels keep the base colour; the rest take one of the shades.
+            let tone = |x: u32, y: u32| shades.get((texel_noise(x, y) % 9) as usize).copied();
             for y in 0..rows {
-                for x in 0..cols {
-                    let n = texel_noise(x, y);
-                    // Most texels keep the base colour; the rest take one of the shades.
-                    let Some(&tone) = shades.get((n % 9) as usize) else {
+                let top = y as f32 * TEXEL;
+                let tall = TEXEL.min(h - top);
+                let mut x = 0;
+                while x < cols {
+                    let Some(this) = tone(x, y) else {
+                        x += 1;
                         continue;
                     };
-                    let at = gpui::point(
-                        bounds.origin.x + px(x as f32 * TEXEL),
-                        bounds.origin.y + px(y as f32 * TEXEL),
-                    );
-                    let size = gpui::size(
-                        px(TEXEL.min(w - x as f32 * TEXEL)),
-                        px(TEXEL.min(h - y as f32 * TEXEL)),
-                    );
-                    window.paint_quad(gpui::fill(gpui::Bounds::new(at, size), tone));
+                    // A run of one shade along the row is one quad, so a tall sidebar stays cheap.
+                    let start = x;
+                    while x < cols && tone(x, y) == Some(this) {
+                        x += 1;
+                    }
+                    let left = start as f32 * TEXEL;
+                    let wide = (x as f32 * TEXEL).min(w) - left;
+                    let at = gpui::point(bounds.origin.x + px(left), bounds.origin.y + px(top));
+                    let size = gpui::size(px(wide), px(tall));
+                    window.paint_quad(gpui::fill(gpui::Bounds::new(at, size), this));
                 }
             }
         },
