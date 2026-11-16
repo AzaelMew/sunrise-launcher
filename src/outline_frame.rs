@@ -161,6 +161,7 @@ impl Launcher {
             .gap(px(24.))
             .border_b_1()
             .border_color(white(0.08))
+            .child(ui::pixel_fill(ui::color(t.night.side), ui::TEXTURE_QUIET))
             // Over the hero where the pages clear the buttons; else beside them, scrolling
             // sideways when too long. The bar starts right of the sidebar, so the right padding
             // moves the pages' centre left by `shift`.
