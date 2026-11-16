@@ -29,6 +29,7 @@ fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text
 impl Launcher {
     pub(super) fn outline_topbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
+        let right_side = self.outline_right_side();
 
         let tight = self.window_width < 1280.;
         let (tab_size, tab_gap) = if tight { (14., 18.) } else { (15., 28.) };
@@ -124,16 +125,20 @@ impl Launcher {
         };
         // Over the hero: on the window's centre, held off the sidebar the same way the hero is.
         let shift = self.outline_centre_shift();
-        let centre = side + (self.window_width - side) / 2. - shift;
+        let end = side + self.outline_page_width();
+        let centre = side + self.outline_page_width() / 2. - shift;
         let fits = |right: f32| {
-            centre - tabs / 2. >= side + 24.
-                && centre + tabs / 2. <= self.window_width - 24. - right - 16.
+            centre - tabs / 2. >= side + 24. && centre + tabs / 2. <= end - 24. - right - 16.
         };
         // Narrower, the players count goes first, then "with Microsoft": the pages keep their
         // place over the hero.
         let count = count_width.is_some() && fits(right_of(true, false));
         let short = !signed_in && !fits(right_of(false, false));
-        let right = right_of(count, short);
+        let right = if right_side {
+            0.
+        } else {
+            right_of(count, short)
+        };
         let centred = fits(right);
         let (pages_layer, pages_flow) = if centred {
             (Some(pages.flex_none()), None)
@@ -143,7 +148,49 @@ impl Launcher {
         // Beside the buttons, the pages scroll in the strip with arrows at hidden ends.
         let performance = self.settings.performance();
         let flow = pages_flow.map(|p| self.nav_strip.render(p, &t, performance, window));
-        let playing = self.playing.filter(|_| count).map(|count| {
+        let account = (!right_side).then(|| self.outline_account(count, short, cx));
+
+        div()
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(px(70.))
+            .pt(px(14.))
+            .px(px(24.))
+            .gap(px(24.))
+            .border_b_1()
+            .border_color(white(0.08))
+            // Over the hero where the pages clear the buttons; else beside them, scrolling
+            // sideways when too long. The bar starts right of the sidebar, so the right padding
+            // moves the pages' centre left by `shift`.
+            .children(pages_layer.map(|pages| {
+                div()
+                    .absolute()
+                    .top(px(14.))
+                    .bottom_0()
+                    .left_0()
+                    .right_0()
+                    .pr(px(2. * shift))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(pages)
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_center()
+                    .children(flow),
+            )
+            .children(account)
+    }
+
+    /// How many play now, in mono after a live dot; a click opens the stats page.
+    pub(super) fn outline_playing(&self) -> Option<Stateful<Div>> {
+        self.playing.map(|count| {
             let url = telemetry::stats_url(&self.links.website);
             mono(12., ink::NOTE)
                 .id("playing-now")
@@ -159,7 +206,20 @@ impl Launcher {
                         cx.open_url(url);
                     }
                 })
-        });
+        })
+    }
+
+    /// The player's side of the top bar: how many play (when `count`), the player's face or
+    /// Sign in (shortened when `short`), and Settings. The right sidebar's top cell holds it
+    /// where there is one.
+    pub(super) fn outline_account(
+        &mut self,
+        count: bool,
+        short: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = self.theme;
+        let playing = count.then(|| self.outline_playing()).flatten();
 
         let face = self.accounts.selected().map(|a| a.uuid.clone());
         let open = self.account_menu;
@@ -248,51 +308,14 @@ impl Launcher {
         }));
 
         div()
-            .relative()
             .flex()
             .flex_none()
             .items_center()
-            .h(px(70.))
-            .pt(px(14.))
-            .px(px(24.))
-            .gap(px(24.))
-            .border_b_1()
-            .border_color(white(0.08))
-            // Over the hero where the pages clear the buttons; else beside them, scrolling
-            // sideways when too long. The bar starts right of the sidebar, so the right padding
-            // moves the pages' centre left by `shift`.
-            .children(pages_layer.map(|pages| {
-                div()
-                    .absolute()
-                    .top(px(14.))
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .pr(px(2. * shift))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(pages)
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_w_0()
-                    .justify_center()
-                    .children(flow),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(14.))
-                    .children(playing)
-                    .children(player)
-                    .children(sign_in)
-                    .child(settings),
-            )
+            .gap(px(14.))
+            .children(playing)
+            .children(player)
+            .children(sign_in)
+            .child(settings)
     }
 }
 

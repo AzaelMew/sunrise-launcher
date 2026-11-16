@@ -1,16 +1,19 @@
-//! Home's sections (installed mods, worlds, saved servers, packs, shaders, screenshots, the log)
-//! as a rail of buttons at the first screen's right edge. A button slides its section in beside
-//! the rail, over Home, so nothing is a scroll away; the same button or the panel's close puts it
-//! away again.
+//! The right sidebar, the left one's mirror: the player's side of the top bar in its top cell,
+//! then the selected instance's sections (installed mods, worlds, saved servers, packs, shaders,
+//! screenshots, the log) as rows with their counts, and how many play at its foot. A row slides
+//! its section in at Home's right edge; the same row or the panel's close puts it away. Narrow
+//! windows keep the sections as an icon column and the player's side in the top bar.
 use super::*;
-use crate::glass_ui::{self as ui, mono};
+use crate::glass_ui::{self as ui, mono, white};
 use home_tabs::HomeTab;
 use sunrise_launcher::packs::Kind as PackKind;
 use sunrise_theme::glass::{ink, radius};
 
-/// The rail's buttons are this tall and wide.
-const BUTTON: f32 = 44.;
-/// The open section's panel is this wide where the window has the room, and never narrower
+/// From this window width the right sidebar is as wide as the left; narrower, it is an icon
+/// column [`COMPACT`] wide.
+const FULL_FROM: f32 = 1180.;
+const COMPACT: f32 = 64.;
+/// The open section's panel is this wide where the page has the room, and never narrower
 /// than [`PANEL_MIN`].
 const PANEL: f32 = 520.;
 const PANEL_MIN: f32 = 320.;
@@ -18,74 +21,140 @@ const PANEL_MIN: f32 = 320.;
 const SLIDE: f32 = 16.;
 
 impl Launcher {
-    /// The rail and, while a section is open, its panel, laid over Home's first screen. The rail
-    /// sits in the middle of the right column `column` px wide, or near the edge when there is
-    /// no column.
-    pub(super) fn home_rail(&mut self, column: f32, cx: &mut Context<Self>) -> Div {
+    /// Whether the right sidebar is full width (and holds the player's side of the top bar).
+    pub(super) fn outline_right_side(&self) -> bool {
+        self.window_width >= FULL_FROM
+    }
+
+    /// How wide the right sidebar is.
+    pub(super) fn outline_right_width(&self) -> f32 {
+        if self.outline_right_side() {
+            frame::SIDEBAR
+        } else {
+            COMPACT
+        }
+    }
+
+    /// The right sidebar.
+    pub(super) fn outline_right_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
+        let full = self.outline_right_side();
         let tabs: Vec<_> = self
             .home_tab_list(cx)
             .into_iter()
             .filter(|(tab, _)| *tab != HomeTab::Overview)
             .collect();
-        let open = self
-            .home_panel
-            .then_some(self.home_tab)
-            .filter(|tab| tabs.iter().any(|(t, _)| t == tab));
-        let edge = if column > 0. {
-            (column - BUTTON) / 2.
-        } else {
-            12.
-        };
-        let buttons = tabs.into_iter().map(|(tab, count)| {
+        let open = (self.page == Page::Play && self.home_panel).then_some(self.home_tab);
+        let rows = tabs.into_iter().map(|(tab, count)| {
             let (name, icon) = section(tab);
-            let button = ui::icon_button(
-                format!("home-rail-{tab:?}"),
-                icon,
-                BUTTON,
-                20.,
-                radius::CONTROL,
-                open == Some(tab),
-                &t,
-            )
-            .tooltip(ui::tip(name))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let again = this.home_panel && this.home_tab == tab;
+            let on = open == Some(tab);
+            let ink_of = white(if on { ink::FULL } else { ink::BODY });
+            let row = ui::row(format!("side-section-{tab:?}"), on, 8., &t)
+                .h(px(40.))
+                .child(ui::icon(icon, 18., ink_of).relative());
+            let row = if full {
+                row.child(
+                    ui::text(
+                        14.,
+                        FontWeight::MEDIUM,
+                        if on { ink::FULL } else { ink::BODY },
+                    )
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(name),
+                )
+                .children(
+                    count
+                        .filter(|n| *n > 0)
+                        .map(|n| mono(12., ink::DIM).relative().child(n.to_string())),
+                )
+            } else {
+                row.justify_center().tooltip(ui::tip(name))
+            };
+            row.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let again = this.page == Page::Play && this.home_panel && this.home_tab == tab;
+                if this.page != Page::Play {
+                    this.go(Page::Play);
+                }
                 this.home_tab = tab;
                 this.home_panel = !again;
                 cx.notify();
-            }));
-            let badge = count.filter(|n| *n > 0).map(|n| {
-                mono(10., ink::DIM)
-                    .absolute()
-                    .right(px(3.))
-                    .bottom(px(2.))
-                    .child(n.to_string())
-            });
-            div().relative().child(button).children(badge)
+            }))
         });
-        let rail = div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .right(px(edge))
+        let rows: Vec<_> = rows.collect();
+        let line = |at_top: bool| {
+            let d = div().absolute().left_0().right_0().h(px(1.));
+            if at_top {
+                d.top(px(70.)).bg(white(0.08))
+            } else {
+                d.bottom(px(24.)).bg(white(0.10))
+            }
+        };
+        let width = self.outline_right_width();
+        let cell = full.then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .h(px(70.))
+                .pt(px(14.))
+                .pr(px(24.))
+                .flex()
+                .items_center()
+                .justify_end()
+                .child(self.outline_account(false, true, cx))
+        });
+        let label = full.then(|| {
+            div()
+                .p(px(8.))
+                .child(mono(12., ink::QUIET).child(tr("This instance").to_uppercase()))
+        });
+        let foot = full
+            .then(|| self.outline_playing())
+            .flatten()
+            .map(|p| div().px(px(8.)).child(p));
+        div()
+            .relative()
             .flex()
             .flex_col()
-            .justify_center()
+            .flex_none()
             .gap(px(4.))
-            .children(buttons);
-        let panel = open.map(|tab| self.home_panel_view(tab, 2. * edge + BUTTON, cx));
-        div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(px(-theme::PAGE_GUTTER))
-            .right(px(-theme::PAGE_GUTTER))
-            .child(rail)
-            .children(panel)
+            .w(px(width))
+            .h_full()
+            .pt(px(82.))
+            .px(px(if full { 12. } else { 10. }))
+            .pb(px(32.))
+            .bg(ui::color(t.night.page))
+            .border_l_1()
+            .border_color(white(0.08))
+            .child(line(true))
+            .child(line(false))
+            .children(cell)
+            .children(label)
+            .child(
+                div()
+                    .id("side-sections")
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+            .child(div().flex_1())
+            .children(foot)
     }
 
-    /// The open section beside the rail, `right` px from the edge: its name and a close over its
+    /// The open section's panel at Home's right edge, while one is open.
+    pub(super) fn home_section_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open = self.home_panel.then_some(self.home_tab)?;
+        (open != HomeTab::Overview).then(|| self.home_panel_view(open, 0., cx))
+    }
+
+    /// The open section at the page's right edge, `right` px in: its name and a close over its
     /// content, which scrolls on its own. It slides and fades in.
     fn home_panel_view(&mut self, tab: HomeTab, right: f32, cx: &mut Context<Self>) -> AnyElement {
         let t = self.theme;
@@ -104,7 +173,7 @@ impl Launcher {
             this.home_panel = false;
             cx.notify();
         }));
-        let room = self.window_width - frame::SIDEBAR - right - 2. * theme::PAGE_GUTTER;
+        let room = self.outline_page_width() - right - 2. * theme::PAGE_GUTTER;
         let width = PANEL.min(room).max(PANEL_MIN);
         let body = self.section_body(tab, cx);
         crate::glass::float(0.)
@@ -180,7 +249,7 @@ impl Launcher {
     }
 }
 
-/// A section's name and its rail icon.
+/// A section's name and its icon.
 fn section(tab: HomeTab) -> (&'static str, &'static str) {
     match tab {
         HomeTab::Overview => (tr("Overview"), "dashboard-square-01"),
