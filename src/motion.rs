@@ -18,6 +18,14 @@ pub const POP: tokens::Motion = tokens::Motion {
 };
 pub const POP_RISE: f32 = 6.;
 
+/// The sun coming up over Home's sky as the page opens (the Sunny panel's `sunny-rise`).
+pub const RISE: tokens::Motion = tokens::Motion {
+    name: "rise",
+    ms: 600,
+    curve: [0.23, 1., 0.32, 1.],
+};
+pub const SUN_RISE: f32 = 8.;
+
 /// A new page: as [`POP`], a little longer and from further down, so the switch reads.
 pub const PAGE: tokens::Motion = tokens::Motion {
     name: "page",

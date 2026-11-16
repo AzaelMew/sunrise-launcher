@@ -180,15 +180,27 @@ pub(crate) fn version_tag(tag: &str) -> Div {
 /// Sunrise's mark, as the Sunny panel draws it on a 16-unit grid: three rays, the stepped sun
 /// with its low warm row, and the pink horizon, centred in `size` px square.
 pub(crate) fn mark(size: f32) -> Div {
+    let unit = size / 16.;
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .size(px(size))
+        .child(sunrise_glyph(unit))
+}
+
+/// The mark's pixels alone, `unit` px to a grid unit: 16 units wide and 11 tall, from the top
+/// ray to the horizon's foot.
+pub(crate) fn sunrise_glyph(unit: f32) -> Div {
     const RAYS: u32 = 0xffe39a;
     const SUN: u32 = 0xffcf5c;
     const SUN_LOW: u32 = 0xffb48a;
     const HORIZON: u32 = 0xe0458a;
-    let k = size / 16.;
-    // The glyph spans rows 3 to 14: half a unit up centres it.
+    // Rounded to whole pixels, so neighbouring rows meet without a seam at any size.
     let rect = |x: f32, y: f32, w: f32, h: f32, colour: u32| {
-        let (x0, y0) = ((x * k).round(), ((y - 0.5) * k).round());
-        let (x1, y1) = (((x + w) * k).round(), ((y + h - 0.5) * k).round());
+        let y = y - 3.;
+        let (x0, y0) = ((x * unit).round(), (y * unit).round());
+        let (x1, y1) = (((x + w) * unit).round(), ((y + h) * unit).round());
         div()
             .absolute()
             .left(px(x0))
@@ -200,7 +212,8 @@ pub(crate) fn mark(size: f32) -> Div {
     div()
         .relative()
         .flex_none()
-        .size(px(size))
+        .w(px((16. * unit).round()))
+        .h(px((11. * unit).round()))
         .child(rect(7., 3., 2., 2., RAYS))
         .child(rect(2., 5., 2., 2., RAYS))
         .child(rect(12., 5., 2., 2., RAYS))

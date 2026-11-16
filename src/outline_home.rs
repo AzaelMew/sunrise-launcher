@@ -1,23 +1,31 @@
 //! The Outline look's Home (`docs/design-system.md`, "Outline"; Figma: Explorations → Home): the
 //! edition, the instance's name, the tagline, Play and the folder, the version and the invite code
-//! centred on the window between the first screen's separator lines, whose floor ends it. The
-//! instance's tabs stay below, a scroll away.
+//! centred on the window, over the Sunny panel's banded sunrise, which fills the rest of the page.
 use super::*;
 use crate::glass_ui::{self as ui, mono, white};
 use sunrise_theme::glass::{fill, ink};
 
-/// The top bar above the first screen (before the page has been laid out once), and the room
-/// under its floor.
+/// The top bar above the first screen (before the page has been laid out once), and the page's
+/// own padding under it, which the sky reaches over to the window's foot.
 const TOP: f32 = 70.;
-const UNDER_FLOOR: f32 = 24.;
+const PAGE_FOOT: f32 = 48.;
 /// The first screen never squeezes shorter than this.
 const FIRST_SCREEN_MIN: f32 = 560.;
 /// Play and the folder side by side: the hero's widest row.
 const HERO_WIDTH: f32 = 412.;
-/// How far in from each edge the first screen's column lines run.
-const COLUMN: f32 = 168.;
-/// The faint arc around the left column line's top.
-const ARC: f32 = 620.;
+/// The sky under the hero never squeezes shorter than this.
+const SKY_MIN: f32 = 200.;
+/// The sky's bands as the Sunny panel draws them, top down: each colour and where it ends, as a
+/// share of the sky's height. Hard edges, no blending.
+const SKY: [(u32, f32); 5] = [
+    (0x161a4a, 0.29),
+    (0x2c2168, 0.51),
+    (0x5a2d7c, 0.71),
+    (0xb34a78, 0.87),
+    (0xf39a5a, 1.),
+];
+/// Px to a unit of the sun's 16-unit grid.
+const SUN_UNIT: f32 = 8.;
 
 impl Launcher {
     /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
@@ -38,7 +46,7 @@ impl Launcher {
         self.window_width - frame::SIDEBAR - self.outline_right_width()
     }
 
-    /// How tall Home's first screen is: from the top bar down to the hero's floor.
+    /// How tall Home's first screen is: from the top bar down to the page's foot padding.
     fn first_screen(&self) -> f32 {
         // The page's own height, so a drawn title bar is left out too.
         let page = f32::from(self.content_scroll.handle.bounds().size.height);
@@ -47,7 +55,7 @@ impl Launcher {
         } else {
             self.window_height - TOP
         };
-        (page - UNDER_FLOOR).max(FIRST_SCREEN_MIN)
+        (page - PAGE_FOOT).max(FIRST_SCREEN_MIN)
     }
 
     pub(super) fn outline_home_head(
@@ -118,66 +126,56 @@ impl Launcher {
             .relative()
             .flex()
             .flex_col()
-            .h(px(self.first_screen()))
-            .child(self.home_lines())
+            .min_h(px(self.first_screen()))
             .child(hero)
+            .child(self.home_sky())
             .children(self.home_section_panel(cx))
     }
 
-    /// Whether the window has room for the first screen's columns beside the hero.
-    fn home_wide(&self) -> bool {
-        let page = self.outline_page_width() - 2. * theme::PAGE_GUTTER;
-        page >= HERO_WIDTH + 2. * COLUMN + 64.
-    }
-
-    /// The first screen's separator lines, part of the page so they scroll with it: the floor,
-    /// and where the window has room beside the hero, a column line near each edge and a faint
-    /// arc around the left one's top.
-    fn home_lines(&self) -> Div {
-        let wide = self.home_wide();
-        let column = |right: bool| {
-            let d = div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .w(px(1.))
-                .bg(white(0.07));
-            if right {
-                d.right(px(COLUMN))
-            } else {
-                d.left(px(COLUMN))
-            }
-        };
-        div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(px(-theme::PAGE_GUTTER))
-            .right(px(-theme::PAGE_GUTTER))
-            .overflow_hidden()
-            .child(
+    /// The sunrise under the hero, as on the Sunny panel: the sky in hard bands from night blue
+    /// down to orange, from sidebar to sidebar and down to the window's foot, and the pixel sun
+    /// coming up at its foot under the hero.
+    fn home_sky(&self) -> Div {
+        let mut sky = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(SKY_MIN))
+            .mt(px(48.))
+            .mx(px(-theme::PAGE_GUTTER))
+            .mb(px(-PAGE_FOOT));
+        let mut from = 0.;
+        for (colour, to) in SKY {
+            sky = sky.child(
                 div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .h(px(1.))
-                    .bg(white(0.10)),
-            )
-            .when(wide, |d| {
-                d.child(
+                    .flex_basis(px(0.))
+                    .flex_grow(to - from)
+                    .bg(gpui::rgb(colour)),
+            );
+            from = to;
+        }
+        let sun = crate::widgets::sunrise_glyph(SUN_UNIT).with_animation(
+            "home-sun-rise",
+            crate::motion::eased(crate::motion::RISE),
+            |d, t| d.top(px(crate::motion::SUN_RISE * (1. - t))),
+        );
+        sky.child(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .flex()
+                .justify_center()
+                .overflow_hidden()
+                .child(
                     div()
-                        .absolute()
-                        .left(px(COLUMN - ARC / 2.))
-                        .top(px(-ARC / 2.))
-                        .size(px(ARC))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(white(0.06)),
-                )
-                .child(column(false))
-                .child(column(true))
-            })
+                        .relative()
+                        .right(px(self.outline_centre_shift()))
+                        .child(sun),
+                ),
+        )
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,
