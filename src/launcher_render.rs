@@ -266,15 +266,6 @@ impl Render for Launcher {
             .font_family(theme::FONT)
             .text_color(t.ink)
             .overflow_hidden()
-            .when(t.glass, |d| {
-                d.child(glass_ui::grain(
-                    glass_ui::color(t.night.side),
-                    glass_ui::TEXTURE_QUIET,
-                    self.window_width,
-                    self.window_height,
-                    self.scale,
-                ))
-            })
             // The sidebar down the left, the top bar and the page beside it.
             .child(
                 div()

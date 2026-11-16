@@ -129,6 +129,13 @@ impl Launcher {
             .pb(px(32.))
             .border_l_1()
             .border_color(white(0.08))
+            .child(ui::grain(
+                ui::color(t.night.side),
+                ui::TEXTURE_QUIET,
+                width,
+                self.window_height,
+                self.scale,
+            ))
             .child(line(true))
             .child(line(false))
             .children(cell)

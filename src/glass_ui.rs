@@ -419,10 +419,10 @@ thread_local! {
     static GRAIN: RefCell<Option<([u32; 6], Arc<gpui::RenderImage>)>> = const { RefCell::new(None) };
 }
 
-/// The window's grain: `c` as the block texture of [`pixel_fill`] behind everything, sidebars and
-/// top bar included, `width` by `height`. One tile is baked once (at the window's `scale`, its
-/// texels on whole device pixels) and repeated, so a full window costs a few dozen images rather
-/// than tens of thousands of quads each frame.
+/// A large area's grain (the sidebars, the top bar): `c` as the block texture of [`pixel_fill`],
+/// `width` by `height`. One tile is baked once (at the window's `scale`, its texels on whole device
+/// pixels) and repeated, so a full-height sidebar costs a few images rather than thousands of quads
+/// each frame. Put it first in a `relative` element.
 pub fn grain(c: Hsla, step: f32, width: f32, height: f32, scale: f32) -> Div {
     let tile = grain_tile(c, step, scale);
     let side = GRAIN_TILE as f32 * TEXEL;
