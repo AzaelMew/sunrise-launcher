@@ -214,7 +214,10 @@ jobs:
           fi
       - name: Name the fork executable
         if: github.repository == 'sunrise-org/sunrise'
-        run: mv "$BIN/sunrise-launcher${{ runner.os == 'Windows' && '.exe' || '' }}" "$BIN/${{ matrix.binary }}"
+        # GNU mv refuses to move a file onto itself: Sunrise's matrix names the binary as Cargo does.
+        run: |
+          built="$BIN/sunrise-launcher${{ runner.os == 'Windows' && '.exe' || '' }}"
+          [[ "$built" == "$BIN/${{ matrix.binary }}" ]] || mv "$built" "$BIN/${{ matrix.binary }}"
       - name: Release binary retains the game-holder capability marker
         run: |
           python=python3; [[ "$RUNNER_OS" != Windows ]] || python=python
