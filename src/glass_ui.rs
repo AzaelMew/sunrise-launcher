@@ -10,6 +10,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 use sunrise_theme::glass::{fill, ink, radius, Glass};
 
 thread_local! {
@@ -407,6 +408,84 @@ pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
     .left_0()
     .size_full()
     .into_any_element()
+}
+
+/// How many texels a side of the window grain's tile has: it repeats every 256 px, which at
+/// this faintness never shows.
+const GRAIN_TILE: usize = 64;
+
+thread_local! {
+    /// The grain tile last baked, and what for (colour, step and scale, as bits).
+    static GRAIN: RefCell<Option<([u32; 6], Arc<gpui::RenderImage>)>> = const { RefCell::new(None) };
+}
+
+/// The window's grain: `c` as the block texture of [`pixel_fill`] behind everything, sidebars and
+/// top bar included, `width` by `height`. One tile is baked once (at the window's `scale`, its
+/// texels on whole device pixels) and repeated, so a full window costs a few dozen images rather
+/// than tens of thousands of quads each frame.
+pub fn grain(c: Hsla, step: f32, width: f32, height: f32, scale: f32) -> Div {
+    let tile = grain_tile(c, step, scale);
+    let side = GRAIN_TILE as f32 * TEXEL;
+    let (cols, rows) = (
+        (width / side).ceil() as usize,
+        (height / side).ceil() as usize,
+    );
+    let mut layer = div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .overflow_hidden()
+        .bg(c);
+    for y in 0..rows {
+        for x in 0..cols {
+            layer = layer.child(
+                gpui::img(tile.clone())
+                    .absolute()
+                    .left(px(x as f32 * side))
+                    .top(px(y as f32 * side))
+                    .size(px(side)),
+            );
+        }
+    }
+    layer
+}
+
+fn grain_tile(c: Hsla, step: f32, scale: f32) -> Arc<gpui::RenderImage> {
+    let key = [
+        c.h.to_bits(),
+        c.s.to_bits(),
+        c.l.to_bits(),
+        c.a.to_bits(),
+        step.to_bits(),
+        scale.to_bits(),
+    ];
+    if let Some(tile) = GRAIN.with_borrow(|g| {
+        g.as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, t)| t.clone())
+    }) {
+        return tile;
+    }
+    let bytes = |h: Hsla| {
+        let rgba = gpui::Rgba::from(h);
+        [rgba.r, rgba.g, rgba.b, rgba.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8)
+    };
+    let shade = |d: f32| bytes(gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a));
+    let shades = [shade(step), shade(-step), shade(1.75 * step)];
+    let base = bytes(c);
+    let texels: Vec<[u8; 4]> = (0..GRAIN_TILE * GRAIN_TILE)
+        .map(|i| {
+            let (x, y) = ((i % GRAIN_TILE) as u32, (i / GRAIN_TILE) as u32);
+            shades
+                .get((texel_noise(x, y) % 9) as usize)
+                .copied()
+                .unwrap_or(base)
+        })
+        .collect();
+    let tile = crate::art::bake(&texels, GRAIN_TILE, GRAIN_TILE, TEXEL, scale);
+    GRAIN.set(Some((key, tile.clone())));
+    tile
 }
 
 /// A fixed scramble of a texel's place.

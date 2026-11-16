@@ -173,16 +173,6 @@ impl Render for Launcher {
                     // rendered: the Mods page's card asks, once the
                     // offset has moved, whether it must follow.
                     .on_scroll(cx.listener(|this, _: &gpui::ScrollEvent, window, cx| {
-                        if this.page == Page::Play {
-                            cx.on_next_frame(window, |this, _, cx| {
-                                let down = this.content_scroll.handle.offset().y < px(-1.);
-                                if this.home_logo_raised.unwrap_or(false) != down {
-                                    this.home_logo_raised = Some(down);
-                                    cx.notify();
-                                }
-                            });
-                            return;
-                        }
                         if this.page != Page::Mods {
                             return;
                         }
@@ -276,6 +266,15 @@ impl Render for Launcher {
             .font_family(theme::FONT)
             .text_color(t.ink)
             .overflow_hidden()
+            .when(t.glass, |d| {
+                d.child(glass_ui::grain(
+                    glass_ui::color(t.night.side),
+                    glass_ui::TEXTURE_QUIET,
+                    self.window_width,
+                    self.window_height,
+                    self.scale,
+                ))
+            })
             // The sidebar down the left, the top bar and the page beside it.
             .child(
                 div()

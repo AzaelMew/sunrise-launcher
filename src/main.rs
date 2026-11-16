@@ -473,9 +473,6 @@ struct Launcher {
     home_tab: home_tabs::HomeTab,
     /// Whether `home_tab`'s panel is open beside Home's rail.
     home_panel: bool,
-    /// Whether Home's background logo is raised (the page scrolled down) or back on the floor;
-    /// none until the page first scrolls, so opening Home plays nothing.
-    home_logo_raised: Option<bool>,
     /// Home's Play or folder menu, while open (glass look).
     home_menu: glass_home::HomeMenu,
     /// The list row under the pointer in Home's glass tabs (a world, a server): it shows its
