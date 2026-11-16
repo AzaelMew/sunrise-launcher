@@ -15,7 +15,8 @@ needed. Explicit home overrides still work for developers.
 
 Microsoft sign-in uses the application ID in the repository's
 `SUNRISE_MSA_CLIENT_ID` variable, which release builds read; it is not in the
-source. Online sign-in waits on Mojang's approval of Sunrise's Microsoft app.
+source. Until Mojang approves Sunrise's own Microsoft app, release builds use
+the Starling launcher's approved app, with its owner's permission.
 Accounts and tokens stay in Sunrise's own storage. A build without a
 configured ID cannot sign in. Unsigned local developer builds retain the explicit
 offline single-player switch. Signed builds retain account and ownership checks.
