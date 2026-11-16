@@ -10,7 +10,6 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use sunrise_launcher::effects::Effects;
 use sunrise_theme::glass::{fill, ink, radius, Glass};
 
 thread_local! {
@@ -22,8 +21,6 @@ thread_local! {
     static FLAT: Cell<bool> = const { Cell::new(false) };
     /// The light appearance: the glass look's white ink and fills turn to [`INK`].
     static LIGHT: Cell<bool> = const { Cell::new(false) };
-    /// The player's flourishes ([`effects`]).
-    static EFFECTS: Cell<Effects> = const { Cell::new(Effects::ALL) };
     /// How many [`hover_back`] layers this frame has built so far: the next one's name.
     static BACKS: Cell<usize> = const { Cell::new(0) };
     /// Each [`hover_back`] layer's pointer: on or off, and since when.
@@ -202,9 +199,9 @@ pub fn wide_field(field: Stateful<Div>, focused: bool) -> Stateful<Div> {
         .when(focused, |d| d.child(focus_ring(radius::ROW)))
 }
 
-/// The mockup's focus ring (`.hzl :focus-visible`: 2 px of the accent's soft shade) over a
-/// focused field, inside its edge with the field's corners: GPUI has no outline, and a field
-/// clips what lies outside it. Put it in a `relative` field round at `radius`.
+/// The focus ring: one solid 1 px line of the accent over a focused field, inside its edge with
+/// the field's corners (GPUI has no outline, and a field clips what lies outside it). Put it in a
+/// `relative` field round at `radius`.
 pub fn focus_ring(radius: f32) -> Div {
     div()
         .absolute()
@@ -212,8 +209,8 @@ pub fn focus_ring(radius: f32) -> Div {
         .left_0()
         .size_full()
         .rounded(px(crate::glass_ui::rad(radius)))
-        .border_2()
-        .border_color(color(look().accent_soft))
+        .border_1()
+        .border_color(color(look().accent))
 }
 
 /// Whether the pages being built draw the glass look: helpers with no theme at hand ask.
@@ -259,38 +256,6 @@ pub fn set_look(look: Glass) {
 /// The look's colours.
 pub fn look() -> Glass {
     LOOK.get()
-}
-
-/// Set as each frame's pages start being built: the flourishes the player keeps.
-pub fn set_effects(effects: Effects) {
-    EFFECTS.set(effects);
-}
-
-/// The flourishes the player keeps (Settings > Appearance).
-pub fn effects() -> Effects {
-    EFFECTS.get()
-}
-
-/// A two-colour fill from `from` to `to` at `angle`, or `from` alone with Gradients off.
-pub fn grad(angle: f32, from: Hsla, to: Hsla) -> gpui::Background {
-    if effects().gradients {
-        gpui::linear_gradient(
-            angle,
-            gpui::linear_color_stop(from, 0.),
-            gpui::linear_color_stop(to, 1.),
-        )
-    } else {
-        from.into()
-    }
-}
-
-/// `shadows` with Glow on; with it off only the inset ones (a control's edge light, not a halo).
-pub fn glows(shadows: Vec<gpui::BoxShadow>) -> Vec<gpui::BoxShadow> {
-    if effects().glow {
-        shadows
-    } else {
-        shadows.into_iter().filter(|s| s.inset).collect()
-    }
 }
 
 /// White at `a`: the dark look's ink and fills. In light, the ink at `a`, so every part keeps
@@ -389,6 +354,27 @@ fn layer(r: f32) -> impl Fn() -> Div {
 /// mockup's `transition-colors` does.
 fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement {
     hover_edge(id, r, to - from, false)
+}
+
+/// How far in each step of a [`pixel_fill`]'s corners cuts.
+pub const PIXEL: f32 = 3.;
+
+/// A coloured button's fill: `c` edge to edge, its corners cut in two [`PIXEL`] steps like a
+/// block's, for a little of the game's look. Put it first in a `relative` button with square
+/// corners, so the label is drawn over it.
+pub fn pixel_fill(c: Hsla) -> AnyElement {
+    crate::plate::cut(PIXEL, 2, Some(c.into()), None)
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+}
+
+/// `accent` a little lighter, for a coloured button under the pointer.
+pub fn lit_accent(accent: u32) -> Hsla {
+    let c = color(accent);
+    gpui::hsla(c.h, c.s, (c.l * 1.1).min(1.), 1.)
 }
 
 /// How opaque white outlines are: every control and inner card at rest, under the pointer, and
@@ -506,35 +492,18 @@ pub fn towards(a: Hsla, b: Hsla, t: f32) -> Hsla {
     }
 }
 
-/// A lifting card's glow under it, at `t` of its strength (the site's `0 14px 36px -12px`).
-fn lift_glow(t: f32) -> Vec<gpui::BoxShadow> {
-    glows(vec![gpui::BoxShadow {
-        color: color(look().accent).opacity(0.6 * t),
-        offset: gpui::point(px(0.), px(14.)),
-        blur_radius: px(36.),
-        spread_radius: px(-12.),
-        inset: false,
-    }])
-}
-
-/// The accent's lighter end, for the primary button's gradient (the mockup's `--accent2`).
-pub fn accent2() -> u32 {
-    sunrise_theme::glass::mix_oklab(look().accent, 0xffffff, 0.25)
-}
-
 /// `d`, a card built by [`card`] with its children in, wrapped to rise [`crate::motion::LIFT`] px
-/// on the spring while the pointer is on it: its outline warms from white to the accent and a glow
-/// opens under it, as the site's cards do. Pressing sinks it [`crate::motion::PRESS`] px instead.
+/// on the spring while the pointer is on it, its outline brightening. Pressing sinks it
+/// [`crate::motion::PRESS`] px instead.
 pub fn lift(id: &SharedString, d: Stateful<Div>) -> AnyElement {
     let rest = white(edge::REST + 0.03);
-    let warm = color(look().accent).opacity(0.65);
+    let lit = white(edge::HOVER);
     crate::hover_move(
         id,
         d.border_1().active(|s| s.top(px(crate::motion::PRESS))),
         move |d, t| {
             d.top(px(-crate::motion::LIFT * t))
-                .border_color(towards(rest, warm, t))
-                .shadow(lift_glow(t))
+                .border_color(towards(rest, lit, t))
         },
     )
 }
@@ -557,65 +526,6 @@ pub fn card(id: impl Into<SharedString>, r: f32, t: &Theme) -> Stateful<Div> {
         ),
         t,
     )
-}
-
-/// One pass of light across a primary button while the pointer is on it (the site's sheen): a
-/// narrow band of white, sliding through on the spring. Put it inside the button, before its
-/// label; it is gone again by the time the spring settles. Reduced motion shows nothing.
-pub fn sheen(id: &SharedString) -> AnyElement {
-    // Out of the flow in every state: an in-flow rest div would sit in the button's gap and
-    // widen it, so the button would narrow the moment the pointer arrives.
-    let nothing = || div().absolute().into_any_element();
-    if crate::motion::still() || !effects().sheen {
-        return nothing();
-    }
-    let hovered = crate::hover_is(id);
-    let since = HOVER_SINCE.with_borrow(|times| times.get(id).copied());
-    if !hovered {
-        return nothing();
-    }
-    let Some(at) = since else {
-        return nothing();
-    };
-    let band = div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .w(gpui::relative(0.55))
-        // shortcut: GPUI gradients stop at two colours, so the sheen fades in but not out
-        // again; a second band mirrored would restore the full pass.
-        .bg(gpui::linear_gradient(
-            105.,
-            gpui::linear_color_stop(gpui::white().opacity(0.), 0.),
-            gpui::linear_color_stop(gpui::white().opacity(0.3), 1.),
-        ));
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let start = *START.get_or_init(std::time::Instant::now);
-    let key =
-        gpui::ElementId::named_usize(format!("{id}-sheen"), (at - start).as_micros() as usize);
-    // One slow pass of light, as the site plays it (750 ms on a long ease-in-out).
-    const SHEEN: sunrise_theme::Motion = sunrise_theme::Motion {
-        name: "sheen",
-        ms: 750,
-        curve: [0.3, 0.7, 0.2, 1.],
-    };
-    band.with_animation(key, crate::motion::eased(SHEEN), |d, t| {
-        d.left(gpui::relative(-0.6 + 1.65 * t))
-    })
-    .into_any_element()
-}
-
-thread_local! {
-    /// When each element's hover began, for one-shot animations like [`sheen`].
-    static HOVER_SINCE: RefCell<HashMap<SharedString, std::time::Instant>> =
-        RefCell::new(HashMap::new());
-}
-
-/// Records hover times for [`sheen`]; called from [`crate::note_hover`].
-pub(crate) fn note_hover_since(id: &SharedString, at: std::time::Instant) {
-    HOVER_SINCE.with_borrow_mut(|times| {
-        times.insert(id.clone(), at);
-    });
 }
 
 /// The state dot before a row's second line (`Dot`): live green, amber for busy (the mockup
@@ -755,8 +665,8 @@ pub fn icon_button(
 }
 
 /// A top-bar page, as the site's nav: a naked tab — no plate, no pill — its label brightening and
-/// a faint fill arriving under the pointer, with the sunrise bar growing under it: a gradient
-/// line, half out on hover and all the way out with a glow on the page it names (`open`).
+/// a faint fill arriving under the pointer, with the accent bar growing under it: half out on
+/// hover and all the way out on the page it names (`open`).
 pub fn nav_tab(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -770,18 +680,9 @@ pub fn nav_tab(
         .bottom(px(1.))
         .h(px(2.))
         .rounded(px(rad(2.)))
-        .bg(grad(90., color(look.accent_soft), color(look.accent)));
+        .bg(color(look.accent));
     let bar = if open {
-        bar.left(px(12.))
-            .right(px(12.))
-            .shadow(glows(vec![gpui::BoxShadow {
-                color: color(look.accent).opacity(0.9),
-                offset: gpui::point(px(0.), px(0.)),
-                blur_radius: px(10.),
-                spread_radius: px(0.),
-                inset: false,
-            }]))
-            .into_any_element()
+        bar.left(px(12.)).right(px(12.)).into_any_element()
     } else {
         // Grows from the middle out to 80 % of the tab, at 70 % strength, on the spring.
         crate::hover_ease(
@@ -792,7 +693,7 @@ pub fn nav_tab(
                     .bottom(px(1.))
                     .h(px(2.))
                     .rounded(px(rad(2.)))
-                    .bg(grad(90., color(look.accent_soft), color(look.accent)))
+                    .bg(color(look.accent))
             },
             move |d, t| {
                 d.left(gpui::relative(0.5 - 0.4 * t))
@@ -1254,11 +1155,11 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         .border_color(if invalid {
             color(sunrise_theme::glass::DANGER_HOVER).opacity(0.6)
         } else if focused {
-            color(look().accent_soft).opacity(0.7)
+            color(look().accent)
         } else {
             white(edge::REST)
         })
-        .child(back_edge(radius::ROW, 0., true))
+        .when(!focused, |d| d.child(back_edge(radius::ROW, 0., true)))
         .font_family(sunrise_theme::glass::FONT)
         .text_size(px(14.))
 }
@@ -1322,58 +1223,16 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         .font_weight(FontWeight::MEDIUM);
     let d = match kind {
         Kind::Primary => {
-            let id2 = id.clone();
-            let accent2 = self::accent2();
-            d.overflow_hidden()
-                .bg(grad(135., color(look.accent), color(accent2)))
-                .border_1()
-                .border_color(white(0.16))
+            let c = if hover_is(&id) {
+                lit_accent(look.accent)
+            } else {
+                color(look.accent)
+            };
+            d.rounded_none()
                 .text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
-                .shadow(glows(vec![
-                    // The site's primary: a light line along the top edge, a glow under it.
-                    gpui::BoxShadow {
-                        color: gpui::white().opacity(0.22),
-                        offset: gpui::point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    },
-                    gpui::BoxShadow {
-                        color: color(look.accent).opacity(0.7),
-                        offset: gpui::point(px(0.), px(6.)),
-                        blur_radius: px(22.),
-                        spread_radius: px(-8.),
-                        inset: false,
-                    },
-                ]))
-                .hover(move |s| {
-                    s.border_color(white(0.34)).shadow(glows(vec![
-                        gpui::BoxShadow {
-                            color: gpui::white().opacity(0.28),
-                            offset: gpui::point(px(0.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        gpui::BoxShadow {
-                            color: color(look.accent).opacity(0.95),
-                            offset: gpui::point(px(0.), px(12.)),
-                            blur_radius: px(34.),
-                            spread_radius: px(-8.),
-                            inset: false,
-                        },
-                        gpui::BoxShadow {
-                            color: color(look.accent).opacity(0.5),
-                            offset: gpui::point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(1.),
-                            inset: false,
-                        },
-                    ]))
-                })
-                .active(|s| s.opacity(0.92).shadow(Vec::new()))
-                .child(sheen(&id2))
+                .active(|s| s.opacity(0.92))
+                .child(pixel_fill(c))
         }
         Kind::Secondary => d
             .bg(white(fill::BUTTON))
@@ -1543,32 +1402,15 @@ pub fn pill_strip(
             .enumerate()
             .map(|(i, tab)| tab.child(pill_probe(id, i, origin.clone()))),
     );
-    let accent = look().accent;
     let pill = sliding_pill(id, active, move || {
         div()
             .absolute()
             .top(px(top))
             .h(px(h))
             .rounded(px(rad(radius::CONTROL)))
-            .bg(grad(180., white(0.16), white(0.07)))
+            .bg(white(0.12))
             .border_1()
             .border_color(white(edge::STRONG))
-            .shadow(glows(vec![
-                gpui::BoxShadow {
-                    color: gpui::white().opacity(0.18),
-                    offset: gpui::point(px(0.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                },
-                gpui::BoxShadow {
-                    color: color(accent).opacity(0.45),
-                    offset: gpui::point(px(0.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(-8.),
-                    inset: false,
-                },
-            ]))
     });
     // The pill first, so the names are drawn over it.
     div().relative().children(pill).child(row)
@@ -1637,13 +1479,6 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .border_1()
             .border_color(color(look().accent).opacity(0.6))
             .bg(color(look().accent).opacity(0.2))
-            .shadow(glows(vec![gpui::BoxShadow {
-                color: color(look().accent).opacity(0.8),
-                offset: gpui::point(px(0.), px(4.)),
-                blur_radius: px(14.),
-                spread_radius: px(-6.),
-                inset: false,
-            }]))
     });
     seg.children(pill)
 }

@@ -10,8 +10,8 @@
 use crate::art::bake;
 use crate::rain::Keep;
 use gpui::{
-    canvas, div, fill, img, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
-    Bounds, Div, Hsla, Pixels, RenderImage, Window,
+    canvas, div, fill, img, point, prelude::*, px, rgb, size, Bounds, Div, Hsla, Pixels,
+    RenderImage, Window,
 };
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -539,13 +539,9 @@ fn cell(b: Bounds<Pixels>, x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
     )
 }
 
-/// A strip fading from `c` at `from` to `c` at `to` opacity, top to bottom.
-fn fade(c: u32, from: f32, to: f32) -> gpui::Background {
-    linear_gradient(
-        180.,
-        linear_color_stop(tone(c).opacity(from), 0.),
-        linear_color_stop(tone(c).opacity(to), 1.),
-    )
+/// A strip of `c` flat at the opacity halfway between `from` and `to`: the look has no gradients.
+fn fade(c: u32, from: f32, to: f32) -> gpui::Hsla {
+    tone(c).opacity((from + to) / 2.)
 }
 
 /// What a [`Mood`] paints behind the clouds and skylines: the water's light shafts and the

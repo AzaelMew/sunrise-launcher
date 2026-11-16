@@ -332,18 +332,12 @@ impl Launcher {
             // The banner: the hero and the Play row over the sky (`sky.rs`), or over the player's
             // own picture under a veil of the page colour. It reaches the content's edges and the top
             // bar.
-            let veil = |angle: f32, from: f32, to: f32, at: f32| {
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .bg(gpui::linear_gradient(
-                        angle,
-                        gpui::linear_color_stop(t.page.opacity(from), 0.),
-                        gpui::linear_color_stop(t.page.opacity(to), at),
-                    ))
-            };
+            let veil = div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(t.page.opacity(0.6));
             // At the window's size (`picture_cache`): a chosen picture may be far bigger.
             let side = picture_cache::Look::Fit(self.window_side());
             let picture = self
@@ -358,8 +352,7 @@ impl Launcher {
                             .size_full()
                             .object_fit(gpui::ObjectFit::Cover)
                             .into_any_element(),
-                        veil(90., 0.82, 0., 0.62).into_any_element(),
-                        veil(180., 0., 0.75, 1.).into_any_element(),
+                        veil.into_any_element(),
                     ]
                 });
             div()

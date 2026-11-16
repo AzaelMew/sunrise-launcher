@@ -22,7 +22,6 @@ impl Render for Launcher {
         glass::set_light(!self.theme.dark);
         self.look = self.theme.look;
         glass_ui::set_look(self.look);
-        glass_ui::set_effects(self.settings.effects);
         glass::set_look(self.look);
         // The mockup tints the scene with any accent but its violet.
         let tint = (self.theme.dark && self.look.accent != sunrise_theme::glass::ACCENT)

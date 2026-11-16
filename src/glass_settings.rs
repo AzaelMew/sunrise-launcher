@@ -45,10 +45,6 @@ const INDEX: [&[&str]; 10] = [
         "Blur",
         "Performance mode",
         "Motion",
-        "Glow",
-        "Gradients",
-        "Shine on hover",
-        "Effects",
         "Home background",
         "Reset the launcher's look",
         "Dark",
@@ -649,7 +645,6 @@ impl Launcher {
             .child(self.glass_accent_row(cx))
             .child(self.performance_row(cx))
             .child(self.motion_row(cx))
-            .children(self.effects_rows(cx))
             .child(self.home_background_row(cx))
             .child(self.reset_look_row(cx));
         let launcher = section(0)
@@ -855,7 +850,7 @@ pub(super) fn nav_item(
         .active(|s| s.bg(white(0.1)));
     let d = if on {
         d.bg(ui::color(accent).opacity(0.16))
-            .border_color(ui::color(soft).opacity(0.5))
+            .border_color(ui::color(accent))
             .font_weight(FontWeight::MEDIUM)
             .text_color(white(ink::FULL))
             .child(
@@ -919,11 +914,11 @@ impl Launcher {
             .bg(white(if focused { 0.11 } else { 0.06 }))
             .border_1()
             .border_color(if focused {
-                ui::color(soft).opacity(0.7)
+                ui::color(ui::look().accent)
             } else {
                 white(ui::edge::REST)
             })
-            .child(ui::back_edge(radius::ROW, 0., true))
+            .when(!focused, |d| d.child(ui::back_edge(radius::ROW, 0., true)))
             .cursor_text()
             .font_family(sunrise_theme::glass::FONT)
             .text_size(px(14.))

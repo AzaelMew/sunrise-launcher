@@ -162,11 +162,10 @@ impl Launcher {
             .w(px(44.))
             .h(px(TALL))
             .cursor_pointer()
-            .when(open, |d| d.bg(gpui::black().opacity(0.2)))
-            .when(!open, |d| {
-                d.child(ui::back_tint(radius::CONTROL, gpui::black().opacity(0.2)))
-            })
-            .child(ui::icon("more-horizontal", 20., glyph).relative())
+            .border_l_1()
+            .border_color(gpui::black().opacity(0.2))
+            .when(!open, |d| d.opacity(0.85).hover(|s| s.opacity(1.)))
+            .child(ui::icon("more-horizontal", 20., glyph))
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if !this.closed_by_this_press(event) {
@@ -190,7 +189,10 @@ impl Launcher {
                 .w(px(44.))
                 .h(px(TALL))
                 .cursor_pointer()
-                .hover(|s| s.bg(gpui::black().opacity(0.2)))
+                .border_l_1()
+                .border_color(gpui::black().opacity(0.2))
+                .opacity(0.85)
+                .hover(|s| s.opacity(1.))
                 .child(ui::icon("stop", 18., glyph))
                 .tooltip(ui::tip(tr("Stop the build")))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -236,8 +238,7 @@ impl Launcher {
         let busy_none = busy.is_none();
         let group = match busy {
             Some((label, progress)) => base
-                .bg(accent.opacity(0.35))
-                .border_color(accent.opacity(0.5))
+                .child(ui::pixel_fill(accent.opacity(0.35)))
                 .child(
                     div()
                         .absolute()
@@ -245,7 +246,7 @@ impl Launcher {
                         .left_0()
                         .h_full()
                         .w(gpui::relative(progress.unwrap_or(0.).clamp(0., 1.)))
-                        .bg(accent),
+                        .child(ui::pixel_fill(accent)),
                 )
                 .child(
                     div()
@@ -265,20 +266,17 @@ impl Launcher {
                             None => format!("{label}…"),
                         }),
                 ),
-            None if running => base
-                .bg(white(0.14))
-                .border_color(white(ui::edge::HOVER))
-                .child(
-                    body(tr("Stop").into(), "stop")
-                        .id("play")
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            if let Some(client) = &this.client {
-                                client.kill();
-                            }
-                            cx.notify();
-                        })),
-                ),
+            None if running => base.child(ui::pixel_fill(white(0.14))).child(
+                body(tr("Stop").into(), "stop")
+                    .id("play")
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        if let Some(client) = &this.client {
+                            client.kill();
+                        }
+                        cx.notify();
+                    })),
+            ),
             None => {
                 let owner = if sunrise_launcher::developer_offline::selected() {
                     Some(true)
@@ -364,7 +362,9 @@ impl Launcher {
                     }
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
-                base.bg(accent).text_color(on_accent).child(main)
+                base.child(ui::pixel_fill(accent))
+                    .text_color(on_accent)
+                    .child(main)
             }
         };
         // Ready to play: it brightens a little under the pointer, and a press dims it.
@@ -626,12 +626,14 @@ impl Launcher {
             .bg(white(if focused { 0.09 } else { 0.06 }))
             .border_1()
             .border_color(if focused {
-                ui::color(ui::look().accent_soft).opacity(0.7)
+                ui::color(ui::look().accent)
             } else {
                 white(ui::edge::REST)
             })
             .relative()
-            .child(ui::back_edge(radius::LARGE, 0., true))
+            .when(!focused, |d| {
+                d.child(ui::back_edge(radius::LARGE, 0., true))
+            })
             .font_family(sunrise_theme::glass::FONT)
             .text_size(px(14.))
             .text_color(white(ink::FULL))

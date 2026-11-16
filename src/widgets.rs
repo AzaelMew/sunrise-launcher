@@ -41,9 +41,7 @@ pub(crate) fn note_hover(id: &SharedString, hovered: bool, window: &mut Window) 
     let is_on = state.on.as_ref().is_some_and(|(h, _)| h == id);
     if hovered && !is_on {
         state.off = state.on.take();
-        let at = Instant::now();
-        state.on = Some((id.clone(), at));
-        glass_ui::note_hover_since(id, at);
+        state.on = Some((id.clone(), Instant::now()));
     } else if !hovered && is_on {
         state.off = Some((id.clone(), Instant::now()));
         state.on = None;

@@ -4176,10 +4176,7 @@ pub struct Settings {
     /// started with `SUNRISE_NO_HEARTBEAT`. On by default, as upstream sends it.
     #[serde(default)]
     pub ping_off: bool,
-    /// The look's flourishes, each on or off (`effects`): glow, gradients, the hover shine.
-    #[serde(default)]
-    pub effects: crate::effects::Effects,
-    /// The player has been through the first-run welcome (theme, accent, effects).
+    /// The player has been through the first-run welcome (theme, accent).
     #[serde(default)]
     pub welcomed: bool,
     /// The player without an account that owns the game has read, once, why the launcher needs

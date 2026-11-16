@@ -178,8 +178,8 @@ fn icon_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div
             .cursor_pointer()
             .when(on, |d| {
                 d.bg(white(0.16))
-                    .border_2()
-                    .border_color(ui::color(ui::look().accent_soft))
+                    .border_1()
+                    .border_color(ui::color(ui::look().accent))
             })
             .when(!on, |d| d.child(ui::back_tint(15., white(0.07)))),
         t,
@@ -997,8 +997,6 @@ impl Launcher {
             (false, true) if copy => tr("Copying…"),
             (false, _) => tr("Create instance"),
         };
-        let accent = ui::color(self.look.accent);
-        let lit = gpui::hsla(accent.h, accent.s, (accent.l * 1.1).min(1.), 1.);
         let save = keyboard(
             div()
                 .id("instance-save")
@@ -1008,10 +1006,9 @@ impl Launcher {
                 .justify_center()
                 .h(px(48.))
                 .px(px(32.))
-                .rounded(px(crate::glass_ui::rad(radius::LARGE)))
-                .bg(accent)
+                .child(ui::pixel_fill(ui::color(self.look.accent)))
                 .cursor_pointer()
-                .child(ui::back_tint(radius::LARGE, lit))
+                .hover(|s| s.opacity(0.92))
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(15.))
                 .font_weight(FontWeight::SEMIBOLD)

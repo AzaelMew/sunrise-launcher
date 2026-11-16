@@ -197,21 +197,21 @@ impl Launcher {
             let start = keyboard(
                 div()
                     .id("server-start")
+                    .relative()
                     .flex()
                     .flex_none()
                     .items_center()
                     .justify_center()
                     .h(px(44.))
                     .px(px(28.))
-                    .rounded(px(crate::glass_ui::rad(radius::LARGE)))
-                    .bg(ui::color(look.accent))
+                    .child(ui::pixel_fill(ui::color(look.accent)))
                     .text_color(ui::color(look.on_accent))
                     .font_family(sunrise_theme::glass::FONT)
                     .text_size(px(15.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.92))
-                    .child(tr("Start")),
+                    .child(div().relative().child(tr("Start"))),
                 &t,
             );
             buttons = buttons.child(if idle && status.phase == "stopped" {

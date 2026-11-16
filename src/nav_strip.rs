@@ -288,11 +288,7 @@ impl NavStrip {
             .when(right, |d| d.right(px(4.)).justify_end())
             .when(!right, |d| d.left(px(4.)))
             .opacity(alpha)
-            .bg(gpui::linear_gradient(
-                if right { 270. } else { 90. },
-                gpui::linear_color_stop(shade.opacity(0.98), 0.6),
-                gpui::linear_color_stop(shade.opacity(0.), 1.),
-            ))
+            .bg(shade.opacity(0.98))
             .child(button)
     }
 }

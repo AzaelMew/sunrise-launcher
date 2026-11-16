@@ -794,27 +794,25 @@ impl Launcher {
                 .child(tr("Cancel")),
             &t,
         );
-        let accent = ui::color(look.accent);
-        let lit = gpui::hsla(accent.h, accent.s, (accent.l * 1.1).min(1.), 1.);
         let create = keyboard(
             div()
                 .id("create-go")
+                .relative()
                 .flex()
                 .items_center()
                 .justify_center()
                 .h(px(48.))
                 .px(px(32.))
-                .rounded(px(crate::glass_ui::rad(radius::LARGE)))
-                .bg(accent)
+                .child(ui::pixel_fill(ui::color(look.accent)))
                 .cursor_pointer()
-                .hover(move |s| s.bg(lit))
+                .hover(|s| s.opacity(0.92))
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(15.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(ui::color(look.on_accent))
                 // The mockup greys it until the EULA is ticked; a press then says why.
                 .when(!eula, |d| d.opacity(0.5))
-                .child(tr("Create server")),
+                .child(div().relative().child(tr("Create server"))),
             &t,
         );
         let buttons = if creating {

@@ -70,7 +70,7 @@ pub fn render(t: &Theme) -> gpui::Div {
         .gap(px(12.))
         .child(ui::button(
             "spec-primary".into(),
-            "Primary, with sheen".into(),
+            "Primary".into(),
             crate::Kind::Primary,
             t,
         ))

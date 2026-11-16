@@ -1,5 +1,5 @@
-//! The launcher look's part of `settings.json`: the accent kept per theme, the effects and reduced
-//! motion, each dropped alone when it isn't one, and an old light appearance moved to the Taiga
+//! The launcher look's part of `settings.json`: the accent kept per theme and reduced motion,
+//! each dropped alone when it isn't one, and an old light appearance moved to the Taiga
 //! theme.
 use super::{Appearance, Settings};
 use serde_json::{Map, Value};
@@ -12,14 +12,6 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
             .retain(|_, a| serde_json::from_value::<crate::themes::Accent>(a.clone()).is_ok()),
         Some(_) => {
             fields.remove("theme_accents");
-        }
-        None => {}
-    }
-    // Effects keep their flags that are true or false; one that isn't stays on.
-    match fields.get_mut("effects") {
-        Some(Value::Object(flags)) => flags.retain(|_, v| v.is_boolean()),
-        Some(_) => {
-            fields.remove("effects");
         }
         None => {}
     }
@@ -62,18 +54,5 @@ mod tests {
         assert_eq!(s.reduce_motion, Some(true));
         let saved = serde_json::to_string(&Settings::default()).unwrap();
         assert!(!saved.contains("theme_accents") && !saved.contains("reduce_motion"));
-    }
-
-    #[test]
-    fn effects_keep_their_good_flags_and_a_bad_effects_loses_nothing_else() {
-        let s =
-            Settings::parse(r#"{"effects": {"glow": false, "sheen": "no"}, "game_args": "--x"}"#);
-        assert_eq!(s.game_args, "--x");
-        assert!(!s.effects.glow && s.effects.gradients && s.effects.sheen);
-        let s = Settings::parse(r#"{"effects": 3, "game_args": "--x"}"#);
-        assert_eq!(
-            (s.game_args.as_str(), s.effects),
-            ("--x", crate::effects::Effects::ALL)
-        );
     }
 }

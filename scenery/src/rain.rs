@@ -7,10 +7,7 @@
 //! stands still under reduced motion, in performance mode and while the window is in the
 //! background (the pointer coming back starts it again, [`Rain::poke`]).
 use crate::sky::{motion, Motion};
-use gpui::{
-    canvas, div, fill, linear_color_stop, linear_gradient, point, prelude::*, px, size, Bounds,
-    Context, Hsla, Pixels, Window,
-};
+use gpui::{canvas, div, fill, point, prelude::*, px, size, Bounds, Context, Hsla, Pixels, Window};
 use std::time::Instant;
 
 const DROPS: u32 = 130;
@@ -139,14 +136,7 @@ impl Render for Rain {
                             point(b.origin.x + px(x), b.origin.y + px(y)),
                             size(px(thick), px(len)),
                         );
-                        window.paint_quad(fill(
-                            streak,
-                            linear_gradient(
-                                180.,
-                                linear_color_stop(color(c).opacity(0.), 0.),
-                                linear_color_stop(color(c).opacity(alpha), 1.),
-                            ),
-                        ));
+                        window.paint_quad(fill(streak, color(c).opacity(alpha / 2.)));
                         // A near drop's splash: a short flat flash at the bottom as it lands.
                         let landed = (y + len - h) / len;
                         if depth == 2 && (0. ..1.).contains(&landed) {
