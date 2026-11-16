@@ -147,7 +147,7 @@ fn searches_by_kind_and_words() {
     );
     let p = hud(&index);
     assert_eq!(p.support(), super::super::Support::Works);
-    assert_eq!(p.page, "/coords_hud");
+    assert_eq!(p.page, "https://playsunrise.net/mods/coords_hud");
 }
 
 #[test]
@@ -405,7 +405,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
 fn screenshots_are_the_gallery_from_the_registry_only() {
     let mut p = sample().projects[0].clone();
     assert!(gallery_of(&p).is_empty());
-    let pages = "https://horizon-rust.github.io/horizon-mods/screenshots/coords_hud";
+    let pages = "https://sunrise-org.github.io/sunrise-mods/screenshots/coords_hud";
     p.screenshots = vec![
         format!("{pages}/b.png"),
         "https://example.com/tracker.png".into(),
