@@ -1,11 +1,11 @@
 //! Home's hero scene (Figma: Components → Hero scene), alive the way mistral.ai's hero is: equal
 //! framed columns on both sides with hairlines, a floor line and a faint arc; Dusk blocks rise out
 //! of the floor into mirrored towers, Sunny pops onto the left tower, the claw and Ferris (the Rust
-//! crab, public domain) appear. Then the scene keeps rearranging itself in short moves with rests
-//! between them: a block slides out and the one above drops, the diamond tumbles over into a
-//! square, the right tower lifts on a block rising out of the floor, the claw lowers and lifts,
-//! Ferris walks a stretch, a block wobbles. Every move is undone later in the cycle, so it loops
-//! without a seam.
+//! crab, public domain) appear. Then, as on mistral.ai, one thing moves at a time on a steady beat
+//! and always by one block: a slide or a rise in 450 ms, a block tipping between square and
+//! diamond in a 220 ms snap, every move easing in and out. Blocks stay on the grid and on what
+//! holds them (a block that loses its support drops at once, Sunny riding its block), and each
+//! move is undone later in the cycle, so it loops without a seam.
 //!
 //! It is a view of its own behind the launcher ([`crate::window_root::Backdrop`]), placed over
 //! Home's first screen: its frames draw the scene alone, never the launcher, and only while
@@ -36,12 +36,18 @@ const APPEAR_MS: f32 = 300.;
 /// Below this many ms of rest the view keeps drawing; above it, it sleeps until the next move.
 const FRAME_MS: u64 = 16;
 
-/// How far the claw's cable reaches up and down.
-const CABLE_UP: f32 = 102.;
-const CABLE_DOWN: f32 = 212.;
-/// Where Ferris stands, from the page's left, and how far it walks.
+/// A slide or a rise, and a block tipping between square and diamond.
+const SLIDE_MS: f32 = 450.;
+const TIP_MS: f32 = 220.;
+/// A diamond: a square this wide turned 45°, its corners on the middle of a block's sides; set
+/// down flat it sinks this much.
+const DIAMOND: f32 = 50.91;
+const TIP_DROP: f32 = (BLOCK - DIAMOND) / 2.;
+
+/// How far the claw's cable reaches at rest.
+const CABLE: f32 = 212.;
+/// Where Ferris stands, from the page's left.
 const FERRIS_HOME: f32 = 280.;
-const FERRIS_WALK: f32 = 136.;
 
 const SUNNY: [&str; 12] = [
     "...b....b....b..",
@@ -115,6 +121,15 @@ const fn block(right: bool, side: f32, bottom: f32, colour: u32, row: f32) -> Bl
     }
 }
 
+/// A diamond in the block whose corner is `side` in and `bottom` up.
+const fn diamond(right: bool, side: f32, bottom: f32, colour: u32, row: f32) -> Block {
+    Block {
+        size: DIAMOND,
+        turn: 45.,
+        ..block(right, side + TIP_DROP, bottom + TIP_DROP, colour, row)
+    }
+}
+
 // The left tower is blocks 0 (A1, the base) to 2; B1 the diamond beside it.
 const A2: usize = 1;
 const A3: usize = 2;
@@ -132,17 +147,11 @@ const BLOCKS: [Block; 11] = [
     block(false, 0., 0., SUN, 0.),
     block(false, 0., BLOCK, AMBER, 1.),
     block(false, 0., 2. * BLOCK, VIOLET, 2.),
-    Block {
-        turn: 45.,
-        ..block(false, BLOCK, 0., PLUM, 0.)
-    },
+    diamond(false, BLOCK, 0., PLUM, 0.),
     block(true, 0., 0., DEEP, 0.),
     block(true, 0., BLOCK, VIOLET, 1.),
     block(true, 0., 2. * BLOCK, PLUM, 2.),
-    Block {
-        turn: 45.,
-        ..block(true, 0., 3. * BLOCK, SUN, 2.)
-    },
+    diamond(true, 0., 3. * BLOCK, SUN, 2.),
     block(true, BLOCK, 0., SUN, 0.),
     Block {
         size: 36.,
@@ -161,17 +170,29 @@ struct Move {
     by: (f32, f32, f32),
     ms: f32,
     rest: f32,
-    /// A wobble: out and back within the move, ending where it began.
-    there_and_back: bool,
 }
 
-const fn shift(parts: &'static [Part], by: (f32, f32, f32), ms: f32, rest: f32) -> Move {
+const fn slide(parts: &'static [Part], inwards: f32, up: f32, rest: f32) -> Move {
     Move {
         parts,
-        by,
-        ms,
+        by: (inwards, up, 0.),
+        ms: SLIDE_MS,
         rest,
-        there_and_back: false,
+    }
+}
+
+/// A diamond set down flat (`flat`) or stood back on its corner.
+const fn tip(parts: &'static [Part], flat: bool, rest: f32) -> Move {
+    let (drop, turn) = if flat {
+        (-TIP_DROP, -45.)
+    } else {
+        (TIP_DROP, 45.)
+    };
+    Move {
+        parts,
+        by: (0., drop, turn),
+        ms: TIP_MS,
+        rest,
     }
 }
 
@@ -182,29 +203,36 @@ const TOWER: &[Part] = &[
     Part::Block(D3),
     Part::Block(D4),
 ];
-const SUNNY_BLOCK: &[Part] = &[Part::Block(A3)];
+const MIDDLE: &[Part] = &[Part::Block(A2)];
+const TOP: &[Part] = &[Part::Block(A3)];
+const LEFT_DIAMOND: &[Part] = &[Part::Block(B1)];
+const RIGHT_DIAMOND: &[Part] = &[Part::Block(D4)];
 const STACK: &[Part] = &[Part::Block(C1), Part::Block(C2)];
+const CLAW_PART: &[Part] = &[Part::Claw];
+const FERRIS_PART: &[Part] = &[Part::Ferris];
 
-/// The cycle, after the build. Each move is undone later, so the scene ends where it began.
-const MOVES: [Move; 15] = [
-    shift(TOWER, (0., BLOCK, 0.), 520., 1600.),
-    shift(&[Part::Block(A2)], (-BLOCK, 0., 0.), 480., 700.),
-    shift(SUNNY_BLOCK, (0., -BLOCK, 0.), 420., 1800.),
-    shift(&[Part::Block(B1)], (BLOCK, 0., 45.), 620., 1400.),
-    shift(&[Part::Claw], (0., CABLE_DOWN - CABLE_UP, 0.), 900., 1500.),
-    shift(STACK, (BLOCK, 0., 0.), 500., 1200.),
-    shift(&[Part::Ferris], (FERRIS_WALK, 0., 0.), 2000., 1300.),
-    Move {
-        there_and_back: true,
-        ..shift(&[Part::Block(C2)], (0., 0., 22.), 560., 1500.)
-    },
-    shift(TOWER, (0., -BLOCK, 0.), 520., 1200.),
-    shift(&[Part::Claw], (0., CABLE_UP - CABLE_DOWN, 0.), 900., 900.),
-    shift(SUNNY_BLOCK, (0., BLOCK, 0.), 420., 300.),
-    shift(&[Part::Block(A2)], (BLOCK, 0., 0.), 480., 1500.),
-    shift(&[Part::Block(B1)], (-BLOCK, 0., -45.), 620., 1000.),
-    shift(STACK, (-BLOCK, 0., 0.), 500., 900.),
-    shift(&[Part::Ferris], (-FERRIS_WALK, 0., 0.), 2000., 1600.),
+/// The cycle after the build: one move at a time, about a second apart, the two sides taking
+/// turns. Each move is undone later, so the scene ends where it began.
+const MOVES: [Move; 18] = [
+    slide(TOWER, 0., BLOCK, 650.),
+    tip(LEFT_DIAMOND, true, 850.),
+    slide(STACK, BLOCK, 0., 700.),
+    // The middle block slides out and the top one, Sunny on it, drops into its place.
+    slide(MIDDLE, -BLOCK, 0., 60.),
+    slide(TOP, 0., -BLOCK, 900.),
+    tip(RIGHT_DIAMOND, true, 800.),
+    slide(LEFT_DIAMOND, BLOCK, 0., 700.),
+    slide(FERRIS_PART, BLOCK, 0., 900.),
+    slide(TOWER, 0., -BLOCK, 750.),
+    slide(LEFT_DIAMOND, -BLOCK, 0., 250.),
+    tip(LEFT_DIAMOND, false, 800.),
+    slide(STACK, -BLOCK, 0., 800.),
+    slide(TOP, 0., BLOCK, 60.),
+    slide(MIDDLE, BLOCK, 0., 900.),
+    tip(RIGHT_DIAMOND, false, 700.),
+    slide(CLAW_PART, 0., -BLOCK, 650.),
+    slide(FERRIS_PART, -BLOCK, 0., 850.),
+    slide(CLAW_PART, 0., BLOCK, 800.),
 ];
 
 /// Where Home's first screen is in the window, as the launcher's last frame laid it out.
@@ -293,7 +321,6 @@ struct State {
     shift: [(f32, f32, f32); BLOCKS.len() + 2],
     built: f32,
     shown: f32,
-    walking: Option<bool>,
     idle_ms: f32,
 }
 
@@ -311,7 +338,6 @@ fn state(ms: f32) -> State {
         shift: [(0., 0., 0.); BLOCKS.len() + 2],
         built: ms,
         shown: ((ms - BUILT_MS) / APPEAR_MS).clamp(0., 1.),
-        walking: None,
         idle_ms: 0.,
     };
     let start = BUILT_MS + APPEAR_MS;
@@ -321,23 +347,7 @@ fn state(ms: f32) -> State {
     let cycle: f32 = MOVES.iter().map(|m| m.ms + m.rest).sum();
     let mut t = (ms - start) % cycle;
     for m in &MOVES {
-        let p = if t >= m.ms {
-            1.
-        } else {
-            let p = t / m.ms;
-            if m.parts == [Part::Ferris] {
-                s.walking = Some(m.by.0 < 0.);
-                // Whole steps: Ferris moves on its pixels, not in a glide.
-                (p * m.ms / 125.).floor() * 125. / m.ms
-            } else {
-                in_out(p)
-            }
-        };
-        let p = if m.there_and_back {
-            (p * std::f32::consts::PI).sin() * if t >= m.ms { 0. } else { 1. }
-        } else {
-            p
-        };
+        let p = if t >= m.ms { 1. } else { in_out(t / m.ms) };
         for &part in m.parts {
             let d = &mut s.shift[slot(part)];
             d.0 += m.by.0 * p;
@@ -403,7 +413,7 @@ fn scene(now: &State, place: Place) -> Div {
         .border_color(white(0.06));
     let blocks = blocks(now);
     let sunny_lift = now.shift[A3].1;
-    let sunny = sprite(&SUNNY, false, |c| match c {
+    let sunny = sprite(&SUNNY, |c| match c {
         'b' => Some(0xffd978),
         'c' => Some(SUN),
         'd' => Some(0xfff3c4),
@@ -494,7 +504,7 @@ fn ease(t: f32) -> f32 {
 
 /// The claw in the left column on its cable from the top line, holding a block.
 fn crane(now: &State) -> Div {
-    let cable = CABLE_UP + now.shift[slot(Part::Claw)].1;
+    let cable = CABLE - now.shift[slot(Part::Claw)].1;
     div()
         .absolute()
         .top_0()
@@ -520,7 +530,7 @@ fn crane(now: &State) -> Div {
                 .bg(rgb(SUN)),
         )
         .child(
-            sprite(&CLAW, false, |c| match c {
+            sprite(&CLAW, |c| match c {
                 'b' => Some(0x5d6b7a),
                 'c' => Some(0xa9b6c6),
                 _ => None,
@@ -530,15 +540,10 @@ fn crane(now: &State) -> Div {
         )
 }
 
-/// Ferris on the floor, facing the way it walks, a pixel up on every other step.
+/// Ferris on the floor, sliding a block's width now and then as the blocks do.
 fn ferris(now: &State) -> Div {
     let x = FERRIS_HOME + now.shift[slot(Part::Ferris)].0;
-    let left = now.walking.unwrap_or(false);
-    let lift = match now.walking {
-        Some(_) if ((x / PIXEL) as usize / 2) % 2 == 1 => PIXEL,
-        _ => 0.,
-    };
-    sprite(&FERRIS, left, |c| match c {
+    sprite(&FERRIS, |c| match c {
         'b' => Some(0x4a1500),
         'c' => Some(0xff9a5a),
         'd' => Some(0xf25a12),
@@ -548,24 +553,20 @@ fn ferris(now: &State) -> Div {
         _ => None,
     })
     .absolute()
-    .left(px((x / PIXEL).round() * PIXEL))
-    .bottom(px(lift))
+    .left(px(x))
+    .bottom_0()
     .opacity(now.shown)
 }
 
-/// Pixel art from rows of letters at 4 px a pixel (mirrored when `flip`), each run of one colour
-/// a single box.
-fn sprite(rows: &[&str], flip: bool, colour: impl Fn(char) -> Option<u32>) -> Div {
+/// Pixel art from rows of letters at 4 px a pixel, each run of one colour a single box.
+fn sprite(rows: &[&str], colour: impl Fn(char) -> Option<u32>) -> Div {
     let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
     let mut d = div()
         .flex_none()
         .w(px(width as f32 * PIXEL))
         .h(px(rows.len() as f32 * PIXEL));
     for (y, row) in rows.iter().enumerate() {
-        let mut chars: Vec<char> = row.chars().collect();
-        if flip {
-            chars.reverse();
-        }
+        let chars: Vec<char> = row.chars().collect();
         let mut x = 0;
         while x < chars.len() {
             let c = chars[x];
