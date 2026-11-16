@@ -16,7 +16,7 @@ use sunrise_theme::glass::{fill, ink, radius, Glass};
 thread_local! {
     /// Whether this frame's pages draw the glass look (the dark appearance).
     static ON: Cell<bool> = const { Cell::new(false) };
-    /// How round its corners are ([`set_corners`]).
+    /// Its corners' radius ([`set_corners`]).
     static CORNERS: Cell<f32> = const { Cell::new(0.) };
     /// The look's colours for the player's accent.
     static LOOK: Cell<Glass> = Cell::new(Glass::default_look());
@@ -231,16 +231,16 @@ pub fn set_on(on: bool) {
 /// A corner of the glass parts: square, as the Outline look draws them (`docs/design-system.md`).
 pub fn rad(r: f32) -> f32 {
     if on() {
-        r * CORNERS.get()
+        CORNERS.get()
     } else {
         r
     }
 }
 
-/// Set as each frame starts: how round the glass look's corners are, a share (0 to 1) of each
-/// one's designed radius (Settings > Appearance > Corners).
-pub fn set_corners(share: f32) {
-    CORNERS.set(share);
+/// Set as each frame starts: the glass look's corner radius in px, the same for every corner
+/// (Settings > Appearance > Corners; a small element rounds no further than half its side).
+pub fn set_corners(radius: f32) {
+    CORNERS.set(radius);
 }
 
 /// The Outline look's 1 px edge.
@@ -977,10 +977,18 @@ pub fn menu_row(
         .px(px(MENU_ROW_PADDING))
         .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
+        .group(id.clone())
         .child(hover_fade(&id, layer(radius::CONTROL), move |d, a| {
             d.bg(hover_color.opacity(hover_color.a * a))
         }))
-        .child(icon(name, MENU_ICON_SIZE, icon_color).relative())
+        .child(hover_nudge(&id, MENU_ROW_GAP))
+        .child(
+            icon(name, MENU_ICON_SIZE, icon_color)
+                .relative()
+                .when(!danger, |d| {
+                    d.group_hover(id.clone(), |s| s.text_color(white(ink::FULL)))
+                }),
+        )
         .child(
             text(MENU_FONT_SIZE, FontWeight::NORMAL, 1.)
                 .relative()
@@ -1345,6 +1353,91 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         .text_size(px(14.))
 }
 
+thread_local! {
+    /// The slider being dragged, if one is.
+    static SLIDING: RefCell<Option<SharedString>> = const { RefCell::new(None) };
+}
+
+/// A slider from `min` to `max` in whole `step`s, standing at `value`, `width` px long: a 4 px
+/// track filled in the accent up to a square knob. A press sets it where the pointer is, and it
+/// follows a drag anywhere in the window until the button comes up; `on_change` hears each value.
+pub fn slider(
+    id: impl Into<SharedString>,
+    value: f32,
+    (min, max, step): (f32, f32, f32),
+    width: f32,
+    on_change: impl Fn(f32, &mut Window, &mut App) + 'static,
+) -> Div {
+    let id = id.into();
+    let share = ((value - min) / (max - min)).clamp(0., 1.);
+    let on_change = Rc::new(on_change);
+    const KNOB: f32 = 14.;
+    // The window's own mouse events, read where the slider was painted: a drag keeps going past
+    // its ends, which an element's listeners (heard only under the pointer) would lose.
+    let listen = canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let at = move |x: Pixels| {
+                let share = ((x - bounds.origin.x) / bounds.size.width).clamp(0., 1.);
+                ((min + share * (max - min)) / step).round() * step
+            };
+            let (down_id, change) = (id.clone(), on_change.clone());
+            window.on_mouse_event(move |e: &gpui::MouseDownEvent, phase, window, cx| {
+                if phase == gpui::DispatchPhase::Bubble
+                    && e.button == gpui::MouseButton::Left
+                    && bounds.contains(&e.position)
+                {
+                    SLIDING.set(Some(down_id.clone()));
+                    change(at(e.position.x), window, cx);
+                }
+            });
+            let (move_id, change) = (id.clone(), on_change.clone());
+            window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, window, cx| {
+                let mine = SLIDING.with_borrow(|s| s.as_ref() == Some(&move_id));
+                if phase == gpui::DispatchPhase::Bubble && mine && e.dragging() {
+                    change(at(e.position.x), window, cx);
+                }
+            });
+            window.on_mouse_event(|_: &gpui::MouseUpEvent, _, _, _| SLIDING.set(None));
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
+    div()
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .w(px(width))
+        .h(px(24.))
+        .cursor_pointer()
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .h(px(4.))
+                .bg(white(fill::ACTIVE))
+                .child(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(share))
+                        .bg(color(look().accent)),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(gpui::relative(share))
+                .ml(px(-KNOB / 2.))
+                .size(px(KNOB))
+                .rounded(px(rad(KNOB / 2.)))
+                .bg(white(ink::FULL)),
+        )
+        .child(listen)
+}
+
 /// A switch (`Toggle`): 40×24, round; the accent with an `on_accent` knob on the right while on,
 /// white at 14 % with a white knob at 70 % on the left while off.
 pub fn toggle(
@@ -1624,8 +1717,9 @@ pub fn segments<T: Copy + PartialEq + 'static>(
         let pick = on_pick.clone();
         let origin = origin.clone();
         let key = id.to_string();
+        let option = SharedString::from(format!("{id}-{label}"));
         let d = div()
-            .id(SharedString::from(format!("{id}-{label}")))
+            .id(option.clone())
             .relative()
             .flex()
             .flex_none()
@@ -1640,11 +1734,14 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .line_height(px(20.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(white(if active { ink::FULL } else { ink::MUTED }))
-            .when(!active, |d| d.hover(|s| s.text_color(white(ink::FULL))))
-            .child(crate::tr(label))
+            .when(!active, |d| {
+                d.hover(|s| s.text_color(white(ink::FULL)))
+                    .child(hover_edge(&option, radius::CONTROL - 1., 0.06, false))
+            })
+            .child(div().relative().child(crate::tr(label)))
             .child(pill_probe(key, i, origin))
             .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx));
-        seg = seg.child(keyboard(d, t));
+        seg = seg.child(keyboard(track_hover(d, option.clone()), t));
     }
     let active = options
         .iter()

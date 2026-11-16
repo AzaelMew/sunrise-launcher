@@ -192,23 +192,37 @@ impl Launcher {
         )
     }
 
-    /// How round the look's corners are: square by default, or a share of each one's radius.
+    /// How round the look's corners are: a radius in px, square by default.
     pub(super) fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let this = cx.entity().downgrade();
-        let picker = segments(
+        let now = self.settings.corners.min(backend::MAX_CORNERS);
+        let slider = crate::glass_ui::slider(
             "corners",
-            &[(0, "Square"), (25, "Slight"), (50, "Soft"), (100, "Round")],
-            self.settings.corners,
-            &t,
-            move |choice, _, cx| {
+            f32::from(now),
+            (0., f32::from(backend::MAX_CORNERS), 1.),
+            180.,
+            move |radius, _, cx| {
                 let _ = this.update(cx, |this, cx| {
-                    this.settings.corners = choice;
-                    this.save_settings();
-                    cx.notify();
+                    let radius = radius as u8;
+                    if this.settings.corners != radius {
+                        this.settings.corners = radius;
+                        this.save_settings();
+                        cx.notify();
+                    }
                 });
             },
         );
+        let picker = div()
+            .flex()
+            .items_center()
+            .gap(px(14.))
+            .child(slider)
+            .child(
+                crate::glass_ui::mono(12., sunrise_theme::glass::ink::BODY)
+                    .w(px(40.))
+                    .child(format!("{now} PX")),
+            );
         index_row(
             0,
             tr("Corners"),

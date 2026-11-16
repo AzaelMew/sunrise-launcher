@@ -4126,6 +4126,9 @@ impl WhilePlaying {
     }
 }
 
+/// The roundest the look's corners go, in px (Settings > Appearance > Corners).
+pub const MAX_CORNERS: u8 = 24;
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4231,8 +4234,8 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
-    /// How round the look's corners are, as a share in percent of each corner's designed
-    /// radius: 0 (square, the default), 25, 50 or 100.
+    /// How round the look's corners are: their radius in px, 0 (square, the default) to
+    /// [`MAX_CORNERS`].
     #[serde(default)]
     pub corners: u8,
 }
