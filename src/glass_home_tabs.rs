@@ -127,7 +127,7 @@ impl Launcher {
             .pt(px(82.))
             .px(px(if full { 12. } else { 10. }))
             .pb(px(32.))
-            .bg(ui::color(t.night.page))
+            .bg(ui::color(t.night.side))
             .border_l_1()
             .border_color(white(0.08))
             .child(line(true))

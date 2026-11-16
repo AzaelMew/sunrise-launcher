@@ -177,32 +177,38 @@ pub(crate) fn version_tag(tag: &str) -> Div {
         )
 }
 
-/// Sunrise's mark (Figma: Sunrise mark, 22 units): three sun dots, the stepped dome and the
-/// violet bar, `size` px square.
+/// Sunrise's mark, as the Sunny panel draws it on a 16-unit grid: three rays, the stepped sun
+/// with its low warm row, and the pink horizon, centred in `size` px square.
 pub(crate) fn mark(size: f32) -> Div {
-    let k = size / 22.;
-    let rect = |x0: f32, y0: f32, x1: f32, y1: f32, colour: u32| {
+    const RAYS: u32 = 0xffe39a;
+    const SUN: u32 = 0xffcf5c;
+    const SUN_LOW: u32 = 0xffb48a;
+    const HORIZON: u32 = 0xe0458a;
+    let k = size / 16.;
+    // The glyph spans rows 3 to 14: half a unit up centres it.
+    let rect = |x: f32, y: f32, w: f32, h: f32, colour: u32| {
+        let (x0, y0) = ((x * k).round(), ((y - 0.5) * k).round());
+        let (x1, y1) = (((x + w) * k).round(), ((y + h - 0.5) * k).round());
         div()
             .absolute()
-            .left(px(x0 * k))
-            .top(px(y0 * k))
-            .w(px((x1 - x0) * k))
-            .h(px((y1 - y0) * k))
+            .left(px(x0))
+            .top(px(y0))
+            .w(px(x1 - x0))
+            .h(px(y1 - y0))
             .bg(gpui::rgb(colour))
     };
-    const DOT: u32 = 0xfee39c;
-    const DOME: u32 = 0xffc94a;
     div()
         .relative()
         .flex_none()
         .size(px(size))
-        .child(rect(9.30, 2.35, 12.69, 5.74, DOT))
-        .child(rect(1.54, 5.52, 4.93, 8.91, DOT))
-        .child(rect(17.07, 5.52, 20.46, 8.91, DOT))
-        .child(rect(7.87, 8.65, 14.13, 10.15, DOME))
-        .child(rect(4.60, 10.15, 17.40, 11.85, DOME))
-        .child(rect(3.16, 11.85, 18.84, 15.05, DOME))
-        .child(rect(0., 16.44, 22., 19.65, 0x6b5ce7))
+        .child(rect(7., 3., 2., 2., RAYS))
+        .child(rect(2., 5., 2., 2., RAYS))
+        .child(rect(12., 5., 2., 2., RAYS))
+        .child(rect(6., 7., 4., 1., SUN))
+        .child(rect(4., 8., 8., 1., SUN))
+        .child(rect(3., 9., 10., 1., SUN))
+        .child(rect(3., 10., 10., 1., SUN_LOW))
+        .child(rect(1., 12., 14., 2., HORIZON))
 }
 
 /// The last thing the player did was press Tab: focused controls show a ring (a click focuses them

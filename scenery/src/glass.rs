@@ -19,7 +19,7 @@ use sunrise_theme::night::Night;
 /// Logical pixels per texel of a plate's piece of backdrop.
 const PIECE: f32 = 4.;
 /// The Outline look's flat plate, under its 1 px line.
-pub const PANEL: u32 = 0x15131c;
+pub const PANEL: u32 = 0x171b2e;
 
 thread_local! {
     /// The flat plate's colour for the theme and appearance shown ([`set_panel`]).
