@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth'in mod paketi biçimi: Modrinth'ten gelen kaynak paketleri indirmelerine göre listelenir, geri kalanı paketin içinde taşınır.",
   "Mods": "Modlar",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise için kendi incelenmiş kayıt defterinden hazırlanan mod ve gölgelendirici (shader) paketleri ile Modrinth kaynak paketleri. Her dosya oyun klasörünüze ulaşmadan önce kaynağının sağlama toplamına (checksum) karşı kontrol edilir.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang hesabını doğrulayamadı. Yeniden giriş yapıp tekrar dene.",
-  "Mojang's session server is not answering. Try again later.": "Mojang'ın oturum sunucusu yanıt vermiyor. Daha sonra tekrar dene.",
   "Mojang's version list isn't here yet.": "Mojang'ın sürüm listesi henüz burada değil.",
   "More": "Daha fazla",
   "Most players at once": "Aynı anda en fazla oyuncu",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft ile oturum aç",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` ile oturum açın.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Oynamak için Minecraft: Java Edition'a sahip bir Microsoft hesabıyla oturum açın",
-  "Sign in with a Minecraft account first.": "Önce bir Minecraft hesabıyla giriş yap.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Edition'a sahip hesapla giriş yap. Adın ve görünümün, diğer başlatıcılarda olduğu gibi çevrim içi sunuculara da gelir.",
   "Sign out": "Oturumu kapat",
   "Sign-in not checked": "Oturum kontrol edilmedi",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Başlatıcının görünümü şimdilik sıfırlandı, ancak kaydedilemedi",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Cam ve Bulanıklık, koyu görünümün buzlu panellerini şekillendirir; açık görünüm düz beyaz paneller çizer.",
   "Performance mode draws solid panels, without glass or blur.": "Performans modu cam veya bulanıklık olmadan düz paneller çizer.",
-  "This theme's night draws solid panels, without glass or blur.": "Bu temanın gecesi cam veya bulanıklık olmadan düz paneller çizer."
+  "This theme's night draws solid panels, without glass or blur.": "Bu temanın gecesi cam veya bulanıklık olmadan düz paneller çizer.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

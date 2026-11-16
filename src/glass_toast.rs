@@ -2,8 +2,8 @@
 //! and more) a line in the top bar between the pages and the account, right-aligned at 70 %;
 //! narrower, a glass toast along the window's bottom (`hzl-float`, 20 px corners).
 //!
-//! Any handler can say something, even one with only `&mut App`: the line waits here and the
-//! launcher's drain (every 80 ms) draws it, then lets it go.
+//! Any handler can say something, even one with only `&mut App`: the line waits here, wakes the
+//! launcher's drain (`wake.rs`), which draws it, then lets it go.
 
 use super::*;
 use crate::glass_ui::{self as ui, white};
@@ -37,6 +37,7 @@ fn say_parts(parts: Parts) {
         n,
         held: None,
     });
+    crate::wake::wake();
 }
 
 /// The pointer is on the toast (its time stops) or left it (its time goes on).
@@ -121,6 +122,10 @@ pub(super) fn open(cx: &mut App, path: &Path) {
 impl Launcher {
     /// From the drain: whether the line changed (a new one, or the last one gone).
     pub(super) fn toast_tick(&mut self) -> bool {
+        // The cache cleanup after a start or a build says what it freed.
+        if let Some(freed) = sunrise_launcher::storage::eviction::take_toast() {
+            say(freed);
+        }
         let now = current().map(|l| l.1);
         let changed = now != self.toast_seen;
         self.toast_seen = now;

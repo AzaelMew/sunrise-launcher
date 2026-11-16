@@ -79,14 +79,15 @@ impl Launcher {
                     |d, a| d.bg(white(0.35 * a)),
                 )
             };
+            let tab = crate::press(track_hover(div().id(id.clone()), id.clone()), &id, |d| {
+                d.opacity(theme::PRESSED)
+            });
             pages = pages.child(keyboard(
-                track_hover(div().id(id.clone()), id)
-                    .relative()
+                tab.relative()
                     .flex()
                     .items_center()
                     .h(px(34.))
                     .child(underline)
-                    .active(|s| s.opacity(theme::PRESSED))
                     .cursor_pointer()
                     .font_family(sunrise_theme::glass::FONT)
                     .text_size(px(tab_size))
@@ -278,7 +279,7 @@ impl Launcher {
             div()
                 .relative()
                 .child(keyboard(chip, &t))
-                .children(self.glass_account_menu(cx))
+                .child(self.islands.account_menu.clone())
         });
         let sign_in = face.is_none().then(|| {
             keyboard(
@@ -349,14 +350,14 @@ impl Launcher {
 /// quick curve, and a press that dims it, as the glass look's controls do.
 pub(super) fn hoverable(id: impl Into<SharedString>, fill: f32) -> Stateful<Div> {
     let id = id.into();
-    track_hover(
+    let el = track_hover(
         div()
             .id(id.clone())
             .relative()
-            .child(hover_layer(&id, white(fill), 0., 0.))
-            .active(|s| s.opacity(theme::PRESSED)),
-        id,
-    )
+            .child(hover_layer(&id, white(fill), 0., 0.)),
+        id.clone(),
+    );
+    crate::press(el, &id, |d| d.opacity(theme::PRESSED))
 }
 
 /// The Outline look's line, brightening while `id` is hovered.

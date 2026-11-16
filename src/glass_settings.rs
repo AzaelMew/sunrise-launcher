@@ -13,6 +13,81 @@ use crate::glass_ui::{self as ui, white};
 use sunrise_theme::glass::{ink, radius};
 
 /// The list's entries: name and icon. The settings sections, in the mockup's order.
+/// The space between the pane's sections.
+const SECTION_GAP: f32 = 16.;
+
+/// Settings' pane draws only the sections near its view in full: laying out every card of every
+/// section was most of an open Settings frame's work (~900 layout nodes, ~1,500 text
+/// measurements). The others are the space they took when last drawn, so the scrollbar, the
+/// sidebar's jumps and its marked section stay where they were. A section not yet measured at
+/// this width is drawn out of view once, one a frame, until all are; meanwhile it takes
+/// [`Culled::ESTIMATE`].
+#[derive(Clone, Copy, Default)]
+pub(super) struct Culled {
+    /// The pane's width the sections were measured at.
+    width: f32,
+    /// One bit per section: measured at that width, drawn in full on the last frame, all.
+    measured: u32,
+    drawn: u32,
+    all: u32,
+}
+
+impl Culled {
+    const ESTIMATE: f32 = 360.;
+
+    /// Some section is still to be measured: the pane wants another frame.
+    pub(super) fn measuring(self) -> bool {
+        self.measured & self.all != self.all && self.width > 0.
+    }
+
+    /// The sections to draw in full on the next frame, and the height to leave for each:
+    /// `last` is what each took on the last frame, in full or as space.
+    fn next(self, last: &[Option<Pixels>], pane: Pane, everything: bool) -> (Culled, Vec<Pixels>) {
+        let mut culled = if pane.width == self.width {
+            self
+        } else {
+            Culled {
+                width: pane.width,
+                ..Culled::default()
+            }
+        };
+        let (mut top, mut drawn, mut measuring_one) = (px(0.), 0, false);
+        let mut heights = Vec::with_capacity(last.len());
+        for (i, last) in last.iter().enumerate() {
+            let bit = 1 << i;
+            let height = match last {
+                Some(h) if culled.measured & bit != 0 => *h,
+                _ => px(Self::ESTIMATE),
+            };
+            let near = top + height >= pane.scrolled - pane.margin
+                && top <= pane.scrolled + pane.view + pane.margin;
+            if everything || near {
+                drawn |= bit;
+            } else if culled.measured & bit == 0 && !measuring_one {
+                // One section out of view is drawn to be measured, each frame until all are.
+                measuring_one = true;
+                drawn |= bit;
+            }
+            heights.push(height);
+            top += height + px(SECTION_GAP);
+        }
+        culled.all = (1 << last.len()) - 1;
+        culled.drawn = drawn;
+        culled.measured |= drawn;
+        (culled, heights)
+    }
+}
+
+/// Where the Settings pane is: its width, the height it shows, how far beyond that sections are
+/// drawn, and how far it is scrolled.
+#[derive(Clone, Copy)]
+struct Pane {
+    width: f32,
+    view: Pixels,
+    margin: Pixels,
+    scrolled: Pixels,
+}
+
 const SECTIONS: [(&str, &str); 10] = [
     ("General", "sliders-horizontal"),
     ("Appearance", "color-picker"),
@@ -318,8 +393,23 @@ impl Launcher {
                 )
                 .into_any_element()
         };
+        // Searching lists other sections in the pane's places: all of them are drawn.
+        let everything = searching || !found || self.args_focused || self.proxy_focused;
+        let (culled, heights) = self.settings_cull(sections.len(), everything);
+        self.settings_culled.set(culled);
         let sections = if found {
             sections
+                .into_iter()
+                .zip(heights)
+                .enumerate()
+                .map(|(i, (section, height))| {
+                    if culled.drawn & (1 << i) != 0 {
+                        section
+                    } else {
+                        div().flex_none().h(height)
+                    }
+                })
+                .collect()
         } else {
             vec![card()
                 .items_center()
@@ -347,7 +437,10 @@ impl Launcher {
             // the section changed.
             .on_scroll(cx.listener(|_, _: &gpui::ScrollEvent, window, cx| {
                 cx.on_next_frame(window, |this, _, cx| {
-                    if this.settings_section(SECTIONS.len()) != this.settings_marked {
+                    let (wanted, _) = this.settings_cull(SECTIONS.len(), false);
+                    if this.settings_section(SECTIONS.len()) != this.settings_marked
+                        || wanted.drawn & !this.settings_culled.get().drawn != 0
+                    {
                         cx.notify();
                     }
                 });
@@ -355,7 +448,7 @@ impl Launcher {
             .rounded(px(crate::glass_ui::rad(radius::PANEL)))
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .gap(px(SECTION_GAP))
             .pb(px(8.))
             .children(sections);
         let content = if wide {
@@ -498,6 +591,28 @@ impl Launcher {
     /// bounds are where layout put it, before the scroll (`ScrollHandle` keeps the offset apart):
     /// the scroll is taken off them here. Reading them as they were left the list on the first
     /// section until the pane hit its end.
+    /// Which of the pane's `count` sections to draw in full now (`Culled`), and the height to
+    /// leave for each of the others.
+    fn settings_cull(&self, count: usize, everything: bool) -> (Culled, Vec<Pixels>) {
+        let pane = self.settings_pane.bounds();
+        // Never laid out yet (the first open): the window's height stands in for the pane's,
+        // without the margin, so the first frame draws only what can show.
+        let (view, margin) = match pane.size.height {
+            h if h > px(0.) => (h, h),
+            _ => (px(self.window_height), px(0.)),
+        };
+        let last: Vec<Option<Pixels>> = (0..count)
+            .map(|i| self.settings_pane.bounds_for_item(i).map(|b| b.size.height))
+            .collect();
+        let pane = Pane {
+            width: pane.size.width.into(),
+            view,
+            margin,
+            scrolled: -self.settings_pane.offset().y,
+        };
+        self.settings_culled.get().next(&last, pane, everything)
+    }
+
     fn settings_section(&self, count: usize) -> usize {
         let pane = self.settings_pane.bounds();
         let scrolled = -self.settings_pane.offset().y;
@@ -846,8 +961,7 @@ pub(super) fn nav_item(
         .border_1()
         .cursor_pointer()
         .font_family(sunrise_theme::glass::FONT)
-        .text_size(px(14.))
-        .active(|s| s.bg(white(0.1)));
+        .text_size(px(14.));
     let d = if on {
         d.bg(ui::color(accent).opacity(0.16))
             .border_color(ui::color(accent))
@@ -888,7 +1002,9 @@ pub(super) fn nav_item(
                         .child(s)
                 })),
         );
-    keyboard(track_hover(d, id), t)
+    crate::press(keyboard(track_hover(d, id.clone()), t), &id, |d| {
+        d.bg(white(0.1))
+    })
 }
 
 impl Launcher {
@@ -1082,5 +1198,56 @@ mod picture_tests {
             Some(gpui::ImageFormat::Png)
         );
         assert_eq!(picture_format(b"<html>"), None);
+    }
+}
+
+#[cfg(test)]
+mod cull_tests {
+    use super::{Culled, Pane};
+    use gpui::{px, Pixels};
+
+    #[test]
+    fn a_pane_draws_what_shows_and_measures_the_rest_one_a_frame() {
+        // Ten sections 500 px tall in a 700 px pane, scrolled to the top.
+        let pane = |scrolled: f32, margin: f32| Pane {
+            width: 900.,
+            view: px(700.),
+            margin: px(margin),
+            scrolled: px(scrolled),
+        };
+        let tall: Vec<Option<Pixels>> = vec![Some(px(500.)); 10];
+        // The first open: nothing measured, no margin. The two sections that can show (at
+        // their estimated height) and the next one to measure.
+        let (culled, _) = Culled::default().next(&[None; 10], pane(0., 0.), false);
+        assert_eq!(culled.drawn, 0b111);
+        assert!(culled.measuring());
+        // Frame by frame, one more is measured until all are.
+        let mut culled = culled;
+        for _ in 0..7 {
+            culled = culled.next(&tall, pane(0., 700.), false).0;
+        }
+        assert!(!culled.measuring());
+        // Then only the sections within a pane's height of the view are drawn: scrolled to the
+        // fifth section (2,064 px), from the third to the seventh; the others keep their height.
+        let (culled, heights) = culled.next(&tall, pane(2064., 700.), false);
+        assert_eq!(culled.drawn, 0b111_1100);
+        assert!(heights.iter().all(|h| *h == px(500.)));
+        // A new width forgets every height.
+        assert!(culled
+            .next(
+                &tall,
+                Pane {
+                    width: 600.,
+                    ..pane(0., 700.)
+                },
+                false
+            )
+            .0
+            .measuring());
+        // Searching draws everything.
+        assert_eq!(
+            culled.next(&tall, pane(0., 700.), true).0.drawn,
+            (1 << 10) - 1
+        );
     }
 }

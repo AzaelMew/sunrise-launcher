@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Furmad modpack Modrinth : renket eo ar pakadoù arc'hwelioù adalek Modrinth hervez o pellgargadenn, ar peurrest a vez degaset ennañ.",
   "Mods": "Modoù",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Modoù ha pakadoù skeudennoù savet evit Sunrise diwar e marilh adwelet e-unan, ha pakadoù arc'hwelioù adalek Modrinth. Gwiriet e vez pep restr ouzh sammad gwiriañ he mammenn a-raok ma tistroio d'ho teuliad c'hoari.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang n'hall ket kadarnaat ho kont. En em lugañ en-dro ha klask en-dro.",
-  "Mojang's session server is not answering. Try again later.": "Ne respont ket dafariad dalc'h Mojang. Klaskit en-dro diwezhatoc'h.",
   "Mojang's version list isn't here yet.": "Roll stummoù Mojang n'emañ ket amañ c'hoazh.",
   "More": "Muioc'h",
   "Most players at once": "An darn vrasañ eus ar c'hoarierien war un dro",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Kevreañ gant Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "En em lugit gant `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "En em lugañ gant ur gont Microsoft a zo perc'henn war Minecraft : Java Embannadur da c'hoari",
-  "Sign in with a Minecraft account first.": "En em lugañ gant ur gont Minecraft da gentañ.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "En em lugañ gant ar gont a zo perc'henn war Minecraft: Java Embannadur. Hoc'h anv hag ho kroc'hen a zeu war servijerioù enlinenn, evel e lañserioù all.",
   "Sign out": "Dilemel",
   "Sign-in not checked": "N'eo ket gwiriet an enskrivadur",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Neuz al lañser zo adderaouekaet evit ar mare, met n'eo ket bet enrollet",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Gwer ha Damwel a stumm paneloù damsklaer an neuz deñval; ar sklaer a dres paneloù gwenn start.",
   "Performance mode draws solid panels, without glass or blur.": "Mod ar perzhded a dres paneloù start, hep gwer na zamwel.",
-  "This theme's night draws solid panels, without glass or blur.": "Noz an tema-mañ a dres paneloù start, hep gwer na zamwel."
+  "This theme's night draws solid panels, without glass or blur.": "Noz an tema-mañ a dres paneloù start, hep gwer na zamwel.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

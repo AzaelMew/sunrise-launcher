@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Ifomethi ye-modpack ye-Modrinth: amaphekhi wensiza asuka kokuthi Modrinth afakwe ohlwini ngokulanda kwawo, amanye aphathwa ngawo.",
   "Mods": "Ama-Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Amaphekhi namaphekhi e-shader enzelwe Sunrise asuka kurejista yawo ebuyekeziwe, namaphakethe wensiza avela ku-Modrinth. Ifayela ngalinye lihlolwa ngokumelene nokuhlola komthombo walo ngaphambi kokuthi lifinyelele kufolda yegeyimu yakho.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ayikwazanga ukuqinisekisa i-akhawunti yakho. Ngena ngemvume futhi bese uzama futhi.",
-  "Mojang's session server is not answering. Try again later.": "MojangIseva yeseshini ayiphenduli. Zama futhi emuva kwesikhathi.",
   "Mojang's version list isn't here yet.": "Uhlu lwenguqulo ye-Mojang alukho lapha okwamanje.",
   "More": "Okuningi",
   "Most players at once": "Abadlali abaningi ngesikhathi esisodwa",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Ngena ngemvume nge-Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Ngena ngemvume nge-`sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Ngena ngemvume nge-akhawunti Microsoft ephethe Minecraft: Java Edition ukuze uyidlale",
-  "Sign in with a Minecraft account first.": "Ngena ngemvume nge-akhawunti Minecraft kuqala.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Ngena ngemvume nge-akhawunti ephethe Minecraft: Java Edition. Igama lakho nesikhumba kufika kumaseva aku-inthanethi, njengakwezinye iziqalisi.",
   "Sign out": "Phuma",
   "Sign-in not checked": "Ukungena ngemvume akuhloliwe",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Ukubukeka kwesiqalisi kusethwe kabusha okwesikhashana, kodwa akugciniwe",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Ingilazi Nokufiphala kuklama amaphaneli angilazi okubukeka okumnyama; okukhanyayo kudweba amaphaneli amhlophe aqinile.",
   "Performance mode draws solid panels, without glass or blur.": "Imodi yokusebenza idweba amaphaneli aqinile, ngaphandle kwezingilazi noma ukufiphala.",
-  "This theme's night draws solid panels, without glass or blur.": "Usuku lokubala kwale thimu idweba amaphaneli aqinile, ngaphandle kwezingilazi noma ukufiphala."
+  "This theme's night draws solid panels, without glass or blur.": "Usuku lokubala kwale thimu idweba amaphaneli aqinile, ngaphandle kwezingilazi noma ukufiphala.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

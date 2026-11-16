@@ -49,7 +49,7 @@ impl Internet {
     }
 
     pub(super) fn new() -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::wake::channel();
         Self {
             state: None,
             reading: false,

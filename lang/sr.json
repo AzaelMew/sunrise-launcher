@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ов формат модпака: пакети ресурса са Modrinth-а наведени су према преузимању, остало се носи у њему.",
   "Mods": "Модс",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Модови и пакети шејдера направљени за Sunrise из његовог прегледаног регистра и пакети ресурса са Modrinth-а. Свака датотека се проверава према контролном збиру свог извора пре него што стигне у фасциклу игре.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang није могао да потврди ваш налог. Пријавите се поново и покушајте опет.",
-  "Mojang's session server is not answering. Try again later.": "Mojang-ов сервер сесија не одговара. Покушајте поново касније.",
   "Mojang's version list isn't here yet.": "Mojang-ова листа верзија још није стигла.",
   "More": "Више",
   "Most players at once": "Већина играча одједном",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Пријави се са Microsoft-ом",
   "Sign in with `sunrise-launcher account sign-in`.": "Пријавите се помоћу `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Пријавите се Microsoft налогом који поседује Minecraft: Java Edition да бисте играли",
-  "Sign in with a Minecraft account first.": "Прво се пријавите Minecraft налогом.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Пријавите се налогом који поседује Minecraft: Java Edition. Ваше име и скин иду са вама на онлајн сервере, као у другим покретачима.",
   "Sign out": "Одјави се",
   "Sign-in not checked": "Пријављивање није означено",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Изглед покретача је за сада ресетован, али није могао бити сачуван",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Стакло и Замућење обликују мат панеле тамног изгледа; светли црта пуне беле панеле.",
   "Performance mode draws solid panels, without glass or blur.": "Режим перформанси црта пуне панеле, без стакла и замућења.",
-  "This theme's night draws solid panels, without glass or blur.": "Ноћ ове теме црта пуне панеле, без стакла и замућења."
+  "This theme's night draws solid panels, without glass or blur.": "Ноћ ове теме црта пуне панеле, без стакла и замућења.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

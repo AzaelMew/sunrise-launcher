@@ -13,6 +13,10 @@ impl Render for Launcher {
                 .children(titlebar::render(&t, window))
                 .child(specimen::render(&t));
         }
+        // Settings measures its hidden sections one a frame (`glass_settings::Culled`).
+        if self.settings_culled.get().measuring() {
+            window.request_animation_frame();
+        }
         if std::mem::take(&mut self.restyle) {
             self.theme = self.settings_theme(window);
         }
@@ -43,7 +47,9 @@ impl Render for Launcher {
         let rains = self.theme.dark && self.theme.edge.is_some() && !performance;
         let accent = self.look.accent;
         self.scale = window.scale_factor();
-        self.perf.frame();
+        if self.perf.frame() {
+            startup::prewarm_fonts(cx);
+        }
         if self.bench.as_ref().is_some_and(perf::Bench::scrolling) {
             self.bench_scroll(window);
         }
@@ -155,11 +161,7 @@ impl Render for Launcher {
         } else {
             (self.topbar(cx), self.sidebar(window, cx).into_any_element())
         };
-        let row_menu = if t.glass {
-            self.row_menu(window, cx)
-        } else {
-            None
-        };
+        let row_menu = self.islands.row_menu.clone();
         let page = self
             .content_scroll
             .wrap(
@@ -229,6 +231,7 @@ impl Render for Launcher {
                             window.focus_next(cx);
                         }
                     }
+                    "escape" if this.close_menus() => {}
                     "escape" if this.welcome_escape() => {}
                     "escape" if this.consent_escape() => {}
                     "escape" if this.native_log_escape() => {}
@@ -291,7 +294,7 @@ impl Render for Launcher {
                     )
                     .children(right_sidebar),
             );
-        root = root.children(row_menu);
+        root = root.child(row_menu);
         if self.page == Page::Servers {
             if let Some(dialog) = self.create_dialog(cx) {
                 root = root.child(dialog);

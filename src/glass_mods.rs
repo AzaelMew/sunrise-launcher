@@ -186,11 +186,18 @@ impl Launcher {
             .child(extras)
             .child(self.glass_mods_list(cx));
         // The card stays in view as the list scrolls (`lg:sticky lg:top-0`, `sticky.rs`).
+        // Beside the list (a wide window) the card is in view already.
+        if wide {
+            self.mods.reveal.wanted.set(0);
+        }
         let detail = self.glass_mod_detail(&instance, cx).map(|d| {
             let down = self.mods_sticky.offset(&self.content_scroll.handle);
             d.flex_none()
                 .when(wide, |d| d.w(px(DETAIL)).top(px(down)))
-                .when(!wide, |d| d.w_full())
+                .when(!wide, |d| {
+                    d.w_full()
+                        .child(card_in_view(&self.mods.reveal, &self.content_scroll.handle))
+                })
                 .child(self.mods_sticky.panel())
         });
         let cards = div()
@@ -213,14 +220,21 @@ impl Launcher {
             more.push(card(self.github_panel(cx)));
         }
         more.extend(self.mods_installed_list(cx).map(card));
-        div().flex().flex_col().child(header).child(cards).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(10.))
-                .mt(px(10.))
-                .children(more),
-        )
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(page_top(&self.mods.reveal))
+            .child(header)
+            .child(cards)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .mt(px(10.))
+                    .children(more),
+            )
     }
 
     /// The source switch (`switches`): Sunrise's registry or Modrinth as small tabs, CurseForge
@@ -623,6 +637,7 @@ impl Launcher {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.mods.picked = Some(id.clone());
                 this.mods.confirm_remove = None;
+                this.mods.reveal.wanted.set(Reveal::TRIES);
                 cx.notify();
             }))
         };
@@ -691,7 +706,7 @@ impl Launcher {
             by.push(trf("from {source}", &[("source", source)]));
         }
         if !p.license.is_empty() {
-            by.push(p.license.clone());
+            by.push(browser::license_label(&p.license));
         }
         let (tone, reason) = match &support {
             Support::Works => (ui::live(), None),
@@ -885,4 +900,76 @@ fn kind_name(kind: PackKind) -> &'static str {
         PackKind::Shader => "Shader pack",
         PackKind::DataPack => "Data pack",
     }
+}
+
+/// Bringing a picked project's card into view where it sits under the list (a narrow window):
+/// a click on a row would otherwise seem to do nothing, its card twenty rows further down.
+#[derive(Default)]
+pub(crate) struct Reveal {
+    /// A project was just picked: the next layouts scroll the page to its card, this many more
+    /// times at most. The list above it builds only its nearby rows and guesses the others'
+    /// heights, so scrolling there measures some and moves the card: the next frame corrects.
+    pub wanted: std::cell::Cell<u8>,
+    /// Where the page's top was laid out, measured as the card is: the page scrolls in its own
+    /// layer, so only the distance between the two means the same in every frame.
+    top: std::cell::Cell<Option<gpui::Pixels>>,
+}
+
+impl Reveal {
+    /// Frames the scroll to a card takes at most.
+    pub(crate) const TRIES: u8 = 4;
+}
+
+/// A child at the page's top, taking no room, that notes where the page starts for [`card_in_view`].
+fn page_top(reveal: &std::rc::Rc<Reveal>) -> impl IntoElement {
+    let reveal = reveal.clone();
+    gpui::canvas(
+        move |page, _, _| reveal.top.set(Some(page.top())),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_0()
+}
+
+/// A child of the picked project's card, taking no room, that scrolls the page so the card's top
+/// shows, once both are laid out, when [`Reveal::wanted`] asks.
+fn card_in_view(reveal: &std::rc::Rc<Reveal>, page: &gpui::ScrollHandle) -> impl IntoElement {
+    let (reveal, page) = (reveal.clone(), page.clone());
+    gpui::canvas(
+        move |card, window, _| {
+            let Some(top) = reveal.top.get() else {
+                return;
+            };
+            let tries = reveal.wanted.get();
+            if tries == 0 {
+                return;
+            }
+            // How far down the page the card is, and how far the page is scrolled.
+            let (down, scrolled) = (card.top() - top, -page.offset().y);
+            let view = page.bounds().size.height;
+            let first = tries == Reveal::TRIES;
+            // In view at the click, with room to read it: nothing moves.
+            if first && down >= scrolled && down + px(160.) <= scrolled + view {
+                reveal.wanted.set(0);
+                return;
+            }
+            let mut offset = page.offset();
+            offset.y = (px(16.) - down).min(px(0.)).max(-page.max_offset().y);
+            // Where it should be already: done.
+            if !first && (offset.y - page.offset().y).abs() < px(1.) {
+                reveal.wanted.set(0);
+                return;
+            }
+            reveal.wanted.set(tries - 1);
+            page.set_offset(offset);
+            window.refresh();
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_0()
 }

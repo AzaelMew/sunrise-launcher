@@ -24,8 +24,8 @@ thread_local! {
     static LIGHT: Cell<bool> = const { Cell::new(false) };
     /// How many [`hover_back`] layers this frame has built so far: the next one's name.
     static BACKS: Cell<usize> = const { Cell::new(0) };
-    /// Each [`hover_back`] layer's pointer: on or off, and since when.
-    static BACK_HOVER: RefCell<HashMap<SharedString, (bool, std::time::Instant)>> =
+    /// Each [`hover_back`] layer's pointer: easing on or off, from where.
+    static BACK_HOVER: RefCell<HashMap<SharedString, crate::motion::Fade>> =
         RefCell::new(HashMap::new());
 }
 
@@ -580,51 +580,40 @@ fn hover_back(inset: f32, r: f32, paint: impl Fn(Div, f32) -> Div + 'static) -> 
     // shortcut: a row hovered as its page is swapped by the keyboard may stay lit until the
     // pointer moves over it; give the callers ids if that shows.
     let id = SharedString::from(format!("hover-back-{n}"));
-    let state = BACK_HOVER.with_borrow(|all| all.get(&id).copied());
-    let shown = back_phase(state, sunrise_theme::QUICK.duration()).map(|(on, at)| {
-        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        let start = *START.get_or_init(std::time::Instant::now);
-        let key = ElementId::named_usize(
-            format!("{id}-{on}"),
-            at.saturating_duration_since(start).as_micros() as usize,
-        );
-        div()
-            .absolute()
-            .top(px(inset))
-            .left(px(inset))
-            .right(px(inset))
-            .bottom(px(inset))
-            .rounded(px(rad(r)))
-            .with_animation(
-                key,
-                crate::motion::eased(sunrise_theme::QUICK),
-                move |d, t| paint(d, if on { t } else { 1. - t }),
-            )
+    let now = std::time::Instant::now();
+    let fade = BACK_HOVER.with_borrow(|all| all.get(&id).copied());
+    let shown = fade.filter(|f| !f.rested(now)).map(|fade| {
+        fade.play(
+            &id,
+            div()
+                .absolute()
+                .top(px(inset))
+                .left(px(inset))
+                .right(px(inset))
+                .bottom(px(inset))
+                .rounded(px(rad(r))),
+            paint,
+        )
     });
     let key = id.clone();
+    let owner = crate::widgets::Owner::default();
     div()
         .id(id)
         .absolute()
         .top_0()
         .left_0()
         .size_full()
-        .on_hover(move |hovered, window, _| {
+        .child(owner.noting())
+        .on_hover(move |hovered, window, cx| {
             BACK_HOVER.with_borrow_mut(|all| {
-                all.insert(key.clone(), (*hovered, std::time::Instant::now()));
+                let last = all.get(&key).copied();
+                let fade = crate::motion::Fade::toward(last, *hovered, std::time::Instant::now());
+                all.insert(key.clone(), fade);
             });
-            window.refresh();
+            owner.redraw(window, cx);
         })
         .children(shown)
         .into_any_element()
-}
-
-/// What a [`hover_back`] layer plays from its last pointer change (`state`): easing in while on,
-/// out for `len` after the pointer left, nothing at rest.
-fn back_phase(
-    state: Option<(bool, std::time::Instant)>,
-    len: std::time::Duration,
-) -> Option<(bool, std::time::Instant)> {
-    state.filter(|&(on, at)| on || at.elapsed() < len)
 }
 
 /// [`hover_back`] as [`hover_edge`]: white at `fill` and the hover outline. `bordered`: the
@@ -1180,7 +1169,6 @@ pub fn quiet_icon(
         .bg(white(fill::BUTTON))
         .border_1()
         .border_color(white(edge::REST))
-        .active(|s| s.bg(white(0.18)))
         .cursor_pointer()
         .font_family(sunrise_theme::glass::FONT)
         .text_size(px(14.))
@@ -1189,7 +1177,9 @@ pub fn quiet_icon(
         .child(hover_edge(&id, radius::CONTROL, 0.06, true))
         .children(name.map(|n| icon(n, 16., white(ink::FULL)).relative()))
         .child(div().relative().child(label.into()));
-    keyboard(track_hover(d, id), t)
+    crate::press(keyboard(track_hover(d, id.clone()), t), &id, |d| {
+        d.bg(white(0.18))
+    })
 }
 
 /// A list row (`ROW`): `rounded-[12px] px-3 py-2.5`, white at 6 % under the pointer. `on_hover`
@@ -1204,6 +1194,7 @@ pub fn list_row(
 ) -> Stateful<Div> {
     let id = id.into();
     let key = id.clone();
+    let owner = crate::widgets::Owner::default();
     let fill = if held && !hover_is(&id) {
         layer(radius::ROW)()
             .bg(white(fill::ROW_HOVER))
@@ -1224,8 +1215,9 @@ pub fn list_row(
         .py(px(10.))
         .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .child(fill)
+        .child(owner.noting())
         .on_hover(move |hovered, window, cx| {
-            note_hover(&key, *hovered, window);
+            note_hover(&key, *hovered, &owner, window, cx);
             on_hover(hovered, window, cx);
         });
     keyboard(d, t)
@@ -1390,7 +1382,6 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             };
             d.text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
-                .active(|s| s.opacity(0.92))
                 .child(pixel_fill(c, TEXTURE_BUTTON))
         }
         Kind::Secondary => d
@@ -1398,15 +1389,21 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             .border_1()
             .border_color(white(edge::REST))
             .text_color(white(ink::FULL))
-            .active(|s| s.bg(white(0.18)))
             .child(hover_edge(&id, radius::CONTROL, 0.06, true)),
         Kind::Ghost => d
             .text_color(white(ink::BODY))
             .hover(|s| s.text_color(white(ink::FULL)))
-            .active(|s| s.bg(white(0.1)))
             .child(hover_edge(&id, radius::CONTROL, 0.06, false)),
     };
-    keyboard(track_hover(d.child(div().relative().child(label)), id), t)
+    let el = keyboard(
+        track_hover(d.child(div().relative().child(label)), id.clone()),
+        t,
+    );
+    crate::press(el, &id, move |d| match kind {
+        Kind::Primary => d.opacity(0.92),
+        Kind::Secondary => d.bg(white(0.18)),
+        Kind::Ghost => d.bg(white(0.1)),
+    })
 }
 
 /// A pill's resting place (left, width) and the slide it plays: when it began, and from where.
@@ -1711,22 +1708,4 @@ impl Render for Tip {
 pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
     let label: SharedString = label.into();
     move |_, cx| cx.new(|_| Tip(label.clone())).into()
-}
-
-#[cfg(test)]
-mod hover_back_tests {
-    use super::back_phase;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn plays_while_on_and_briefly_after() {
-        let len = Duration::from_millis(150);
-        assert_eq!(back_phase(None, len), None);
-        let now = Instant::now();
-        assert!(back_phase(Some((true, now)), len).is_some());
-        assert!(back_phase(Some((false, now)), len).is_some());
-        let old = now - Duration::from_secs(1);
-        assert!(back_phase(Some((true, old)), len).is_some());
-        assert_eq!(back_phase(Some((false, old)), len), None);
-    }
 }

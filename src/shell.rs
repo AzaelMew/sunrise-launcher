@@ -305,7 +305,9 @@ pub fn action(id: impl Into<SharedString>, kind: Action, t: &Theme) -> Stateful<
                 d.bg(alpha(n.card_hi, n.card_hi_alpha * 0.5 * a))
             })),
     };
-    keyboard(track_hover(d, id), t).active(|s| s.opacity(theme::PRESSED))
+    crate::press(keyboard(track_hover(d, id.clone()), t), &id, |d| {
+        d.opacity(theme::PRESSED)
+    })
 }
 
 /// A label for an [`action`], over its hover layer.

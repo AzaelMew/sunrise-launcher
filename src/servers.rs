@@ -732,6 +732,15 @@ pub fn settings_args(spec: &NewServer, panel_port: u16) -> Vec<String> {
     ]
 }
 
+/// Why no server can be created yet, known before the form is filled in: no server programs are
+/// set up, and no installed version (`tag`) to set them up from.
+pub fn create_blocked(tag: Option<&str>) -> Option<Problem> {
+    let set_up = program().is_some() && game_files_ready();
+    (!set_up && tag.is_none()).then(|| Problem::plain(NEEDS_VERSION))
+}
+
+const NEEDS_VERSION: &str = "Install a Sunrise version first (Versions page), then prepare it.";
+
 /// Creates a server: its folder, the world (a copy when asked), `init` and the settings, then adds it to
 /// the list. `tag` is the installed version whose programs and game files it uses when none are set up.
 pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Result<Entry, Problem> {
@@ -742,9 +751,7 @@ pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Resu
         });
     }
     if program().is_none() || !game_files_ready() {
-        let tag = tag.ok_or_else(|| {
-            Problem::plain("Install a Sunrise version first (Versions page), then prepare it.")
-        })?;
+        let tag = tag.ok_or_else(|| Problem::plain(NEEDS_VERSION))?;
         log(format!("Setting up the server programs from Sunrise {tag}"));
         set_up(tag).map_err(|e| {
             if e.contains("prepared") {

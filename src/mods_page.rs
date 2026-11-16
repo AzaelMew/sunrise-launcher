@@ -112,6 +112,9 @@ pub(super) struct Mods {
     confirm_remove: Option<String>,
     /// The project the glass look's detail card shows; the first result when none is.
     pub(super) picked: Option<String>,
+    /// A project was just picked where its card sits under the list (a narrow window): the page
+    /// scrolls to the card once it is laid out (`glass_mods::reveal`).
+    pub(super) reveal: std::rc::Rc<glass_mods::Reveal>,
     /// The project the glass detail card showed last.
     pub(super) shown: Option<Project>,
     /// An install awaiting explicit native-code consent, before any download.
@@ -184,7 +187,7 @@ impl Mods {
     }
 
     pub(super) fn new(cx: &mut App) -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::wake::channel();
         let page = std::env::var("SUNRISE_LAUNCHER_PAGE");
         let kind = match page.as_deref() {
             Ok("modpacks") => PackKind::Modpack,
@@ -232,6 +235,7 @@ impl Mods {
             updates: HashMap::new(),
             confirm_remove: None,
             picked: None,
+            reveal: Default::default(),
             shown: None,
             checks: HashMap::new(),
             about: HashMap::new(),
@@ -1770,7 +1774,7 @@ impl Launcher {
                 by.push(trf("from {source}", &[("source", source)]));
             }
             if !p.license.is_empty() {
-                by.push(p.license.clone());
+                by.push(browser::license_label(&p.license));
             }
             let detail = div()
                 .flex()

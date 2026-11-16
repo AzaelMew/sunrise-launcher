@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth का मॉडपैक प्रारूप: Modrinth से संसाधन पैक उनके डाउनलोड द्वारा सूचीबद्ध किए जाते हैं, बाकी इसमें ले जाया जाता है।",
   "Mods": "मॉड्स",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise के लिए इसके अपने समीक्षित रजिस्ट्री से बनाए गए मॉड और शेडर पैक, और Modrinth से संसाधन पैक। आपके गेम फ़ोल्डर में पहुँचने से पहले प्रत्येक फ़ाइल की जाँच उसके स्रोत के चेकसम के विरुद्ध की जाती है।",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang आपके खाते की पुष्टि नहीं कर सका। फिर से साइन इन करें और दोबारा कोशिश करें।",
-  "Mojang's session server is not answering. Try again later.": "Mojang का सत्र सर्वर उत्तर नहीं दे रहा है। बाद में फिर कोशिश करें।",
   "Mojang's version list isn't here yet.": "Mojang की संस्करण सूची अभी यहाँ नहीं है।",
   "More": "अधिक",
   "Most players at once": "एक साथ अधिकतम खिलाड़ी",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "माइक्रोसॉफ्ट के साथ साइन इन करें",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` से साइन इन करें।",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "खेलने के लिए उस माइक्रोसॉफ्ट खाते से साइन इन करें जिसके पास Minecraft: Java Edition है",
-  "Sign in with a Minecraft account first.": "पहले एक Minecraft खाते से साइन इन करें।",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "उस खाते से साइन इन करें जिसके पास Minecraft: Java Edition है। आपका नाम और स्किन ऑनलाइन सर्वरों पर साथ आते हैं, दूसरे लॉन्चरों की तरह।",
   "Sign out": "साइन आउट",
   "Sign-in not checked": "साइन-इन की जाँच नहीं की गई",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "लॉन्चर का रूप अभी के लिए रीसेट हो गया है, लेकिन सहेजा नहीं जा सका",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ग्लास और ब्लर डार्क रूप के फ्रॉस्टेड पैनल बनाते हैं; लाइट रूप ठोस सफ़ेद पैनल बनाता है।",
   "Performance mode draws solid panels, without glass or blur.": "प्रदर्शन मोड बिना ग्लास या ब्लर के ठोस पैनल बनाता है।",
-  "This theme's night draws solid panels, without glass or blur.": "इस थीम की रात बिना ग्लास या ब्लर के ठोस पैनल बनाती है।"
+  "This theme's night draws solid panels, without glass or blur.": "इस थीम की रात बिना ग्लास या ब्लर के ठोस पैनल बनाती है।",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -7,6 +7,12 @@ description = "Downloads, prepares and starts Sunrise builds"
 
 [workspace]
 
+[features]
+# GPUI Fast's frame profiler, for measuring animations: the frame-time overlay
+# (`SUNRISE_LAUNCHER_FRAME_OVERLAY`) and each frame's work in `sunrise-launcher benchmark`
+# (README, Performance log). Off in every published build.
+frame-stats = ["gpui/profiler"]
+
 [dependencies]
 sunrise-mod-point-emit = { path = "../crates/sunrise-mod-point-emit" }
 sunrise-addresses = { path = "../crates/sunrise-addresses" }

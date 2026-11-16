@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth modpack formátuma: a Modrinth forráscsomagjai a letöltésük szerint vannak felsorolva, a többi benne van.",
   "Mods": "Modok",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "A Sunrisehoz a saját felülvizsgált rendszerleíró adatbázisából készült modok és shader csomagok, valamint a Modrinth erőforráscsomagjai. Minden fájlt a rendszer a forrás ellenőrző összegével ellenőrzi, mielőtt elérné a játék mappáját.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang nem tudta megerősíteni a fiókját. Jelentkezzen be újra, és próbálja újra.",
-  "Mojang's session server is not answering. Try again later.": "Mojang munkamenet-szervere nem válaszol. Próbálja újra később.",
   "Mojang's version list isn't here yet.": "A Mojang verziólistája még nincs itt.",
   "More": "Többet",
   "Most players at once": "A legtöbb játékos egyszerre",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Jelentkezzen be a Microsofttal",
   "Sign in with `sunrise-launcher account sign-in`.": "Jelentkezzen be a `sunrise-launcher account sign-in` paranccsal.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Jelentkezzen be a Minecraft: Java Edition tulajdonában lévő Microsoft-fiókkal a játékhoz",
-  "Sign in with a Minecraft account first.": "Először jelentkezzen be Minecraft fiókkal.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Jelentkezzen be azzal a fiókkal, amelyhez a Minecraft: Java Edition tartozik. A neve és a skinje Önnel tart az online szerverekre, mint más indítókban.",
   "Sign out": "Jelentkezzen ki",
   "Sign-in not checked": "A bejelentkezés nincs bejelölve",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Az indító megjelenése egyelőre vissza lett állítva, de nem sikerült menteni",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Üveg és Elmosás formálja a sötét megjelenés fakó paneleit; a világos tömör fehér paneleket rajzol.",
   "Performance mode draws solid panels, without glass or blur.": "Teljesítmény mód tömör paneleket rajzol, üveg és elmosás nélkül.",
-  "This theme's night draws solid panels, without glass or blur.": "Ezen téma éjszakája tömör paneleket rajzol, üveg és elmosás nélkül."
+  "This theme's night draws solid panels, without glass or blur.": "Ezen téma éjszakája tömör paneleket rajzol, üveg és elmosás nélkül.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

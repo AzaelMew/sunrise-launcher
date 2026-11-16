@@ -705,7 +705,7 @@ impl Launcher {
             }
         }
         if !p.license.is_empty() {
-            meta.push(p.license.clone());
+            meta.push(browser::license_label(&p.license));
         }
         if let Some(source) = p.source.shown_for(&p.id) {
             meta.push(trf("from {source}", &[("source", source)]));

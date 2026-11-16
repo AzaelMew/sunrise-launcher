@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ның modpack форматында: Modrinth-нан ресурс пакеттары уларҙы скачать итеү буйынса исемлеккә бирелгән, ҡалғаны унда йөрөтөлә.",
   "Mods": "Модтар",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Модтар һәм шейдер пакеттары өсөн эшләнгән Sunrise үҙ тикшерелгән реестрынан, һәм ресурс пакеттары Modrinth. Һәр файл тикшерелә, уның сығанағы тикшерелгән суммаһы, ул һеҙҙең уйын папкаһына еткәнсе.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang һеҙҙең иҫәп яҙмағыҙҙы раҫлай алманы. Яңынан инеп ҡарағыҙ һәм яңынан тырышығыҙ.",
-  "Mojang's session server is not answering. Try again later.": "Mojang-ның сеанс серверы яуап бирмәй. Һуңынан тағы ла тырышып ҡарағыҙ.",
   "Mojang's version list isn't here yet.": "Mojang версиялары исемлеге әлегә бында юҡ.",
   "More": "Тағы ла",
   "Most players at once": "Күпселек уйынсылар бер юлы",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft менән инергә",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` менән инегеҙ.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Minecraft Minecraft хужаһы булған Microsoft иҫәп яҙмаһы менән инеү: Java Уйнау өсөн баҫма",
-  "Sign in with a Minecraft account first.": "Тәүҙә Minecraft иҫәп яҙмаһы менән инегеҙ.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Баҫмаға эйә булған иҫәп яҙмаһы менән инергә. Һеҙҙең исем һәм тире менән бергә килә онлайн-серверҙар, башҡа стартерҙар кеүек.",
   "Sign out": "Сығыу",
   "Sign-in not checked": "Инеү тикшерелмәгән",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Лаунчерҙың тышҡы ҡиәфәте әлегә кире ҡайтарылды, ләкин һаҡланманы",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Быяла һәм Томанлау ҡараңғы күренештең мат панелдәрен формалаштыра; яҡтыһы ҡаты аҡ панелдәр һүрәтләй.",
   "Performance mode draws solid panels, without glass or blur.": "Һөҙөмтәлелек режимы быялаһыҙ һәм томанлауһыҙ ҡаты панелдәр һүрәтләй.",
-  "This theme's night draws solid panels, without glass or blur.": "Ошо теманың төнө быялаһыҙ һәм томанлауһыҙ ҡаты панелдәр һүрәтләй."
+  "This theme's night draws solid panels, without glass or blur.": "Ошо теманың төнө быялаһыҙ һәм томанлауһыҙ ҡаты панелдәр һүрәтләй.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

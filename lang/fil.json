@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Ang format ng modpack ng Modrinth: ang mga resource pack mula sa Modrinth ay nakalista ayon sa kanilang pag-download, ang iba ay dinadala dito.",
   "Mods": "Mga mod",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mga mod at shader pack na ginawa para sa Sunrise mula sa sarili nitong sinuri na registry, at mga resource pack mula sa Modrinth. Sinusuri ang bawat file laban sa checksum ng pinagmulan nito bago ito makarating sa folder ng iyong laro.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Hindi makumpirma ni Mojang ang iyong account. Mag-sign in muli at subukang muli.",
-  "Mojang's session server is not answering. Try again later.": "Hindi sumasagot ang session server ni Mojang. Subukan ulit mamaya.",
   "Mojang's version list isn't here yet.": "Ang listahan ng bersyon ni Mojang ay wala pa rito.",
   "More": "Higit pa",
   "Most players at once": "Karamihan sa mga manlalaro nang sabay-sabay",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Mag-sign in gamit ang Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Mag-sign in gamit ang `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Mag-sign in gamit ang isang Microsoft account na nagmamay-ari ng Minecraft: Java Edition para maglaro",
-  "Sign in with a Minecraft account first.": "Mag-sign in muna gamit ang isang Minecraft account.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Mag-sign in gamit ang account na nagmamay-ari ng Minecraft: Java Edition. Ang iyong pangalan at balat ay kasama sa mga online na server, tulad ng sa iba pang mga launcher.",
   "Sign out": "Mag-sign out",
   "Sign-in not checked": "Hindi naka-check ang pag-sign in",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Na-reset muna ang hitsura ng launcher, pero hindi na-save",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Hinuhubog ng Glass at Blur ang mga frosted panel ng dark na hitsura; ang light naman, solid na puting panel ang ginagamit.",
   "Performance mode draws solid panels, without glass or blur.": "Gumagamit ang Mode ng performance ng solid na panel, walang glass o blur.",
-  "This theme's night draws solid panels, without glass or blur.": "Solid na panel ang gabi ng temang ito, walang glass o blur."
+  "This theme's night draws solid panels, without glass or blur.": "Solid na panel ang gabi ng temang ito, walang glass o blur.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

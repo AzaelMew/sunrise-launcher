@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Định dạng modpack của Modrinth: các gói tài nguyên từ Modrinth được liệt kê theo lượt tải xuống của chúng, phần còn lại được chứa trong đó.",
   "Mods": "mod",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Các mod và gói đổ bóng được tạo cho Sunrise từ cơ quan đăng ký đã được đánh giá của chính nó và các gói tài nguyên từ Modrinth. Mỗi tệp được kiểm tra dựa trên tổng kiểm tra nguồn của nó trước khi nó đến thư mục trò chơi của bạn.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang không thể xác nhận tài khoản của bạn. Đăng nhập lại và thử lại.",
-  "Mojang's session server is not answering. Try again later.": "Máy chủ phiên của Mojang không trả lời. Hãy thử lại sau.",
   "Mojang's version list isn't here yet.": "Danh sách phiên bản của Mojang chưa có ở đây.",
   "More": "Thêm",
   "Most players at once": "Hầu hết người chơi cùng một lúc",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Đăng nhập bằng Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Đăng nhập bằng `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Đăng nhập bằng tài khoản Microsoft sở hữu Minecraft: Java Edition để chơi",
-  "Sign in with a Minecraft account first.": "Trước tiên hãy đăng nhập bằng tài khoản Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Đăng nhập bằng tài khoản sở hữu Minecraft: Java Edition. Tên và skin của bạn đi cùng bạn đến các máy chủ trực tuyến, giống như ở các launcher khác.",
   "Sign out": "Đăng xuất",
   "Sign-in not checked": "Đăng nhập chưa được kiểm tra",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Giao diện launcher đã được đặt lại tạm thời, nhưng không lưu được",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Kính và Độ mờ tạo hình các bảng kính mờ của giao diện tối; giao diện sáng vẽ bảng trắng đặc.",
   "Performance mode draws solid panels, without glass or blur.": "Chế độ hiệu suất vẽ bảng đặc, không kính, không độ mờ.",
-  "This theme's night draws solid panels, without glass or blur.": "Ban đêm của chủ đề này vẽ bảng đặc, không kính, không độ mờ."
+  "This theme's night draws solid panels, without glass or blur.": "Ban đêm của chủ đề này vẽ bảng đặc, không kính, không độ mờ.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

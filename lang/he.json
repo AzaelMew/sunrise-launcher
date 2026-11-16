@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "פורמט ה-modpack של Modrinth: חבילות משאבים מ- Modrinth מופיעות לפי ההורדה שלהן, השאר נישאים בה.",
   "Mods": "מודים",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "ערכות מודים וחבילות הצללה שנוצרו עבור Sunrise מהרישום הנבדק שלה, וחבילות משאבים מבית Modrinth. כל קובץ נבדק מול סכום הבדיקה של המקור שלו לפני שהוא מגיע לתיקיית המשחק שלך.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang לא הצליח לאשר את החשבון שלך. היכנס שוב ונסה שוב.",
-  "Mojang's session server is not answering. Try again later.": "שרת הפגישה של Mojang לא עונה. נסה שוב מאוחר יותר.",
   "Mojang's version list isn't here yet.": "רשימת הגרסאות של Mojang עדיין לא כאן.",
   "More": "עוד",
   "Most players at once": "רוב השחקנים בבת אחת",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "היכנס עם Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "היכנס עם `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "היכנס עם חשבון Microsoft שבבעלותו Minecraft: Java Edition כדי לשחק",
-  "Sign in with a Minecraft account first.": "היכנס תחילה עם חשבון Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "היכנס עם החשבון שבבעלותו Minecraft: Java Edition. השם והסקין שלך עוברים איתך לשרתים מקוונים, כמו במשגרים אחרים.",
   "Sign out": "צא",
   "Sign-in not checked": "הכניסה לא מסומנת",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "המראה של המשגר אופס לעת עתה, אך לא ניתן היה לשמור אותו",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "זכוכית וטשטוש מעצבים את הפאנלים המטושטשים של המראה הכהה; הבהיר מצייר פאנלים לבנים אחידים.",
   "Performance mode draws solid panels, without glass or blur.": "מצב ביצועים מצייר פאנלים אחידים, בלי זכוכית ובלי טשטוש.",
-  "This theme's night draws solid panels, without glass or blur.": "הלילה של ערכת הנושא הזו מצייר פאנלים אחידים, בלי זכוכית ובלי טשטוש."
+  "This theme's night draws solid panels, without glass or blur.": "הלילה של ערכת הנושא הזו מצייר פאנלים אחידים, בלי זכוכית ובלי טשטוש.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

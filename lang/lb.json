@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Dem Modrinth säi Modpack-Format: Ressourcepacken aus Modrinth gi vun hirem Download opgelëscht, de Rescht gëtt dran gedroen.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods a Shader Packs gemaach fir Sunrise aus senger eegener iwwerpréifter Registry, a Ressource Packs aus Modrinth. All Datei gëtt géint d'Checksum vun der Quell gepréift ier se Äre Spilldopper erreecht.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang konnt Äre Kont net bestätegen. Mellt Iech nach eng Kéier un a probéiert nach eng Kéier.",
-  "Mojang's session server is not answering. Try again later.": "Dem Mojang säin Sessiounsserver äntwert net. Probéiert méi spéit nach eng Kéier.",
   "Mojang's version list isn't here yet.": "Dem Mojang seng Versiounslëscht ass nach net hei.",
   "More": "Méi",
   "Most players at once": "Meeschte Spiller op eemol",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Mellt Iech un mat Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Mellt Iech mat `sunrise-launcher account sign-in` un.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Mellt Iech un mat engem Microsoft Kont deen Minecraft: Java Editioun besëtzt fir ze spillen",
-  "Sign in with a Minecraft account first.": "Mellt Iech als éischt mat engem Minecraft Kont un.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Mellt Iech un mat dem Kont deen Minecraft: Java Editioun gehéiert. Ären Numm an d'Haut kommen op Online Serveren, wéi an anere Startënnerlagen.",
   "Sign out": "Zeechen aus",
   "Sign-in not checked": "Umeldung net iwwerpréift",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "D'Ausgesinn vum Starter ass fir den Moment zeréckgesat, mee konnt net gespäichert ginn",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas a Blur formen d'frosted Panneauen vum däischteren Ausgesinn; dat hellt zeecht massiv wäiss Panneauen.",
   "Performance mode draws solid panels, without glass or blur.": "Leeschtungsmodus zeecht massiv Panneauen, ouni Glas oder Blur.",
-  "This theme's night draws solid panels, without glass or blur.": "D'Nuecht vun dësem Thema zeecht massiv Panneauen, ouni Glas oder Blur."
+  "This theme's night draws solid panels, without glass or blur.": "D'Nuecht vun dësem Thema zeecht massiv Panneauen, ouni Glas oder Blur.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

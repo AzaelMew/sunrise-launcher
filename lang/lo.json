@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "ຮູບແບບ modpack ຂອງ Modrinth: ຊອງຊັບພະຍາກອນຈາກ Modrinth ຖືກລະບຸໄວ້ໂດຍການດາວໂຫລດຂອງພວກເຂົາ, ສ່ວນທີ່ເຫຼືອແມ່ນປະຕິບັດຢູ່ໃນມັນ.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods ແລະ shader packs ທີ່ສ້າງຂຶ້ນສໍາລັບ Sunrise ຈາກການທົບທວນຄືນຂອງຕົນເອງ, ແລະຊຸດຊັບພະຍາກອນຈາກ Modrinth. ແຕ່ລະໄຟລ໌ຖືກກວດສອບກັບ checksum ຂອງແຫຼ່ງຂອງມັນກ່ອນທີ່ມັນຈະໄປຮອດໂຟນເດີເກມຂອງເຈົ້າ.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ບໍ່ສາມາດຢືນຢັນບັນຊີຂອງທ່ານໄດ້. ເຂົ້າສູ່ລະບົບອີກຄັ້ງແລ້ວລອງໃໝ່.",
-  "Mojang's session server is not answering. Try again later.": "ເຊີບເວີເຊສຊັນຂອງ Mojang ບໍ່ຕອບສະໜອງ. ລອງໃໝ່ໃນພາຍຫຼັງ.",
   "Mojang's version list isn't here yet.": "ບັນຊີລາຍຊື່ສະບັບຂອງ Mojang ຍັງບໍ່ຢູ່ທີ່ນີ້.",
   "More": "ເພີ່ມເຕີມ",
   "Most players at once": "ຜູ້ນສ່ວນໃຫຍ່ໃນເວລາດຽວ",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "ເຂົ້າສູ່ລະບົບດ້ວຍ Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "ເຂົ້າສູ່ລະບົບດ້ວຍ `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "ເຂົ້າສູ່ລະບົບດ້ວຍບັນຊີ Microsoft ທີ່ເປັນເຈົ້າຂອງ Minecraft: Java Edition ເພື່ອຫຼິ້ນ",
-  "Sign in with a Minecraft account first.": "ເຂົ້າສູ່ລະບົບດ້ວຍບັນຊີ Minecraft ກ່ອນ.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "ເຂົ້າສູ່ລະບົບດ້ວຍບັນຊີທີ່ເປັນເຈົ້າຂອງ Minecraft: Java Edition. ຊື່ ແລະຜິວໜັງຂອງເຈົ້າມາກັບເຊີບເວີອອນໄລນ໌, ຄືກັບຕົວເປີດໃຊ້ອື່ນໆ.",
   "Sign out": "ອອກຈາກລະບົບ",
   "Sign-in not checked": "ບໍ່ໄດ້ເລືອກການເຂົ້າສູ່ລະບົບ",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "ໜ້າຕາຂອງຕົວເປີດຖືກຣີເຊັດໄປກ່ອນ, ແຕ່ບໍ່ສາມາດບັນທຶກໄດ້",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ແກ້ວ ແລະ ຄວາມມົວ ປັບຮູບແບບແຜງຝ້າມົວຂອງໂໝດມືດ; ໂໝດແຈ້ງວາດແຜງສີຂາວທັນໆ.",
   "Performance mode draws solid panels, without glass or blur.": "ໂໝດປະສິດທິພາບວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ.",
-  "This theme's night draws solid panels, without glass or blur.": "ກາງຄືນຂອງຮູບແບບນີ້ວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ."
+  "This theme's night draws solid panels, without glass or blur.": "ກາງຄືນຂອງຮູບແບບນີ້ວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

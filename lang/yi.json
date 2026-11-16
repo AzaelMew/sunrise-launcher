@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth ס מאָדפּאַק פֿאָרמאַט: מיטל פּאַקס פֿון Modrinth זענען ליסטעד דורך זייער אראפקאפיע, די מנוחה איז געפירט אין עס.",
   "Mods": "מאָדס",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "מאָדס און שאַדער פּאַקס געמאכט פֿאַר Sunrise פֿון זיין אייגענע ריוויוד רעגיסטרי, און מיטל פּאַקס פֿון Modrinth. יעדער טעקע איז אָפּגעשטעלט קעגן די טשעקסום פון זיין מקור איידער עס ריטשאַז דיין שפּיל טעקע.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang קען נישט באַשטעטיקן דיין חשבון. קלאָץ אין ווידער און פּרובירן ווידער.",
-  "Mojang's session server is not answering. Try again later.": "דער סעסיע סערווער פון Mojang ענטפערט נישט. פּרוּווט ווידער שפּעטער.",
   "Mojang's version list isn't here yet.": "די ווערסיע רשימה פון Mojang איז נישט דאָ נאָך.",
   "More": "מער",
   "Most players at once": "רובֿ פּלייַערס אין אַמאָל",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "צייכן אין מיט Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "קלאָץ איין מיט `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "קלאָץ אין מיט אַ Microsoft חשבון וואָס אָונז Minecraft: Java אַדישאַן צו שפּילן",
-  "Sign in with a Minecraft account first.": "קלאָץ אין מיט אַ Minecraft חשבון ערשטער.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "קלאָץ אין מיט די חשבון וואָס אָונז Minecraft: Java אַדישאַן. דיין נאָמען און הויט קומען צוזאמען צו אָנליין סערווערס, ווי אין אנדערע לאַונטשערס.",
   "Sign out": "צייכן אויס",
   "Sign-in not checked": "צייכן אין ניט אָפּגעשטעלט",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "די קוק פון די לאָנטשער איז איצט רעסעטירט, אבער עס איז נישט געראטעוועט געווארן",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "גלאָז און בלאַר פארמען די פֿאַרנעפּלטע פּאַנעלן פונעם טונקלן אויסזען; דאס ליכטיקע צייכנט סאָלידע ווייסע פּאַנעלן.",
   "Performance mode draws solid panels, without glass or blur.": "פאָרשטעלונג מאָדע צייכנט סאָלידע פּאַנעלן, אָן גלאָז און בלאַר.",
-  "This theme's night draws solid panels, without glass or blur.": "די נאכט פון דער טעמע צייכנט סאָלידע פּאַנעלן, אָן גלאָז און בלאַר."
+  "This theme's night draws solid panels, without glass or blur.": "די נאכט פון דער טעמע צייכנט סאָלידע פּאַנעלן, אָן גלאָז און בלאַר.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

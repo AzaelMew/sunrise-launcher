@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth இன் modpack வடிவம்: Modrinth இன் ஆதாரப் பொதிகள் அவற்றின் பதிவிறக்கத்தின் மூலம் பட்டியலிடப்பட்டுள்ளன, மீதமுள்ளவை அதில் கொண்டு செல்லப்படுகின்றன.",
   "Mods": "மோட்ஸ்",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise-இன் சொந்த மதிப்பாய்வு செய்யப்பட்ட பதிவேட்டிலிருந்து அதற்காக உருவாக்கப்பட்ட மோட்கள் மற்றும் ஷேடர் பொதிகள், Modrinth-இலிருந்து வள பொதிகள். ஒவ்வொரு கோப்பும் உங்கள் கேம் கோப்புறையை அடையும் முன் அதன் மூலத்தின் செக்சம்முடன் சரிபார்க்கப்படுகிறது.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang உங்கள் கணக்கை உறுதிப்படுத்த முடியவில்லை. மீண்டும் உள்நுழைந்து மீண்டும் முயற்சிக்கவும்.",
-  "Mojang's session server is not answering. Try again later.": "Mojang-இன் அமர்வு சேவையகம் பதிலளிக்கவில்லை. பிறகு மீண்டும் முயலவும்.",
   "Mojang's version list isn't here yet.": "Mojang-இன் பதிப்புப் பட்டியல் இன்னும் வரவில்லை.",
   "More": "மேலும்",
   "Most players at once": "ஒரே நேரத்தில் பெரும்பாலான வீரர்கள்",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft மூலம் உள்நுழை",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` மூலம் உள்நுழையவும்.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "விளையாட, Minecraft: Java Edition வைத்திருக்கும் Microsoft கணக்கில் உள்நுழையவும்",
-  "Sign in with a Minecraft account first.": "முதலில் Minecraft கணக்கில் உள்நுழையவும்.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Edition ஐ வைத்திருக்கும் கணக்கில் உள்நுழையவும். மற்ற லாஞ்சர்களைப் போலவே உங்கள் பெயரும் தோலும் ஆன்லைன் சேவையகங்களுக்கு வரும்.",
   "Sign out": "வெளியேறு",
   "Sign-in not checked": "உள்நுழைவு சரிபார்க்கப்படவில்லை",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "துவக்கியின் தோற்றம் இப்போது மீட்டமைக்கப்பட்டுள்ளது, ஆனால் சேமிக்க முடியவில்லை",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "கண்ணாடியும் மங்கலும் இருள் தோற்றத்தின் பனிப்பூச்சு பேனல்களை வடிவமைக்கின்றன; ஒளி தோற்றம் திட வெள்ளை பேனல்களை வரையும்.",
   "Performance mode draws solid panels, without glass or blur.": "செயல்திறன் பயன்முறை கண்ணாடி அல்லது மங்கல் இன்றி திட பேனல்களை வரையும்.",
-  "This theme's night draws solid panels, without glass or blur.": "இந்தக் கருப்பொருளின் இரவு கண்ணாடி அல்லது மங்கல் இன்றி திட பேனல்களை வரையும்."
+  "This theme's night draws solid panels, without glass or blur.": "இந்தக் கருப்பொருளின் இரவு கண்ணாடி அல்லது மங்கல் இன்றி திட பேனல்களை வரையும்.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

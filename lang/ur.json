@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth کا modpack فارمیٹ: Modrinth کے ریسورس پیک ان کے ڈاؤن لوڈ کے ذریعے درج ہیں، باقی اس میں لے جایا جاتا ہے۔",
   "Mods": "موڈز",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise کے لیے اس کی اپنی نظرثانی شدہ رجسٹری سے بنائے گئے موڈز اور شیڈر پیک، اور موڈرینتھ کے ریسورس پیک۔ آپ کے گیم فولڈر تک پہنچنے سے پہلے ہر فائل کو اس کے ماخذ کے چیکسم کے خلاف چیک کیا جاتا ہے۔",
-  "Mojang could not confirm your account. Sign in again and retry.": "موجنگ آپ کے اکاؤنٹ کی تصدیق نہیں کر سکا۔ دوبارہ سائن ان کریں اور دوبارہ کوشش کریں۔",
-  "Mojang's session server is not answering. Try again later.": "موجنگ کا سیشن سرور جواب نہیں دے رہا ہے۔ بعد میں دوبارہ کوشش کریں۔",
   "Mojang's version list isn't here yet.": "موجنگ کے ورژن کی فہرست ابھی تک یہاں نہیں ہے۔",
   "More": "مزید",
   "Most players at once": "ایک ساتھ زیادہ تر کھلاڑی",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft کے ساتھ سائن ان کریں۔",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` سے سائن ان کریں۔",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "مائیکروسافٹ اکاؤنٹ کے ساتھ سائن ان کریں جو Minecraft: Java Edition کا مالک ہے۔",
-  "Sign in with a Minecraft account first.": "پہلے Minecraft اکاؤنٹ سے سائن ان کریں۔",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "اس اکاؤنٹ سے سائن ان کریں جو Minecraft: Java Edition کا مالک ہے۔ آپ کا نام اور اسکن دوسرے لانچرز کی طرح آن لائن سرورز پر بھی ساتھ جاتے ہیں۔",
   "Sign out": "سائن آؤٹ کریں۔",
   "Sign-in not checked": "سائن ان چیک نہیں کیا گیا۔",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "لانچر کی شکل ابھی کے لیے ری سیٹ کر دی گئی ہے، مگر محفوظ نہیں ہو سکی",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "گلاس اور دھندلاہٹ تاریک شکل کے فراسٹڈ پینل بناتی ہیں؛ روشن شکل ٹھوس سفید پینل بناتی ہے۔",
   "Performance mode draws solid panels, without glass or blur.": "کارکردگی کا موڈ گلاس یا دھندلاہٹ کے بغیر ٹھوس پینل بناتا ہے۔",
-  "This theme's night draws solid panels, without glass or blur.": "اس تھیم کی رات گلاس یا دھندلاہٹ کے بغیر ٹھوس پینل بناتی ہے۔"
+  "This theme's night draws solid panels, without glass or blur.": "اس تھیم کی رات گلاس یا دھندلاہٹ کے بغیر ٹھوس پینل بناتی ہے۔",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

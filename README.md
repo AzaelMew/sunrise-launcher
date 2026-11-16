@@ -219,7 +219,7 @@ The opening, then Play ([clip](docs/opening.webm)):
   (each named in itself); a string a table lacks shows in English. The tables are
   `launcher/lang/<code>.json`, English text to its translation, Sunrise's own; a test fails when
   the code asks `tr("…")` for a string a table lacks, or a table keeps one the code dropped.
-  `sunrise-launcher settings language system|en|fr|ru|de|zh|es|uk|pl`.
+  `sunrise-launcher settings language system|CODE` (a wrong code lists every one).
 - **Console**: Home's Console shows the game's output of this run as it comes: a search (every
   word, any case), Follow to keep the newest line in view, Copy, and Open logs folder. Warnings
   and errors stand out. **Share log…** uploads the log to [mclo.gs](https://mclo.gs), a paste
@@ -577,6 +577,15 @@ measure idle CPU, fetches the release list 3 times, and writes one report there 
 95% confidence intervals. Its window has to be on a screen that is awake. Session logs stay on
 your machine; a `benchmark` report is uploaded, dated to the day, only if you allowed benchmark
 uploads ([data collection](../docs/telemetry.md)).
+
+The frame intervals above stop at the display's refresh: an animation whose frames take 12 ms on a
+60 Hz screen still reads 16.7 ms. A build with `cargo build --release --features frame-stats` (never
+a published one) also measures each frame's own work, from GPUI Fast's profiler:
+`SUNRISE_LAUNCHER_FRAME_OVERLAY=1` (or `full`) paints the frame times over the window while you try
+an animation, and `sunrise-launcher benchmark` reports the work's median, p95 and p99 and the late
+frames, those that took longer than a refresh. An animation inside the launcher's own view redraws
+that whole view each frame; one in a view of its own (`cx.new`, as Home's corner blocks) redraws
+only itself.
 
 Long lists on Mods (results, installed entries, coverage reports and project versions), Versions
 and Patch notes build only nearby rows, including on their first frame. Variable row heights

@@ -40,7 +40,7 @@ pub(super) struct Github {
 
 impl Github {
     pub(super) fn new(cx: &mut App) -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::wake::channel();
         Self {
             text: LineEdit::new(String::new(), 300, 40),
             focus: cx.focus_handle().tab_index(0).tab_stop(true),

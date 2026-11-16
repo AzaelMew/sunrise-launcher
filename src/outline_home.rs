@@ -30,7 +30,7 @@ impl Launcher {
     }
 
     /// How tall Home's first screen is: from the top bar down to the hero's floor.
-    fn first_screen(&self) -> f32 {
+    pub(super) fn first_screen(&self) -> f32 {
         // The page's own height, so a drawn title bar is left out too.
         let page = f32::from(self.content_scroll.handle.bounds().size.height);
         let page = if page > 0. {
@@ -49,6 +49,13 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let java = self.selected_instance().and_then(|i| i.java.clone());
+        let build = self.glass_build_notice(cx);
+        let crash = self.crash.clone().map(|c| self.crash_notice(c, cx));
+        let said: Vec<Div> = [self.prepare_error.clone(), self.client_error.clone()]
+            .into_iter()
+            .flatten()
+            .map(|e| notice(e, &self.theme))
+            .collect();
         let name = self
             .selected_instance()
             .map(|i| i.name.clone())
@@ -101,11 +108,15 @@ impl Launcher {
                 self.version_chip(cx)
                     .map(|chip| div().pt(px(12.)).child(chip)),
             )
-            // The preparation's steps right under Play, where the player looks after pressing it.
+            // The preparation's steps right under Play, where the player looks after pressing it,
+            // and what Play could not do: a crash, a preparation that failed, why the game did not
+            // start. Home fits the window, so anything after the first screen is never seen.
             .children(
                 steps
                     .into_iter()
-                    .chain(self.glass_build_notice(cx))
+                    .chain(build)
+                    .chain(crash)
+                    .chain(said)
                     .map(|s| div().pt(px(20.)).w(px(HERO_WIDTH)).max_w_full().child(s)),
             )
             .child(
@@ -247,23 +258,25 @@ impl Launcher {
         let instance = self.selected_instance()?.clone();
         let label = self.sheet_version(&instance);
         Some(
-            mono(12., ink::BODY)
-                .id("home-version")
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .h(px(30.))
-                .px(px(10.))
-                .cursor_pointer()
-                .hover(|s| s.text_color(white(ink::FULL)))
-                .active(|s| s.opacity(theme::PRESSED))
-                .child(label.to_uppercase())
-                .child(ui::icon("arrow-down-01", 14., white(ink::BODY)))
-                .tooltip(ui::tip(tr("Change the version in instance settings")))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
-                    cx.notify();
-                })),
+            crate::press(
+                mono(12., ink::BODY).id("home-version"),
+                &"home-version".into(),
+                |d| d.opacity(theme::PRESSED),
+            )
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .h(px(30.))
+            .px(px(10.))
+            .cursor_pointer()
+            .hover(|s| s.text_color(white(ink::FULL)))
+            .child(label.to_uppercase())
+            .child(ui::icon("arrow-down-01", 14., white(ink::BODY)))
+            .tooltip(ui::tip(tr("Change the version in instance settings")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
+                cx.notify();
+            })),
         )
     }
 }

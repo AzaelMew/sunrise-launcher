@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "La modpack-formato de Modrinth: rimedpakaĵoj de Modrinth estas listigitaj per sia elŝuto, la resto estas portata en ĝi.",
   "Mods": "Modoj",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Modifoj kaj ombraj pakoj faritaj por Sunrise el sia propra reviziita registro, kaj rimedpakoj de Modrinth. Ĉiu dosiero estas kontrolita kontraŭ la kontrolsumo de sia fonto antaŭ ol ĝi atingas vian luddosierujon.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ne povis konfirmi vian konton. Ensalutu denove kaj reprovu.",
-  "Mojang's session server is not answering. Try again later.": "La sesioservilo de Mojang ne respondas. Provu denove poste.",
   "Mojang's version list isn't here yet.": "La versiolisto de Mojang ankoraŭ ne estas ĉi tie.",
   "More": "Pli",
   "Most players at once": "Plej multaj ludantoj samtempe",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Ensalutu per Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Ensalutu per `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Ensalutu kun Microsoft konto kiu posedas Minecraft: Java Eldono por ludi",
-  "Sign in with a Minecraft account first.": "Unue ensalutu kun Minecraft konto.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Ensalutu kun la konto, kiu posedas Minecraft: Java Eldono. Via nomo kaj haŭto venas al interretaj serviloj, kiel en aliaj lanĉiloj.",
   "Sign out": "Elsaluti",
   "Sign-in not checked": "Ensaluto ne kontrolita",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "La aspekto de la lanĉilo restarigitas por nun, sed ĝi ne konserviĝis",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Vitro kaj Malklarigo formigas la matigitajn panelojn de la malhela aspekto; la hela desegnas solidajn blankajn panelojn.",
   "Performance mode draws solid panels, without glass or blur.": "Efikeca reĝimo desegnas solidajn panelojn, sen vitro aŭ malklarigo.",
-  "This theme's night draws solid panels, without glass or blur.": "La nokto de ĉi tiu etoso desegnas solidajn panelojn, sen vitro aŭ malklarigo."
+  "This theme's night draws solid panels, without glass or blur.": "La nokto de ĉi tiu etoso desegnas solidajn panelojn, sen vitro aŭ malklarigo.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

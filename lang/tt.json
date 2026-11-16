@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth модпак форматы: pa1⟧ ресурс пакетлары аларны йөкләү белән күрсәтелгән, калганнары анда.",
   "Mods": "Модлар",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Модлар һәм шейдер пакетлар өчен ясалганSunriseүзенең реестрыннан, ресурс пакетларыннанModrinth. Eachәрбер файл сезнең уен папкасына җиткәнче аның чыганагы тикшерелә.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang сезнең счетыгызны раслый алмады. Тагын керегез һәм кабатлап карагыз.",
-  "Mojang's session server is not answering. Try again later.": "Mojang сессия серверы җавап бирми. Соңрак кабатлап карагыз.",
   "Mojang's version list isn't here yet.": "Mojang версияләр исемлеге монда юк.",
   "More": "Күбрәк",
   "Most players at once": "Күпчелек уенчылар берьюлы",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft белән керегез",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` белән керегез.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "А белән керегезMicrosoftбулган хисапMinecraft:JavaУйнау өчен басма",
-  "Sign in with a Minecraft account first.": "Башта Minecraft счеты белән керегез.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java басмасы булган счет белән керегез. Сезнең исемегез һәм тирегез башка эшләтеп җибәрүчеләрдәге кебек онлайн серверларга керә.",
   "Sign out": "Чыгу",
   "Sign-in not checked": "Керү тикшерелмәгән",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Эшләткечнең тышкы кыяфәте әлегә кире кайтарылды, ләкин сакланмады",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Пыяла һәм Томанлау караңгы күренешнең мат панельләрен формалаштыра; яктысы катлы ак панельләр сурәтли.",
   "Performance mode draws solid panels, without glass or blur.": "Җитештерүчәнлек режимы пыяла һәм томанлаусыз катлы панельләр сурәтли.",
-  "This theme's night draws solid panels, without glass or blur.": "Бу теманың төне пыяла һәм томанлаусыз катлы панельләр сурәтли."
+  "This theme's night draws solid panels, without glass or blur.": "Бу теманың төне пыяла һәм томанлаусыз катлы панельләр сурәтли.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

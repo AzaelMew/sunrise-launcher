@@ -259,7 +259,7 @@ pub(super) struct Servers {
 
 impl Servers {
     pub(super) fn new() -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::wake::channel();
         Self {
             list: Vec::new(),
             loaded: false,
@@ -635,7 +635,6 @@ impl Launcher {
                         s.create = None;
                         s.list = servers::list();
                         s.modes.clear();
-                        s.modes.clear();
                         self.open_server(entry.dir.clone());
                         self.servers.note = Some(format!(
                             "{} is ready. Press Start, then give your friends the address below.",
@@ -936,7 +935,8 @@ impl Launcher {
         } else {
             Default::default()
         };
-        self.servers.problem = None;
+        // Nothing to run it with yet: said as the form opens, not after it is filled in.
+        self.servers.problem = servers::create_blocked(self.selected().map(String::as_str));
         self.servers.create_scroll = Scrollbar::default();
         self.servers.create = Some(Create {
             new_world: true,

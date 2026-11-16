@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Cruth modpack Modrinth: tha pacaidean ghoireasan bho Modrinth air an liostadh leis an luchdachadh sìos aca, tha an còrr air a ghiùlan ann.",
   "Mods": "Mòdan",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mòdan agus pacaidean sgàile air an dèanamh airson Sunrise bhon chlàr ath-sgrùdaichte aige fhèin, agus pacaidean ghoireasan bho Modrinth. Thèid gach faidhle a sgrùdadh mu choinneamh seic an tùs aige mus ruig e am pasgan geama agad.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang cha b’ urrainn dhuinn do chunntas a dhearbhadh. Clàraich a-steach a-rithist is feuch ris a-rithist.",
-  "Mojang's session server is not answering. Try again later.": "Chan eil frithealaiche seisean Mojang a’ freagairt. Feuch ris a-rithist nas fhaide air adhart.",
   "Mojang's version list isn't here yet.": "Chan eil liosta dreach Mojang an seo fhathast.",
   "More": "Tuilleadh",
   "Most players at once": "A 'mhòr-chuid de chluicheadairean aig an aon àm",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Log a-steach le Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Clàraich a-steach le `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Clàraich a-steach le cunntas Microsoft leis a bheil Minecraft: Java Deasachadh ri chluich",
-  "Sign in with a Minecraft account first.": "Clàraich a-steach le cunntas Minecraft an-toiseach.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Clàraich a-steach leis a’ chunntas leis a bheil Minecraft: Java Edition. Thig d’ ainm agus do chraiceann gu frithealaichean air-loidhne, mar ann an lannsaichean eile.",
   "Sign out": "Clàraich a-mach",
   "Sign-in not checked": "Cha deach clàradh a-steach a sgrùdadh",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Chaidh coltas an lannsair ath-shuidheachadh na choisise, ach cha deach a shàbhaladh",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Cruthaichidh Glainne agus Blur panail reòta choltas dorcha; tarraingidh an coltas soilleir panail geala fhìor.",
   "Performance mode draws solid panels, without glass or blur.": "Tarraingidh modh coileanaidh panail fhìor, as aonais glainne no blur.",
-  "This theme's night draws solid panels, without glass or blur.": "Tarraingidh oidhche an ùrlair seo panail fhìor, as aonais glainne no blur."
+  "This theme's night draws solid panels, without glass or blur.": "Tarraingidh oidhche an ùrlair seo panail fhìor, as aonais glainne no blur.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

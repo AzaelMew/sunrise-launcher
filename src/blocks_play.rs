@@ -94,18 +94,23 @@ impl Launcher {
                 ),
                 None => centered(&waiting, &t).child(actions),
             };
+            // The instance's sections (its mods, worlds, log...) open over the page as they do with
+            // a version: nothing installed yet is when the log is most wanted.
             return div()
+                .relative()
                 .flex()
                 .flex_col()
                 .gap(px(24.))
                 .pt(px(28.))
+                .when(t.glass, |d| d.min_h(px(self.first_screen())))
                 .child(page_header(
                     "Play",
                     "Start the game, or run a server for others to join.",
                     &t,
                 ))
                 .child(middle)
-                .children(memory);
+                .children(memory)
+                .children(t.glass.then(|| self.home_section_panel(cx)).flatten());
         };
         let prepared = backend::is_prepared(&tag);
         // Prepared without sounds (#1035): Prepare again is the fix, so it stands out.
@@ -391,11 +396,12 @@ impl Launcher {
                 )
         };
         let mut page = div().flex().flex_col().gap(px(28.)).child(banner);
-        if let Some(e) = self.prepare_error.clone() {
+        // The glass look's head shows these under Play (`outline_home_head`).
+        if let Some(e) = self.prepare_error.clone().filter(|_| !t.glass) {
             page = page.child(notice(e, &t));
         }
         // On the instance, before its tabs: what crashed and the way back into the game.
-        if let Some(crash) = self.crash.clone() {
+        if let Some(crash) = self.crash.clone().filter(|_| !t.glass) {
             page = page.child(self.crash_notice(crash, cx));
         }
         page = if t.glass {
@@ -405,7 +411,7 @@ impl Launcher {
         } else {
             page.child(self.home_tabs(rows, cx))
         };
-        if let Some(e) = self.client_error.clone() {
+        if let Some(e) = self.client_error.clone().filter(|_| !t.glass) {
             page = page.child(notice(e, &t));
         }
         page

@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ӑн modpack форматӗ: Modrinth-ран пуҫласа ресурс пакетӗсем вӗсене скачать тунӑ тӑрӑх кӑтартнӑ, ыттине унта илсе ҫӳренӗ.",
   "Mods": "Модсем",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Хӑйӗн тишкернӗ реестрӗнчен Sunrise валли тунӑ модсемпе шейдерсен пакетӗсем, Modrinthран ресурссен пакетӗсем. Кашни файла сирӗн вӑйӑ папкине ҫитиччен унӑн ҫӑлкуҫӗн тӗрӗслев суммипе тӗрӗслеҫҫӗ.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang сирӗн аккаунта ҫирӗплетеймерӗ. Тепӗр хут кӗрӗр те тепӗр хут тытӑнӑр.",
-  "Mojang's session server is not answering. Try again later.": "Mojang сеанс серверӗ хуравламасть. Кайран тепӗр хут тытӑнса пӑхӑр.",
   "Mojang's version list isn't here yet.": "Mojang версийӗсен списокӗ кунта ҫук-ха.",
   "More": "Тӗплӗнрех",
   "Most players at once": "Ытларах вылякансем пӗр харӑсах",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoftпа кӗрӗр",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` командӑпа кӗрӗр.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Minecraft тытакан Microsoft аккаунтпа кӗрӗр: Java Вылямалли кӑларӑм",
-  "Sign in with a Minecraft account first.": "Малтан Minecraft аккаунтпа кӗрӗр.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Издание тытса тӑракан аккаунтпа кӗрӗр. Сирӗн ятӑрпа тир ытти лаунчерсенчи пекех онлайн-серверсем ҫине кӗреҫҫӗ.",
   "Sign out": "Тухса кайӑр",
   "Sign-in not checked": "Кӗнине тӗрӗслемен",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Лаунчерӑн сӑн-сӑпатӗ халӗ ҫӗнӗрен лартӑнӑ, анчах упранман",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Кантӑк тата Блюр тӗттӗм сӑн-сӑпатӑн ҫийӗннӗ панельӗсене евӗрлет; ҫуттӑнни шурӑ тулли панельсем ҫырать.",
   "Performance mode draws solid panels, without glass or blur.": "Ӗҫ тухӑҫлӑхӗн режимӗ кантӑк-блюрсӗр тулли панельсем ҫырать.",
-  "This theme's night draws solid panels, without glass or blur.": "Ку теман каҫӗ кантӑк-блюрсӗр тулли панельсем ҫырать."
+  "This theme's night draws solid panels, without glass or blur.": "Ку теман каҫӗ кантӑк-блюрсӗр тулли панельсем ҫырать.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

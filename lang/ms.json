@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Format modpack Modrinth: pek sumber daripada Modrinth disenaraikan mengikut muat turun mereka, selebihnya dibawa di dalamnya.",
   "Mods": "Mod",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mod dan pek shader dibuat untuk Sunrise daripada pendaftarannya yang disemak sendiri, dan pek sumber daripada Modrinth. Setiap fail disemak terhadap jumlah semak sumbernya sebelum ia mencapai folder permainan anda.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang tidak dapat mengesahkan akaun anda. Log masuk semula dan cuba semula.",
-  "Mojang's session server is not answering. Try again later.": "Pelayan sesi Mojang tidak menjawab. Cuba lagi nanti.",
   "Mojang's version list isn't here yet.": "Senarai versi Mojang belum ada di sini.",
   "More": "Lagi",
   "Most players at once": "Kebanyakan pemain serentak",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Log masuk dengan Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Log masuk dengan `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Log masuk dengan akaun Microsoft yang memiliki Minecraft: Java Edition untuk dimainkan",
-  "Sign in with a Minecraft account first.": "Log masuk dengan akaun Minecraft dahulu.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Log masuk dengan akaun yang memiliki Minecraft: Java Edition. Nama dan kulit anda disertakan dengan pelayan dalam talian, seperti dalam pelancar lain.",
   "Sign out": "Log keluar",
   "Sign-in not checked": "Log masuk tidak ditandakan",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Penampilan pelancar ditetapkan semula buat sementara, tetapi tidak dapat disimpan",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Kaca dan Kabur membentuk panel berkaca penampilan gelap; yang cerah melukis panel putih pepejal.",
   "Performance mode draws solid panels, without glass or blur.": "Mod prestasi melukis panel pepejal, tanpa kaca atau kabur.",
-  "This theme's night draws solid panels, without glass or blur.": "Malam tema ini melukis panel pepejal, tanpa kaca atau kabur."
+  "This theme's night draws solid panels, without glass or blur.": "Malam tema ini melukis panel pepejal, tanpa kaca atau kabur.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

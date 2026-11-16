@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "ʻO ke ʻano modpack o Modrinth: ua helu ʻia nā pūʻulu waiwai mai Modrinth e kā lākou hoʻoiho, lawe ʻia ke koena i loko.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Hana ʻia nā mods a me shader pack no Sunrise mai kāna papa inoa loiloi ponoʻī, a me nā pūʻolo waiwai mai Modrinth. Hoʻopaʻa ʻia kēlā me kēia faila ma mua o ka hōʻea ʻana i kāu waihona pāʻani.",
-  "Mojang could not confirm your account. Sign in again and retry.": "ʻAʻole hiki iā Mojang ke hōʻoia i kāu moʻokāki. E ʻeʻe hou a hoʻāʻo hou.",
-  "Mojang's session server is not answering. Try again later.": "ʻAʻole pane mai ke kikowaena kauā o Mojang. E ho'āʻo hou ma hope.",
   "Mojang's version list isn't here yet.": "ʻAʻole i hiki mai ka papa inoa mana o Mojang.",
   "More": "ʻOi aku",
   "Most players at once": "ʻO ka hapa nui o nā mea pāʻani i ka manawa hoʻokahi",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "E ʻeʻe me Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "E ʻeʻe me `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "E ʻeʻe me kahi moʻokāki Microsoft nona ka Minecraft: Java Edition e pāʻani ai",
-  "Sign in with a Minecraft account first.": "E ʻeʻe me kahi moʻokāki Minecraft mua.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "E ʻeʻe me ka moʻokāki nona ka Minecraft: Java Edition. Hele mai kou inoa a me kou ʻili i nā kikowaena pūnaewele, e like me nā mea hoʻolaha ʻē aʻe.",
   "Sign out": "E haʻalele",
   "Sign-in not checked": "ʻAʻole i nānā ʻia ke komo ʻana",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Ua hoʻoponopono hou ʻia ke ʻano o ka mea hoʻolaha no kēia manawa, akā ʻaʻole i mālama ʻia",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Hoʻohewa ka Aniani a me ka Blur i nā pā ʻōnohi o ke ʻano poʻeleʻele; ke kaha polū pololei ka mea māmā i nā pā keʻokeʻo paʻa.",
   "Performance mode draws solid panels, without glass or blur.": "Ke kaha ka ʻano hana i nā pā paʻa, me ka ʻole o ke aniani a me ka blur.",
-  "This theme's night draws solid panels, without glass or blur.": "Ke kaha ka pō o kēia kumuhana i nā pā paʻa, me ka ʻole o ke aniani a me ka blur."
+  "This theme's night draws solid panels, without glass or blur.": "Ke kaha ka pō o kēia kumuhana i nā pā paʻa, me ka ʻole o ke aniani a me ka blur.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

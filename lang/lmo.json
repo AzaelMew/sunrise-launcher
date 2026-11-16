@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "El furmat modpack de Modrinth: i pachett de risurs de Modrinth sun elencà segond luur scaricament, el rest l’è purtà denter.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mod e pachett shader fatt per Sunrise dal sò registro rivist e pachett de risurs de Modrinth. Ogni file l’è cuntrulà cuntra la suma de cuntrol de la sò funt prima de rivà in de la cartella del giœugh.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang l’è minga stait bon de cunfermà el tò conto. Accedi ancamò e pruva ancamò.",
-  "Mojang's session server is not answering. Try again later.": "El server di sesiun de Mojang rispunt minga. Pruva ancamò dopu.",
   "Mojang's version list isn't here yet.": "La lista di versiun de Mojang l’è minga ancamò chi.",
   "More": "Altro",
   "Most players at once": "La magiur part di giucadur a la volta",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Accedi cun Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Accedi cunt `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Accedi cunt un cunt Microsoft che g’ha Minecraft: Ediziun Java per giœgar",
-  "Sign in with a Minecraft account first.": "Accedi prima cunt un cunt Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Accedi cunt el cunt che g’ha Minecraft: Java Ediziun. El tò nomm e la tò pel rivan süi server online, cuma en olter lanciador.",
   "Sign out": "Descontra",
   "Sign-in not checked": "Accedi minga cuntrulà",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "L'aspètt del lanciador l'è stà ripristinaa per adess, ma l'è minga stà salvà",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Veder e Blur i fen föra i pannell smalzià del aspett scür; quell ciar el disegna pannell bianch solii.",
   "Performance mode draws solid panels, without glass or blur.": "Modalità prestaziun la disegna pannell solii, senza veder né blur.",
-  "This theme's night draws solid panels, without glass or blur.": "La nocc de sto tema chì la disegna pannell solii, senza veder né blur."
+  "This theme's night draws solid panels, without glass or blur.": "La nocc de sto tema chì la disegna pannell solii, senza veder né blur.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

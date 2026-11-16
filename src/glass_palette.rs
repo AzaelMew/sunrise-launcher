@@ -52,6 +52,8 @@ impl Launcher {
             window.focus(&self.root_focus, cx);
             return;
         }
+        // A menu left open would draw over the palette.
+        self.close_menus();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         self.palette = Some(Palette {

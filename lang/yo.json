@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Ọna kika modpack Modrinth: awọn akopọ orisun lati Modrinth ti wa ni akojọ nipasẹ igbasilẹ wọn, iyoku ni a gbe sinu rẹ.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods ati awọn akopọ shader ti a ṣe fun Sunrise lati iforukọsilẹ atunyẹwo tirẹ, ati awọn akopọ orisun lati Modrinth. Fáìlì kọ̀ọ̀kan jẹ́ àyẹ̀wò lòdì sí ibi ìṣàyẹ̀wò orísun rẹ̀ kí ó tó dé fódà eré rẹ.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ko le jẹrisi akọọlẹ rẹ. Wọle lẹẹkansi ki o tun gbiyanju.",
-  "Mojang's session server is not answering. Try again later.": "Olupin igba Mojang ko dahun. Gbiyanju lẹẹkansi nigbamii.",
   "Mojang's version list isn't here yet.": "Akojọ ẹya Mojang ko si nibi sibẹsibẹ.",
   "More": "Die e sii",
   "Most players at once": "Ọpọlọpọ awọn ẹrọ orin ni ẹẹkan",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Wọle pẹlu Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Wọlé pẹ̀lú `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Wọlé pẹlu akọọlẹ Microsoft kan ti o ni Minecraft: Java Ẹya lati mu ṣiṣẹ",
-  "Sign in with a Minecraft account first.": "Wọle pẹlu akọọlẹ Minecraft kan akọkọ.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Wọle pẹlu akọọlẹ ti o ni Minecraft: Java Edition. Orukọ rẹ ati awọ ara wa pẹlu awọn olupin ori ayelujara, bii ninu awọn ifilọlẹ miiran.",
   "Sign out": "Wọlé jade",
   "Sign-in not checked": "Wọle ko ṣayẹwo",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Irísi ifilọlẹ ti tunto fún àsìkò yìí, ṣùgbọ́n kò lè fi pamọ́",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Gíláàsì àti Ìdàrú ń ṣe àwọn pánẹ́lì tí ó farapamọ́ tí ìrísí dudu; ìmọ́lẹ̀ ń fa pánẹ́lì funfun lile.",
   "Performance mode draws solid panels, without glass or blur.": "Ipò iṣẹ́ ṣíṣe ń fa pánẹ́lì lile, láìsí gíláàsì tàbí ìdàrú.",
-  "This theme's night draws solid panels, without glass or blur.": "Òru àkórí yìí ń fa pánẹ́lì lile, láìsí gíláàsì tàbí ìdàrú."
+  "This theme's night draws solid panels, without glass or blur.": "Òru àkórí yìí ń fa pánẹ́lì lile, láìsí gíláàsì tàbí ìdàrú.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -461,3 +461,18 @@ fn curseforge_is_coming_soon_and_never_searched() {
     assert_eq!(ids, [SourceId::Modrinth, SourceId::Sunrise]);
     assert!(source(SourceId::CurseForge).is_none());
 }
+
+#[test]
+fn a_projects_own_licence_reads_as_words() {
+    assert_eq!(
+        license_label("LicenseRef-Polyform-Shield-1.0.0"),
+        "Polyform Shield 1.0.0"
+    );
+    assert_eq!(
+        license_label("LicenseRef-All-Rights-Reserved"),
+        "All Rights Reserved"
+    );
+    // An SPDX id is what people search licences by: it stays as it is.
+    assert_eq!(license_label("LGPL-3.0-only"), "LGPL-3.0-only");
+    assert_eq!(license_label("LicenseRef-"), "LicenseRef-");
+}

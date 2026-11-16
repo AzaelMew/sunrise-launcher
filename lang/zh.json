@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth 的整合包格式：来自 Modrinth 的资源包通过下载链接列出，其余内容直接包含在包内。",
   "Mods": "模组",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "来自 Sunrise 自有审核注册表的专属模组与光影包，以及来自 Modrinth 的资源包。每个文件在进入游戏文件夹前都会核对源端的校验和。",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang 无法确认你的账户。请重新登录后重试。",
-  "Mojang's session server is not answering. Try again later.": "Mojang 的会话服务器没有响应。请稍后再试。",
   "Mojang's version list isn't here yet.": "尚未获取到 Mojang 的版本列表。",
   "More": "更多",
   "Most players at once": "最多同时在线玩家",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "使用 Microsoft 账户登录",
   "Sign in with `sunrise-launcher account sign-in`.": "使用 `sunrise-launcher account sign-in` 登录。",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "登录拥有 Minecraft: Java Edition 的 Microsoft 账户，即可开始游戏",
-  "Sign in with a Minecraft account first.": "请先使用 Minecraft 账户登录。",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "使用拥有 Minecraft: Java Edition 的账户登录。和其他启动器一样，你的名称和皮肤会随你进入在线服务器。",
   "Sign out": "退出登录",
   "Sign-in not checked": "尚未检查登录状态",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "启动器外观已暂时重置，但未能保存",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "玻璃和模糊塑造深色外观的磨砂面板；浅色外观绘制纯白面板。",
   "Performance mode draws solid panels, without glass or blur.": "性能模式绘制纯色面板，不带玻璃或模糊效果。",
-  "This theme's night draws solid panels, without glass or blur.": "此主题的夜间模式绘制纯色面板，不带玻璃或模糊效果。"
+  "This theme's night draws solid panels, without glass or blur.": "此主题的夜间模式绘制纯色面板，不带玻璃或模糊效果。",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

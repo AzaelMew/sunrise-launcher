@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "El formato de modpack de Modrinth: los paquetes de recursos de Modrinth se listan por su descarga y el resto se incluye dentro.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods y paquetes de shaders creados para Sunrise desde su propio registro revisado, y paquetes de recursos de Modrinth. Cada archivo se comprueba con la suma de verificación de su origen antes de llegar a la carpeta del juego.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang no pudo confirmar tu cuenta. Vuelve a iniciar sesión e inténtalo de nuevo.",
-  "Mojang's session server is not answering. Try again later.": "El servidor de sesiones de Mojang no responde. Inténtalo más tarde.",
   "Mojang's version list isn't here yet.": "La lista de versiones de Mojang aún no ha llegado.",
   "More": "Más",
   "Most players at once": "Máximo de jugadores a la vez",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Iniciar sesión con Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Inicia sesión con `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Inicia sesión con una cuenta de Microsoft que posea Minecraft: Java Edition para jugar",
-  "Sign in with a Minecraft account first.": "Primero inicia sesión con una cuenta de Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Inicia sesión con la cuenta que tiene Minecraft: Java Edition. Tu nombre y tu skin te acompañan a los servidores en línea, como en otros launchers.",
   "Sign out": "Cerrar sesión",
   "Sign-in not checked": "Sesión sin comprobar",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "El aspecto del launcher se ha restablecido por ahora, pero no se pudo guardar",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Cristal y Desenfoque dan forma a los paneles esmerilados del aspecto oscuro; el claro dibuja paneles blancos sólidos.",
   "Performance mode draws solid panels, without glass or blur.": "Modo rendimiento dibuja paneles sólidos, sin cristal ni desenfoque.",
-  "This theme's night draws solid panels, without glass or blur.": "La noche de este tema dibuja paneles sólidos, sin cristal ni desenfoque."
+  "This theme's night draws solid panels, without glass or blur.": "La noche de este tema dibuja paneles sólidos, sin cristal ni desenfoque.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

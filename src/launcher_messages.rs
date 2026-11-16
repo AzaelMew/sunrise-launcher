@@ -1,10 +1,19 @@
-//! The backend's messages, drained every frame (`Launcher::drain`).
+//! The backend's messages, drained as they arrive (`Launcher::drain`, `wake.rs`).
 use super::*;
 
 impl Launcher {
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
         let mut changed = false;
         self.perf.tick();
+        if self.perf.resting(Duration::from_millis(250)) {
+            let _ = cx.update_window(window, |_, window, _| {
+                language_page::warm_language_name(window)
+            });
+        }
+        #[cfg(feature = "frame-stats")]
+        if self.bench.is_some() {
+            self.perf.draws = cx.update_window(window, |_, w, _| perf::draws(w)).ok();
+        }
         match self.bench.as_mut().map(|b| b.tick(&self.perf)) {
             Some(perf::Step::Go(page)) => {
                 let pages: Vec<Page> = Page::ALL.iter().map(|p| p.0).collect();

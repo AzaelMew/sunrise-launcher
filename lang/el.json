@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Μορφή modpack του Modrinth: τα πακέτα πόρων από το Modrinth παρατίθενται από τη λήψη τους, ενώ τα υπόλοιπα μεταφέρονται σε αυτό.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Πακέτα mods και shader που δημιουργήθηκαν για το Sunrise από το δικό του ελεγμένο μητρώο και πακέτα πόρων από το Modrinth. Κάθε αρχείο ελέγχεται με το άθροισμα ελέγχου της πηγής του πριν φτάσει στο φάκελο του παιχνιδιού σας.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Ο Mojang δεν μπόρεσε να επιβεβαιώσει τον λογαριασμό σας. Συνδεθείτε ξανά και δοκιμάστε ξανά.",
-  "Mojang's session server is not answering. Try again later.": "Ο διακομιστής συνεδρίας του Mojang δεν απαντά. Δοκιμάστε ξανά αργότερα.",
   "Mojang's version list isn't here yet.": "Η λίστα εκδόσεων του Mojang δεν είναι ακόμα εδώ.",
   "More": "Περισσότερα",
   "Most players at once": "Οι περισσότεροι παίκτες ταυτόχρονα",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Συνδεθείτε με τη Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Συνδεθείτε με `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Συνδεθείτε με έναν λογαριασμό Microsoft στον οποίο ανήκει το Minecraft: Java Edition για αναπαραγωγή",
-  "Sign in with a Minecraft account first.": "Συνδεθείτε πρώτα με έναν λογαριασμό Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Συνδεθείτε με τον λογαριασμό που κατέχει το Minecraft: Java Edition. Το όνομα και το skin σας σας ακολουθούν στους διαδικτυακούς διακομιστές, όπως και σε άλλους launchers.",
   "Sign out": "Αποσυνδεθείτε",
   "Sign-in not checked": "Η σύνδεση δεν είναι επιλεγμένη",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Η εμφάνιση του launcher επαναφέρθηκε προς το παρόν, αλλά δεν μπόρεσε να αποθηκευτεί",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Γυαλί και Θόλωμα διαμορφώνουν τα θαμπά πάνελ της σκούρας εμφάνισης· η φωτεινή σχεδιάζει συμπαγή λευκά πάνελ.",
   "Performance mode draws solid panels, without glass or blur.": "Η λειτουργία Performance σχεδιάζει συμπαγή πάνελ, χωρίς γυαλί ή θόλωμα.",
-  "This theme's night draws solid panels, without glass or blur.": "Η νύχτα αυτού του θέματος σχεδιάζει συμπαγή πάνελ, χωρίς γυαλί ή θόλωμα."
+  "This theme's night draws solid panels, without glass or blur.": "Η νύχτα αυτού του θέματος σχεδιάζει συμπαγή πάνελ, χωρίς γυαλί ή θόλωμα.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

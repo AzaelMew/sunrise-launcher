@@ -885,7 +885,8 @@ enum Cmd {
     /// selected one, the ones instances use and the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
-    /// system|en|fr|ru|de|zh|es|uk|pl (the window's language; system follows the computer's), accent
+    /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
+    /// system follows the computer's; a wrong code lists them all), accent
     /// violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any
     /// hue), background PATH (a picture behind Home; "default"
     /// shows Sunrise's landscape), cache-limit-gib N (managed cache limit
@@ -1130,7 +1131,8 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
             s.language = match value.trim() {
                 "system" | "default" => None,
                 code => Some(Language::parse(code).ok_or_else(|| {
-                    format!("{value}: say system, en, fr, ru, de, zh, es, uk, pl or pt-br")
+                    let codes: Vec<&str> = Language::ALL.iter().map(|l| l.code()).collect();
+                    format!("{value}: say system or one of {}", codes.join(", "))
                 })?),
             }
         }
@@ -3771,10 +3773,18 @@ mod tests {
             set_setting(&mut settings, "language", code).unwrap();
             assert_eq!(settings.language, Some(language));
         }
-        assert_eq!(
-            set_setting(&mut settings, "language", "xx").unwrap_err(),
-            "xx: say system, en, fr, ru, de, zh, es, uk, pl or pt-br"
+        // A wrong code lists every language the launcher has, not only the first few.
+        let wrong = set_setting(&mut settings, "language", "xx").unwrap_err();
+        assert!(
+            wrong.starts_with("xx: say system or one of en, "),
+            "{wrong}"
         );
+        for code in ["ja", "pt-br", "th", "pl"] {
+            assert!(
+                wrong.contains(&format!(" {code},")) || wrong.ends_with(&format!(" {code}")),
+                "{code}: {wrong}"
+            );
+        }
         set_setting(&mut settings, "language", "system").unwrap();
         assert_eq!(settings.language, None);
     }

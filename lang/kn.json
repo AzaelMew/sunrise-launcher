@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth ನ ಮೋಡ್‌ಪ್ಯಾಕ್ ಫಾರ್ಮ್ಯಾಟ್: Modrinth ನಿಂದ ಸಂಪನ್ಮೂಲ ಪ್ಯಾಕ್‌ಗಳನ್ನು ಅವುಗಳ ಡೌನ್‌ಲೋಡ್ ಮೂಲಕ ಪಟ್ಟಿಮಾಡಲಾಗಿದೆ, ಉಳಿದವುಗಳನ್ನು ಅದರಲ್ಲಿ ಸಾಗಿಸಲಾಗುತ್ತದೆ.",
   "Mods": "ಮೋಡ್ಸ್",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "ತನ್ನದೇ ಆದ ಪರಿಶೀಲಿಸಿದ ನೋಂದಾವಣೆಯಿಂದ Sunrise ಗಾಗಿ ಮಾಡ್‌ಗಳು ಮತ್ತು ಶೇಡರ್ ಪ್ಯಾಕ್‌ಗಳು ಮತ್ತು Modrinth ರಿಂದ ಸಂಪನ್ಮೂಲ ಪ್ಯಾಕ್‌ಗಳು. ನಿಮ್ಮ ಆಟದ ಫೋಲ್ಡರ್ ಅನ್ನು ತಲುಪುವ ಮೊದಲು ಪ್ರತಿಯೊಂದು ಫೈಲ್ ಅನ್ನು ಅದರ ಮೂಲದ ಚೆಕ್‌ಸಮ್ ವಿರುದ್ಧ ಪರಿಶೀಲಿಸಲಾಗುತ್ತದೆ.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ನಿಮ್ಮ ಖಾತೆಯನ್ನು ಖಚಿತಪಡಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ. ಮತ್ತೆ ಸೈನ್ ಇನ್ ಮಾಡಿ ಮತ್ತು ಮರುಪ್ರಯತ್ನಿಸಿ.",
-  "Mojang's session server is not answering. Try again later.": "Mojang ನ ಸೆಷನ್ ಸರ್ವರ್ ಉತ್ತರಿಸುತ್ತಿಲ್ಲ. ನಂತರ ಮತ್ತೆ ಪ್ರಯತ್ನಿಸಿ.",
   "Mojang's version list isn't here yet.": "Mojang ನ ಆವೃತ್ತಿ ಪಟ್ಟಿ ಇನ್ನೂ ಇಲ್ಲ.",
   "More": "ಇನ್ನಷ್ಟು",
   "Most players at once": "ಏಕಕಾಲದಲ್ಲಿ ಹೆಚ್ಚಿನ ಆಟಗಾರರು",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft ನೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` ನೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "ಪ್ಲೇ ಮಾಡಲು Minecraft: Java ಆವೃತ್ತಿಯನ್ನು ಹೊಂದಿರುವ Microsoft ಖಾತೆಯೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ",
-  "Sign in with a Minecraft account first.": "ಮೊದಲು Minecraft ಖಾತೆಯೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java ಆವೃತ್ತಿಯನ್ನು ಹೊಂದಿರುವ ಖಾತೆಯೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ. ನಿಮ್ಮ ಹೆಸರು ಮತ್ತು ಚರ್ಮವು ಇತರ ಲಾಂಚರ್‌ಗಳಂತೆ ಆನ್‌ಲೈನ್ ಸರ್ವರ್‌ಗಳಿಗೆ ಬರುತ್ತದೆ.",
   "Sign out": "ಸೈನ್ ಔಟ್ ಮಾಡಿ",
   "Sign-in not checked": "ಸೈನ್-ಇನ್ ಅನ್ನು ಪರಿಶೀಲಿಸಲಾಗಿಲ್ಲ",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "ಲಾಂಚರ್‌ನ ನೋಟ ಸದ್ಯಕ್ಕೆ ಮರುಹೊಂದಿಸಲಾಗಿದೆ, ಆದರೆ ಉಳಿಸಲಾಗಲಿಲ್ಲ",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ಗಾಜು ಮತ್ತು ಮಸುಕು ಕತ್ತಲೆ ನೋಟದ ಹಿಮಗಟ್ಟಿದ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ರೂಪಿಸುತ್ತದೆ; ಬೆಳಕಿನ ನೋಟ ಘನ ಬಿಳಿ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ.",
   "Performance mode draws solid panels, without glass or blur.": "ಕಾರ್ಯಕ್ಷಮತೆ ಮೋಡ್ ಗಾಜು ಅಥವಾ ಮಸುಕಿಲ್ಲದೆ ಘನ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ.",
-  "This theme's night draws solid panels, without glass or blur.": "ಈ ಥೀಮ್‌ನ ರಾತ್ರಿ ಗಾಜು ಅಥವಾ ಮಸುಕಿಲ್ಲದೆ ಘನ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ."
+  "This theme's night draws solid panels, without glass or blur.": "ಈ ಥೀಮ್‌ನ ರಾತ್ರಿ ಗಾಜು ಅಥವಾ ಮಸುಕಿಲ್ಲದೆ ಘನ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

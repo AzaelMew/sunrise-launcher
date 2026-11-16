@@ -56,6 +56,7 @@ mod instance_icons;
 mod instance_mods;
 mod instances_page;
 mod internet;
+mod island;
 mod jar_launch;
 mod language_page;
 mod launch_page;
@@ -96,6 +97,7 @@ mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
+mod wake;
 mod welcome;
 mod while_playing;
 mod window_root;
@@ -112,7 +114,7 @@ use scrollbar::Scrollbar;
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use sunrise_launcher::account::{self, Accounts, SignIn, SignInState};
@@ -245,6 +247,8 @@ struct Launcher {
     whats_new_open: Option<std::collections::HashSet<String>>,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
     settings_marked: usize,
+    /// Which Settings sections the pane draws in full (`glass_settings::Culled`).
+    settings_culled: std::cell::Cell<glass_settings::Culled>,
     /// About's credit picture was asked for, and what came back.
     credit_asked: bool,
     /// The Game version dropdown of the instance dialog and sheet is open.
@@ -358,6 +362,8 @@ struct Launcher {
     account_menu: bool,
     /// The glass sidebar's ⋮ menu (`frame.rs`).
     row_menu: frame::RowMenu,
+    /// The menus drawn as views of their own (`island.rs`).
+    islands: island::Islands,
     /// The instance sheet's open section (`glass_sheet.rs`).
     sheet_tab: glass_sheet::SheetTab,
     /// The glass look's colours for the player's accent (`sunrise_theme::glass`).

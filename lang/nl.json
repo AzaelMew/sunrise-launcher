@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth's modpack-formaat: bronpakketten van Modrinth worden vermeld op basis van hun download, de rest wordt erin opgeslagen.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods en shader-pakketten gemaakt voor Sunrise vanuit het eigen beoordeelde register, en resourcepakketten van Modrinth. Elk bestand wordt gecontroleerd aan de hand van de controlesom van de bron voordat het uw gamemap bereikt.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang kon uw account niet bevestigen. Meld u opnieuw aan en probeer het opnieuw.",
-  "Mojang's session server is not answering. Try again later.": "De sessieserver van Mojang antwoordt niet. Probeer het later opnieuw.",
   "Mojang's version list isn't here yet.": "De versielijst van Mojang is er nog niet.",
   "More": "Meer",
   "Most players at once": "De meeste spelers tegelijk",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Meld u aan bij Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Meld u aan met `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Meld u aan met een Microsoft-account dat eigenaar is van Minecraft: Java Edition om te spelen",
-  "Sign in with a Minecraft account first.": "Meld u eerst aan met een Minecraft-account.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Meld je aan met het account dat Minecraft: Java Edition bezit. Je naam en skin gaan mee naar online servers, net als in andere launchers.",
   "Sign out": "Meld u af",
   "Sign-in not checked": "Inloggen niet aangevinkt",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Het uiterlijk van de launcher is voor nu hersteld, maar kon niet worden opgeslagen",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas en Vervaging vormen de matte panelen van het donkere uiterlijk; het lichte tekent massief witte panelen.",
   "Performance mode draws solid panels, without glass or blur.": "Prestatiemodus tekent massieve panelen, zonder glas of vervaging.",
-  "This theme's night draws solid panels, without glass or blur.": "De nacht van dit thema tekent massieve panelen, zonder glas of vervaging."
+  "This theme's night draws solid panels, without glass or blur.": "De nacht van dit thema tekent massieve panelen, zonder glas of vervaging.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

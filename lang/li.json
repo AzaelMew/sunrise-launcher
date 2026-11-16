@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth's modpack-formaat: resource packs vaan Modrinth zien vermeld op basis vaan hun download, de res weurt d'r in gedrage.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods en shaderpacks gemaak veur Sunrise oet zien eige beoordeelde register, en resource packs vaan Modrinth. Eeder bestand weurt gecontroleerd tege de checksum vaan de bron veurtot ‘t in de speulmap kump.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang kon eur account neet bevestige. Meld weer aan en probeer ‘t weer.",
-  "Mojang's session server is not answering. Try again later.": "De sessieserver vaan Mojang antwoord neet. Probeer ‘t later nog ‘nmaol.",
   "Mojang's version list isn't here yet.": "De versielies vaan Mojang is nog neet hei.",
   "More": "Meer",
   "Most players at once": "De mieste speulers tegeliekertied",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Meld aan mit Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Meld aon mit `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Meld aan mit un Microsoft-account det Minecraft: Java Editie um te sjpele",
-  "Sign in with a Minecraft account first.": "Meld iers aan mit un Minecraft-account.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Meld aan mit ut account det Minecraft: Java Editie beziet. Uw naam en huid komme op online servers, zjus wie in aandere launchers.",
   "Sign out": "Meld oet",
   "Sign-in not checked": "Aonmelde neet gecontroleerd",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "'t Uterlik vaan de launcher is veur noe trökgesjtèld, mer 't kos neet weure opgeslage",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glaas en Vervaag vörme de matte panneel van 't duustere uterlik; 't liechte teikent massief witte panneel.",
   "Performance mode draws solid panels, without glass or blur.": "Prestatiemodus teikent massief panneel, zoonder glaas of vervaag.",
-  "This theme's night draws solid panels, without glass or blur.": "De nach van dit thema teikent massief panneel, zoonder glaas of vervaag."
+  "This theme's night draws solid panels, without glass or blur.": "De nach van dit thema teikent massief panneel, zoonder glaas of vervaag.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

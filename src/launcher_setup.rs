@@ -5,22 +5,25 @@ use super::*;
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         sunrise_launcher::storage::eviction::cleanup_after_start();
-        let (tx, rx) = channel();
+        let (tx, rx) = wake::channel();
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
             cx.notify();
         });
         let window_handle = window.window_handle();
+        #[cfg(feature = "frame-stats")]
+        perf::frame_overlay(window);
+        // The pump: on its tick, or at once when a worker says something (`wake.rs`).
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(80))
-                .await;
+            let tick = cx.background_executor().timer(wake::TICK);
+            futures_util::future::select(std::pin::pin!(tick), std::pin::pin!(wake::woken())).await;
             if this
                 .update(cx, |this, cx| this.drain(window_handle, cx))
                 .is_err()
             {
                 break;
             }
+            cx.background_executor().timer(wake::SETTLE).await;
         })
         .detach();
         let mut settings = Settings::load();
@@ -71,6 +74,7 @@ impl Launcher {
             settings_query_focused: false,
             whats_new_open: None,
             settings_marked: 0,
+            settings_culled: Default::default(),
             credit_asked: false,
             version_menu: false,
             credit_picture: None,
@@ -140,6 +144,7 @@ impl Launcher {
             language_menu: false,
             account_menu: false,
             row_menu: Default::default(),
+            islands: island::Islands::new(cx),
             sheet_tab: Default::default(),
             look: sunrise_theme::glass::Glass::default_look(),
             menu_closed_at: None,
@@ -409,10 +414,29 @@ impl Launcher {
                 self.mods.reset_lists();
             }
         }
+        self.close_menus();
+    }
+
+    /// Closes every dropdown and row menu, and says whether one was open: a page switch, the
+    /// palette and Escape each close them (Escape the menu first, then what is under it).
+    pub(crate) fn close_menus(&mut self) -> bool {
+        let open = self.picker.open
+            || self.language_menu
+            || self.mods.browse.sort_menu
+            || self.account_menu
+            || self.version_menu
+            || self.row_menu.open.is_some()
+            || self.home_menu != glass_home::HomeMenu::None
+            || self.list_menu.is_some();
         self.picker.open = false;
         self.language_menu = false;
         self.mods.browse.sort_menu = false;
         self.account_menu = false;
+        self.version_menu = false;
+        self.row_menu.open = None;
+        self.home_menu = glass_home::HomeMenu::None;
+        self.list_menu = None;
+        open
     }
 
     pub(crate) fn check_updates(&mut self) {
