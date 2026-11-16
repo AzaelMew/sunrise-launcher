@@ -406,8 +406,9 @@ impl Launcher {
             page = page.child(self.crash_notice(crash, cx));
         }
         page = if t.glass {
-            // What Play still needs (and an open export or launch panel), above the tabs.
-            page.child(rows).child(self.glass_home_tabs(cx))
+            // What Play still needs (and an open export or launch panel); the sections are on the
+            // first screen's rail.
+            page.child(rows)
         } else {
             page.child(self.home_tabs(rows, cx))
         };

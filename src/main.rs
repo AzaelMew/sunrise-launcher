@@ -471,6 +471,8 @@ struct Launcher {
     download_seen: Option<(Instant, usize)>,
     /// The tab open under Home's hero (`home_tabs.rs`).
     home_tab: home_tabs::HomeTab,
+    /// Whether `home_tab`'s panel is open beside Home's rail.
+    home_panel: bool,
     /// Home's Play or folder menu, while open (glass look).
     home_menu: glass_home::HomeMenu,
     /// The list row under the pointer in Home's glass tabs (a world, a server): it shows its
@@ -478,9 +480,6 @@ struct Launcher {
     list_hover: Option<SharedString>,
     /// A Home list row's ⋯ menu, while open, and whether its Delete… was clicked once.
     list_menu: Option<(SharedString, bool)>,
-    /// The size of Home's tab strip, measured as it is laid out: the glass panel's plate cuts
-    /// its corner around it.
-    home_strip: std::rc::Rc<std::cell::Cell<Option<gpui::Size<Pixels>>>>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
     instance_mods: instance_mods::InstanceMods,
     /// Debug-build previews of the native mod states (`glass_mod_states.rs`).

@@ -112,14 +112,20 @@ impl Launcher {
             .h(px(self.first_screen()))
             .child(self.home_lines())
             .child(hero)
+            .child(self.home_rail(if self.home_wide() { COLUMN } else { 0. }, cx))
+    }
+
+    /// Whether the window has room for the first screen's columns beside the hero.
+    fn home_wide(&self) -> bool {
+        let page = self.window_width - frame::SIDEBAR - 2. * theme::PAGE_GUTTER;
+        page >= HERO_WIDTH + 2. * COLUMN + 64.
     }
 
     /// The first screen's separator lines, part of the page so they scroll with it: the floor,
     /// and where the window has room beside the hero, a column line near each edge and a faint
     /// arc around the left one's top.
     fn home_lines(&self) -> Div {
-        let page = self.window_width - frame::SIDEBAR - 2. * theme::PAGE_GUTTER;
-        let wide = page >= HERO_WIDTH + 2. * COLUMN + 64.;
+        let wide = self.home_wide();
         let column = |right: bool| {
             let d = div()
                 .absolute()

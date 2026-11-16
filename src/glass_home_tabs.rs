@@ -1,92 +1,159 @@
-//! Home's tabbed panel in the glass look (the mockup's `TabbedPanel` and `Overview`,
-//! `launcher-views.tsx`): one glass plate whose top-left corner is the tab strip, and under it
-//! the open tab. Overview shows the instance's last screenshots beside the newest patch log,
-//! then what Play still needs (the launcher's rows). Dark appearance only.
+//! Home's sections (installed mods, worlds, saved servers, packs, shaders, screenshots, the log)
+//! as a rail of buttons at the first screen's right edge. A button slides its section in beside
+//! the rail, over Home, so nothing is a scroll away; the same button or the panel's close puts it
+//! away again.
 use super::*;
-use crate::glass_ui::{self as ui, white};
+use crate::glass_ui::{self as ui, mono};
 use home_tabs::HomeTab;
 use sunrise_launcher::packs::Kind as PackKind;
-use sunrise_theme::glass::ink;
+use sunrise_theme::glass::{ink, radius};
 
-/// The tabbed panel's own body is at least this tall (`min-h-[340px]`), and so is the patch log.
-const BODY: f32 = 340.;
+/// The rail's buttons are this tall and wide.
+const BUTTON: f32 = 44.;
+/// The open section's panel is this wide where the window has the room, and never narrower
+/// than [`PANEL_MIN`].
+const PANEL: f32 = 520.;
+const PANEL_MIN: f32 = 320.;
+/// How far the panel slides in from.
+const SLIDE: f32 = 16.;
 
 impl Launcher {
-    /// The tabbed panel: the strip, then the open tab.
-    pub(super) fn glass_home_tabs(&mut self, cx: &mut Context<Self>) -> Div {
+    /// The rail and, while a section is open, its panel, laid over Home's first screen. The rail
+    /// sits in the middle of the right column `column` px wide, or near the edge when there is
+    /// no column.
+    pub(super) fn home_rail(&mut self, column: f32, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let tabs: Vec<_> = self
             .home_tab_list(cx)
             .into_iter()
             .filter(|(tab, _)| *tab != HomeTab::Overview)
             .collect();
-        let open = tabs
-            .iter()
-            .map(|(tab, _)| *tab)
-            .find(|tab| *tab == self.home_tab)
-            .unwrap_or(HomeTab::Mods);
-        // Icons beside the names only where every tab still has the room for both.
-        let icons = self.window_width >= crate::glass_home::SIDE_BY_SIDE + 160.;
-        let active = tabs.iter().position(|(tab, _)| *tab == open).unwrap_or(0);
-        let items: Vec<_> = tabs
-            .into_iter()
-            .map(|(tab, count)| {
-                let (name, icon) = match tab {
-                    HomeTab::Overview => (tr("Overview"), "dashboard-square-01"),
-                    HomeTab::Mods => (tr("Installed mods"), "puzzle"),
-                    HomeTab::Packs => (tr("Resource packs"), "image-01"),
-                    HomeTab::Shaders => (tr("Shaders"), "flash"),
-                    HomeTab::Worlds => (tr("Worlds"), "earth"),
-                    HomeTab::Multiplayer => (tr("Saved servers"), "user-multiple-02"),
-                    HomeTab::Screenshots => (tr("Screenshots"), "image-01"),
-                    HomeTab::Console => (tr("Log"), "computer-terminal-01"),
-                };
-                let on = tab == open;
-                let ink_of = white(if on { ink::FULL } else { ink::BODY });
-                ui::pill_tab(format!("home-tab-{tab:?}"), on, 38., &t)
-                    // Each grows from its own width, so long names keep their room.
-                    .flex_auto()
-                    .min_w_0()
-                    .px(px(8.))
-                    .text_size(px(14.))
-                    .line_height(px(20.))
-                    .children(icons.then(|| ui::icon(icon, 16., ink_of).relative()))
-                    .child(
-                        div()
-                            .relative()
-                            .min_w_0()
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(name),
-                    )
-                    .children(count.filter(|n| *n > 0).map(|n| {
-                        div()
-                            .relative()
-                            .flex_none()
-                            .text_color(white(ink::DIM))
-                            .child(n.to_string())
-                    }))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.home_tab = tab;
-                        cx.notify();
-                    }))
-            })
-            .collect();
-        let row = div()
+        let open = self
+            .home_panel
+            .then_some(self.home_tab)
+            .filter(|tab| tabs.iter().any(|(t, _)| t == tab));
+        let edge = if column > 0. {
+            (column - BUTTON) / 2.
+        } else {
+            12.
+        };
+        let buttons = tabs.into_iter().map(|(tab, count)| {
+            let (name, icon) = section(tab);
+            let button = ui::icon_button(
+                format!("home-rail-{tab:?}"),
+                icon,
+                BUTTON,
+                20.,
+                radius::CONTROL,
+                open == Some(tab),
+                &t,
+            )
+            .tooltip(ui::tip(name))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let again = this.home_panel && this.home_tab == tab;
+                this.home_tab = tab;
+                this.home_panel = !again;
+                cx.notify();
+            }));
+            let badge = count.filter(|n| *n > 0).map(|n| {
+                mono(10., ink::DIM)
+                    .absolute()
+                    .right(px(3.))
+                    .bottom(px(2.))
+                    .child(n.to_string())
+            });
+            div().relative().child(button).children(badge)
+        });
+        let rail = div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right(px(edge))
             .flex()
-            .items_center()
-            .w_full()
-            .min_w_0()
-            .gap(px(2.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(4.))
-            .child(crate::glass::measure(self.home_strip.clone()));
-        let strip = ui::pill_strip("home-tabs", active, 38., 8., row, items).w_full();
-        let body: Option<AnyElement> = match open {
-            // The glass look has no Overview: its pieces live in their own tabs, Versions has the
-            // patch notes, and what Play needs sits above the tabs.
+            .flex_col()
+            .justify_center()
+            .gap(px(4.))
+            .children(buttons);
+        let panel = open.map(|tab| self.home_panel_view(tab, 2. * edge + BUTTON, cx));
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(-theme::PAGE_GUTTER))
+            .right(px(-theme::PAGE_GUTTER))
+            .child(rail)
+            .children(panel)
+    }
+
+    /// The open section beside the rail, `right` px from the edge: its name and a close over its
+    /// content, which scrolls on its own. It slides and fades in.
+    fn home_panel_view(&mut self, tab: HomeTab, right: f32, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let (name, _) = section(tab);
+        let close = ui::icon_button(
+            "home-panel-close",
+            "cancel-01",
+            32.,
+            16.,
+            radius::CONTROL,
+            false,
+            &t,
+        )
+        .tooltip(ui::tip(tr("Close")))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.home_panel = false;
+            cx.notify();
+        }));
+        let room = self.window_width - frame::SIDEBAR - right - 2. * theme::PAGE_GUTTER;
+        let width = PANEL.min(room).max(PANEL_MIN);
+        let body = self.section_body(tab, cx);
+        crate::glass::float(0.)
+            .absolute()
+            .top(px(16.))
+            .bottom(px(16.))
+            .right(px(right))
+            .w(px(width))
+            .border_1()
+            .border_color(ui::line())
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_between()
+                    .h(px(52.))
+                    .pl(px(16.))
+                    .pr(px(10.))
+                    .border_b_1()
+                    .border_color(ui::line())
+                    .child(ui::text(15., FontWeight::SEMIBOLD, ink::FULL).child(name))
+                    .child(close),
+            )
+            .child(
+                div()
+                    .id("home-panel-body")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .gap(px(12.))
+                    .p(px(16.))
+                    .overflow_y_scroll()
+                    .child(body),
+            )
+            .with_animation(
+                ElementId::Name(format!("home-panel-{tab:?}").into()),
+                crate::motion::eased(crate::motion::POP),
+                move |d, p| d.opacity(p).right(px(right - SLIDE * (1. - p))),
+            )
+            .into_any_element()
+    }
+
+    /// A section's content, or one line where it has none yet.
+    fn section_body(&mut self, tab: HomeTab, cx: &mut Context<Self>) -> AnyElement {
+        let content = match tab {
             HomeTab::Overview => None,
             HomeTab::Mods => Some(self.glass_instance_mods(cx).into_any_element()),
             HomeTab::Worlds => self.glass_worlds(cx).map(IntoElement::into_any_element),
@@ -99,40 +166,31 @@ impl Launcher {
             HomeTab::Shaders => self
                 .glass_packs(PackKind::Shader, cx)
                 .map(IntoElement::into_any_element),
-            HomeTab::Screenshots => Some(
-                self.glass_screenshots(cx)
-                    .map(IntoElement::into_any_element)
-                    .unwrap_or_else(|| empty_tab(tr("No screenshots yet. Press F2 in the game."))),
-            ),
+            HomeTab::Screenshots => self
+                .glass_screenshots(cx)
+                .map(IntoElement::into_any_element),
             HomeTab::Console => self.glass_console(cx).map(IntoElement::into_any_element),
         };
-        div()
-            .relative()
-            // `mt-12` under the head, of which Home's own gap gives 28.
-            .mt(px(20.))
-            .child(crate::glass::tabbed(self.home_strip.clone()))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .w_full()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(strip),
-            )
-            .child(
-                div().relative().p(px(8.)).child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.))
-                        .min_h(px(BODY))
-                        .px(px(4.))
-                        .pt(px(8.))
-                        .pb(px(4.))
-                        .children(body),
-                ),
-            )
+        content.unwrap_or_else(|| {
+            empty_tab(match tab {
+                HomeTab::Screenshots => tr("No screenshots yet. Press F2 in the game."),
+                _ => tr("Nothing here yet."),
+            })
+        })
+    }
+}
+
+/// A section's name and its rail icon.
+fn section(tab: HomeTab) -> (&'static str, &'static str) {
+    match tab {
+        HomeTab::Overview => (tr("Overview"), "dashboard-square-01"),
+        HomeTab::Mods => (tr("Installed mods"), "puzzle"),
+        HomeTab::Packs => (tr("Resource packs"), "image-01"),
+        HomeTab::Shaders => (tr("Shaders"), "flash"),
+        HomeTab::Worlds => (tr("Worlds"), "earth"),
+        HomeTab::Multiplayer => (tr("Saved servers"), "user-multiple-02"),
+        HomeTab::Screenshots => (tr("Screenshots"), "view"),
+        HomeTab::Console => (tr("Log"), "computer-terminal-01"),
     }
 }
 
