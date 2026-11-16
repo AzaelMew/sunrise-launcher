@@ -81,18 +81,24 @@ impl Render for Launcher {
         }
         glass::begin_build(window);
         let sides = t.glass && self.outline_sides();
-        let right_sidebar = sides.then(|| self.outline_side(false, window, cx));
-        let (topbar, sidebar) = if t.glass {
-            (
-                self.outline_topbar(window, cx),
-                if sides {
-                    self.outline_side(true, window, cx)
-                } else {
-                    div().into_any_element()
-                },
-            )
+        let (right_sidebar, right_panel) = match sides.then(|| self.outline_side(false, window, cx))
+        {
+            Some((place, panel)) => (Some(place), panel),
+            None => (None, None),
+        };
+        let (topbar, sidebar, left_panel) = if t.glass {
+            let (place, panel) = if sides {
+                self.outline_side(true, window, cx)
+            } else {
+                (div().into_any_element(), None)
+            };
+            (self.outline_topbar(window, cx), place, panel)
         } else {
-            (self.topbar(cx), self.sidebar(window, cx).into_any_element())
+            (
+                self.topbar(cx),
+                self.sidebar(window, cx).into_any_element(),
+                None,
+            )
         };
         let row_menu = if t.glass {
             self.row_menu(window, cx)
@@ -235,7 +241,10 @@ impl Render for Launcher {
                             .child(topbar)
                             .child(page),
                     )
-                    .children(right_sidebar),
+                    .children(right_sidebar)
+                    // A narrow window's sidebars, opened over the page.
+                    .children(left_panel)
+                    .children(right_panel),
             );
         root = root.children(row_menu);
         if self.page == Page::Servers {

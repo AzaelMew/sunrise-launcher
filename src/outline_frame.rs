@@ -397,15 +397,20 @@ pub(super) fn edge(id: impl Into<SharedString>) -> AnyElement {
 }
 
 impl Launcher {
-    /// A sidebar (the `left` one, else the right) in its place: at full width on a wide window;
-    /// narrower, folded to its icon column, opening to full width over the page while the pointer
-    /// is near it and folding again as it leaves. The page never moves for it.
+    /// A sidebar (the `left` one, else the right): its place in the page's row, and on a narrow
+    /// window the panel to draw after the page. At full width on a wide window; narrower, folded
+    /// to its icon column, opening to full width over the page while the pointer is near it and
+    /// folding again as it leaves. The page never moves for it.
+    ///
+    /// The panel is drawn after the page (over it, under the dialogs) and always the same
+    /// element: lifted into GPUI's top layer only while it opened, it changed place every time
+    /// it began to open, and the hover of everything in it (the instances' ⋮) was lost.
     pub(super) fn outline_side(
         &mut self,
         left: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> (AnyElement, Option<AnyElement>) {
         // Any of the way open, the sidebar draws its full self, cut to the width it has reached.
         let bar = |this: &mut Self, open: f32, cx: &mut Context<Self>| {
             if left {
@@ -415,7 +420,7 @@ impl Launcher {
             }
         };
         if self.outline_wide() {
-            return bar(self, 1., cx).into_any_element();
+            return (bar(self, 1., cx).into_any_element(), None);
         }
         let side = usize::from(!left);
         let open = self.unfolded(side, window);
@@ -480,19 +485,14 @@ impl Launcher {
         )
         .absolute()
         .size_0();
-        div()
+        let place = div()
             .relative()
             .flex_none()
             .w(px(COMPACT))
             .h_full()
             .child(exit)
-            // Over the page only while it opens: folded, it stays in its place under dialogs.
-            .child(if open > 0. {
-                gpui::deferred(panel).with_priority(1).into_any_element()
-            } else {
-                panel.into_any_element()
-            })
-            .into_any_element()
+            .into_any_element();
+        (place, Some(panel.into_any_element()))
     }
 
     /// How far (0 folded, 1 open) the folded sidebar on `side` (0 left, 1 right) has opened,
