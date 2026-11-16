@@ -3,7 +3,7 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, clock, glass, rain, scene, sky};
+use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
@@ -543,14 +543,16 @@ struct Launcher {
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
     /// Home's scenery, each its own view, drawn by the backdrop behind the launcher
-    /// (`window_root.rs`): the sunset, a theme's painted sky, Hypr Neon's rain.
-    scene: gpui::Entity<scene::Scene>,
+    /// (`window_root.rs`): Sunrise's coast, a theme's painted sky, Hypr Neon's rain.
+    coast: gpui::Entity<coast::Coast>,
     sky: gpui::Entity<sky::SkyView>,
     rain: gpui::Entity<rain::Rain>,
     backdrop: gpui::Entity<window_root::Backdrop>,
     /// Where the page between the sidebars, under the top bar, was laid out last: Home's
     /// scenery goes there.
     cover_at: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// What the views behind the launcher were last handed (`launcher_render.rs`).
+    pushed: Option<launcher_render::Pushed>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }

@@ -379,8 +379,8 @@ pub const TEXTURE_QUIET: f32 = 0.009;
 /// drawn over it.
 pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
     let shades = texel_shades(c, step);
-    // The look's corners, which a canvas can't clip to: the fill is drawn round, and texels
-    // outside the round corners are left out.
+    // The look's corners, which a canvas can't clip to: the fill is drawn round, and the
+    // texels in its corners keep the fill's colour.
     let r = rad(0.);
     canvas(
         |_, _, _| {},
@@ -389,13 +389,12 @@ pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
             let r = r.min(w / 2.).min(h / 2.);
             window.paint_quad(gpui::fill(bounds, c).corner_radii(px(r)));
             let (cols, rows) = ((w / TEXEL).ceil() as u32, (h / TEXEL).ceil() as u32);
+            // A texel is a square: one that reaches into a round corner would square it off,
+            // so those keep the base colour.
             let inside = |x: u32, y: u32| {
-                let (cx, cy) = ((x as f32 + 0.5) * TEXEL, (y as f32 + 0.5) * TEXEL);
-                let (dx, dy) = (
-                    (r - cx).max(cx - (w - r)).max(0.),
-                    (r - cy).max(cy - (h - r)).max(0.),
-                );
-                dx * dx + dy * dy <= r * r
+                let (left, top) = (x as f32 * TEXEL, y as f32 * TEXEL);
+                let side = |a: f32, len: f32| a < r || a + TEXEL > len - r;
+                r <= 0. || !(side(left, w) && side(top, h))
             };
             // Most texels keep the base colour; the rest take one of the shades.
             let tone = |x: u32, y: u32| {
@@ -1021,7 +1020,7 @@ pub fn popover(width: f32) -> Div {
 /// GPUI can't blur what it drew, so the scene's blurred copy (a menu's, `hzl-float`) covers the
 /// page. The scrim goes over it.
 pub fn scrim_backdrop() -> impl IntoElement {
-    crate::glass::backdrop(crate::glass::Kind::Float, 0.)
+    crate::glass::backdrop(0.)
 }
 
 /// The scrim over [`scrim_backdrop`]: 50 % in the dark look, 20 % in light, so the dimmed

@@ -2,7 +2,6 @@
 //! uninstall` removes. The launcher's own sky and plates (docs/design-system.md, "Night"); the
 //! work is `sunrise_launcher::installer`, on a thread, reported over a channel.
 use crate::glass_ui;
-use crate::scene;
 use crate::shell::{c, text};
 use crate::theme::{self, night, Theme};
 use crate::titlebar;
@@ -32,9 +31,8 @@ enum Event {
 pub struct Setup {
     mode: Mode,
     theme: Theme,
-    /// The redesign's scene behind the dark window (as the launcher draws it); the light
-    /// appearance keeps the dawn sky until the design has a light scene.
-    scene: gpui::Entity<scene::Scene>,
+    /// Sunrise's scene behind the window, as Home draws it.
+    coast: gpui::Entity<crate::coast::Coast>,
     wake: Option<(Instant, Task<()>)>,
     /// The settings file's write time and size as last read: a change (the launcher's Settings
     /// page) rebuilds the theme on the next frame, as the launcher applies it on its own next
@@ -86,7 +84,7 @@ impl Setup {
             mode,
             theme: Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
                 .with_glass(settings.glass_tint(), settings.glass_blur()),
-            scene: cx.new(|_| scene::Scene::new()),
+            coast: cx.new(|cx| crate::coast::Coast::new(window, cx)),
             wake: None,
             settings_stamp: Self::settings_stamp(),
             options: Options::new(),
@@ -440,9 +438,9 @@ impl Render for Setup {
                 Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
                     .with_glass(settings.glass_tint(), settings.glass_blur());
         }
-        // Look again twice a second, so a settings change
-        // shows even while the scene has stopped animating, without drawing the window at
-        // 60 fps and reading the file's metadata every frame for it.
+        // Look again twice a second, so a settings change shows even while the scene stands
+        // still, without drawing the window at 60 fps and reading the file's metadata every
+        // frame for it.
         self.wake(Duration::from_millis(500), cx);
         let t = self.theme;
         let viewport = window.viewport_size();
@@ -451,16 +449,12 @@ impl Render for Setup {
         glass_ui::set_on(t.glass);
         glass_ui::set_light(!t.dark);
         glass_ui::set_look(t.look);
-        crate::glass::begin_build(window);
-        crate::glass::set_look(t.look);
-        crate::glass::set_light(!t.dark);
-        // The launcher's own scene, tinted by the player's accent as the launcher tinted it, so
-        // a player with a blue accent gets the blue scene, not the night sunset.
-        let tint = (t.look.accent != sunrise_theme::glass::ACCENT)
-            .then(|| sunrise_theme::glass::mix_oklab(t.look.accent, 0x767676, 0.58));
-        self.scene
-            .update(cx, |scene, cx| scene.set_look(tint, t.look.blur, cx));
-        let sky = self.scene.clone();
+        let size = (f32::from(viewport.width), f32::from(viewport.height));
+        let scale = window.scale_factor();
+        self.coast.update(cx, |coast, cx| {
+            coast.set(crate::coast::SUNRISE, size, scale, cx)
+        });
+        let sky = self.coast.clone();
         let card = self.card(cx);
         div()
             .flex()

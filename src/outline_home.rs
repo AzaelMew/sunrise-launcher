@@ -1,7 +1,7 @@
 //! The Outline look's Home (`docs/design-system.md`, "Outline"; Figma: Explorations → Home): the
 //! edition, the instance's name, the tagline, Play and the folder, the version and the invite code
-//! centred on the window between the first screen's separator lines, whose floor ends it. The
-//! instance's tabs stay below, a scroll away.
+//! centred on the window's first screen, over the theme's scenery. The instance's tabs stay
+//! below, a scroll away.
 use super::*;
 use crate::glass_ui::{self as ui, mono, white};
 use sunrise_theme::glass::{fill, ink};
@@ -14,10 +14,6 @@ const UNDER_FLOOR: f32 = 24.;
 const FIRST_SCREEN_MIN: f32 = 560.;
 /// Play and the folder side by side: the hero's widest row.
 const HERO_WIDTH: f32 = 412.;
-/// How far in from each edge the first screen's column lines run.
-const COLUMN: f32 = 168.;
-/// The faint arc around the left column line's top.
-const ARC: f32 = 620.;
 /// The Rust logo standing in for the title's r: its size, and how far above the line's foot it
 /// sits so it stands on the baseline.
 const RUST_R: f32 = 62.;
@@ -131,65 +127,8 @@ impl Launcher {
             .flex()
             .flex_col()
             .h(px(self.first_screen()))
-            .child(self.home_lines())
             .child(hero)
             .children(self.home_section_panel(cx))
-    }
-
-    /// Whether the window has room for the first screen's columns beside the hero.
-    fn home_wide(&self) -> bool {
-        let page = self.outline_page_width() - 2. * theme::PAGE_GUTTER;
-        page >= HERO_WIDTH + 2. * COLUMN + 64.
-    }
-
-    /// The first screen's separator lines, part of the page so they scroll with it: the floor,
-    /// and where the window has room beside the hero, a column line near each edge and a faint
-    /// arc around the left one's top.
-    fn home_lines(&self) -> Div {
-        let wide = self.home_wide();
-        let column = |right: bool| {
-            let d = div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .w(px(1.))
-                .bg(white(0.07));
-            if right {
-                d.right(px(COLUMN))
-            } else {
-                d.left(px(COLUMN))
-            }
-        };
-        div()
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(px(-theme::PAGE_GUTTER))
-            .right(px(-theme::PAGE_GUTTER))
-            .overflow_hidden()
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .h(px(1.))
-                    .bg(white(0.10)),
-            )
-            .when(wide, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .left(px(COLUMN - ARC / 2.))
-                        .top(px(-ARC / 2.))
-                        .size(px(ARC))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(white(0.06)),
-                )
-                .child(column(false))
-                .child(column(true))
-            })
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,

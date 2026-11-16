@@ -238,7 +238,7 @@ impl Launcher {
 
     /// The picture behind Home, if the player keeps one.
     /// Home's scenery, when it shows: the player's picture, else the theme's scene (Sunrise's
-    /// sunset for its own theme and Dawn's, the painted sky for the others).
+    /// coast for its own theme and Dawn's, the painted sky for the others).
     pub(super) fn home_cover(&self) -> Option<crate::window_root::Cover> {
         use crate::window_root::Cover;
         if !self.theme.glass || !self.outline_sides() || !self.settings.scenery() {
@@ -248,7 +248,8 @@ impl Launcher {
             return Some(Cover::Picture(picture));
         }
         Some(match self.settings.theme.as_deref() {
-            None | Some("dawn") => Cover::Sunset,
+            None => Cover::Coast(sunrise_launcher_scenery::coast::SUNRISE),
+            Some("dawn") => Cover::Coast(sunrise_launcher_scenery::coast::DAWN),
             Some(id) => Cover::Sky {
                 rains: id == "hypr_neon",
             },

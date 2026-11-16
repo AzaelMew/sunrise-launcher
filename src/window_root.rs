@@ -2,9 +2,10 @@
 //! frame dirties the views it sits in, so a scene drifting inside the launcher would draw the
 //! whole launcher again on every frame of it. As siblings, a scene frame draws the scene and this
 //! thin root; the launcher is drawn from its last frame (GPUI Fast retains views).
-use crate::{rain, scene, sky, Launcher};
+use crate::{coast, rain, sky, Launcher};
 use gpui::{
-    div, prelude::*, px, Bounds, Context, Entity, Hsla, IntoElement, Pixels, Render, Window,
+    div, prelude::*, px, AnimationExt, Bounds, Context, Entity, Hsla, IntoElement, Pixels, Render,
+    Window,
 };
 use std::path::PathBuf;
 
@@ -12,8 +13,8 @@ use std::path::PathBuf;
 /// player's own picture.
 #[derive(Clone, PartialEq)]
 pub enum Cover {
-    /// Sunrise's pixel sunset (Sunrise's own theme and Dawn), tinted by the accent.
-    Sunset,
+    /// Sunrise's coast at first light (Sunrise's own theme, and Dawn's in its colours).
+    Coast(coast::Palette),
     /// The theme's painted sky; Hypr Neon's rains.
     Sky {
         rains: bool,
@@ -32,20 +33,23 @@ pub struct Back {
 
 pub struct Backdrop {
     back: Option<Back>,
-    scene: Entity<scene::Scene>,
+    /// How many times the scenery came into view: it fades in with the page each time.
+    arrivals: usize,
+    coast: Entity<coast::Coast>,
     sky: Entity<sky::SkyView>,
     rain: Entity<rain::Rain>,
 }
 
 impl Backdrop {
     pub fn new(
-        scene: Entity<scene::Scene>,
+        coast: Entity<coast::Coast>,
         sky: Entity<sky::SkyView>,
         rain: Entity<rain::Rain>,
     ) -> Self {
         Self {
             back: None,
-            scene,
+            arrivals: 0,
+            coast,
             sky,
             rain,
         }
@@ -54,6 +58,10 @@ impl Backdrop {
     /// Called from the launcher's frame: draws again only when something changed.
     pub fn set(&mut self, back: Back, cx: &mut Context<Self>) {
         if self.back.as_ref() != Some(&back) {
+            let was = self.back.as_ref().is_some_and(|b| b.cover.is_some());
+            if !was && back.cover.is_some() {
+                self.arrivals += 1;
+            }
             self.back = Some(back);
             cx.notify();
         }
@@ -78,7 +86,7 @@ impl Render for Backdrop {
             .h(at.size.height)
             .overflow_hidden();
         let place = match cover {
-            Cover::Sunset => place.child(self.scene.clone()),
+            Cover::Coast(_) => place.child(self.coast.clone()),
             Cover::Sky { rains } => place
                 .child(self.sky.clone())
                 .when(rains, |d| d.child(self.rain.clone())),
@@ -95,13 +103,18 @@ impl Render for Backdrop {
             .left_0()
             .right_0()
             .bottom_0()
-            .h(px(f32::from(at.size.height) * 0.35))
+            .h(px(f32::from(at.size.height) * 0.18))
             .bg(gpui::linear_gradient(
                 0.,
                 gpui::linear_color_stop(b.side, 0.),
                 gpui::linear_color_stop(b.side.opacity(0.), 1.),
             ));
-        back.child(place.child(veil))
+        // It arrives with Home, fading in as the page does.
+        back.child(place.child(veil).with_animation(
+            gpui::ElementId::named_usize("scenery-in", self.arrivals),
+            crate::motion::eased(crate::motion::PAGE),
+            |d, p| d.opacity(p),
+        ))
     }
 }
 
@@ -124,6 +137,12 @@ impl Render for Shell {
             .relative()
             .size_full()
             .child(self.backdrop.clone())
-            .child(self.launcher.clone())
+            // Cached: a frame of the scenery redraws the backdrop, never the launcher, which is
+            // drawn again only when it is notified.
+            .child(
+                self.launcher
+                    .clone()
+                    .cached(gpui::StyleRefinement::default().size_full()),
+            )
     }
 }
