@@ -206,7 +206,20 @@ impl Render for Launcher {
                             } else {
                                 48.
                             }))
-                            .child(content),
+                            // Past Home, a page keeps to a column it reads well at, centred
+                            // under the top bar's pages.
+                            .when(t.glass && self.page != Page::Play, |d| d.justify_center())
+                            .child(if t.glass && self.page != Page::Play {
+                                div()
+                                    .flex()
+                                    .w_full()
+                                    .max_w(px(theme::PAGE_MAX))
+                                    .min_w_0()
+                                    .child(content)
+                                    .into_any_element()
+                            } else {
+                                content.into_any_element()
+                            }),
                     ),
                 &t,
             )

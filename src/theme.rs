@@ -30,6 +30,8 @@ pub const CONTROL: f32 = 34.;
 pub const TOPBAR: f32 = 56.;
 pub const SIDEBAR: f32 = 248.;
 pub const PAGE_GUTTER: f32 = 32.;
+/// The widest a page past Home grows; on a wider window it stands centred.
+pub const PAGE_MAX: f32 = 1200.;
 
 /// Motion: short and eased out, never bouncy.
 pub const MOVE: Duration = tokens::MOVE.duration();
