@@ -296,7 +296,7 @@ impl CornerBlocks {
         if crate::motion::still() {
             return Duration::ZERO;
         }
-        self.ferris.act = Some((act, Instant::now(), to));
+        self.ferris.start(act, to);
         cx.notify();
         act.length()
     }

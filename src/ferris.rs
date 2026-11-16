@@ -115,16 +115,15 @@ pub(crate) enum Act {
 }
 
 impl Act {
-    /// His acts as often as he does them: a wave about a third of the time.
-    pub(crate) const ALL: [Act; 8] = [
-        Act::Wave,
-        Act::Wave,
+    /// His acts as often as he does them: a wave now and then, a blink or a snap most often.
+    pub(crate) const ALL: [Act; 7] = [
         Act::Wave,
         Act::Blink,
         Act::Snap,
         Act::Scuttle,
         Act::Hop,
         Act::Blink,
+        Act::Snap,
     ];
 
     pub(crate) fn length(self) -> Duration {
@@ -142,11 +141,13 @@ impl Act {
 #[derive(Clone, Copy)]
 pub(crate) struct Ferris {
     pub(crate) at: f32,
-    /// The act playing, when it began, and where a scuttle goes (for a wave, by thirds: his left
-    /// arm, his right, or both).
+    /// The act playing, when it began, and where a scuttle goes (for a wave, under a half his
+    /// left arm, else his right).
     pub(crate) act: Option<(Act, Instant, f32)>,
     /// His idle loop's step.
     pub(crate) tick: u32,
+    /// The arm his next wave takes: they take turns.
+    left_next: bool,
 }
 
 impl Ferris {
@@ -155,7 +156,24 @@ impl Ferris {
             at: 0.5,
             act: None,
             tick: 0,
+            left_next: true,
         }
+    }
+
+    /// Starts `act`, a scuttle going `to` along his block; a wave takes the arm whose turn it is.
+    pub(crate) fn start(&mut self, act: Act, to: f32) {
+        let to = if act == Act::Wave {
+            let left = self.left_next;
+            self.left_next = !left;
+            if left {
+                0.
+            } else {
+                1.
+            }
+        } else {
+            to
+        };
+        self.act = Some((act, Instant::now(), to));
     }
 
     /// Steps his idle loop.
@@ -205,16 +223,11 @@ impl Ferris {
                     };
                 }
                 Act::Hop => lift = HOP * 4. * t * (1. - t),
-                // An arm up beside his head, or both, its claw swaying open and shut: a third of
-                // his waves each, the left only where the page's edge leaves it room.
+                // An arm up beside his head, its claw swaying open and shut; the left only where
+                // the page's edge leaves it room.
                 Act::Wave if t < 1. => {
-                    let room = x >= REACH * texel;
-                    let (left, right) = match to {
-                        to if to < 1. / 3. && room => (true, false),
-                        to if to >= 2. / 3. && room => (true, true),
-                        _ => (false, true),
-                    };
-                    wave = Some((left, right, ((t * 10.) as u32) % 2 == 1))
+                    let left = to < 0.5 && x >= REACH * texel;
+                    wave = Some((left, !left, ((t * 10.) as u32) % 2 == 1))
                 }
                 Act::Wave => {}
             }
