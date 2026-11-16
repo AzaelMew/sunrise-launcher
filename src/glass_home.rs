@@ -7,7 +7,7 @@ use gpui::deferred;
 use sunrise_theme::glass::{fill, ink, radius};
 
 /// Play, the version and the big icons are this tall (`h-14`).
-const TALL: f32 = 56.;
+const TALL: f32 = 52.;
 /// The window width from which Home's head is laid out as the mockup's `xl` (1280 px); under it
 /// Play and the version are narrower and the invite code takes what is left of their row. The
 /// account page and the theme editor also put their two columns side by side from it.
@@ -153,12 +153,12 @@ impl Launcher {
             .id("play-more")
             .occlude()
             .absolute()
-            .right(px(8.))
+            .right_0()
             .flex()
             .items_center()
             .justify_center()
-            .size(px(40.))
-            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
+            .w(px(44.))
+            .h(px(TALL))
             .cursor_pointer()
             .when(open, |d| d.bg(gpui::black().opacity(0.2)))
             .when(!open, |d| {
@@ -181,12 +181,12 @@ impl Launcher {
                 .id("play-cancel")
                 .occlude()
                 .absolute()
-                .right(px(8.))
+                .right_0()
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(px(40.))
-                .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
+                .w(px(44.))
+                .h(px(TALL))
                 .cursor_pointer()
                 .hover(|s| s.bg(gpui::black().opacity(0.2)))
                 .child(ui::icon("stop", 18., glyph))
@@ -205,17 +205,11 @@ impl Launcher {
             .flex()
             .items_center()
             .flex_none()
-            // At least the mockup's width, wider when the label needs it ("Prepare & play",
+            // At least the design's 300, wider when the label needs it ("Prepare & play",
             // "Sign in to play", a long translation).
-            .min_w(px(if self.window_width >= WIDE {
-                200.
-            } else {
-                160.
-            }))
+            .min_w(px(300.))
             .h(px(TALL))
-            .overflow_hidden()
-            .border_1()
-            .rounded(px(crate::glass_ui::rad(radius::LARGE)));
+            .overflow_hidden();
         let body = |label: SharedString, icon: &'static str| {
             div()
                 .flex()
@@ -225,7 +219,7 @@ impl Launcher {
                 .justify_center()
                 .gap(px(10.))
                 .pl(px(20.))
-                .pr(px(52.))
+                .pr(px(44.))
                 .whitespace_nowrap()
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(18.))
@@ -368,74 +362,17 @@ impl Launcher {
                     }
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
-                // The gradient's far end leans away from the label's ink (deeper under white
-                // ink, lighter under dark ink), so the label and the menu dots on that end
-                // keep their contrast across the whole button.
-                let (accent_hex, ink) = (self.look.accent, self.look.on_accent);
-                let far = if sunrise_theme::contrast(ink, 0x000000)
-                    > sunrise_theme::contrast(ink, 0xffffff)
-                {
-                    sunrise_theme::glass::mix_oklab(accent_hex, 0x000000, 0.75)
-                } else {
-                    ui::accent2()
-                };
-                base.bg(ui::grad(135., accent, ui::color(far)))
-                    .border_color(white(0.16))
-                    .shadow(ui::glows(vec![
-                        // The site's primary: a light line along the top edge, a glow under it.
-                        gpui::BoxShadow {
-                            color: white(0.22),
-                            offset: gpui::point(px(0.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        gpui::BoxShadow {
-                            color: accent.opacity(0.7),
-                            offset: gpui::point(px(0.), px(6.)),
-                            blur_radius: px(22.),
-                            spread_radius: px(-8.),
-                            inset: false,
-                        },
-                    ]))
-                    .text_color(on_accent)
-                    .child(main)
-                    .child(ui::sheen(&SharedString::from("play")))
+                base.bg(accent).text_color(on_accent).child(main)
             }
         };
-        // Ready to play: the accent's glow comes up under the pointer, a press dims it.
+        // Ready to play: it brightens a little under the pointer, and a press dims it.
         let primary = !running && busy_none;
-        let soft = ui::color(self.look.accent_soft);
         let group = group
             .id("play-group")
             .group("play-glyph")
             .when(primary, |d| {
-                d.hover(move |s| {
-                    s.border_color(white(0.34)).shadow(ui::glows(vec![
-                        gpui::BoxShadow {
-                            color: white(0.28),
-                            offset: gpui::point(px(0.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        gpui::BoxShadow {
-                            color: accent.opacity(0.95),
-                            offset: gpui::point(px(0.), px(12.)),
-                            blur_radius: px(34.),
-                            spread_radius: px(-8.),
-                            inset: false,
-                        },
-                        gpui::BoxShadow {
-                            color: soft.opacity(0.5),
-                            offset: gpui::point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(1.),
-                            inset: false,
-                        },
-                    ]))
-                })
-                .active(|s| s.opacity(0.92).shadow(Vec::new()))
+                d.hover(|s| s.opacity(0.92))
+                    .active(|s| s.opacity(theme::PRESSED))
             });
         let mut wrap = div().relative().child(keyboard(group, &t).child(more));
         if open {
@@ -548,29 +485,22 @@ impl Launcher {
         let home = instance.home.clone();
         let open = self.home_menu == HomeMenu::Folder;
         let opener = home.clone();
-        let more = div()
-            .id("folder-more")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .h(px(40.))
-            .w(px(36.))
-            .mr(px(8.))
-            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
-            .cursor_pointer()
-            .when(open, |d| {
-                d.w(px(36.))
-                    .mr(px(8.))
-                    .opacity(1.)
-                    .bg(white(fill::SELECTED))
-            })
-            .group_hover("folder-group", |s| s.w(px(36.)).mr(px(8.)).opacity(1.))
-            .when(!open, |d| {
-                d.child(ui::back_tint(radius::CONTROL, white(fill::SELECTED)))
-            })
-            .child(ui::icon("more-horizontal", 20., white(ink::STRONG)).relative())
+        // The design's folder menu: the folder and its ⋯, two 52 px cells on one quiet fill.
+        let cell = |id: &'static str| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(TALL))
+                .cursor_pointer()
+                .hover(|s| s.bg(white(fill::HOVER)))
+                .active(|s| s.bg(white(fill::SELECTED)))
+        };
+        let more = cell("folder-more")
+            .when(open, |d| d.bg(white(fill::SELECTED)))
+            .child(ui::icon("more-horizontal", 20., white(ink::STRONG)))
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 if !this.closed_by_this_press(event) {
                     this.home_menu = match this.home_menu {
@@ -582,41 +512,20 @@ impl Launcher {
             }));
         let group = div()
             .id("folder-group")
-            .relative()
             .flex()
             .items_center()
             .h(px(TALL))
-            .rounded(px(crate::glass_ui::rad(radius::LARGE)))
             .bg(white(fill::BUTTON))
-            .border_1()
-            .border_color(white(if open {
-                ui::edge::STRONG
-            } else {
-                ui::edge::REST
-            }))
-            .child(ui::back_edge(radius::LARGE, 0.05, true))
             .child(
-                div()
-                    .id("home-folder")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(TALL - 2.))
-                    .cursor_pointer()
-                    .active(|s| s.bg(white(0.1)))
-                    .child(ui::icon("folder-01", 21., white(ink::STRONG)))
+                cell("home-folder")
+                    .child(ui::icon("folder-01", 20., white(ink::STRONG)))
                     .tooltip(ui::tip(tr("Open this instance's folder")))
                     .on_click(move |_, _, cx| {
                         let _ = std::fs::create_dir_all(&opener);
                         crate::glass_toast::open(cx, &opener);
                     }),
             )
-            .when(open || self.folder_hovered, |d| d.child(more))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                this.folder_hovered = *hovered;
-                cx.notify();
-            }));
+            .child(more);
         let mut wrap = div().relative().child(keyboard(group, &t));
         if open {
             let shots = home.join("screenshots");

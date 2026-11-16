@@ -5,10 +5,6 @@ use super::*;
 use crate::glass_ui::{self as ui, mono, white};
 use sunrise_theme::glass::{fill, ink, radius};
 
-/// The brand's width: the 22 px mark, 10 px, then "Sunrise" at 17 px bold; the mark alone.
-const BRAND: f32 = 130.;
-const MARK: f32 = 22.;
-
 /// How wide `text` is drawn, so the bar fits each part in the language shown.
 fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text: &str) -> f32 {
     let mut font = gpui::font(SharedString::from(family.to_owned()));
@@ -35,7 +31,7 @@ impl Launcher {
         let t = self.theme;
 
         let tight = self.window_width < 1280.;
-        let (tab_size, tab_gap) = if tight { (14., 14.) } else { (15., 22.) };
+        let (tab_size, tab_gap) = if tight { (14., 18.) } else { (15., 28.) };
         let in_bar: Vec<_> = Page::in_top_bar().collect();
         let tabs = in_bar
             .iter()
@@ -99,7 +95,7 @@ impl Launcher {
             ));
         }
 
-        let side = crate::frame::SIDEBAR + crate::frame::MARGIN;
+        let side = crate::frame::SIDEBAR;
         let signed_in = self.accounts.selected().is_some();
         let mono_width = |text: &str| {
             line_width(
@@ -127,42 +123,19 @@ impl Launcher {
             36. + 14. + account + count
         };
         // Narrower, the players count goes first, then "with Microsoft": the pages keep their room.
-        let room = self.window_width - side - 48. - BRAND - 48.;
+        let room = self.window_width - side - 48.;
         let count = count_width.is_some() && room - right_of(true, false) >= tabs;
         let short = !signed_in && room - right_of(false, false) < tabs;
         let right = right_of(count, short);
-        // Narrower still, the brand gives way to the pages: its word, then its mark.
-        let fits = |brand: f32| self.window_width - side - 48. - brand - 48. - right >= tabs;
-        let (word, mark) = if fits(BRAND) {
-            (true, true)
-        } else {
-            (false, fits(MARK))
-        };
-        let brand_width = match (word, mark) {
-            (true, _) => BRAND,
-            (false, true) => MARK,
-            _ => -24.,
-        };
-        let brand = mark.then(|| {
-            div()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(10.))
-                .child(self.sunrise_mark(22.))
-                .when(word, |d| {
-                    d.child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
-                })
-        });
         let half = self.window_width / 2.;
-        let centred = half - tabs / 2. >= side + 24. + brand_width + 16.
+        let centred = half - tabs / 2. >= side + 24.
             && half + tabs / 2. <= self.window_width - 24. - right - 16.;
         let (pages_layer, pages_flow) = if centred {
             (Some(pages.flex_none()), None)
         } else {
             (None, Some(pages.flex_none()))
         };
-        // Between brand and buttons, the pages scroll in the strip with arrows at hidden ends.
+        // Beside the buttons, the pages scroll in the strip with arrows at hidden ends.
         let performance = self.settings.performance();
         let flow = pages_flow.map(|p| self.nav_strip.render(p, &t, performance, window));
         let playing = self.playing.filter(|_| count).map(|count| {
@@ -274,16 +247,18 @@ impl Launcher {
             .flex()
             .flex_none()
             .items_center()
-            .h(px(56.))
+            .h(px(70.))
+            .pt(px(14.))
             .px(px(24.))
-            .mt(px(8.))
             .gap(px(24.))
+            .border_b_1()
+            .border_color(white(0.08))
             // On the window's centre (the bar starts right of the sidebar) where the pages clear
-            // the brand and the buttons; else between them, scrolling sideways when too long.
+            // the buttons; else beside them, scrolling sideways when too long.
             .children(pages_layer.map(|pages| {
                 div()
                     .absolute()
-                    .top_0()
+                    .top(px(14.))
                     .bottom_0()
                     .left(px(-side))
                     .right_0()
@@ -292,7 +267,6 @@ impl Launcher {
                     .justify_center()
                     .child(pages)
             }))
-            .children(brand)
             .child(
                 div()
                     .flex()
@@ -311,54 +285,6 @@ impl Launcher {
                     .children(player)
                     .children(sign_in)
                     .child(settings),
-            )
-    }
-}
-
-impl Launcher {
-    /// The sidebar's foot in the Outline look: Discord, Documentation and Website as icons, the
-    /// launcher's version on the right.
-    pub(super) fn outline_side_links(&self) -> Div {
-        let t = self.theme;
-        let icon = |id: &'static str, icon: &'static str, url: String| {
-            keyboard(
-                hoverable(id, fill::BUTTON)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(30.))
-                    .cursor_pointer()
-                    .child(ui::icon(icon, 16., white(ink::SOFT)))
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-                &t,
-            )
-        };
-        let mut icons = div().flex().items_center().gap(px(2.));
-        for (id, name, url) in [
-            ("discord", "discord", &self.links.discord),
-            ("docs", "book", &self.links.docs),
-            ("website", "globe-02", &self.links.website),
-        ] {
-            if !url.is_empty() {
-                icons = icons.child(icon(id, name, url.clone()));
-            }
-        }
-        div()
-            .relative()
-            .flex()
-            .items_center()
-            .justify_between()
-            .mt(px(12.))
-            .px(px(4.))
-            .py(px(4.))
-            .child(crate::glass::backdrop(crate::glass::Kind::Glass, 0.))
-            .child(icons.relative())
-            .child(
-                mono(12., ink::DIM)
-                    .id("launcher-version")
-                    .relative()
-                    .pr(px(8.))
-                    .child(backend::VERSION),
             )
     }
 }
@@ -388,121 +314,212 @@ pub(super) fn edge(id: impl Into<SharedString>) -> AnyElement {
 }
 
 impl Launcher {
-    /// The Outline look's sidebar, 248 wide: Instances with its +, the instances, the player's
-    /// servers, then the launcher's update and the links with the launcher's version.
+    /// The Outline look's sidebar (Figma: Explorations → Sidebar): a flush column on the page's
+    /// colour, the mark and "Sunrise" in its top cell, Instances, the instances with their ⋮ and
+    /// New instance, then the launcher's update and the links with the version at its foot. A
+    /// faint dashed sketch stands behind its lower half; the top bar's line and the hero's floor
+    /// run through it.
     pub(super) fn outline_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
         self.load_packs();
-        let add = ui::icon_button(
-            "add-instance",
-            "plus-sign",
-            36.,
-            16.,
-            radius::CONTROL,
-            false,
-            &t,
-        )
-        .tooltip(ui::tip(tr("Add instance")))
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.open_instance_dialog(None);
-            cx.notify();
-        }));
-        let header = div()
+        let logo = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(70.))
             .flex()
-            .flex_none()
             .items_center()
-            .justify_between()
-            .px(px(16.))
-            .pt(px(16.))
-            .pb(px(8.))
-            .child(mono(12., ink::NOTE).child(tr("Instances").to_uppercase()))
-            .child(add);
-        let mut list = div()
+            .gap(px(10.))
+            .pl(px(24.))
+            .pt(px(14.))
+            .child(mark(22.))
+            .child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"));
+        let label = div()
+            .p(px(8.))
+            .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()));
+        let new = keyboard(
+            hoverable("add-instance", fill::HOVER)
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(36.))
+                .px(px(14.))
+                .cursor_pointer()
+                .child(
+                    ui::text(14., FontWeight::MEDIUM, ink::BODY)
+                        .relative()
+                        .child(format!("+  {}", tr("New instance"))),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.open_instance_dialog(None);
+                    cx.notify();
+                })),
+            &t,
+        );
+        let list = div()
             .id("side-list")
             .flex()
             .flex_col()
-            .flex_1()
+            .gap(px(4.))
             .min_h_0()
             .overflow_y_scroll()
-            .px(px(10.))
-            .children(self.glass_instances(cx));
-
-        let servers: Vec<_> = self
-            .servers
-            .sidebar_list()
-            .map(<[_]>::to_vec)
-            .unwrap_or_else(|| self.side_servers.clone());
-        list = list.child(
-            mono(12., ink::NOTE)
-                .px(px(6.))
-                .pt(px(28.))
-                .pb(px(6.))
-                .child(tr("Servers").to_uppercase()),
-        );
-        if servers.is_empty() {
-            list = list.child(
-                ui::text(13., FontWeight::NORMAL, ink::DIM)
-                    .px(px(6.))
-                    .child(tr("None yet.")),
-            );
-        }
-        let mut server_rows = div().flex().flex_col().gap(px(4.));
-        for e in &servers {
-            let up = self.servers.is_up(&e.dir);
-            let open = self.page == Page::Servers && self.servers.open.as_ref() == Some(&e.dir);
-            let dir = e.dir.clone();
-            server_rows = server_rows.child(
-                ui::row(format!("side-server-{}", e.dir.display()), open, 8., &t)
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .justify_center()
-                            .size(px(38.))
-                            .bg(white(fill::BUTTON))
-                            .child(ui::icon("computer-terminal-01", 18., white(ink::STRONG))),
-                    )
-                    .child(ui::row_text(
-                        e.name.clone(),
-                        if up {
-                            (ui::Tone::Live, tr("Running").into())
-                        } else {
-                            (ui::Tone::Off, tr("Stopped").into())
-                        },
-                    ))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_server(dir.clone());
-                        this.go(Page::Servers);
-                        cx.notify();
-                    })),
-            );
-        }
-        let list = list.child(server_rows);
-
+            .children(self.glass_instances(cx))
+            .child(new);
         let foot = div()
             .flex()
             .flex_col()
             .flex_none()
-            .px(px(10.))
-            .pt(px(16.))
-            .pb(px(12.))
+            .gap(px(12.))
             .children(self.rail_update_card(soft, cx))
             .child(self.outline_side_links());
-
         div()
             .relative()
             .flex()
             .flex_col()
             .flex_none()
+            .gap(px(4.))
             .w(px(frame::SIDEBAR))
-            .my(px(frame::MARGIN))
-            .ml(px(frame::MARGIN))
-            .overflow_hidden()
-            .child(header.relative())
-            .child(list.relative())
-            .child(foot.relative())
+            .h_full()
+            .pt(px(82.))
+            .px(px(12.))
+            .pb(px(32.))
+            .bg(ui::color(t.night.page))
+            .border_r_1()
+            .border_color(white(0.08))
+            .child(sketch())
+            .child(
+                div()
+                    .absolute()
+                    .top(px(70.))
+                    .left_0()
+                    .right_0()
+                    .h(px(1.))
+                    .bg(white(0.08)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(24.))
+                    .left_0()
+                    .right_0()
+                    .h(px(1.))
+                    .bg(white(0.10)),
+            )
+            .child(logo)
+            .child(label)
+            .child(list)
+            .child(div().flex_1())
+            .child(foot)
     }
+
+    /// The sidebar's foot: Discord, Documentation and Website as icons, the launcher's version
+    /// on the right.
+    fn outline_side_links(&self) -> Div {
+        let t = self.theme;
+        let icon = |id: &'static str, icon: &'static str, url: String| {
+            keyboard(
+                hoverable(id, fill::BUTTON)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(30.))
+                    .cursor_pointer()
+                    .child(ui::icon(icon, 18., white(ink::SOFT)).relative())
+                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                &t,
+            )
+        };
+        let mut links = div().flex().items_center().gap(px(2.));
+        for (id, name, url) in [
+            ("discord", "chat", &self.links.discord),
+            ("docs", "book", &self.links.docs),
+            ("website", "globe-02", &self.links.website),
+        ] {
+            if !url.is_empty() {
+                links = links.child(icon(id, name, url.clone()));
+            }
+        }
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(links)
+            .child(
+                mono(12., ink::DIM)
+                    .id("launcher-version")
+                    .child(backend::VERSION),
+            )
+    }
+}
+
+/// The sidebar's faint dashed sketch: a stair of blocks and a turned one on a short floor,
+/// standing on the line 76 px above the sidebar's foot.
+fn sketch() -> Div {
+    const S: f32 = 48.;
+    let line = white(0.09);
+    let square = |left: f32, up: usize| {
+        div()
+            .absolute()
+            .left(px(left))
+            .bottom(px(76. + up as f32 * S))
+            .size(px(S))
+            .border_1()
+            .border_dashed()
+            .border_color(line)
+    };
+    let mut d = div().absolute().top_0().bottom_0().left_0().right_0();
+    for up in 0..4 {
+        d = d.child(square(190., up));
+    }
+    for up in 0..2 {
+        d = d.child(square(142., up));
+    }
+    // The turned block's outline, dashed as the others, by its four sides.
+    d.child(
+        gpui::canvas(
+            |_, _, _| {},
+            move |bounds, (), window, _| {
+                let o = bounds.origin;
+                let (cx, cy, r) = (
+                    o.x + px(118.),
+                    o.y + bounds.size.height - px(76. + 24.),
+                    px(24.),
+                );
+                let corners = [
+                    gpui::point(cx, cy - r),
+                    gpui::point(cx + r, cy),
+                    gpui::point(cx, cy + r),
+                    gpui::point(cx - r, cy),
+                ];
+                // Dashes of 4 with gaps of 4 along each side.
+                for i in 0..4 {
+                    let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                    let steps = 8;
+                    for k in (0..steps).step_by(2) {
+                        let p0 = a + (b - a) * (k as f32 / steps as f32);
+                        let p1 = a + (b - a) * ((k + 1) as f32 / steps as f32);
+                        let mut path = gpui::PathBuilder::stroke(px(1.));
+                        path.move_to(p0);
+                        path.line_to(p1);
+                        if let Ok(path) = path.build() {
+                            window.paint_path(path, line);
+                        }
+                    }
+                }
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
+    .child(
+        div()
+            .absolute()
+            .left(px(24.))
+            .bottom(px(76.))
+            .w(px(214.))
+            .h(px(1.))
+            .bg(line),
+    )
 }

@@ -232,7 +232,7 @@ impl Launcher {
                 InstanceKind::Pack => false,
             };
             let state = self.row_state(&i);
-            let icon = self.glass_instance_icon(&i, 38.);
+            let icon = self.glass_instance_icon(&i, 36.);
             let clicked = i.clone();
             let menu_open = self
                 .row_menu
@@ -253,8 +253,8 @@ impl Launcher {
                     ui::icon_button(
                         format!("side-more-{}", i.id),
                         "more-vertical",
-                        32.,
-                        18.,
+                        28.,
+                        16.,
                         radius::SMALL,
                         menu_open,
                         &t,

@@ -672,19 +672,12 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
         .p(px(8.))
         .pr(px(pr))
         .rounded(px(rad(radius::ROW)))
-        .border_1()
         .cursor_pointer();
-    // The one shown: tinted with the accent and outlined in it.
+    // The one shown: white at 10 %, as the design's selected instance row.
     let d = if current {
-        d.bg(color(look().accent).opacity(0.16))
-            .border_color(color(look().accent_soft).opacity(0.55))
+        d.bg(white(fill::SELECTED))
     } else {
-        d.border_color(gpui::transparent_black()).child(hover_edge(
-            &id,
-            radius::ROW,
-            fill::ROW_HOVER,
-            true,
-        ))
+        d.child(hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
     };
     keyboard(track_hover(d, id), t)
 }
