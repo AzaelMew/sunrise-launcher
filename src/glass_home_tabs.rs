@@ -12,7 +12,7 @@ use sunrise_theme::glass::{ink, radius};
 /// From this window width the right sidebar is as wide as the left; narrower, it is an icon
 /// column [`COMPACT`] wide.
 const FULL_FROM: f32 = 1180.;
-const COMPACT: f32 = 64.;
+pub(crate) const COMPACT: f32 = 64.;
 /// The open section's panel is this wide where the page has the room, and never narrower
 /// than [`PANEL_MIN`].
 const PANEL: f32 = 520.;
@@ -36,10 +36,9 @@ impl Launcher {
         }
     }
 
-    /// The right sidebar.
-    pub(super) fn outline_widebar(&mut self, cx: &mut Context<Self>) -> Div {
+    /// The right sidebar, `full` or folded to its icon column.
+    pub(super) fn outline_right_sidebar(&mut self, full: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let full = self.outline_wide();
         let tabs: Vec<_> = self
             .home_tab_list(cx)
             .into_iter()
@@ -93,25 +92,31 @@ impl Launcher {
                 d.bottom(px(24.)).bg(white(0.10))
             }
         };
-        let width = self.outline_side_width();
-        // The top cell holds the account alone: "Sign in with Microsoft" where it fits (mono 12,
-        // uppercase, about 7.4 px a letter, beside the logo and padding), else "Sign in".
+        let width = if full { frame::SIDEBAR } else { COMPACT };
+        // On a wide window the top cell holds the account alone: "Sign in with Microsoft" where it
+        // fits (mono 12, uppercase, about 7.4 px a letter, beside the logo and padding), else
+        // "Sign in". Narrower, the account stays in the top bar and Settings takes the cell.
         let label = tr("Sign in with Microsoft").chars().count() as f32;
         let short = 48. + 7.4 * label > width - 24. - 12.;
-        let cell = full.then(|| {
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .right_0()
-                .h(px(70.))
-                .pt(px(14.))
-                .pr(px(24.))
-                .flex()
-                .items_center()
-                .justify_end()
-                .child(self.outline_account(false, short, false, cx))
-        });
+        let wide = self.outline_wide();
+        let in_cell = if wide {
+            self.outline_account(false, short, false, cx)
+                .into_any_element()
+        } else {
+            self.outline_settings(cx).into_any_element()
+        };
+        let cell = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(70.))
+            .pt(px(14.))
+            .flex()
+            .items_center()
+            .when(full, |d| d.pr(px(24.)).justify_end())
+            .when(!full, |d| d.justify_center())
+            .child(in_cell);
         let label = full.then(|| {
             div()
                 .p(px(8.))
@@ -143,7 +148,7 @@ impl Launcher {
             ))
             .child(line(true))
             .child(line(false))
-            .children(cell)
+            .child(cell)
             .children(label)
             .child(
                 div()

@@ -475,6 +475,9 @@ struct Launcher {
     home_tab: home_tabs::HomeTab,
     /// Whether `home_tab`'s panel is open beside Home's rail.
     home_panel: bool,
+    /// Each folded sidebar (left, right): whether the pointer is near it, opening it over the
+    /// page, and since when.
+    side_folds: [Option<(bool, Instant)>; 2],
     /// Home's Play or folder menu, while open (glass look).
     home_menu: glass_home::HomeMenu,
     /// The list row under the pointer in Home's glass tabs (a world, a server): it shows its

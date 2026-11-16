@@ -2,8 +2,18 @@
 //! left, the pages centred as text with a line under the open one, then how many play, the player's
 //! face and Settings on the right.
 use super::*;
+use crate::glass_home_tabs::COMPACT;
 use crate::glass_ui::{self as ui, mono, white};
 use sunrise_theme::glass::{fill, ink, radius};
+
+/// A folded sidebar opening over the page while the pointer is near it, and closing again.
+const UNFOLD: sunrise_theme::Motion = sunrise_theme::Motion {
+    name: "unfold",
+    ms: 220,
+    curve: [0.2, 0.7, 0.2, 1.],
+};
+/// How near a folded sidebar the pointer opens it.
+const NEAR: f32 = 12.;
 
 /// How wide `text` is drawn, so the bar fits each part in the language shown.
 fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text: &str) -> f32 {
@@ -111,7 +121,8 @@ impl Launcher {
             6. + 8. + mono_width(&trf("{count} playing now", &[("count", &thousands(n))]))
         });
         let sign_in_width = |label: &str| 2. + 24. + 14. + 8. + mono_width(tr(label));
-        // The right side: settings, then the face or the sign-in, then the count, 14 px apart.
+        // The right side: the face or the sign-in, then the count, 14 px apart. Settings is in the
+        // right sidebar's top cell while the window is narrow.
         let right_of = |count: bool, short: bool| {
             let account = if signed_in {
                 61.
@@ -121,7 +132,7 @@ impl Launcher {
                 sign_in_width("Sign in with Microsoft")
             };
             let count = count_width.filter(|_| count).map_or(0., |w| w + 14.);
-            36. + 14. + account + count
+            account + count
         };
         // Over the hero, on the page's centre, which is the window's.
         let end = side + self.outline_page_width();
@@ -151,7 +162,7 @@ impl Launcher {
         let account = if right_side {
             self.outline_settings(cx).into_any_element()
         } else {
-            self.outline_account(count, short, true, cx)
+            self.outline_account(count, short, false, cx)
                 .into_any_element()
         };
 
@@ -359,17 +370,106 @@ pub(super) fn edge(id: impl Into<SharedString>) -> AnyElement {
 }
 
 impl Launcher {
+    /// A sidebar (the `left` one, else the right) in its place: at full width on a wide window;
+    /// narrower, folded to its icon column, opening to full width over the page while the pointer
+    /// is near it and folding again as it leaves. The page never moves for it.
+    pub(super) fn outline_side(
+        &mut self,
+        left: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bar = |this: &mut Self, full: bool, cx: &mut Context<Self>| {
+            if left {
+                this.outline_sidebar(full, cx)
+            } else {
+                this.outline_right_sidebar(full, cx)
+            }
+        };
+        if self.outline_wide() {
+            return bar(self, true, cx).into_any_element();
+        }
+        let side = usize::from(!left);
+        let open = self.unfolded(side, window);
+        let width = COMPACT + (frame::SIDEBAR - COMPACT) * open;
+        let content = bar(self, open > 0., cx);
+        // The sidebar as wide as it has opened, its content held to the window's edge.
+        let shown = div()
+            .relative()
+            .flex_none()
+            .w(px(width))
+            .h_full()
+            .overflow_hidden()
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .when(left, |d| d.left_0())
+                    .when(!left, |d| d.right_0())
+                    .child(content),
+            );
+        // A strip of air on its page side, so the pointer opens it a little before it arrives.
+        let near = div().flex_none().w(px(NEAR)).h_full();
+        let panel = div()
+            .id(if left { "left-fold" } else { "right-fold" })
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .when(left, |d| d.left_0())
+            .when(!left, |d| d.right_0())
+            .flex()
+            .when(!left, |d| d.flex_row_reverse())
+            .child(shown)
+            .child(near)
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                let was = this.side_folds[side].is_some_and(|(open, _)| open);
+                if was != *hovered {
+                    this.side_folds[side] = Some((*hovered, Instant::now()));
+                    cx.notify();
+                }
+            }));
+        div()
+            .relative()
+            .flex_none()
+            .w(px(COMPACT))
+            .h_full()
+            .child(gpui::deferred(panel).with_priority(1))
+            .into_any_element()
+    }
+
+    /// How far (0 folded, 1 open) the folded sidebar on `side` (0 left, 1 right) has opened,
+    /// asking for frames while it moves.
+    fn unfolded(&self, side: usize, window: &mut Window) -> f32 {
+        let Some((open, at)) = self.side_folds[side] else {
+            return 0.;
+        };
+        let t = if crate::motion::still() {
+            1.
+        } else {
+            (at.elapsed().as_secs_f32() / UNFOLD.duration().as_secs_f32()).min(1.)
+        };
+        if t < 1. {
+            window.request_animation_frame();
+        }
+        let t = UNFOLD.ease(t);
+        if open {
+            t
+        } else {
+            1. - t
+        }
+    }
+
     /// The Outline look's sidebar (Figma: Explorations → Sidebar): a flush column on the page's
     /// colour, the mark and "Sunrise" in its top cell, Instances, the instances with their ⋮ and
     /// New instance, then the launcher's update and the links with the version at its foot. A
     /// faint dashed sketch stands behind its lower half; the top bar's line and the hero's floor
     /// run through it. On a narrow window it folds, as the right one does, to an icon column: the
     /// mark, the instances' icons and New instance's plus, the links' icons.
-    pub(super) fn outline_sidebar(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn outline_sidebar(&mut self, full: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
-        let full = self.outline_wide();
-        let width = self.outline_side_width();
+        let width = if full { frame::SIDEBAR } else { COMPACT };
         self.load_packs();
         let logo = div()
             .absolute()
