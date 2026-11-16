@@ -33,8 +33,8 @@ pub(crate) const REST_CHAINED: u64 = 120;
 /// How long the right block stands as a diamond before it turns back.
 const REST_TURNED: u64 = 1500;
 /// How long Ferris rests between his acts, at least and at most.
-const FERRIS_REST_MIN: u64 = 1400;
-const FERRIS_REST_MAX: u64 = 3600;
+const FERRIS_REST_MIN: u64 = 900;
+const FERRIS_REST_MAX: u64 = 2400;
 /// How many moves a side plays before the other side's turn, at least.
 const TURN_MOVES: u64 = 2;
 pub(crate) const MOVE: sunrise_theme::Motion = sunrise_theme::Motion {

@@ -37,7 +37,7 @@ const GLINT: u32 = 0xffffff;
 const BLINK_ROW: usize = 8;
 const PINCER_ROWS: usize = 13;
 const PINCERS: [(usize, usize); 2] = [(7, 11), (16, 20)];
-/// His waving arm: the leftmost columns, from his shoulder to his foot.
+/// His arms: the two columns at each side, from his shoulder to his foot.
 const ARM_COLS: usize = 2;
 /// The rows above his pincers rise as he breathes; this is the first that doesn't.
 const CHEST: usize = 12;
@@ -57,7 +57,17 @@ pub(crate) enum Act {
 }
 
 impl Act {
-    pub(crate) const ALL: [Act; 5] = [Act::Blink, Act::Snap, Act::Scuttle, Act::Hop, Act::Wave];
+    /// His acts as often as he does them: a wave about a third of the time.
+    pub(crate) const ALL: [Act; 8] = [
+        Act::Wave,
+        Act::Wave,
+        Act::Wave,
+        Act::Blink,
+        Act::Snap,
+        Act::Scuttle,
+        Act::Hop,
+        Act::Blink,
+    ];
 
     pub(crate) fn length(self) -> Duration {
         Duration::from_millis(match self {
@@ -74,7 +84,8 @@ impl Act {
 #[derive(Clone, Copy)]
 pub(crate) struct Ferris {
     pub(crate) at: f32,
-    /// The act playing, when it began, and where a scuttle goes.
+    /// The act playing, when it began, and where a scuttle goes (for a wave, under a half his
+    /// left arm, else his right).
     pub(crate) act: Option<(Act, Instant, f32)>,
     /// His idle loop's step.
     pub(crate) tick: u32,
@@ -183,7 +194,10 @@ impl Ferris {
                         };
                         let pincer = row >= PINCER_ROWS
                             && PINCERS.iter().any(|&(a, b)| (a..=b).contains(&col));
-                        let arm = col < ARM_COLS;
+                        let arm = match self.act.map(|(_, _, to)| to < 0.5) {
+                            Some(true) => col < ARM_COLS,
+                            _ => col >= COLS - ARM_COLS,
+                        };
                         let chest = row < CHEST;
                         let up = match wave {
                             Some(raise) if arm => raise * texel,

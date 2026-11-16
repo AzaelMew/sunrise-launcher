@@ -513,8 +513,8 @@ impl Launcher {
             .items_center()
             .gap(px(10.))
             .pt(px(14.))
-            .when(full, |d| d.pl(px(24.)))
-            .when(!full, |d| d.justify_center())
+            // Where the folded column centres it, so it stays put as the sidebar opens.
+            .pl(px((COMPACT - 22.) / 2.))
             .child(mark(22.))
             .when(full, |d| {
                 d.child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
