@@ -825,8 +825,12 @@ pub(crate) fn quiet_note(text_: impl Into<SharedString>, t: &Theme) -> Div {
         .child(text(theme::CAPTION).text_color(t.muted).child(text_.into()))
 }
 
-/// Something went wrong: a dot in the danger colour, then what happened.
+/// Something went wrong: a dot in the danger colour, then what happened. The glass look draws it
+/// as its other notices are, outlined in 1 px of that colour.
 pub(crate) fn notice(text_: String, t: &Theme) -> Div {
+    if glass_ui::on() {
+        return outlined_note(text_, t.danger, Some(t.danger));
+    }
     plate(t)
         .flex()
         .gap(px(12.))
@@ -845,6 +849,53 @@ pub(crate) fn notice(text_: String, t: &Theme) -> Div {
                 .bg(t.danger),
         )
         .child(blocks::icon("info-box", 20., t.danger))
+        .child(div().flex_1().min_w_0().child(text_))
+}
+
+/// Something worth knowing, nothing wrong: in the glass look, a quiet outline and an info mark.
+pub(crate) fn hint(text_: String, t: &Theme) -> Div {
+    if glass_ui::on() {
+        return outlined_note(text_, glass_ui::white(glass_ui::edge::REST), None);
+    }
+    plate(t)
+        .flex()
+        .gap(px(12.))
+        .p(px(16.))
+        .text_size(px(theme::UI.px))
+        .line_height(px(21.))
+        .text_color(t.muted)
+        .child(div().flex_1().min_w_0().child(text_))
+}
+
+/// A note in the glass look: `edge` around it, a dot in `dot` (or an info mark without one),
+/// then the text.
+fn outlined_note(text_: String, edge: Hsla, dot: Option<Hsla>) -> Div {
+    use sunrise_theme::glass::ink;
+    let mark = match dot {
+        Some(c) => div()
+            .flex_none()
+            .mt(px(7.))
+            .size(px(7.))
+            .rounded_full()
+            .bg(c)
+            .into_any_element(),
+        None => glass_ui::icon("information-circle", 18., glass_ui::white(ink::QUIET))
+            .flex_none()
+            .into_any_element(),
+    };
+    div()
+        .flex()
+        .items_start()
+        .gap(px(12.))
+        .px(px(16.))
+        .py(px(14.))
+        .border_1()
+        .border_color(edge)
+        .font_family(sunrise_theme::glass::FONT)
+        .text_size(px(14.))
+        .line_height(px(21.))
+        .text_color(glass_ui::white(ink::FULL))
+        .child(mark)
         .child(div().flex_1().min_w_0().child(text_))
 }
 

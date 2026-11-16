@@ -4,7 +4,6 @@
 use crate::glass_ui;
 use crate::scene;
 use crate::shell::{c, text};
-use crate::sky::Sky;
 use crate::theme::{self, night, Theme};
 use crate::titlebar;
 use crate::Kind;
@@ -36,8 +35,7 @@ pub struct Setup {
     /// The redesign's scene behind the dark window (as the launcher draws it); the light
     /// appearance keeps the dawn sky until the design has a light scene.
     scene: gpui::Entity<scene::Scene>,
-    sky: Sky,
-    sky_wake: Option<(Instant, Task<()>)>,
+    wake: Option<(Instant, Task<()>)>,
     /// The settings file's write time and size as last read: a change (the launcher's Settings
     /// page) rebuilds the theme on the next frame, as the launcher applies it on its own next
     /// frame.
@@ -89,8 +87,7 @@ impl Setup {
             theme: Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
                 .with_glass(settings.glass_tint(), settings.glass_blur()),
             scene: cx.new(|_| scene::Scene::new()),
-            sky: Sky::default(),
-            sky_wake: None,
+            wake: None,
             settings_stamp: Self::settings_stamp(),
             options: Options::new(),
             update: installer::installed().is_some(),
@@ -106,20 +103,20 @@ impl Setup {
         Some((meta.modified().ok()?, meta.len()))
     }
 
-    /// Draws the window again when the sky next changes (as `Launcher::wake_sky`).
-    fn wake_sky(&mut self, after: Duration, cx: &mut Context<Self>) {
+    /// Draws the window again in `after`, unless a frame comes sooner.
+    fn wake(&mut self, after: Duration, cx: &mut Context<Self>) {
         let at = Instant::now() + after;
-        if self.sky_wake.as_ref().is_some_and(|(when, _)| *when <= at) {
+        if self.wake.as_ref().is_some_and(|(when, _)| *when <= at) {
             return;
         }
         let timer = cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             let _ = this.update(cx, |this, cx| {
-                this.sky_wake = None;
+                this.wake = None;
                 cx.notify();
             });
         });
-        self.sky_wake = Some((at, timer));
+        self.wake = Some((at, timer));
     }
 
     fn start(&mut self, cx: &mut Context<Self>) {
@@ -443,10 +440,10 @@ impl Render for Setup {
                 Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
                     .with_glass(settings.glass_tint(), settings.glass_blur());
         }
-        // Look again twice a second, through the same wake the sky uses, so a settings change
+        // Look again twice a second, so a settings change
         // shows even while the scene has stopped animating, without drawing the window at
         // 60 fps and reading the file's metadata every frame for it.
-        self.wake_sky(Duration::from_millis(500), cx);
+        self.wake(Duration::from_millis(500), cx);
         let t = self.theme;
         let viewport = window.viewport_size();
         // The card's controls use the launcher's glass look and the player's accent, as the
@@ -457,34 +454,13 @@ impl Render for Setup {
         crate::glass::begin_build(window);
         crate::glass::set_look(t.look);
         crate::glass::set_light(!t.dark);
-        self.sky.free_replaced(window);
-        // The launcher's own backdrop: the redesign's scene in the dark look, tinted by the
-        // player's accent as the launcher tints it, and the dawn sky in the light one (the
-        // redesign has no light scene yet). The setup therefore looks like the client it
-        // installs: a player with a blue accent gets the blue scene, not the night sunset.
-        let tint = (t.dark && t.look.accent != sunrise_theme::glass::ACCENT)
+        // The launcher's own scene, tinted by the player's accent as the launcher tinted it, so
+        // a player with a blue accent gets the blue scene, not the night sunset.
+        let tint = (t.look.accent != sunrise_theme::glass::ACCENT)
             .then(|| sunrise_theme::glass::mix_oklab(t.look.accent, 0x767676, 0.58));
         self.scene
             .update(cx, |scene, cx| scene.set_look(tint, t.look.blur, cx));
-        let sky = if t.dark {
-            self.scene.clone().into_any_element()
-        } else {
-            crate::sky::frost(&t.night, (viewport.width.into(), viewport.height.into()));
-            // The setup has no rail or top bar to keep particles off ([`crate::frame::keep_clear`]
-            // is the launcher's layout): they drift everywhere, as they did before areas were kept.
-            let (sky, next) = self.sky.render(
-                &t.night,
-                (viewport.width.into(), viewport.height.into()),
-                window.scale_factor(),
-                crate::rain::Keep::default(),
-                window.is_window_active(),
-                Instant::now(),
-            );
-            if let Some(next) = next {
-                self.wake_sky(next, cx);
-            }
-            sky.into_any_element()
-        };
+        let sky = self.scene.clone();
         let card = self.card(cx);
         div()
             .flex()

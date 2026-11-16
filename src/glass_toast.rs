@@ -197,6 +197,7 @@ impl Launcher {
                         .max_w(px(560.))
                         .px(px(14.))
                         .py(px(10.))
+                        .rounded(px(ui::rad(0.)))
                         .bg(ui::color(crate::glass::panel()))
                         .border_1()
                         .border_color(ui::line())

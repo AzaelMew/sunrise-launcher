@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::glass_ui::{self as ui, white};
-use sunrise_theme::glass::{ink, radius};
+use sunrise_theme::glass::{fill, ink, radius};
 
 /// The list's entries: name and icon. The settings sections, in the mockup's order.
 /// The space between the pane's sections.
@@ -120,6 +120,7 @@ const INDEX: [&[&str]; 10] = [
         "Blur",
         "Performance mode",
         "Motion",
+        "Corners",
         "Home background",
         "Reset the launcher's look",
         "Dark",
@@ -271,6 +272,10 @@ fn note(s: &str) -> Option<AnyElement> {
     Some(div().child(tr(s).to_string()).into_any_element())
 }
 
+/// The window width from which Settings shows its section list beside the sections (the dialog
+/// is then at least 760 wide, past its 24 px margins); narrower, the list is a strip above them.
+const SETTINGS_LIST_BESIDE: f32 = 808.;
+
 impl Launcher {
     pub(super) fn glass_settings(&mut self, b: Built, cx: &mut Context<Self>) -> Div {
         if self.storage_report.is_none() && !self.storage_pending && self.storage_error.is_none() {
@@ -302,7 +307,9 @@ impl Launcher {
         } else {
             sections
         };
-        let wide = self.window_width >= crate::glass_home::COMPACT;
+        // The dialog's own width decides, not the window's: the list beside the sections fits
+        // from a little narrower than the dialog at its widest.
+        let wide = self.window_width >= SETTINGS_LIST_BESIDE;
         let items: Vec<Stateful<Div>> = if searching {
             hits.iter()
                 .enumerate()
@@ -384,6 +391,7 @@ impl Launcher {
                         .id("settings-nav-strip")
                         .flex_none()
                         .w_full()
+                        .flex()
                         .flex_row()
                         .overflow_x_scroll()
                         .on_scroll(|_, _, cx| cx.stop_propagation())
@@ -760,6 +768,7 @@ impl Launcher {
             .child(self.glass_accent_row(cx))
             .child(self.performance_row(cx))
             .child(self.motion_row(cx))
+            .child(self.corners_row(cx))
             .child(self.home_background_row(cx))
             .child(self.reset_look_row(cx));
         let launcher = section(0)
@@ -934,7 +943,7 @@ impl Launcher {
 }
 
 /// An entry of the settings list: a section, or while searching a setting found (its section
-/// under it). The one being read is tinted with the accent, outlined in it and marked by a bar.
+/// under it). The one being read is lit as the sidebar's chosen instance is: a plain white fill.
 pub(super) fn nav_item(
     id: String,
     icon: &'static str,
@@ -945,8 +954,6 @@ pub(super) fn nav_item(
     t: &Theme,
 ) -> Stateful<Div> {
     let id = SharedString::from(id);
-    let accent = ui::look().accent;
-    let soft = ui::look().accent_soft;
     let d = div()
         .id(id.clone())
         .relative()
@@ -963,20 +970,10 @@ pub(super) fn nav_item(
         .font_family(sunrise_theme::glass::FONT)
         .text_size(px(14.));
     let d = if on {
-        d.bg(ui::color(accent).opacity(0.16))
-            .border_color(ui::color(accent))
+        d.bg(white(fill::SELECTED))
+            .border_color(gpui::transparent_black())
             .font_weight(FontWeight::MEDIUM)
             .text_color(white(ink::FULL))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(-1.))
-                    .top(px(10.))
-                    .bottom(px(10.))
-                    .w(px(3.))
-                    .rounded_full()
-                    .bg(ui::color(soft)),
-            )
     } else {
         d.border_color(gpui::transparent_black())
             .text_color(white(0.7))
@@ -984,8 +981,9 @@ pub(super) fn nav_item(
             .child(ui::hover_edge(&id, radius::ROW, 0.06, true))
     };
     let d = d
+        .child(ui::hover_nudge(&id, if wide { 12. } else { 8. }))
         .child(
-            ui::icon(icon, 17., if on { ui::color(soft) } else { white(0.65) })
+            ui::icon(icon, 17., white(if on { ink::FULL } else { 0.65 }))
                 .relative()
                 .flex_none(),
         )

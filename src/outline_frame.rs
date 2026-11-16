@@ -14,6 +14,8 @@ const UNFOLD: sunrise_theme::Motion = sunrise_theme::Motion {
 };
 /// How near a folded sidebar the pointer opens it.
 const NEAR: f32 = 12.;
+/// A link icon's side at the sidebar's foot.
+const LINK: f32 = 30.;
 
 /// How wide `text` is drawn, so the bar fits each part in the language shown.
 fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text: &str) -> f32 {
@@ -39,7 +41,8 @@ fn line_width(window: &Window, family: &str, weight: FontWeight, size: f32, text
 impl Launcher {
     pub(super) fn outline_topbar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
-        let right_side = self.outline_wide();
+        let sides = self.outline_sides();
+        let right_side = sides && self.outline_wide();
 
         let tight = self.window_width < 1280.;
         let (tab_size, tab_gap) = if tight { (14., 18.) } else { (15., 28.) };
@@ -108,6 +111,15 @@ impl Launcher {
         }
 
         let side = self.outline_side_width();
+        // Without the sidebars the bar starts with the mark and the name.
+        let name_width = line_width(
+            window,
+            sunrise_theme::glass::FONT,
+            FontWeight::BOLD,
+            17.,
+            "Sunrise",
+        );
+        let logo_width = if sides { 0. } else { 22. + 10. + name_width };
         let signed_in = self.accounts.selected().is_some();
         let mono_width = |text: &str| {
             line_width(
@@ -139,17 +151,21 @@ impl Launcher {
         let end = side + self.outline_page_width();
         let centre = side + self.outline_page_width() / 2.;
         let fits = |right: f32| {
-            centre - tabs / 2. >= side + 24. && centre + tabs / 2. <= end - 24. - right - 16.
+            centre - tabs / 2. >= side + 24. + logo_width + 16.
+                && centre + tabs / 2. <= end - 24. - right - 16.
         };
         // Narrower, the players count goes first, then "with Microsoft": the pages keep their
         // place over the hero.
         let count = count_width.is_some() && fits(right_of(true, false));
         let short = !signed_in && !fits(right_of(false, false));
-        // With the right sidebar, the account is in its top cell and only Settings stays here.
+        // With the right sidebar open, the account is in its top cell and only Settings stays
+        // here; folded, Settings is in its cell instead; without the sidebars, both are here.
         let right = if right_side {
             36.
-        } else {
+        } else if sides {
             right_of(count, short)
+        } else {
+            right_of(count, short) + 14. + 36.
         };
         let centred = fits(right);
         let (pages_layer, pages_flow) = if centred {
@@ -163,9 +179,18 @@ impl Launcher {
         let account = if right_side {
             self.outline_settings(cx).into_any_element()
         } else {
-            self.outline_account(count, short, false, cx)
+            self.outline_account(count, short, !sides, cx)
                 .into_any_element()
         };
+        let logo = (!sides).then(|| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(10.))
+                .child(mark(22.))
+                .child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
+        });
 
         div()
             .relative()
@@ -185,6 +210,7 @@ impl Launcher {
                 70.,
                 self.scale,
             ))
+            .children(logo)
             // Over the hero where the pages clear the buttons; else beside them, scrolling
             // sideways when too long.
             .children(pages_layer.map(|pages| {
@@ -253,6 +279,7 @@ impl Launcher {
                 .gap(px(8.))
                 .h(px(36.))
                 .px(px(6.))
+                .rounded(px(ui::rad(0.)))
                 .bg(white(if open { fill::ACTIVE } else { 0. }))
                 .cursor_pointer()
                 .child(
@@ -371,29 +398,35 @@ pub(super) fn edge(id: impl Into<SharedString>) -> AnyElement {
 }
 
 impl Launcher {
-    /// A sidebar (the `left` one, else the right) in its place: at full width on a wide window;
-    /// narrower, folded to its icon column, opening to full width over the page while the pointer
-    /// is near it and folding again as it leaves. The page never moves for it.
+    /// A sidebar (the `left` one, else the right): its place in the page's row, and on a narrow
+    /// window the panel to draw after the page. At full width on a wide window; narrower, folded
+    /// to its icon column, opening to full width over the page while the pointer is near it and
+    /// folding again as it leaves. The page never moves for it.
+    ///
+    /// The panel is drawn after the page (over it, under the dialogs) and always the same
+    /// element: lifted into GPUI's top layer only while it opened, it changed place every time
+    /// it began to open, and the hover of everything in it (the instances' ⋮) was lost.
     pub(super) fn outline_side(
         &mut self,
         left: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let bar = |this: &mut Self, full: bool, cx: &mut Context<Self>| {
+    ) -> (AnyElement, Option<AnyElement>) {
+        // Any of the way open, the sidebar draws its full self, cut to the width it has reached.
+        let bar = |this: &mut Self, open: f32, cx: &mut Context<Self>| {
             if left {
-                this.outline_sidebar(full, cx)
+                this.outline_sidebar(open > 0., open, cx)
             } else {
-                this.outline_right_sidebar(full, cx)
+                this.outline_right_sidebar(open > 0., cx)
             }
         };
         if self.outline_wide() {
-            return bar(self, true, cx).into_any_element();
+            return (bar(self, 1., cx).into_any_element(), None);
         }
         let side = usize::from(!left);
         let open = self.unfolded(side, window);
         let width = COMPACT + (frame::SIDEBAR - COMPACT) * open;
-        let content = bar(self, open > 0., cx);
+        let content = bar(self, open, cx);
         // The sidebar as wide as it has opened, its content held to the window's edge.
         let shown = div()
             .relative()
@@ -453,14 +486,14 @@ impl Launcher {
         )
         .absolute()
         .size_0();
-        div()
+        let place = div()
             .relative()
             .flex_none()
             .w(px(COMPACT))
             .h_full()
             .child(exit)
-            .child(gpui::deferred(panel).with_priority(1))
-            .into_any_element()
+            .into_any_element();
+        (place, Some(panel.into_any_element()))
     }
 
     /// How far (0 folded, 1 open) the folded sidebar on `side` (0 left, 1 right) has opened,
@@ -491,7 +524,12 @@ impl Launcher {
     /// faint dashed sketch stands behind its lower half; the top bar's line and the hero's floor
     /// run through it. On a narrow window it folds, as the right one does, to an icon column: the
     /// mark, the instances' icons and New instance's plus, the links' icons.
-    pub(super) fn outline_sidebar(&mut self, full: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn outline_sidebar(
+        &mut self,
+        full: bool,
+        unfold: f32,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
         let width = if full { frame::SIDEBAR } else { COMPACT };
@@ -506,17 +544,20 @@ impl Launcher {
             .items_center()
             .gap(px(10.))
             .pt(px(14.))
-            .when(full, |d| d.pl(px(24.)))
-            .when(!full, |d| d.justify_center())
+            // Where the folded column centres it, so it stays put as the sidebar opens.
+            .pl(px((COMPACT - 22.) / 2.))
             .child(mark(22.))
             .when(full, |d| {
                 d.child(ui::text(17., FontWeight::BOLD, ink::FULL).child("Sunrise"))
             });
-        let label = full.then(|| {
-            div()
-                .p(px(8.))
-                .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()))
-        });
+        // Folded, the label keeps its room unseen, so the rows don't jump as the sidebar opens.
+        let label = div()
+            .p(px(8.))
+            // One line in either width: wrapped in the folded column it would stand taller.
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .when(!full, |d| d.invisible())
+            .child(mono(12., ink::QUIET).child(tr("Instances").to_uppercase()));
         let new = hoverable("add-instance", fill::HOVER)
             .flex()
             .flex_none()
@@ -539,8 +580,10 @@ impl Launcher {
                 .tooltip(ui::tip(tr("New instance")))
         };
         let new = keyboard(new, &t);
+        // Open, the rows reach 6 px further out, so each icon stands where its folded one does.
         let list = div()
             .id("side-list")
+            .when(full, |d| d.mx(px(-6.)))
             .flex()
             .flex_col()
             .gap(px(4.))
@@ -554,7 +597,7 @@ impl Launcher {
             .flex_none()
             .gap(px(12.))
             .children(full.then(|| self.rail_update_card(soft, cx)).flatten())
-            .child(self.outline_side_links(full));
+            .child(self.outline_side_links(if full { unfold } else { 0. }));
         div()
             .relative()
             .flex()
@@ -595,7 +638,7 @@ impl Launcher {
                     .bg(white(0.10)),
             )
             .child(logo)
-            .children(label)
+            .child(label)
             .child(list)
             .child(div().flex_1())
             .child(foot)
@@ -603,7 +646,7 @@ impl Launcher {
 
     /// The sidebar's foot: Discord, Documentation and Website as icons, the launcher's version
     /// on the right; folded (not `full`), the icons alone, one above the other.
-    fn outline_side_links(&self, full: bool) -> Div {
+    fn outline_side_links(&self, unfold: f32) -> Div {
         let t = self.theme;
         let icon = |id: &'static str, icon: &'static str, url: String| {
             keyboard(
@@ -611,37 +654,55 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(30.))
+                    .size(px(LINK))
                     .cursor_pointer()
                     .child(ui::icon(icon, 18., white(ink::SOFT)).relative())
                     .on_click(move |_, _, cx| cx.open_url(&url)),
                 &t,
             )
         };
-        let mut links = div().flex().items_center().gap(px(2.));
-        if !full {
-            links = links.flex_col();
-        }
-        for (id, name, url) in [
+        let links: Vec<_> = [
             ("discord", "discord", &self.links.discord),
             ("docs", "book", &self.links.docs),
             ("website", "globe-02", &self.links.website),
-        ] {
-            if !url.is_empty() {
-                links = links.child(icon(id, name, url.clone()));
-            }
+        ]
+        .into_iter()
+        .filter(|(_, _, url)| !url.is_empty())
+        .collect();
+        // The first stays where it is; each next one stands above it while folded and beside it
+        // open, gliding between the two as the sidebar opens.
+        let step = LINK + 2.;
+        let more = links.len().saturating_sub(1) as f32;
+        let mut stack = div()
+            .relative()
+            .flex_none()
+            // Centred in the folded column, and in the same place open.
+            .ml(px(
+                (COMPACT - LINK) / 2. - if unfold > 0. { 12. } else { 10. }
+            ))
+            .w(px(LINK + step * more * unfold))
+            .h(px(LINK + step * more * (1. - unfold)));
+        for (i, (id, name, url)) in links.into_iter().enumerate() {
+            stack = stack.child(
+                div()
+                    .absolute()
+                    .left(px(step * i as f32 * unfold))
+                    .bottom(px(step * i as f32 * (1. - unfold)))
+                    .child(icon(id, name, url.clone())),
+            );
         }
-        if !full {
-            return links;
+        if unfold <= 0. {
+            return stack;
         }
         div()
             .flex()
-            .items_center()
+            .items_end()
             .justify_between()
-            .child(links)
+            .child(stack)
             .child(
                 mono(12., ink::DIM)
                     .id("launcher-version")
+                    .opacity(unfold)
                     .child(backend::VERSION),
             )
     }

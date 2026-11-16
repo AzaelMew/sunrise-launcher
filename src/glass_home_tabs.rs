@@ -27,9 +27,17 @@ impl Launcher {
         self.window_width >= FULL_FROM
     }
 
-    /// How wide each sidebar is.
+    /// Whether the sidebars show: on Home, and on Settings opened over it. The other pages have
+    /// the window to themselves.
+    pub(super) fn outline_sides(&self) -> bool {
+        self.page == Page::Play || (self.page == Page::Settings && self.behind == Page::Play)
+    }
+
+    /// How wide each sidebar is (none where they don't show).
     pub(super) fn outline_side_width(&self) -> f32 {
-        if self.outline_wide() {
+        if !self.outline_sides() {
+            0.
+        } else if self.outline_wide() {
             frame::SIDEBAR
         } else {
             COMPACT
@@ -117,11 +125,14 @@ impl Launcher {
             .when(full, |d| d.pr(px(24.)).justify_end())
             .when(!full, |d| d.justify_center())
             .child(in_cell);
-        let label = full.then(|| {
-            div()
-                .p(px(8.))
-                .child(mono(12., ink::QUIET).child(tr("This instance").to_uppercase()))
-        });
+        // Folded, the label keeps its room unseen, so the rows don't jump as the sidebar opens.
+        let label = div()
+            .p(px(8.))
+            // One line in either width: wrapped in the folded column it would stand taller.
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .when(!full, |d| d.invisible())
+            .child(mono(12., ink::QUIET).child(tr("This instance").to_uppercase()));
         let foot = full
             .then(|| self.outline_playing())
             .flatten()
@@ -149,7 +160,7 @@ impl Launcher {
             .child(line(true))
             .child(line(false))
             .child(cell)
-            .children(label)
+            .child(label)
             .child(
                 div()
                     .id("side-sections")

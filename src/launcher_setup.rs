@@ -57,9 +57,6 @@ impl Launcher {
         let scene = cx.new(|_| scene::Scene::new());
         let sky = cx.new(|cx| sky::SkyView::new(window, cx));
         let rain = cx.new(|_| rain::Rain::new());
-        let corner_blocks = cx.new(|_| corner_blocks::CornerBlocks::new());
-        let right_blocks = cx.new(|_| right_blocks::RightBlocks::new());
-        corner_blocks::run(corner_blocks.downgrade(), right_blocks.downgrade(), cx);
         let backdrop =
             cx.new(|_| window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
@@ -260,13 +257,11 @@ impl Launcher {
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
             side_servers: sunrise_launcher::servers::list(),
-            sky,
             scene,
+            sky,
             rain,
-            corner_blocks,
-            right_blocks,
             backdrop,
-            pushed: None,
+            cover_at: Default::default(),
             scale: window.scale_factor(),
         };
         if this.location_error.is_some() || this.location_note.is_some() {

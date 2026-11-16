@@ -22,30 +22,20 @@ impl Render for Launcher {
         }
         glass_ui::set_on(self.theme.glass);
         glass::set_panel(self.theme.night.card);
+        let corners = f32::from(self.settings.corners());
+        glass_ui::set_corners(corners);
+        glass::set_corners(corners);
         glass_ui::set_light(!self.theme.dark);
         glass::set_light(!self.theme.dark);
         self.look = self.theme.look;
         glass_ui::set_look(self.look);
         glass::set_look(self.look);
-        // The mockup tints the scene with any accent but its violet.
-        let tint = (self.theme.dark && self.look.accent != sunrise_theme::glass::ACCENT)
-            .then(|| sunrise_theme::glass::mix_oklab(self.look.accent, 0x767676, 0.58));
-        let blur = self.look.blur;
-        let performance = self.settings.performance();
-        // Performance mode's plates are solid: no glass, no blur, nothing sampled from the scene.
-        // So are an OLED theme's, over its own black sky.
-        let sunset = self.theme.glass && self.theme.dark && self.theme.scene;
-        glass::set_plain(
-            performance || (self.theme.dark && !self.theme.scene),
-            self.theme.edge,
-        );
+        // The plates are the theme's own solid card: nothing behind the pages to frost.
+        glass::set_plain(self.settings.performance() || self.theme.dark);
         // Reduced motion (the player's or the system's) holds GPUI's own animations too.
-        sky::set_preference(self.settings.reduce_motion);
+        clock::set_preference(self.settings.reduce_motion);
         cx.set_reduce_motion(motion::still());
-        let blur = if performance { 0. } else { blur };
-        // Hypr Neon's night rains, except in performance mode.
-        let rains = self.theme.dark && self.theme.edge.is_some() && !performance;
-        let accent = self.look.accent;
+        self.push_back(window, cx);
         self.scale = window.scale_factor();
         if self.perf.frame() {
             startup::prewarm_fonts(cx);
@@ -95,71 +85,26 @@ impl Render for Launcher {
         if self.opening.is_none() && window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }
-        // The glass look draws the new design's scene in the dark appearance; the light look and
-        // the blocky looks keep the baked sky. The sky is tiles that don't depend on the
-        // window's size, so a resize costs no rebake.
         glass::begin_build(window);
-        // Only a theme with its own painted sky draws one; Sunrise's own is the plain Dusk page.
-        let painted = (!sunset && t.look.own_sky).then(|| {
-            let (night, size) = (t.night, (size.width.into(), size.height.into()));
-            // A new blur, size or theme is blurred on a worker; the plates keep the last one
-            // until it is ready, so dragging Blur never holds a frame.
-            if let Some(job) = sky::frost_later(&night, size) {
-                cx.spawn(async move |this, cx| {
-                    let done = cx.background_spawn(async move { job() }).await;
-                    glass::frost_done(done);
-                    let _ = this.update(cx, |_, cx| cx.notify());
-                })
-                .detach();
-            }
-            (night, size, window.scale_factor())
-        });
-        // What is behind the launcher, handed to its views only when it changed: reading them
-        // on every frame would make each sky frame draw the launcher again too.
-        let keep = frame::keep_clear(
-            size.width.into(),
-            size.height.into(),
-            self.page == Page::Play,
-        );
-        let pushed = Pushed {
-            keep,
-            performance,
-            tint,
-            blur,
-            rains,
-            accent,
-            painted,
-            back: window_root::Back {
-                side: t.side,
-                sunset,
-                rains,
-                // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
-                dim: sunset && self.page != Page::Play,
-            },
+        let sides = t.glass && self.outline_sides();
+        let (right_sidebar, right_panel) = match sides.then(|| self.outline_side(false, window, cx))
+        {
+            Some((place, panel)) => (Some(place), panel),
+            None => (None, None),
         };
-        if self.pushed != Some(pushed) {
-            self.pushed = Some(pushed);
-            self.scene.update(cx, |scene, cx| {
-                scene.set_performance(performance, cx);
-                scene.set_look(tint, blur, cx);
-            });
-            self.rain
-                .update(cx, |rain, cx| rain.set(rains, accent, keep, cx));
-            if let Some((night, size, scale)) = painted {
-                self.sky
-                    .update(cx, |sky, cx| sky.set(night, size, scale, keep, cx));
-            }
-            self.backdrop.update(cx, |b, cx| b.set(pushed.back, cx));
-        }
-        // Dark: the glass frame over the scene; Light keeps the night one over the dawn.
-        let right_sidebar = t.glass.then(|| self.outline_side(false, window, cx));
-        let (topbar, sidebar) = if t.glass {
-            (
-                self.outline_topbar(window, cx),
-                self.outline_side(true, window, cx),
-            )
+        let (topbar, sidebar, left_panel) = if t.glass {
+            let (place, panel) = if sides {
+                self.outline_side(true, window, cx)
+            } else {
+                (div().into_any_element(), None)
+            };
+            (self.outline_topbar(window, cx), place, panel)
         } else {
-            (self.topbar(cx), self.sidebar(window, cx).into_any_element())
+            (
+                self.topbar(cx),
+                self.sidebar(window, cx).into_any_element(),
+                None,
+            )
         };
         let row_menu = self.islands.row_menu.clone();
         let page = self
@@ -203,7 +148,20 @@ impl Render for Launcher {
                             } else {
                                 48.
                             }))
-                            .child(content),
+                            // Past Home, a page keeps to a column it reads well at, centred
+                            // under the top bar's pages.
+                            .when(t.glass && self.page != Page::Play, |d| d.justify_center())
+                            .child(if t.glass && self.page != Page::Play {
+                                div()
+                                    .flex()
+                                    .w_full()
+                                    .max_w(px(theme::PAGE_MAX))
+                                    .min_w_0()
+                                    .child(content)
+                                    .into_any_element()
+                            } else {
+                                content.into_any_element()
+                            }),
                     ),
                 &t,
             )
@@ -261,12 +219,6 @@ impl Render for Launcher {
                 }
             }))
             .capture_any_mouse_down(|_, _, _| KEYBOARD.store(false, Ordering::Relaxed))
-            .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
-                let size = window.viewport_size();
-                this.scene
-                    .update(cx, |scene, cx| scene.point(ev.position, size, cx));
-                this.rain.update(cx, |rain, cx| rain.poke(cx));
-            }))
             .relative()
             .flex()
             .flex_col()
@@ -290,9 +242,21 @@ impl Render for Launcher {
                             .flex_1()
                             .min_w_0()
                             .child(topbar)
-                            .child(page),
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .child(self.measure_cover(cx))
+                                    .child(page),
+                            ),
                     )
-                    .children(right_sidebar),
+                    .children(right_sidebar)
+                    // A narrow window's sidebars, opened over the page.
+                    .children(left_panel)
+                    .children(right_panel),
             );
         root = root.child(row_menu);
         if self.page == Page::Servers {
@@ -399,20 +363,75 @@ impl Render for Launcher {
     }
 }
 
-/// What the launcher's frame hands the views behind it (the scene, the rain, the painted sky).
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) struct Pushed {
-    keep: rain::Keep,
-    performance: bool,
-    tint: Option<u32>,
-    blur: f32,
-    rains: bool,
-    accent: u32,
-    painted: Option<(sunrise_theme::night::Night, (f32, f32), f32)>,
-    back: window_root::Back,
-}
+/// The room Home's hero takes at the top of the page (width, height), which drifting snow,
+/// leaves, petals and rain stay out of.
+const HERO_KEEP: (f32, f32) = (520., 440.);
 
 impl Launcher {
+    /// Hands the backdrop what goes behind the launcher: the page's colour, and on Home its
+    /// scenery where the page between the sidebars was laid out. Each view draws again only
+    /// when what it is handed changed.
+    fn push_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let t = self.theme;
+        let cover = self.home_cover().zip(self.cover_at.get());
+        if let Some((cover, at)) = &cover {
+            let size = (f32::from(at.size.width), f32::from(at.size.height));
+            let performance = self.settings.performance();
+            match cover {
+                window_root::Cover::Sunset => {
+                    // The mockup tints the sunset with any accent but its violet.
+                    let tint = (self.look.accent != sunrise_theme::glass::ACCENT)
+                        .then(|| sunrise_theme::glass::mix_oklab(self.look.accent, 0x767676, 0.58));
+                    self.scene.update(cx, |scene, cx| {
+                        scene.set_size(Some((f64::from(size.0), f64::from(size.1))), cx);
+                        scene.set_performance(performance, cx);
+                        scene.set_look(tint, self.look.blur, cx);
+                    });
+                }
+                window_root::Cover::Sky { rains } => {
+                    let (night, scale) = (t.night, window.scale_factor());
+                    // Snow, leaves, petals and rain keep off the hero: its column, from the
+                    // edition tabs down to the invite code.
+                    let mut keep = rain::Keep::default();
+                    keep.0[0] = [size.0 / 2. - HERO_KEEP.0 / 2., 0., HERO_KEEP.0, HERO_KEEP.1];
+                    self.sky
+                        .update(cx, |sky, cx| sky.set(night, size, scale, keep, cx));
+                    let (rains, accent) = (*rains && !performance, self.look.accent);
+                    self.rain
+                        .update(cx, |rain, cx| rain.set(rains, accent, keep, cx));
+                }
+                window_root::Cover::Picture(_) => {}
+            }
+        }
+        let back = window_root::Back {
+            side: t.side,
+            cover,
+        };
+        self.backdrop.update(cx, |b, cx| b.set(back, cx));
+    }
+
+    /// Records where the page between the sidebars is laid out, for Home's scenery: a frame
+    /// later when it moved (a resize, a sidebar folding).
+    fn measure_cover(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (at, this) = (self.cover_at.clone(), cx.entity().downgrade());
+        gpui::canvas(
+            move |bounds, _, cx| {
+                if at.get() != Some(bounds) {
+                    at.set(Some(bounds));
+                    let this = this.clone();
+                    cx.defer(move |cx| {
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    });
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+    }
+
     /// Where the opening is: the reveal's progress (1 when there is no opening) and how long
     /// the wordmark has been showing, in seconds.
     pub(crate) fn opening_phase(&mut self, window: &mut Window) -> (f32, f32) {

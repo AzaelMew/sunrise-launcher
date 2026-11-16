@@ -139,7 +139,7 @@ pub(super) fn letter_tile(colour: Hsla, name: &str, size: f32) -> Div {
         .items_center()
         .justify_center()
         .size(px(size))
-        .rounded(px((size * 0.26).round()))
+        .rounded(px(ui::rad((size * 0.26).round()).min(size / 2.)))
         .bg(colour)
         .font_family(if letter >= 40. {
             sunrise_theme::glass::DISPLAY_FONT
@@ -158,7 +158,7 @@ pub(super) fn tile_image(image: Arc<gpui::RenderImage>, size: f32) -> AnyElement
     gpui::img(image)
         .flex_none()
         .size(px(size))
-        .rounded(px((size * 0.26).round()))
+        .rounded(px(ui::rad((size * 0.26).round()).min(size / 2.)))
         .into_any_element()
 }
 

@@ -6,7 +6,7 @@
 //! place comes from the time, not a step per frame, so a late frame never makes it jump. It
 //! stands still under reduced motion, in performance mode and while the window is in the
 //! background (the pointer coming back starts it again, [`Rain::poke`]).
-use crate::sky::{motion, Motion};
+use crate::clock::{motion, Motion};
 use gpui::{canvas, div, fill, point, prelude::*, px, size, Bounds, Context, Hsla, Pixels, Window};
 use std::time::Instant;
 

@@ -4126,6 +4126,11 @@ impl WhilePlaying {
     }
 }
 
+/// The roundest the look's corners go, in px (Settings > Appearance > Corners), and how round
+/// they are until the player picks.
+pub const MAX_CORNERS: u8 = 24;
+pub const DEFAULT_CORNERS: u8 = 4;
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4231,6 +4236,26 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
+    /// How round the look's corners are: their radius in px, 0 (square) to [`MAX_CORNERS`];
+    /// unset is [`DEFAULT_CORNERS`] (read it with [`Settings::corners`]).
+    #[serde(default, rename = "corners", skip_serializing_if = "Option::is_none")]
+    pub corners_px: Option<u8>,
+    /// Home's scenery between the sidebars: the theme's animated pixel scene (or the player's
+    /// picture). Unset is on; off leaves the plain page (read it with [`Settings::scenery`]).
+    #[serde(default, rename = "scenery", skip_serializing_if = "Option::is_none")]
+    pub scenery_on: Option<bool>,
+}
+
+impl Settings {
+    /// The look's corner radius in px: the player's, else [`DEFAULT_CORNERS`].
+    pub fn corners(&self) -> u8 {
+        self.corners_px.unwrap_or(DEFAULT_CORNERS).min(MAX_CORNERS)
+    }
+
+    /// Whether Home shows its scenery: on unless the player turned it off.
+    pub fn scenery(&self) -> bool {
+        self.scenery_on.unwrap_or(true)
+    }
 }
 
 impl Settings {

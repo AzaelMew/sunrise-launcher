@@ -30,6 +30,8 @@ pub const CONTROL: f32 = 34.;
 pub const TOPBAR: f32 = 56.;
 pub const SIDEBAR: f32 = 248.;
 pub const PAGE_GUTTER: f32 = 32.;
+/// The widest a page past Home grows; on a wider window it stands centred.
+pub const PAGE_MAX: f32 = 1200.;
 
 /// Motion: short and eased out, never bouncy.
 pub const MOVE: Duration = tokens::MOVE.duration();
@@ -79,11 +81,6 @@ pub struct Theme {
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink
     /// for white and light plates, `glass_ui::light`).
     pub glass: bool,
-    /// Whether the dark glass look draws the pixel sunset (`scene.rs`) behind its plates; an OLED
-    /// theme draws its own black sky instead, with solid plates.
-    pub scene: bool,
-    /// The solid plates' 1 px edge, when the theme draws one (Hypr Neon's night).
-    pub edge: Option<u32>,
 }
 
 /// The light appearance's look: the soft accent (links, ticks, the sliders) is the accent
@@ -92,25 +89,6 @@ pub struct Theme {
 fn light_look(look: tokens::glass::Glass) -> tokens::glass::Glass {
     let mut look = tokens::glass::Glass::new(readable_on_white(look.accent), look.tint, look.blur);
     look.accent_soft = look.accent;
-    look
-}
-
-/// How much of the accent's dark base a content plate takes over the sunset. The mockup's 22 %
-/// let the bright sun shine through settings, dialogs and lists; at 85 % text sits on a steady
-/// surface and the scene stays decoration around it. Glass (the white tint) still lightens it.
-const STEADY_BASE: f32 = 0.85;
-
-/// The look's plates mixed as `Glass::new` does, from `base` at [`STEADY_BASE`] instead of the
-/// mockup's.
-fn steady_plates(mut look: tokens::glass::Glass, base: u32) -> tokens::glass::Glass {
-    let tint = look.tint;
-    let alpha = tint + (1. - tint) * STEADY_BASE;
-    look.plate = [16u32, 8, 0].iter().fold(0, |out, s| {
-        let base = ((base >> s) & 255) as f32 / 255.;
-        let premul = tint + (1. - tint) * STEADY_BASE * base;
-        out | (((premul / alpha) * 255.).round().clamp(0., 255.) as u32) << s
-    });
-    look.plate_alpha = alpha;
     look
 }
 
@@ -153,10 +131,8 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
         theme = theme.with_launcher_theme(picked);
     }
     // Performance mode keeps a painted sky's colours and drops what drifts over it.
-    // Its plates go solid too: no blurred copy of the sky to sample.
     if settings.performance() {
         theme.night.art.mood = night::Mood::Plain;
-        theme.look.own_sky = false;
     }
     theme.with_glass(settings.glass_tint(), settings.glass_blur())
 }
@@ -172,56 +148,22 @@ impl Theme {
             self.night.sky = picked.sky;
             return self;
         };
-        let night = *night;
+        // Sunrise's own pages, flat over the page colour, in the theme's colours: a theme never
+        // changes how a page is laid out or works, nor paints anything behind it.
         let accent = self.accent_choice;
-        if picked.look != themes::Look::Solid {
-            // The same glass pages as Sunrise's own: only the skies, the plates and the accent
-            // change, so a theme never changes how a page is laid out or works.
-            let mut themed = Self::from(accent.apply(night.blocks()), night, accent).glass(accent);
-            if themed.dark && picked.look == themes::Look::Oled {
-                themed.scene = false;
-                themed.edge = Some(night::over(night.stroke, night.stroke_alpha, night.card));
-            }
-            // The painted skies (and an OLED night's, with its edge) replace the sunset too; the
-            // plates frost them as they would it, so Glass and Blur apply.
-            if matches!(picked.look, themes::Look::Painted | themes::Look::Oled) {
-                themed.scene = false;
-                themed.look.own_sky = true;
-            }
-            return themed;
-        }
-        // A theme with its own palette draws the square, solid Blocks look: no glass plates, no
-        // rounded corners. The glass look's own colours stay the mockup's violet ones.
-        let mut themed = Self::from(accent.apply(night.blocks()), night, accent);
-        themed.look = tokens::glass::Glass::new(accent.rgb(), self.look.tint, self.look.blur);
-        if !themed.dark {
-            themed.look = light_look(themed.look);
-        }
-        themed
+        Self::from(accent.apply(night.blocks()), *night, accent).glass(accent)
     }
 
     /// The glass look with the player's Glass (how much white the plates take, 0 to 1) and Blur
     /// (px).
     pub fn with_glass(mut self, tint: f32, blur: f32) -> Self {
-        let own_sky = self.look.own_sky;
         self.look = tokens::glass::Glass::new(self.look.accent, tint, blur);
-        if own_sky {
-            // A painted sky's frosted plates take the theme's own card where the sunset's take
-            // the accent's dark violet; a light one's accent reads on white, as the light look's.
-            if !self.dark {
-                self.look = light_look(self.look);
-            }
-            self.look = steady_plates(self.look, self.night.card);
-            self.look.own_sky = true;
-        } else if !self.dark {
-            self.look = light_look(self.look);
-        } else if !self.scene {
-            // No sunset to frost: the plates are the theme's own solid card.
+        if self.dark {
+            // Nothing behind the pages to frost: the plates are the theme's own solid card.
             self.look.plate = self.night.card;
             self.look.plate_alpha = 1.;
         } else {
-            let base = self.look.base;
-            self.look = steady_plates(self.look, base);
+            self.look = light_look(self.look);
         }
         self
     }
@@ -318,8 +260,6 @@ impl Theme {
             accent_choice: accent,
             dark: p.dark,
             glass: false,
-            scene: false,
-            edge: None,
         }
     }
 }
@@ -334,10 +274,9 @@ mod tests {
     use sunrise_launcher::backend::{Appearance, Settings};
     use sunrise_launcher::themes::Accent;
 
-    /// Nord asks for the solid, square Blocks look: no glass, and its own polar-night palette
-    /// with the frost accent rather than Sunrise's violet glass colours.
+    /// Nord draws Sunrise's pages in its own polar-night palette with the frost accent.
     #[test]
-    fn a_palette_theme_is_solid_and_square() {
+    fn nord_draws_sunrises_pages_in_its_colours() {
         let settings = Settings {
             appearance: Appearance::Dark,
             accent: Accent::from_rgb(0x88c0d0),
@@ -345,19 +284,18 @@ mod tests {
             ..Settings::default()
         };
         let theme = from_settings(&settings, WindowAppearance::Dark);
-        assert!(!theme.glass, "Nord draws the blocks look");
+        assert!(theme.glass, "Nord draws Sunrise's pages");
         assert!(theme.dark);
         assert_eq!(theme.night.page, 0x2e3440);
         assert_eq!(theme.night.accent, 0x88c0d0);
         assert_eq!(theme.accent_choice.rgb(), 0x88c0d0);
     }
 
-    /// Every theme keeps Sunrise's glass pages (so no page changes how it works) in its one
-    /// look: Hypr's plates frost its black night with an edge, the painted ones their own sky,
-    /// Taiga a snowy blue hour.
+    /// Every theme keeps Sunrise's pages (so no page changes how it works or what is behind it)
+    /// in its one look; only the colours differ, Hypr's page true black.
     #[test]
     fn the_new_families_keep_the_glass_pages() {
-        for (id, oled, dark) in [
+        for (id, black, dark) in [
             ("dawn", false, true),
             ("hypr_neon", true, true),
             ("overworld", false, true),
@@ -371,15 +309,11 @@ mod tests {
             let theme = from_settings(&settings, WindowAppearance::Light);
             assert!(theme.glass, "{id}: glass pages");
             assert_eq!(theme.dark, dark, "{id}: one look");
-            assert_eq!(theme.edge.is_some(), oled);
-            let painted = matches!(id, "overworld" | "taiga");
             assert_eq!(
-                theme.look.own_sky,
-                painted || oled,
-                "{id}: frosts its own sky"
+                theme.look.plate, theme.night.card,
+                "{id}: its own solid plates"
             );
-            assert!(!theme.scene, "{id}: Home's hero scene replaced the sunset");
-            if oled {
+            if black {
                 assert_eq!(theme.night.page, 0x000000);
             }
             // Text on the main action, and the light look's accent on white.

@@ -232,6 +232,19 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
+        // The glass look's: the Mods search's field.
+        let field = if t.glass {
+            field
+                .h(px(44.))
+                .px(px(14.))
+                .border_0()
+                .rounded(px(crate::glass_ui::rad(12.)))
+                .bg(crate::glass_ui::white(if focused { 0.11 } else { 0.07 }))
+                .font_family(sunrise_theme::glass::FONT)
+                .text_size(px(14.))
+        } else {
+            field
+        };
         line_edit::mouse(field, cx, |this| &mut this.github.text)
     }
 

@@ -211,7 +211,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
             Block::Code(code) => div()
                 .p(px(16.))
                 .rounded(px(if glass {
-                    12.
+                    crate::glass_ui::rad(12.)
                 } else {
                     crate::theme::RADIUS_PLATE
                 }))

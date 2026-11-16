@@ -1,6 +1,11 @@
-//! Ferris, the Rust crab, in pixels, standing on Home's bottom-left blocks. Between his little
-//! acts (a blink, a snap of his pincers, a scuttle sideways, a hop) he stands still and nothing is
-//! drawn again; an act is played frame by frame while it lasts.
+//! Ferris, the Rust crab, in pixels, standing on Home's bottom-left blocks. He is never quite still:
+//! between his little acts (a blink, a snap of his pincers, a scuttle sideways, a hop, a wave) he
+//! breathes and flexes his pincers, a pixel at a time on a slow tick, as pixel art moves. An act is
+//! played frame by frame while it lasts.
+//!
+//! Hidden for now: he stood on the corner blocks, which are gone, and nothing draws him until he
+//! has a new place.
+#![allow(dead_code)]
 use gpui::{canvas, px, Canvas, Hsla, Window};
 use std::time::{Duration, Instant};
 
@@ -36,6 +41,70 @@ const GLINT: u32 = 0xffffff;
 const BLINK_ROW: usize = 8;
 const PINCER_ROWS: usize = 13;
 const PINCERS: [(usize, usize); 2] = [(7, 11), (16, 20)];
+/// His lowered arm on each side: the two outer columns, from below his shoulder to his foot.
+const ARM_COLS: usize = 2;
+const ARM_ROWS: std::ops::RangeInclusive<usize> = 10..=14;
+/// His left arm raised to wave, as (column, row) on his grid, reaching past his edge and above
+/// his head: up from the shoulder, then the claw, open and swayed out, or shut and swayed in.
+/// The right arm is the same, mirrored.
+const RAISED: [(i32, i32); 16] = [
+    (1, 8),
+    (0, 8),
+    (0, 7),
+    (-1, 7),
+    (0, 6),
+    (-1, 6),
+    (-1, 5),
+    (-2, 5),
+    (-1, 4),
+    (-2, 4),
+    (-2, 3),
+    (-1, 3),
+    (-2, 2),
+    (-1, 2),
+    (-2, 1),
+    (-1, 1),
+];
+const CLAW_OPEN: [(i32, i32); 14] = [
+    (-4, -3),
+    (0, -3),
+    (-4, -2),
+    (-3, -2),
+    (-1, -2),
+    (0, -2),
+    (-4, -1),
+    (-3, -1),
+    (-2, -1),
+    (-1, -1),
+    (0, -1),
+    (-3, 0),
+    (-2, 0),
+    (-1, 0),
+];
+const CLAW_SHUT: [(i32, i32); 16] = [
+    (-2, -3),
+    (-1, -3),
+    (0, -3),
+    (-3, -2),
+    (-2, -2),
+    (-1, -2),
+    (0, -2),
+    (1, -2),
+    (-3, -1),
+    (-2, -1),
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-2, 0),
+    (-1, 0),
+    (0, 0),
+];
+/// How far past his edge the raised arm reaches, in his pixels.
+const REACH: f32 = 4.;
+/// The rows above his pincers rise as he breathes; this is the first that doesn't.
+const CHEST: usize = 12;
+/// How often his idle loop steps.
+pub(crate) const TICK: Duration = Duration::from_millis(260);
 /// How high he hops, in his own pixels, and how many steps a scuttle takes.
 const HOP: f32 = 7.;
 const STEPS: f32 = 4.;
@@ -46,10 +115,20 @@ pub(crate) enum Act {
     Snap,
     Scuttle,
     Hop,
+    Wave,
 }
 
 impl Act {
-    pub(crate) const ALL: [Act; 4] = [Act::Blink, Act::Snap, Act::Scuttle, Act::Hop];
+    /// His acts as often as he does them: a wave now and then, a blink or a snap most often.
+    pub(crate) const ALL: [Act; 7] = [
+        Act::Wave,
+        Act::Blink,
+        Act::Snap,
+        Act::Scuttle,
+        Act::Hop,
+        Act::Blink,
+        Act::Snap,
+    ];
 
     pub(crate) fn length(self) -> Duration {
         Duration::from_millis(match self {
@@ -57,6 +136,7 @@ impl Act {
             Act::Snap => 640,
             Act::Scuttle => 720,
             Act::Hop => 520,
+            Act::Wave => 1100,
         })
     }
 }
@@ -65,13 +145,44 @@ impl Act {
 #[derive(Clone, Copy)]
 pub(crate) struct Ferris {
     pub(crate) at: f32,
-    /// The act playing, when it began, and where a scuttle goes.
+    /// The act playing, when it began, and where a scuttle goes (for a wave, under a half his
+    /// left arm, else his right).
     pub(crate) act: Option<(Act, Instant, f32)>,
+    /// His idle loop's step.
+    pub(crate) tick: u32,
+    /// The arm his next wave takes: they take turns.
+    left_next: bool,
 }
 
 impl Ferris {
     pub(crate) fn new() -> Self {
-        Self { at: 0.5, act: None }
+        Self {
+            at: 0.5,
+            act: None,
+            tick: 0,
+            left_next: true,
+        }
+    }
+
+    /// Starts `act`, a scuttle going `to` along his block; a wave takes the arm whose turn it is.
+    pub(crate) fn start(&mut self, act: Act, to: f32) {
+        let to = if act == Act::Wave {
+            let left = self.left_next;
+            self.left_next = !left;
+            if left {
+                0.
+            } else {
+                1.
+            }
+        } else {
+            to
+        };
+        self.act = Some((act, Instant::now(), to));
+    }
+
+    /// Steps his idle loop.
+    pub(crate) fn idle(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
     }
 
     /// Ends the act playing, leaving him where it took him.
@@ -91,7 +202,11 @@ impl Ferris {
     pub(crate) fn draw(self, side: f32, window: &mut Window) -> Canvas<()> {
         let texel = Self::texel(side);
         let room = side - COLS as f32 * texel;
-        let (mut x, mut lift, mut blink, mut snap) = (self.at * room, 0., false, false);
+        let (mut x, mut lift, mut blink) = (self.at * room, 0., false);
+        // His idle loop: a breath in and out over four steps, his pincers flexing every third.
+        let breath = self.tick % 4 >= 2;
+        let mut snap = self.tick.is_multiple_of(3);
+        let mut wave = None;
         if let Some((act, began, to)) = self.act {
             let t = (began.elapsed().as_secs_f32() / act.length().as_secs_f32()).min(1.);
             if t < 1. {
@@ -112,6 +227,13 @@ impl Ferris {
                     };
                 }
                 Act::Hop => lift = HOP * 4. * t * (1. - t),
+                // An arm up beside his head, its claw swaying open and shut; the left only where
+                // the page's edge leaves it room.
+                Act::Wave if t < 1. => {
+                    let left = to < 0.5 && x >= REACH * texel;
+                    wave = Some((left, !left, ((t * 10.) as u32) % 2 == 1))
+                }
+                Act::Wave => {}
             }
         }
         let (x, lift) = (x.round(), (lift * texel).round());
@@ -119,12 +241,15 @@ impl Ferris {
             |_, _, _| {},
             move |bounds, (), window, _| {
                 let foot = bounds.origin.y + bounds.size.height;
-                let at = |col: usize, row: usize, up: f32| {
+                let at_i = |col: i32, row: i32, up: f32| {
                     gpui::point(
                         bounds.origin.x + px(x + col as f32 * texel),
-                        foot - px((ROWS - row) as f32 * texel + lift + up),
+                        foot - px((ROWS as i32 - row) as f32 * texel + lift + up),
                     )
                 };
+                let at = |col: usize, row: usize, up: f32| at_i(col as i32, row as i32, up);
+                let size = gpui::size(px(texel), px(texel));
+                let body: Hsla = gpui::rgb(BODY).into();
                 let colour = |ch: char, row: usize| -> Option<Hsla> {
                     let eye = matches!(ch, 'K' | 'W');
                     let c = match ch {
@@ -150,9 +275,51 @@ impl Ferris {
                         };
                         let pincer = row >= PINCER_ROWS
                             && PINCERS.iter().any(|&(a, b)| (a..=b).contains(&col));
-                        let up = if pincer && snap { texel } else { 0. };
-                        let size = gpui::size(px(texel), px(texel));
+                        // The waving arm is drawn raised below, so its lowered self goes.
+                        let lowered = ARM_ROWS.contains(&row)
+                            && wave.is_some_and(|(left, right, _)| {
+                                (left && col < ARM_COLS) || (right && col >= COLS - ARM_COLS)
+                            });
+                        if lowered {
+                            continue;
+                        }
+                        let chest = row < CHEST;
+                        let up = if (pincer && snap) || (chest && breath) {
+                            texel
+                        } else {
+                            0.
+                        };
                         window.paint_quad(gpui::fill(gpui::Bounds::new(at(col, row, up), size), c));
+                        // Breathing in, his chest's lowest row stays put too, so he stretches
+                        // rather than parting.
+                        if breath && row + 1 == CHEST && up > 0. {
+                            window.paint_quad(gpui::fill(
+                                gpui::Bounds::new(at(col, row, 0.), size),
+                                c,
+                            ));
+                        }
+                    }
+                }
+                if let Some((left, right, shut)) = wave {
+                    let claw: &[(i32, i32)] = if shut { &CLAW_SHUT } else { &CLAW_OPEN };
+                    let arms = RAISED.iter().chain(claw);
+                    // The right arm is the left mirrored.
+                    let sides = arms.flat_map(|&(col, row)| {
+                        [(left, col), (right, COLS as i32 - 1 - col)]
+                            .into_iter()
+                            .filter(|&(on, _)| on)
+                            .map(move |(_, col)| (col, row))
+                    });
+                    for (col, row) in sides {
+                        let up = if breath && row < CHEST as i32 {
+                            texel
+                        } else {
+                            0.
+                        };
+                        window.paint_quad(gpui::fill(
+                            gpui::Bounds::new(at_i(col, row, up), size),
+                            body,
+                        ));
                     }
                 }
             },
