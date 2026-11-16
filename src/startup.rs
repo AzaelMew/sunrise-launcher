@@ -147,7 +147,7 @@ fn run_launcher() {
                     },
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| crate::window_root::Shell::new(window, cx)),
+                |window, cx| cx.new(|cx| crate::Launcher::new(window, cx)),
             )
             .expect("window");
             cx.on_window_closed(|cx, _| shut_down(cx)).detach();

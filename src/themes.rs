@@ -7,7 +7,7 @@
 //! lightness, then darkens or lightens each just enough to read as well as the violet does: white
 //! on the face at 4.5:1, the accent at 3:1 on every background.
 use std::path::{Path, PathBuf};
-use sunrise_theme::night::{Land, Mood, Night, SkyArt};
+use sunrise_theme::night::Night;
 use sunrise_theme::{contrast, Blocks};
 
 /// An accent: a hue in degrees, or none for Sunrise's violet, whose tokens are the palette's own
@@ -77,17 +77,6 @@ pub const NORD_DARK: Night = Night {
     warn: 0xebcb8b,
     danger: 0xeeb3b8,
     dark: true,
-    art: SkyArt {
-        sun: [0x8fbcbb, 0x88c0d0, 0x5e81ac],
-        far: 0x3b4252,
-        near: 0x272c36,
-        cloud: [0x3b4252, 0x434c5e, 0x4c566a],
-        lit: [0x4c566a, 0x5e6a7d, 0x81a1c1],
-        shade: 0x272c36,
-        star: 0xeceff4,
-        mood: Mood::Plain,
-        land: Land::Plain,
-    },
 };
 
 /// Old School's sky: the night tokens under the sky just before sunrise.
@@ -139,17 +128,6 @@ pub const DAWN_DARK: Night = Night {
     warn: 0xffc48f,
     danger: 0xff9a9a,
     dark: true,
-    art: SkyArt {
-        sun: [0xffe0a8, 0xffc48f, 0xff9a6e],
-        far: 0x3d1a3a,
-        near: 0x1a0c1a,
-        cloud: [0x4a1e44, 0x8a3460, 0xd96a86],
-        lit: [0x6a2c5a, 0xb4507a, 0xffb08f],
-        shade: 0x2a1228,
-        star: 0xfff1f6,
-        mood: Mood::Plain,
-        land: Land::Plain,
-    },
 };
 
 /// Hypr Neon's night: true black over a magenta sunrise, a cyan accent and magenta edges, neon
@@ -176,17 +154,6 @@ pub const HYPR_DARK: Night = Night {
     warn: 0xf9e2af,
     danger: 0xff8fb0,
     dark: true,
-    art: SkyArt {
-        sun: [0xff4fd8, 0xff7aa8, 0xffb36b],
-        far: 0x0b0618,
-        near: 0x030209,
-        cloud: [0x0b0618, 0x120926, 0x1a0c34],
-        lit: [0x2a0f46, 0x3a125c, 0x1c4a66],
-        shade: 0x06040d,
-        star: 0xbff6ff,
-        mood: Mood::Neon([0xff4fd8, 0x3fe0ff]),
-        land: Land::Neon([0xb04cff, 0x3fe0ff]),
-    },
 };
 
 /// Dawn: the Sunrise website's warm dawn, on Sunrise's glass pages.
@@ -231,17 +198,6 @@ pub const OCEAN_DARK: Night = Night {
     warn: 0xffd37a,
     danger: 0xff9a9a,
     dark: true,
-    art: SkyArt {
-        sun: [0xd8fbff, 0xa6eef7, 0x62d4e6],
-        far: 0x0a4458,
-        near: 0x04202b,
-        cloud: [0x0b4a5c, 0x11677c, 0x2a8fa3],
-        lit: [0x13607a, 0x2288a0, 0x5cc0d0],
-        shade: 0x06303f,
-        star: 0xdffaff,
-        mood: Mood::Water([0x8feeff, 0xbff6ff, 0xffffff]),
-        land: Land::Plain,
-    },
 };
 
 /// Deep Ocean: teal water, light shafts and bubbles, on Sunrise's glass pages.
@@ -276,17 +232,6 @@ pub const AUTUMN_DARK: Night = Night {
     warn: 0xffcf6b,
     danger: 0xff9a8a,
     dark: true,
-    art: SkyArt {
-        sun: [0xffe3a0, 0xffbf5c, 0xf0892a],
-        far: 0x3a1c0e,
-        near: 0x160a05,
-        cloud: [0x3d1d0f, 0x6e3414, 0xb8621f],
-        lit: [0x5a2c14, 0x9a4d1a, 0xe89a4a],
-        shade: 0x2a1409,
-        star: 0xffe9c8,
-        mood: Mood::Leaves([0xd9531e, 0xf0a02a, 0x9c3a14]),
-        land: Land::Plain,
-    },
 };
 
 /// Autumn Forest: amber and rust under falling leaves, on Sunrise's glass pages.
@@ -321,17 +266,6 @@ pub const CHERRY_DARK: Night = Night {
     warn: 0xffd59a,
     danger: 0xff9aa8,
     dark: true,
-    art: SkyArt {
-        sun: [0xfff0f6, 0xffd0e2, 0xf5a0c0],
-        far: 0x3a2655,
-        near: 0x160f28,
-        cloud: [0x3a2a5c, 0x6a4a86, 0xb87ca8],
-        lit: [0x4f3a74, 0x8b64a0, 0xe8a8c8],
-        shade: 0x2a1d44,
-        star: 0xfff0fa,
-        mood: Mood::Petals([0xffc2d9, 0xff8fb8]),
-        land: Land::Plain,
-    },
 };
 
 /// Cherry Blossom: a pink twilight with drifting petals, on Sunrise's glass pages.
@@ -366,17 +300,6 @@ pub const AURORA_DARK: Night = Night {
     warn: 0xffd98a,
     danger: 0xff9aa0,
     dark: true,
-    art: SkyArt {
-        sun: [0xeafff5, 0xbdf5dd, 0x7fe0b8],
-        far: 0x0d2236,
-        near: 0x040a14,
-        cloud: [0x0a1a2e, 0x10304a, 0x1d4a60],
-        lit: [0x14304a, 0x1f5068, 0x3c8a90],
-        shade: 0x07121f,
-        star: 0xeefaff,
-        mood: Mood::Aurora([0x3dffa0, 0x9b6bff, 0x35d6ff]),
-        land: Land::Plain,
-    },
 };
 
 /// Midnight Aurora: green and violet curtains over a deep blue night, on Sunrise's glass pages.
@@ -411,20 +334,6 @@ pub const OVERWORLD_DARK: Night = Night {
     warn: 0xffd27a,
     danger: 0xff9a8a,
     dark: true,
-    art: SkyArt {
-        sun: [0xe8ecf4, 0xd6dcea, 0xc2cadc],
-        far: 0x1a2a3c,
-        near: 0x2a1d14,
-        cloud: [0x1a2448, 0x223058, 0x2c3a66],
-        lit: [0x2c3a66, 0x384878, 0x46568a],
-        shade: 0x121a36,
-        star: 0xf1f6ff,
-        mood: Mood::Plain,
-        land: Land::Blocks {
-            grass: [0x24402c, 0x2f5a24],
-            leaves: 0x1f4a1c,
-        },
-    },
 };
 
 /// Overworld: an original blocky day and night over stepped grassy land, square clouds drifting.
@@ -460,19 +369,6 @@ pub const TAIGA_NIGHT: Night = Night {
     warn: 0xf0b860,
     danger: 0xff8f86,
     dark: true,
-    art: SkyArt {
-        sun: [0xe6edf3, 0xd2dce5, 0xbcc8d4],
-        far: 0x23313f,
-        near: 0x0c1218,
-        cloud: [0x1c2836, 0x243244, 0x2e3e52],
-        lit: [0x3a4c62, 0x46596f, 0x54687e],
-        shade: 0x151e29,
-        star: 0xeef4ff,
-        mood: Mood::Snow([0xf4f8fb, 0x0c1218]),
-        land: Land::Taiga {
-            snow: [0x9fb0c0, 0xd6e1ea],
-        },
-    },
 };
 
 /// Taiga: snow on the spruce woods. Where an old light appearance opens (`Settings::parse`).

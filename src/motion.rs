@@ -47,7 +47,7 @@ pub const PRESS: f32 = 1.;
 
 /// Whether the player's system asks for reduced motion (or `SUNRISE_LAUNCHER_MOTION=off`).
 pub fn still() -> bool {
-    crate::sky::motion() == crate::sky::Motion::Still
+    crate::clock::motion() == crate::clock::Motion::Still
 }
 
 /// `motion` as GPUI plays it: its length on its own curve; at its end from the first frame under

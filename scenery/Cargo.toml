@@ -3,7 +3,7 @@ name = "sunrise-launcher-scenery"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "The Sunrise launcher's scenery: the sunset scene, painted skies, rain and frosted glass"
+description = "The Sunrise launcher's scenery: the sunset scene and frosted glass"
 publish = false
 
 [dependencies]

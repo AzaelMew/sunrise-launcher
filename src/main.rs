@@ -3,18 +3,18 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, glass, rain, scene, sky};
+#[cfg(windows)]
+use sunrise_launcher_scenery::scene;
+use sunrise_launcher_scenery::{art, clock, glass};
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
 mod blocks_versions;
-mod corner_blocks;
 mod ferris;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
-mod right_blocks;
 mod widgets;
 pub(crate) use widgets::*;
 mod agents_page;
@@ -98,7 +98,6 @@ mod themes_page;
 mod titlebar;
 mod welcome;
 mod while_playing;
-mod window_root;
 mod worlds_page;
 
 use gpui::{
@@ -538,20 +537,6 @@ struct Launcher {
     shortcuts: shortcut_page::Shortcuts,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
-    /// The pixel art made for this window (`art.rs`), and pictures downloaded by URL.
-    sky: gpui::Entity<sky::SkyView>,
-    /// The pixel sunset of the new design (dark appearance): its own view, so a frame of it
-    /// alone redraws nothing else.
-    scene: gpui::Entity<scene::Scene>,
-    /// Hypr Neon's rain over its black night (`rain.rs`).
-    rain: gpui::Entity<rain::Rain>,
-    /// The playing blocks in Home's bottom corners, left and right.
-    corner_blocks: gpui::Entity<corner_blocks::CornerBlocks>,
-    right_blocks: gpui::Entity<right_blocks::RightBlocks>,
-    /// What is behind the launcher, drawn as its sibling (`window_root.rs`).
-    backdrop: gpui::Entity<window_root::Backdrop>,
-    /// What the views behind the launcher were last handed.
-    pushed: Option<launcher_render::Pushed>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }

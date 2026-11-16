@@ -14,7 +14,6 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use sunrise_theme::glass::Glass;
-use sunrise_theme::night::Night;
 
 /// Logical pixels per texel of a plate's piece of backdrop.
 const PIECE: f32 = 4.;
@@ -76,15 +75,8 @@ pub enum Kind {
 /// else the device scale (×100) of a fillet's piece.
 type Key = (i32, i32, i32, i32, Kind, u32, u32);
 
-/// What a painted sky's blurred copy was made for: the night, the window's size and the blur.
-type SkyKey = (Night, (i32, i32), f32);
-
 struct Pieces {
     backdrop: Option<Backdrop>,
-    /// A painted theme's own sky, blurred ([`frost_sky`]): its plates read this, not the scene.
-    sky: Option<(SkyKey, Backdrop)>,
-    /// A blur of it being made off the main thread ([`frost_sky_later`]).
-    pending: Option<SkyKey>,
     look: Glass,
     /// Bumped when the backdrop or the look changes: older pieces are thrown away.
     generation: u32,
@@ -99,8 +91,6 @@ struct Pieces {
     /// Performance mode: plates are a solid colour instead of glass over the scene, so nothing
     /// is blurred, tinted or sampled.
     plain: bool,
-    /// Solid plates' 1 px edge (an OLED theme's), opaque.
-    edge: Option<u32>,
     /// Full-window backdrop images baked once per window size/look/generation.
     full_glass: Option<Arc<RenderImage>>,
     full_float: Option<Arc<RenderImage>>,
@@ -115,8 +105,6 @@ const LIGHT_FLOAT: f32 = 0.94;
 thread_local! {
     static PIECES: RefCell<Pieces> = RefCell::new(Pieces {
         backdrop: None,
-        sky: None,
-        pending: None,
         look: Glass::default_look(),
         generation: 0,
         build: 0,
@@ -124,7 +112,6 @@ thread_local! {
         retired: Vec::new(),
         light: false,
         plain: false,
-        edge: None,
         full_glass: None,
         full_float: None,
         full_size: (0., 0.),
@@ -132,13 +119,11 @@ thread_local! {
     });
 }
 
-/// Performance mode's plates, and an OLED theme's: solid, with no glass behind them, and the
-/// theme's edge around them if it has one.
-pub fn set_plain(plain: bool, edge: Option<u32>) {
+/// Performance mode's plates: solid, with no glass behind them.
+pub fn set_plain(plain: bool) {
     PIECES.with_borrow_mut(|p| {
-        if p.plain != plain || p.edge != edge {
+        if p.plain != plain {
             p.plain = plain;
-            p.edge = edge;
             p.generation += 1;
         }
     });
@@ -160,94 +145,15 @@ fn solid_fill(p: &Pieces, kind: Kind) -> gpui::Hsla {
 }
 
 impl Pieces {
-    /// Plates drawn as a plain fill: the light look's, and performance mode's or an OLED theme's
-    /// (`plain`), unless the look frosts its own painted sky (Taiga's light one too).
+    /// Plates drawn as a plain fill: the light look's, and performance mode's (`plain`).
     fn solid(&self) -> bool {
-        (self.light || self.plain) && !self.look.own_sky
+        self.light || self.plain
     }
 
-    /// Plates drawn as the light look's flat white pieces.
-    fn flat_light(&self) -> bool {
-        self.light && !self.look.own_sky
-    }
-
-    /// The blurred picture plates sample: the painted sky's for a look that frosts it, else the
-    /// scene's.
+    /// The blurred picture plates sample: the scene's.
     fn source(&self) -> Option<&Backdrop> {
-        if self.look.own_sky {
-            self.sky.as_ref().map(|(_, b)| b)
-        } else {
-            self.backdrop.as_ref()
-        }
+        self.backdrop.as_ref()
     }
-}
-
-/// A painted theme's sky, blurred for its plates, as the scene's is: made again only when the
-/// night, the window's size (`w` × `h` logical pixels) or the blur changes, never per frame.
-/// `texels` gives the sky's still parts: colours, columns, rows and logical pixels per texel.
-pub fn frost_sky(
-    night: &Night,
-    (w, h): (f32, f32),
-    texels: impl FnOnce() -> (Vec<[f64; 3]>, usize, usize, f32),
-) {
-    PIECES.with_borrow_mut(|p| {
-        if !p.look.own_sky {
-            return;
-        }
-        let key = (*night, (w.round() as i32, h.round() as i32), p.look.blur);
-        if p.sky.as_ref().is_some_and(|(k, _)| *k == key) {
-            return;
-        }
-        p.sky = Some((key, blur_sky(key, texels)));
-        p.generation += 1;
-    });
-}
-
-fn blur_sky(key: SkyKey, texels: impl FnOnce() -> (Vec<[f64; 3]>, usize, usize, f32)) -> Backdrop {
-    let (base, cols, rows, unit) = texels();
-    Backdrop::from_texels(&base, cols, rows, f64::from(unit), f64::from(key.2), false)
-}
-
-/// A painted sky's blur made off the main thread, to hand to [`frost_done`].
-pub struct Frosted(SkyKey, Backdrop);
-
-/// [`frost_sky`] for a window that keeps drawing meanwhile: the first blur is made here (plates
-/// have nothing to frost before it), a later one (a new blur, size or theme) is returned to run
-/// on a worker while the plates keep the last one. One at a time: asked again while one runs,
-/// it returns nothing, and the next frame after [`frost_done`] asks for the latest.
-pub fn frost_sky_later(
-    night: &Night,
-    (w, h): (f32, f32),
-    texels: impl FnOnce() -> (Vec<[f64; 3]>, usize, usize, f32) + Send + 'static,
-) -> Option<impl FnOnce() -> Frosted + Send + 'static> {
-    PIECES.with_borrow_mut(|p| {
-        if !p.look.own_sky {
-            return None;
-        }
-        let key = (*night, (w.round() as i32, h.round() as i32), p.look.blur);
-        if p.sky.as_ref().is_some_and(|(k, _)| *k == key) || p.pending.is_some() {
-            return None;
-        }
-        if p.sky.is_none() {
-            p.sky = Some((key, blur_sky(key, texels)));
-            p.generation += 1;
-            return None;
-        }
-        p.pending = Some(key);
-        Some(move || Frosted(key, blur_sky(key, texels)))
-    })
-}
-
-/// A blur from [`frost_sky_later`] is ready: the plates take it (unless the look stopped
-/// frosting its own sky meanwhile).
-pub fn frost_done(Frosted(key, backdrop): Frosted) {
-    PIECES.with_borrow_mut(|p| {
-        p.pending = None;
-        if p.look.own_sky {
-            p.sky = Some((key, backdrop));
-            p.generation += 1;
-        }
-    });
 }
 
 /// The scene was built again (a new window size or tint), or the blur changed: plates take
@@ -292,9 +198,6 @@ pub fn set_backdrop_tint(tint: Option<u32>) {
 pub fn set_look(look: Glass) {
     PIECES.with_borrow_mut(|p| {
         if p.look != look {
-            if !look.own_sky {
-                p.sky = None;
-            }
             p.look = look;
             p.generation += 1;
         }
@@ -384,17 +287,16 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
     .into_any_element()
 }
 
-/// A plate's 1 px edge: a theme's own (Hypr Neon's neon), else a faint light line, so a plate
-/// reads as a surface rather than as fog over the scene.
+/// A plate's 1 px edge: a faint line, so a plate reads as a surface rather than as fog over the
+/// scene.
 fn edge() -> gpui::Hsla {
     if outline() {
-        return gpui::white().opacity(0.12);
+        gpui::white().opacity(0.12)
+    } else if PIECES.with_borrow(|p| p.light) {
+        gpui::Hsla::from(rgb(sunrise_theme::glass::ON_LIGHT)).opacity(0.10)
+    } else {
+        gpui::white().opacity(0.09)
     }
-    PIECES.with_borrow(|p| match p.edge {
-        Some(edge) if !p.light => rgb(edge).into(),
-        _ if p.light => gpui::Hsla::from(rgb(sunrise_theme::glass::ON_LIGHT)).opacity(0.10),
-        _ => gpui::white().opacity(0.09),
-    })
 }
 
 /// A `relative` div on a glass plate with `radius` corners.
@@ -445,14 +347,9 @@ fn build_dark_full_image(
 }
 
 fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &mut Window) {
-    // Solid plates need no backdrop (an OLED theme draws none): a plain quad.
-    let plain = PIECES.with_borrow(|p| p.solid().then(|| (solid_fill(p, kind), p.edge, p.light)));
-    if let Some((colour, edge, light)) = plain {
-        let mut quad = gpui::fill(bounds, colour).corner_radii(corners);
-        if let Some(edge) = edge.filter(|_| !light) {
-            quad = quad.border_widths(px(1.)).border_color(rgb(edge));
-        }
-        window.paint_quad(quad);
+    // Solid plates need no backdrop: a plain quad.
+    if let Some(colour) = PIECES.with_borrow(|p| p.solid().then(|| solid_fill(p, kind))) {
+        window.paint_quad(gpui::fill(bounds, colour).corner_radii(corners));
         return;
     }
     let viewport = window.viewport_size();
@@ -469,7 +366,7 @@ fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &
     );
 
     let (image, image_bounds) = PIECES.with_borrow_mut(|p| {
-        let light = p.flat_light();
+        let light = p.light;
         if !light && p.source().is_none() {
             return (None, bounds);
         }
@@ -523,57 +420,4 @@ fn texels(w: f32, h: f32) -> (u32, u32) {
         (w / PIECE).ceil().max(1.) as u32,
         (h / PIECE).ceil().max(1.) as u32,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn generation() -> u32 {
-        PIECES.with_borrow(|p| p.generation)
-    }
-
-    /// A painted sky is blurred once per night, window size and blur, never per frame; a look
-    /// that does not frost its own sky makes none and keeps none.
-    #[test]
-    fn a_painted_sky_is_blurred_only_when_it_changes() {
-        let mut look = Glass::default_look();
-        look.own_sky = true;
-        set_light(false);
-        set_plain(true, None);
-        set_look(look);
-        let night = sunrise_theme::night::NIGHT;
-        let made = Cell::new(0);
-        let texels = || {
-            made.set(made.get() + 1);
-            (vec![[0.5; 3]; 4 * 3], 4, 3, 4.)
-        };
-        frost_sky(&night, (16., 12.), texels);
-        let g = generation();
-        frost_sky(&night, (16., 12.), texels);
-        assert_eq!((made.get(), generation()), (1, g), "same frame again");
-        // Plates frost it although performance-mode's `plain` is set: the look decides.
-        assert!(PIECES.with_borrow(|p| !p.solid() && p.source().is_some()));
-        frost_sky(&night, (20., 12.), texels);
-        assert_eq!(made.get(), 2, "new size");
-        look.blur = 40.;
-        set_look(look);
-        frost_sky(&night, (20., 12.), texels);
-        assert_eq!(made.get(), 3, "new blur");
-        // Later: a new blur is made apart and taken when done; one at a time.
-        look.blur = 10.;
-        set_look(look);
-        let job = frost_sky_later(&night, (20., 12.), || (vec![[0.5; 3]; 4 * 3], 4, 3, 4.))
-            .expect("a new blur to make");
-        assert!(frost_sky_later(&night, (20., 12.), || unreachable!()).is_none());
-        let g = generation();
-        frost_done(job());
-        assert!(generation() > g);
-        assert!(frost_sky_later(&night, (20., 12.), || unreachable!()).is_none());
-        look.own_sky = false;
-        set_look(look);
-        frost_sky(&night, (20., 12.), texels);
-        assert_eq!(made.get(), 3, "no painted sky");
-        assert!(PIECES.with_borrow(|p| p.solid() && p.sky.is_none()));
-    }
 }

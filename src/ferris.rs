@@ -2,6 +2,10 @@
 //! between his little acts (a blink, a snap of his pincers, a scuttle sideways, a hop, a wave) he
 //! breathes and flexes his pincers, a pixel at a time on a slow tick, as pixel art moves. An act is
 //! played frame by frame while it lasts.
+//!
+//! Hidden for now: he stood on the corner blocks, which are gone, and nothing draws him until he
+//! has a new place.
+#![allow(dead_code)]
 use gpui::{canvas, px, Canvas, Hsla, Window};
 use std::time::{Duration, Instant};
 

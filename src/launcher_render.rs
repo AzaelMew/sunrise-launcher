@@ -27,25 +27,11 @@ impl Render for Launcher {
         self.look = self.theme.look;
         glass_ui::set_look(self.look);
         glass::set_look(self.look);
-        // The mockup tints the scene with any accent but its violet.
-        let tint = (self.theme.dark && self.look.accent != sunrise_theme::glass::ACCENT)
-            .then(|| sunrise_theme::glass::mix_oklab(self.look.accent, 0x767676, 0.58));
-        let blur = self.look.blur;
-        let performance = self.settings.performance();
-        // Performance mode's plates are solid: no glass, no blur, nothing sampled from the scene.
-        // So are an OLED theme's, over its own black sky.
-        let sunset = self.theme.glass && self.theme.dark && self.theme.scene;
-        glass::set_plain(
-            performance || (self.theme.dark && !self.theme.scene),
-            self.theme.edge,
-        );
+        // The plates are the theme's own solid card: nothing behind the pages to frost.
+        glass::set_plain(self.settings.performance() || self.theme.dark);
         // Reduced motion (the player's or the system's) holds GPUI's own animations too.
-        sky::set_preference(self.settings.reduce_motion);
+        clock::set_preference(self.settings.reduce_motion);
         cx.set_reduce_motion(motion::still());
-        let blur = if performance { 0. } else { blur };
-        // Hypr Neon's night rains, except in performance mode.
-        let rains = self.theme.dark && self.theme.edge.is_some() && !performance;
-        let accent = self.look.accent;
         self.scale = window.scale_factor();
         self.perf.frame();
         if self.bench.as_ref().is_some_and(perf::Bench::scrolling) {
@@ -93,63 +79,7 @@ impl Render for Launcher {
         if self.opening.is_none() && window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }
-        // The glass look draws the new design's scene in the dark appearance; the light look and
-        // the blocky looks keep the baked sky. The sky is tiles that don't depend on the
-        // window's size, so a resize costs no rebake.
         glass::begin_build(window);
-        // Only a theme with its own painted sky draws one; Sunrise's own is the plain Dusk page.
-        let painted = (!sunset && t.look.own_sky).then(|| {
-            let (night, size) = (t.night, (size.width.into(), size.height.into()));
-            // A new blur, size or theme is blurred on a worker; the plates keep the last one
-            // until it is ready, so dragging Blur never holds a frame.
-            if let Some(job) = sky::frost_later(&night, size) {
-                cx.spawn(async move |this, cx| {
-                    let done = cx.background_spawn(async move { job() }).await;
-                    glass::frost_done(done);
-                    let _ = this.update(cx, |_, cx| cx.notify());
-                })
-                .detach();
-            }
-            (night, size, window.scale_factor())
-        });
-        // What is behind the launcher, handed to its views only when it changed: reading them
-        // on every frame would make each sky frame draw the launcher again too.
-        let keep = frame::keep_clear(
-            size.width.into(),
-            size.height.into(),
-            self.page == Page::Play,
-        );
-        let pushed = Pushed {
-            keep,
-            performance,
-            tint,
-            blur,
-            rains,
-            accent,
-            painted,
-            back: window_root::Back {
-                side: t.side,
-                sunset,
-                rains,
-                // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
-                dim: sunset && self.page != Page::Play,
-            },
-        };
-        if self.pushed != Some(pushed) {
-            self.pushed = Some(pushed);
-            self.scene.update(cx, |scene, cx| {
-                scene.set_performance(performance, cx);
-                scene.set_look(tint, blur, cx);
-            });
-            self.rain
-                .update(cx, |rain, cx| rain.set(rains, accent, keep, cx));
-            if let Some((night, size, scale)) = painted {
-                self.sky
-                    .update(cx, |sky, cx| sky.set(night, size, scale, keep, cx));
-            }
-            self.backdrop.update(cx, |b, cx| b.set(pushed.back, cx));
-        }
-        // Dark: the glass frame over the scene; Light keeps the night one over the dawn.
         let sides = t.glass && self.outline_sides();
         let right_sidebar = sides.then(|| self.outline_side(false, window, cx));
         let (topbar, sidebar) = if t.glass {
@@ -280,12 +210,6 @@ impl Render for Launcher {
                 }
             }))
             .capture_any_mouse_down(|_, _, _| KEYBOARD.store(false, Ordering::Relaxed))
-            .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
-                let size = window.viewport_size();
-                this.scene
-                    .update(cx, |scene, cx| scene.point(ev.position, size, cx));
-                this.rain.update(cx, |rain, cx| rain.poke(cx));
-            }))
             .relative()
             .flex()
             .flex_col()
@@ -411,24 +335,12 @@ impl Render for Launcher {
             .flex_col()
             .relative()
             .size_full()
+            .bg(t.side)
             .children(titlebar::render(&t, window))
             .children(self.settings_save_notice(cx))
             .child(root.flex_1().min_h_0())
             .children(titlebar::resize_handles(window))
     }
-}
-
-/// What the launcher's frame hands the views behind it (the scene, the rain, the painted sky).
-#[derive(Clone, Copy, PartialEq)]
-pub(crate) struct Pushed {
-    keep: rain::Keep,
-    performance: bool,
-    tint: Option<u32>,
-    blur: f32,
-    rains: bool,
-    accent: u32,
-    painted: Option<(sunrise_theme::night::Night, (f32, f32), f32)>,
-    back: window_root::Back,
 }
 
 impl Launcher {

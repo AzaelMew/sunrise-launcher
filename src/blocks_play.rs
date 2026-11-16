@@ -329,7 +329,7 @@ impl Launcher {
                 None => self.hero(&tag, &version, prepared, cx),
             };
             let actions = self.home_actions(prepared || java.is_some(), java.is_some(), cx);
-            // The banner: the hero and the Play row over the sky (`sky.rs`), or over the player's
+            // The banner: the hero and the Play row over the page, or over the player's
             // own picture under a veil of the page colour. It reaches the content's edges and the top
             // bar.
             let veil = div()

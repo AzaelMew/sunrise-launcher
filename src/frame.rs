@@ -12,31 +12,8 @@ use std::rc::Rc;
 use sunrise_launcher::instances::{Icon, Instance, Kind as InstanceKind};
 use sunrise_theme::glass::{fill, ink, radius};
 
-/// The sidebar's distance from the window's edges (`m-3.5`).
-pub const MARGIN: f32 = 14.;
-
 /// The Outline look's sidebar, 14 from the window's edges.
 pub const SIDEBAR: f32 = 248.;
-/// What drifting particles (Taiga's snow, Hypr Neon's streaks, leaves, petals) keep clear of in a
-/// window of `w` by `h`: the title and top bars, the rail, and the text. Home's hero text sits in
-/// the left column and its tabs below it, so the sky drifts through the top right between them;
-/// every other page is text from the top bar down.
-pub fn keep_clear(w: f32, h: f32, home: bool) -> rain::Keep {
-    const TOP: f32 = 32. + MARGIN + theme::TOPBAR;
-    const HERO: f32 = 400.;
-    const HERO_WIDTH: f32 = 640.;
-    let left = MARGIN + SIDEBAR;
-    let body = if home { HERO } else { TOP };
-    rain::Keep([
-        [0., 0., w, TOP],
-        [0., 0., left, h],
-        [left, TOP, HERO_WIDTH.min(w - left), (HERO - TOP).max(0.)],
-        [left, body, w - left, (h - body).max(0.)],
-        // The hero's right column: its version and What's new buttons, the invite-code field.
-        [(w - 360.).max(left), TOP, 360., (HERO - TOP).max(0.)],
-    ])
-}
-
 /// The ⋮ menu of a sidebar row while open: whose, and whether Delete… was pressed once.
 #[derive(Clone, Default)]
 pub struct RowMenu {
