@@ -118,6 +118,13 @@ jobs:
             HEAD_SHA=$SOURCE_SHA
           fi
           python3 tools/release_train.py decide --kind launcher ${HEAD_SHA:+--head "$HEAD_SHA"} ${FORCE:+--force} | tee decision.json
+          # A real hand dispatch without base releases main's head or nothing: while main's newest gate is still running
+          # (or failed), the newest gate-green commit is an older one, which would otherwise ship without a word.
+          picked=$(jq -r '.head // empty' decision.json)
+          if [[ "$EVENT" == workflow_dispatch && -z "$BASE" && "$DRY_RUN" != true && -n "$picked" && "$picked" != "$SOURCE_SHA" ]]; then
+            echo "::error::the newest commit with a green gate is ${picked:0:9}, not main's head ${SOURCE_SHA:0:9}: main's gate on ${SOURCE_SHA:0:9} is still running or failed. Dispatch again once it passes, or with -f base=${picked:0:9} to release that commit on purpose."
+            exit 1
+          fi
           echo "### $(jq -r '.reason' decision.json)" >> "$GITHUB_STEP_SUMMARY"
           tag=$(jq -r '.tag' decision.json)
           version=${tag#launcher-v}
