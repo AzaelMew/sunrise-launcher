@@ -924,7 +924,7 @@ impl Launcher {
 fn reset_look(s: &mut Settings) {
     s.appearance = Default::default();
     s.theme = None;
-    s.accent = crate::themes::starting_accent(None, &Default::default());
+    s.accent = themes::starting_accent(None, &Default::default());
     s.glass = None;
     s.blur = None;
     s.background = None;
