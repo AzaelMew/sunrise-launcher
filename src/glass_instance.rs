@@ -38,7 +38,7 @@ pub(super) fn choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Statef
             .id(id.into())
             .relative()
             .flex()
-            .rounded(px(radius::POPOVER))
+            .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
             .cursor_pointer()
             .bg(white(if on { fill::ACTIVE } else { 0.04 }))
             .when(!on, |d| {
@@ -96,7 +96,7 @@ pub(super) fn list_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> S
             .items_center()
             .gap(px(16.))
             .px(px(16.))
-            .rounded(px(radius::ROW))
+            .rounded(px(crate::glass_ui::rad(radius::ROW)))
             .cursor_pointer()
             .when(on, |d| d.bg(white(0.11)))
             .when(!on, |d| {
@@ -126,7 +126,7 @@ pub(super) fn list_box(id: &'static str, max: f32) -> Stateful<Div> {
         .overflow_y_scroll()
         .on_scroll(|_, _, cx| cx.stop_propagation())
         .p(px(6.))
-        .rounded(px(radius::POPOVER))
+        .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
         .bg(white(0.04))
 }
 
@@ -174,7 +174,7 @@ fn icon_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div
             .items_center()
             .justify_center()
             .size(px(52.))
-            .rounded(px(15.))
+            .rounded(px(crate::glass_ui::rad(15.)))
             .cursor_pointer()
             .when(on, |d| {
                 d.bg(white(0.16))
@@ -471,15 +471,17 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .size(px(42.))
-                    .rounded(px(11.))
+                    .rounded(px(crate::glass_ui::rad(11.)))
                     .bg(white(fill::BUTTON))
                     .child(ui::icon("puzzle", 21., white(0.85)))
                     .into_any_element(),
                 _ => self.auto_mark(k, loader, 42.),
             };
+            // As tall as a card whose note wraps once, so the three line up.
             let card = choice(format!("new-kind-{id}"), k == kind, &t)
                 .items_center()
                 .gap(px(14.))
+                .min_h(px(80.))
                 .p(px(12.))
                 .child(tile)
                 .child(choice_text(title, note));
@@ -502,9 +504,9 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .h(px(40.))
+                    .h(px(48.))
                     .px(px(8.))
-                    .rounded(px(radius::CONTROL))
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     .cursor_pointer()
                     .font_family(sunrise_theme::glass::FONT)
                     .text_size(px(14.))
@@ -529,8 +531,10 @@ impl Launcher {
             .w(px(340.))
             .h_full()
             .p(px(28.))
+            // Import sits on the foot's line: the foot's 20 px under 48 px buttons.
+            .pb(px(20.))
             .overflow_y_scroll()
-            .rounded_l(px(radius::MODAL))
+            .rounded_l(px(crate::glass_ui::rad(radius::MODAL)))
             .bg(white(0.035))
             .child(
                 ui::text(13., FontWeight::MEDIUM, ink::QUIET).child(tr(if editing.is_some() {
@@ -977,7 +981,7 @@ impl Launcher {
                 .items_center()
                 .h(px(48.))
                 .px(px(20.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .cursor_pointer()
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(15.))
@@ -1004,7 +1008,7 @@ impl Launcher {
                 .justify_center()
                 .h(px(48.))
                 .px(px(32.))
-                .rounded(px(radius::LARGE))
+                .rounded(px(crate::glass_ui::rad(radius::LARGE)))
                 .bg(accent)
                 .cursor_pointer()
                 .child(ui::back_tint(radius::LARGE, lit))
@@ -1043,7 +1047,7 @@ impl Launcher {
             .gap(px(12.))
             .px(px(36.))
             .py(px(20.))
-            .rounded_br(px(radius::MODAL))
+            .rounded_br(px(crate::glass_ui::rad(radius::MODAL)))
             .bg(white(0.03))
             // Why Create failed takes the folder's place, by the buttons.
             .child(match error {
@@ -1051,10 +1055,13 @@ impl Launcher {
                     .min_w_0()
                     .text_color(ui::danger())
                     .child(e),
+                // Narrow, the folder would show as a few cut letters: it's left out.
                 None => ui::text(13., FontWeight::NORMAL, ink::FAINT)
                     .min_w_0()
                     .truncate()
-                    .child(place),
+                    .when(self.window_width >= crate::glass_home::SIDE_BY_SIDE, |d| {
+                        d.child(place)
+                    }),
             })
             .child(buttons.flex_none())
     }
@@ -1282,7 +1289,7 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .size(px(36.))
-                    .rounded(px(radius::CONTROL))
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     .bg(white(fill::BUTTON))
                     .child(ui::icon("plus-sign", 18., white(ink::BODY))),
             )

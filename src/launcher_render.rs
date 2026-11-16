@@ -17,6 +17,7 @@ impl Render for Launcher {
             self.theme = self.settings_theme(window);
         }
         glass_ui::set_on(self.theme.glass);
+        glass::set_panel(self.theme.night.card);
         glass_ui::set_light(!self.theme.dark);
         glass::set_light(!self.theme.dark);
         self.look = self.theme.look;
@@ -56,6 +57,7 @@ impl Render for Launcher {
         self.settings_query_focused = self.settings_query_focus.is_focused(window);
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
+        self.window_height = f32::from(size.height);
         self.window_long_side = f32::from(size.width).max(f32::from(size.height));
         self.scale_factor = window.scale_factor();
         let shown = if t.glass && self.page == Page::Settings {
@@ -146,7 +148,7 @@ impl Render for Launcher {
         // Dark: the glass frame over the scene; Light keeps the night one over the dawn.
         let (topbar, sidebar) = if t.glass {
             (
-                self.glass_topbar(cx),
+                self.outline_topbar(window, cx),
                 self.glass_rail(window, cx)
                     .ml(px(frame::MARGIN))
                     .mb(px(frame::MARGIN))

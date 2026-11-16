@@ -312,16 +312,10 @@ impl Launcher {
             }
         }
 
-        // The glass look's head (the mockup's `HomeView`) replaces the banner; the preparation's
-        // steps stay right under it, where the player looks after pressing Play.
+        // The Outline look's head replaces the banner; the preparation's steps stay right under
+        // it, where the player looks after pressing Play.
         let banner = if t.glass {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(24.))
-                .child(self.glass_home_head(&tag, prepared, cx))
-                .children(steps)
-                .children(self.glass_build_notice(cx))
+            self.outline_home_head(&tag, prepared, steps, cx)
         } else {
             let hero = match &java {
                 // Its own game: the Minecraft version and the loader, never Sunrise's.

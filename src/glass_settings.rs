@@ -158,7 +158,7 @@ fn tile(lead: AnyElement, title: String, note: String, action: AnyElement) -> Di
         .flex_col()
         .flex_1()
         .min_w(px(140.))
-        .rounded(px(radius::LARGE))
+        .rounded(px(crate::glass_ui::rad(radius::LARGE)))
         .bg(white(0.045))
         .border_1()
         .border_color(white(ui::edge::REST))
@@ -356,7 +356,7 @@ impl Launcher {
                     }
                 });
             }))
-            .rounded(px(radius::PANEL))
+            .rounded(px(crate::glass_ui::rad(radius::PANEL)))
             .flex()
             .flex_col()
             .gap(px(16.))
@@ -584,7 +584,7 @@ impl Launcher {
             .items_center()
             .justify_center()
             .size(px(42.))
-            .rounded(px(11.))
+            .rounded(px(crate::glass_ui::rad(11.)))
             .bg(white(0.08))
             .child(ui::icon("computer", 21., white(0.8)))
             .into_any_element();
@@ -647,8 +647,6 @@ impl Launcher {
         let appearance = section(1)
             .child(self.launcher_theme_row(cx))
             .child(self.glass_accent_row(cx))
-            .child(self.look_slider_row(themes_page::LookKnob::Glass, cx))
-            .child(self.look_slider_row(themes_page::LookKnob::Blur, cx))
             .child(self.performance_row(cx))
             .child(self.motion_row(cx))
             .children(self.effects_rows(cx))

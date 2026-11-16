@@ -199,7 +199,7 @@ impl Launcher {
                 .relative()
                 .flex_none()
                 .size(px(36.))
-                .rounded(px(9.))
+                .rounded(px(crate::glass_ui::rad(9.)))
                 .overflow_hidden()
                 .child(self.mod_icon(row.entry.as_ref(), row.icon.clone(), 36.))
                 .into_any_element()
@@ -284,7 +284,7 @@ impl Launcher {
                     .relative()
                     .flex()
                     .items_center()
-                    .rounded(px(radius::CONTROL)),
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL))),
             )
             .child(menu)
             .text_color(white(1.))

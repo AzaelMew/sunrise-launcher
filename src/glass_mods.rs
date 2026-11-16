@@ -156,7 +156,7 @@ impl Launcher {
                         .child(ui::text(13., FontWeight::NORMAL, 0.7).child(tr("Show everything")))
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.mods.everything = !this.mods.everything;
-                            this.mods_search(0);
+                            this.mods_search_keeping(0, true);
                             cx.notify();
                         })),
                 )
@@ -298,7 +298,7 @@ impl Launcher {
                 .gap(px(8.))
                 .h(px(44.))
                 .px(px(14.))
-                .rounded(px(12.))
+                .rounded(px(crate::glass_ui::rad(12.)))
                 .bg(white(if open { 0.11 } else { 0.07 }))
                 .hover(|s| s.bg(white(0.11)))
                 .cursor_pointer()
@@ -492,6 +492,7 @@ impl Launcher {
             self.content_scroll.handle.clone(),
         );
         let total = self.mods.results.len();
+        let refreshing = self.mods.refreshing;
         let row = |i: usize| {
             let p = self.mods.results[i].clone();
             let icon = self.mods_icon(&p, 40.);
@@ -522,6 +523,10 @@ impl Launcher {
                     tr("Checking…")
                 } else if busy {
                     tr("Installing…")
+                } else if p.kind == PackKind::Modpack
+                    && self.window_width < crate::glass_home::SIDE_BY_SIDE
+                {
+                    tr("Import")
                 } else if p.kind == PackKind::Modpack {
                     tr("Import as an instance")
                 } else {
@@ -579,7 +584,7 @@ impl Launcher {
                 div()
                     .flex_none()
                     .size(px(40.))
-                    .rounded(px(8.))
+                    .rounded(px(crate::glass_ui::rad(8.)))
                     .overflow_hidden()
                     .child(icon),
             )
@@ -621,11 +626,11 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let mut list =
-            div()
-                .flex()
-                .flex_col()
-                .child(rows.column(&scroll, total, 0., |_| false, row));
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .when(refreshing, |d| d.opacity(0.45))
+            .child(rows.column(&scroll, total, 0., |_| false, row));
         if self.mods.more {
             let searching = self.mods.searching;
             let offset = self.mods.results.len();
@@ -773,7 +778,7 @@ impl Launcher {
                 .child(
                     div()
                         .size(px(64.))
-                        .rounded(px(12.))
+                        .rounded(px(crate::glass_ui::rad(12.)))
                         .overflow_hidden()
                         .child(icon),
                 )

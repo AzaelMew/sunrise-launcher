@@ -61,7 +61,7 @@ pub(crate) fn hover_layer(id: &SharedString, color: Hsla, radius: f32, bleed: f3
             .bottom_0()
             .left(px(-bleed))
             .right(px(-bleed))
-            .rounded(px(radius))
+            .rounded(px(glass_ui::rad(radius)))
     };
     hover_fade(id, layer, move |d, a| d.bg(color.opacity(color.a * a)))
 }
@@ -304,7 +304,7 @@ pub(crate) fn button(
 /// (`sunrise_launcher::desktop_seams`).
 pub(crate) fn copy_to_clipboard(cx: &mut App, item: gpui::ClipboardItem) {
     match item.text() {
-        Some(text) => glass_toast::say(trf("Copied {text}", &[("text", &text)])),
+        Some(text) => glass_toast::say_with("Copied {text}", &text),
         None => glass_toast::say(tr("Copied the picture")),
     }
     if let Some(file) = sunrise_launcher::desktop_seams::clipboard_file() {

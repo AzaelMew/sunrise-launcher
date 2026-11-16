@@ -71,6 +71,8 @@ mod native_consent;
 mod native_log_page;
 mod native_registry_consent;
 mod new_instance;
+mod outline_frame;
+mod outline_home;
 mod owner_page;
 mod packs_page;
 mod perf;
@@ -341,8 +343,6 @@ struct Launcher {
     picker: glass_home::PickerState,
     /// Settings' any-colour swatch shows the hue strip (the glass look).
     accent_strip: bool,
-    /// Settings' Glass and Blur sliders (the glass look).
-    look_sliders: themes_page::LookSliders,
     /// Where the accent picker's hue strip is on screen (`themes_page.rs`), to map a click to a
     /// hue.
     hue_area: std::rc::Rc<std::cell::Cell<Option<Bounds<gpui::Pixels>>>>,
@@ -431,6 +431,7 @@ struct Launcher {
     friend_focus: FocusHandle,
     /// The window's width at the last frame: Home's head lays out by it, as the mockup's `xl`.
     window_width: f32,
+    window_height: f32,
     /// The window's longer side in points, and the screen's pixels per point: the size pictures
     /// are made at (`picture_cache`).
     window_long_side: f32,
@@ -481,8 +482,6 @@ struct Launcher {
     /// The size of Home's tab strip, measured as it is laid out: the glass panel's plate cuts
     /// its corner around it.
     home_strip: std::rc::Rc<std::cell::Cell<Option<gpui::Size<Pixels>>>>,
-    /// When the running game was first seen running, for Home's "Playing for…".
-    client_since: Option<Instant>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
     instance_mods: instance_mods::InstanceMods,
     /// Debug-build previews of the native mod states (`glass_mod_states.rs`).

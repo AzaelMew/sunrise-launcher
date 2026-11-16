@@ -4,7 +4,6 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 use gpui::deferred;
-use std::time::Instant;
 use sunrise_theme::glass::{fill, ink, radius};
 
 /// Play, the version and the big icons are this tall (`h-14`).
@@ -13,8 +12,6 @@ const TALL: f32 = 56.;
 /// Play and the version are narrower and the invite code takes what is left of their row. The
 /// account page and the theme editor also put their two columns side by side from it.
 pub(super) const WIDE: f32 = 1280.;
-/// The window width from which the top bar's pages show at full size.
-pub(super) const TOP_BAR_WIDE: f32 = 1380.;
 /// The window width from which pages put their head and cards side by side (Overview, Mods,
 /// Versions, Settings' About); under it they stack, and Home's tabs drop their icons.
 pub(super) const SIDE_BY_SIDE: f32 = 1200.;
@@ -38,183 +35,6 @@ pub(super) enum HomeMenu {
 }
 
 impl Launcher {
-    /// The head: what Home shows above its tabs. `tag`: the Sunrise version it plays (empty for a
-    /// Java instance); `prepared`: whether that version's files are ready.
-    pub(super) fn glass_home_head(
-        &mut self,
-        tag: &str,
-        prepared: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let java = self.selected_instance().and_then(|i| i.java.clone());
-        // How long this game has run, for "Playing for 5 min now".
-        match (&self.client, self.client_since) {
-            (Some(_), None) => self.client_since = Some(Instant::now()),
-            (None, Some(_)) => self.client_since = None,
-            _ => {}
-        }
-        // The invite code stays on the actions' row at every width (unlike the mockup's
-        // `xl:flex-row`, which moves it under them): on the right, 340 wide from 1280 px; under
-        // that it takes what is left, and the puzzle (the Mods tab below does the same) gives
-        // way to it.
-        let wide = self.window_width >= WIDE;
-        let mods = ui::big_icon("home-mods", "puzzle", &self.theme)
-            .tooltip(ui::tip(tr("Mods in this instance")))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.home_tab = home_tabs::HomeTab::Mods;
-                cx.notify();
-            }));
-        // Instance settings: the sheet down the right side.
-        let settings = |this: &mut Self, cx: &mut Context<Self>| {
-            let instance = this.selected_instance().cloned()?;
-            // Memory is set only for Java instances.
-            let tip = match instance.java {
-                Some(_) => "Edit this instance: its name, version, memory and more",
-                None => "Edit this instance: its name, icon, version and more",
-            };
-            Some(
-                ui::big_icon("home-settings", "pencil-edit-02", &this.theme)
-                    .tooltip(ui::tip(tr(tip)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::General);
-                        cx.notify();
-                    })),
-            )
-        };
-        let actions = if wide {
-            div()
-                .mt(px(32.))
-                .flex()
-                // One line, unlike the mockup's `flex-wrap`: at 1280 px the folder's ⋯ would wrap the
-                // row away from under the pointer, which hides it again.
-                .items_center()
-                .gap(px(10.))
-                .child(self.play_group(tag, prepared || java.is_some(), cx))
-                .children(Some(mods))
-                .children(self.folder_group(java.is_none(), cx))
-                .children(settings(self, cx))
-                .child(div().flex_1().min_w(px(22.)))
-                .child(self.glass_join_friend(tag, true, cx))
-        } else {
-            div()
-                .mt(px(32.))
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(self.play_group(tag, prepared || java.is_some(), cx))
-                        .children(self.folder_group(java.is_none(), cx))
-                        .children(settings(self, cx)),
-                )
-                .child(self.glass_join_friend(tag, false, cx))
-        };
-        div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .pt(px(64. - crate::glass::CONTENT_INSET))
-            .child(motion::enter(
-                ElementId::named_usize("home-title", self.switches),
-                1,
-                self.home_title(cx),
-            ))
-            .child(motion::enter(
-                ElementId::named_usize("home-status", self.switches),
-                2,
-                self.played_text(),
-            ))
-            .child(motion::enter(
-                ElementId::named_usize("home-actions", self.switches),
-                3,
-                actions,
-            ))
-    }
-
-    /// The edition switch over the rail, in the top bar where Sunrise's mark was: Sunrise's mark
-    /// and the grass block on a segmented control whose lit pill slides to the selected
-    /// instance's edition. An instance's edition is chosen when it is made, so the other side
-    /// goes to an instance of that edition ([`Self::switch_edition`]).
-    pub(super) fn edition_switch(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        const ID: &str = "edition-switch";
-        let java = self.selected_instance().is_some_and(|i| i.java.is_some());
-        let sunrise = self.sunrise_mark(20.);
-        let grass = match self.grass_mark(20.) {
-            Some(image) => gpui::img(image)
-                .flex_none()
-                .size(px(20.))
-                .rounded(px(5.))
-                .into_any_element(),
-            None => div().into_any_element(),
-        };
-        let origin = ui::PillOrigin::default();
-        let mut seg = div()
-            .id(ID)
-            .relative()
-            .flex()
-            .flex_none()
-            .gap(px(2.))
-            .p(px(3.))
-            .rounded(px(radius::LARGE))
-            .bg(white(0.04))
-            .border_1()
-            .border_color(white(ui::edge::REST))
-            .child(ui::pill_origin(&origin));
-        for (i, (label, mark)) in [
-            ("Sunrise: your Sunrise instances", sunrise),
-            ("Java Edition: your Java instances", grass),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let on = (i == 1) == java;
-            let d = div()
-                .id(SharedString::from(format!("{ID}-{i}")))
-                .relative()
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(30.))
-                .rounded(px(radius::CONTROL - 1.))
-                .child(
-                    div()
-                        .relative()
-                        .opacity(if on { 1. } else { 0.5 })
-                        .child(mark),
-                )
-                .child(ui::pill_probe(ID, i, origin.clone()))
-                .tooltip(ui::tip(tr(label)));
-            let d = if on {
-                d
-            } else {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(white(fill::ROW_HOVER)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.switch_edition(i == 1, cx);
-                        this.go(Page::Play);
-                        cx.notify();
-                    }))
-            };
-            seg = seg.child(crate::keyboard(d, &self.theme));
-        }
-        let pill = ui::sliding_pill(ID, usize::from(java), || {
-            div()
-                .absolute()
-                .top(px(3.))
-                .bottom(px(3.))
-                .rounded(px(radius::CONTROL - 1.))
-                .border_1()
-                .border_color(ui::color(ui::look().accent).opacity(0.6))
-                .bg(ui::color(ui::look().accent).opacity(0.2))
-        });
-        // The pill first, so the marks are drawn over it.
-        seg.children(pill)
-    }
-
     /// An edition tab's click: the instance of that edition (`java`) played last, or, with none,
     /// the New instance dialog on Vanilla or Sunrise.
     pub(super) fn switch_edition(&mut self, java: bool, cx: &mut Context<Self>) {
@@ -233,141 +53,9 @@ impl Launcher {
         }
     }
 
-    /// The instance's icon and its name in Bricolage, 64 px at this width
-    /// (`clamp(2.75rem, 5vw, 4rem)`). Clickable to open the edit dialog (fixes #8689).
-    fn home_title(&mut self, cx: &mut Context<Self>) -> Div {
-        let Some(instance) = self.selected_instance().cloned() else {
-            return div();
-        };
-        let edit = instance.clone();
-        let cut = ui::cut(
-            cx,
-            &self.rooms,
-            "home-title",
-            &instance.name,
-            sunrise_theme::glass::DISPLAY_FONT,
-            44.,
-            FontWeight::SEMIBOLD,
-        );
-        let version = self.version_chip(cx);
-        let whats_new = self.whats_new_link(cx);
-        div()
-            .mt(px(16.))
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .min_w_0()
-            .child(
-                div()
-                    .id("home-instance-icon")
-                    .cursor_pointer()
-                    .hover(|s| s.opacity(0.85))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_instance_sheet(edit.clone(), glass_sheet::SheetTab::General);
-                        cx.notify();
-                    }))
-                    .child(self.glass_instance_icon(&instance, 56.)),
-            )
-            .child(
-                div()
-                    .id("home-title")
-                    .relative()
-                    .min_w_0()
-                    .truncate()
-                    .font_family(sunrise_theme::glass::DISPLAY_FONT)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(44.))
-                    .line_height(px(48.))
-                    .text_color(white(ink::FULL))
-                    // A long name is cut at the header's width: the whole of it on hover.
-                    .when(cut, |d| d.tooltip(ui::tip(instance.name.clone())))
-                    .child(ui::room(&self.rooms, "home-title".into()))
-                    .child(instance.name),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(8.))
-                    .children(version)
-                    .children(whats_new),
-            )
-    }
-
-    /// "You've played for 41 h 06 min! Last played today.", or how long it has run now; then
-    /// the players counts the launcher knows (not in the mockup).
-    fn played_text(&self) -> Div {
-        let line = match (self.client_since, self.selected_instance()) {
-            (Some(since), _) => trf(
-                "Playing for {time} now. Have fun!",
-                &[("time", &instances::play_time(since.elapsed()))],
-            ),
-            (None, Some(i)) => match i.last_played {
-                Some(when) => trf(
-                    "You've played for {time}! Last played {when}.",
-                    &[
-                        ("time", &played_for(i.played)),
-                        ("when", &last_played(when)),
-                    ],
-                ),
-                // Signed out, the button says "Sign in to play": the line says the same.
-                None if self.owner == Some(false)
-                    && !sunrise_launcher::developer_offline::selected() =>
-                {
-                    tr("You haven't played this one yet. Sign in to start.").into()
-                }
-                None => tr("You haven't played this one yet. Press Play to start.").into(),
-            },
-            (None, None) => String::new(),
-        };
-        let link = |id: &'static str, label: String| {
-            div()
-                .id(id)
-                .cursor_pointer()
-                .hover(|s| s.text_color(white(ink::FULL)))
-                .child(label)
-        };
-        let playing = self.playing.map(|count| {
-            let label = format!(
-                "· {}",
-                trf("{count} playing now", &[("count", &thousands(count))])
-            );
-            let url = telemetry::stats_url(&self.links.website);
-            link("playing-now", label).on_click(move |_: &ClickEvent, _, cx| {
-                if let Some(url) = &url {
-                    cx.open_url(url);
-                }
-            })
-        });
-        // A local unsigned developer base is said as such, with its trust warning.
-        let developer = self
-            .selected_instance()
-            .and_then(|i| self.version_of(i))
-            .and_then(|tag| {
-                sunrise_launcher::developer_install::instance_status(tag, backend::is_prepared(tag))
-            });
-        // A soft dark scrim keeps the line readable over the brightest sky (a low sun, snow).
-        ui::text(15., FontWeight::NORMAL, ink::STRONG)
-            .mt(px(10.))
-            .ml(px(-10.))
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(radius::CONTROL))
-            .bg(gpui::black().opacity(0.28))
-            .self_start()
-            .flex()
-            .flex_wrap()
-            .gap(px(4.))
-            .child(line)
-            .children(playing)
-            .children(developer.map(|status| div().w_full().text_color(ui::warn()).child(status)))
-    }
-
     /// Play and its ⋯ menu (`PlayGroup`): Stop while the game runs, Update when the launcher's
     /// version has a newer one, the progress while preparing, updating or starting.
-    fn play_group(&mut self, tag: &str, ready: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn play_group(&mut self, tag: &str, ready: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let accent = ui::color(self.look.accent);
         let running = self.client.is_some();
@@ -852,25 +540,10 @@ impl Launcher {
         wrap
     }
 
-    /// "What's new" beside the version button: the Versions page with the played build's notes
-    /// open.
-    fn whats_new_link(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let tag = self.whats_new_tag()?;
-        Some(
-            hero_button("home-whats-new", "sparkles", tr("What's new").into()).on_click(
-                cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.whats_new_open = Some(std::iter::once(tag.clone()).collect());
-                    this.go(Page::Versions);
-                    cx.notify();
-                }),
-            ),
-        )
-    }
-
     /// What the instance plays, at the title's right: "Latest version", "Nov 11 update",
     /// "26.3 · Fabric 0.17". Its versions are in instance settings, which a click opens on
     /// Installation.
-    fn version_chip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn version_chip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let instance = self.selected_instance()?.clone();
         let label = self.sheet_version(&instance);
         Some(
@@ -885,7 +558,7 @@ impl Launcher {
 
     /// The folder button and its ⋯ (`FolderGroup`), which shows under the pointer or while its
     /// menu is open: the instance's folder, its screenshots, and (Sunrise) the Minecraft folder.
-    fn folder_group(&self, sunrise: bool, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn folder_group(&self, sunrise: bool, cx: &mut Context<Self>) -> Option<Div> {
         let t = self.theme;
         let instance = self.selected_instance()?;
         let home = instance.home.clone();
@@ -1041,7 +714,7 @@ impl Launcher {
 
     /// The invite code field (`JoinFriend`): 340 wide (`wide`), else what its row leaves, with a
     /// shorter placeholder; the icon inside on the left, Join inside on the right.
-    fn glass_join_friend(&self, tag: &str, wide: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn glass_join_friend(&self, tag: &str, wide: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let focused = self.friend_focused;
         let join_label = tr("Join");
@@ -1195,16 +868,6 @@ fn edition_pick(
         .max_by_key(|i| i.last_played)
 }
 
-/// How long an instance was played, as the mockup writes it: "41 hours", "1 hour", "25 min".
-fn played_for(played: Duration) -> String {
-    match played.as_secs() / 60 {
-        0 => tr("under a minute").into(),
-        m @ 1..=59 => trf("{count} min", &[("count", &m.to_string())]),
-        60..=119 => tr("1 hour").into(),
-        m => trf("{count} hours", &[("count", &(m / 60).to_string())]),
-    }
-}
-
 /// When something was last played, as the mockup writes it: "just now", "25 min ago", "2 hours
 /// ago" within a day, then "yesterday", then the day ("Oct 31").
 pub(super) fn last_played(when: std::time::SystemTime) -> String {
@@ -1287,14 +950,6 @@ mod tests {
         ];
         assert_eq!(edition_pick(&fresh, true).map(|i| i.id.as_str()), Some("a"));
         assert!(edition_pick(&fresh, false).is_none());
-    }
-
-    #[test]
-    fn played_time_reads_as_the_mockup_writes_it() {
-        let h = |s: u64| played_for(Duration::from_secs(s));
-        assert_eq!(h(148_000), "41 hours");
-        assert_eq!(h(5_400), "1 hour");
-        assert_eq!(h(1_500), "25 min");
     }
 
     #[test]

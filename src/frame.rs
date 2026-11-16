@@ -3,7 +3,7 @@
 //! pages in a glass tab strip, the player, Microsoft sign-in and Settings; and the menus they open.
 //! Dark appearance only for now (`docs/design-system.md`, "Glass").
 use super::*;
-use crate::glass_ui::{self as ui, white, Tone};
+use crate::glass_ui::{self as ui, mono, white, Tone};
 use crate::instances_page::java_line;
 use gpui::{anchored, canvas, deferred, point};
 use std::cell::RefCell;
@@ -185,7 +185,7 @@ impl Launcher {
 
     /// A sidebar row's state line and its dot (the mockup's `statusOf`), from what the launcher
     /// knows of the instance.
-    fn row_state(&self, i: &Instance) -> (Tone, String) {
+    pub(super) fn row_state(&self, i: &Instance) -> (Tone, String) {
         let running =
             self.client.is_some() && self.selected_instance().is_some_and(|s| s.id == i.id);
         if running {
@@ -326,6 +326,8 @@ impl Launcher {
                     )
                     .on_click(cx.listener(
                         move |this, event: &ClickEvent, _, cx| {
+                            // The row under the ⋮ would otherwise take the click and go to Play.
+                            cx.stop_propagation();
                             if this.closed_by_this_press(event) {
                                 return;
                             }
@@ -506,7 +508,14 @@ impl Launcher {
             .sidebar_list()
             .map(<[_]>::to_vec)
             .unwrap_or_else(|| self.side_servers.clone());
-        if !servers.is_empty() {
+        list = list.child(
+            mono(12., ink::NOTE)
+                .px(px(6.))
+                .pt(px(28.))
+                .pb(px(6.))
+                .child(tr("Servers").to_uppercase()),
+        );
+        if servers.is_empty() {
             list = list.child(
                 div()
                     .h(px(22.))
@@ -536,7 +545,7 @@ impl Launcher {
                             .items_center()
                             .justify_center()
                             .size(px(38.))
-                            .rounded(px(radius::CONTROL))
+                            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                             .bg(white(fill::BUTTON))
                             .child(ui::icon("computer-terminal-01", 18., white(ink::STRONG))),
                     )
@@ -819,8 +828,7 @@ impl Launcher {
             div()
                 .flex()
                 .flex_col()
-                .mb(px(6.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(white(fill::FIELD))
                 .border_1()
                 .border_color(white(ui::edge::REST))
@@ -918,236 +926,8 @@ impl Launcher {
         }
     }
 
-    /// The glass top bar, across the window above the rail and the page: the edition switch over
-    /// the rail, the pages, then search (the palette), the last native build's log and the player.
-    /// Launcher settings live in the rail.
-    pub(super) fn glass_topbar(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let wide = self.window_width >= crate::glass_home::TOP_BAR_WIDE;
-        let compact = self.window_width < crate::glass_home::COMPACT;
-        // Near the window's smallest width (960) the page tabs need all the room: the player is
-        // only a face and Sign in only its logo, each with a tooltip.
-        let tight = self.window_width < 1000.;
-        let mark = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .w(px(RAIL))
-            .child(self.edition_switch(cx));
-        let mut tabs = div()
-            .flex()
-            .items_center()
-            .gap(px(if compact { 2. } else { 4. }))
-            .min_w_0();
-        for (page, label, _) in Page::in_top_bar() {
-            let mut item = ui::nav_tab(format!("nav-{label}"), tr(label), self.page == page, &t);
-            if compact {
-                item = item.px(px(8.));
-            }
-            tabs = tabs.child(
-                item.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.go(page);
-                    cx.notify();
-                })),
-            );
-        }
-        let strip = div()
-            .flex()
-            .items_center()
-            .min_w_0()
-            .when(wide, |d| d.flex_none())
-            .when(!wide, |d| d.flex_shrink(1.).overflow_hidden())
-            .child(tabs.id("nav-pages").relative().when(!wide, |d| {
-                d.overflow_x_scroll()
-                    .on_scroll(|_, _, cx| cx.stop_propagation())
-            }));
-
-        let (name, how) = self.who_plays();
-        let face = self.accounts.selected().map(|a| a.uuid.clone());
-        let open = self.account_menu;
-        // Signed out, the chip is only the face: the Sign in with Microsoft button beside it
-        // says it once, and the page tabs keep their room.
-        let signed_in = face.is_some() && !tight;
-        let chip =
-            div()
-                .id("account")
-                .relative()
-                .when(tight, |d| d.tooltip(ui::tip(name.clone())))
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .h(px(44.))
-                .pl(px(8.))
-                .pr(px(12.))
-                .rounded(px(radius::ROW))
-                .bg(white(if open { fill::ACTIVE } else { fill::ROW_HOVER }))
-                .when(!open, |d| d.hover(|s| s.bg(white(0.09))))
-                .cursor_pointer()
-                .child(
-                    div().size(px(26.)).rounded(px(7.)).overflow_hidden().child(
-                        self.profile_heads
-                            .draw(face.as_deref(), 26., self.scale, &t),
-                    ),
-                )
-                .children(signed_in.then(|| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .max_w(px(if compact { 100. } else { 150. }))
-                        .child(
-                            ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
-                                .line_height(px(17.))
-                                .truncate()
-                                .child(name),
-                        )
-                        .children((!compact).then(|| {
-                            ui::text(12., FontWeight::NORMAL, ink::QUIET)
-                                .line_height(px(15.))
-                                .child(how)
-                        }))
-                }))
-                .child(
-                    ui::icon("arrow-down-01", 16., white(ink::FAINT))
-                        .ml(px(4.))
-                        .with_transformation(gpui::Transformation::rotate(gpui::radians(
-                            if open { std::f32::consts::PI } else { 0. },
-                        ))),
-                )
-                .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
-                    if this.closed_by_this_press(event) {
-                        return;
-                    }
-                    this.account_menu = !this.account_menu;
-                    if this.account_menu {
-                        this.accounts = Accounts::load();
-                        this.load_profile_heads();
-                    }
-                    cx.notify();
-                }));
-        let account = div()
-            .relative()
-            .child(keyboard(chip, &t))
-            .children(self.glass_account_menu(cx));
-
-        // Signing in with Microsoft, while nobody is: the mockup's button.
-        let sign_in = self.accounts.selected().is_none().then(|| {
-            keyboard(
-                div()
-                    .id("topbar-sign-in")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(44.))
-                    .px(px(if tight { 14. } else { 16. }))
-                    .rounded(px(radius::ROW))
-                    .bg(white(fill::BUTTON))
-                    .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(microsoft::logo(16.))
-                    .when(!tight, |d| {
-                        d.child(
-                            ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                                .child(tr("Sign in with Microsoft")),
-                        )
-                    })
-                    .when(tight, |d| d.tooltip(ui::tip(tr("Sign in with Microsoft"))))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
-                        cx.notify();
-                    })),
-                &t,
-            )
-        });
-        // Search: the palette (⌘K or Ctrl+K anywhere), as a field-shaped button.
-        let sid = SharedString::from("topbar-search");
-        let key: &str = if cfg!(target_os = "macos") {
-            "⌘K"
-        } else {
-            tr("Ctrl K")
-        };
-        let search = keyboard(
-            track_hover(
-                div()
-                    .id(sid.clone())
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(38.))
-                    .w(px(if compact { 38. } else { 230. }))
-                    .when(compact, |d| d.justify_center())
-                    .when(!compact, |d| d.px(px(12.)))
-                    .rounded(px(radius::CONTROL))
-                    .bg(white(fill::FIELD))
-                    .border_1()
-                    .border_color(white(ui::edge::REST))
-                    .cursor_pointer()
-                    .child(ui::hover_edge(&sid, radius::CONTROL, fill::HOVER, true))
-                    .child(ui::icon("search-01", 16., white(ink::QUIET)).relative())
-                    .when(!compact, |d| {
-                        d.child(
-                            ui::text(13.5, FontWeight::NORMAL, ink::QUIET)
-                                .relative()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(tr("Search…")),
-                        )
-                        .child(
-                            ui::text(11.5, FontWeight::MEDIUM, ink::DIM)
-                                .relative()
-                                .flex()
-                                .flex_none()
-                                .items_center()
-                                .h(px(20.))
-                                .px(px(6.))
-                                .rounded(px(5.))
-                                .border_1()
-                                .border_color(white(ui::edge::REST))
-                                .child(key.to_string()),
-                        )
-                    })
-                    .when(compact, |d| d.tooltip(ui::tip(tr("Search…"))))
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.palette_toggle(window, cx);
-                        cx.notify();
-                    })),
-                sid,
-            ),
-            &t,
-        );
-        // The build log isn't a top-bar button: it pushed the pages off the bar during a build.
-        // It opens from the build card and from each mod's menu.
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(12.))
-            .h(px(64.))
-            .pl(px(MARGIN))
-            .pr(px(MARGIN + 8.))
-            .pt(px(4.))
-            .child(mark)
-            .child(strip)
-            .children(self.toast_in_topbar())
-            .child(
-                div()
-                    .ml_auto()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(search)
-                    .child(account)
-                    .children(sign_in),
-            )
-    }
-
     /// The menu under the player (`Switch player`): everyone who can play, then Manage accounts.
-    fn glass_account_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    pub(super) fn glass_account_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if !self.account_menu {
             return None;
         }
@@ -1175,14 +955,14 @@ impl Launcher {
                         .gap(px(12.))
                         .h(px(48.))
                         .px(px(10.))
-                        .rounded(px(radius::CONTROL))
+                        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                         .cursor_pointer()
                         .child(hover_layer(&id, white(0.07), radius::CONTROL, 0.))
                         .child(
                             div()
                                 .relative()
                                 .size(px(30.))
-                                .rounded(px(8.))
+                                .rounded(px(crate::glass_ui::rad(8.)))
                                 .overflow_hidden()
                                 .child(self.profile_heads.draw(
                                     Some(who.as_str()),

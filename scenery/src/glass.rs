@@ -20,6 +20,43 @@ use sunrise_theme::night::Night;
 
 /// Logical pixels per texel of a plate's piece of backdrop.
 const PIECE: f32 = 4.;
+/// The Outline look's flat plate, under its 1 px line.
+pub const PANEL: u32 = 0x15131c;
+
+thread_local! {
+    /// The flat plate's colour for the theme and appearance shown ([`set_panel`]).
+    static OUTLINE_PANEL: Cell<u32> = const { Cell::new(PANEL) };
+    /// Whether the pages being built draw the Outline look ([`set_outline`]).
+    static OUTLINE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Set with the launcher's look as each frame's pages start being built.
+pub fn set_outline(on: bool) {
+    OUTLINE.set(on);
+}
+
+fn outline() -> bool {
+    OUTLINE.get()
+}
+
+/// A corner: square in the Outline look.
+fn rad(r: f32) -> f32 {
+    if outline() {
+        0.
+    } else {
+        r
+    }
+}
+
+/// Set as each frame starts: the theme's card colour, so plates match its sky.
+pub fn set_panel(c: u32) {
+    OUTLINE_PANEL.set(c);
+}
+
+/// The Outline look's plate colour now.
+pub fn panel() -> u32 {
+    OUTLINE_PANEL.get()
+}
 
 /// A plate's kind: `.hzl-glass` (panels, the sidebar, dialogs) or `.hzl-float` (menus and
 /// popovers: twice the blur, darker).
@@ -305,6 +342,15 @@ pub fn begin_build(window: &mut Window) {
 /// A plate's backdrop with its corners: put it first inside a `relative` element, the content
 /// after it. In performance mode it is a solid colour: no backdrop, no glass.
 pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
+    if outline() {
+        return div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(rgb(panel()).opacity(if kind == Kind::Float { 0.96 } else { 0.78 }))
+            .into_any_element();
+    }
     // The light look's plates are flat white with no blur: a plain fill draws them exactly (its
     // image pieces came out missing, the sky showing through the panels).
     let plain = PIECES.with_borrow(|p| p.solid().then(|| solid_fill(p, kind)));
@@ -332,6 +378,9 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
 /// A plate's 1 px edge: a theme's own (Hypr Neon's neon), else a faint light line, so a plate
 /// reads as a surface rather than as fog over the scene.
 fn edge() -> gpui::Hsla {
+    if outline() {
+        return gpui::white().opacity(0.12);
+    }
     PIECES.with_borrow(|p| match p.edge {
         Some(edge) if !p.light => rgb(edge).into(),
         _ if p.light => gpui::Hsla::from(rgb(sunrise_theme::glass::ON_LIGHT)).opacity(0.10),
@@ -343,7 +392,7 @@ fn edge() -> gpui::Hsla {
 pub fn plate(radius: f32) -> Div {
     div()
         .relative()
-        .rounded(px(radius))
+        .rounded(px(rad(radius)))
         .border_1()
         .border_color(edge())
         .child(backdrop(Kind::Glass, radius))
@@ -353,7 +402,7 @@ pub fn plate(radius: f32) -> Div {
 pub fn float(radius: f32) -> Div {
     div()
         .relative()
-        .rounded(px(radius))
+        .rounded(px(rad(radius)))
         .border_1()
         .border_color(edge())
         .child(backdrop(Kind::Float, radius))
@@ -502,7 +551,19 @@ fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &
 /// inward curve where the strip's right edge meets the panel's top. `strip` is the strip's size,
 /// recorded by [`measure`] inside it. Close to the panel's own width, the panel is one plate
 /// round at 20, as the mockup does.
-pub fn tabbed(strip: Rc<Cell<Option<Size<Pixels>>>>) -> impl IntoElement {
+pub fn tabbed(strip: Rc<Cell<Option<Size<Pixels>>>>) -> AnyElement {
+    // The Outline look: one flat plate under its line, strip and panel alike.
+    if outline() {
+        return div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(rgb(panel()).opacity(0.78))
+            .border_1()
+            .border_color(edge())
+            .into_any_element();
+    }
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
@@ -542,6 +603,7 @@ pub fn tabbed(strip: Rc<Cell<Option<Size<Pixels>>>>) -> impl IntoElement {
     .top_0()
     .left_0()
     .size_full()
+    .into_any_element()
 }
 
 /// Records the size of the element it sits in (absolute, filling it) for [`tabbed`].

@@ -120,7 +120,7 @@ pub fn setting_row(
         .gap_y(px(12.))
         .px(px(14.))
         .py(px(13.))
-        .rounded(px(12.))
+        .rounded(px(rad(12.)))
         .border_1()
         .border_color(gpui::transparent_black())
         .relative()
@@ -160,7 +160,7 @@ pub fn setting_row_stacked(
         .gap(px(16.))
         .px(px(14.))
         .py(px(13.))
-        .rounded(px(12.))
+        .rounded(px(rad(12.)))
         .border_1()
         .border_color(gpui::transparent_black())
         .relative()
@@ -194,7 +194,7 @@ pub fn wide_field(field: Stateful<Div>, focused: bool) -> Stateful<Div> {
         .h(px(44.))
         .px(px(16.))
         .border_0()
-        .rounded(px(radius::ROW))
+        .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .bg(white(if focused { 0.11 } else { 0.07 }))
         .font_family(sunrise_theme::glass::FONT)
         .text_size(px(14.))
@@ -211,7 +211,7 @@ pub fn focus_ring(radius: f32) -> Div {
         .top_0()
         .left_0()
         .size_full()
-        .rounded(px(radius))
+        .rounded(px(crate::glass_ui::rad(radius)))
         .border_2()
         .border_color(color(look().accent_soft))
 }
@@ -225,6 +225,30 @@ pub fn on() -> bool {
 pub fn set_on(on: bool) {
     ON.set(on);
     BACKS.set(0);
+    crate::glass::set_outline(on);
+}
+
+/// A corner of the glass parts: square, as the Outline look draws them (`docs/design-system.md`).
+pub fn rad(r: f32) -> f32 {
+    if on() {
+        0.
+    } else {
+        r
+    }
+}
+
+/// The Outline look's 1 px edge.
+pub fn line() -> Hsla {
+    white(0.12)
+}
+
+/// A label in the Outline look: Geist Mono, upper case, spaced out.
+pub fn mono(size: f32, a: f32) -> Div {
+    div()
+        .font_family(crate::theme::MONO)
+        .text_size(px(size))
+        .line_height(px(size * 1.4))
+        .text_color(white(a))
 }
 
 /// Set as each frame's pages start being built: the colours for the player's accent.
@@ -351,7 +375,14 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
 
 /// A layer filling its parent, round at `r`, for hover fills.
 fn layer(r: f32) -> impl Fn() -> Div {
-    move || div().absolute().top_0().left_0().size_full().rounded(px(r))
+    move || {
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .rounded(px(crate::glass_ui::rad(r)))
+    }
 }
 
 /// `id`'s fill eased between `from` (white at that opacity) and `to` while hovered, as the
@@ -381,7 +412,7 @@ pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -
                 .left(px(inset))
                 .right(px(inset))
                 .bottom(px(inset))
-                .rounded(px(r))
+                .rounded(px(rad(r)))
         },
         move |d, t| {
             d.bg(white(fill * t))
@@ -417,7 +448,7 @@ fn hover_back(inset: f32, r: f32, paint: impl Fn(Div, f32) -> Div + 'static) -> 
             .left(px(inset))
             .right(px(inset))
             .bottom(px(inset))
-            .rounded(px(r))
+            .rounded(px(rad(r)))
             .with_animation(
                 key,
                 crate::motion::eased(sunrise_theme::QUICK),
@@ -517,7 +548,7 @@ pub fn card(id: impl Into<SharedString>, r: f32, t: &Theme) -> Stateful<Div> {
             div()
                 .id(id.clone())
                 .relative()
-                .rounded(px(r))
+                .rounded(px(rad(r)))
                 .bg(white(0.035))
                 .border_1()
                 .border_color(white(edge::REST + 0.03))
@@ -640,7 +671,7 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
         .w_full()
         .p(px(8.))
         .pr(px(pr))
-        .rounded(px(radius::ROW))
+        .rounded(px(rad(radius::ROW)))
         .border_1()
         .cursor_pointer();
     // The one shown: tinted with the accent and outlined in it.
@@ -711,7 +742,7 @@ pub fn icon_button(
         .items_center()
         .justify_center()
         .size(px(size))
-        .rounded(px(r))
+        .rounded(px(crate::glass_ui::rad(r)))
         .cursor_pointer();
     let d = if active {
         d.bg(white(fill::ACTIVE))
@@ -745,7 +776,7 @@ pub fn nav_tab(
         .absolute()
         .bottom(px(1.))
         .h(px(2.))
-        .rounded(px(2.))
+        .rounded(px(rad(2.)))
         .bg(grad(90., color(look.accent_soft), color(look.accent)));
     let bar = if open {
         bar.left(px(12.))
@@ -767,7 +798,7 @@ pub fn nav_tab(
                     .absolute()
                     .bottom(px(1.))
                     .h(px(2.))
-                    .rounded(px(2.))
+                    .rounded(px(rad(2.)))
                     .bg(grad(90., color(look.accent_soft), color(look.accent)))
             },
             move |d, t| {
@@ -789,7 +820,7 @@ pub fn nav_tab(
                 .items_center()
                 .h(px(36.))
                 .px(px(13.))
-                .rounded(px(radius::CONTROL))
+                .rounded(px(rad(radius::CONTROL)))
                 .cursor_pointer()
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(14.5))
@@ -869,7 +900,7 @@ pub fn menu_row(
         .h(px(40.))
         .w_full()
         .px(px(MENU_ROW_PADDING))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
         .child(hover_fade(&id, layer(radius::CONTROL), move |d, a| {
             d.bg(hover_color.opacity(hover_color.a * a))
@@ -886,11 +917,10 @@ pub fn menu_row(
     keyboard(track_hover(d, id), t)
 }
 
-/// A popover (`POPOVER`): the cards' glass (the mockup's darker `hzl-float` read as a different
-/// material beside them), round at 16 with 6 px around its rows, a shadow setting it above the
-/// card under it.
+/// A popover (`POPOVER`): a menu's near-opaque plate (the page's plates let the scene through),
+/// 6 px around its rows, a shadow setting it above the card under it.
 pub fn popover(width: f32) -> Div {
-    crate::glass::plate(radius::POPOVER)
+    crate::glass::float(radius::POPOVER)
         .shadow_lg()
         .w(px(width))
         .p(px(POPOVER_PADDING))
@@ -920,7 +950,7 @@ pub fn dialog_plate(radius: f32) -> Div {
             .top_0()
             .left_0()
             .size_full()
-            .rounded(px(radius))
+            .rounded(px(crate::glass_ui::rad(radius)))
             .bg(c)
     };
     crate::glass::plate(radius)
@@ -953,7 +983,7 @@ pub fn solid(
             .min_h(px(h))
             .py(px(4.))
             .px(px(16.))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
             .text_center()
             .bg(paper())
             .border_1()
@@ -978,35 +1008,6 @@ pub fn solid(
     )
 }
 
-/// A big square button with one icon (`BIG_ICON`): 56 px, white at 8 %, 13 % under the pointer;
-/// the glyph white at 80 %, white under the pointer.
-pub fn big_icon(id: impl Into<SharedString>, name: &'static str, t: &Theme) -> Stateful<Div> {
-    let id = id.into();
-    let group = SharedString::from(format!("{id}-group"));
-    let glyph = icon(name, 21., white(ink::STRONG))
-        .group_hover(group.clone(), |s| s.text_color(white(ink::FULL)));
-    keyboard(
-        div()
-            .id(id)
-            .group(group)
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(56.))
-            .rounded(px(radius::LARGE))
-            .bg(white(fill::BUTTON))
-            .border_1()
-            .border_color(white(edge::REST))
-            .active(|s| s.bg(white(0.18)))
-            .cursor_pointer()
-            .child(back_edge(radius::LARGE, 0.05, true))
-            .child(glyph.relative()),
-        t,
-    )
-}
-
 /// A menu row with a note under its label (`MENU_ITEM`): 14 px medium over 12 px at 55 %, white
 /// at 7 % under the pointer; at 40 % when `locked`. A mark (a tick) can follow on the right.
 pub fn menu_item(
@@ -1027,7 +1028,7 @@ pub fn menu_item(
         .w_full()
         .px(px(12.))
         .py(px(8.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .when(!locked, |d| {
             d.cursor_pointer()
                 .child(hover_fade(&id, layer(radius::CONTROL), |d, a| {
@@ -1077,7 +1078,7 @@ pub fn pick_row(
         .h(px(36.))
         .w_full()
         .px(px(12.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
         .child(hover_fade(&id, layer(radius::CONTROL), |d, a| {
             d.bg(white(0.07 * a))
@@ -1121,7 +1122,7 @@ pub fn quiet_icon(
         .gap(px(8.))
         .h(px(h))
         .px(px(14.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(rad(radius::CONTROL)))
         .bg(white(fill::BUTTON))
         .border_1()
         .border_color(white(edge::REST))
@@ -1167,7 +1168,7 @@ pub fn list_row(
         .w_full()
         .px(px(12.))
         .py(px(10.))
-        .rounded(px(radius::ROW))
+        .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .child(fill)
         .on_hover(move |hovered, window, cx| {
             note_hover(&key, *hovered, window);
@@ -1254,7 +1255,7 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         .h(px(44.))
         .px(px(16.))
         .overflow_hidden()
-        .rounded(px(radius::ROW))
+        .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .bg(bg)
         .border_1()
         .border_color(if invalid {
@@ -1320,7 +1321,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         .gap(px(8.))
         .h(px(36.))
         .px(px(14.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
         .font_family(sunrise_theme::glass::FONT)
         .text_size(px(14.))
@@ -1517,7 +1518,7 @@ pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Sta
                 .gap(px(7.))
                 .h(px(h))
                 .px(px(12.))
-                .rounded(px(radius::CONTROL))
+                .rounded(px(rad(radius::CONTROL)))
                 .cursor_pointer()
                 .font_family(sunrise_theme::glass::FONT)
                 .font_weight(FontWeight::MEDIUM)
@@ -1555,7 +1556,7 @@ pub fn pill_strip(
             .absolute()
             .top(px(top))
             .h(px(h))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(rad(radius::CONTROL)))
             .bg(grad(180., white(0.16), white(0.07)))
             .border_1()
             .border_color(white(edge::STRONG))
@@ -1598,7 +1599,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
         .flex_none()
         .gap(px(2.))
         .p(px(3.))
-        .rounded(px(radius::LARGE))
+        .rounded(px(rad(radius::LARGE)))
         .bg(white(0.04))
         .border_1()
         .border_color(white(edge::REST))
@@ -1617,7 +1618,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .justify_center()
             .h(px(32.))
             .px(px(12.))
-            .rounded(px(radius::CONTROL - 1.))
+            .rounded(px(rad(radius::CONTROL - 1.)))
             .cursor_pointer()
             .font_family(sunrise_theme::glass::FONT)
             .text_size(px(13.5))
@@ -1639,7 +1640,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .absolute()
             .top(px(3.))
             .bottom(px(3.))
-            .rounded(px(radius::CONTROL - 1.))
+            .rounded(px(rad(radius::CONTROL - 1.)))
             .border_1()
             .border_color(color(look().accent).opacity(0.6))
             .bg(color(look().accent).opacity(0.2))
@@ -1708,7 +1709,7 @@ impl Render for Tip {
             .max_w(px(360.))
             .px(px(10.))
             .py(px(6.))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(rad(radius::CONTROL)))
             .bg(rgb(look().base))
             .border_1()
             .border_color(white(0.12))
