@@ -44,7 +44,7 @@ output shapes are not yet described in the reference.
 ## Not there yet
 
 - **A Sunrise modpack manifest.** A pack made for Sunrise (not a port of a Java pack) needs its own file: the pack's
-  id, name and version; the Sunrise API lines and the release line it needs; its `.hmod` mods (id, version, SHA-256,
+  id, name and version; the Sunrise API lines and the release line it needs; its `.smod` mods (id, version, SHA-256,
   where to download it, client, server or both); resource packs; default settings; and whether it has a server side.
   One manifest serves the launcher, `sunrise-server` (a server installs the server side of the same pack) and the mod
   browser. Designed from what a pack maker does, versioned per [stability.md](stability.md), with a schema test.
