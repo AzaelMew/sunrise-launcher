@@ -18,6 +18,9 @@ impl Render for Launcher {
         }
         glass_ui::set_on(self.theme.glass);
         glass::set_panel(self.theme.night.card);
+        let corners = f32::from(self.settings.corners) / 100.;
+        glass_ui::set_corners(corners);
+        glass::set_corners(corners);
         glass_ui::set_light(!self.theme.dark);
         glass::set_light(!self.theme.dark);
         self.look = self.theme.look;

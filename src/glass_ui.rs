@@ -16,6 +16,8 @@ use sunrise_theme::glass::{fill, ink, radius, Glass};
 thread_local! {
     /// Whether this frame's pages draw the glass look (the dark appearance).
     static ON: Cell<bool> = const { Cell::new(false) };
+    /// How round its corners are ([`set_corners`]).
+    static CORNERS: Cell<f32> = const { Cell::new(0.) };
     /// The look's colours for the player's accent.
     static LOOK: Cell<Glass> = Cell::new(Glass::default_look());
     /// Whether the rows being built go in a Settings card ([`flat_rows`]).
@@ -229,10 +231,16 @@ pub fn set_on(on: bool) {
 /// A corner of the glass parts: square, as the Outline look draws them (`docs/design-system.md`).
 pub fn rad(r: f32) -> f32 {
     if on() {
-        0.
+        r * CORNERS.get()
     } else {
         r
     }
+}
+
+/// Set as each frame starts: how round the glass look's corners are, a share (0 to 1) of each
+/// one's designed radius (Settings > Appearance > Corners).
+pub fn set_corners(share: f32) {
+    CORNERS.set(share);
 }
 
 /// The Outline look's 1 px edge.
@@ -545,8 +553,9 @@ pub mod edge {
     pub const STRONG: f32 = 0.30;
 }
 
-/// `id`'s hover layer: a white fill at `fill` and an outline at [`edge::HOVER`], both eased in
-/// and out. `bordered`: the element has its own 1 px outline, which the layer's covers.
+/// `id`'s hover layer: a white fill at `fill`, eased in and out (no outline: a line flashing round
+/// a row read as a glitch, not a hover). `bordered`: the element has its own 1 px outline, which
+/// the layer reaches over.
 pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -> gpui::AnyElement {
     let inset = if bordered { -1. } else { 0. };
     hover_fade(
@@ -560,11 +569,21 @@ pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -
                 .bottom(px(inset))
                 .rounded(px(rad(r)))
         },
-        move |d, t| {
-            d.bg(white(fill * t))
-                .border_1()
-                .border_color(white(edge::HOVER * t))
-        },
+        move |d, t| d.bg(white(fill * t)),
+    )
+}
+
+/// How far a row's content slides along while the pointer is on it.
+const NUDGE: f32 = 3.;
+
+/// A row's content sliding [`NUDGE`] px along under the pointer, eased in and out: put it first
+/// in a row whose children are `gap` px apart (it takes no gap of its own). Nothing at rest.
+pub fn hover_nudge(id: &SharedString, gap: f32) -> AnyElement {
+    crate::hover_ease(
+        id,
+        || div().flex_none().h(px(1.)),
+        move |d, t| d.w(px(NUDGE * t)).mr(px(-gap)),
+        sunrise_theme::QUICK,
     )
 }
 
@@ -749,6 +768,7 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
     } else {
         d.child(hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
     };
+    let d = d.child(hover_nudge(&id, 12.));
     keyboard(track_hover(d, id), t)
 }
 
@@ -806,7 +826,8 @@ pub fn icon_button(
         .justify_center()
         .size(px(size))
         .rounded(px(crate::glass_ui::rad(r)))
-        .cursor_pointer();
+        .cursor_pointer()
+        .active(|s| s.top(px(1.)));
     let d = if active {
         d.bg(white(fill::ACTIVE))
             .border_1()
@@ -1180,7 +1201,7 @@ pub fn quiet_icon(
         .bg(white(fill::BUTTON))
         .border_1()
         .border_color(white(edge::REST))
-        .active(|s| s.bg(white(0.18)))
+        .active(|s| s.bg(white(0.18)).top(px(1.)))
         .cursor_pointer()
         .font_family(sunrise_theme::glass::FONT)
         .text_size(px(14.))
@@ -1390,7 +1411,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             };
             d.text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
-                .active(|s| s.opacity(0.92))
+                .active(|s| s.opacity(0.92).top(px(1.)))
                 .child(pixel_fill(c, TEXTURE_BUTTON))
         }
         Kind::Secondary => d
@@ -1398,12 +1419,12 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             .border_1()
             .border_color(white(edge::REST))
             .text_color(white(ink::FULL))
-            .active(|s| s.bg(white(0.18)))
+            .active(|s| s.bg(white(0.18)).top(px(1.)))
             .child(hover_edge(&id, radius::CONTROL, 0.06, true)),
         Kind::Ghost => d
             .text_color(white(ink::BODY))
             .hover(|s| s.text_color(white(ink::FULL)))
-            .active(|s| s.bg(white(0.1)))
+            .active(|s| s.bg(white(0.1)).top(px(1.)))
             .child(hover_edge(&id, radius::CONTROL, 0.06, false)),
     };
     keyboard(track_hover(d.child(div().relative().child(label)), id), t)

@@ -45,6 +45,7 @@ const INDEX: [&[&str]; 10] = [
         "Blur",
         "Performance mode",
         "Motion",
+        "Corners",
         "Home background",
         "Reset the launcher's look",
         "Dark",
@@ -652,6 +653,7 @@ impl Launcher {
             .child(self.glass_accent_row(cx))
             .child(self.performance_row(cx))
             .child(self.motion_row(cx))
+            .child(self.corners_row(cx))
             .child(self.home_background_row(cx))
             .child(self.reset_look_row(cx));
         let launcher = section(0)
@@ -865,6 +867,7 @@ pub(super) fn nav_item(
             .child(ui::hover_edge(&id, radius::ROW, 0.06, true))
     };
     let d = d
+        .child(ui::hover_nudge(&id, if wide { 12. } else { 8. }))
         .child(
             ui::icon(icon, 17., white(if on { ink::FULL } else { 0.65 }))
                 .relative()

@@ -278,6 +278,24 @@ impl Launcher {
                         },
                     )),
                 );
+            // The ⋮ stays out of the way until its row is under the pointer: it fades and slides
+            // in then. Shown outright while the pointer is on it (the row goes dark under it),
+            // its menu is open, or the keyboard is moving through the rows.
+            let row_id = SharedString::from(format!("side-instance-{}", i.id));
+            let more_id = SharedString::from(format!("side-more-{}", i.id));
+            let shown = menu_open
+                || crate::hover_is(&more_id)
+                || KEYBOARD.load(std::sync::atomic::Ordering::Relaxed);
+            let more = if shown {
+                more.into_any_element()
+            } else {
+                crate::hover_ease(
+                    &row_id,
+                    move || more,
+                    |d, t| d.opacity(t).right(px(2. + 4. * t)),
+                    sunrise_theme::QUICK,
+                )
+            };
             list = list.child(crate::motion::enter(
                 ElementId::named_usize(format!("side-enter-{}", i.id), 0),
                 order,

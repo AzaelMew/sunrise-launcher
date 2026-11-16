@@ -192,6 +192,36 @@ impl Launcher {
         )
     }
 
+    /// How round the look's corners are: square by default, or a share of each one's radius.
+    pub(super) fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let this = cx.entity().downgrade();
+        let picker = segments(
+            "corners",
+            &[(0, "Square"), (25, "Slight"), (50, "Soft"), (100, "Round")],
+            self.settings.corners,
+            &t,
+            move |choice, _, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    this.settings.corners = choice;
+                    this.save_settings();
+                    cx.notify();
+                });
+            },
+        );
+        index_row(
+            0,
+            tr("Corners"),
+            Some(
+                div()
+                    .child(tr("How round buttons, cards and dialogs are."))
+                    .into_any_element(),
+            ),
+            Some(picker.into_any_element()),
+            &t,
+        )
+    }
+
     /// The picture behind Home, if the player keeps one.
     pub(super) fn home_background(&self) -> Option<PathBuf> {
         themes::background(&backend::data_dir(), self.settings.background.as_deref())

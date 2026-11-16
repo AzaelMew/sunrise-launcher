@@ -22,6 +22,8 @@ const PIECE: f32 = 4.;
 pub const PANEL: u32 = 0x171b2e;
 
 thread_local! {
+    /// How round the Outline look's corners are ([`set_corners`]).
+    static CORNERS: std::cell::Cell<f32> = const { std::cell::Cell::new(0.) };
     /// The flat plate's colour for the theme and appearance shown ([`set_panel`]).
     static OUTLINE_PANEL: Cell<u32> = const { Cell::new(PANEL) };
     /// Whether the pages being built draw the Outline look ([`set_outline`]).
@@ -37,13 +39,18 @@ fn outline() -> bool {
     OUTLINE.get()
 }
 
-/// A corner: square in the Outline look.
+/// A corner: in the Outline look, the share of its radius the player keeps ([`set_corners`]).
 fn rad(r: f32) -> f32 {
     if outline() {
-        0.
+        r * CORNERS.get()
     } else {
         r
     }
+}
+
+/// Set as each frame starts: how round the Outline look's corners are, 0 (square) to 1.
+pub fn set_corners(share: f32) {
+    CORNERS.set(share);
 }
 
 /// Set as each frame starts: the theme's card colour, so plates match its sky.
@@ -349,6 +356,7 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
             // Solid: the flat look has no frost, and a see-through panel lets what is under a
             // dialog read through it.
             .bg(rgb(panel()))
+            .rounded(px(rad(radius)))
             .into_any_element();
     }
     // The light look's plates are flat white with no blur: a plain fill draws them exactly (its
