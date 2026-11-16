@@ -13,6 +13,7 @@ mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
+mod right_blocks;
 mod widgets;
 pub(crate) use widgets::*;
 mod agents_page;
@@ -540,8 +541,9 @@ struct Launcher {
     scene: gpui::Entity<scene::Scene>,
     /// Hypr Neon's rain over its black night (`rain.rs`).
     rain: gpui::Entity<rain::Rain>,
-    /// The playing blocks in Home's bottom-left corner.
+    /// The playing blocks in Home's bottom corners, left and right.
     corner_blocks: gpui::Entity<corner_blocks::CornerBlocks>,
+    right_blocks: gpui::Entity<right_blocks::RightBlocks>,
     /// What is behind the launcher, drawn as its sibling (`window_root.rs`).
     backdrop: gpui::Entity<window_root::Backdrop>,
     /// What the views behind the launcher were last handed.

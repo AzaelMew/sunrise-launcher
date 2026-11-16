@@ -134,8 +134,9 @@ impl Launcher {
         // place over the hero.
         let count = count_width.is_some() && fits(right_of(true, false));
         let short = !signed_in && !fits(right_of(false, false));
+        // With the right sidebar, the account is in its top cell and only Settings stays here.
         let right = if right_side {
-            0.
+            36.
         } else {
             right_of(count, short)
         };
@@ -148,7 +149,12 @@ impl Launcher {
         // Beside the buttons, the pages scroll in the strip with arrows at hidden ends.
         let performance = self.settings.performance();
         let flow = pages_flow.map(|p| self.nav_strip.render(p, &t, performance, window));
-        let account = (!right_side).then(|| self.outline_account(count, short, cx));
+        let account = if right_side {
+            self.outline_settings(cx).into_any_element()
+        } else {
+            self.outline_account(count, short, true, cx)
+                .into_any_element()
+        };
 
         div()
             .relative()
@@ -192,7 +198,7 @@ impl Launcher {
                     .justify_center()
                     .children(flow),
             )
-            .children(account)
+            .child(account)
     }
 
     /// How many play now, in mono after a live dot; a click opens the stats page.
@@ -223,6 +229,7 @@ impl Launcher {
         &mut self,
         count: bool,
         short: bool,
+        settings: bool,
         cx: &mut Context<Self>,
     ) -> Div {
         let t = self.theme;
@@ -296,24 +303,7 @@ impl Launcher {
                 &t,
             )
         });
-        let settings = ui::icon_button(
-            "nav-Settings",
-            "sliders-horizontal",
-            36.,
-            18.,
-            radius::CONTROL,
-            self.page == Page::Settings,
-            &t,
-        )
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.go(if this.page == Page::Settings {
-                Page::Play
-            } else {
-                Page::Settings
-            });
-            cx.notify();
-        }));
-
+        let settings = settings.then(|| self.outline_settings(cx));
         div()
             .flex()
             .flex_none()
@@ -322,7 +312,28 @@ impl Launcher {
             .children(playing)
             .children(player)
             .children(sign_in)
-            .child(settings)
+            .children(settings)
+    }
+
+    /// Settings, its sliders: a press opens it, or goes back Home from it.
+    pub(super) fn outline_settings(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        ui::icon_button(
+            "nav-Settings",
+            "sliders-horizontal",
+            36.,
+            18.,
+            radius::CONTROL,
+            self.page == Page::Settings,
+            &self.theme,
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.go(if this.page == Page::Settings {
+                Page::Play
+            } else {
+                Page::Settings
+            });
+            cx.notify();
+        }))
     }
 }
 

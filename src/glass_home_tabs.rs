@@ -93,6 +93,10 @@ impl Launcher {
             }
         };
         let width = self.outline_right_width();
+        // The top cell holds the account alone: "Sign in with Microsoft" where it fits (mono 12,
+        // uppercase, about 7.4 px a letter, beside the logo and padding), else "Sign in".
+        let label = tr("Sign in with Microsoft").chars().count() as f32;
+        let short = 48. + 7.4 * label > width - 24. - 12.;
         let cell = full.then(|| {
             div()
                 .absolute()
@@ -105,7 +109,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_end()
-                .child(self.outline_account(false, true, cx))
+                .child(self.outline_account(false, short, false, cx))
         });
         let label = full.then(|| {
             div()

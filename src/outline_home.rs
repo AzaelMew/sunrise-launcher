@@ -147,7 +147,7 @@ impl Launcher {
 
     /// The first screen's separator lines, part of the page so they scroll with it: the floor,
     /// and where the window has room beside the hero, a column line near each edge and a faint
-    /// arc around the left one's top. The playing blocks stand on the floor in its left corner.
+    /// arc around the left one's top. The playing blocks stand on the floor in both its corners.
     fn home_lines(&self) -> Div {
         let wide = self.home_wide();
         let column = |right: bool| {
@@ -199,6 +199,13 @@ impl Launcher {
                     .left_0()
                     .bottom(px(1.))
                     .child(self.corner_blocks.clone()),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .right_0()
+                    .bottom(px(1.))
+                    .child(self.right_blocks.clone()),
             )
     }
 

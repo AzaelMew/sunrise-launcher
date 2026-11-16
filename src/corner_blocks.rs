@@ -1,12 +1,15 @@
-//! Four textured blocks in Home's bottom-left corner, playing one short move every few seconds:
-//! the corner block changes colour; the block on top sinks into it and later rises out again; the
-//! block on its right turns into a diamond and back, or slides over the corner block (which takes
-//! its colour) and later back out, turning into a diamond as it lands; while it is inside, the
-//! small block can slide over to the corner block and back; the small block hops. Between moves
-//! nothing is drawn again, so the corner costs nothing while it rests.
+//! Home's playing blocks: four textured blocks in the bottom-left corner (here) and four in the
+//! bottom-right ([`crate::right_blocks`]), taking turns ([`run`]): a few short moves on one side, then
+//! a few on the other, never both at once. Between moves nothing is drawn again.
+//!
+//! Bottom left: the corner block changes colour; the block on top sinks into it and later rises
+//! out again; the block on its right turns into a diamond and back, or slides over the corner
+//! block (which takes its colour) and later back out, turning into a diamond as it lands; while it
+//! is inside, the small block can slide over to the corner block and back; the small block hops.
 use crate::glass_ui::{color, pixel_fill, texel_noise, texel_shades, TEXEL, TEXTURE_BUTTON};
 use gpui::{
-    canvas, div, prelude::*, px, AnimationExt, Context, Div, ElementId, IntoElement, Render, Window,
+    canvas, div, prelude::*, px, AnimationExt, App, AsyncApp, Canvas, Context, Div, ElementId,
+    IntoElement, Render, WeakEntity, Window,
 };
 use std::f32::consts::{FRAC_1_SQRT_2, FRAC_PI_4};
 use std::time::{Duration, Instant};
@@ -22,14 +25,16 @@ const CORNER: [u32; 3] = [0x4f60e6, 0x3d4cc4, 0x6a7af0];
 const TOP: u32 = 0x2c3a9e;
 const RIGHT: u32 = 0x93b4ff;
 const SMALL_COLOUR: u32 = 0x6b7399;
-/// How long the corner rests between moves, at least and at most, and before the turn that
-/// always follows sliding out.
-const REST_MIN: u64 = 1800;
-const REST_MAX: u64 = 4200;
-const REST_CHAINED: u64 = 120;
+/// How long the blocks rest between moves, at least and at most, and before a move that must
+/// follow the last at once (the turn as a block lands).
+const REST_MIN: u64 = 600;
+const REST_MAX: u64 = 1400;
+pub(crate) const REST_CHAINED: u64 = 120;
 /// How long the right block stands as a diamond before it turns back.
 const REST_TURNED: u64 = 1500;
-const MOVE: sunrise_theme::Motion = sunrise_theme::Motion {
+/// How many moves a side plays before the other side's turn, at least.
+const TURN_MOVES: u64 = 2;
+pub(crate) const MOVE: sunrise_theme::Motion = sunrise_theme::Motion {
     name: "corner-block",
     ms: 460,
     curve: [0.6, 0., 0.3, 1.],
@@ -64,29 +69,113 @@ pub struct CornerBlocks {
     /// A move that must come next, and the rest before it.
     then: Option<(Move, u64)>,
     moves: usize,
-    seed: u64,
+    rng: Rng,
+}
+
+/// A fixed pseudo-random sequence (xorshift), seeded from the clock.
+pub(crate) struct Rng(u64);
+
+impl Rng {
+    pub(crate) fn seeded() -> Self {
+        Self(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(1, |d| d.as_nanos() as u64)
+                | 1,
+        )
+    }
+
+    pub(crate) fn next(&mut self) -> u64 {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        self.0
+    }
+
+    /// One of `from`, picked.
+    pub(crate) fn pick<T: Copy>(&mut self, from: &[T]) -> T {
+        from[(self.next() % from.len() as u64) as usize]
+    }
+}
+
+/// A side's blocks, as [`run`] plays them.
+pub(crate) trait Show: Render + Sized + 'static {
+    /// The rest before a move that must follow the last one at once, if one must.
+    fn chained(&self) -> Option<u64>;
+    /// Picks a move the blocks can make from where they are, and plays it.
+    fn play(&mut self, cx: &mut Context<Self>);
+    /// Ends the move playing, leaving the blocks where it took them.
+    fn finish(&mut self, cx: &mut Context<Self>);
+}
+
+/// Plays both sides' blocks for as long as they are there: a few moves on the left, then a few on
+/// the right (and any move one of them must still make), one at a time, with short rests.
+pub(crate) fn run(
+    left: WeakEntity<CornerBlocks>,
+    right: WeakEntity<crate::right_blocks::RightBlocks>,
+    cx: &mut App,
+) {
+    cx.spawn(async move |cx| {
+        let mut rng = Rng::seeded();
+        loop {
+            for on_left in [true, false] {
+                let count = TURN_MOVES + rng.next() % 2;
+                let mut played = 0;
+                loop {
+                    let chained = if on_left {
+                        step(&left, cx, &mut rng).await
+                    } else {
+                        step(&right, cx, &mut rng).await
+                    };
+                    let Some(chained) = chained else {
+                        return;
+                    };
+                    played += 1;
+                    if played >= count && !chained {
+                        break;
+                    }
+                }
+            }
+        }
+    })
+    .detach();
+}
+
+/// Plays one move of `blocks` after its rest. Whether another must follow at once; none once the
+/// blocks are gone.
+async fn step<T: Show>(blocks: &WeakEntity<T>, cx: &mut AsyncApp, rng: &mut Rng) -> Option<bool> {
+    let rest = blocks
+        .update(cx, |b, _| b.chained())
+        .ok()?
+        .unwrap_or_else(|| REST_MIN + rng.next() % (REST_MAX - REST_MIN));
+    cx.background_executor()
+        .timer(Duration::from_millis(rest))
+        .await;
+    blocks.update(cx, |b, cx| b.play(cx)).ok()?;
+    cx.background_executor().timer(MOVE.duration()).await;
+    blocks.update(cx, |b, cx| b.finish(cx)).ok()?;
+    blocks.update(cx, |b, _| b.chained().is_some()).ok()
+}
+
+/// How far a turn begun `at` has come, eased, asking for the next frame while it runs: a turn is
+/// drawn texel by texel, so it is played frame by frame rather than by GPUI's animations.
+pub(crate) fn turn_progress(at: Instant, window: &mut Window) -> f32 {
+    let t = (at.elapsed().as_secs_f32() / MOVE.duration().as_secs_f32()).min(1.);
+    if t < 1. {
+        window.request_animation_frame();
+    }
+    MOVE.ease(t)
+}
+
+/// A block's side for this window: a share of its height, on whole texels so the texture stays
+/// square.
+pub(crate) fn block_side(window: &Window) -> f32 {
+    let height = f32::from(window.viewport_size().height);
+    ((height * SIDE_SHARE).clamp(SIDE_MIN, SIDE_MAX) / (2. * TEXEL)).round() * 2. * TEXEL
 }
 
 impl CornerBlocks {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        cx.spawn(async move |this, cx| loop {
-            let rest = this.update(cx, |b, _| b.rest()).unwrap_or(REST_MAX);
-            cx.background_executor()
-                .timer(Duration::from_millis(rest))
-                .await;
-            if this.update(cx, |b, cx| b.start(cx)).is_err() {
-                break;
-            }
-            cx.background_executor().timer(MOVE.duration()).await;
-            if this.update(cx, |b, cx| b.finish(cx)).is_err() {
-                break;
-            }
-        })
-        .detach();
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(1, |d| d.as_nanos() as u64)
-            | 1;
+    pub fn new() -> Self {
         Self {
             corner: 0,
             top_up: true,
@@ -96,23 +185,8 @@ impl CornerBlocks {
             playing: None,
             then: None,
             moves: 0,
-            seed,
+            rng: Rng::seeded(),
         }
-    }
-
-    /// The next of a fixed pseudo-random sequence (xorshift).
-    fn next(&mut self) -> u64 {
-        self.seed ^= self.seed << 13;
-        self.seed ^= self.seed >> 7;
-        self.seed ^= self.seed << 17;
-        self.seed
-    }
-
-    fn rest(&mut self) -> u64 {
-        if let Some((_, rest)) = self.then {
-            return rest;
-        }
-        REST_MIN + self.next() % (REST_MAX - REST_MIN)
     }
 
     /// The moves the blocks can make from where they are.
@@ -132,31 +206,6 @@ impl CornerBlocks {
             (false, false, _) => can.extend([Move::Cover, Move::Turn, Move::Tint]),
         }
         can
-    }
-
-    /// Picks a move the blocks can make from where they are, and plays it.
-    fn start(&mut self, cx: &mut Context<Self>) {
-        let pick = match self.then.take() {
-            Some((next, _)) => next,
-            None => {
-                let can = self.moves_from_here();
-                can[(self.next() % can.len() as u64) as usize]
-            }
-        };
-        self.moves += 1;
-        if crate::motion::still() {
-            self.apply(pick);
-        } else {
-            self.playing = Some((pick, self.moves, Instant::now()));
-        }
-        cx.notify();
-    }
-
-    fn finish(&mut self, cx: &mut Context<Self>) {
-        if let Some((done, _, _)) = self.playing.take() {
-            self.apply(done);
-            cx.notify();
-        }
     }
 
     fn apply(&mut self, done: Move) {
@@ -180,10 +229,45 @@ impl CornerBlocks {
             Move::Hop => {}
         }
     }
+
+    /// The next move: the one that must follow, or one picked from those the blocks can make.
+    fn next_move(&mut self) -> Move {
+        match self.then.take() {
+            Some((next, _)) => next,
+            None => {
+                let can = self.moves_from_here();
+                self.rng.pick(&can)
+            }
+        }
+    }
+}
+
+impl Show for CornerBlocks {
+    fn chained(&self) -> Option<u64> {
+        self.then.map(|(_, rest)| rest)
+    }
+
+    fn play(&mut self, cx: &mut Context<Self>) {
+        let pick = self.next_move();
+        self.moves += 1;
+        if crate::motion::still() {
+            self.apply(pick);
+        } else {
+            self.playing = Some((pick, self.moves, Instant::now()));
+        }
+        cx.notify();
+    }
+
+    fn finish(&mut self, cx: &mut Context<Self>) {
+        if let Some((done, _, _)) = self.playing.take() {
+            self.apply(done);
+            cx.notify();
+        }
+    }
 }
 
 /// A textured block of `colour`, `side` px square, placed by its left and bottom edges.
-fn block(colour: u32, side: f32, left: f32, bottom: f32) -> Div {
+pub(crate) fn block(colour: u32, side: f32, left: f32, bottom: f32) -> Div {
     div()
         .absolute()
         .left(px(left))
@@ -193,11 +277,11 @@ fn block(colour: u32, side: f32, left: f32, bottom: f32) -> Div {
         .child(pixel_fill(color(colour), TEXTURE_BUTTON))
 }
 
-/// The right block `turn` of the way (0 to 1) from a square to a diamond: turned 45° and shrunk
-/// until its corners touch its cell's sides. GPUI can't turn an element, so it is drawn here: one
+/// A block `turn` of the way (0 to 1) from a square to a diamond: turned 45° and shrunk until its
+/// corners touch its cell's sides. GPUI can't turn an element, so it is drawn here: one
 /// straight-edged shape in the block's colour, with the texture's texels wherever they lie wholly
-/// inside it.
-fn turned_block(colour: u32, side: f32, turn: f32) -> impl IntoElement {
+/// inside it. Place it in its cell, `side` px square.
+pub(crate) fn turned_block(colour: u32, side: f32, turn: f32) -> Canvas<()> {
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _| {
@@ -258,10 +342,15 @@ fn turned_block(colour: u32, side: f32, turn: f32) -> impl IntoElement {
             }
         },
     )
-    .absolute()
-    .left(px(side))
-    .bottom_0()
-    .size(px(side))
+}
+
+/// The right block turned `turn` of the way, in its cell.
+fn right_turned(side: f32, turn: f32) -> Canvas<()> {
+    turned_block(RIGHT, side, turn)
+        .absolute()
+        .left(px(side))
+        .bottom_0()
+        .size(px(side))
 }
 
 impl Render for CornerBlocks {
@@ -270,10 +359,7 @@ impl Render for CornerBlocks {
         let is = |m: Move| playing.filter(|(p, _, _)| *p == m).map(|(_, n, _)| n);
         let key = |n: usize| ElementId::named_usize("corner-block", n);
         let own = CORNER[self.corner];
-        // Sized by the window, on whole texels so the texture stays square.
-        let height = f32::from(window.viewport_size().height);
-        let side =
-            ((height * SIDE_SHARE).clamp(SIDE_MIN, SIDE_MAX) / (2. * TEXEL)).round() * 2. * TEXEL;
+        let side = block_side(window);
         let (small_side, hop) = (side / 2., side / 6.);
         let mut d = div()
             .relative()
@@ -329,15 +415,10 @@ impl Render for CornerBlocks {
                 move |d, t| d.left(px(side * t)),
             ))
         } else if let Some((at, back)) = turning {
-            // The turn is drawn texel by texel, so it is played here frame by frame.
-            let t = (at.elapsed().as_secs_f32() / MOVE.duration().as_secs_f32()).min(1.);
-            if t < 1. {
-                window.request_animation_frame();
-            }
-            let t = MOVE.ease(t);
-            d.child(turned_block(RIGHT, side, if back { 1. - t } else { t }))
+            let t = turn_progress(at, window);
+            d.child(right_turned(side, if back { 1. - t } else { t }))
         } else if self.turned {
-            d.child(turned_block(RIGHT, side, 1.))
+            d.child(right_turned(side, 1.))
         } else if !self.covered {
             d.child(block(RIGHT, side, side, 0.))
         } else {
@@ -385,7 +466,7 @@ mod tests {
             playing: None,
             then: None,
             moves: 0,
-            seed: 0x2545_f491_4f6c_dd1d,
+            rng: Rng(0x2545_f491_4f6c_dd1d),
         }
     }
 
@@ -393,13 +474,11 @@ mod tests {
     fn every_move_is_one_the_blocks_can_make_and_sliding_out_lands_turning() {
         let mut b = blocks();
         for _ in 0..5000 {
-            let pick = match b.then.take() {
-                Some((next, _)) => next,
-                None => {
-                    let can = b.moves_from_here();
-                    can[(b.next() % can.len() as u64) as usize]
-                }
-            };
+            let then = b.then;
+            let pick = b.next_move();
+            if let Some((next, _)) = then {
+                assert_eq!(pick, next);
+            }
             match pick {
                 Move::Uncover => assert!(b.covered && !b.attached),
                 Move::Cover => assert!(!b.covered && !b.turned),

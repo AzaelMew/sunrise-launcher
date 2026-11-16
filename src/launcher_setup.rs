@@ -54,6 +54,9 @@ impl Launcher {
         let scene = cx.new(|_| scene::Scene::new());
         let sky = cx.new(|cx| sky::SkyView::new(window, cx));
         let rain = cx.new(|_| rain::Rain::new());
+        let corner_blocks = cx.new(|_| corner_blocks::CornerBlocks::new());
+        let right_blocks = cx.new(|_| right_blocks::RightBlocks::new());
+        corner_blocks::run(corner_blocks.downgrade(), right_blocks.downgrade(), cx);
         let backdrop =
             cx.new(|_| window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
@@ -254,7 +257,8 @@ impl Launcher {
             sky,
             scene,
             rain,
-            corner_blocks: cx.new(corner_blocks::CornerBlocks::new),
+            corner_blocks,
+            right_blocks,
             backdrop,
             pushed: None,
             scale: window.scale_factor(),
