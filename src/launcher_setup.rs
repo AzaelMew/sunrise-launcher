@@ -68,6 +68,7 @@ impl Launcher {
             settings_query_focused: false,
             whats_new_open: None,
             settings_marked: 0,
+            settings_nav_open: false,
             credit_asked: false,
             version_menu: false,
             credit_picture: None,

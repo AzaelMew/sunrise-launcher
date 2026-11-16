@@ -239,6 +239,8 @@ struct Launcher {
     whats_new_open: Option<std::collections::HashSet<String>>,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
     settings_marked: usize,
+    /// Narrow Settings: the category list is dropped open from the switcher row; it starts folded and folds again on a pick.
+    settings_nav_open: bool,
     /// About's credit picture was asked for, and what came back.
     credit_asked: bool,
     /// The Game version dropdown of the instance dialog and sheet is open.
