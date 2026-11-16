@@ -54,10 +54,8 @@ impl Launcher {
         let scene = cx.new(|_| scene::Scene::new());
         let sky = cx.new(|cx| sky::SkyView::new(window, cx));
         let rain = cx.new(|_| rain::Rain::new());
-        let hero = cx.new(|_| outline_scene::Hero::new());
-        let backdrop = cx.new(|_| {
-            window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone(), hero.clone())
-        });
+        let backdrop =
+            cx.new(|_| window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
@@ -194,9 +192,6 @@ impl Launcher {
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),
             friend_focused: false,
             nav_strip: Default::default(),
-            hero,
-            hero_place: None,
-            hero_shown: None,
             window_width: 0.,
             window_height: 0.,
             window_long_side: 0.,

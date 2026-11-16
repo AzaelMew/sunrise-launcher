@@ -122,14 +122,19 @@ impl Launcher {
             let count = count_width.filter(|_| count).map_or(0., |w| w + 14.);
             36. + 14. + account + count
         };
-        // Narrower, the players count goes first, then "with Microsoft": the pages keep their room.
-        let room = self.window_width - side - 48.;
-        let count = count_width.is_some() && room - right_of(true, false) >= tabs;
-        let short = !signed_in && room - right_of(false, false) < tabs;
+        // Over the hero: on the window's centre, held off the sidebar the same way the hero is.
+        let shift = self.outline_centre_shift();
+        let centre = side + (self.window_width - side) / 2. - shift;
+        let fits = |right: f32| {
+            centre - tabs / 2. >= side + 24.
+                && centre + tabs / 2. <= self.window_width - 24. - right - 16.
+        };
+        // Narrower, the players count goes first, then "with Microsoft": the pages keep their
+        // place over the hero.
+        let count = count_width.is_some() && fits(right_of(true, false));
+        let short = !signed_in && !fits(right_of(false, false));
         let right = right_of(count, short);
-        let half = self.window_width / 2.;
-        let centred = half - tabs / 2. >= side + 24.
-            && half + tabs / 2. <= self.window_width - 24. - right - 16.;
+        let centred = fits(right);
         let (pages_layer, pages_flow) = if centred {
             (Some(pages.flex_none()), None)
         } else {
@@ -253,15 +258,17 @@ impl Launcher {
             .gap(px(24.))
             .border_b_1()
             .border_color(white(0.08))
-            // On the window's centre (the bar starts right of the sidebar) where the pages clear
-            // the buttons; else beside them, scrolling sideways when too long.
+            // Over the hero where the pages clear the buttons; else beside them, scrolling
+            // sideways when too long. The bar starts right of the sidebar, so the right padding
+            // moves the pages' centre left by `shift`.
             .children(pages_layer.map(|pages| {
                 div()
                     .absolute()
                     .top(px(14.))
                     .bottom_0()
-                    .left(px(-side))
+                    .left_0()
                     .right_0()
+                    .pr(px(2. * shift))
                     .flex()
                     .items_center()
                     .justify_center()

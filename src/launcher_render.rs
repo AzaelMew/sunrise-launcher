@@ -146,9 +146,6 @@ impl Render for Launcher {
             }
             self.backdrop.update(cx, |b, cx| b.set(pushed.back, cx));
         }
-        // Home's hero scene follows its first screen; away from Home there is none.
-        let place = self.hero_place.take();
-        self.hero.update(cx, |hero, cx| hero.set(place, cx));
         // Dark: the glass frame over the scene; Light keeps the night one over the dawn.
         let (topbar, sidebar) = if t.glass {
             (

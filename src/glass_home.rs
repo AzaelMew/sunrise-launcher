@@ -8,6 +8,8 @@ use sunrise_theme::glass::{fill, ink, radius};
 
 /// Play, the version and the big icons are this tall (`h-14`).
 const TALL: f32 = 52.;
+/// The Join button inside the invite field, centred in it.
+const JOIN: f32 = 40.;
 /// The window width from which Home's head is laid out as the mockup's `xl` (1280 px); under it
 /// Play and the version are narrower and the invite code takes what is left of their row. The
 /// account page and the theme editor also put their two columns side by side from it.
@@ -672,7 +674,7 @@ impl Launcher {
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
         let valid = sunrise_friends::invite::parse(self.friend_code.text()).is_some();
         let can = valid && (tag.is_empty() || self.can_start(tag));
-        let join = ui::quiet("join-friend", join_label, 40., &t);
+        let join = ui::quiet("join-friend", join_label, JOIN, &t);
         let join = if can {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_friend();
@@ -695,7 +697,13 @@ impl Launcher {
                     .top(px((TALL - 19.) / 2.))
                     .child(ui::icon("user-add-01", 19., white(ink::NOTE))),
             )
-            .child(div().absolute().right(px(8.)).top(px(8.)).child(join))
+            .child(
+                div()
+                    .absolute()
+                    .right(px((TALL - JOIN) / 2.))
+                    .top(px((TALL - JOIN) / 2.))
+                    .child(join),
+            )
     }
 }
 

@@ -1,7 +1,7 @@
 //! The Outline look's Home (`docs/design-system.md`, "Outline"; Figma: Explorations → Home): the
 //! edition, the instance's name, the tagline, Play and the folder, the version and the invite code
-//! centred on the window over the hero scene, whose floor ends the first screen. The instance's
-//! tabs stay below, a scroll away.
+//! centred on the window between the first screen's separator lines, whose floor ends it. The
+//! instance's tabs stay below, a scroll away.
 use super::*;
 use crate::glass_ui::{self as ui, mono, white};
 use sunrise_theme::glass::{fill, ink};
@@ -14,8 +14,21 @@ const UNDER_FLOOR: f32 = 24.;
 const FIRST_SCREEN_MIN: f32 = 560.;
 /// Play and the folder side by side: the hero's widest row.
 const HERO_WIDTH: f32 = 412.;
+/// How far in from each edge the first screen's column lines run.
+const COLUMN: f32 = 168.;
+/// The faint arc around the left column line's top.
+const ARC: f32 = 620.;
 
 impl Launcher {
+    /// How far left of the page's centre the hero and the top bar's pages sit: half the sidebar,
+    /// which centres them on the window, but never so far that the hero's widest row would come
+    /// closer than the gutter to the sidebar.
+    pub(super) fn outline_centre_shift(&self) -> f32 {
+        let page = self.window_width - frame::SIDEBAR;
+        let room = ((page - HERO_WIDTH) / 2. - theme::PAGE_GUTTER).max(0.);
+        (frame::SIDEBAR / 2.).min(room)
+    }
+
     /// How tall Home's first screen is: from the top bar down to the hero's floor.
     fn first_screen(&self) -> f32 {
         // The page's own height, so a drawn title bar is left out too.
@@ -64,8 +77,7 @@ impl Launcher {
             .children(self.folder_group(java.is_none(), cx));
         let hero = div()
             .relative()
-            // Centred on the window, not on the page beside the sidebar.
-            .right(px(frame::SIDEBAR / 2.))
+            .right(px(self.outline_centre_shift()))
             .flex()
             .flex_col()
             .items_center()
@@ -93,26 +105,64 @@ impl Launcher {
                     .max_w_full()
                     .child(self.glass_join_friend(tag, false, cx)),
             );
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .h(px(self.first_screen()))
+            .child(self.home_lines())
+            .child(hero)
+    }
+
+    /// The first screen's separator lines, part of the page so they scroll with it: the floor,
+    /// and where the window has room beside the hero, a column line near each edge and a faint
+    /// arc around the left one's top.
+    fn home_lines(&self) -> Div {
         let page = self.window_width - frame::SIDEBAR - 2. * theme::PAGE_GUTTER;
-        // The side columns need the room beside the hero; narrower, only the floor is drawn.
-        let wide = page >= HERO_WIDTH + 2. * outline_scene::COLUMN + 64.;
-        let first = self.first_screen();
-        // The scene is drawn behind the launcher, over this first screen as last laid out.
-        let area = self.content_scroll.handle.bounds();
-        if area.size.width > px(0.) {
-            self.hero_place = Some(outline_scene::Place {
-                left: f32::from(area.origin.x),
-                top: f32::from(area.origin.y + self.content_scroll.handle.offset().y),
-                width: f32::from(area.size.width),
-                height: first,
-                wide,
-            });
-        }
-        if self.hero_shown != Some(self.switches) {
-            self.hero_shown = Some(self.switches);
-            self.hero.update(cx, |hero, cx| hero.replay(cx));
-        }
-        div().relative().flex().flex_col().h(px(first)).child(hero)
+        let wide = page >= HERO_WIDTH + 2. * COLUMN + 64.;
+        let column = |right: bool| {
+            let d = div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .w(px(1.))
+                .bg(white(0.07));
+            if right {
+                d.right(px(COLUMN))
+            } else {
+                d.left(px(COLUMN))
+            }
+        };
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(px(-theme::PAGE_GUTTER))
+            .right(px(-theme::PAGE_GUTTER))
+            .overflow_hidden()
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(1.))
+                    .bg(white(0.10)),
+            )
+            .when(wide, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(COLUMN - ARC / 2.))
+                        .top(px(-ARC / 2.))
+                        .size(px(ARC))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(white(0.06)),
+                )
+                .child(column(false))
+                .child(column(true))
+            })
     }
 
     /// The edition tabs: the instance's own lit. An instance's edition is chosen when it is made,
