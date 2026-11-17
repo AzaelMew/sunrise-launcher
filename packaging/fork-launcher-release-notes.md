@@ -7,8 +7,9 @@ theirs as they are. It installs and updates only from
 [sunrise-org/sunrise](https://github.com/sunrise-org/sunrise).
 
 Sign in with a Microsoft account that owns Minecraft: Java Edition.
-Until Mojang approves Sunrise's own Microsoft app, sign-in goes through the Starling launcher's
-approved app, with its owner's permission: Microsoft's sign-in page names Starling.
+Sign-in goes through Sunrise's own Microsoft app, approved by Mojang. Earlier launchers
+signed in through the Starling launcher's app: if you signed in with one, sign in once more
+after updating, since a sign-in belongs to the app it was made with.
 
 Signed Nightly builds require a signed-in account that owns Minecraft.
 Accounts it signs in are stored under its own name, apart from the official launcher's.
