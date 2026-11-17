@@ -1416,7 +1416,15 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                native_mods::build(&base, &folder, &target, profile, back_up_worlds, steps, registry_consent).map_err(|error| {
+                match native_mods::build(&base, &folder, &target, profile, back_up_worlds, steps, registry_consent) {
+                    // A content mod needs no build: the instance stays as it is.
+                    Err(nothing @ native_mods::Failed::Nothing) => {
+                        println!("{nothing}");
+                        return Ok(0);
+                    }
+                    result => result,
+                }
+                .map_err(|error| {
                     if let native_mods::Failed::Worlds(stake) = &error {
                         return trf(
                             "{error}\n{stay}: nothing changed. Or run again with --back-up-worlds to back them up into {backups} and build without the mods named.",
