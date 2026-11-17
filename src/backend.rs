@@ -1674,11 +1674,11 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
     reuse_prepared(&versions_dir(), tag);
     complete_assets(tag);
     forget_prepared();
-    let resources = resources(tag);
+    let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
         .spawn(move || {
-            if let Err(e) = write_data_file(&resources) {
+            if let Err(e) = write_data_file(&root, &resources) {
                 eprintln!("{}: not written: {e}", resources.display());
             }
         });
@@ -1690,14 +1690,15 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
 /// Writes a prepared version's `sunrise-data.bin` so its first start already reads one file, not
 /// thousands: over a minute under Windows Defender (#1961), and a player who updates would pay it
 /// after every update. After `complete_assets`, as the file answers "missing" for what it lacks.
-/// The game still writes it when this didn't finish. Only looks for the file, as
-/// `prepared_files::open` keeps it open for the whole run, which would stop a removal on Windows.
-fn write_data_file(resources: &Path) -> std::io::Result<()> {
+/// The version's own preparer writes it (`data-file`); the game still writes it when this didn't, or the preparer is too old to. Only looks for the file, as the game keeps it open for the whole run, which would stop a removal on Windows.
+fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
     if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
         return Ok(());
     }
-    let readers = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
-    sunrise_platform::prepared_files::write_with_readers(resources, readers)
+    match crate::preparer::binary(root) {
+        Some(binary) => crate::preparer::data_file(&binary, root, resources).map(drop),
+        None => Ok(()),
+    }
 }
 
 /// `reuse_prepared` for every installed version that is not prepared, oldest first, so a
@@ -6345,6 +6346,7 @@ pub fn {f}("
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_version_is_prepared_once_at_a_time() {
         let dir = std::env::temp_dir().join(format!(
@@ -6363,31 +6365,43 @@ pub fn {f}("
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
-    fn a_prepared_version_gets_a_data_file_that_holds_its_files() {
-        use crate::preparer::DATA_FILE as FILE_NAME;
-        let resources =
+    #[ignore = "daily"]
+    fn a_prepared_version_asks_its_preparer_for_a_data_file_once() {
+        use crate::preparer::DATA_FILE;
+        use std::os::unix::fs::PermissionsExt;
+        let root =
             std::env::temp_dir().join(format!("sunrise-launcher-data-file-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&resources);
-        let recipe = resources.join("data/minecraft/recipe/stick.json");
-        fs::create_dir_all(recipe.parent().unwrap()).unwrap();
-        fs::write(&recipe, "{\"stick\":1}").unwrap();
-
-        // Not prepared yet: nothing to hold.
-        write_data_file(&resources).unwrap();
-        assert!(!resources.join(FILE_NAME).exists());
-
+        let _ = fs::remove_dir_all(&root);
+        let resources = root.join("resources");
+        fs::create_dir_all(&resources).unwrap();
+        let binary = root.join("sunrise-prepare");
+        fs::write(
+            &binary,
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$(dirname \"$0\")/asked\"\necho '{\"format\": 1, \"written\": true}'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        let asked = || fs::read_to_string(root.join("asked")).unwrap_or_default();
+        // Not prepared yet: nothing to hold, nothing asked.
+        write_data_file(&root, &resources).unwrap();
+        assert_eq!(asked(), "");
         fs::write(resources.join(RESOURCES_MANIFEST), "{}").unwrap();
-        write_data_file(&resources).unwrap();
-        let written = fs::read(resources.join(FILE_NAME)).unwrap();
-        let held = b"{\"stick\":1}";
-        assert!(written.windows(held.len()).any(|w| w == held));
-
+        write_data_file(&root, &resources).unwrap();
+        let args: Vec<String> = asked().lines().map(str::to_owned).collect();
+        assert_eq!(args[0], "data-file");
+        assert!(
+            args.windows(2)
+                .any(|pair| pair[0] == "--output" && pair[1] == resources.to_string_lossy()),
+            "{args:?}"
+        );
         // One already there stays: the game judges whether it can use it.
-        fs::write(resources.join(FILE_NAME), "kept").unwrap();
-        write_data_file(&resources).unwrap();
-        assert_eq!(fs::read(resources.join(FILE_NAME)).unwrap(), b"kept");
-        fs::remove_dir_all(&resources).unwrap();
+        fs::write(resources.join(DATA_FILE), "kept").unwrap();
+        fs::remove_file(root.join("asked")).unwrap();
+        write_data_file(&root, &resources).unwrap();
+        assert_eq!(asked(), "");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
