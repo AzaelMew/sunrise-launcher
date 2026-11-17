@@ -1335,10 +1335,9 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             native_permission(trust_native_code)?;
             native_mods::mixins_from_source(mixins_from_source);
             if catalog {
-                let discovered =
-                    native_mods::pinned_catalog_with_modules(&folder.expect("required by clap"))?;
                 let destination = catalog_output.ok_or("--catalog requires --catalog-output")?;
-                let destination = discovered.snapshot(&destination)?;
+                let destination =
+                    native_mods::catalog(&folder.expect("required by clap"), &destination)?;
                 println!("{}", destination.display());
                 return Ok(0);
             }
