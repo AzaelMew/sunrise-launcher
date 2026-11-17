@@ -19,6 +19,7 @@ fn pack_with(summary: Summary) -> Imported {
         resourcepacks: 0,
         indexed_resources: 0,
         datapacks: 0,
+        unread: None,
     }
 }
 

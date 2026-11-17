@@ -248,15 +248,14 @@ impl Porter {
         if let Some(spec) = crate::proxy::spec_for(crate::browser::modrinth::API) {
             command.env("HTTPS_PROXY", &spec).env("HTTP_PROXY", spec);
         }
-        let mut child = command
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("sunrise-port-pack: {e}"))?;
+            .stderr(Stdio::null());
+        let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
         let mut last = None;
-        for text in BufReader::new(child.stdout.take().expect("piped")).lines() {
-            let text = text.map_err(|e| format!("sunrise-port-pack: {e}"))?;
+        for text in BufReader::new(child.child().stdout.take().expect("piped")).lines() {
+            let text = text.map_err(unrun)?;
             let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
             match value["message"].as_str() {
                 Some(message) => log(message.to_owned()),
@@ -264,14 +263,16 @@ impl Porter {
                 None => {}
             }
         }
-        let status = child
-            .wait()
-            .map_err(|e| format!("sunrise-port-pack: {e}"))?;
+        let status = child.wait().map_err(unrun)?;
         if status.code() == Some(2) {
             return Ok(None);
         }
-        let value =
-            last.ok_or_else(|| format!("sunrise-port-pack ended ({status}) without a reply"))?;
+        let value = last.ok_or_else(|| {
+            trf(
+                "The modpack porter stopped ({status}) without saying why.",
+                &[("status", &status.to_string())],
+            )
+        })?;
         reply(value).map(Some)
     }
 
@@ -338,8 +339,7 @@ impl Porter {
                 &|_| {},
             )?
             .ok_or_else(|| too_old(&self.program))?;
-        serde_json::from_value(value["check"].clone())
-            .map_err(|e| format!("sunrise-port-pack check: {e}"))
+        serde_json::from_value(value["check"].clone()).map_err(unreadable)
     }
 }
 
@@ -357,10 +357,28 @@ fn reply(value: Value) -> Result<Value, String> {
     match value.get("error") {
         Some(error) => Err(error["message"]
             .as_str()
-            .unwrap_or("sunrise-port-pack failed")
+            .unwrap_or(crate::i18n::tr(
+                "The modpack porter failed without saying why.",
+            ))
             .to_owned()),
         None => Ok(value),
     }
+}
+
+/// Why the porter couldn't be run or read, in the launcher's language.
+fn unrun(error: std::io::Error) -> String {
+    trf(
+        "The modpack porter couldn't run: {error}",
+        &[("error", &error.to_string())],
+    )
+}
+
+/// A reply of the porter's that isn't one this launcher reads.
+fn unreadable(error: serde_json::Error) -> String {
+    trf(
+        "The modpack porter's answer couldn't be read: {error}. Update the launcher.",
+        &[("error", &error.to_string())],
+    )
 }
 
 fn too_old(program: &Path) -> String {
@@ -372,8 +390,7 @@ fn too_old(program: &Path) -> String {
 
 /// Keeps a status reply in `work` and reads it.
 fn keep(work: &Path, value: &Value) -> Result<WorkStatus, String> {
-    let status = serde_json::from_value(value.clone())
-        .map_err(|e| format!("sunrise-port-pack status: {e}"))?;
+    let status = serde_json::from_value(value.clone()).map_err(unreadable)?;
     let path = work.join(STATUS_FILE);
     fs::write(&path, value.to_string()).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(status)

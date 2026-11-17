@@ -111,6 +111,11 @@ fn run_launcher() {
                 .expect("bundled fonts");
             cx.bind_keys(key_bindings());
             cx.on_action(|_: &Quit, cx| shut_down(cx));
+            cx.on_app_quit(|_| {
+                sunrise_launcher::process::owned::stop_all();
+                async {}
+            })
+            .detach();
             // The key press is being handled inside the window, so the window can only be
             // removed once that update has finished.
             cx.on_action(|_: &CloseWindow, cx| {

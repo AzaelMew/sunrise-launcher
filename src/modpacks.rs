@@ -56,14 +56,17 @@ pub struct Imported {
     pub indexed_resources: usize,
     /// Data packs from jars that hold nothing else; new worlds in the profile start with them.
     pub datapacks: usize,
+    /// Why no installed porter reads this pack (one imported before the launcher kept its status): it is listed, and nothing else.
+    pub unread: Option<String>,
 }
 
 impl Imported {
     pub fn can_play(&self) -> bool {
-        !self.mods.is_empty() || self.resourcepacks > 0 || self.datapacks > 0
+        self.unread.is_none()
+            && (!self.mods.is_empty() || self.resourcepacks > 0 || self.datapacks > 0)
     }
     pub fn can_port(&self) -> bool {
-        self.portable > 0 || self.indexed_resources > 0
+        self.unread.is_none() && (self.portable > 0 || self.indexed_resources > 0)
     }
     pub fn title(&self) -> &str {
         if self.pack.name.is_empty() {
@@ -97,6 +100,9 @@ impl Imported {
     /// comes over and what does not, as `coverage.md` opens; none for a pack with no mod to port.
     pub fn headline(&self) -> Vec<String> {
         use crate::i18n::{tr, trf};
+        if let Some(why) = &self.unread {
+            return vec![why.clone()];
+        }
         let s = self.summary;
         let n = |count: usize| count.to_string();
         let mut lines = Vec::new();
@@ -263,13 +269,35 @@ pub fn row_plain(row: &Row) -> String {
     format!("{plain} {waiting}")
 }
 
-/// The pack in `work`, from the status the launcher kept, else its current porter's.
+/// The pack in `work`, from the status the launcher kept, else its current porter's; Err when `work` holds no pack.
 pub fn load(work: &Path) -> Result<Imported, String> {
-    let status = match crate::porter::kept(work) {
-        Some(status) => status,
-        None => Porter::for_version(None)?.status(work)?,
-    };
-    Ok(imported(work, status))
+    load_with(work, || Porter::for_version(None)?.status(work))
+}
+
+fn load_with(
+    work: &Path,
+    ask: impl FnOnce() -> Result<crate::porter::WorkStatus, String>,
+) -> Result<Imported, String> {
+    if let Some(status) = crate::porter::kept(work) {
+        return Ok(imported(work, status));
+    }
+    match ask() {
+        Ok(status) => Ok(imported(work, status)),
+        Err(why) => {
+            let path = work.join("pack.json");
+            let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let pack =
+                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            let status = crate::porter::WorkStatus {
+                pack,
+                ..Default::default()
+            };
+            Ok(Imported {
+                unread: Some(why),
+                ..imported(work, status)
+            })
+        }
+    }
 }
 
 fn imported(work: &Path, status: crate::porter::WorkStatus) -> Imported {
@@ -309,6 +337,7 @@ fn imported(work: &Path, status: crate::porter::WorkStatus) -> Imported {
         resourcepacks: status.resourcepacks,
         indexed_resources: status.indexed_resources,
         datapacks: status.datapacks,
+        unread: None,
     }
 }
 
@@ -322,6 +351,8 @@ pub(crate) fn list_in(ports: &Path) -> Vec<Imported> {
         .into_iter()
         .flatten()
         .flatten()
+        // An import in progress, or a pack being replaced (`import`).
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
         .filter_map(|e| load(&e.path()).ok())
         .collect();
     packs.sort_by_key(|p| p.title().to_ascii_lowercase());
@@ -355,16 +386,45 @@ pub fn import(porter: &Porter, path: &Path, log: Log) -> Result<Imported, String
     };
     let work = ports_dir().join(slug(&name));
     log(format!("Importing {name} into {}", work.display()));
-    if work.exists() {
-        let _ = fs::remove_dir_all(&staging);
-        porter.import(path, &work, log)?;
-    } else {
-        fs::rename(&staging, &work).map_err(|e| format!("{}: {e}", work.display()))?;
-    }
+    replace_with(&work, &staging)?;
     porter.inventory(&work, log)?;
     porter.report(&work, log)?;
     porter.profile(&work, log)?;
     load(&work)
+}
+
+/// Makes the fresh import `staging` the pack in `work`; what it didn't write of an earlier import there (its jars, ports and the profile's saves) carries over.
+fn replace_with(work: &Path, staging: &Path) -> Result<(), String> {
+    let at = |e: std::io::Error, path: &Path| format!("{}: {e}", path.display());
+    if !work.exists() {
+        return fs::rename(staging, work).map_err(|e| at(e, work));
+    }
+    let name = work.file_name().unwrap_or_default().to_string_lossy();
+    let old = work.with_file_name(format!(".replacing-{name}"));
+    let _ = fs::remove_dir_all(&old);
+    fs::rename(work, &old).map_err(|e| at(e, work))?;
+    if let Err(e) = fs::rename(staging, work) {
+        let _ = fs::rename(&old, work);
+        let _ = fs::remove_dir_all(staging);
+        return Err(at(e, work));
+    }
+    carry_over(&old, work).map_err(|e| at(e, &old))?;
+    let _ = fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Moves into `to` each entry of `from` it lacks, going into the folders both have.
+fn carry_over(from: &Path, to: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if !target.exists() {
+            fs::rename(entry.path(), &target)?;
+        } else if entry.file_type()?.is_dir() && target.is_dir() {
+            carry_over(&entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 /// Ports what this computer can with `porter`: the portable mods' jars (from `from` when the
@@ -453,6 +513,9 @@ pub fn apply_profile(cmd: &mut Command, work: &Path) -> Result<(), String> {
         }
     }
     let pack = load(work)?;
+    if let Some(why) = pack.unread {
+        return Err(why);
+    }
     if !pack.can_play() {
         return Err(
             "No content mods, data packs or resource packs are available: port the pack first."
@@ -661,6 +724,67 @@ mod tests {
         assert!(pack.can_play());
         assert!(outcome(&pack).contains("1 data packs on in new worlds"));
         fs::remove_dir_all(work.parent().unwrap().parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_pack_no_porter_reads_stays_listed_and_says_why() {
+        let work = work_with("unread", serde_json::json!({}));
+        fs::remove_file(work.join("launcher-status.json")).unwrap();
+        let why = "Sunrise 0.9 is too old to import modpacks for this launcher".to_owned();
+        assert!(
+            load_with(&work, || Err(why.clone())).is_err(),
+            "no pack.json: not a pack"
+        );
+        fs::write(work.join("pack.json"), r#"{"name": "Cozy"}"#).unwrap();
+        let pack = load_with(&work, || Err(why.clone())).unwrap();
+        assert_eq!(pack.title(), "Cozy");
+        assert_eq!(pack.headline(), std::slice::from_ref(&why));
+        assert!(!pack.can_play() && !pack.can_port());
+        let ports = work.parent().unwrap();
+        for hidden in [".importing-1-0", ".replacing-pack"] {
+            fs::create_dir_all(ports.join(hidden)).unwrap();
+            fs::write(
+                ports.join(hidden).join("launcher-status.json"),
+                r#"{"format": 1}"#,
+            )
+            .unwrap();
+        }
+        fs::write(work.join("launcher-status.json"), r#"{"format": 1}"#).unwrap();
+        let listed: Vec<String> = list_in(ports).into_iter().map(|p| p.slug).collect();
+        assert_eq!(listed, ["pack"], "import folders in progress are not packs");
+        fs::remove_dir_all(ports.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn importing_again_keeps_the_jars_ports_and_saves_the_new_import_lacks() {
+        let root =
+            std::env::temp_dir().join(format!("sunrise-launcher-reimport-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (work, staging) = (root.join("pack"), root.join(".importing-1-0"));
+        let put = |path: PathBuf, text: &str| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        put(work.join("pack.json"), "old");
+        put(work.join("jars/a.jar"), "downloaded");
+        put(work.join("mods/a/carry/sunrise-mod.toml"), "ported");
+        put(work.join("home/saves/World/level.dat"), "save");
+        put(staging.join("pack.json"), "new");
+        put(staging.join("jars/b.jar"), "from the instance");
+        replace_with(&work, &staging).unwrap();
+        let read = |path: &str| fs::read_to_string(work.join(path)).unwrap();
+        assert_eq!(read("pack.json"), "new");
+        assert_eq!(read("jars/a.jar"), "downloaded");
+        assert_eq!(read("jars/b.jar"), "from the instance");
+        assert_eq!(read("mods/a/carry/sunrise-mod.toml"), "ported");
+        assert_eq!(read("home/saves/World/level.dat"), "save");
+        let left: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["pack"]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

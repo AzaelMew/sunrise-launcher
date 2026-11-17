@@ -62,7 +62,7 @@ pub fn refuse(spec: &str) -> Option<String> {
     None
 }
 
-/// Tells the parts that build their own agents (`net`, and `sunrise-port-pack`'s) which proxy to use, and keeps
+/// Tells the parts that build their own agents (`net`) which proxy to use, and keeps
 /// the setting for the launcher's own requests. Called with what `settings.json` holds: at start,
 /// and whenever the player changes the setting.
 ///
@@ -73,8 +73,6 @@ pub fn announce(setting: Option<String>) {
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty());
     *held() = Some(spec.clone());
-    // Modpack imports and their jars still go through sunrise-port-pack's own agents.
-    sunrise_port_pack::net::set_proxy(spec.clone());
     crate::net::set_proxy(spec);
 }
 
@@ -109,6 +107,25 @@ fn held() -> std::sync::MutexGuard<'static, Option<Option<String>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_socks_proxy_is_one_the_launcher_can_reach_through() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let proxy = crate::net::parse(&format!("socks5://127.0.0.1:{port}")).unwrap();
+        let error = ureq::AgentBuilder::new()
+            .proxy(proxy)
+            .build()
+            .get("http://example.invalid/")
+            .call()
+            .unwrap_err()
+            .to_string();
+        // The port is closed, so it fails reaching the proxy: never for want of SOCKS in the build.
+        assert!(!error.contains("SOCKS feature disabled"), "{error}");
+    }
 
     #[test]
     fn a_local_address_takes_no_proxy() {
