@@ -1,4 +1,5 @@
 use super::*;
+use crate::native_mods::api;
 use crate::native_mods::tests::{dir, write_bundle};
 use std::rc::Rc;
 
