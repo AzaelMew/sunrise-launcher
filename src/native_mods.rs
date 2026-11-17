@@ -967,7 +967,8 @@ pub enum Failed {
         error: String,
         compiling: bool,
     },
-    /// Every mod was left out.
+    /// The folder holds no mod to build: none has a `[native]` table (content and wasm mods
+    /// need no native build).
     Nothing,
     /// Mods this build can't use were saved into worlds: the player chooses (stay, or back the
     /// worlds up and build without them).
@@ -986,7 +987,7 @@ impl std::fmt::Display for Failed {
         match self {
             Self::Mods { error, .. } | Self::Other(error) => f.write_str(error),
             Self::Worlds(stake) => f.write_str(&stake.text),
-            Self::Nothing => Ok(()),
+            Self::Nothing => f.write_str(tr("Nothing to build: none of these mods has native code (a [native] table in sunrise-mod.toml). Content and wasm mods need no native build.")),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
         }
     }
@@ -1703,6 +1704,8 @@ fn isolated(
                 }
                 last = error;
             }
+            // Nothing was there to build: said as such, not as an empty failure.
+            Err(Failed::Nothing) if skip.is_empty() => return Err(Failed::Nothing),
             Err(Failed::Nothing) => return Err(said(&skip, last)),
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
@@ -2284,6 +2287,13 @@ mod tests {
         };
         assert!(guard_worlds(&home, &[other], build, false, &|_| {}).is_ok());
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_folder_with_nothing_native_says_so() {
+        let _guard = scratch_state();
+        let result = isolated(|_| Err(Failed::Nothing), &|_| {});
+        assert!(matches!(result, Err(Failed::Nothing)));
     }
 
     #[test]

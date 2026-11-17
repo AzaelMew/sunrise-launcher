@@ -143,7 +143,7 @@ MCP: `native_lock`.
 
 ## `sunrise-launcher native-build`
 
-Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the instance's exact Sunrise source revision with the launcher's own Rust, as the version the instance then plays. Not sandboxed: the mods' code runs with your rights.
+Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the instance's exact Sunrise source revision with the launcher's own Rust, as the version the instance then plays. Not sandboxed: the mods' code runs with your rights. With no native mod found (content and wasm mods need no build), it says there is nothing to build and exits successfully; a server export still fails, as no engine is made.
 
     sunrise-launcher native-build [FOLDER]
 
