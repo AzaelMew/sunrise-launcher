@@ -377,8 +377,9 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         .collect();
     assert_eq!(found, ["lanterns"]);
     // Not into the game folder: into a world.
-    assert!(install_from(&index, true, &p, &dir.join("home"), &|_, _| {}).is_err());
-    let (zip, number) = fetch_datapack_from(&index, true, &p, &dir.join("dl"), &|_| {}).unwrap();
+    assert!(install_from(&index, true, &p, &dir.join("home"), GAME, &|_, _| {}).is_err());
+    let (zip, number) =
+        fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
     assert_eq!(number, "1.0.0");
     let world = dir.join("world");
     let pack = crate::datapacks::add(&world, &zip).unwrap();
@@ -388,7 +389,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
     let mut changed = index.clone();
     let at = changed.projects.len() - 1;
     changed.projects[at].versions[0].file.sha256 = "0".repeat(64);
-    let e = fetch_datapack_from(&changed, true, &p, &dir.join("dl2"), &|_| {}).unwrap_err();
+    let e = fetch_datapack_from(&changed, true, &p, &dir.join("dl2"), GAME, &|_| {}).unwrap_err();
     assert!(e.contains("checksum") || e.contains("SHA-256"), "{e}");
     // Nor one taken down.
     index.revoked.push(index::Revoked {
@@ -397,7 +398,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         reason: "Test.".into(),
         date: String::new(),
     });
-    let e = fetch_datapack_from(&index, true, &p, &dir.join("dl3"), &|_| {}).unwrap_err();
+    let e = fetch_datapack_from(&index, true, &p, &dir.join("dl3"), GAME, &|_| {}).unwrap_err();
     assert_eq!(e, "Lanterns was taken down: Test.");
     fs::remove_dir_all(&dir).unwrap();
 }
@@ -468,7 +469,10 @@ fn installs_checked_turns_on_and_removes() {
     let index = sample();
     let home = scratch("install");
     let p = hud(&index);
-    let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
+    // An instance on another build's Minecraft version gets that version's file, or none.
+    let other = install_from(&index, true, &p, &home, "26.9", &|_, _| {}).unwrap_err();
+    assert!(other.contains("no version for 26.9"), "{other}");
+    let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
     assert!(done[0].skipped.is_empty());
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
@@ -546,7 +550,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     let home = scratch("shader");
     let p = project_of(&index, index.project("glow").unwrap(), GAME).unwrap();
     assert_eq!(p.support(GAME), super::super::Support::Works);
-    let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.sshader");
     assert_eq!(done[0].kind, Kind::Shader);
     assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
@@ -567,7 +571,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
     // A file of the same name the registry didn't put there is left alone.
     fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = install_from(&index, true, &p, &home, &|_, _| {}).unwrap_err();
+    let e = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap_err();
     assert_eq!(
         e,
         "shaderpacks/glow-1.0.0.sshader is already there: move it away first."

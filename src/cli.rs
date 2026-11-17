@@ -2287,6 +2287,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         (ModsCmd::Search { .. }, _) | (_, None) => backend::game_home(),
         (_, Some(i)) => i.home.clone(),
     };
+    // The Minecraft version the instance's own build plays (its pinned build), else the launcher's.
+    let game = backend::played_version_id_by(instance.as_ref().and_then(|i| i.version.as_deref()));
     let entry_json = |e: &installed::Entry| serde_json::to_value(e).unwrap_or_default();
     let line = |label: &str, f: f32| progress(label.to_string())(f);
     let from_registry = installed::Installed::load(&home)
@@ -2437,6 +2439,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 &*source,
                 &p,
                 everything,
+                &game,
                 &progress(p.title.clone()),
             )?;
             if as_json {
@@ -2478,6 +2481,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     &p,
                     everything,
                     &world.path,
+                    &game,
                     &progress(p.title.clone()),
                 )?;
                 if as_json {
@@ -2523,8 +2527,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             }
             if p.kind == Kind::Modpack {
                 let folder = modpacks::ports_dir().join("downloads");
-                let file =
-                    installed::fetch_modpack(&*source, &p, &folder, &progress(p.title.clone()))?;
+                let file = installed::fetch_modpack(
+                    &*source,
+                    &p,
+                    &folder,
+                    &game,
+                    &progress(p.title.clone()),
+                )?;
                 let log = &|line: String| eprintln!("{line}");
                 let porter = modpacks::Porter::for_version(None)?;
                 let pack = modpacks::import_and_port(&porter, &file, log)?;
@@ -2534,7 +2543,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             }
             let done = match &java {
                 Some(target) => java_instance::install(&*source, target, &p, &home, &line)?,
-                None => installed::install(&*source, &p, everything, &home, &line)?,
+                None => installed::install(&*source, &p, everything, &home, &game, &line)?,
             };
             if as_json {
                 json(done.iter().map(entry_json).collect());
@@ -2569,7 +2578,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 };
                 let newer = match &java {
                     Some(target) => java_instance::update_for(&*source, target, e)?,
-                    None => installed::update_for(&*source, e)?,
+                    None => installed::update_for(&*source, e, &game)?,
                 };
                 match newer {
                     None => println!("{} {}: up to date.", e.title, e.number),
@@ -2582,7 +2591,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                             Some(target) => {
                                 java_instance::install(&*source, target, &p, &home, &line)?
                             }
-                            None => installed::install(&*source, &p, true, &home, &line)?,
+                            None => installed::install(&*source, &p, true, &home, &game, &line)?,
                         };
                         for done in done {
                             println!("{} {}: {}", done.title, done.number, done.file);

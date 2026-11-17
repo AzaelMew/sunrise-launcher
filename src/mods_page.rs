@@ -98,6 +98,10 @@ pub(super) struct Mods {
     pub(super) chosen: std::collections::BTreeMap<String, String>,
     /// The Sunrise the selected instance played when its updates were last looked for.
     pub(super) checked_for: Option<String>,
+    /// The build the page's Minecraft version was last worked out for (the selected instance's).
+    game_for: Option<Option<String>>,
+    /// Whether the start's auto-update ran: it waits for the release list.
+    pub(super) auto_updated: bool,
     loaded: bool,
     /// Whether the page searched for the instance as it is (its version and loader).
     asked: bool,
@@ -223,6 +227,8 @@ impl Mods {
             installed: Vec::new(),
             chosen: Default::default(),
             checked_for: None,
+            game_for: None,
+            auto_updated: false,
             loaded: false,
             asked: false,
             home: None,
@@ -524,7 +530,7 @@ impl Launcher {
         // registry, where it can't be seen or turned off, it would list what the note says is
         // hidden.
         let glass = self.theme.glass;
-        let game = self.selected_instance().map(|i| self.game_of(i));
+        let game = self.mods_game();
         let m = &mut self.mods;
         let everything = m.everything && !(glass && m.source == SourceId::Sunrise);
         m.search += 1;
@@ -551,7 +557,7 @@ impl Launcher {
                     offset,
                     limit: PAGE,
                     filters: m.browse.filters.clone(),
-                    game: game.unwrap_or(query.game.clone()),
+                    game,
                     ..query
                 }
             }
@@ -705,6 +711,7 @@ impl Launcher {
         }
         // A version other than 26.3 asked for: check the newest file for 1.21 and later.
         let everything = m.everything || m.browse.filters.other_version(&m.game);
+        let game = m.game.clone();
         let tx = m.tx.clone();
         let queue = std::sync::Mutex::new(todo.into_iter());
         std::thread::spawn(move || {
@@ -719,7 +726,14 @@ impl Launcher {
                                     trf("{source} isn't set up.", &[("source", p.source.label())])
                                 })
                                 .and_then(|source| {
-                                    java::check_project(&home, &*source, &p, everything, &|_| {})
+                                    java::check_project(
+                                        &home,
+                                        &*source,
+                                        &p,
+                                        everything,
+                                        &game,
+                                        &|_| {},
+                                    )
                                 });
                             // The project's page, if open, shows the verdict beside its version.
                             if let Ok((version, check)) = &result {
@@ -748,6 +762,7 @@ impl Launcher {
         }
         let tx = self.mods.tx.clone();
         let java = self.mods.java.clone();
+        let game = self.mods_game();
         std::thread::spawn(move || {
             let mut found = HashMap::new();
             for e in entries {
@@ -756,7 +771,7 @@ impl Launcher {
                 };
                 let newer = match &java {
                     Some(target) => java_instance::update_for(&*source, target, &e),
-                    None => installed::update_for(&*source, &e),
+                    None => installed::update_for(&*source, &e, &game),
                 };
                 if let Ok(Some(v)) = newer {
                     found.insert((e.source, e.project.clone()), v.number);
@@ -789,6 +804,7 @@ impl Launcher {
         self.mods.updates.clear();
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
+        let game = self.mods_game();
         let java = self.mods.java.clone();
         std::thread::spawn(move || {
             let count = todo.len();
@@ -809,7 +825,7 @@ impl Launcher {
                             Some(target) => {
                                 java_instance::install(&*source, target, &p, &home, &step)
                             }
-                            None => installed::install(&*source, &p, true, &home, &step),
+                            None => installed::install(&*source, &p, true, &home, &game, &step),
                         }
                     });
                 match updated {
@@ -862,6 +878,7 @@ impl Launcher {
         let tag = self.selected().map(|tag| tag.to_string());
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
+        let game = self.mods_game();
         let java = self.mods.java.clone();
         let instance = self
             .selected_instance()
@@ -901,10 +918,14 @@ impl Launcher {
                         let (world, name) = world.ok_or_else(|| {
                             tr("Pick the world the data pack goes into first.").to_string()
                         })?;
-                        let done =
-                            installed::install_datapack(&*source, &p, everything, &world, &|f| {
-                                progress(&p.title, f)
-                            })?;
+                        let done = installed::install_datapack(
+                            &*source,
+                            &p,
+                            everything,
+                            &world,
+                            &game,
+                            &|f| progress(&p.title, f),
+                        )?;
                         return Ok(trf(
                             "Put {pack} {version} in {world}'s data packs, checksum checked: the \
                              game turns it on when the world opens. {coverage}",
@@ -937,7 +958,7 @@ impl Launcher {
                     }
                     if modpack {
                         let folder = modpacks::ports_dir().join("downloads");
-                        let file = installed::fetch_modpack(&*source, &p, &folder, &|f| {
+                        let file = installed::fetch_modpack(&*source, &p, &folder, &game, &|f| {
                             progress(&p.title, f)
                         })?;
                         let log = |line: String| progress(&line, 1.);
@@ -955,7 +976,8 @@ impl Launcher {
                             tr("Play it from the list above.")
                         ));
                     }
-                    let done = installed::install(&*source, &p, everything, &home, &progress)?;
+                    let done =
+                        installed::install(&*source, &p, everything, &home, &game, &progress)?;
                     let names: Vec<String> = done
                         .iter()
                         .map(|e| format!("{} {}", e.title, e.number))
@@ -1081,6 +1103,17 @@ impl Launcher {
         // Another version or loader: other results, on the page's next draw.
         if java != self.mods.java {
             self.mods.asked = false;
+        }
+        // Another build: its Minecraft version, and so the search, may differ. Worked out only when the build changes, not per frame.
+        let build = self
+            .selected_instance()
+            .and_then(|i| self.version_of(i))
+            .cloned();
+        if self.mods.game_for.as_ref() != Some(&build) {
+            self.mods.game_for = Some(build);
+            if self.mods_game() != self.mods.game {
+                self.mods.asked = false;
+            }
         }
         self.mods.java = java;
         // The instance moved to another Sunrise (picked, or an update it follows): the versions

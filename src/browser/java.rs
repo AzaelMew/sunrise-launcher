@@ -111,10 +111,11 @@ pub fn check_project(
     source: &dyn Source,
     project: &Project,
     everything: bool,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<(Version, Check), String> {
     let versions = source.versions(project)?;
-    let version = pick(Kind::Mod, &versions, everything, &super::game())
+    let version = pick(Kind::Mod, &versions, everything, game)
         .cloned()
         .ok_or_else(|| match versions.iter().find_map(|v| v.blocked.clone()) {
             Some(why) => format!("{} can't be downloaded from here: {why}", project.title),
@@ -235,6 +236,7 @@ pub fn install(
     project: &Project,
     everything: bool,
     home: &Path,
+    game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
@@ -242,6 +244,7 @@ pub fn install(
         source,
         everything,
         home,
+        game,
         progress,
     };
     let mut done = Vec::new();
@@ -254,6 +257,7 @@ struct Job<'a> {
     source: &'a dyn Source,
     everything: bool,
     home: &'a Path,
+    game: &'a str,
     progress: &'a dyn Fn(&str, f32),
 }
 
@@ -269,12 +273,13 @@ impl Job<'_> {
             source,
             everything,
             home,
+            game,
             progress,
         } = *self;
         if done.iter().any(|e| e.project == project.id) {
             return Ok(());
         }
-        let (version, check) = check_project(home, source, project, everything, &|f| {
+        let (version, check) = check_project(home, source, project, everything, game, &|f| {
             progress(&format!("Checking {}", project.title), f)
         })?;
         if check.verdict == Verdict::No {

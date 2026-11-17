@@ -131,6 +131,12 @@ impl Launcher {
         backend::played_version_id_by(self.version_of(instance).map(String::as_str))
     }
 
+    /// The Minecraft version the Mods page installs and updates for: the selected instance's build, else the launcher's.
+    pub(super) fn mods_game(&self) -> String {
+        self.selected_instance()
+            .map_or_else(sunrise_launcher::browser::game, |i| self.game_of(i))
+    }
+
     /// Keeps the selected instance on `tag`, or lets it follow the launcher's version.
     pub(super) fn pin_version(&mut self, tag: Option<String>) {
         let Some(id) = self.selected_instance().map(|i| i.id.clone()) else {

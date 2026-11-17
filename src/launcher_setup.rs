@@ -291,7 +291,6 @@ impl Launcher {
         this.load_profile_heads();
         this.load_auth_statuses(true);
         this.fetch_startup_releases();
-        this.mods_auto_update();
         this.fetch_links();
         if home::getting_ready_preview() {
             this.preparing = true;

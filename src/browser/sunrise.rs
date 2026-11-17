@@ -828,9 +828,10 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
 pub fn install(
     project: &Project,
     home: &Path,
+    game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
-    install_from(&*index()?, local(), project, home, progress)
+    install_from(&*index()?, local(), project, home, game, progress)
 }
 
 /// [`install`] from `index`.
@@ -839,12 +840,13 @@ fn install_from(
     local: bool,
     project: &Project,
     home: &Path,
+    game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let p = index
         .project(&project.id)
         .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
-    let v = newest(index, p)?;
+    let v = newest(index, p, game)?;
     install_version(index, local, p, v, home, progress).map(|e| vec![e])
 }
 
@@ -854,9 +856,10 @@ fn install_from(
 pub fn fetch_datapack(
     project: &Project,
     folder: &Path,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<(PathBuf, String), String> {
-    fetch_datapack_from(&*index()?, local(), project, folder, progress)
+    fetch_datapack_from(&*index()?, local(), project, folder, game, progress)
 }
 
 fn fetch_datapack_from(
@@ -864,13 +867,14 @@ fn fetch_datapack_from(
     local: bool,
     project: &Project,
     folder: &Path,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<(PathBuf, String), String> {
     let p = index
         .project(&project.id)
         .filter(|p| p.kind == index::Kind::DataPack)
         .ok_or_else(|| format!("{} isn't a data pack in Sunrise's registry.", project.title))?;
-    let v = newest(index, p)?;
+    let v = newest(index, p, game)?;
     let file = &version_of(index, p, v).files[0];
     let path = fetch(file, folder, local, progress)?;
     index::check_file(index, p, v, &path).inspect_err(|_| {
@@ -879,9 +883,12 @@ fn fetch_datapack_from(
     Ok((path, v.version.clone()))
 }
 
-/// A project's newest version for this game that wasn't taken down.
-fn newest<'a>(index: &Index, p: &'a index::Project) -> Result<&'a index::Version, String> {
-    let game = super::game();
+/// A project's newest version for the Minecraft version `game` that wasn't taken down.
+fn newest<'a>(
+    index: &Index,
+    p: &'a index::Project,
+    game: &str,
+) -> Result<&'a index::Version, String> {
     let mut taken_down = None;
     for v in p.versions.iter().filter(|v| v.game == game) {
         if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
@@ -928,7 +935,7 @@ fn install_version_guarded(
     progress: &dyn Fn(&str, f32),
 ) -> Result<installed::Entry, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let project = project_of(index, p, &super::game())
+    let project = project_of(index, p, &v.game)
         .ok_or_else(|| format!("{} can't be installed here.", p.name))?;
     if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
         return Err(format!("{} was taken down: {}", p.name, r.reason));

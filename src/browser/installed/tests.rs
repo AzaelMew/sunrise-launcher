@@ -132,7 +132,7 @@ fn installs_with_dependencies_then_updates_and_removes() {
     fake.release("addon", "1", &["base"], b"addon pack", false);
     let addon = fake.project("addon").unwrap();
 
-    let done = install(&fake, &addon, false, &home, NONE).unwrap();
+    let done = install(&fake, &addon, false, &home, GAME, NONE).unwrap();
     let files: Vec<&str> = done.iter().map(|e| e.file.as_str()).collect();
     assert_eq!(
         files,
@@ -148,14 +148,17 @@ fn installs_with_dependencies_then_updates_and_removes() {
 
     // Installing again with nothing new downloads nothing.
     fs::remove_file(home.join("resourcepacks/base-1.zip")).unwrap();
-    install(&fake, &addon, false, &home, NONE).unwrap();
+    install(&fake, &addon, false, &home, GAME, NONE).unwrap();
     assert!(!home.join("resourcepacks/base-1.zip").exists());
 
     // An update replaces the old file.
     fake.release("addon", "2", &["base"], b"addon pack v2", false);
     let entry = Installed::load(&home).lookup("addon").cloned().unwrap();
-    assert_eq!(update_for(&fake, &entry).unwrap().unwrap().number, "2");
-    install(&fake, &addon, false, &home, NONE).unwrap();
+    assert_eq!(
+        update_for(&fake, &entry, GAME).unwrap().unwrap().number,
+        "2"
+    );
+    install(&fake, &addon, false, &home, GAME, NONE).unwrap();
     assert!(!home.join("resourcepacks/addon-1.zip").exists());
     assert_eq!(
         fs::read(home.join("resourcepacks/addon-2.zip")).unwrap(),
@@ -166,7 +169,7 @@ fn installs_with_dependencies_then_updates_and_removes() {
         .cloned()
         .unwrap();
     assert_eq!(entry.number, "2");
-    assert!(update_for(&fake, &entry).unwrap().is_none());
+    assert!(update_for(&fake, &entry, GAME).unwrap().is_none());
 
     let removed = remove(&home, "addon").unwrap();
     assert_eq!(removed.project, "addon");
@@ -187,13 +190,22 @@ fn nothing_is_installed_when_a_check_fails() {
     fake.release("bad", "1", &[], b"tampered", true);
     fake.release("needs-mod", "1", &["sodium"], b"x", false);
 
-    let e = install(&fake, &fake.project("bad").unwrap(), false, &home, NONE).unwrap_err();
+    let e = install(
+        &fake,
+        &fake.project("bad").unwrap(),
+        false,
+        &home,
+        GAME,
+        NONE,
+    )
+    .unwrap_err();
     assert!(e.contains("checksum doesn't match"), "{e}");
     let e = install(
         &fake,
         &fake.project("needs-mod").unwrap(),
         false,
         &home,
+        GAME,
         NONE,
     )
     .unwrap_err();
@@ -207,7 +219,15 @@ fn nothing_is_installed_when_a_check_fails() {
     // The player's own file of the same name is never replaced.
     fs::create_dir_all(home.join("resourcepacks")).unwrap();
     fs::write(home.join("resourcepacks/good-1.zip"), b"mine").unwrap();
-    let e = install(&fake, &fake.project("good").unwrap(), false, &home, NONE).unwrap_err();
+    let e = install(
+        &fake,
+        &fake.project("good").unwrap(),
+        false,
+        &home,
+        GAME,
+        NONE,
+    )
+    .unwrap_err();
     assert!(e.contains("wasn't installed by the browser"), "{e}");
     assert_eq!(
         fs::read(home.join("resourcepacks/good-1.zip")).unwrap(),
@@ -217,7 +237,7 @@ fn nothing_is_installed_when_a_check_fails() {
     assert!(home.join("resourcepacks/good-1.zip").exists());
 
     let pack = project("pack", Kind::Modpack);
-    assert!(plan(&fake, &pack, false)
+    assert!(plan(&fake, &pack, false, GAME)
         .unwrap_err()
         .contains("imported, not installed"));
     fs::remove_dir_all(&home).unwrap();
@@ -230,10 +250,24 @@ fn modpacks_download_checked() {
     fake.add(project("atm", Kind::Modpack));
     fake.release("atm", "1", &[], b"mrpack", false);
     let downloads = home.join("downloads");
-    let path = fetch_modpack(&fake, &fake.project("atm").unwrap(), &downloads, &|_| {}).unwrap();
+    let path = fetch_modpack(
+        &fake,
+        &fake.project("atm").unwrap(),
+        &downloads,
+        GAME,
+        &|_| {},
+    )
+    .unwrap();
     assert_eq!(fs::read(path).unwrap(), b"mrpack");
     fake.release("atm", "2", &[], b"mrpack 2", true);
-    assert!(fetch_modpack(&fake, &fake.project("atm").unwrap(), &downloads, &|_| {}).is_err());
+    assert!(fetch_modpack(
+        &fake,
+        &fake.project("atm").unwrap(),
+        &downloads,
+        GAME,
+        &|_| {}
+    )
+    .is_err());
     assert!(!downloads.join("atm-2.zip").exists());
     fs::remove_dir_all(&home).unwrap();
 }
@@ -313,7 +347,15 @@ fn java_mods_are_ported_turned_on_refused_on_clashes_and_removed() {
     fake.release("lib", "1", &[], &lib, false);
     fake.release("gem", "1", &[], &gem, false);
 
-    let done = install(&fake, &fake.project("ruby").unwrap(), false, &home, NONE).unwrap();
+    let done = install(
+        &fake,
+        &fake.project("ruby").unwrap(),
+        false,
+        &home,
+        GAME,
+        NONE,
+    )
+    .unwrap();
     assert_eq!(done.len(), 1, "the library isn't installed");
     let entry = &done[0];
     assert_eq!(entry.file, "sunrise-mods/ruby");
@@ -337,7 +379,15 @@ fn java_mods_are_ported_turned_on_refused_on_clashes_and_removed() {
         .join("mod-browser/checks-1/.downloads/ruby-1.zip")
         .exists());
 
-    let clash = install(&fake, &fake.project("gem").unwrap(), false, &home, NONE).unwrap_err();
+    let clash = install(
+        &fake,
+        &fake.project("gem").unwrap(),
+        false,
+        &home,
+        GAME,
+        NONE,
+    )
+    .unwrap_err();
     assert!(clash.contains("shares its id or namespace"), "{clash}");
     assert!(!home.join("sunrise-mods/gem").exists());
 
@@ -421,7 +471,7 @@ fn data_packs_go_into_a_world_when_something_in_them_runs() {
     let tools = fake.project("tools").unwrap();
     let off = &|_: f32| {};
 
-    let done = install_datapack(&fake, &tools, false, &world, off).unwrap();
+    let done = install_datapack(&fake, &tools, false, &world, GAME, off).unwrap();
     assert_eq!(done.pack.file, "tools-2.0.zip");
     assert!(done.pack.enabled);
     assert_eq!(done.number, "2.0");
@@ -434,11 +484,11 @@ fn data_packs_go_into_a_world_when_something_in_them_runs() {
     assert!(Installed::load(world.parent().unwrap().parent().unwrap())
         .entries
         .is_empty());
-    let again = install_datapack(&fake, &tools, false, &world, off).unwrap();
+    let again = install_datapack(&fake, &tools, false, &world, GAME, off).unwrap();
     assert_eq!(again.pack.file, "tools-2.0 (2).zip");
 
     let terrain = fake.project("terrain").unwrap();
-    let refused = install_datapack(&fake, &terrain, false, &world, off)
+    let refused = install_datapack(&fake, &terrain, false, &world, GAME, off)
         .err()
         .unwrap();
     assert_eq!(
@@ -457,19 +507,19 @@ fn data_packs_go_into_a_world_when_something_in_them_runs() {
         fake.release(slug, "1", &[], &datapack_zip(&[file]), false);
         let only = fake.project(slug).unwrap();
         assert!(
-            install_datapack(&fake, &only, false, &world, off).is_ok(),
+            install_datapack(&fake, &only, false, &world, GAME, off).is_ok(),
             "{slug}"
         );
     }
     let jar = fake.project("jar").unwrap();
-    assert!(install_datapack(&fake, &jar, false, &world, off).is_err());
+    assert!(install_datapack(&fake, &jar, false, &world, GAME, off).is_err());
 
     let mut bad = project("bad", Kind::DataPack);
     bad.loaders = vec!["datapack".into()];
     fake.add(bad);
     fake.release("bad", "1", &[], &runs, true);
     let bad = fake.project("bad").unwrap();
-    assert!(install_datapack(&fake, &bad, false, &world, off).is_err());
+    assert!(install_datapack(&fake, &bad, false, &world, GAME, off).is_err());
     let names: Vec<String> = fs::read_dir(world.join("datapacks"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
