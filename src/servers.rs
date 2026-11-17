@@ -9,6 +9,7 @@
 //! launcher prepared: nothing of Mojang's is downloaded or shipped.
 
 use crate::backend;
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -373,7 +374,7 @@ pub fn run(dir: &Path, args: &[&str]) -> Result<String, Problem> {
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| Problem::plain(format!("Couldn't run sunrise-server: {e}")))?;
+        .map_err(|e| unrun(&e))?;
     let out = String::from_utf8_lossy(&output.stdout).into_owned();
     if output.status.success() {
         Ok(out)
@@ -397,22 +398,77 @@ pub fn run_managed(
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
     let supervisor = command(dir, args).map_err(Problem::plain)?;
-    let mut engine =
-        sunrise_server_launch::engine_command(Path::new(supervisor.get_program()), dir).map_err(
-            |error| {
-                let mut problem = Problem::plain(error.to_string());
-                if matches!(
-                    error,
-                    sunrise_server_launch::EngineCommandError::Resources(_)
-                ) {
-                    problem.fix = Some(Fix::Prepare);
-                }
-                problem
-            },
-        )?;
+    let mut engine = engine_command(dir)?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
     stream(dir, supervisor, line)
+}
+
+/// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).
+const ENGINE_COMMAND_FORMAT: u64 = 1;
+
+/// The engine `sunrise-server run` would start in `dir`, as the folder's own `sunrise-server` describes it.
+fn engine_command(dir: &Path) -> Result<Command, Problem> {
+    let output = command(dir, &["engine-command", "--json"])
+        .map_err(Problem::plain)?
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| unrun(&e))?;
+    engine_from_reply(&output.stdout)
+}
+
+/// Why `sunrise-server` couldn't be run, in the launcher's language.
+fn unrun(error: &std::io::Error) -> Problem {
+    Problem::plain(trf(
+        "Couldn't run sunrise-server: {error}",
+        &[("error", &error.to_string())],
+    ))
+}
+
+/// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
+fn engine_from_reply(stdout: &[u8]) -> Result<Command, Problem> {
+    // A build from before `engine-command` answers with its usage, never with a JSON object, whatever its exit code.
+    let Some(reply) = serde_json::from_slice::<serde_json::Value>(stdout)
+        .ok()
+        .filter(serde_json::Value::is_object)
+    else {
+        return Err(Problem::plain(tr(
+            "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
+        )));
+    };
+    if reply["format"]
+        .as_u64()
+        .is_none_or(|format| format > ENGINE_COMMAND_FORMAT)
+    {
+        return Err(Problem::plain(tr(
+            "This server's Sunrise build is newer than the launcher understands: update the launcher.",
+        )));
+    }
+    if let Some(error) = reply.get("error") {
+        let mut problem = Problem::plain(error["message"].as_str().unwrap_or_default());
+        if error["kind"] == "resources" {
+            problem.fix = Some(Fix::Prepare);
+        }
+        return Err(problem);
+    }
+    let unreadable = || {
+        Problem::plain(tr(
+            "This server's Sunrise build answered with a start command the launcher can't read: update the launcher.",
+        ))
+    };
+    let text = |key: &str| reply[key].as_str().ok_or_else(unreadable);
+    let mut engine = crate::process::command(text("program")?);
+    for arg in reply["args"].as_array().into_iter().flatten() {
+        engine.arg(arg.as_str().ok_or_else(unreadable)?);
+    }
+    engine.current_dir(text("cwd")?);
+    for (key, value) in reply["env"].as_object().into_iter().flatten() {
+        match value.as_str() {
+            Some(value) => engine.env(key, value),
+            None => engine.env_remove(key),
+        };
+    }
+    Ok(engine)
 }
 
 fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(), Problem> {
@@ -423,7 +479,7 @@ fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(),
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Problem::plain(format!("Couldn't run sunrise-server: {e}")))?;
+        .map_err(|e| unrun(&e))?;
     let (tx_err, rx_err) = std::sync::mpsc::channel();
     let mut err = child.stderr.take();
     std::thread::spawn(move || {
