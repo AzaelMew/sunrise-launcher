@@ -10,7 +10,7 @@ use std::{
 };
 use sunrise_launcher_smod::manifest::JarRef;
 
-const API: &str = "https://api.modrinth.com/v2";
+use crate::browser::{download::MODRINTH_CDN, modrinth::API};
 const AGENT: &str = concat!("sunrise-launcher/", env!("CARGO_PKG_VERSION"));
 /// The largest jar read or downloaded.
 const MAX_JAR: u64 = 512 << 20;
@@ -59,8 +59,10 @@ fn jar_file_urls(found: Value) -> Result<BTreeMap<String, String>, String> {
 
 /// Downloads exactly `jar` from Modrinth's CDN to `dest`, published only once its SHA-512 matches.
 pub fn download_jar(url: &str, jar: &JarRef, dest: &Path) -> Result<(), String> {
-    let response =
-        crate::net::get_from_hosts(url, &["cdn.modrinth.com"])?.ok_or("Modrinth jar not found")?;
+    let cdn = MODRINTH_CDN
+        .trim_start_matches("https://")
+        .trim_end_matches('/');
+    let response = crate::net::get_from_hosts(url, &[cdn])?.ok_or("Modrinth jar not found")?;
     let part = dest.with_file_name(format!(".sunrise-download-{}.part", std::process::id()));
     let mut file = fs::File::create(&part).map_err(|e| e.to_string())?;
     let result = (|| {
