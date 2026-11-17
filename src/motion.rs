@@ -111,12 +111,8 @@ impl Fade {
             .mul_f32((self.target() - self.from).abs().min(1.))
     }
 
-    /// The strength at `now`: 0 at rest, 1 lit (more, briefly, on an overshooting curve).
-    pub fn value(self, now: Instant) -> f32 {
-        self.value_as(now, still())
-    }
-
-    /// [`Fade::value`] with the reduced-motion preference given, not read.
+    /// The strength at `now`: 0 at rest, 1 lit (more, briefly, on an overshooting curve); `still`
+    /// (reduced motion) holds it at its target.
     fn value_as(self, now: Instant, still: bool) -> f32 {
         let length = self.length().as_secs_f32();
         if length <= 0. || still {
