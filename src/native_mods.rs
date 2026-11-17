@@ -1098,7 +1098,7 @@ pub struct AtStake {
 struct Checks {
     verdicts: Vec<(String, fit::Verdict)>,
     refusals: Vec<(String, String)>,
-    route: String,
+    route: Option<String>,
 }
 
 /// The mods `ids` of `folder` checked against `sdk`'s build by its tool (`native-check`); the surface and build data are fetched only when a mod made for another build needs them.
@@ -1136,7 +1136,15 @@ fn check_all(
     checks_from(checked, ids).map_err(refused)
 }
 
-/// The checks of `ids` in the tool's reply; a reply naming no route comes from a tool older than this launcher.
+/// What the player reads of a mod the tool refuses (`why`, in the tool's words).
+fn refusal_text(id: &str, why: &str) -> String {
+    trf(
+        "{mod} can't be built here: {why}",
+        &[("mod", id), ("why", why)],
+    )
+}
+
+/// The checks of `ids` in the tool's reply; a reply without a `route` field comes from a tool older than this launcher.
 fn checks_from(checked: tool::Checked, ids: &[&str]) -> Result<Checks, String> {
     let mut checks = Checks {
         route: checked.route.ok_or_else(tool::too_old)?,
@@ -1147,11 +1155,7 @@ fn checks_from(checked: tool::Checked, ids: &[&str]) -> Result<Checks, String> {
             continue;
         };
         if let Some(refusal) = &found.refusal {
-            let text = trf(
-                "{mod} can't be built here: {why}",
-                &[("mod", id), ("why", refusal)],
-            );
-            checks.refusals.push((id.to_string(), text));
+            checks.refusals.push((id.to_string(), refusal.clone()));
         } else if let Some(verdict) = &found.verdict {
             checks.verdicts.push((id.to_string(), verdict.clone()));
         }
@@ -1415,8 +1419,8 @@ fn pipeline(
     if let Some(sdk) = &sdk {
         progress(Step::Checking(ids.len()));
         let checks = check_all(&incoming, &ids, sdk, &sdk_base).map_err(|r| r.to_string())?;
-        if let Some((_, refusal)) = checks.refusals.first() {
-            return Err(refusal.clone().into());
+        if let Some((id, why)) = checks.refusals.first() {
+            return Err(refusal_text(id, why).into());
         }
         route = Some(checks.route);
         let mut unusable = Vec::new();
@@ -1616,7 +1620,13 @@ fn pipeline(
                             .map_err(refused)?
                             .route
                     }
-                };
+                }
+                .ok_or_else(|| {
+                    trf(
+                        "No native mod here can be built on {build}.",
+                        &[("build", &sdk.shown())],
+                    )
+                })?;
                 let slices = sdk_cache::slices(lease, sdk, &sdk_base, &route, target, &fetched)
                     .map_err(refused)?;
                 (slices, program)
@@ -3383,27 +3393,68 @@ mod tests {
     }
 
     #[test]
-    fn a_check_without_a_route_is_a_tool_too_old_and_refusals_name_their_mod() {
-        let reply = |route: &str| -> tool::Checked {
-            serde_json::from_str(&format!(
-                r#"{{"contract":2,{route}"mods":[{{"id":"scripted","refusal":"build scripts aren't allowed"}},{{"id":"fine","verdict":{{"kind":"made-for"}}}}]}}"#
-            ))
-            .unwrap()
+    fn a_reply_without_a_route_field_is_a_tool_too_old_and_a_null_route_keeps_every_answer() {
+        let reply = |route: &str, mods: &str| -> tool::Checked {
+            serde_json::from_str(&format!(r#"{{"contract":2,{route}"mods":[{mods}]}}"#)).unwrap()
         };
-        let older = checks_from(reply(""), &["scripted", "fine"]).err().unwrap();
+        let refused = r#"{"id":"scripted","refusal":"build scripts aren't allowed"}"#;
+        let unfit = r#"{"id":"old","verdict":{"kind":"exact","made_for":"b","why":"internals"}}"#;
+        let fine = r#"{"id":"fine","verdict":{"kind":"made-for"}}"#;
+        let older = checks_from(reply("", fine), &["fine"]).err().unwrap();
         assert!(older.contains("too old"), "{older}");
-        let checks =
-            checks_from(reply(r#""route":"prebuilt-api","#), &["scripted", "fine"]).unwrap();
-        assert_eq!(checks.route, "prebuilt-api");
-        assert!(matches!(&checks.verdicts[..], [(id, fit::Verdict::MadeFor)] if id == "fine"));
-        let [(id, text)] = &checks.refusals[..] else {
-            panic!("{:?}", checks.refusals)
-        };
-        assert_eq!(id, "scripted");
-        assert!(
-            text.contains("scripted") && text.ends_with("build scripts aren't allowed"),
-            "{text}"
+        let both = checks_from(
+            reply(r#""route":"prebuilt-api","#, &format!("{refused},{fine}")),
+            &["scripted", "fine"],
+        )
+        .unwrap();
+        assert_eq!(both.route.as_deref(), Some("prebuilt-api"));
+        assert!(matches!(&both.verdicts[..], [(id, fit::Verdict::MadeFor)] if id == "fine"));
+        assert_eq!(
+            both.refusals,
+            [(
+                "scripted".to_owned(),
+                "build scripts aren't allowed".to_owned()
+            )]
         );
+        // Nothing usable: the tool sends `"route": null`, and every verdict and refusal still counts.
+        let all_refused = checks_from(reply(r#""route":null,"#, refused), &["scripted"]).unwrap();
+        assert_eq!((all_refused.route, all_refused.refusals.len()), (None, 1));
+        let all_unfit = checks_from(reply(r#""route":null,"#, unfit), &["old"]).unwrap();
+        assert!(all_unfit.route.is_none());
+        assert!(
+            matches!(&all_unfit.verdicts[..], [(id, fit::Verdict::Exact { .. })] if id == "old")
+        );
+        assert!(refusal_text("scripted", "no").contains("scripted"));
+    }
+
+    #[test]
+    fn an_update_leaves_out_refused_mods_and_the_mods_that_need_them() {
+        let root = dir("update-left-out");
+        let bundle = |id: &str, needs: &str| {
+            let folder = root.join(id);
+            write_bundle(&folder, id, "");
+            let manifest = folder.join(NATIVE_MANIFEST);
+            let mut text = fs::read_to_string(&manifest).unwrap();
+            if !needs.is_empty() {
+                text += &format!("[dependencies]\n{needs} = \"*\"\n");
+            }
+            fs::write(&manifest, text).unwrap();
+            bundle_in(&folder).unwrap().unwrap()
+        };
+        let found = [
+            bundle("fine", ""),
+            bundle("scripted", ""),
+            bundle("addon", "scripted"),
+        ];
+        let checks = Checks {
+            verdicts: vec![("fine".into(), fit::Verdict::MadeFor)],
+            refusals: vec![("scripted".into(), "build scripts aren't allowed".into())],
+            route: Some("prebuilt-api".into()),
+        };
+        let left = planning::update_left_out(&found, &checks);
+        let ids: Vec<&str> = left.iter().map(|l| l.id.as_str()).collect();
+        assert_eq!(ids, ["scripted", "addon"]);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

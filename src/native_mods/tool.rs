@@ -340,9 +340,15 @@ pub(super) fn stop() {
 /// `native-check`'s reply: each mod's refusal, verdict or the file it needs.
 #[derive(Debug, Deserialize)]
 pub(super) struct Checked {
-    #[serde(default)]
-    pub route: Option<String>,
+    /// Absent from a tool older than this launcher; `null` when no mod is usable.
+    #[serde(default, deserialize_with = "present")]
+    pub route: Option<Option<String>>,
     pub mods: Vec<CheckedMod>,
+}
+
+/// A field that is there, `null` or not: [`Checked::route`]'s absence is told apart from its `null`.
+fn present<'de, D: serde::Deserializer<'de>>(field: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(field).map(Some)
 }
 
 #[derive(Debug, Deserialize)]

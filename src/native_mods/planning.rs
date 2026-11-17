@@ -79,7 +79,8 @@ pub(super) fn classify(
     };
     match check_all(folder, &ids, &sdk, &sdk_base) {
         Ok(checks) => {
-            for (id, reason) in checks.refusals {
+            for (id, why) in checks.refusals {
+                let reason = refusal_text(&id, &why);
                 said(id.as_str(), Route::Invalid { reason });
             }
             for (id, verdict) in checks.verdicts {
@@ -101,6 +102,41 @@ pub(super) fn classify(
         Err(refusal) => unchecked(&mut result, &refusal.to_string()),
     }
     Ok(result)
+}
+
+/// The mods an update leaves out: the unfit and the refused, then every mod that needs one of them.
+pub(super) fn update_left_out(found: &[Bundle], checks: &Checks) -> Vec<LeftOut> {
+    let left_out = |id: &str, why: String| {
+        let bundle = found.iter().find(|b| b.manifest.id == id)?;
+        Some(LeftOut::new(bundle, isolate::Why::Unfit(why)))
+    };
+    let unfit: Vec<LeftOut> = checks
+        .verdicts
+        .iter()
+        .filter(|(_, verdict)| !verdict.usable())
+        .filter_map(|(id, verdict)| left_out(id, fit::short(verdict)))
+        .chain(
+            checks
+                .refusals
+                .iter()
+                .filter_map(|(id, why)| left_out(id, why.clone())),
+        )
+        .collect();
+    let declared: Vec<Vec<dependencies::Dependency>> = found
+        .iter()
+        .map(|bundle| {
+            dependencies::from_manifest(
+                &bundle.manifest.dependencies,
+                sunrise_mod_package::manifest::Side::Both,
+            )
+        })
+        .collect();
+    let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = found
+        .iter()
+        .zip(&declared)
+        .map(|(b, d)| (b, d.as_slice()))
+        .collect();
+    isolate::with_dependents(&unfit, &pairs)
 }
 
 /// What updating an instance's native mods to a newer release or Nightly would do, told before
@@ -135,41 +171,12 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
     let sdk_base = sdk_cache::Base::from_env();
     let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::REPO);
     let sdk = sdk_cache::index(&sdk_base, &revision, &keys).map_err(|r| r.to_string())?;
-    let verdicts = match &folder {
-        Some(folder) => {
-            check_all(folder, &ids, &sdk, &sdk_base)
-                .map_err(|r| r.to_string())?
-                .verdicts
-        }
-        None => Vec::new(),
+    let checks = match &folder {
+        Some(folder) => check_all(folder, &ids, &sdk, &sdk_base).map_err(|r| r.to_string())?,
+        None => Checks::default(),
     };
     let shown = sdk.shown();
-    let unfit: Vec<LeftOut> = verdicts
-        .iter()
-        .filter(|(_, verdict)| !verdict.usable())
-        .filter_map(|(id, verdict)| {
-            let bundle = found.iter().find(|b| &b.manifest.id == id)?;
-            Some(LeftOut::new(
-                bundle,
-                isolate::Why::Unfit(fit::short(verdict)),
-            ))
-        })
-        .collect();
-    let declared: Vec<Vec<dependencies::Dependency>> = found
-        .iter()
-        .map(|bundle| {
-            dependencies::from_manifest(
-                &bundle.manifest.dependencies,
-                sunrise_mod_package::manifest::Side::Both,
-            )
-        })
-        .collect();
-    let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = found
-        .iter()
-        .zip(&declared)
-        .map(|(b, d)| (b, d.as_slice()))
-        .collect();
-    let left = isolate::with_dependents(&unfit, &pairs);
+    let left = update_left_out(&found, &checks);
     let off: Vec<(String, String)> = left
         .iter()
         .map(|l| {
