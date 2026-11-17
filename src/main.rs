@@ -507,7 +507,7 @@ struct Launcher {
     registry_packs: Vec<sunrise_launcher::browser::sunrise::pack::Installed>,
     packs_loaded: Option<Instant>,
     pack_open: Option<String>,
-    pack_filter: Option<sunrise_port_pack::report::Status>,
+    pack_filter: Option<sunrise_launcher::modpacks::Status>,
     pack_busy: bool,
     pack_log: VecDeque<String>,
     pack_error: Option<String>,

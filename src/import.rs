@@ -16,10 +16,10 @@ use crate::browser::{download, installed, FileRef};
 use crate::export::{FILES, FOLDERS};
 use crate::instances::{self, Instance};
 use crate::packs;
+use crate::zip_intake::{self, Archive};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use sunrise_port_pack::zip_intake::{self, Archive};
 
 const INDEX: &str = "modrinth.index.json";
 /// The `.mrpack` folders copied into the game folder; `server-overrides/` is a server's.
@@ -112,7 +112,7 @@ pub fn what(file: &Path) -> Result<Dropped, String> {
     if has("manifest.json") && !has("pack.mcmeta") {
         return Ok(Dropped::Modpack);
     }
-    if !has("pack.mcmeta") && sunrise_port_pack::import::prism_archive_layout(&names)?.is_some() {
+    if !has("pack.mcmeta") && prism_instance(&names) {
         return Ok(Dropped::Modpack);
     }
     if has("pack.mcmeta") {
@@ -318,6 +318,20 @@ fn fill(
             .map_err(|e| format!("{relative}: {e}"))?;
     }
     Ok(())
+}
+
+/// Whether a zip holds a Prism or MultiMC instance: an `mmc-pack.json` at its top or one folder down (the porter reads the rest).
+fn prism_instance<S: AsRef<str>>(names: &[S]) -> bool {
+    names.iter().any(|name| {
+        name.as_ref()
+            .strip_suffix("mmc-pack.json")
+            .is_some_and(|root| {
+                root.is_empty()
+                    || root
+                        .strip_suffix('/')
+                        .is_some_and(|folder| !folder.is_empty() && !folder.contains('/'))
+            })
+    })
 }
 
 #[cfg(test)]

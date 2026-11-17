@@ -49,7 +49,10 @@ impl Launcher {
                 }
                 Ok(Dropped::Modpack) => {
                     self.show_modpack(None);
-                    self.pack_job(move |log| sunrise_launcher::modpacks::import(&file, log));
+                    self.pack_job(move |log| {
+                        use sunrise_launcher::modpacks;
+                        modpacks::import(&modpacks::Porter::for_version(None)?, &file, log)
+                    });
                     self.importing.note = Some(Ok(trf(
                         "{name} is a Java modpack: importing it on the Modpacks page.",
                         &[("name", &name)],

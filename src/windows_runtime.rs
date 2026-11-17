@@ -296,7 +296,7 @@ mod tests {
                 registry
                     .lock(
                         &open_directory(&path).unwrap(),
-                        crate::native_cache::LockMode::Shared
+                        sunrise_mod_package::locks::LockMode::Shared
                     )
                     .is_ok(),
                 "{} has no lease",

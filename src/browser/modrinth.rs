@@ -2,7 +2,7 @@
 use super::{details, FileRef, Kind, Project, Query, Source, SourceId, Version, GAME};
 use serde_json::Value;
 
-const API: &str = "https://api.modrinth.com/v2";
+pub(crate) const API: &str = "https://api.modrinth.com/v2";
 const SITE: &str = "https://modrinth.com";
 
 pub struct Modrinth;

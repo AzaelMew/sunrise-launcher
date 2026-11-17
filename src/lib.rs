@@ -40,11 +40,13 @@ mod native_cache;
 pub mod native_fit;
 pub mod native_mods;
 pub mod native_status;
+pub mod net;
 pub mod nightly;
 pub mod no_ai;
 pub mod other_launchers;
 pub mod packs;
 pub mod pictures;
+pub mod porter;
 pub mod private_window;
 pub mod process;
 pub mod proxy;
@@ -67,6 +69,7 @@ pub mod update_recovery;
 #[cfg(windows)]
 mod windows_runtime;
 pub mod worlds;
+pub mod zip_intake;
 
 pub mod jars;
 

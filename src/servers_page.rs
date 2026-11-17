@@ -3394,9 +3394,23 @@ mod tests {
         let bin = servers::runtime_root().join("current");
         std::fs::create_dir_all(&bin).unwrap();
         let supervisor = bin.join("sunrise-server");
-        std::fs::write(&supervisor, "#!/bin/sh\nprintf ran > \"$2/ran\"\n").unwrap();
+        let engine = bin.join("sunrise-engine");
+        // Answers `engine-command --json` as the real supervisor does; anything else would start the server.
+        let reply = serde_json::json!({
+            "format": 1,
+            "program": engine,
+            "args": ["--resources", root.path(), "--control-socket", root.path().join(".sunrise/engine.json"), "--dedicated", "--nogui"],
+            "cwd": root.path(),
+            "env": {"SUNRISE_NO_AUDIO": "1"},
+            "resources": root.path(),
+        });
+        std::fs::write(
+            &supervisor,
+            format!("#!/bin/sh\nif [ \"$3\" = engine-command ]; then printf '%s' '{reply}'; exit 0; fi\nprintf ran > \"$2/ran\"\n"),
+        )
+        .unwrap();
         std::fs::set_permissions(&supervisor, std::fs::Permissions::from_mode(0o700)).unwrap();
-        std::fs::write(bin.join("sunrise-engine"), "never executed").unwrap();
+        std::fs::write(&engine, "never executed").unwrap();
         std::fs::write(root.path().join("sunrise-resources.json"), "{}").unwrap();
         let config = format!(
             "[engine]\nresources = {:?}\n",

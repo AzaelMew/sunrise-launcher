@@ -9,18 +9,11 @@
 use crate::backend;
 use crate::browser::sunrise::pack as sunrise_pack;
 use crate::other_launchers::{self, Found};
+pub use crate::porter::{Fetched, How, Log, Pack, Porter, Row, Status, Summary};
 use crate::sources::{Folders, Os};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use sunrise_port_pack::{
-    datapacks,
-    fetch::{Fetched, How},
-    import::Pack,
-    pipeline::{self, Log},
-    report::{self, Row, Status},
-    resourcepacks::{self, Report as ResourceReport, State},
-};
 
 /// Where imported packs live.
 pub fn ports_dir() -> PathBuf {
@@ -47,6 +40,8 @@ pub struct Imported {
     pub work: PathBuf,
     pub pack: Pack,
     pub rows: Vec<Row>,
+    /// The headline's numbers.
+    pub summary: Summary,
     pub fetched: Fetched,
     /// The carried-over mods the profile loads.
     pub mods: Vec<PathBuf>,
@@ -61,14 +56,17 @@ pub struct Imported {
     pub indexed_resources: usize,
     /// Data packs from jars that hold nothing else; new worlds in the profile start with them.
     pub datapacks: usize,
+    /// Why no installed porter reads this pack (one imported before the launcher kept its status): it is listed, and nothing else.
+    pub unread: Option<String>,
 }
 
 impl Imported {
     pub fn can_play(&self) -> bool {
-        !self.mods.is_empty() || self.resourcepacks > 0 || self.datapacks > 0
+        self.unread.is_none()
+            && (!self.mods.is_empty() || self.resourcepacks > 0 || self.datapacks > 0)
     }
     pub fn can_port(&self) -> bool {
-        self.portable > 0 || self.indexed_resources > 0
+        self.unread.is_none() && (self.portable > 0 || self.indexed_resources > 0)
     }
     pub fn title(&self) -> &str {
         if self.pack.name.is_empty() {
@@ -99,11 +97,13 @@ impl Imported {
         parts.join("  ·  ")
     }
     /// The plain headline above the numbers, in the launcher's language: how much of the pack
-    /// comes over and what does not. The same lines as `sunrise_port_pack::report::Summary::lines`
-    /// (a test keeps the English equal); none for a pack with no mod to port.
+    /// comes over and what does not, as `coverage.md` opens; none for a pack with no mod to port.
     pub fn headline(&self) -> Vec<String> {
         use crate::i18n::{tr, trf};
-        let s = report::summary(&self.rows);
+        if let Some(why) = &self.unread {
+            return vec![why.clone()];
+        }
+        let s = self.summary;
         let n = |count: usize| count.to_string();
         let mut lines = Vec::new();
         if s.needing == 0 {
@@ -269,66 +269,76 @@ pub fn row_plain(row: &Row) -> String {
     format!("{plain} {waiting}")
 }
 
-/// Reads the pack in `work`.
+/// The pack in `work`, from the status the launcher kept, else its current porter's; Err when `work` holds no pack.
 pub fn load(work: &Path) -> Result<Imported, String> {
-    let pack: Pack = pipeline::read_json(&work.join("pack.json"))?;
-    let rows: Vec<Row> = pipeline::read_json(&work.join("coverage.json")).unwrap_or_default();
-    let records: Vec<sunrise_port_pack::inventory::Record> =
-        pipeline::read_json(&work.join("inventory.json")).unwrap_or_default();
-    let (mods, mut left_off) = pipeline::loadable(&carried(work));
-    let fetched = Fetched::load(work);
+    load_with(work, || Porter::for_version(None)?.status(work))
+}
+
+fn load_with(
+    work: &Path,
+    ask: impl FnOnce() -> Result<crate::porter::WorkStatus, String>,
+) -> Result<Imported, String> {
+    if let Some(status) = crate::porter::kept(work) {
+        return Ok(imported(work, status));
+    }
+    match ask() {
+        Ok(status) => Ok(imported(work, status)),
+        Err(why) => {
+            let path = work.join("pack.json");
+            let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let pack =
+                serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+            let status = crate::porter::WorkStatus {
+                pack,
+                ..Default::default()
+            };
+            Ok(Imported {
+                unread: Some(why),
+                ..imported(work, status)
+            })
+        }
+    }
+}
+
+fn imported(work: &Path, status: crate::porter::WorkStatus) -> Imported {
+    let mut left_off = status.left_off;
     left_off.extend(
-        fetched
+        status
+            .fetched
             .files
             .iter()
             .filter(|o| o.how == How::NeedsKey)
             .map(|o| format!("{}: CurseForge downloads coming soon", o.key)),
     );
-    let resources = ResourceReport::load(work);
-    let profile: ResourceReport =
-        pipeline::read_json(&work.join("profile-resourcepacks.json")).unwrap_or_default();
-    for (path, outcome) in resources.files.iter().chain(&profile.files) {
+    let reports = &status.resource_reports;
+    for (path, outcome) in reports.staged.files.iter().chain(&reports.profile.files) {
         if matches!(
-            outcome.state,
-            State::Conflict | State::Failed | State::Missing | State::Unsupported
+            outcome.state.as_str(),
+            "conflict" | "failed" | "missing" | "unsupported"
         ) {
-            left_off.push(format!("{path}: {:?}: {}", outcome.state, outcome.detail));
+            left_off.push(format!("{path}: {}: {}", outcome.state, outcome.detail));
         }
     }
     left_off.sort();
     left_off.dedup();
-    let resourcepacks = resourcepacks::available(work).len();
-    let indexed_resources = pack
-        .files
-        .iter()
-        .filter(|f| f.kind() == "resourcepacks" && f.client != "unsupported")
-        .count();
-    // A mod the carry found made for 1.20 or older is not one the port step can carry over.
-    let old: std::collections::BTreeSet<&str> = rows
-        .iter()
-        .filter(|r| r.old_layout)
-        .map(|r| r.key.as_str())
-        .collect();
-    let portable = records
-        .iter()
-        .filter(|r| pipeline::portable(r) && !old.contains(r.key.as_str()))
-        .count();
-    Ok(Imported {
-        resourcepacks,
-        indexed_resources,
-        datapacks: datapacks::installed(work),
+    Imported {
         slug: work
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default(),
         work: work.to_path_buf(),
-        pack,
-        rows,
-        fetched,
-        mods,
+        pack: status.pack,
+        rows: status.rows,
+        summary: status.summary,
+        fetched: status.fetched,
+        mods: status.mods,
         left_off,
-        portable,
-    })
+        portable: status.portable,
+        resourcepacks: status.resourcepacks,
+        indexed_resources: status.indexed_resources,
+        datapacks: status.datapacks,
+        unread: None,
+    }
 }
 
 /// Every imported pack, by name.
@@ -341,72 +351,105 @@ pub(crate) fn list_in(ports: &Path) -> Vec<Imported> {
         .into_iter()
         .flatten()
         .flatten()
+        // An import in progress, or a pack being replaced (`import`).
+        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
         .filter_map(|e| load(&e.path()).ok())
         .collect();
     packs.sort_by_key(|p| p.title().to_ascii_lowercase());
     packs
 }
 
-/// The carried-over mods in a work folder (`mods/<id>/carry/` with its manifest).
-pub fn carried(work: &Path) -> Vec<PathBuf> {
-    let mut mods: Vec<PathBuf> = fs::read_dir(work.join("mods"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|e| e.path().join("carry"))
-        .filter(|c| c.join("sunrise-mod.toml").is_file())
-        .collect();
-    mods.sort();
-    mods
-}
-
-/// Imports the pack at `path` into `ports/<slug>/` and writes its coverage report from
-/// metadata (Modrinth answers by file hash; nothing is downloaded yet). Importing the same pack
-/// again keeps the jars and ports it already has.
-pub fn import(path: &Path, log: Log) -> Result<Imported, String> {
-    let pack = sunrise_port_pack::import::import(path)?;
+/// Imports the pack at `path` into `ports/<slug>/` with `porter` and writes its coverage report
+/// from metadata (Modrinth answers by file hash; nothing is downloaded yet). Importing the same
+/// pack again keeps the jars and ports it already has.
+pub fn import(porter: &Porter, path: &Path, log: Log) -> Result<Imported, String> {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let staging = ports_dir().join(format!(
+        ".importing-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&staging).map_err(|e| format!("{}: {e}", staging.display()))?;
+    let pack = match porter.import(path, &staging, log) {
+        Ok(status) => status.pack,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+    };
     let name = if pack.name.is_empty() || pack.name == "modlist" {
         path.file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default()
     } else {
-        pack.name.clone()
+        pack.name
     };
     let work = ports_dir().join(slug(&name));
     log(format!("Importing {name} into {}", work.display()));
-    pipeline::import(path, &work, log)?;
-    pipeline::inventory(&work, false, log)?;
-    pipeline::report(&work, log)?;
-    prepare_resourcepacks(&work);
+    replace_with(&work, &staging)?;
+    porter.inventory(&work, log)?;
+    porter.report(&work, log)?;
+    porter.profile(&work, log)?;
     load(&work)
 }
 
-/// Ports what this computer can: the portable mods' jars (from `from` when the player has them,
-/// else the pack's links or Modrinth), carried over for `resources`, then the report again.
+/// Makes the fresh import `staging` the pack in `work`; what it didn't write of an earlier import there (its jars, ports and the profile's saves) carries over.
+fn replace_with(work: &Path, staging: &Path) -> Result<(), String> {
+    let at = |e: std::io::Error, path: &Path| format!("{}: {e}", path.display());
+    if !work.exists() {
+        return fs::rename(staging, work).map_err(|e| at(e, work));
+    }
+    let name = work.file_name().unwrap_or_default().to_string_lossy();
+    let old = work.with_file_name(format!(".replacing-{name}"));
+    let _ = fs::remove_dir_all(&old);
+    fs::rename(work, &old).map_err(|e| at(e, work))?;
+    if let Err(e) = fs::rename(staging, work) {
+        let _ = fs::rename(&old, work);
+        let _ = fs::remove_dir_all(staging);
+        return Err(at(e, work));
+    }
+    carry_over(&old, work).map_err(|e| at(e, &old))?;
+    let _ = fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Moves into `to` each entry of `from` it lacks, going into the folders both have.
+fn carry_over(from: &Path, to: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if !target.exists() {
+            fs::rename(entry.path(), &target)?;
+        } else if entry.file_type()?.is_dir() && target.is_dir() {
+            carry_over(&entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// Ports what this computer can with `porter`: the portable mods' jars (from `from` when the
+/// player has them, else the pack's links or Modrinth), carried over for its version, then the
+/// report again.
 pub fn port(
+    porter: &Porter,
     work: &Path,
-    resources: Option<&Path>,
     from: Option<&Path>,
     log: Log,
 ) -> Result<Imported, String> {
-    pipeline::port(work, resources, from, log)?;
-    prepare_resourcepacks(work);
+    porter.port(work, from, log)?;
+    porter.profile(work, log)?;
     load(work)
 }
 
 /// What the mod browser does with a modpack: imports it, then ports what this computer can
 /// (from the pack's links and Modrinth), so it plays straight away. A port that fails leaves the
 /// pack imported; the error says so.
-pub fn import_and_port(
-    path: &Path,
-    resources: Option<&Path>,
-    log: Log,
-) -> Result<Imported, String> {
-    let pack = import(path, log)?;
+pub fn import_and_port(porter: &Porter, path: &Path, log: Log) -> Result<Imported, String> {
+    let pack = import(porter, path, log)?;
     if !pack.can_port() {
         return Ok(pack);
     }
-    port(&pack.work, resources, None, log)
+    port(porter, &pack.work, None, log)
         .map_err(|e| format!("{} is imported, but porting it failed: {e}", pack.title()))
 }
 
@@ -460,18 +503,25 @@ pub fn apply_profile(cmd: &mut Command, work: &Path) -> Result<(), String> {
     if sunrise_pack::is_pack(work) {
         return sunrise_pack::apply(cmd, work);
     }
-    // Only mods that load together: the game would refuse the later of two sharing a namespace.
-    let (mods, _) = pipeline::loadable(&carried(work));
-    if mods.is_empty()
-        && resourcepacks::available(work).is_empty()
-        && datapacks::installed(work) == 0
+    // The game's own porter, beside it, installs the profile's resource packs.
+    if let Some(porter) = Path::new(cmd.get_program())
+        .parent()
+        .and_then(|dir| Porter::in_dir(dir, None))
     {
+        if let Err(e) = porter.profile(work, &|_| {}) {
+            eprintln!("resource packs not installed: {e}");
+        }
+    }
+    let pack = load(work)?;
+    if let Some(why) = pack.unread {
+        return Err(why);
+    }
+    if !pack.can_play() {
         return Err(
             "No content mods, data packs or resource packs are available: port the pack first."
                 .into(),
         );
     }
-    prepare_resourcepacks(work);
     let home = profile_home(work);
     fs::create_dir_all(&home).map_err(|e| format!("{}: {e}", home.display()))?;
     let options = home.join("options.txt");
@@ -480,20 +530,11 @@ pub fn apply_profile(cmd: &mut Command, work: &Path) -> Result<(), String> {
         let _ = fs::copy(own, &options);
     }
     cmd.current_dir(&home).env("SUNRISE_HOME", &home);
-    for m in mods {
+    // Only mods that load together: the porter leaves off the later of two sharing a namespace.
+    for m in pack.mods {
         cmd.arg("--dev-mod").arg(m);
     }
     Ok(())
-}
-
-/// Installs the staged resource packs into the profile. A pack that cannot be installed
-/// is logged and left off; it never blocks importing, porting or launching the mods.
-fn prepare_resourcepacks(work: &Path) {
-    let result = resourcepacks::install(work, &profile_home(work))
-        .and_then(|report| pipeline::write_json(&work.join("profile-resourcepacks.json"), &report));
-    if let Err(e) = result {
-        eprintln!("resource packs not installed: {e}");
-    }
 }
 
 /// The modpacks other launchers keep on this computer, for the Modpacks page to offer: each
@@ -586,11 +627,6 @@ mod tests {
         assert_eq!(found_slug(&found[0]), "fabric-1-21");
         assert_eq!(found_folder(&found[1]), cf.join("All the Mods 10"));
         assert_eq!(found_slug(&found[1]), "all-the-mods-10");
-        // The slug is the one importing it gives.
-        for f in &found {
-            let pack = sunrise_port_pack::import::import(&found_folder(f)).unwrap();
-            assert_eq!(found_slug(f), slug(&pack.name));
-        }
         assert_eq!(
             found_summary(&found[0]),
             "Prism Launcher  ·  Minecraft 1.21.1"
@@ -609,22 +645,30 @@ mod tests {
         assert_eq!(slug("  "), "pack");
     }
 
-    #[test]
-    fn jars_only_curseforge_serves_are_left_off_as_coming_soon() {
-        use sunrise_port_pack::fetch::Outcome;
-        let work = std::env::temp_dir().join(format!("sunrise-launcher-cf-{}", std::process::id()));
+    /// A work folder whose porter last replied `status`.
+    fn work_with(name: &str, status: serde_json::Value) -> PathBuf {
+        let work = std::env::temp_dir()
+            .join(format!("sunrise-launcher-{name}-{}", std::process::id()))
+            .join("ports/pack");
         let _ = fs::remove_dir_all(&work);
         fs::create_dir_all(&work).unwrap();
-        pipeline::write_json(&work.join("pack.json"), &Pack::default()).unwrap();
-        let fetched = Fetched {
-            files: vec![Outcome {
-                key: "allthemodium".into(),
-                file: "mods/allthemodium.jar".into(),
-                how: How::NeedsKey,
-                detail: String::new(),
-            }],
-        };
-        pipeline::write_json(&work.join("fetch.json"), &fetched).unwrap();
+        let mut reply = serde_json::json!({"format": 1, "pack": {"name": "Pack"}});
+        reply
+            .as_object_mut()
+            .unwrap()
+            .extend(status.as_object().unwrap().clone());
+        fs::write(work.join("launcher-status.json"), reply.to_string()).unwrap();
+        work
+    }
+
+    #[test]
+    fn jars_only_curseforge_serves_are_left_off_as_coming_soon() {
+        let work = work_with(
+            "cf",
+            serde_json::json!({"fetched": {"files": [
+                {"key": "allthemodium", "file": "mods/allthemodium.jar", "how": "needs-key"}
+            ]}}),
+        );
         let pack = load(&work).unwrap();
         assert_eq!(
             pack.left_off,
@@ -634,186 +678,120 @@ mod tests {
             .jars()
             .unwrap()
             .contains("CurseForge downloads coming soon"));
-        fs::remove_dir_all(&work).unwrap();
+        fs::remove_dir_all(work.parent().unwrap().parent().unwrap()).unwrap();
     }
 
     #[test]
-    fn a_profile_has_its_own_home_and_mods() {
-        let root =
-            std::env::temp_dir().join(format!("sunrise-launcher-pack-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let work = root.join("ports/small");
+    fn a_profile_has_its_own_home_and_the_mods_its_porter_loads() {
+        let work = work_with("profile", serde_json::json!({}));
         let mut cmd = Command::new("true");
-        assert!(apply_profile(&mut cmd, &work).is_err());
-        for (id, namespaces) in [("a", ""), ("b", ""), ("d", "\"a\"")] {
-            let carry = work.join("mods").join(id).join("carry");
-            fs::create_dir_all(&carry).unwrap();
-            fs::write(
-                carry.join("sunrise-mod.toml"),
-                format!(
-                    "id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = \"0.2\"\n\
-                     capabilities = [\"registries\"]\nnamespaces = [{namespaces}]\n"
-                ),
-            )
-            .unwrap();
-        }
-        // Left out: no manifest (c), and one owning a namespace of an earlier mod (d).
-        fs::create_dir_all(work.join("mods/c/carry")).unwrap();
+        assert!(apply_profile(&mut cmd, &work).is_err(), "nothing to play");
+        let (a, b) = (work.join("mods/a/carry"), work.join("mods/b/carry"));
+        let work = work_with("profile", serde_json::json!({"mods": [a, b]}));
         apply_profile(&mut cmd, &work).unwrap();
-        let args: Vec<String> = cmd
-            .get_args()
-            .map(|a| a.to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(args.len(), 4);
-        assert_eq!(
-            Path::new(&args[1]),
-            work.join("mods").join("a").join("carry")
-        );
-        assert_eq!(
-            Path::new(&args[3]),
-            work.join("mods").join("b").join("carry")
-        );
-        assert_eq!(cmd.get_current_dir(), Some(profile_home(&work).as_path()));
-        assert!(profile_home(&work).is_dir());
-        fs::remove_dir_all(&root).unwrap();
-    }
-    #[test]
-    fn resource_only_profile_can_play_without_enabling_or_overwriting_packs() {
-        let root = std::env::temp_dir().join(format!(
-            "sunrise-launcher-resource-profile-{}",
-            std::process::id()
-        ));
-        let work = root.join("ports/looks");
-        fs::create_dir_all(work.join("resourcepacks/Look")).unwrap();
-        fs::write(work.join("resourcepacks/Look/pack.mcmeta"), b"{}").unwrap();
-        fs::write(work.join("resourcepacks/look.zip"), b"zip").unwrap();
-        pipeline::write_json(&work.join("pack.json"), &Pack::default()).unwrap();
+        let args: Vec<PathBuf> = cmd.get_args().map(PathBuf::from).collect();
+        assert_eq!(args, ["--dev-mod".into(), a, "--dev-mod".into(), b]);
         let home = profile_home(&work);
-        fs::create_dir_all(home.join("resourcepacks")).unwrap();
-        fs::write(home.join("resourcepacks/look.zip"), b"user edit").unwrap();
-        fs::write(home.join("options.txt"), b"resourcePacks:[]\n").unwrap();
-        let mut cmd = Command::new("true");
-        apply_profile(&mut cmd, &work).unwrap();
-        assert_eq!(cmd.get_args().count(), 0);
         assert_eq!(cmd.get_current_dir(), Some(home.as_path()));
         assert!(cmd
             .get_envs()
             .any(|(k, v)| k == "SUNRISE_HOME" && v == Some(home.as_os_str())));
-        assert!(home.join("resourcepacks/Look/pack.mcmeta").is_file());
-        assert_eq!(
-            fs::read(home.join("resourcepacks/look.zip")).unwrap(),
-            b"user edit"
-        );
-        assert_eq!(
-            fs::read(home.join("options.txt")).unwrap(),
-            b"resourcePacks:[]\n"
-        );
-        let pack = load(&work).unwrap();
-        assert!(pack.can_play());
-        assert!(!pack.can_port());
-        assert_eq!(pack.resourcepacks, 2);
-        assert!(pack
-            .left_off
-            .iter()
-            .any(|l| l.contains("Conflict") && l.contains("look.zip")));
-        assert!(outcome(&pack).contains("2 resource packs available"));
-        apply_profile(&mut Command::new("true"), &work).unwrap();
-        fs::remove_dir_all(root).unwrap();
+        assert!(home.is_dir());
+        fs::remove_dir_all(work.parent().unwrap().parent().unwrap()).unwrap();
     }
 
     #[test]
-    fn a_profile_with_only_data_packs_plays_and_its_game_folder_holds_them() {
-        let root = std::env::temp_dir().join(format!(
-            "sunrise-launcher-datapack-profile-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        let work = root.join("ports/sky");
-        fs::create_dir_all(&work).unwrap();
-        pipeline::write_json(&work.join("pack.json"), &Pack::default()).unwrap();
-        assert!(!load(&work).unwrap().can_play());
-        let pack = datapacks::folder(&work).join("void");
-        fs::create_dir_all(&pack).unwrap();
-        fs::write(pack.join("pack.mcmeta"), b"{}").unwrap();
-        let p = load(&work).unwrap();
-        assert!(p.can_play());
-        assert_eq!(p.datapacks, 1);
-        assert!(outcome(&p).contains("1 data packs on in new worlds"));
+    fn resource_and_data_packs_alone_make_a_pack_playable() {
+        let work = work_with(
+            "packs",
+            serde_json::json!({"resourcepacks": 2, "resource_reports": {"profile": {"files": {
+                "resourcepacks/look.zip": {"state": "conflict", "detail": "the profile has its own"},
+                "resourcepacks/Look": {"state": "available", "detail": ""}
+            }}}}),
+        );
+        let pack = load(&work).unwrap();
+        assert!(pack.can_play() && !pack.can_port());
+        assert_eq!(
+            pack.left_off,
+            ["resourcepacks/look.zip: conflict: the profile has its own"]
+        );
+        assert!(outcome(&pack).contains("2 resource packs available"));
         let mut cmd = Command::new("true");
         apply_profile(&mut cmd, &work).unwrap();
         assert_eq!(cmd.get_args().count(), 0);
-        // The game finds them in its game folder, the profile's home.
-        let home = profile_home(&work);
-        assert_eq!(cmd.get_current_dir(), Some(home.as_path()));
-        assert!(pack.starts_with(&home));
-        fs::remove_dir_all(root).unwrap();
+        let data = work_with("packs", serde_json::json!({"datapacks": 1}));
+        let pack = load(&data).unwrap();
+        assert!(pack.can_play());
+        assert!(outcome(&pack).contains("1 data packs on in new worlds"));
+        fs::remove_dir_all(work.parent().unwrap().parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_pack_no_porter_reads_stays_listed_and_says_why() {
+        let work = work_with("unread", serde_json::json!({}));
+        fs::remove_file(work.join("launcher-status.json")).unwrap();
+        let why = "Sunrise 0.9 is too old to import modpacks for this launcher".to_owned();
+        assert!(
+            load_with(&work, || Err(why.clone())).is_err(),
+            "no pack.json: not a pack"
+        );
+        fs::write(work.join("pack.json"), r#"{"name": "Cozy"}"#).unwrap();
+        let pack = load_with(&work, || Err(why.clone())).unwrap();
+        assert_eq!(pack.title(), "Cozy");
+        assert_eq!(pack.headline(), std::slice::from_ref(&why));
+        assert!(!pack.can_play() && !pack.can_port());
+        let ports = work.parent().unwrap();
+        for hidden in [".importing-1-0", ".replacing-pack"] {
+            fs::create_dir_all(ports.join(hidden)).unwrap();
+            fs::write(
+                ports.join(hidden).join("launcher-status.json"),
+                r#"{"format": 1}"#,
+            )
+            .unwrap();
+        }
+        fs::write(work.join("launcher-status.json"), r#"{"format": 1}"#).unwrap();
+        let listed: Vec<String> = list_in(ports).into_iter().map(|p| p.slug).collect();
+        assert_eq!(listed, ["pack"], "import folders in progress are not packs");
+        fs::remove_dir_all(ports.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn importing_again_keeps_the_jars_ports_and_saves_the_new_import_lacks() {
+        let root =
+            std::env::temp_dir().join(format!("sunrise-launcher-reimport-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (work, staging) = (root.join("pack"), root.join(".importing-1-0"));
+        let put = |path: PathBuf, text: &str| {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        };
+        put(work.join("pack.json"), "old");
+        put(work.join("jars/a.jar"), "downloaded");
+        put(work.join("mods/a/carry/sunrise-mod.toml"), "ported");
+        put(work.join("home/saves/World/level.dat"), "save");
+        put(staging.join("pack.json"), "new");
+        put(staging.join("jars/b.jar"), "from the instance");
+        replace_with(&work, &staging).unwrap();
+        let read = |path: &str| fs::read_to_string(work.join(path)).unwrap();
+        assert_eq!(read("pack.json"), "new");
+        assert_eq!(read("jars/a.jar"), "downloaded");
+        assert_eq!(read("jars/b.jar"), "from the instance");
+        assert_eq!(read("mods/a/carry/sunrise-mod.toml"), "ported");
+        assert_eq!(read("home/saves/World/level.dat"), "save");
+        let left: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["pack"]);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
     fn resource_downloads_enable_port_even_when_no_mods_are_portable() {
-        let root = std::env::temp_dir().join(format!(
-            "sunrise-launcher-resource-index-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        let pack = Pack {
-            files: vec![sunrise_port_pack::import::PackFile {
-                path: "resourcepacks/look.zip".into(),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        pipeline::write_json(&root.join("pack.json"), &pack).unwrap();
-        let p = load(&root).unwrap();
-        assert!(p.can_port());
-        assert!(!p.can_play());
-        assert_eq!(p.portable, 0);
-        assert_eq!(p.indexed_resources, 1);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    /// Prominence II (Fabric 1.20.1): of its 29 data-tier content mods the port found 24 made
-    /// for 1.20 or older. Those are not carried, so the pack does not list them as portable.
-    #[test]
-    fn mods_made_for_1_20_are_not_portable() {
-        let root = std::env::temp_dir().join(format!(
-            "sunrise-launcher-old-layout-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        pipeline::write_json(&root.join("pack.json"), &Pack::default()).unwrap();
-        let record = |key: &str| sunrise_port_pack::inventory::Record {
-            key: key.into(),
-            class: "content".into(),
-            tier: "data".into(),
-            ..Default::default()
-        };
-        pipeline::write_json(
-            &root.join("inventory.json"),
-            &vec![record("old"), record("new")],
-        )
-        .unwrap();
-        let row = |key: &str, old_layout: bool| Row {
-            key: key.into(),
-            name: key.into(),
-            class: "content".into(),
-            tier: "data".into(),
-            license: String::new(),
-            license_kind: "unknown".into(),
-            status: Status::NotYet,
-            reason: String::new(),
-            plain: String::new(),
-            waiting: 0,
-            old_layout,
-        };
-        pipeline::write_json(
-            &root.join("coverage.json"),
-            &vec![row("old", true), row("new", false)],
-        )
-        .unwrap();
-        let p = load(&root).unwrap();
-        assert_eq!(p.portable, 1);
-        assert!(p.can_port());
-        fs::remove_dir_all(root).unwrap();
+        let work = work_with("index", serde_json::json!({"indexed_resources": 1}));
+        let pack = load(&work).unwrap();
+        assert!(pack.can_port() && !pack.can_play());
+        fs::remove_dir_all(work.parent().unwrap().parent().unwrap()).unwrap();
     }
 }

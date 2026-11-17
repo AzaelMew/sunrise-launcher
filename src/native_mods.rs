@@ -14,10 +14,7 @@ use sunrise_mod_package::dependencies;
 use sunrise_mod_package::mod_surface;
 pub use sunrise_native_build::Refusal;
 use sunrise_native_build::{api, internals, package, prebuilt, registry_generate};
-use sunrise_native_build::{
-    apply, bundle_files, cargo, is_revision, prepare_mixins_source, registry_rustc, run, source,
-    stage_mixins, sync, tool,
-};
+use sunrise_native_build::{bundle_files, is_revision, registry_rustc};
 pub use sunrise_native_build::{
     bundle_in, bundles, cancel, check_cancelled, copy_bundle, digest, failure, mixins_from_source,
     scan_bundles, source_digest, unpack_archive, Bundle, RegistryInventory, Target, CANCELLED,
@@ -27,7 +24,7 @@ pub use sunrise_native_build::{
 mod planning;
 pub use planning::{routes, update_check, UpdateCheck};
 mod internals_sync;
-pub use internals_sync::{pinned_catalog_with_modules, DiscoveryCatalog};
+pub use internals_sync::catalog;
 pub mod fit;
 mod isolate;
 mod picker;
@@ -298,7 +295,7 @@ fn logged<T, E: std::fmt::Display + From<String>>(
 
 /// Dispatch Cargo's discovery-only rustc wrapper before normal launcher startup.
 pub fn internals_rustc_wrapper() -> Option<i32> {
-    registry_rustc::wrapper().or_else(internals_sync::rustc_wrapper)
+    registry_rustc::wrapper().or_else(sunrise_native_build::discover::rustc_wrapper)
 }
 
 pub fn sync_internals(
@@ -306,7 +303,7 @@ pub fn sync_internals(
 ) -> Result<Vec<sunrise_mod_package::internals::ListedInternal>, Failed> {
     install_host();
     require_consent()?;
-    internals_sync::check(folder).map_err(|error| Failed::Other(error.to_string()))
+    internals_sync::check(folder).map_err(Failed::Other)
 }
 
 pub fn cache_error(error: crate::storage::Error) -> String {
@@ -2013,6 +2010,7 @@ fn carried_over(name: &std::ffi::OsStr, target: Target) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use sunrise_native_build::{apply, stage_mixins, sync};
 
     use super::*;
     use crate::rust_toolchain::Toolchain;
@@ -3338,7 +3336,7 @@ mod tests {
         denied(sync_internals(&folder));
         let expected = require_consent().unwrap_err().to_string();
         assert_eq!(
-            pinned_catalog_with_modules(&folder).err().unwrap(),
+            catalog(&folder, &folder.join("catalog")).unwrap_err(),
             expected
         );
         let preview = root().join("installed.routes");

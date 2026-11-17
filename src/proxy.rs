@@ -9,11 +9,11 @@
 //! Servers page's calls to a game server's API (`servers.rs`) build their agent without it: they
 //! are on loopback and asked every second.
 //!
-//! Which hosts are reached directly, and how an address is read, are `sunrise-port-pack`'s rules
-//! (`crates/sunrise-port-pack/src/net.rs`): the jars an import fetches are downloaded there, and
-//! the same hosts have to be left alone on both sides. This module adds what is the launcher's
-//! own — the setting in `settings.json`, kept in memory so a request doesn't read the file — and
-//! hands the address to the parts that build their agents.
+//! Which hosts are reached directly, and how an address is read, are `net`'s rules, the same as the
+//! game's porter keeps: a modpack import runs it with this proxy in `HTTPS_PROXY`/`HTTP_PROXY`, so
+//! both leave the same hosts alone. This module adds what is the launcher's own — the setting in
+//! `settings.json`, kept in memory so a request doesn't read the file — and hands the address to
+//! the parts that build their agents.
 use crate::backend::Settings;
 use std::sync::Mutex;
 
@@ -24,16 +24,16 @@ static SET: Mutex<Option<Option<String>>> = Mutex::new(None);
 /// The proxy address to reach `url` through: the launcher's setting, else the environment's, unless
 /// `url` is a local address or `NO_PROXY` names its host.
 pub fn spec_for(url: &str) -> Option<String> {
-    let scheme = sunrise_port_pack::net::scheme_of(url)?;
-    if sunrise_port_pack::net::direct(url) {
+    let scheme = crate::net::scheme_of(url)?;
+    if crate::net::direct(url) {
         return None;
     }
-    setting().or_else(|| sunrise_port_pack::net::env_for(scheme))
+    setting().or_else(|| crate::net::env_for(scheme))
 }
 
 /// The proxy to reach `url` through: `spec_for`'s address, read as one.
 pub fn for_url(url: &str) -> Option<ureq::Proxy> {
-    spec_for(url).and_then(|spec| sunrise_port_pack::net::parse(&spec))
+    spec_for(url).and_then(|spec| crate::net::parse(&spec))
 }
 
 /// `builder`, reaching `url` through the proxy when one is set. For the parts that ask for a few
@@ -53,18 +53,16 @@ pub fn refuse(spec: &str) -> Option<String> {
     }
     // `ureq` takes `http://` without a host, which would leave a download failing with nothing
     // said about the proxy.
-    if sunrise_port_pack::net::parse(spec).is_none()
-        || sunrise_port_pack::net::host_of(spec).is_none_or(str::is_empty)
-    {
+    if crate::net::parse(spec).is_none() || crate::net::host_of(spec).is_none_or(str::is_empty) {
         return Some(format!(
             "{} isn't a proxy address. Write it as http://host:port or socks5://host:port.",
-            sunrise_port_pack::net::redacted(spec)
+            crate::net::redacted(spec)
         ));
     }
     None
 }
 
-/// Tells the parts that build their own agents (`sunrise-port-pack`) which proxy to use, and keeps
+/// Tells the parts that build their own agents (`net`) which proxy to use, and keeps
 /// the setting for the launcher's own requests. Called with what `settings.json` holds: at start,
 /// and whenever the player changes the setting.
 ///
@@ -75,7 +73,7 @@ pub fn announce(setting: Option<String>) {
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty());
     *held() = Some(spec.clone());
-    sunrise_port_pack::net::set_proxy(spec);
+    crate::net::set_proxy(spec);
 }
 
 /// The launcher's setting: read from `settings.json` the first time it is needed and kept after
@@ -109,6 +107,25 @@ fn held() -> std::sync::MutexGuard<'static, Option<Option<String>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_socks_proxy_is_one_the_launcher_can_reach_through() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let proxy = crate::net::parse(&format!("socks5://127.0.0.1:{port}")).unwrap();
+        let error = ureq::AgentBuilder::new()
+            .proxy(proxy)
+            .build()
+            .get("http://example.invalid/")
+            .call()
+            .unwrap_err()
+            .to_string();
+        // The port is closed, so it fails reaching the proxy: never for want of SOCKS in the build.
+        assert!(!error.contains("SOCKS feature disabled"), "{error}");
+    }
 
     #[test]
     fn a_local_address_takes_no_proxy() {

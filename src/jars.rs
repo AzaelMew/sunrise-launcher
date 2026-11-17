@@ -1,4 +1,5 @@
 //! Resolve a mod set's passive Java jars before a launcher-managed launch.
+mod download;
 mod launch;
 use crate::i18n::{tr, trf};
 pub use launch::{prepare_launch, LaunchError};
@@ -8,7 +9,6 @@ use std::{
     path::{Path, PathBuf},
 };
 use sunrise_launcher_smod::manifest::{JarRef, JarRequirement, MissingJar};
-use sunrise_port_pack::{fetch, modrinth};
 
 /// Download consent for this mod set, never a permission to execute Java code.
 #[non_exhaustive]
@@ -113,25 +113,9 @@ pub fn prepare(
         home,
         jars,
         permission,
-        |jars| {
-            let jars = jars
-                .iter()
-                .map(|jar| to_game(jar))
-                .collect::<Result<Vec<_>, _>>()?;
-            modrinth::jar_urls(&jars.iter().collect::<Vec<_>>())
-        },
-        |url, jar, dest| fetch::download_jar(url, &to_game(jar)?, dest),
+        download::jar_urls,
+        download::download_jar,
     )
-}
-
-/// A jar as the game's crates spell it, for sunrise-port-pack until it runs as its own process.
-fn to_game(jar: &JarRef) -> Result<sunrise_mod_package::manifest::JarRef, String> {
-    sunrise_mod_package::manifest::JarRef::new(
-        jar.id().into(),
-        jar.version().into(),
-        jar.sha512().into(),
-    )
-    .map_err(|error| copies_disagree(jar.id(), &error))
 }
 
 /// A jar of a game-crate manifest (the native build's) in the launcher's own types.
@@ -160,7 +144,7 @@ fn prepare_with(
         match fs::File::open(&path) {
             Ok(file) => {
                 let hash =
-                    fetch::hash_reader::<sha2::Sha512>(file, io::sink()).map_err(|source| {
+                    download::hash_reader::<sha2::Sha512>(file, io::sink()).map_err(|source| {
                         PrepareError::Io {
                             path: path.clone(),
                             source,

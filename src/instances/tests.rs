@@ -45,13 +45,9 @@ fn player_home(home: &Path) {
     put(&home.join("logs/latest.log"), "log");
     put(&home.join("sessions/a.json"), "token");
     put(&home.join("telemetry/consent.json"), "{}");
-    let pack = sunrise_port_pack::import::Pack {
-        name: "Small Pack".into(),
-        ..Default::default()
-    };
     put(
-        &home.join("ports/small-pack/pack.json"),
-        &serde_json::to_string(&pack).unwrap(),
+        &home.join("ports/small-pack/launcher-status.json"),
+        r#"{"format": 1, "pack": {"name": "Small Pack"}}"#,
     );
     put(
         &home.join("ports/small-pack/home/saves/Modded/level.dat"),

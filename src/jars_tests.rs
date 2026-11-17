@@ -467,12 +467,12 @@ fn information_requests_do_not_read_packages_or_create_a_cache() {
 }
 
 #[test]
-fn a_jar_crosses_to_the_game_crates_types_and_back_unchanged() {
-    let jar = JarRef::new("first".into(), "2".into(), "a".repeat(128)).unwrap();
-    let game = to_game(&jar).unwrap();
+fn a_game_crate_jar_becomes_the_launchers_unchanged() {
+    let game =
+        sunrise_mod_package::manifest::JarRef::new("first".into(), "2".into(), "a".repeat(128))
+            .unwrap();
     assert_eq!(
-        (game.id(), game.version(), game.sha512()),
-        ("first", "2", "a".repeat(128).as_str())
+        from_game(&game).unwrap(),
+        JarRef::new("first".into(), "2".into(), "a".repeat(128)).unwrap()
     );
-    assert_eq!(from_game(&game).unwrap(), jar);
 }
