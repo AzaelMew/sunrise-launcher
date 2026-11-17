@@ -810,7 +810,9 @@ enum Cmd {
     },
     /// Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the instance's exact
     /// Sunrise source revision with the launcher's own Rust, as the version the instance then
-    /// plays. Not sandboxed: the mods' code runs with your rights
+    /// plays. Not sandboxed: the mods' code runs with your rights. With no native mod found (content
+    /// and wasm mods need no build), it says there is nothing to build and exits successfully; a
+    /// server export still fails, as no engine is made
     NativeBuild {
         /// Discover internal uses through compiler diagnostics. Prints resolved declarations
         /// as JSON for cargo sunrise-mod internals sync; never installs or selects a game
@@ -1417,7 +1419,15 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                native_mods::build(&base, &folder, &target, profile, back_up_worlds, steps, registry_consent).map_err(|error| {
+                match native_mods::build(&base, &folder, &target, profile, back_up_worlds, steps, registry_consent) {
+                    // A content mod needs no build: the instance stays as it is.
+                    Err(nothing @ native_mods::Failed::Nothing) => {
+                        println!("{nothing}");
+                        return Ok(0);
+                    }
+                    result => result,
+                }
+                .map_err(|error| {
                     if let native_mods::Failed::Worlds(stake) = &error {
                         return trf(
                             "{error}\n{stay}: nothing changed. Or run again with --back-up-worlds to back them up into {backups} and build without the mods named.",
