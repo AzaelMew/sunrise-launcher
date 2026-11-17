@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::fs;
 use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 
 /// The game's cache of prepared data in a resources folder (`sunrise_core::prepared_files::FILE_NAME`).
 pub const DATA_FILE: &str = "sunrise-data.bin";
@@ -97,41 +97,109 @@ pub fn binary(dir: &Path) -> Option<PathBuf> {
     binary.is_file().then_some(binary)
 }
 
-/// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't).
-fn reply(mut command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, String> {
-    let mut child = command
+/// Why a version's preparer can't be used: it is from before the commands this launcher runs.
+pub fn too_old(version: &str) -> String {
+    crate::i18n::trf(
+        "Sunrise {version} is too old for this launcher: install a newer version.",
+        &[("version", version)],
+    )
+}
+
+fn unrun(error: std::io::Error) -> String {
+    crate::i18n::trf(
+        "The game's preparer couldn't run: {error}",
+        &[("error", &error.to_string())],
+    )
+}
+
+/// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe fills) and its lines returned.
+fn run(
+    mut command: Command,
+    out: &mut dyn FnMut(String),
+) -> Result<(ExitStatus, Vec<String>), String> {
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("sunrise-prepare: {e}"))?;
+        .stderr(Stdio::piped());
+    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
+    let stderr = child.child().stderr.take().expect("piped");
+    let errors = std::thread::spawn(move || {
+        BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+            .collect::<Vec<_>>()
+    });
+    for text in BufReader::new(child.child().stdout.take().expect("piped")).lines() {
+        out(text.map_err(unrun)?);
+    }
+    let status = child.wait().map_err(unrun)?;
+    Ok((status, errors.join().unwrap_or_default()))
+}
+
+/// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't); its log lines go to `line`.
+fn reply(command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, String> {
     let mut last = None;
-    for text in BufReader::new(child.stdout.take().expect("piped")).lines() {
-        let text = text.map_err(|e| format!("sunrise-prepare: {e}"))?;
+    let (status, errors) = run(command, &mut |text| {
         let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
         match value["message"].as_str() {
             Some(message) => line(message.to_owned()),
-            None => last = Some(value),
+            None if value.is_object() => last = Some(value),
+            None => {}
         }
-    }
-    let status = child.wait().map_err(|e| format!("sunrise-prepare: {e}"))?;
+    })?;
     if status.code() == Some(2) {
         return Ok(None);
     }
-    let value = last.ok_or_else(|| format!("sunrise-prepare ended ({status}) without a reply"))?;
+    for text in errors {
+        line(text);
+    }
+    let value = last.ok_or_else(|| {
+        crate::i18n::trf(
+            "The game's preparer stopped ({status}) without saying why.",
+            &[("status", &status.to_string())],
+        )
+    })?;
     if value["format"]
         .as_u64()
         .is_none_or(|format| format > FORMAT)
     {
-        return Err("This Sunrise build's preparer is newer than the launcher understands: update the launcher.".into());
+        return Err(crate::i18n::tr(
+            "This Sunrise version's preparer is newer than the launcher understands: update the launcher.",
+        )
+        .into());
     }
     if let Some(error) = value.get("error") {
         return Err(error["message"]
             .as_str()
-            .unwrap_or("sunrise-prepare failed")
+            .unwrap_or(crate::i18n::tr(
+                "The game's preparer failed without saying why.",
+            ))
             .to_owned());
     }
     Ok(Some(value))
+}
+
+/// Copies the sounds into `root`'s resources (`sounds`), each line to `line`; None when the preparer has no such command.
+pub fn sounds(
+    binary: &Path,
+    root: &Path,
+    minecraft: &Path,
+    line: &dyn Fn(String),
+) -> Result<Option<()>, String> {
+    let mut command = crate::process::command(binary);
+    command
+        .current_dir(root)
+        .arg("sounds")
+        .arg("--root")
+        .arg(root)
+        .arg("--minecraft-dir")
+        .arg(minecraft);
+    let (status, errors) = run(command, &mut |text| line(text))?;
+    match status.code() {
+        Some(0) => Ok(Some(())),
+        Some(2) => Ok(None),
+        _ => Err(errors.join("\n").trim_start_matches("error: ").to_owned()),
+    }
 }
 
 fn json_command(binary: &Path, root: &Path, subcommand: &str) -> Command {
@@ -238,4 +306,56 @@ pub fn add_extras(
             .collect(),
         missing: extras(&value["missing"]),
     }))
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A preparer that runs `script` (a shell `case` on its first argument).
+    fn fake(dir: &Path, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        fs::create_dir_all(dir).unwrap();
+        let binary = dir.join("sunrise-prepare");
+        fs::write(&binary, format!("#!/bin/sh\n{script}\n")).unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        binary
+    }
+
+    #[test]
+    #[ignore = "daily"]
+    fn a_preparers_log_lines_reach_the_log_and_an_old_one_answers_nothing() {
+        let dir =
+            std::env::temp_dir().join(format!("sunrise-launcher-preparer-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let binary = fake(
+            &dir,
+            r#"case "$1" in
+needs) echo 'linked the import of v1' >&2; printf '%s\n' '{"format": 1, "server_jar": false, "jdk": true}' ;;
+sounds) echo 'copying 2 sounds'; echo 'error: no sound index' >&2; exit 1 ;;
+*) exit 2 ;;
+esac"#,
+        );
+        let lines = std::cell::RefCell::new(Vec::new());
+        let log = |line: String| lines.borrow_mut().push(line);
+        let answered = needs(&binary, &dir, &log).unwrap();
+        assert_eq!(
+            answered,
+            Some(Needs {
+                server_jar: false,
+                jdk: true
+            })
+        );
+        let error = sounds(&binary, &dir, &dir, &log).unwrap_err();
+        assert_eq!(error, "no sound index");
+        assert_eq!(
+            *lines.borrow(),
+            ["linked the import of v1", "copying 2 sounds"]
+        );
+
+        let old = fake(&dir.join("old"), "exit 2");
+        assert_eq!(needs(&old, &dir, &log).unwrap(), None);
+        assert_eq!(sounds(&old, &dir, &dir, &log).unwrap(), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

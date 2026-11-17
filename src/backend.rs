@@ -1925,24 +1925,6 @@ pub fn default_minecraft_dir() -> Option<PathBuf> {
         .find(|dir| dir.is_dir())
 }
 
-fn found(program: &str, arg: &str) -> bool {
-    crate::process::command(program)
-        .arg(arg)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
-}
-
-fn python() -> Option<&'static str> {
-    let candidates: &[&'static str] = if cfg!(windows) {
-        &["py", "python"]
-    } else {
-        &["python3", "python"]
-    };
-    candidates.iter().copied().find(|p| found(p, "--version"))
-}
-
 /// Downloads the pinned version from Mojang into `dir` when an account in the launcher owns
 /// Minecraft (asked again now), else says what signing in would do, as the last line of the
 /// not-found error.
@@ -2293,13 +2275,11 @@ pub fn preparer(
     set_prepare_step(PrepareStep::Files);
     let version = game_version(tag);
     let dir = version_dir(tag);
-    let binary = crate::preparer::binary(&dir);
+    let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
-    let needs = match &binary {
-        Some(binary) => crate::preparer::needs(binary, &dir, log)?,
-        None => None,
-    };
-    let reused = needs.is_some_and(|needs| !needs.server_jar);
+    let needs =
+        crate::preparer::needs(&binary, &dir, log)?.ok_or_else(|| crate::preparer::too_old(tag))?;
+    let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
     // Resolved even when the game files are reused: the assets still come from the install.
     let minecraft = {
@@ -2347,12 +2327,6 @@ pub fn preparer(
         .join("versions")
         .join(&version)
         .join(format!("{version}.json"));
-    let python = match binary {
-        Some(_) => None,
-        None => Some(python().ok_or(
-            "This version prepares with Python: Python 3.10 or newer is needed. Install it, or pick a newer version.",
-        )?),
-    };
     // The Java the version pins, found as sunrise-prepare finds it, so a missing one is
     // reported (or downloaded) before the server jar is downloaded. Versions from before
     // java_major ran Java 25.
@@ -2368,13 +2342,7 @@ pub fn preparer(
             .map(|(_, dir)| dir),
     );
     set_prepare_step(PrepareStep::Java);
-    let java_home = java(
-        major,
-        needs.is_none_or(|needs| needs.jdk),
-        &games,
-        &manifest,
-        log,
-    )?;
+    let java_home = java(major, needs.jdk, &games, &manifest, log)?;
     let jar = data_dir()
         .join("server-jars")
         .join(format!("{version}.jar"));
@@ -2397,20 +2365,9 @@ pub fn preparer(
             .and_then(|_| fs::rename(&partial, &jar))
             .map_err(|e| e.to_string())?;
     }
-    if let Some(binary) = binary {
-        let mut cmd = Command::new(binary);
-        with_java(&mut cmd, &java_home);
-        cmd.current_dir(&dir).arg("--root").arg(&dir);
-        if !reused {
-            cmd.args(["--prepare", "--server-jar"]).arg(&jar);
-        }
-        cmd.arg("--minecraft-dir").arg(&minecraft);
-        return Ok((cmd, minecraft));
-    }
-    let mut cmd = Command::new(python.unwrap());
+    let mut cmd = Command::new(binary);
     with_java(&mut cmd, &java_home);
-    cmd.current_dir(&dir)
-        .args(["-u", "tools/prepare_native_client.py"]);
+    cmd.current_dir(&dir).arg("--root").arg(&dir);
     if !reused {
         cmd.args(["--prepare", "--server-jar"]).arg(&jar);
     }
@@ -2418,45 +2375,22 @@ pub fn preparer(
     Ok((cmd, minecraft))
 }
 
-/// Copies the pinned version's sounds from the player's own launcher install into the version's
-/// resources (`sunrise-prepare sounds`), each line to `log`. Sound is optional, so a launcher
-/// install without them is a line in the log, never a failed preparation. The version's own
-/// preparer does it when it is not the launcher's and knows how; versions from before it read
-/// the sounds where the launcher's preparer puts them.
+/// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
 pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
+    use crate::i18n::{tr, trf};
     let dir = version_dir(tag);
-    let binary = crate::preparer::binary(&dir).filter(|binary| {
-        crate::process::command(binary)
-            .arg("--help")
-            .output()
-            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("sunrise-prepare sounds"))
-    });
     set_prepare_step(PrepareStep::Sounds);
-    log("Copying the sounds from your Minecraft install".into());
-    let result = match binary {
-        Some(binary) => crate::process::command(binary)
-            .current_dir(&dir)
-            .arg("sounds")
-            .arg("--root")
-            .arg(&dir)
-            .arg("--minecraft-dir")
-            .arg(minecraft)
-            .output()
-            .map_err(|e| e.to_string())
-            .and_then(|o| {
-                let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
-                for line in text(&o.stdout).lines() {
-                    log(line.to_string());
-                }
-                match o.status.success() {
-                    true => Ok(()),
-                    false => Err(text(&o.stderr).trim_start_matches("error: ").to_string()),
-                }
-            }),
-        None => Err("this version's sunrise-prepare has no sounds command".into()),
+    log(tr("Copying the sounds from your Minecraft install").into());
+    let result = match crate::preparer::binary(&dir) {
+        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log)
+            .and_then(|done| done.ok_or_else(|| crate::preparer::too_old(tag))),
+        None => Err(crate::preparer::too_old(tag)),
     };
-    if let Err(e) = result {
-        log(format!("No sound (the game will be silent): {e}"));
+    if let Err(why) = result {
+        log(trf(
+            "No sound (the game will be silent): {why}",
+            &[("why", &why)],
+        ));
     }
 }
 
