@@ -1,5 +1,6 @@
 use super::*;
 use crate::browser::{download, FileRef, Query, GAME};
+use crate::porter::Check;
 use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -254,8 +255,39 @@ fn mod_jar(id: &str, files: &[(&str, &str)]) -> Vec<u8> {
     zip.finish().unwrap().into_inner()
 }
 
+/// A porter's check of a test jar: a mod with files carries over and works, one without doesn't run.
+fn fake_check(jar: &Path, out: &Path) -> Result<Check, String> {
+    let (id, _) = crate::browser::java::jar_title(jar).ok_or("no metadata")?;
+    let files = zip::ZipArchive::new(fs::File::open(jar).unwrap())
+        .unwrap()
+        .len();
+    let works = files > 1;
+    let check: Check = serde_json::from_value(serde_json::json!({
+        "mod_id": id, "name": id, "version": "1.0", "loader": "neoforge", "license": "MIT",
+        "verdict": if works { "works" } else { "no" }, "summary": "",
+        "namespaces": [id], "ports": [], "skipped": [], "depends": []
+    }))
+    .unwrap();
+    if works {
+        fs::create_dir_all(out.join("carry")).unwrap();
+        fs::write(
+            out.join("carry/sunrise-mod.toml"),
+            format!("id = \"{id}\"\n"),
+        )
+        .unwrap();
+    }
+    fs::create_dir_all(out).unwrap();
+    fs::write(
+        out.join("check.json"),
+        serde_json::to_string(&check).unwrap(),
+    )
+    .unwrap();
+    Ok(check)
+}
+
 #[test]
 fn java_mods_are_ported_turned_on_refused_on_clashes_and_removed() {
+    crate::browser::java::FAKE_CHECK.with(|fake| fake.set(Some(fake_check)));
     let home = home("java");
     let mut fake = Fake::default();
     for id in ["ruby", "lib", "gem"] {

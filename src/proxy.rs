@@ -9,11 +9,11 @@
 //! Servers page's calls to a game server's API (`servers.rs`) build their agent without it: they
 //! are on loopback and asked every second.
 //!
-//! Which hosts are reached directly, and how an address is read, are `sunrise-port-pack`'s rules
-//! (`crates/sunrise-port-pack/src/net.rs`): the jars an import fetches are downloaded there, and
-//! the same hosts have to be left alone on both sides. This module adds what is the launcher's
-//! own — the setting in `settings.json`, kept in memory so a request doesn't read the file — and
-//! hands the address to the parts that build their agents.
+//! Which hosts are reached directly, and how an address is read, are `net`'s rules, the same as the
+//! game's porter keeps: a modpack import runs it with this proxy in `HTTPS_PROXY`/`HTTP_PROXY`, so
+//! both leave the same hosts alone. This module adds what is the launcher's own — the setting in
+//! `settings.json`, kept in memory so a request doesn't read the file — and hands the address to
+//! the parts that build their agents.
 use crate::backend::Settings;
 use std::sync::Mutex;
 

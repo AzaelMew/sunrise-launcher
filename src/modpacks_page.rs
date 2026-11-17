@@ -4,8 +4,8 @@ use super::*;
 use std::path::PathBuf;
 use sunrise_launcher::browser::sunrise::pack as sunrise_pack;
 use sunrise_launcher::modpacks::{self, Imported};
+use sunrise_launcher::modpacks::{Porter, Status};
 use sunrise_launcher::other_launchers::Found;
-use sunrise_port_pack::report::Status;
 
 /// The report's filter: every row, or one status.
 pub(super) const FILTERS: [(Option<Status>, &str); 5] = [
@@ -76,7 +76,9 @@ impl Launcher {
             if let Ok(Ok(Some(mut paths))) = paths.await {
                 if let Some(path) = paths.pop() {
                     let _ = this.update(cx, |this, cx| {
-                        this.pack_job(move |log| modpacks::import(&path, log));
+                        this.pack_job(move |log| {
+                            modpacks::import(&Porter::for_version(None)?, &path, log)
+                        });
                         cx.notify();
                     });
                 }
@@ -90,12 +92,10 @@ impl Launcher {
         let Some(work) = self.open_pack().map(|p| p.work.clone()) else {
             return;
         };
-        let resources = self
-            .selected()
-            .filter(|tag| backend::is_prepared(tag))
-            .map(|tag| backend::resources(tag));
+        let tag = self.selected().map(|tag| tag.to_string());
+        let porter = move || Porter::for_version(tag.as_deref());
         if !ask {
-            self.pack_job(move |log| modpacks::port(&work, resources.as_deref(), None, log));
+            self.pack_job(move |log| modpacks::port(&porter()?, &work, None, log));
             return;
         }
         let paths = cx.prompt_for_paths(PathPromptOptions {
@@ -109,7 +109,7 @@ impl Launcher {
                 if let Some(from) = paths.pop() {
                     let _ = this.update(cx, |this, cx| {
                         this.pack_job(move |log| {
-                            modpacks::port(&work, resources.as_deref(), Some(&from), log)
+                            modpacks::port(&porter()?, &work, Some(&from), log)
                         });
                         cx.notify();
                     });
@@ -275,7 +275,9 @@ impl Launcher {
                 button(id, "Import", Kind::Secondary, &t).on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| {
                         let folder = folder.clone();
-                        this.pack_job(move |log| modpacks::import(&folder, log));
+                        this.pack_job(move |log| {
+                            modpacks::import(&Porter::for_version(None)?, &folder, log)
+                        });
                         cx.notify();
                     },
                 ))
@@ -520,7 +522,7 @@ impl Launcher {
         if !can_play {
             notes.push(tr("Playing needs a prepared Sunrise version (Play page).").into());
         }
-        let mut rows: Vec<&sunrise_port_pack::report::Row> = p
+        let mut rows: Vec<&sunrise_launcher::modpacks::Row> = p
             .rows
             .iter()
             .filter(|r| self.pack_filter.is_none_or(|s| r.status == s))
