@@ -1240,6 +1240,7 @@
   "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.",
   "Invalid developer build revision.": "Invalid developer build revision.",
   "Local unsigned developer build · {commit} · {id}": "Local unsigned developer build · {commit} · {id}",
+  "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.": "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
   "The checkout's release packager failed; no developer build was installed.": "The checkout's release packager failed; no developer build was installed.",
   "The developer checkout has dirty tracked inputs. Commit your changes first, then rebuild the game and retry.": "The developer checkout has dirty tracked inputs. Commit your changes first, then rebuild the game and retry.",
   "The developer checkout has no HEAD commit.": "The developer checkout has no HEAD commit.",
@@ -1274,6 +1275,5 @@
   "The launcher's look is reset for now, but it could not be saved": "런처 모양새는 지금 초기화되었지만 저장하지 못했습니다",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "유리와 흐림은 다크 모양새의 반투명 패널을 만들고, 라이트는 단색 흰 패널을 그립니다.",
   "Performance mode draws solid panels, without glass or blur.": "성능 모드는 유리나 흐림 없이 단색 패널을 그립니다.",
-  "This theme's night draws solid panels, without glass or blur.": "이 테마의 밤은 유리나 흐림 없이 단색 패널을 그립니다.",
-  "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.": "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/."
+  "This theme's night draws solid panels, without glass or blur.": "이 테마의 밤은 유리나 흐림 없이 단색 패널을 그립니다."
 }

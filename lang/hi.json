@@ -1240,6 +1240,7 @@
   "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.",
   "Invalid developer build revision.": "Invalid developer build revision.",
   "Local unsigned developer build · {commit} · {id}": "Local unsigned developer build · {commit} · {id}",
+  "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.": "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
   "The checkout's release packager failed; no developer build was installed.": "The checkout's release packager failed; no developer build was installed.",
   "The developer checkout has dirty tracked inputs. Commit your changes first, then rebuild the game and retry.": "The developer checkout has dirty tracked inputs. Commit your changes first, then rebuild the game and retry.",
   "The developer checkout has no HEAD commit.": "The developer checkout has no HEAD commit.",
@@ -1274,6 +1275,5 @@
   "The launcher's look is reset for now, but it could not be saved": "लॉन्चर का रूप अभी के लिए रीसेट हो गया है, लेकिन सहेजा नहीं जा सका",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ग्लास और ब्लर डार्क रूप के फ्रॉस्टेड पैनल बनाते हैं; लाइट रूप ठोस सफ़ेद पैनल बनाता है।",
   "Performance mode draws solid panels, without glass or blur.": "प्रदर्शन मोड बिना ग्लास या ब्लर के ठोस पैनल बनाता है।",
-  "This theme's night draws solid panels, without glass or blur.": "इस थीम की रात बिना ग्लास या ब्लर के ठोस पैनल बनाती है।",
-  "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.": "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/."
+  "This theme's night draws solid panels, without glass or blur.": "इस थीम की रात बिना ग्लास या ब्लर के ठोस पैनल बनाती है।"
 }
