@@ -178,11 +178,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # Saved by main's runs only, which every branch restores from: a branch's copy (about 800 MB a platform) serves
+      # no other ref and pushed main's SDK caches out of the repository's 10 GB.
       - uses: Swatinem/rust-cache@v2
         if: runner.environment == 'github-hosted'
         with:
           workspaces: launcher
           shared-key: launcher-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Linux libraries GPUI links to
         if: runner.os == 'Linux'
         run: |
