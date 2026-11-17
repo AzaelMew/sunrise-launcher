@@ -351,7 +351,8 @@ mod tests {
             install(&checkout, &program, true).unwrap_err(),
             "The developer checkout has no HEAD commit."
         );
-        let (_other, checkout, program) = packaging_inputs(&["sunrise-ctl", "sunrise-prepare"]);
+        let (_other, checkout, program) =
+            packaging_inputs(&["sunrise-ctl", "sunrise-perf", "sunrise-prepare"]);
         fs::write(program.with_file_name("sunrise-wasm-std.wasm"), "").unwrap();
         let error = install(&checkout, &program, true).unwrap_err();
         assert!(
