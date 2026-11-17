@@ -158,3 +158,59 @@ fn the_tool_hears_the_launchers_proxy_and_github_mirror() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
+    use super::super::fit::{Change, Verdict};
+    let line = r#"{"contract":2,"route":"prebuilt-api","mods":[
+        {"id":"here","refusal":null,"verdict":{"kind":"made-for"},"needs":null},
+        {"id":"gone","refusal":null,"verdict":{"kind":"does-not-fit","made_for":"b","misfits":[
+            {"id":"fn:give","change":"removed"},
+            {"id":"type:T","change":{"lost-impl":"Clone"}},
+            {"id":"hook:h","change":{"version":{"named":1,"now":2}}},
+            {"id":"type:S","change":{"fields":{"gained":["x"],"at":"src/lib.rs:3"}}}]},"needs":null},
+        {"id":"later","refusal":null,"verdict":null,"needs":"surface"},
+        {"id":"refused","refusal":"it has a build script","verdict":null,"needs":null}]}"#
+        .replace('\n', "");
+    let checked = reply(Some(&line)).unwrap();
+    assert_eq!(checked.mods[0].verdict, Some(Verdict::MadeFor));
+    let Some(Verdict::DoesNotFit { misfits, .. }) = &checked.mods[1].verdict else {
+        panic!("{:?}", checked.mods[1]);
+    };
+    let changes: Vec<&Change> = misfits.iter().map(|m| &m.change).collect();
+    assert_eq!(
+        changes,
+        [
+            &Change::Removed,
+            &Change::LostImpl("Clone".into()),
+            &Change::Version { named: 1, now: 2 },
+            &Change::Fields {
+                gained: vec!["x".into()],
+                at: "src/lib.rs:3".into()
+            }
+        ]
+    );
+    assert_eq!(checked.mods[2].needs.as_deref(), Some("surface"));
+    assert!(reply(None).unwrap_err().contains("too old"));
+    let error = r#"{"contract":2,"error":{"kind":"unread","message":"mods: not a folder"}}"#;
+    let refused = reply(Some(error)).unwrap_err();
+    assert!(refused.ends_with(": mods: not a folder"), "{refused}");
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "daily"]
+fn a_check_by_a_tool_on_another_contract_or_from_before_the_command_says_which_to_update() {
+    let _guard = super::super::tests::scratch_state();
+    let dir =
+        std::env::temp_dir().join(format!("sunrise-native-check-exit-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let plan = serde_json::json!({"contract": CONTRACT});
+    fake(&dir, &["ERRORS", "EXIT3"]);
+    let newer = check(&dir.join("tool"), &plan).unwrap_err();
+    assert!(newer.contains("update the launcher"), "{newer}");
+    fake(&dir, &["ERRORS"]);
+    let older = check(&dir.join("tool"), &plan).unwrap_err();
+    assert!(older.contains("install a newer version"), "{older}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
