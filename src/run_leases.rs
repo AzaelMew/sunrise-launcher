@@ -171,7 +171,7 @@ pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
 #[cfg(test)]
 mod tests;
 
-const GAME: &str = "SUNRISE_LAUNCHER_GAME_COMMAND";
+pub(crate) const GAME: &str = "SUNRISE_LAUNCHER_GAME_COMMAND";
 
 /// Preserve the engine-owned argument grammar before wrappers obscure it.
 pub(crate) fn snapshot(command: &mut Command) {

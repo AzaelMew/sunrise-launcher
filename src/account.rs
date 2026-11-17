@@ -2353,6 +2353,23 @@ pub struct GameSession {
     pub env: Vec<(&'static str, String)>,
 }
 
+impl GameSession {
+    /// Gives the game about to start this session: the playing account's file, the other
+    /// accounts' for splitscreen players, and, when it plays offline, why
+    /// (`SUNRISE_OFFLINE_REASON`), which the game shows the player. The reason, for the
+    /// launcher to show as well.
+    pub fn apply(self, cmd: &mut std::process::Command) -> Option<String> {
+        if let Some(file) = self.file {
+            cmd.arg("--session-file").arg(file);
+        }
+        cmd.envs(self.env);
+        if let Some(reason) = &self.offline {
+            cmd.env("SUNRISE_OFFLINE_REASON", reason);
+        }
+        self.offline
+    }
+}
+
 /// The owner gate for the game about to start, then the selected account's session in a file
 /// for it, and the other accounts' for its splitscreen players.
 pub fn session_for_game(game_home: &Path) -> Result<GameSession, NoOwner> {
