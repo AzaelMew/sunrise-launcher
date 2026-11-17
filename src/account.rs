@@ -326,7 +326,12 @@ fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens
         ])),
         "Microsoft",
     )?;
-    ms_tokens(status, &v)
+    // A refresh token issued to another app registration (the launcher's client ID changed
+    // since the player signed in) is refused as the client's; only a new sign-in mends it.
+    match v.get("error").and_then(Value::as_str) {
+        Some("invalid_client" | "unauthorized_client") => Err(SIGN_IN_AGAIN.into()),
+        _ => ms_tokens(status, &v),
+    }
 }
 
 // ----- Xbox Live, XSTS, Minecraft ----------------------------------------------------------------

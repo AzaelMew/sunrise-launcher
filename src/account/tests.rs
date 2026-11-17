@@ -61,6 +61,9 @@ fn route(mock: &mut Mock, method: &str, path: &str, auth: &str, body: &str) -> (
                     json!({"access_token": "ms-access-2", "refresh_token": "ms-refresh-2"}),
                 )
             }
+            Some("refresh_token") if form("refresh_token").as_deref() == Some("other-app") => {
+                reply(400, json!({"error": "unauthorized_client"}))
+            }
             _ => reply(400, json!({"error": "invalid_grant"})),
         },
         ("POST", "/xbl") => {
@@ -379,6 +382,20 @@ fn refresh_only_when_the_token_runs_out() {
     assert!(matches!(
         check(&ep, Some("test-client"), &notch(), revoked),
         Check::NoAnswer(e, s) if e == SIGN_IN_AGAIN && s.owns
+    ));
+}
+
+#[test]
+fn a_refresh_token_of_another_app_registration_asks_to_sign_in_again() {
+    let (_, ep) = mock(|_| {});
+    let other = Secrets {
+        refresh_token: "other-app".into(),
+        minecraft_expires_at: 0,
+        ..secrets("mc-token", true)
+    };
+    assert!(matches!(
+        check(&ep, Some("test-client"), &notch(), other),
+        Check::NoAnswer(e, s) if e == SIGN_IN_AGAIN && s.sign_in_required
     ));
 }
 
