@@ -8,88 +8,15 @@
 //!
 //! People read "made for" (a mod's pin) and "fits"; builds by their Nightly names; and items as
 //! what they are ("the hook `player_logged_in`"), never surface ids or hashes.
-use super::{api, internals, prebuilt, sdk_cache};
 use crate::i18n::{tr, trf};
-use mod_surface::uses::{self, Change, Fit, ItemKind, Misfit, UsesTable};
-use std::io::Read;
-use std::path::Path;
+use mod_surface::uses::{self, Change, ItemKind, Misfit};
 use sunrise_mod_package::mod_surface;
 
 /// At most this many changed items are named in a message; the build log has them all.
 pub const SHOWN_ITEMS: usize = 5;
 
-/// How a mod stands against the build an instance plays.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Verdict {
-    /// Made for this build.
-    MadeFor,
-    /// Made for another build (`made_for`), and every item it uses is unchanged in this one.
-    Fits { made_for: String },
-    /// It changes game code or names the game's internals (`why`: the table that does, or
-    /// `internals`): it works on the build it was made for only.
-    Exact { made_for: String, why: &'static str },
-    /// Its package doesn't say what it uses (made by an older tool, or its list is for another
-    /// build than its pin): it works on the build it was made for only.
-    NoList { made_for: String },
-    /// Items it uses changed in this build.
-    DoesNotFit {
-        made_for: String,
-        misfits: Vec<Misfit>,
-    },
-    /// An `[[inject]]` row's point is not the same in this build: why.
-    Points { made_for: String, why: String },
-}
-
-impl Verdict {
-    /// Whether the mod can be built against this build.
-    pub fn usable(&self) -> bool {
-        matches!(self, Self::MadeFor | Self::Fits { .. })
-    }
-}
-
-/// The uses table `dir` carries, when it carries one this launcher reads. A table that is too
-/// large, of another schema or malformed is no table: the mod then works on its own build only.
-pub(super) fn table(dir: &Path) -> Option<UsesTable> {
-    let file = std::fs::File::open(dir.join(uses::USES_FILE)).ok()?;
-    let mut bytes = Vec::new();
-    file.take(uses::MAX_USES_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    UsesTable::read(&bytes).ok()
-}
-
-/// How `project` stands against build `build`, whose surface `surface` gives (asked for only when
-/// the mod was made for another build) and whose build data `catalog` holds.
-pub(super) fn judge(
-    project: &api::Project<'_>,
-    build: &str,
-    surface: &mut dyn FnMut() -> Result<std::rc::Rc<mod_surface::Surface>, sdk_cache::Refusal>,
-    catalog: &mut dyn FnMut() -> Result<std::rc::Rc<internals::Catalog>, sdk_cache::Refusal>,
-) -> Result<Verdict, sdk_cache::Refusal> {
-    let made_for = project.bundle.native().sunrise.clone();
-    if made_for == build {
-        return Ok(Verdict::MadeFor);
-    }
-    if let Some(why) = prebuilt::changes_game(project) {
-        return Ok(Verdict::Exact { made_for, why });
-    }
-    let Some(table) = table(&project.bundle.dir).filter(|table| table.made_for == made_for) else {
-        return Ok(Verdict::NoList { made_for });
-    };
-    let target = surface()?;
-    if let Fit::DoesNotFit(misfits) = uses::fits(&table.entries, target.as_ref()) {
-        return Ok(Verdict::DoesNotFit { made_for, misfits });
-    }
-    if !project.bundle.manifest.inject.is_empty() {
-        if let Err(error) = catalog()?.check(&project.bundle.manifest) {
-            return Ok(Verdict::Points {
-                made_for,
-                why: error.to_string(),
-            });
-        }
-    }
-    Ok(Verdict::Fits { made_for })
-}
+use super::sdk_cache;
+pub use sunrise_native_build::check::{judge, table, Verdict};
 
 /// An item as people read it: "the hook `player_logged_in`".
 pub fn item(id: &str) -> String {
