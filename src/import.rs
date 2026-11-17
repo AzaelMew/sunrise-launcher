@@ -16,10 +16,10 @@ use crate::browser::{download, installed, FileRef};
 use crate::export::{FILES, FOLDERS};
 use crate::instances::{self, Instance};
 use crate::packs;
+use crate::zip_intake::{self, Archive};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use sunrise_port_pack::zip_intake::{self, Archive};
 
 const INDEX: &str = "modrinth.index.json";
 /// The `.mrpack` folders copied into the game folder; `server-overrides/` is a server's.

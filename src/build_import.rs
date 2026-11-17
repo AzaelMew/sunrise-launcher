@@ -12,11 +12,11 @@
 use crate::backend::{self, CLIENT};
 use crate::i18n::{tr, trf};
 use crate::native_mods::{self, Target};
+use crate::zip_intake::{self, Archive};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
-use sunrise_port_pack::zip_intake::{self, Archive};
 
 const PREFIX: &str = "imported-";
 /// What an import was made from, in its folder.

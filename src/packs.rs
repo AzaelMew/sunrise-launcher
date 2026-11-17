@@ -56,7 +56,7 @@ fn shader_key(path: &Path) -> Option<String> {
     let manifest = if path.is_dir() {
         sunrise_launcher_shader_api::Pack::read_manifest(path)
     } else {
-        let mut zip = sunrise_port_pack::zip_intake::open(fs::File::open(path).ok()?).ok()?;
+        let mut zip = crate::zip_intake::open(fs::File::open(path).ok()?).ok()?;
         sunrise_launcher_shader_api::Pack::read_zip_manifest(&mut zip)
     }
     .ok()?;
@@ -232,7 +232,7 @@ pub(crate) fn entry(path: &Path, name: &str) -> Option<Vec<u8>> {
             .read_to_end(&mut out)
             .ok()?;
     } else {
-        let mut zip = sunrise_port_pack::zip_intake::open(fs::File::open(path).ok()?).ok()?;
+        let mut zip = crate::zip_intake::open(fs::File::open(path).ok()?).ok()?;
         let entry = zip.by_name(name).ok()?;
         entry.take(4 << 20).read_to_end(&mut out).ok()?;
     }
@@ -394,8 +394,7 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
         }
     }
     let archive = fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let zip = sunrise_port_pack::zip_intake::open(archive)
-        .map_err(|e| format!("{}: {e}", file.display()))?;
+    let zip = crate::zip_intake::open(archive).map_err(|e| format!("{}: {e}", file.display()))?;
     if ext.as_deref() == Some(SHADER_PACKAGE) {
         Ok(Kind::Shader)
     } else if zip.index_for_name("pack.mcmeta").is_some() {

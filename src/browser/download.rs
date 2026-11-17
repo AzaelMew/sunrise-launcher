@@ -6,11 +6,13 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+/// Modrinth's file server, also where mods' required jars come from (`jars`).
+pub(crate) const MODRINTH_CDN: &str = "https://cdn.modrinth.com/";
 /// Hosts a file may come from: Modrinth's and CurseForge's file servers, and the release assets
 /// of Sunrise's registry (and, see [`github_release_asset`], of the repository a registry entry
 /// names).
 const HOSTS: [&str; 5] = [
-    "https://cdn.modrinth.com/",
+    MODRINTH_CDN,
     "https://edge.forgecdn.net/",
     "https://mediafilez.forgecdn.net/",
     sunrise_launcher_smod::index::FILE_HOST,
@@ -47,7 +49,7 @@ const MAX: u64 = 1 << 30;
 /// be a handshake per file, and a modpack brings hundreds.
 pub(super) fn agent(url: &str) -> ureq::Agent {
     let spec = crate::proxy::spec_for(url);
-    sunrise_port_pack::net::keep("browser", spec.as_deref(), |proxy| {
+    crate::net::keep("browser", spec.as_deref(), |proxy| {
         let builder = ureq::AgentBuilder::new()
             .user_agent(&format!(
                 "{} sunrise-launcher/{} (github.com/{})",
