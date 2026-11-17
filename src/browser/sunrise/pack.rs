@@ -4,7 +4,7 @@
 //! mods in `home/sunrise-mods/`, each downloaded and checked against the index like any
 //! registry mod, turned on or off as the pack says. The pack's overrides (settings, resource
 //! packs, a mod's saved settings) are copied in once, when it is installed.
-use super::{check_file, fetch, index, install_version, local, newest, Index};
+use super::{fetch, index, install_version, local, newest, Index};
 use crate::browser::{java, FileRef};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -116,7 +116,7 @@ fn install_version_in(
     let path = fetch(&file, &work.join("downloads"), local, &|f| {
         progress(&line, f)
     })?;
-    check_file(index, p, v, &path).inspect_err(|_| {
+    index::check_file(index, p, v, &path).inspect_err(|_| {
         let _ = fs::remove_file(&path);
     })?;
     let pack = Modpack::read(&path)?;

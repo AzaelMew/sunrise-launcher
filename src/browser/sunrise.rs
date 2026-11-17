@@ -1,8 +1,8 @@
 //! Sunrise's own registry (docs/modding/src/reference/registry-index.md): mods, modpacks and resource packs made for
 //! Sunrise, reviewed as pull requests in sunrise-org/sunrise-mods. One file lists them all,
 //! `index.json`; every download is checked against it before it reaches the game folder
-//! ([`check_file`]: size, SHA-256, the author's signature, the file's own
-//! manifest and content), and files the index says were taken down are refused and turned off.
+//! ([`index::check_file`]: size, SHA-256, the author's signature and the file's own manifest; the game refuses
+//! content it can't load, with its own error), and files the index says were taken down are refused and turned off.
 use super::{
     details::{Details, GitHub, Link},
     download, installed, java, FileRef, Kind, Project, Query, Source, SourceId, Version, GAME,
@@ -14,35 +14,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use sunrise_launcher_smod::index::{self, Index, Trust};
-
-/// The game's content fence over a mod's blocks, items and data, which the launcher's `.smod` copy leaves out.
-pub fn content_fence(kind: &index::Kind, path: &Path) -> Result<(), String> {
-    let manifest = match kind {
-        index::Kind::NativeMod => sunrise_mod_package::index::native::Bundle::read(path)?.manifest,
-        index::Kind::Mod => sunrise_mod_package::Package::read(path)?.manifest,
-        _ => return Ok(()),
-    };
-    sunrise_mod_package::Content::read(path, &manifest).map(drop)
-}
-
-/// [`index::inspect`], then the [`content_fence`] it ran before the launcher's `.smod` copy left it out.
-pub fn inspect(kind: &index::Kind, path: &Path) -> Result<index::Facts, String> {
-    let facts = index::inspect(kind, path)?;
-    content_fence(kind, path)?;
-    Ok(facts)
-}
-
-/// [`index::check_file`], then the [`content_fence`] over the file.
-pub fn check_file(
-    index: &Index,
-    p: &index::Project,
-    v: &index::Version,
-    path: &Path,
-) -> Result<Trust, String> {
-    let trust = index::check_file(index, p, v, path)?;
-    content_fence(&p.kind, path)?;
-    Ok(trust)
-}
 
 /// Where the registry publishes its index (GitHub Pages of sunrise-org/sunrise-mods).
 pub const INDEX_URL: &str = sunrise_launcher_addresses::MOD_INDEX;
@@ -901,7 +872,7 @@ fn fetch_datapack_from(
     let v = newest(index, p)?;
     let file = &version_of(index, p, v).files[0];
     let path = fetch(file, folder, local, progress)?;
-    check_file(index, p, v, &path).inspect_err(|_| {
+    index::check_file(index, p, v, &path).inspect_err(|_| {
         let _ = fs::remove_file(&path);
     })?;
     Ok((path, v.version.clone()))
@@ -978,7 +949,7 @@ fn install_version_guarded(
             } else {
                 index::Kind::Mod
             };
-            inspect(&kind, &path)
+            index::inspect(&kind, &path)
                 .map_err(|e| format!("Cannot inspect installed {}: {e}", p.name))?;
             different = installed_native != native;
         }
@@ -1016,7 +987,7 @@ fn install_version_guarded(
     let file = &version_of(index, p, v).files[0];
     let staging = home.join("mod-browser/downloads");
     let path = fetch(file, &staging, local, &|f| progress(&line, f))?;
-    let checked = check_file(index, p, v, &path).and_then(|trust| {
+    let checked = index::check_file(index, p, v, &path).and_then(|trust| {
         // Only Rust and TOML sources, for the mod the index names: nothing in it runs here.
         match native {
             true => index::native::Bundle::read(&path).and_then(|b| match b.manifest.id == p.id {
