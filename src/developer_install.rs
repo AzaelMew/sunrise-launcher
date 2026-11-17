@@ -305,14 +305,12 @@ mod tests {
     fn dirty_tracked_checkout_is_refused_but_local_commit_is_snapshotted() {
         let folder = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
-            assert!(
-                Command::new("git")
-                    .current_dir(folder.path())
-                    .args(args)
-                    .status()
-                    .unwrap()
-                    .success()
-            );
+            assert!(Command::new("git")
+                .current_dir(folder.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
         };
         git(&["init", "-q"]);
         fs::write(folder.path().join("input"), "committed").unwrap();
@@ -337,11 +335,9 @@ mod tests {
             "committed"
         );
         fs::write(folder.path().join("input"), "dirty").unwrap();
-        assert!(
-            committed_snapshot(folder.path())
-                .unwrap_err()
-                .contains("Commit your changes first")
-        );
+        assert!(committed_snapshot(folder.path())
+            .unwrap_err()
+            .contains("Commit your changes first"));
     }
     /// A checkout with the exporters manifest, and a game program beside the given companions.
     fn packaging_inputs(
@@ -507,20 +503,18 @@ mod tests {
             "sounds"
         );
         // The data file names its own root, so the base writes its own (the game does it on start).
-        assert!(
-            !to.join(sunrise_platform::prepared_files::FILE_NAME)
-                .exists()
-        );
+        assert!(!to
+            .join(sunrise_platform::prepared_files::FILE_NAME)
+            .exists());
         // A copy, not a link: preparing the base again rewrites its files only.
         fs::write(to.join("registries.json"), "reprepared").unwrap();
         assert_eq!(
             fs::read_to_string(from.join("registries.json")).unwrap(),
             "checkout tables"
         );
-        assert!(
-            from.join(sunrise_platform::prepared_files::FILE_NAME)
-                .exists()
-        );
+        assert!(from
+            .join(sunrise_platform::prepared_files::FILE_NAME)
+            .exists());
     }
     #[test]
     fn resources_the_base_gained_meanwhile_are_left_alone() {

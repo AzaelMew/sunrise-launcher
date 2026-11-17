@@ -28,12 +28,7 @@ pub(super) fn install(args: DeveloperInstall, as_json: bool) -> Result<(), Strin
     } else {
         println!("{label}");
         if prepared {
-            println!(
-                "{}",
-                tr(
-                    "Its resources are prepared: the checkout's prepared folder, copied beside the game."
-                )
-            );
+            println!("{}", tr("Its resources are prepared."));
         } else {
             println!(
                 "{}",
