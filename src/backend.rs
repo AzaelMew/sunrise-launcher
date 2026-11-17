@@ -1178,7 +1178,39 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
         &sha256,
         selected_game_architecture(&settings),
         progress,
-    )
+    )?;
+    // An older build publishes no release file; `played` then reads its research-lock.json.
+    let source = release.nightly.as_deref().unwrap_or(tag);
+    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
+    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
+        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
+    }
+    Ok(())
+}
+
+/// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
+const RELEASE_FILE: &str = "sunrise-release.json";
+
+/// [`RELEASE_FILE`]'s signed digest in `release`, published under the GitHub tag `source`.
+fn release_file_digest(release: &Release, source: &str) -> Result<String, String> {
+    match &release.nightly {
+        Some(_) => crate::signed::build_digest(
+            source,
+            &release.tag,
+            RELEASE_FILE,
+            &sunrise_launcher_release_verify::trusted_keys_for(REPO),
+            fetch_small,
+        ),
+        None => signed_digest(source, RELEASE_FILE),
+    }
+}
+
+/// Keeps `bytes` as the installed build's [`RELEASE_FILE`] in `dir` when they are the signed `sha256`'s.
+fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), String> {
+    if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
+        return Err(format!("{RELEASE_FILE}: not the signed file"));
+    }
+    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file
@@ -1266,11 +1298,21 @@ pub fn played_vanilla() -> String {
 }
 
 fn played(field: &str) -> String {
+    played_by(None, field)
+}
+
+/// The Minecraft version id the installed build `tag` plays (an instance's own build), else the launcher's.
+pub fn played_version_id_by(tag: Option<&str>) -> String {
+    played_by(tag, "version_id")
+}
+
+fn played_by(tag: Option<&str>, field: &str) -> String {
     // Tests share one scratch launcher folder whose installed builds other tests change.
     if cfg!(test) {
         return PINNED_GAME.into();
     }
-    played_in(&versions_dir(), Settings::load().selected.as_deref(), field)
+    let selected = Settings::load().selected;
+    played_in(&versions_dir(), tag.or(selected.as_deref()), field)
 }
 
 /// The played build's sunrise-release.json `field`, else its locked Minecraft, else [`PINNED_GAME`].
@@ -1281,7 +1323,7 @@ fn played_in(versions: &Path, selected: Option<&str>, field: &str) -> String {
         .or(installed.first().map(String::as_str));
     tag.map(|t| versions.join(t))
         .and_then(|dir| {
-            read_json(&dir.join("sunrise-release.json"))
+            read_json(&dir.join(RELEASE_FILE))
                 .and_then(|release| release[field].as_str().map(String::from))
                 .or_else(|| locked_game(&dir))
         })
@@ -4384,6 +4426,18 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn an_installed_build_keeps_its_release_file_only_when_it_is_the_signed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = br#"{"version_id":"26.4-pre1","vanilla":"26.4 Pre-Release 1"}"#;
+        let signed = sunrise_launcher_release_verify::sha256_hex(file);
+        assert!(keep_release_file(dir.path(), b"{}", &signed).is_err());
+        assert!(!dir.path().join(RELEASE_FILE).exists());
+        keep_release_file(dir.path(), file, &signed).unwrap();
+        let kept = read_json(&dir.path().join(RELEASE_FILE)).unwrap();
+        assert_eq!(kept["version_id"], "26.4-pre1");
+    }
 
     #[test]
     fn the_played_game_comes_from_the_release_file_else_the_lock_else_the_pin() {

@@ -126,6 +126,11 @@ impl Launcher {
         }
     }
 
+    /// The Minecraft version `instance`'s own build plays: what its mods and packs are for.
+    pub(super) fn game_of(&self, instance: &Instance) -> String {
+        backend::played_version_id_by(self.version_of(instance).map(String::as_str))
+    }
+
     /// Keeps the selected instance on `tag`, or lets it follow the launcher's version.
     pub(super) fn pin_version(&mut self, tag: Option<String>) {
         let Some(id) = self.selected_instance().map(|i| i.id.clone()) else {

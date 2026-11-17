@@ -315,6 +315,7 @@ impl Launcher {
             .filter(|_| self.starting_pack.is_none())
             .map(|i| mods_page::AutoTarget {
                 instance: i.clone(),
+                game: self.game_of(i),
             });
         let mods_tx = self.mods.tx.clone();
         let auto_enabled = self.settings.auto_updates_mods();

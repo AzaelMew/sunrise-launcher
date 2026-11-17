@@ -71,10 +71,9 @@ pub fn is_native_mod(id: &str) -> bool {
 
 /// How many of the registry's projects this Sunrise left out because none of their versions
 /// passes the index's rules (mods published for the earlier mod system), by the index already
-/// read (never the network): None when no index was read.
-pub fn projects_left_out() -> Option<usize> {
+/// read (never the network), for the Minecraft version `game`: None when no index was read.
+pub fn projects_left_out(game: &str) -> Option<usize> {
     let index = known_index()?;
-    let game = super::game();
     // With those listed whose versions for this game all are (`Blocked::EarlierSystem`), which
     // the list hides too.
     let mut ids: Vec<&str> = index
@@ -86,7 +85,7 @@ pub fn projects_left_out() -> Option<usize> {
             index
                 .projects
                 .iter()
-                .filter(|p| matches!(blocked(&index, p, &game), Some(Blocked::EarlierSystem)))
+                .filter(|p| matches!(blocked(&index, p, game), Some(Blocked::EarlierSystem)))
                 .map(|p| p.id.as_str()),
         )
         .collect();

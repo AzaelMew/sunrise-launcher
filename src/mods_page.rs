@@ -524,6 +524,7 @@ impl Launcher {
         // registry, where it can't be seen or turned off, it would list what the note says is
         // hidden.
         let glass = self.theme.glass;
+        let game = self.selected_instance().map(|i| self.game_of(i));
         let m = &mut self.mods;
         let everything = m.everything && !(glass && m.source == SourceId::Sunrise);
         m.search += 1;
@@ -543,13 +544,17 @@ impl Launcher {
                 limit: PAGE,
                 ..target.search(m.text.text(), m.kind, &m.browse.filters)
             },
-            None => Query {
-                everything,
-                offset,
-                limit: PAGE,
-                filters: m.browse.filters.clone(),
-                ..Query::new(m.text.text(), m.kind)
-            },
+            None => {
+                let query = Query::new(m.text.text(), m.kind);
+                Query {
+                    everything,
+                    offset,
+                    limit: PAGE,
+                    filters: m.browse.filters.clone(),
+                    game: game.unwrap_or(query.game.clone()),
+                    ..query
+                }
+            }
         };
         m.game = query.game.clone();
         // A Java instance's files are Modrinth's; Sunrise's registry is for Sunrise.
@@ -620,6 +625,7 @@ impl Launcher {
             .iter()
             .map(|i| AutoTarget {
                 instance: i.clone(),
+                game: self.game_of(i),
             })
             .collect();
         let tx = self.mods.tx.clone();
@@ -1854,13 +1860,14 @@ impl Launcher {
 /// An instance whose registry projects may update.
 pub(super) struct AutoTarget {
     pub(super) instance: instances::Instance,
+    /// The Minecraft version its own build plays ([`Launcher::game_of`]).
+    pub(super) game: String,
 }
 
 /// Updates the registry projects of `targets`: Sunrise's own instances only, never a modpack's
 /// profile, whose pack pins its mods. Returns what happened for the page's notice.
 pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> {
     let mut lines = Vec::new();
-    let game = browser::game();
     for t in targets {
         let i = &t.instance;
         let pack = i.id.starts_with("pack:") || i.id.starts_with("port:");
@@ -1869,7 +1876,7 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
         };
         let ctx = sunrise::auto::Context {
             in_pack: sunrise::auto::in_pack(&i.home),
-            game: &game,
+            game: &t.game,
         };
         if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, &|_, _| {}) {
             lines.extend(report.lines());
