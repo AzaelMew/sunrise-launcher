@@ -487,7 +487,7 @@ pub(super) fn picture(image: Option<gpui::ImageSource>, fallback: &'static str) 
             .relative()
             .flex_none()
             .size(px(PICTURE))
-            .rounded(px(PICTURE_RADIUS))
+            .rounded(px(crate::glass_ui::rad(PICTURE_RADIUS)))
             .into_any_element(),
         None => div()
             .relative()
@@ -496,7 +496,7 @@ pub(super) fn picture(image: Option<gpui::ImageSource>, fallback: &'static str) 
             .items_center()
             .justify_center()
             .size(px(PICTURE))
-            .rounded(px(PICTURE_RADIUS))
+            .rounded(px(crate::glass_ui::rad(PICTURE_RADIUS)))
             .bg(white(fill::BUTTON))
             .child(ui::icon(fallback, 17., white(ink::QUIET)))
             .into_any_element(),
@@ -523,7 +523,7 @@ pub(super) fn danger_button(id: SharedString, label: SharedString) -> Stateful<D
         .items_center()
         .h(px(36.))
         .px(px(12.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
         .child(ui::back_tint(
             radius::CONTROL,

@@ -133,7 +133,7 @@ fn run_launcher() {
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(960.), px(600.))),
+                    window_min_size: Some(size(px(800.), px(600.))),
                     titlebar: Some(titlebar::options()),
                     #[cfg(target_os = "linux")]
                     window_decorations: Some(gpui::WindowDecorations::Client),
@@ -154,4 +154,39 @@ fn run_launcher() {
             cx.on_window_closed(|cx, _| shut_down(cx)).detach();
             cx.activate(true);
         });
+}
+
+/// Every family and weight the launcher draws text in.
+const DRAWN_FAMILIES: [&str; 5] = [
+    sunrise_theme::FONT,
+    sunrise_theme::MONO,
+    sunrise_theme::night::FONT,
+    sunrise_theme::glass::DISPLAY_FONT,
+    sunrise_theme::glass::HEADING_FONT,
+];
+const DRAWN_WEIGHTS: [FontWeight; 4] = [
+    FontWeight::NORMAL,
+    FontWeight::MEDIUM,
+    FontWeight::SEMIBOLD,
+    FontWeight::BOLD,
+];
+
+/// Prepares every font the launcher draws in, on a worker after the first frame. A family and
+/// weight first used mid-frame (a dialog's bold heading, a menu's mono line) otherwise matches
+/// its fallbacks against the system's fonts there, on the UI thread: opening the New instance
+/// dialog the first time took 50 ms, 12 of them shaping 39 lines. One font at a time, so the
+/// frames meanwhile never wait long for the text system.
+pub(super) fn prewarm_fonts(cx: &App) {
+    let text = cx.text_system().clone();
+    cx.background_spawn(async move {
+        for family in DRAWN_FAMILIES {
+            for weight in DRAWN_WEIGHTS {
+                text.prewarm_fonts(&[gpui::Font {
+                    weight,
+                    ..gpui::font(family)
+                }]);
+            }
+        }
+    })
+    .detach();
 }

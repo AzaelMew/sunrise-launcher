@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ning modpack formati: Modrinth-dan resurs paketlari yuklab olish bo'yicha ro'yxatga olinadi, qolganlari unda saqlanadi.",
   "Mods": "Modlar",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "O'zining ko'rib chiqilgan reestridan Sunrise uchun yaratilgan mods va shader paketlari va Modrinth resurs paketlari. Har bir fayl oʻyin papkasiga yetib borgunga qadar manbaning nazorat summasi bilan tekshiriladi.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang hisobingizni tasdiqlay olmadi. Qayta kiring va qayta urinib ko'ring.",
-  "Mojang's session server is not answering. Try again later.": "Mojang seans serveri javob bermayapti. Keyinroq qayta urining.",
   "Mojang's version list isn't here yet.": "Mojang versiyalari roʻyxati hali bu yerda yoʻq.",
   "More": "Batafsil",
   "Most players at once": "Bir vaqtning o'zida ko'pchilik o'yinchilar",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft bilan tizimga kiring",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` bilan tizimga kiring.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "O'ynash uchun Minecraft: Java Edition-ga ega bo'lgan Microsoft hisob qaydnomasi bilan tizimga kiring",
-  "Sign in with a Minecraft account first.": "Avval Minecraft hisobiga kiring.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Edition-ga ega hisob qaydnomasi bilan tizimga kiring. Sizning ismingiz va teringiz boshqa ishga tushirgichlarda bo'lgani kabi onlayn serverlarga ham kiradi.",
   "Sign out": "Chiqish",
   "Sign-in not checked": "Kirish belgilanmagan",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Launcher ko'rinishi hozircha tiklandi, lekin saqlanmadi",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Shisha va Xiralash qorong'i ko'rinishning xira panellarini shakllantiradi; yorug'i qattiq oq panellar chizadi.",
   "Performance mode draws solid panels, without glass or blur.": "Unumdorlik rejimi shisha va xiralashsiz qattiq panellar chizadi.",
-  "This theme's night draws solid panels, without glass or blur.": "Bu mavzuning tuni shisha va xiralashsiz qattiq panellar chizadi."
+  "This theme's night draws solid panels, without glass or blur.": "Bu mavzuning tuni shisha va xiralashsiz qattiq panellar chizadi.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

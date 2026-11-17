@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Format modpack Modrinth: pakiety zasobōw z Modrinth sōm wymianowane bez jejich pobranie, reszta je w nim przenoszōno.",
   "Mods": "Mody",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mody i pakiety shaderōw wykōnane do Sunrise z włosnego przeglōndanego registru, jak tyż pakiety zasobōw z Modrinth. Kożdy plik je sprawdzany podle sumy kōntrolnyj jego zdrzōdła przed ôsiōngniyńciym folderu gry.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang niy mōg potwierdzić twojigo kōnta. Zalogowaj sie zaś i sprōbuj ponownie.",
-  "Mojang's session server is not answering. Try again later.": "Serwer sesji Mojang niy ôdpowiado. Sprōbuj niyskorzij.",
   "Mojang's version list isn't here yet.": "Lista wersyji Mojang niy ma jeszcze tu.",
   "More": "Wiyncyj",
   "Most players at once": "Wiynkszość groczy na rŏz",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Zalogować sie ze pōmocōm Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Zalogowaj sie kōmandōm `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Zalogowaj sie ze kōntym Microsoft, kere posiado Minecraft: Java Edycyjo, coby grać",
-  "Sign in with a Minecraft account first.": "Nojprzōd zalogowaj sie ze kōntym Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Zalogowaj sie ze kōntym, kere posiado Minecraft: Java Edycyjo. Twoje miano i skōra przichodzōm na serwerach internetowych, jak w inkszych launcherach.",
   "Sign out": "Wylogować sie",
   "Sign-in not checked": "Zalogowanie niy ma zaznaczōne",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Wyglōnd ôdpalacza je na terŏz resetniynty, ale niy ś dało go spamiyntować",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Szkło i Rozmycie fōrmujōm matowe panele ćmawego wyglōndu; jasny rysuje cołke białe panele.",
   "Performance mode draws solid panels, without glass or blur.": "Tryb wydajności rysuje cołke panele, bez szkła i rozmyciŏ.",
-  "This theme's night draws solid panels, without glass or blur.": "Noc tego motywu rysuje cołke panele, bez szkła i rozmyciŏ."
+  "This theme's night draws solid panels, without glass or blur.": "Noc tego motywu rysuje cołke panele, bez szkła i rozmyciŏ.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Formati modpack i Modrinth: paketat e burimeve nga Modrinth renditen sipas shkarkimit të tyre, pjesa tjetër bartet në të.",
   "Mods": "Mod",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mod-et dhe paketat shader të krijuara për Sunrise nga regjistri i tij i rishikuar dhe paketat e burimeve nga Modrinth. Çdo skedar kontrollohet me kontrollin e burimit të tij përpara se të arrijë në dosjen tuaj të lojës.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang nuk mund ta konfirmonte llogarinë tuaj. Identifikohu përsëri dhe provo sërish.",
-  "Mojang's session server is not answering. Try again later.": "Serveri i sesionit të Mojang nuk po përgjigjet. Provo sërish më vonë.",
   "Mojang's version list isn't here yet.": "Lista e versioneve të Mojang nuk është ende këtu.",
   "More": "Më shumë",
   "Most players at once": "Shumica e lojtarëve në të njëjtën kohë",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Hyni me Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Identifikohuni me `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Hyni me një llogari të Microsoft që zotëron Minecraft: Java Edition për të luajtur",
-  "Sign in with a Minecraft account first.": "Hyni fillimisht me një llogari Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Hyni me llogarinë që zotëron Minecraft: Java Edition. Emri dhe lëkura juaj vijnë së bashku në serverët në internet, si në lëshuesit e tjerë.",
   "Sign out": "Dilni",
   "Sign-in not checked": "Identifikimi nuk është zgjedhur",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Pamja e lëshuesit është rivendosur për tani, por nuk u ruajt",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Xhami dhe Mjegullimi formojnë panelet e mjelmëta të pamjes së errët; e çelëta vizaton panele të bardha të ngurta.",
   "Performance mode draws solid panels, without glass or blur.": "Modaliteti i performancës vizaton panele të ngurta, pa xhami as mjegullim.",
-  "This theme's night draws solid panels, without glass or blur.": "Nata e kësaj teme vizaton panele të ngurta, pa xhami as mjegullim."
+  "This theme's night draws solid panels, without glass or blur.": "Nata e kësaj teme vizaton panele të ngurta, pa xhami as mjegullim.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

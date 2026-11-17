@@ -32,6 +32,8 @@ pub struct Perf {
     first_frame: Option<Instant>,
     last_frame: Option<Instant>,
     ui_frames: Vec<f32>,
+    /// The frames' own work (`draws`), read by a benchmark window while it measures.
+    pub draws: Option<serde_json::Value>,
     saved: Instant,
     dirty: bool,
     /// Off for the windows `sunrise-launcher benchmark` starts: they report to it instead.
@@ -81,6 +83,7 @@ impl Perf {
             first_frame: None,
             last_frame: None,
             ui_frames: Vec::new(),
+            draws: None,
             saved: Instant::now(),
             dirty: false,
             log: true,
@@ -124,6 +127,14 @@ impl Perf {
         }
         self.last_frame = Some(now);
         first
+    }
+
+    /// The window has drawn its first frame a while ago and none since `quiet`: nothing moves,
+    /// so a little work on the UI thread holds up no frame.
+    pub fn resting(&self, quiet: Duration) -> bool {
+        self.first_frame
+            .is_some_and(|first| first.elapsed() > Duration::from_secs(2))
+            && self.last_frame.is_some_and(|last| last.elapsed() >= quiet)
     }
 
     pub fn ui_frame_times(&self) -> &[f32] {
@@ -199,7 +210,44 @@ impl Drop for Perf {
     }
 }
 
-/// What a window started by `sunrise-launcher benchmark` does next (`Launcher::drain`, every 80 ms).
+/// `SUNRISE_LAUNCHER_FRAME_OVERLAY=1` (or `full`) paints GPUI's frame times over the window, in a
+/// build with `--features frame-stats`: how long each frame's work took, while animating.
+#[cfg(feature = "frame-stats")]
+pub fn frame_overlay(window: &mut gpui::Window) {
+    let mode = match std::env::var("SUNRISE_LAUNCHER_FRAME_OVERLAY").as_deref() {
+        Ok("full") => gpui::DebugFrameOverlayMode::Full,
+        Ok("" | "0") | Err(_) => return,
+        Ok(_) => gpui::DebugFrameOverlayMode::Minimal,
+    };
+    window.set_debug_frame_overlay_mode(mode);
+}
+
+/// The work of the frames a window drew so far (`--features frame-stats`), in milliseconds:
+/// building, laying out and painting them, which the frame intervals (`ui_ms`) hide under the
+/// display's refresh. `late` frames took longer than a refresh; `missed` refreshes they cost.
+#[cfg(feature = "frame-stats")]
+pub fn draws(window: &gpui::Window) -> serde_json::Value {
+    let frames = window.frame_duration_snapshot();
+    let draw = &frames.draw_duration_histogram;
+    let ms = |q: f64| draw.value_at_quantile(q) as f64 / 1e6;
+    let (late, missed) = frames
+        .by_refresh_interval
+        .iter()
+        .fold((0, 0), |(late, missed), f| {
+            (late + f.frames_late, missed + f.missed_refreshes)
+        });
+    serde_json::json!({
+        "frames": draw.len(),
+        "p50_ms": ms(0.5),
+        "p95_ms": ms(0.95),
+        "p99_ms": ms(0.99),
+        "max_ms": draw.max() as f64 / 1e6,
+        "late": late,
+        "missed": missed,
+    })
+}
+
+/// What a window started by `sunrise-launcher benchmark` does next (`Launcher::drain`).
 pub enum Step {
     Wait,
     /// Show this page (an index into `Page::ALL`, wrapping).
@@ -215,7 +263,8 @@ const IDLE: Duration = Duration::from_secs(3);
 /// The environment variable that makes a launcher window measure itself into the file it names.
 const BENCH_ENV: &str = "SUNRISE_LAUNCHER_BENCH";
 
-/// A launcher window measuring itself: after its first frame it switches pages every tick for
+/// A launcher window measuring itself: after its first frame it switches pages every
+/// [`crate::wake::TICK`] for
 /// a few seconds (each switch animates, so the UI draws continuously), scrolls the longest list
 /// on every frame for a few more, then rests, then writes what it measured for `benchmark` and
 /// quits.
@@ -223,6 +272,8 @@ pub struct Bench {
     out: PathBuf,
     began: Option<Instant>,
     page: usize,
+    /// When the last page switch was: the pump also runs between ticks, when messages arrive.
+    switched: Option<Instant>,
     /// When scrolling began, and the UI frames drawn by then and by its end.
     scroll: Option<(Instant, usize, Option<usize>)>,
     idle_cpu: Option<(Instant, f64)>,
@@ -240,6 +291,7 @@ impl Bench {
             out: out.into(),
             began: None,
             page: 0,
+            switched: None,
             scroll: None,
             idle_cpu: None,
         })
@@ -256,6 +308,13 @@ impl Bench {
         };
         let began = *self.began.get_or_insert_with(Instant::now);
         if began.elapsed() < SWITCHING {
+            if self
+                .switched
+                .is_some_and(|at| at.elapsed() < crate::wake::TICK)
+            {
+                return Step::Wait;
+            }
+            self.switched = Some(Instant::now());
             self.page += 1;
             return Step::Go(self.page);
         }
@@ -304,6 +363,7 @@ impl Bench {
             "scroll_ms": scroll,
             "rss_mb": sunrise_bench::rss_bytes(pid).map(|b| b as f64 / f64::from(1 << 20)),
             "cpu_idle_pct": cpu_idle_pct,
+            "draws": perf.draws,
         });
         let _ = std::fs::write(&self.out, result.to_string());
         Step::Quit
@@ -320,6 +380,9 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
     report.conditions.power = sunrise_bench::power_source().map(str::to_owned);
     report.conditions.load_avg_1m = sunrise_bench::load_average();
     let (mut starts, mut rss, mut cpu) = (Vec::new(), Vec::new(), Vec::new());
+    // A `--features frame-stats` build's frame work (`draws`); none in other builds.
+    let (mut draw_p50, mut draw_p95, mut draw_p99, mut late) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let scratch =
         std::env::temp_dir().join(format!("sunrise-launcher-bench-{}", std::process::id()));
     for repeat in 0..repeats {
@@ -357,6 +420,15 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
         }
         rss.extend(result["rss_mb"].as_f64());
         cpu.extend(result["cpu_idle_pct"].as_f64());
+        let draws = &result["draws"];
+        for (key, values) in [
+            ("p50_ms", &mut draw_p50),
+            ("p95_ms", &mut draw_p95),
+            ("p99_ms", &mut draw_p99),
+            ("late", &mut late),
+        ] {
+            values.extend(draws[key].as_f64());
+        }
         let times = |key: &str| -> Vec<f32> {
             result[key]
                 .as_array()
@@ -388,6 +460,16 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
             at(0.5).unwrap_or(0.),
             at(0.95).unwrap_or(0.)
         );
+        if let Some(frames) = draws["frames"].as_u64() {
+            eprintln!(
+                "  frame work: {frames} frames, median {:.2} ms, p95 {:.2} ms, p99 {:.2} ms, max {:.1} ms; {} late",
+                draws["p50_ms"].as_f64().unwrap_or(0.),
+                draws["p95_ms"].as_f64().unwrap_or(0.),
+                draws["p99_ms"].as_f64().unwrap_or(0.),
+                draws["max_ms"].as_f64().unwrap_or(0.),
+                draws["late"].as_u64().unwrap_or(0),
+            );
+        }
     }
     report.metric("launcher.cold_start_ms", &starts[..starts.len().min(1)]);
     report.metric(
@@ -396,6 +478,12 @@ pub fn benchmark(repeats: usize) -> Result<PathBuf, String> {
     );
     report.metric("launcher.rss_mb", &rss);
     report.metric("launcher.cpu_idle_pct", &cpu);
+    if !draw_p50.is_empty() {
+        report.metric("launcher.frame_work_p50_ms", &draw_p50);
+        report.metric("launcher.frame_work_p95_ms", &draw_p95);
+        report.metric("launcher.frame_work_p99_ms", &draw_p99);
+        report.metric("launcher.late_frames", &late);
+    }
     let mut fetches = Vec::new();
     for _ in 0..3 {
         let started = Instant::now();
@@ -492,12 +580,16 @@ mod tests {
             out: std::env::temp_dir().join("unused"),
             began: None,
             page: 0,
+            switched: None,
             idle_cpu: None,
             scroll: None,
         };
         assert!(matches!(bench.tick(&perf), Step::Wait));
         perf.frame();
         assert!(matches!(bench.tick(&perf), Step::Go(1)));
+        // A message woke the pump within the tick: the page stays.
+        assert!(matches!(bench.tick(&perf), Step::Wait));
+        bench.switched = bench.switched.map(|at| at - crate::wake::TICK);
         assert!(matches!(bench.tick(&perf), Step::Go(2)));
     }
 }

@@ -8,8 +8,9 @@ impl Launcher {
     /// Whether the screen covers the window: no owner, and either Play was refused or the player
     /// hasn't read it yet. The data question comes first.
     pub(crate) fn asking_owner(&self) -> bool {
+        // Opened on purpose (the top bar's Sign in), it shows whatever is known of the owner.
         (!sunrise_launcher::developer_offline::selected() || sign_in_preview())
-            && (self.owner == Some(false) || sign_in_preview())
+            && (self.owner == Some(false) || self.owner_screen_open || sign_in_preview())
             && (self.owner_screen_open || !self.settings.owner_notice_seen || sign_in_preview())
             && !self.asking_consent()
             && self.opening.is_none()
@@ -86,7 +87,7 @@ impl Launcher {
                 .relative()
                 .mt(px(10.))
                 .p(px(18.))
-                .rounded(px(theme::night::RADIUS_CONTROL))
+                .rounded(px(crate::glass_ui::rad(theme::night::RADIUS_CONTROL)))
                 .bg(plate::alpha(n.card_hi, n.card_hi_alpha))
                 .border_1()
                 .border_color(plate::alpha(n.stroke, n.stroke_alpha))
@@ -284,7 +285,7 @@ impl Launcher {
             div()
                 .mt(px(20.))
                 .p(px(20.))
-                .rounded(px(radius::POPOVER))
+                .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
                 .bg(white(0.045))
         };
         let mut card = ui::dialog_plate(radius::MODAL)
@@ -449,7 +450,7 @@ impl Launcher {
                         .gap(px(10.))
                         .h(px(44.))
                         .px(px(20.))
-                        .rounded(px(radius::ROW))
+                        .rounded(px(crate::glass_ui::rad(radius::ROW)))
                         .bg(gpui::white())
                         .cursor_pointer()
                         .hover(|s| s.opacity(0.9))

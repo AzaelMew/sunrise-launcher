@@ -259,7 +259,7 @@ pub(super) struct Servers {
 
 impl Servers {
     pub(super) fn new() -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::wake::channel();
         Self {
             list: Vec::new(),
             loaded: false,
@@ -635,7 +635,6 @@ impl Launcher {
                         s.create = None;
                         s.list = servers::list();
                         s.modes.clear();
-                        s.modes.clear();
                         self.open_server(entry.dir.clone());
                         self.servers.note = Some(format!(
                             "{} is ready. Press Start, then give your friends the address below.",
@@ -936,7 +935,8 @@ impl Launcher {
         } else {
             Default::default()
         };
-        self.servers.problem = None;
+        // Nothing to run it with yet: said as the form opens, not after it is filled in.
+        self.servers.problem = servers::create_blocked(self.selected().map(String::as_str));
         self.servers.create_scroll = Scrollbar::default();
         self.servers.create = Some(Create {
             new_world: true,
@@ -1055,7 +1055,11 @@ impl Launcher {
                             | Field::AddPlayer
                             | Field::DeleteServer
                     ),
-                    |d| d.h(px(36.)).px(px(12.)).rounded(px(radius::CONTROL)),
+                    |d| {
+                        d.h(px(36.))
+                            .px(px(12.))
+                            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
+                    },
                 )
                 // The instance dialog's are the large `FIELD_LG`: 48 px, 15 px text, white at 6 %,
                 // 10 % while typed in.
@@ -1079,7 +1083,7 @@ impl Launcher {
                 .when(f == Field::AccentHex, |d| {
                     d.h(px(36.))
                         .px(px(12.))
-                        .rounded(px(radius::CONTROL))
+                        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                         .text_size(px(13.))
                         .font_weight(FontWeight::MEDIUM)
                 })
@@ -1296,7 +1300,11 @@ impl Launcher {
             .flex()
             .flex_col()
             .size(px(size))
-            .rounded(px(if self.theme.glass { size / 4. } else { 3. }))
+            .rounded(px(if self.theme.glass {
+                crate::glass_ui::rad(size / 4.).min(size / 2.)
+            } else {
+                3.
+            }))
             .overflow_hidden()
             .bg(self.theme.plate);
         if let Some(pixels) = face {

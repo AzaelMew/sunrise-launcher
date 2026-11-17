@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Formáid modpack Modrinth: liostaítear na pacáistí acmhainní ó Modrinth de réir a n-íoslódála, iompraítear an chuid eile ann.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods agus pacáistí scáthaithe déanta do Sunrise óna chlár athbhreithnithe féin, agus pacáistí acmhainní ó Modrinth. Seiceáiltear gach comhad in aghaidh sheiceála a fhoinse sula sroicheann sé d'fhillteán cluiche.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Níorbh fhéidir le Mojang do chuntas a dhearbhú. Sínigh isteach arís agus bain triail eile as.",
-  "Mojang's session server is not answering. Try again later.": "Níl freastalaí seisiúin Mojang ag freagairt. Bain triail eile as ar ball.",
   "Mojang's version list isn't here yet.": "Níl liosta leaganacha Mojang anseo fós.",
   "More": "Tuilleadh",
   "Most players at once": "An chuid is mó imreoirí ag an am céanna",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Sínigh isteach le Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Sínigh isteach le `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Sínigh isteach le cuntas Microsoft ar leis Minecraft: Java Edition é a imirt",
-  "Sign in with a Minecraft account first.": "Sínigh isteach le cuntas Minecraft ar dtús.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Sínigh isteach leis an gcuntas ar leis Minecraft: Java Edition. Tagann d’ainm agus do chraiceann chuig freastalaithe ar líne, mar a dhéantar i lainseálaithe eile.",
   "Sign out": "Sínigh amach",
   "Sign-in not checked": "Níl síniú isteach seiceáilte",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Tá cuma an tosaitheora athshocraithe faoi láthair, ach níor sábháladh é",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Cruthaíonn Gloine agus Doiléire na painéil reoite den chuma dhorcha; tarraingíonn an chuma éadrom painéil bhána sholadacha.",
   "Performance mode draws solid panels, without glass or blur.": "Tarraingíonn mód feidhmíochta painéil sholadacha, gan ghloine ná doiléire.",
-  "This theme's night draws solid panels, without glass or blur.": "Tarraingíonn oíche an téama seo painéil sholadacha, gan ghloine ná doiléire."
+  "This theme's night draws solid panels, without glass or blur.": "Tarraingíonn oíche an téama seo painéil sholadacha, gan ghloine ná doiléire.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

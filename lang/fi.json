@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinthin modpack-muoto: Modrinthin resurssipaketit luetellaan niiden latausten mukaan, loput siirretään siihen.",
   "Mods": "Modit",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunriseille tehdyt modit ja shader-paketit sen omasta tarkistetusta rekisteristä ja resurssipaketit Modrinthista. Jokaista tiedostoa verrataan sen lähteen tarkistussummaan ennen kuin se saapuu pelikansioosi.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ei voinut vahvistaa tiliäsi. Kirjaudu uudelleen sisään ja yritä uudelleen.",
-  "Mojang's session server is not answering. Try again later.": "Mojangin istuntopalvelin ei vastaa. Yritä myöhemmin uudelleen.",
   "Mojang's version list isn't here yet.": "Mojangin versioluettelo ei ole vielä täällä.",
   "More": "Lisää",
   "Most players at once": "Useimmat pelaajat kerralla",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Kirjaudu sisään Microsoftilla",
   "Sign in with `sunrise-launcher account sign-in`.": "Kirjaudu sisään komennolla `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Kirjaudu sisään Microsoft-tilillä, joka omistaa Minecraft: Java Editionin pelataksesi",
-  "Sign in with a Minecraft account first.": "Kirjaudu ensin sisään Minecraft-tilillä.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Kirjaudu sisään tilillä, joka omistaa Minecraft: Java Editionin. Nimesi ja skinisi kulkevat mukanasi verkkopalvelimille, kuten muissakin käynnistysohjelmissa.",
   "Sign out": "Kirjaudu ulos",
   "Sign-in not checked": "Sisäänkirjautumista ei ole tarkistettu",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Käynnistimen ulkoasu on alustettu toistaiseksi, mutta sitä ei voitu tallentaa",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Lasi ja Sumennus muovaavat tumman ulkoasun huurretuita paneeleja; vaalea piirtää yhtenäiset valkoiset paneelit.",
   "Performance mode draws solid panels, without glass or blur.": "Suorituskykytila piirtää yhtenäiset paneelit ilman lasia ja sumennusta.",
-  "This theme's night draws solid panels, without glass or blur.": "Tämän teeman yö piirtää yhtenäiset paneelit ilman lasia ja sumennusta."
+  "This theme's night draws solid panels, without glass or blur.": "Tämän teeman yö piirtää yhtenäiset paneelit ilman lasia ja sumennusta.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

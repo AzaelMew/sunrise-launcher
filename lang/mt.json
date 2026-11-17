@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Il-format modpack ta' Modrinth: pakketti ta' riżorsi minn Modrinth huma elenkati bit-tniżżil tagħhom, il-bqija jinġarr fih.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods u pakketti shader magħmula għal Sunrise mir-reġistru rivedut tagħha stess, u pakketti tar-riżorsi minn Modrinth. Kull fajl jiġi ċċekkjat mal-checksum tas-sors tiegħu qabel ma jasal fil-folder tal-logħob tiegħek.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ma setgħetx tikkonferma l-kont tiegħek. Idħol mill-ġdid u erġa' pprova.",
-  "Mojang's session server is not answering. Try again later.": "Is-server tas-sessjoni ta' Mojang mhux qed iwieġeb. Erġa' pprova aktar tard.",
   "Mojang's version list isn't here yet.": "Il-lista tal-verżjoni ta' Mojang għadha mhix hawn.",
   "More": "Aktar",
   "Most players at once": "Ħafna plejers f'daqqa",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Idħol ma' Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Idħol b'`sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Idħol b'kont Microsoft li għandu Minecraft: Java Edizzjoni biex tilgħab",
-  "Sign in with a Minecraft account first.": "Idħol l-ewwel b'kont Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Idħol mal-kont li għandu Minecraft: Java Edizzjoni. Ismek u l-ġilda jiġu flimkien mas-servers online, bħal f'lanċjaturi oħra.",
   "Sign out": "Iffirma",
   "Sign-in not checked": "Id-dħul mhux iċċekkjat",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Id-dehra tal-lanċjar ġiet irrissettjar għalissa, imma ma setgħetx tiġi salvata",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Il-Ħġieġ u ċ-Ċċajpar jiffurmaw il-pannelli frosted tad-dehra skura; dik iċ-ċara tiġbed pannelli bojod solidi.",
   "Performance mode draws solid panels, without glass or blur.": "Il-Modalità tal-prestazzjoni tiġbed pannelli solidi, bla ħġieġ jew iċċajpar.",
-  "This theme's night draws solid panels, without glass or blur.": "In-noti ta' din it-tema tiġbed pannelli solidi, bla ħġieġ jew iċċajpar."
+  "This theme's night draws solid panels, without glass or blur.": "In-noti ta' din it-tema tiġbed pannelli solidi, bla ħġieġ jew iċċajpar.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -169,7 +169,7 @@ impl Launcher {
             .h_full()
             .p(px(28.))
             .overflow_y_scroll()
-            .rounded_l(px(radius::MODAL))
+            .rounded_l(px(ui::rad(radius::MODAL)))
             .bg(white(0.035))
             .child(ui::text(13., FontWeight::MEDIUM, ink::QUIET).child(tr("New server")))
             .child(
@@ -179,7 +179,7 @@ impl Launcher {
                     .h(px(190.))
                     .flex_none()
                     .overflow_hidden()
-                    .rounded(px(18.))
+                    .rounded(px(crate::glass_ui::rad(18.)))
                     .child(div().size_full().child(cover)),
             )
             .child(
@@ -334,7 +334,7 @@ impl Launcher {
                     .w(px(64.))
                     .h(px(40.))
                     .overflow_hidden()
-                    .rounded(px(8.))
+                    .rounded(px(crate::glass_ui::rad(8.)))
                     .bg(white(fill::BUTTON))
                     .when(icon.is_file(), |d| {
                         d.child(img(icon).size_full().object_fit(gpui::ObjectFit::Cover))
@@ -398,7 +398,7 @@ impl Launcher {
                 .flex()
                 .gap(px(4.))
                 .p(px(4.))
-                .rounded(px(radius::LARGE))
+                .rounded(px(crate::glass_ui::rad(radius::LARGE)))
                 .bg(white(0.04))
         };
         let difficulties = strip().children(DIFFICULTIES.iter().map(|&(id, label)| {
@@ -410,7 +410,7 @@ impl Launcher {
                     .items_center()
                     .h(px(40.))
                     .px(px(16.))
-                    .rounded(px(radius::CONTROL))
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     .cursor_pointer()
                     .font_family(sunrise_theme::glass::FONT)
                     .text_size(px(14.))
@@ -441,7 +441,7 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .size(px(40.))
-                    .rounded(px(radius::CONTROL))
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     .cursor_pointer()
                     .hover(|s| s.bg(white(fill::BUTTON)))
                     .child(ui::icon(icon, 17., white(ink::FULL))),
@@ -524,7 +524,7 @@ impl Launcher {
             .justify_between()
             .gap(px(24.))
             .p(px(16.))
-            .rounded(px(radius::POPOVER))
+            .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
             .bg(white(0.04))
             .child(
                 div()
@@ -584,14 +584,16 @@ impl Launcher {
         let mut chips = div().mt(px(12.)).flex().flex_wrap().gap(px(8.));
         for (i, name) in friends.iter().enumerate() {
             let face = match &own {
-                Some((n, uuid)) if n == name => self.head(uuid, 30.).rounded(px(8.)),
+                Some((n, uuid)) if n == name => {
+                    self.head(uuid, 30.).rounded(px(crate::glass_ui::rad(8.)))
+                }
                 _ => div()
                     .flex()
                     .flex_none()
                     .items_center()
                     .justify_center()
                     .size(px(30.))
-                    .rounded(px(8.))
+                    .rounded(px(crate::glass_ui::rad(8.)))
                     .bg(white(fill::BUTTON))
                     .child(ui::icon("user", 16., white(ink::BODY))),
             };
@@ -599,7 +601,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .h(px(44.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(white(fill::ROW_HOVER))
                 .child(
                     div()
@@ -653,7 +655,7 @@ impl Launcher {
                 .items_center()
                 .h(px(32.))
                 .px(px(12.))
-                .rounded(px(9.))
+                .rounded(px(crate::glass_ui::rad(9.)))
                 .bg(white(fill::BUTTON))
                 .cursor_pointer()
                 .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
@@ -678,7 +680,7 @@ impl Launcher {
                 .items_center()
                 .h(px(44.))
                 .pr(px(6.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(white(if focused { fill::BUTTON } else { 0.04 }))
                 .child(self.field(Field::Players, "Add a friend's name", 170., cx))
                 .child(add),
@@ -711,7 +713,7 @@ impl Launcher {
             .items_center()
             .justify_center()
             .size(px(22.))
-            .rounded(px(7.))
+            .rounded(px(crate::glass_ui::rad(7.)))
             .bg(if eula {
                 ui::color(look.accent)
             } else {
@@ -782,7 +784,7 @@ impl Launcher {
                 .items_center()
                 .h(px(48.))
                 .px(px(20.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .cursor_pointer()
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(15.))
@@ -792,27 +794,25 @@ impl Launcher {
                 .child(tr("Cancel")),
             &t,
         );
-        let accent = ui::color(look.accent);
-        let lit = gpui::hsla(accent.h, accent.s, (accent.l * 1.1).min(1.), 1.);
         let create = keyboard(
             div()
                 .id("create-go")
+                .relative()
                 .flex()
                 .items_center()
                 .justify_center()
                 .h(px(48.))
                 .px(px(32.))
-                .rounded(px(radius::LARGE))
-                .bg(accent)
+                .child(ui::pixel_fill(ui::color(look.accent), ui::TEXTURE_BUTTON))
                 .cursor_pointer()
-                .hover(move |s| s.bg(lit))
+                .hover(|s| s.opacity(0.92))
                 .font_family(sunrise_theme::glass::FONT)
                 .text_size(px(15.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(ui::color(look.on_accent))
                 // The mockup greys it until the EULA is ticked; a press then says why.
                 .when(!eula, |d| d.opacity(0.5))
-                .child(tr("Create server")),
+                .child(div().relative().child(tr("Create server"))),
             &t,
         );
         let buttons = if creating {
@@ -852,7 +852,7 @@ impl Launcher {
             .gap(px(16.))
             .px(px(36.))
             .py(px(20.))
-            .rounded_br(px(radius::MODAL))
+            .rounded_br(px(ui::rad(radius::MODAL)))
             .bg(white(0.03))
             .child(
                 div()

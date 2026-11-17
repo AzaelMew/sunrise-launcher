@@ -3,11 +3,12 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, glass, rain, scene, sky};
+use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
 mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
 mod blocks_versions;
+mod ferris;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
@@ -53,6 +54,7 @@ mod instance_icons;
 mod instance_mods;
 mod instances_page;
 mod internet;
+mod island;
 mod jar_launch;
 mod language_page;
 mod launch_page;
@@ -70,7 +72,10 @@ mod multiplayer_page;
 mod native_consent;
 mod native_log_page;
 mod native_registry_consent;
+mod nav_strip;
 mod new_instance;
+mod outline_frame;
+mod outline_home;
 mod owner_page;
 mod packs_page;
 mod perf;
@@ -90,6 +95,7 @@ mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
+mod wake;
 mod welcome;
 mod while_playing;
 mod window_root;
@@ -106,7 +112,7 @@ use scrollbar::Scrollbar;
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use sunrise_launcher::account::{self, Accounts, SignIn, SignInState};
@@ -239,6 +245,8 @@ struct Launcher {
     whats_new_open: Option<std::collections::HashSet<String>>,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
     settings_marked: usize,
+    /// Which Settings sections the pane draws in full (`glass_settings::Culled`).
+    settings_culled: std::cell::Cell<glass_settings::Culled>,
     /// Narrow Settings: the category list is dropped open from the switcher row; it starts folded and folds again on a pick.
     settings_nav_open: bool,
     /// About's credit picture was asked for, and what came back.
@@ -343,8 +351,6 @@ struct Launcher {
     picker: glass_home::PickerState,
     /// Settings' any-colour swatch shows the hue strip (the glass look).
     accent_strip: bool,
-    /// Settings' Glass and Blur sliders (the glass look).
-    look_sliders: themes_page::LookSliders,
     /// Where the accent picker's hue strip is on screen (`themes_page.rs`), to map a click to a
     /// hue.
     hue_area: std::rc::Rc<std::cell::Cell<Option<Bounds<gpui::Pixels>>>>,
@@ -356,8 +362,8 @@ struct Launcher {
     account_menu: bool,
     /// The glass sidebar's ⋮ menu (`frame.rs`).
     row_menu: frame::RowMenu,
-    /// The rail's hover: whether the pointer is on it, and since when (it eases open and shut).
-    rail: frame::Rail,
+    /// The menus drawn as views of their own (`island.rs`).
+    islands: island::Islands,
     /// The instance sheet's open section (`glass_sheet.rs`).
     sheet_tab: glass_sheet::SheetTab,
     /// The glass look's colours for the player's accent (`sunrise_theme::glass`).
@@ -432,7 +438,10 @@ struct Launcher {
     friend_focused: bool,
     friend_focus: FocusHandle,
     /// The window's width at the last frame: Home's head lays out by it, as the mockup's `xl`.
+    /// The top bar's pages, scrolling sideways when the window is too narrow for them.
+    nav_strip: nav_strip::NavStrip,
     window_width: f32,
+    window_height: f32,
     /// The window's longer side in points, and the screen's pixels per point: the size pictures
     /// are made at (`picture_cache`).
     window_long_side: f32,
@@ -471,20 +480,18 @@ struct Launcher {
     download_seen: Option<(Instant, usize)>,
     /// The tab open under Home's hero (`home_tabs.rs`).
     home_tab: home_tabs::HomeTab,
+    /// Whether `home_tab`'s panel is open beside Home's rail.
+    home_panel: bool,
+    /// Each folded sidebar (left, right): whether the pointer is near it, opening it over the
+    /// page, and since when.
+    side_folds: [Option<(bool, Instant)>; 2],
     /// Home's Play or folder menu, while open (glass look).
     home_menu: glass_home::HomeMenu,
-    /// Whether the pointer is over Home's folder button, which then shows its ⋯.
-    folder_hovered: bool,
     /// The list row under the pointer in Home's glass tabs (a world, a server): it shows its
     /// actions then.
     list_hover: Option<SharedString>,
     /// A Home list row's ⋯ menu, while open, and whether its Delete… was clicked once.
     list_menu: Option<(SharedString, bool)>,
-    /// The size of Home's tab strip, measured as it is laid out: the glass panel's plate cuts
-    /// its corner around it.
-    home_strip: std::rc::Rc<std::cell::Cell<Option<gpui::Size<Pixels>>>>,
-    /// When the running game was first seen running, for Home's "Playing for…".
-    client_since: Option<Instant>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
     instance_mods: instance_mods::InstanceMods,
     /// Debug-build previews of the native mod states (`glass_mod_states.rs`).
@@ -537,16 +544,16 @@ struct Launcher {
     shortcuts: shortcut_page::Shortcuts,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
-    /// The pixel art made for this window (`art.rs`), and pictures downloaded by URL.
+    /// Home's scenery, each its own view, drawn by the backdrop behind the launcher
+    /// (`window_root.rs`): Sunrise's coast, a theme's painted sky, Hypr Neon's rain.
+    coast: gpui::Entity<coast::Coast>,
     sky: gpui::Entity<sky::SkyView>,
-    /// The pixel sunset of the new design (dark appearance): its own view, so a frame of it
-    /// alone redraws nothing else.
-    scene: gpui::Entity<scene::Scene>,
-    /// Hypr Neon's rain over its black night (`rain.rs`).
     rain: gpui::Entity<rain::Rain>,
-    /// What is behind the launcher, drawn as its sibling (`window_root.rs`).
     backdrop: gpui::Entity<window_root::Backdrop>,
-    /// What the views behind the launcher were last handed.
+    /// Where the page between the sidebars, under the top bar, was laid out last: Home's
+    /// scenery goes there.
+    cover_at: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// What the views behind the launcher were last handed (`launcher_render.rs`).
     pushed: Option<launcher_render::Pushed>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,

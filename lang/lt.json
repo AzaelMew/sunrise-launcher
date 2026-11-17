@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth's modpack formatas: išteklių paketai iš Modrinth pateikiami pagal jų atsisiuntimą, o likusi dalis yra pernešama.",
   "Mods": "Modifikacijos",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Modifikacijos ir šešėlių paketai, sukurti „Sunrise“ iš jo paties peržiūrėto registro, ir išteklių paketai iš „Modrinth“. Kiekvienas failas prieš pasiekiant žaidimo aplanką patikrinamas pagal šaltinio kontrolinę sumą.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang negalėjo patvirtinti jūsų paskyros. Prisijunkite dar kartą ir bandykite dar kartą.",
-  "Mojang's session server is not answering. Try again later.": "Mojang seanso serveris neatsako. Vėliau bandykite dar kartą.",
   "Mojang's version list isn't here yet.": "Mojang versijų sąrašo dar nėra.",
   "More": "Daugiau",
   "Most players at once": "Dauguma žaidėjų vienu metu",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Prisijunkite naudodami „Microsoft“.",
   "Sign in with `sunrise-launcher account sign-in`.": "Prisijunkite vykdydami `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Prisijunkite naudodami „Microsoft“ paskyrą, kuriai priklauso „Minecraft: Java Edition“, kad galėtumėte žaisti",
-  "Sign in with a Minecraft account first.": "Pirmiausia prisijunkite naudodami „Minecraft“ paskyrą.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Prisijunkite paskyra, kuriai priklauso „Minecraft: Java Edition“. Jūsų vardas ir išvaizda keliauja su jumis į internetinius serverius, kaip ir kitose paleidimo priemonėse.",
   "Sign out": "Atsijungti",
   "Sign-in not checked": "Prisijungimas nepažymėtas",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Paleidyklės išvaizda kol kas atkurta, bet jos nepavyko išsaugoti",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Stiklas ir Suliejimas formuoja tamsios išvaizdos matinius skydus; šviesioji piešia vientisus baltus skydus.",
   "Performance mode draws solid panels, without glass or blur.": "Našumo režimas piešia vientisus skydus, be stiklo ir suliejimo.",
-  "This theme's night draws solid panels, without glass or blur.": "Šios temos naktis piešia vientisus skydus, be stiklo ir suliejimo."
+  "This theme's night draws solid panels, without glass or blur.": "Šios temos naktis piešia vientisus skydus, be stiklo ir suliejimo.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

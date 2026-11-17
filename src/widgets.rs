@@ -8,47 +8,153 @@ pub(crate) enum Kind {
     Ghost,
 }
 
-/// The element under the pointer and the one it just left, with when that happened. Hover
-/// backgrounds ease in and out from these rather than snapping.
+/// The element under the pointer, and every element whose hover is easing in or out, each on
+/// its own [`motion::Fade`]: a pointer swept across a menu fades each row it leaves from where
+/// it had got to, several at once.
 pub(crate) struct HoverState {
-    on: Option<(SharedString, Instant)>,
-    off: Option<(SharedString, Instant)>,
+    lit: Option<SharedString>,
+    fades: Vec<(SharedString, motion::Fade)>,
 }
 
 pub(crate) static HOVER: Mutex<HoverState> = Mutex::new(HoverState {
-    on: None,
-    off: None,
+    lit: None,
+    fades: Vec::new(),
 });
 
+impl HoverState {
+    fn fade(&self, id: &SharedString) -> Option<motion::Fade> {
+        self.fades
+            .iter()
+            .find(|(f, _)| f == id)
+            .map(|(_, fade)| *fade)
+    }
+
+    /// `id`'s hover turns `on` or off now, from where its fade was.
+    fn turn(&mut self, id: &SharedString, on: bool, now: Instant) {
+        let fade = motion::Fade::toward(self.fade(id), on, now);
+        self.fades.retain(|(f, fade)| f != id && !fade.rested(now));
+        self.fades.push((id.clone(), fade));
+    }
+}
+
+/// The view an element is drawn in, noted while it is painted: its hover and press redraw that
+/// view alone, not the window (which would build every view again, none reused).
+#[derive(Clone, Default)]
+pub(crate) struct Owner(std::rc::Rc<std::cell::Cell<Option<gpui::EntityId>>>);
+
+impl Owner {
+    /// A child of the element, taking no room, that notes the view it is painted in.
+    pub(crate) fn noting(&self) -> impl IntoElement {
+        let owner = self.0.clone();
+        gpui::canvas(
+            move |_, window, _| owner.set(Some(window.current_view())),
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_0()
+    }
+
+    /// Redraws the view the element was painted in (the window, before its first paint).
+    pub(crate) fn redraw(&self, window: &mut Window, cx: &mut App) {
+        match self.0.get() {
+            Some(view) => cx.notify(view),
+            None => window.refresh(),
+        }
+    }
+}
+
+/// `el` (named `id`) eases its hover layers ([`hover_fade`], [`hover_move`]) in and out under
+/// the pointer.
 pub(crate) fn track_hover(el: Stateful<Div>, id: SharedString) -> Stateful<Div> {
-    el.on_hover(move |hovered, window, _| note_hover(&id, *hovered, window))
+    let owner = Owner::default();
+    el.child(owner.noting())
+        .on_hover(move |hovered, window, cx| note_hover(&id, *hovered, &owner, window, cx))
 }
 
 /// Whether `id` is the element [`hover_fade`] shows hovered now.
 pub(crate) fn hover_is(id: &SharedString) -> bool {
-    HOVER
-        .lock()
-        .unwrap()
-        .on
-        .as_ref()
-        .is_some_and(|(h, _)| h == id)
+    HOVER.lock().unwrap().lit.as_ref() == Some(id)
 }
 
-/// Records that `id` is now hovered or not, for [`hover_fade`]: an element whose own hover
-/// listener does more calls it.
-pub(crate) fn note_hover(id: &SharedString, hovered: bool, window: &mut Window) {
+/// Records that `id` is now hovered or not, for [`hover_fade`], and redraws the view it is in:
+/// an element whose own hover listener does more calls it, with the [`Owner`] it notes.
+pub(crate) fn note_hover(
+    id: &SharedString,
+    hovered: bool,
+    owner: &Owner,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let mut state = HOVER.lock().unwrap();
-    let is_on = state.on.as_ref().is_some_and(|(h, _)| h == id);
-    if hovered && !is_on {
-        state.off = state.on.take();
-        let at = Instant::now();
-        state.on = Some((id.clone(), at));
-        glass_ui::note_hover_since(id, at);
-    } else if !hovered && is_on {
-        state.off = Some((id.clone(), Instant::now()));
-        state.on = None;
+    let now = Instant::now();
+    let is_lit = state.lit.as_ref() == Some(id);
+    if hovered && !is_lit {
+        // One element is lit at a time: the one the pointer last entered.
+        if let Some(left) = state.lit.replace(id.clone()) {
+            state.turn(&left, false, now);
+        }
+        state.turn(id, true, now);
+    } else if !hovered && is_lit {
+        state.lit = None;
+        state.turn(id, false, now);
+    } else {
+        return;
     }
-    window.refresh();
+    drop(state);
+    owner.redraw(window, cx);
+}
+
+/// The elements the left button went down on, until it comes up anywhere.
+static PRESSED: Mutex<Vec<SharedString>> = Mutex::new(Vec::new());
+
+/// `el` (named `id`) drawn by `pressed` while the left button is held on it, as `.active()`
+/// draws it, but redrawing only the view it is in: `.active()` redraws the window on the press
+/// and the release, every view built again. `pressed` applies last, over the element's looks.
+/// (An element whose `.hover()` sets what the press does keeps `.active()`: a hover style
+/// draws over the element's own.)
+pub(crate) fn press(
+    el: Stateful<Div>,
+    id: &SharedString,
+    pressed: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
+) -> Stateful<Div> {
+    let owner = Owner::default();
+    let held = PRESSED.lock().unwrap().contains(id);
+    let (down, up, out) = (id.clone(), owner.clone(), owner.clone());
+    let el = el
+        .child(owner.noting())
+        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+            PRESSED.lock().unwrap().push(down.clone());
+            owner.redraw(window, cx);
+        })
+        .on_mouse_up(gpui::MouseButton::Left, move |_, window, cx| {
+            release(&up, window, cx)
+        })
+        .on_mouse_up_out(gpui::MouseButton::Left, move |_, window, cx| {
+            release(&out, window, cx)
+        });
+    if held {
+        pressed(el)
+    } else {
+        el
+    }
+}
+
+fn release(owner: &Owner, window: &mut Window, cx: &mut App) {
+    let mut pressed = PRESSED.lock().unwrap();
+    if !pressed.is_empty() {
+        pressed.clear();
+        drop(pressed);
+        owner.redraw(window, cx);
+    }
+}
+
+/// `id`'s fade as `motion` plays it, while there is something to draw.
+fn hover_now(id: &SharedString, motion: sunrise_theme::Motion) -> Option<motion::Fade> {
+    let mut state = HOVER.lock().unwrap();
+    let (_, fade) = state.fades.iter_mut().find(|(f, _)| f == id)?;
+    fade.motion = motion;
+    let fade = *fade;
+    (!fade.rested(Instant::now())).then_some(fade)
 }
 
 /// A layer under an element's content that fades `color` in while it is hovered. `bleed` lets
@@ -61,7 +167,7 @@ pub(crate) fn hover_layer(id: &SharedString, color: Hsla, radius: f32, bleed: f3
             .bottom_0()
             .left(px(-bleed))
             .right(px(-bleed))
-            .rounded(px(radius))
+            .rounded(px(glass_ui::rad(radius)))
     };
     hover_fade(id, layer, move |d, a| d.bg(color.opacity(color.a * a)))
 }
@@ -84,30 +190,11 @@ pub(crate) fn hover_ease(
     paint: impl Fn(Div, f32) -> Div + 'static,
     on: sunrise_theme::Motion,
 ) -> AnyElement {
-    let state = HOVER.lock().unwrap();
-    // Each transition gets its own animation id, from when it started, so it plays once.
-    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    let start = *START.get_or_init(Instant::now);
-    let key = |dir: &str, at: Instant| {
-        ElementId::named_usize(format!("{id}-{dir}"), (at - start).as_micros() as usize)
-    };
-    let ease = move || motion::eased(on);
-    if let Some((_, at)) = state.on.as_ref().filter(|(h, _)| h == id) {
-        return layer()
-            .with_animation(key("in", *at), ease(), paint)
-            .into_any_element();
+    match hover_now(id, on) {
+        Some(fade) => fade.play(id, layer(), paint),
+        // Not hovered: nothing to draw (out of the flow, so it takes no gap either).
+        None => div().absolute().into_any_element(),
     }
-    if let Some((_, at)) = state
-        .off
-        .as_ref()
-        .filter(|(h, at)| h == id && at.elapsed() < on.duration())
-    {
-        return layer()
-            .with_animation(key("out", *at), ease(), move |d, t| paint(d, 1. - t))
-            .into_any_element();
-    }
-    // Not hovered: nothing to draw (out of the flow, so it takes no gap either).
-    div().absolute().into_any_element()
 }
 
 /// The element `el` itself — not a layer inside it — eased between its rest and hovered looks on
@@ -119,33 +206,10 @@ pub(crate) fn hover_move(
     el: Stateful<Div>,
     paint: impl Fn(Stateful<Div>, f32) -> Stateful<Div> + 'static,
 ) -> AnyElement {
-    let state = HOVER.lock().unwrap();
-    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-    let start = *START.get_or_init(Instant::now);
-    let key = |dir: &str, at: Instant| {
-        ElementId::named_usize(
-            format!("{id}-move-{dir}"),
-            (at - start).as_micros() as usize,
-        )
-    };
-    let spring = motion::eased(motion::SPRING);
-    if let Some((_, at)) = state.on.as_ref().filter(|(h, _)| h == id) {
-        return el
-            .relative()
-            .with_animation(key("in", *at), spring, paint)
-            .into_any_element();
+    match hover_now(id, motion::SPRING) {
+        Some(fade) => fade.play(id, el.relative(), paint),
+        None => el.into_any_element(),
     }
-    if let Some((_, at)) = state
-        .off
-        .as_ref()
-        .filter(|(h, at)| h == id && at.elapsed() < motion::SPRING.duration())
-    {
-        return el
-            .relative()
-            .with_animation(key("out", *at), spring, move |d, t| paint(d, 1. - t))
-            .into_any_element();
-    }
-    el.into_any_element()
 }
 
 /// Text set in one step of the type scale: headings (heading, title, display) in the pixel face.
@@ -300,14 +364,16 @@ pub(crate) fn button(
             .pb(px(if kind == Kind::Ghost { 0. } else { 2. }))
             .child(label),
     );
-    keyboard(track_hover(base, id), &t).active(|s| s.opacity(theme::PRESSED).top(px(1.)))
+    press(keyboard(track_hover(base, id.clone()), &t), &id, |d| {
+        d.opacity(theme::PRESSED).top(px(1.))
+    })
 }
 
 /// Copies to the clipboard, or into `SUNRISE_LAUNCHER_CLIPBOARD` when a test run sets it
 /// (`sunrise_launcher::desktop_seams`).
 pub(crate) fn copy_to_clipboard(cx: &mut App, item: gpui::ClipboardItem) {
     match item.text() {
-        Some(text) => glass_toast::say(trf("Copied {text}", &[("text", &text)])),
+        Some(text) => glass_toast::say_with("Copied {text}", &text),
         None => glass_toast::say(tr("Copied the picture")),
     }
     if let Some(file) = sunrise_launcher::desktop_seams::clipboard_file() {
@@ -665,7 +731,7 @@ pub(crate) fn slot_row(
             .gap(px(14.))
             .px(px(16.))
             .py(px(12.))
-            .children(slot.map(|s| s.rounded(px(8.)).overflow_hidden()))
+            .children(slot.map(|s| s.rounded(px(crate::glass_ui::rad(8.))).overflow_hidden()))
             .child(
                 glass_ui::setting_row(name, detail, right)
                     .p_0()
@@ -746,8 +812,12 @@ pub(crate) fn quiet_note(text_: impl Into<SharedString>, t: &Theme) -> Div {
         .child(text(theme::CAPTION).text_color(t.muted).child(text_.into()))
 }
 
-/// Something went wrong: a dot in the danger colour, then what happened.
+/// Something went wrong: a dot in the danger colour, then what happened. The glass look draws it
+/// as its other notices are, outlined in 1 px of that colour.
 pub(crate) fn notice(text_: String, t: &Theme) -> Div {
+    if glass_ui::on() {
+        return outlined_note(text_, t.danger, Some(t.danger));
+    }
     plate(t)
         .flex()
         .gap(px(12.))
@@ -766,6 +836,53 @@ pub(crate) fn notice(text_: String, t: &Theme) -> Div {
                 .bg(t.danger),
         )
         .child(blocks::icon("info-box", 20., t.danger))
+        .child(div().flex_1().min_w_0().child(text_))
+}
+
+/// Something worth knowing, nothing wrong: in the glass look, a quiet outline and an info mark.
+pub(crate) fn hint(text_: String, t: &Theme) -> Div {
+    if glass_ui::on() {
+        return outlined_note(text_, glass_ui::white(glass_ui::edge::REST), None);
+    }
+    plate(t)
+        .flex()
+        .gap(px(12.))
+        .p(px(16.))
+        .text_size(px(theme::UI.px))
+        .line_height(px(21.))
+        .text_color(t.muted)
+        .child(div().flex_1().min_w_0().child(text_))
+}
+
+/// A note in the glass look: `edge` around it, a dot in `dot` (or an info mark without one),
+/// then the text.
+fn outlined_note(text_: String, edge: Hsla, dot: Option<Hsla>) -> Div {
+    use sunrise_theme::glass::ink;
+    let mark = match dot {
+        Some(c) => div()
+            .flex_none()
+            .mt(px(7.))
+            .size(px(7.))
+            .rounded_full()
+            .bg(c)
+            .into_any_element(),
+        None => glass_ui::icon("information-circle", 18., glass_ui::white(ink::QUIET))
+            .flex_none()
+            .into_any_element(),
+    };
+    div()
+        .flex()
+        .items_start()
+        .gap(px(12.))
+        .px(px(16.))
+        .py(px(14.))
+        .border_1()
+        .border_color(edge)
+        .font_family(sunrise_theme::glass::FONT)
+        .text_size(px(14.))
+        .line_height(px(21.))
+        .text_color(glass_ui::white(ink::FULL))
+        .child(mark)
         .child(div().flex_1().min_w_0().child(text_))
 }
 

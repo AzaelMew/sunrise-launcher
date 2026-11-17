@@ -12,88 +12,8 @@ use std::rc::Rc;
 use sunrise_launcher::instances::{Icon, Instance, Kind as InstanceKind};
 use sunrise_theme::glass::{fill, ink, radius};
 
-/// The rail's distance from the window's edges (`m-3.5`).
-pub const MARGIN: f32 = 14.;
-
-/// The rail's width at rest (icons) and open (icons and names), while the pointer is on it.
-pub const RAIL: f32 = 80.;
-pub const RAIL_OPEN: f32 = 248.;
-/// What drifting particles (Taiga's snow, Hypr Neon's streaks, leaves, petals) keep clear of in a
-/// window of `w` by `h`: the title and top bars, the rail, and the text. Home's hero text sits in
-/// the left column and its tabs below it, so the sky drifts through the top right between them;
-/// every other page is text from the top bar down.
-pub fn keep_clear(w: f32, h: f32, home: bool) -> rain::Keep {
-    const TOP: f32 = 32. + MARGIN + theme::TOPBAR;
-    const HERO: f32 = 400.;
-    const HERO_WIDTH: f32 = 640.;
-    let left = MARGIN + RAIL;
-    let body = if home { HERO } else { TOP };
-    rain::Keep([
-        [0., 0., w, TOP],
-        [0., 0., left, h],
-        [left, TOP, HERO_WIDTH.min(w - left), (HERO - TOP).max(0.)],
-        [left, body, w - left, (h - body).max(0.)],
-        // The hero's right column: its version and What's new buttons, the invite-code field.
-        [(w - 360.).max(left), TOP, 360., (HERO - TOP).max(0.)],
-    ])
-}
-
-/// How the rail opens and shuts: quick, settling from a little past its width.
-const RAIL_MOTION: sunrise_theme::Motion = sunrise_theme::Motion {
-    name: "rail",
-    ms: 320,
-    curve: [0.22, 0.9, 0.3, 1.08],
-};
-/// Discord's own blurple, in every theme, and under the pointer.
-const DISCORD: u32 = 0x5865F2;
-const DISCORD_HOVER: u32 = 0x4752C4;
-
-/// The rail's state: whether the pointer is on it, and where its last opening or shutting began.
-#[derive(Default)]
-pub struct Rail {
-    pub hovered: bool,
-    open: bool,
-    since: Option<Instant>,
-    from: f32,
-    at: f32,
-    /// The instance list's scroll, for the cue that more rows sit below.
-    list: gpui::ScrollHandle,
-    /// The web links shown in full while the instance list overflows (they fold into one row).
-    links_open: bool,
-}
-
-impl Rail {
-    /// How far open the rail is, 0 to 1 (a little past 1 as it settles). `pinned`: something it
-    /// opened is still open (a row's menu), so it stays open without the pointer. Frames are asked
-    /// for only while it moves; under reduced motion it jumps.
-    pub fn progress(&mut self, window: &mut Window, pinned: bool) -> f32 {
-        // `SUNRISE_LAUNCHER_RAIL_OPEN=1` holds it open, for screenshots.
-        static HELD: std::sync::LazyLock<bool> =
-            std::sync::LazyLock::new(|| std::env::var_os("SUNRISE_LAUNCHER_RAIL_OPEN").is_some());
-        let want = self.hovered || pinned || *HELD;
-        if want != self.open {
-            self.open = want;
-            self.from = self.at;
-            self.since = Some(Instant::now());
-        }
-        let to = if want { 1. } else { 0. };
-        let t = match self.since {
-            Some(since) if !crate::motion::still() => {
-                since.elapsed().as_secs_f32() / RAIL_MOTION.secs()
-            }
-            _ => 1.,
-        };
-        if t >= 1. {
-            self.since = None;
-            self.at = to;
-            return to;
-        }
-        self.at = self.from + (to - self.from) * RAIL_MOTION.ease(t);
-        window.request_animation_frame();
-        self.at
-    }
-}
-
+/// The Outline look's sidebar, 14 from the window's edges.
+pub const SIDEBAR: f32 = 248.;
 /// The ⋮ menu of a sidebar row while open: whose, and whether Delete… was pressed once.
 #[derive(Clone, Default)]
 pub struct RowMenu {
@@ -129,7 +49,7 @@ impl Launcher {
         if let Some(picture) = self.instance_picture(i, size) {
             return instance_icons::centred(picture, size, self.scale).into_any_element();
         }
-        let r = px((size * 0.26).round());
+        let r = px(ui::rad((size * 0.26).round()).min(size / 2.));
         let mut colour = self.look.accent;
         match &i.icon {
             Some(Icon::Colour(hex)) => {
@@ -185,7 +105,7 @@ impl Launcher {
 
     /// A sidebar row's state line and its dot (the mockup's `statusOf`), from what the launcher
     /// knows of the instance.
-    fn row_state(&self, i: &Instance) -> (Tone, String) {
+    pub(super) fn row_state(&self, i: &Instance) -> (Tone, String) {
         let running =
             self.client.is_some() && self.selected_instance().is_some_and(|s| s.id == i.id);
         if running {
@@ -240,12 +160,11 @@ impl Launcher {
     }
 
     /// The instances by group (`sections` in the mockup): those without a group first.
-    /// `open`: the rail shows names (else icons alone, the name on hover); `label`: how far the
-    /// names have faded in.
-    fn glass_instances(
+    /// The sidebar's instances, by group. `compact` (the folded sidebar): each its icon alone, the
+    /// name in a tooltip, no group names and no ⋮ (a right click still opens the menu).
+    pub(super) fn glass_instances(
         &mut self,
-        open: bool,
-        label: f32,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let t = self.theme;
@@ -262,13 +181,12 @@ impl Launcher {
             if i.group != group {
                 list = flush(list, &mut out);
                 group = i.group.clone();
-                if let Some(g) = group.as_ref().filter(|_| open) {
+                if let Some(g) = group.as_ref().filter(|_| !compact) {
                     out.push(
                         ui::text(12., FontWeight::MEDIUM, ink::DIM)
                             .px(px(8.))
                             .pt(px(16.))
                             .pb(px(6.))
-                            .opacity(label)
                             .whitespace_nowrap()
                             .child(g.clone())
                             .into_any_element(),
@@ -297,7 +215,7 @@ impl Launcher {
                 InstanceKind::Pack => false,
             };
             let state = self.row_state(&i);
-            let icon = self.glass_instance_icon(&i, 38.);
+            let icon = self.glass_instance_icon(&i, 36.);
             let clicked = i.clone();
             let menu_open = self
                 .row_menu
@@ -318,14 +236,16 @@ impl Launcher {
                     ui::icon_button(
                         format!("side-more-{}", i.id),
                         "more-vertical",
-                        32.,
-                        18.,
+                        28.,
+                        16.,
                         radius::SMALL,
                         menu_open,
                         &t,
                     )
                     .on_click(cx.listener(
                         move |this, event: &ClickEvent, _, cx| {
+                            // The row under the ⋮ would otherwise take the click and go to Play.
+                            cx.stop_propagation();
                             if this.closed_by_this_press(event) {
                                 return;
                             }
@@ -335,6 +255,24 @@ impl Launcher {
                         },
                     )),
                 );
+            // The ⋮ stays out of the way until its row is under the pointer: it fades and slides
+            // in then. Shown outright while the pointer is on it (the row goes dark under it),
+            // its menu is open, or the keyboard is moving through the rows.
+            let row_id = SharedString::from(format!("side-instance-{}", i.id));
+            let more_id = SharedString::from(format!("side-more-{}", i.id));
+            let shown = menu_open
+                || crate::hover_is(&more_id)
+                || KEYBOARD.load(std::sync::atomic::Ordering::Relaxed);
+            let more = if shown {
+                more.into_any_element()
+            } else {
+                crate::hover_ease(
+                    &row_id,
+                    move || more,
+                    |d, t| d.opacity(t).right(px(2. + 4. * t)),
+                    sunrise_theme::QUICK,
+                )
+            };
             list = list.child(crate::motion::enter(
                 ElementId::named_usize(format!("side-enter-{}", i.id), 0),
                 order,
@@ -342,485 +280,63 @@ impl Launcher {
                     .relative()
                     .child(measure(&self.row_menu.rows, i.id.clone()))
                     .child(
-                        ui::row(
-                            format!("side-instance-{}", i.id),
-                            current,
-                            if open { 40. } else { 8. },
-                            &t,
-                        )
-                        .child(div().relative().flex_none().child(icon))
-                        .child(
-                            ui::row_text(i.name.clone(), state)
-                                .overflow_hidden()
-                                .opacity(label)
-                                .child(ui::room(&self.rooms, room_key.clone())),
-                        )
-                        // Narrow, icons alone; open, a name too long for the row is cut: the full
-                        // name on hover either way.
-                        .when(!open || cut, |d| d.tooltip(ui::tip(i.name.clone())))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            match clicked.kind {
-                                InstanceKind::Default | InstanceKind::Own => {
-                                    this.select_instance(&clicked);
-                                    this.go(Page::Play);
+                        ui::row(format!("side-instance-{}", i.id), current, 40., &t)
+                            .when(compact, |d| d.justify_center().px_0())
+                            .child(div().relative().flex_none().child(icon))
+                            .when(!compact, |d| {
+                                d.child(
+                                    ui::row_text(i.name.clone(), state)
+                                        .overflow_hidden()
+                                        .child(ui::room(&self.rooms, room_key.clone())),
+                                )
+                            })
+                            // A name cut short, or not shown at all: the full name on hover.
+                            .when(cut || compact, |d| d.tooltip(ui::tip(i.name.clone())))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                match clicked.kind {
+                                    InstanceKind::Default | InstanceKind::Own => {
+                                        this.select_instance(&clicked);
+                                        this.go(Page::Play);
+                                    }
+                                    InstanceKind::Port => {
+                                        this.show_modpack(Some(clicked.id["port:".len()..].into()))
+                                    }
+                                    InstanceKind::Pack => this.show_modpack(None),
                                 }
-                                InstanceKind::Port => {
-                                    this.show_modpack(Some(clicked.id["port:".len()..].into()))
-                                }
-                                InstanceKind::Pack => this.show_modpack(None),
-                            }
-                            cx.notify();
-                        }))
-                        // The ⋮ menu, from a right click anywhere on the row.
-                        .on_mouse_down(
-                            gpui::MouseButton::Right,
-                            cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                                // The open menu's mouse-down-out already closed it on this
-                                // press: reopening here would make the toggle a no-op.
-                                if this.menu_closed_at.take() == Some(event.position) {
-                                    cx.notify();
-                                    return;
-                                }
-                                this.row_menu.open =
-                                    row_menu_after_press(this.row_menu.open.take(), &right_id);
                                 cx.notify();
-                            }),
-                        ),
+                            }))
+                            // The ⋮ menu, from a right click anywhere on the row.
+                            .on_mouse_down(
+                                gpui::MouseButton::Right,
+                                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                    // The open menu's mouse-down-out already closed it on this
+                                    // press: reopening here would make the toggle a no-op.
+                                    if this.menu_closed_at.take() == Some(event.position) {
+                                        cx.notify();
+                                        return;
+                                    }
+                                    this.row_menu.open =
+                                        row_menu_after_press(this.row_menu.open.take(), &right_id);
+                                    cx.notify();
+                                }),
+                            ),
                     )
-                    .when(open, |d| d.child(more)),
+                    .when(!compact, |d| d.child(more)),
             ));
         }
         out.push(list.into_any_element());
         out
     }
 
-    /// The rail: a strip of instance icons that opens into names, states and links while the
-    /// pointer is on it (or one of its menus is open). It opens over the page, which keeps the
-    /// collapsed rail's room, so the page never moves or squeezes under the pointer. Its foot keeps
-    /// the launcher's update, Discord, the project's links, Settings and the version.
-    pub(super) fn glass_rail(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let t = self.theme;
-        let soft = self.look.accent_soft;
-        self.load_packs();
-        let pinned = self.row_menu.open.is_some();
-        let p = self.rail.progress(window, pinned);
-        let open = p > 0.5;
-        // Names and lines fade in over the second half of the opening, as the width arrives.
-        let label = ((p - 0.35) / 0.65).clamp(0., 1.);
-        let fade = move |d: Div| d.min_w_0().overflow_hidden().opacity(label);
-
-        // A rail button: an icon, its name beside it once the rail opens.
-        let button = |id: SharedString, icon: &'static str, name: SharedString, active: bool| {
-            keyboard(
-                track_hover(
-                    div()
-                        .id(id.clone())
-                        .relative()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(12.))
-                        .w_full()
-                        .h(px(42.))
-                        .px(px(17.5))
-                        .rounded(px(radius::ROW))
-                        .border_1()
-                        .border_color(if active {
-                            white(ui::edge::STRONG)
-                        } else {
-                            gpui::transparent_black()
-                        })
-                        .when(active, |d| d.bg(white(fill::ACTIVE)))
-                        .cursor_pointer()
-                        .child(ui::hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
-                        .child(ui::icon(icon, 19., white(ink::SOFT)).relative())
-                        .child(
-                            fade(ui::text(14., FontWeight::MEDIUM, ink::STRONG).relative())
-                                .whitespace_nowrap()
-                                .child(name.clone()),
-                        )
-                        // Narrow, the rail shows icons alone: the name on hover.
-                        .when(!open, |d| d.tooltip(ui::tip(name))),
-                    id,
-                ),
-                &t,
-            )
-        };
-
-        // Add instance: the accent's outline, not the sun gradient, so Play stays the one bright
-        // button on Home.
-        let add = keyboard(
-            track_hover(
-                div()
-                    .id("add-instance")
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(12.))
-                    .w_full()
-                    .h(px(42.))
-                    .px(px(17.5))
-                    .rounded(px(radius::ROW))
-                    .bg(ui::color(self.look.accent).opacity(0.08))
-                    .border_1()
-                    .border_color(ui::color(self.look.accent).opacity(0.5))
-                    .hover(|s| {
-                        s.bg(ui::color(self.look.accent).opacity(0.16))
-                            .border_color(ui::color(self.look.accent).opacity(0.8))
-                    })
-                    .cursor_pointer()
-                    .child(ui::icon("plus-sign", 19., ui::color(soft)))
-                    .child(
-                        fade(ui::text(14., FontWeight::SEMIBOLD, ink::FULL))
-                            .whitespace_nowrap()
-                            .child(tr("Add instance")),
-                    )
-                    .when(!open, |d| d.tooltip(ui::tip(tr("Add instance"))))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.open_instance_dialog(None);
-                        cx.notify();
-                    })),
-                "add-instance".into(),
-            ),
-            &t,
-        );
-
-        let mut list = div()
-            .id("side-list")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&self.rail.list)
-            .children(self.glass_instances(open, label, cx));
-
-        // The player's hosted servers, one more section under the instances.
-        let servers: Vec<_> = self
-            .servers
-            .sidebar_list()
-            .map(<[_]>::to_vec)
-            .unwrap_or_else(|| self.side_servers.clone());
-        if !servers.is_empty() {
-            list = list.child(
-                div()
-                    .h(px(22.))
-                    .flex()
-                    .items_end()
-                    .px(px(8.))
-                    .pb(px(4.))
-                    .child(
-                        fade(ui::text(12., FontWeight::MEDIUM, ink::DIM))
-                            .whitespace_nowrap()
-                            .child(tr("Servers")),
-                    ),
-            );
-        }
-        let mut server_rows = div().flex().flex_col().gap(px(2.));
-        for e in &servers {
-            let up = self.servers.is_up(&e.dir);
-            let shown = self.page == Page::Servers && self.servers.open.as_ref() == Some(&e.dir);
-            let dir = e.dir.clone();
-            server_rows = server_rows.child(
-                ui::row(format!("side-server-{}", e.dir.display()), shown, 8., &t)
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .justify_center()
-                            .size(px(38.))
-                            .rounded(px(radius::CONTROL))
-                            .bg(white(fill::BUTTON))
-                            .child(ui::icon("computer-terminal-01", 18., white(ink::STRONG))),
-                    )
-                    .child(fade(ui::row_text(
-                        e.name.clone(),
-                        if up {
-                            (Tone::Live, tr("Running").into())
-                        } else {
-                            (Tone::Off, tr("Stopped").into())
-                        },
-                    )))
-                    .when(!open, |d| d.tooltip(ui::tip(e.name.clone())))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_server(dir.clone());
-                        this.go(Page::Servers);
-                        cx.notify();
-                    })),
-            );
-        }
-        let list = list.child(server_rows);
-        // More rows than the rail shows: the web links fold into one row, and while rows sit
-        // below the list's foot a fade and a "More" pill say so; the pill scrolls to them.
-        let rows = self.instances.list.len() + servers.len();
-        let overflows = 52. * rows as f32 > f32::from(window.viewport_size().height) - 420.;
-        let scroll = self.rail.list.clone();
-        // Before the list's first layout the handle knows no height: the estimate stands in.
-        let below = match scroll.max_offset().y {
-            max if max == px(0.) => overflows,
-            max => max + scroll.offset().y > px(2.),
-        };
-        let more = div()
-            .id("rail-more")
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .gap(px(4.))
-            .h(px(24.))
-            .px(px(10.))
-            .rounded_full()
-            .border_1()
-            .border_color(white(ui::edge::STRONG))
-            .bg(white(fill::ACTIVE))
-            .cursor_pointer()
-            .child(ui::icon("arrow-down-01", 14., white(ink::STRONG)))
-            .when(open, |d| {
-                d.child(
-                    fade(ui::text(12., FontWeight::MEDIUM, ink::STRONG))
-                        .whitespace_nowrap()
-                        .child(tr("More")),
-                )
-            })
-            .when(!open, |d| d.tooltip(ui::tip(tr("More instances below"))))
-            .on_click(move |_, _, _| scroll.scroll_to_bottom());
-        // The fade sits over the list's last rows; the pill gets its own line under them, so it
-        // never covers a tile.
-        let list = div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .gap(px(6.))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .child(list)
-                    .when(below, |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .bottom_0()
-                                .h(px(28.))
-                                .bg(gpui::linear_gradient(
-                                    180.,
-                                    gpui::linear_color_stop(gpui::black().opacity(0.), 0.),
-                                    gpui::linear_color_stop(gpui::black().opacity(0.3), 1.),
-                                )),
-                        )
-                    }),
-            )
-            .when(below, |d| {
-                d.child(div().flex().flex_none().justify_center().child(more))
-            });
-
-        // A hairline set in from the rail's sides: between the instances and the buttons, and
-        // between Settings and the version.
-        let rule = || {
-            div()
-                .flex_none()
-                .h(px(1.))
-                .mx(px(10.))
-                .my(px(4.))
-                .bg(white(0.1))
-        };
-        let mut foot = div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .gap(px(2.))
-            .pt(px(4.))
-            .child(rule());
-        // The launcher's own update: the card while open; a dot on Settings while narrow.
-        let updating = match self.self_update {
-            SelfUpdate::Downloading(..) | SelfUpdate::Ready(_) => true,
-            SelfUpdate::Stuck(_) => !self.self_update_hidden,
-            _ => false,
-        };
-        if open {
-            foot = foot.children(self.rail_update_card(soft, cx));
-        }
-
-        // Discord keeps its own blurple in every theme, as the icon at rest and the fill under the
-        // pointer, so it never reads as the selected page. No pulse.
-        if !self.links.discord.is_empty() {
-            let url = self.links.discord.clone();
-            let did = SharedString::from("discord");
-            let hovered = crate::hover_is(&did);
-            foot = foot.child(keyboard(
-                track_hover(
-                    div()
-                        .id(did.clone())
-                        .relative()
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(12.))
-                        .w_full()
-                        .h(px(42.))
-                        .mb(px(4.))
-                        .px(px(17.5))
-                        .rounded(px(radius::ROW))
-                        .when(hovered, |d| d.bg(ui::color(DISCORD_HOVER)))
-                        .cursor_pointer()
-                        .child(ui::icon(
-                            "discord",
-                            19.,
-                            if hovered {
-                                gpui::white()
-                            } else {
-                                ui::color(DISCORD)
-                            },
-                        ))
-                        .child(
-                            fade(ui::text(14., FontWeight::SEMIBOLD, 1.))
-                                .text_color(if hovered {
-                                    gpui::white()
-                                } else {
-                                    white(ink::STRONG)
-                                })
-                                .whitespace_nowrap()
-                                .child(tr("Join the Discord")),
-                        )
-                        .when(!open, |d| d.tooltip(ui::tip(tr("Join the Discord"))))
-                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                    did,
-                ),
-                &t,
-            ));
-        }
-        let links = [
-            ("roadmap", tr("Roadmap"), "map", self.links.roadmap.clone()),
-            ("docs", tr("Documentation"), "book", self.links.docs.clone()),
-            (
-                "website",
-                tr("Website"),
-                "globe-02",
-                self.links.website.clone(),
-            ),
-        ];
-        // While the instances overflow, the links fold into one row the player can open.
-        let folded = overflows && !self.rail.links_open;
-        if overflows && links.iter().any(|(.., url)| !url.is_empty()) {
-            let (name, icon) = if folded {
-                (tr("More links"), "more-horizontal")
-            } else {
-                (tr("Fewer links"), "chevron-down")
-            };
-            foot = foot.child(
-                button("rail-links".into(), icon, name.into(), false).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.rail.links_open = !this.rail.links_open;
-                        cx.notify();
-                    },
-                )),
-            );
-        }
-        for (id, name, icon, url) in links {
-            if url.is_empty() || folded {
-                continue;
-            }
-            foot = foot.child(
-                button(SharedString::from(id), icon, name.into(), false)
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
-            );
-        }
-        let settings_open = self.page == Page::Settings;
-        foot = foot.child(
-            button(
-                "rail-settings".into(),
-                "sliders-horizontal",
-                tr("Settings").into(),
-                settings_open,
-            )
-            .child(
-                // The launcher's update waits: a dot on Settings while the rail is narrow.
-                div()
-                    .absolute()
-                    .top(px(9.))
-                    .left(px(27.))
-                    .when(!(updating && !open), |d| d.invisible())
-                    .child(ui::dot(Tone::Accent(soft))),
-            )
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.go(Page::Settings);
-                cx.notify();
-            })),
-        );
-        // The launcher's version under it: "Launcher 0.2.0" open, the number alone while narrow.
-        let version: SharedString = if open {
-            trf("Launcher {version}", &[("version", backend::VERSION)]).into()
-        } else {
-            backend::VERSION.into()
-        };
-        foot = foot.child(rule()).child(
-            div()
-                .flex()
-                .items_center()
-                .h(px(20.))
-                .px(px(if open { 12. } else { 0. }))
-                .when(!open, |d| d.justify_center())
-                .child(
-                    ui::text(11.5, FontWeight::NORMAL, ink::DIM)
-                        .id("launcher-version")
-                        .whitespace_nowrap()
-                        .truncate()
-                        .child(version)
-                        .when(!open, |d| {
-                            d.tooltip(ui::tip(trf(
-                                "Launcher {version}",
-                                &[("version", backend::VERSION)],
-                            )))
-                        }),
-                ),
-        );
-
-        let width = RAIL + (RAIL_OPEN - RAIL) * p;
-        crate::glass::plate(radius::PANEL)
-            .id("rail")
-            .flex()
-            .flex_col()
-            .flex_none()
-            .gap(px(10.))
-            .w(px(width))
-            .px(px(12.))
-            .py(px(12.))
-            .overflow_hidden()
-            // Open, it lies over the page: a shadow lifts it off what it covers.
-            .when(p > 0.02, |d| d.shadow_lg())
-            .occlude()
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                this.rail.hovered = *hovered;
-                cx.notify();
-            }))
-            .child(add)
-            .child(list.relative())
-            .child(foot.relative())
-    }
-
     /// The launcher's own update, as a card at the open rail's foot (while one downloads, waits,
     /// or could not be applied).
-    fn rail_update_card(&mut self, soft: u32, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn rail_update_card(&mut self, soft: u32, cx: &mut Context<Self>) -> Option<Div> {
         let t = self.theme;
         let card = |title: String, right: Option<String>| {
             div()
                 .flex()
                 .flex_col()
-                .mb(px(6.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(white(fill::FIELD))
                 .border_1()
                 .border_color(white(ui::edge::REST))
@@ -918,236 +434,8 @@ impl Launcher {
         }
     }
 
-    /// The glass top bar, across the window above the rail and the page: the edition switch over
-    /// the rail, the pages, then search (the palette), the last native build's log and the player.
-    /// Launcher settings live in the rail.
-    pub(super) fn glass_topbar(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let wide = self.window_width >= crate::glass_home::TOP_BAR_WIDE;
-        let compact = self.window_width < crate::glass_home::COMPACT;
-        // Near the window's smallest width (960) the page tabs need all the room: the player is
-        // only a face and Sign in only its logo, each with a tooltip.
-        let tight = self.window_width < 1000.;
-        let mark = div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .w(px(RAIL))
-            .child(self.edition_switch(cx));
-        let mut tabs = div()
-            .flex()
-            .items_center()
-            .gap(px(if compact { 2. } else { 4. }))
-            .min_w_0();
-        for (page, label, _) in Page::in_top_bar() {
-            let mut item = ui::nav_tab(format!("nav-{label}"), tr(label), self.page == page, &t);
-            if compact {
-                item = item.px(px(8.));
-            }
-            tabs = tabs.child(
-                item.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.go(page);
-                    cx.notify();
-                })),
-            );
-        }
-        let strip = div()
-            .flex()
-            .items_center()
-            .min_w_0()
-            .when(wide, |d| d.flex_none())
-            .when(!wide, |d| d.flex_shrink(1.).overflow_hidden())
-            .child(tabs.id("nav-pages").relative().when(!wide, |d| {
-                d.overflow_x_scroll()
-                    .on_scroll(|_, _, cx| cx.stop_propagation())
-            }));
-
-        let (name, how) = self.who_plays();
-        let face = self.accounts.selected().map(|a| a.uuid.clone());
-        let open = self.account_menu;
-        // Signed out, the chip is only the face: the Sign in with Microsoft button beside it
-        // says it once, and the page tabs keep their room.
-        let signed_in = face.is_some() && !tight;
-        let chip =
-            div()
-                .id("account")
-                .relative()
-                .when(tight, |d| d.tooltip(ui::tip(name.clone())))
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .h(px(44.))
-                .pl(px(8.))
-                .pr(px(12.))
-                .rounded(px(radius::ROW))
-                .bg(white(if open { fill::ACTIVE } else { fill::ROW_HOVER }))
-                .when(!open, |d| d.hover(|s| s.bg(white(0.09))))
-                .cursor_pointer()
-                .child(
-                    div().size(px(26.)).rounded(px(7.)).overflow_hidden().child(
-                        self.profile_heads
-                            .draw(face.as_deref(), 26., self.scale, &t),
-                    ),
-                )
-                .children(signed_in.then(|| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .max_w(px(if compact { 100. } else { 150. }))
-                        .child(
-                            ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
-                                .line_height(px(17.))
-                                .truncate()
-                                .child(name),
-                        )
-                        .children((!compact).then(|| {
-                            ui::text(12., FontWeight::NORMAL, ink::QUIET)
-                                .line_height(px(15.))
-                                .child(how)
-                        }))
-                }))
-                .child(
-                    ui::icon("arrow-down-01", 16., white(ink::FAINT))
-                        .ml(px(4.))
-                        .with_transformation(gpui::Transformation::rotate(gpui::radians(
-                            if open { std::f32::consts::PI } else { 0. },
-                        ))),
-                )
-                .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
-                    if this.closed_by_this_press(event) {
-                        return;
-                    }
-                    this.account_menu = !this.account_menu;
-                    if this.account_menu {
-                        this.accounts = Accounts::load();
-                        this.load_profile_heads();
-                    }
-                    cx.notify();
-                }));
-        let account = div()
-            .relative()
-            .child(keyboard(chip, &t))
-            .children(self.glass_account_menu(cx));
-
-        // Signing in with Microsoft, while nobody is: the mockup's button.
-        let sign_in = self.accounts.selected().is_none().then(|| {
-            keyboard(
-                div()
-                    .id("topbar-sign-in")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(44.))
-                    .px(px(if tight { 14. } else { 16. }))
-                    .rounded(px(radius::ROW))
-                    .bg(white(fill::BUTTON))
-                    .hover(|s| s.bg(white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(microsoft::logo(16.))
-                    .when(!tight, |d| {
-                        d.child(
-                            ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                                .child(tr("Sign in with Microsoft")),
-                        )
-                    })
-                    .when(tight, |d| d.tooltip(ui::tip(tr("Sign in with Microsoft"))))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.start_sign_in();
-                        cx.notify();
-                    })),
-                &t,
-            )
-        });
-        // Search: the palette (⌘K or Ctrl+K anywhere), as a field-shaped button.
-        let sid = SharedString::from("topbar-search");
-        let key: &str = if cfg!(target_os = "macos") {
-            "⌘K"
-        } else {
-            tr("Ctrl K")
-        };
-        let search = keyboard(
-            track_hover(
-                div()
-                    .id(sid.clone())
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(10.))
-                    .h(px(38.))
-                    .w(px(if compact { 38. } else { 230. }))
-                    .when(compact, |d| d.justify_center())
-                    .when(!compact, |d| d.px(px(12.)))
-                    .rounded(px(radius::CONTROL))
-                    .bg(white(fill::FIELD))
-                    .border_1()
-                    .border_color(white(ui::edge::REST))
-                    .cursor_pointer()
-                    .child(ui::hover_edge(&sid, radius::CONTROL, fill::HOVER, true))
-                    .child(ui::icon("search-01", 16., white(ink::QUIET)).relative())
-                    .when(!compact, |d| {
-                        d.child(
-                            ui::text(13.5, FontWeight::NORMAL, ink::QUIET)
-                                .relative()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(tr("Search…")),
-                        )
-                        .child(
-                            ui::text(11.5, FontWeight::MEDIUM, ink::DIM)
-                                .relative()
-                                .flex()
-                                .flex_none()
-                                .items_center()
-                                .h(px(20.))
-                                .px(px(6.))
-                                .rounded(px(5.))
-                                .border_1()
-                                .border_color(white(ui::edge::REST))
-                                .child(key.to_string()),
-                        )
-                    })
-                    .when(compact, |d| d.tooltip(ui::tip(tr("Search…"))))
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.palette_toggle(window, cx);
-                        cx.notify();
-                    })),
-                sid,
-            ),
-            &t,
-        );
-        // The build log isn't a top-bar button: it pushed the pages off the bar during a build.
-        // It opens from the build card and from each mod's menu.
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(12.))
-            .h(px(64.))
-            .pl(px(MARGIN))
-            .pr(px(MARGIN + 8.))
-            .pt(px(4.))
-            .child(mark)
-            .child(strip)
-            .children(self.toast_in_topbar())
-            .child(
-                div()
-                    .ml_auto()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(search)
-                    .child(account)
-                    .children(sign_in),
-            )
-    }
-
     /// The menu under the player (`Switch player`): everyone who can play, then Manage accounts.
-    fn glass_account_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+    pub(super) fn glass_account_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if !self.account_menu {
             return None;
         }
@@ -1175,14 +463,14 @@ impl Launcher {
                         .gap(px(12.))
                         .h(px(48.))
                         .px(px(10.))
-                        .rounded(px(radius::CONTROL))
+                        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                         .cursor_pointer()
                         .child(hover_layer(&id, white(0.07), radius::CONTROL, 0.))
                         .child(
                             div()
                                 .relative()
                                 .size(px(30.))
-                                .rounded(px(8.))
+                                .rounded(px(crate::glass_ui::rad(8.)))
                                 .overflow_hidden()
                                 .child(self.profile_heads.draw(
                                     Some(who.as_str()),

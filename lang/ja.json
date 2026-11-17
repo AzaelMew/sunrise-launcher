@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "ModrinthのModpack形式。Modrinthのリソースパックはダウンロード元として記載され、それ以外はファイル内に含まれます。",
   "Mods": "Mod",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise独自の審査済みレジストリにあるSunrise用Modおよびシェーダーパック、そしてModrinthのリソースパックです。各ファイルはゲームフォルダに配置される前に、送信元のチェックサムと照合されます。",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang がアカウントを確認できませんでした。もう一度サインインしてやり直してください。",
-  "Mojang's session server is not answering. Try again later.": "Mojang のセッションサーバーが応答していません。後でもう一度お試しください。",
   "Mojang's version list isn't here yet.": "Mojangのバージョンリストはまだ取得できていません。",
   "More": "もっと見る",
   "Most players at once": "最大同時プレイヤー数",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoftでサインイン",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` でサインインしてください。",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "プレイするには、Minecraft: Java Editionを所有するMicrosoftアカウントでサインインしてください",
-  "Sign in with a Minecraft account first.": "まず Minecraft アカウントでサインインしてください。",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Edition を所有するアカウントでサインインしてください。名前とスキンは、ほかのランチャーと同じようにオンラインサーバーでも使われます。",
   "Sign out": "サインアウト",
   "Sign-in not checked": "サインイン未確認",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "ランチャーの見た目は一時的にリセットされましたが、保存できませんでした",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ガラスとぼかしはダークの外観のすりガラス パネルを形づくり、ライトは無地の白いパネルを描きます。",
   "Performance mode draws solid panels, without glass or blur.": "パフォーマンスモードは、ガラスやぼかしのない無地のパネルを描きます。",
-  "This theme's night draws solid panels, without glass or blur.": "このテーマの夜は、ガラスやぼかしのない無地のパネルを描きます。"
+  "This theme's night draws solid panels, without glass or blur.": "このテーマの夜は、ガラスやぼかしのない無地のパネルを描きます。",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinths modpack-format: resurspaket från Modrinth listas efter nedladdning, resten bärs i den.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods och shader-paket gjorda för Sunrise från sitt eget granskade register, och resurspaket från Modrinth. Varje fil kontrolleras mot dess källas kontrollsumma innan den når din spelmapp.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang kunde inte bekräfta ditt konto. Logga in igen och försök igen.",
-  "Mojang's session server is not answering. Try again later.": "Mojangs sessionsserver svarar inte. Försök igen senare.",
   "Mojang's version list isn't here yet.": "Mojangs versionslista är inte här än.",
   "More": "Mer",
   "Most players at once": "De flesta spelare på en gång",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Logga in med Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Logga in med `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Logga in med ett Microsoft-konto som äger Minecraft: Java Edition för att spela",
-  "Sign in with a Minecraft account first.": "Logga in med ett Minecraft-konto först.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Logga in med kontot som äger Minecraft: Java Edition. Ditt namn och din skin följer med till onlineservrar, precis som i andra launchers.",
   "Sign out": "Logga ut",
   "Sign-in not checked": "Inloggning ej markerad",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Launcherns utseende är återställt för tillfället, men det kunde inte sparas",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas och Oskärpa formar de matta panelerna i det mörka utseendet; det ljusa ritar helvita vita paneler.",
   "Performance mode draws solid panels, without glass or blur.": "Prestandaläge ritar helfyllda paneler, utan glas eller oskärpa.",
-  "This theme's night draws solid panels, without glass or blur.": "Det här temats natt ritar helfyllda paneler, utan glas eller oskärpa."
+  "This theme's night draws solid panels, without glass or blur.": "Det här temats natt ritar helfyllda paneler, utan glas eller oskärpa.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -28,9 +28,7 @@ static SEG: std::sync::Mutex<Seg> = std::sync::Mutex::new(Seg::One);
 pub fn render(t: &Theme) -> gpui::Div {
     ui::set_on(true);
     ui::set_light(false);
-    crate::glass::set_light(false);
     ui::set_look(Glass::default_look());
-    crate::glass::set_look(Glass::default_look());
     let seg = *SEG.lock().unwrap();
     let pick = |v: Seg, window: &mut gpui::Window, _: &mut gpui::App| {
         *SEG.lock().unwrap() = v;
@@ -70,7 +68,7 @@ pub fn render(t: &Theme) -> gpui::Div {
         .gap(px(12.))
         .child(ui::button(
             "spec-primary".into(),
-            "Primary, with sheen".into(),
+            "Primary".into(),
             crate::Kind::Primary,
             t,
         ))

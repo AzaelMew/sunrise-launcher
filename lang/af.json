@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth se modpack-formaat: hulpbronpakke van Modrinth word gelys volgens hul aflaai, die res word daarin gedra.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods en shader-pakke gemaak vir Sunrise uit sy eie hersiene register, en hulpbronpakke van Modrinth. Elke lêer word gekontroleer teen sy bron se kontrolesom voordat dit jou speletjie-lêergids bereik.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang kon nie jou rekening bevestig nie. Meld weer aan en probeer weer.",
-  "Mojang's session server is not answering. Try again later.": "Mojang se sessiebediener antwoord nie. Probeer later weer.",
   "Mojang's version list isn't here yet.": "Mojang se weergawelys is nog nie hier nie.",
   "More": "Meer",
   "Most players at once": "Meeste spelers gelyktydig",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Meld aan met Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Meld aan met `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Meld aan met 'n Microsoft-rekening wat Minecraft: Java Edition besit om te speel",
-  "Sign in with a Minecraft account first.": "Meld eers aan met 'n Minecraft-rekening.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Meld aan met die rekening wat Minecraft: Java Edition besit. Jou naam en vel kom saam na aanlyn bedieners, soos in ander lanseerders.",
   "Sign out": "Meld af",
   "Sign-in not checked": "Aanmelding nie gemerk nie",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Die launcher se voorkoms is vir nou terug gestel, maar dit kon nie gestoor word nie",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas en Vervaging vorm die donker voorkoms se matpanele; die ligte een teken soliede wit panele.",
   "Performance mode draws solid panels, without glass or blur.": "Prestasiemodus teken soliede panele, sonder glas of vervaging.",
-  "This theme's night draws solid panels, without glass or blur.": "Hierdie tema se nag teken soliede panele, sonder glas of vervaging."
+  "This theme's night draws solid panels, without glass or blur.": "Hierdie tema se nag teken soliede panele, sonder glas of vervaging.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

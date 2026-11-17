@@ -36,7 +36,7 @@ pub fn options() -> TitlebarOptions {
 /// page would start under the traffic lights. AppKit keeps its controls and window interactions.
 #[cfg(target_os = "macos")]
 pub fn render(theme: &Theme, _window: &Window) -> Option<Div> {
-    use crate::glass::{self, Kind};
+    use crate::glass;
     use gpui::{div, prelude::*, px};
 
     Some(
@@ -44,9 +44,7 @@ pub fn render(theme: &Theme, _window: &Window) -> Option<Div> {
             .relative()
             .flex_none()
             .h(px(32.))
-            .when(theme.glass, |bar| {
-                bar.child(glass::backdrop(Kind::Glass, 0.))
-            })
+            .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
             .when(!theme.glass, |bar| bar.bg(theme.side))
             .text_color(theme.muted),
     )
@@ -64,7 +62,7 @@ pub fn render(_theme: &Theme, _window: &Window) -> Option<Div> {
 /// Draw the launcher's Linux title bar when the platform uses client-side decorations.
 #[cfg(target_os = "linux")]
 pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
-    use crate::glass::{self, Kind};
+    use crate::glass;
     use crate::{blocks, mark};
     use gpui::{div, prelude::*, px, Decorations, FontWeight, MouseButton};
 
@@ -95,9 +93,7 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
         .flex_none()
         .items_center()
         .h(px(32.))
-        .when(theme.glass, |bar| {
-            bar.child(glass::backdrop(Kind::Glass, 0.))
-        })
+        .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
         .when(!theme.glass, |bar| bar.bg(theme.side))
         .text_color(theme.muted)
         .border_b_1()
@@ -324,7 +320,7 @@ pub fn apply_appearance(_: &Window, _: Appearance) {}
 #[cfg(target_os = "windows")]
 mod windows {
     use super::*;
-    use crate::glass::{self, Kind};
+    use crate::glass;
     use crate::glass_ui::{color, hover_edge, white};
     use crate::{blocks, mark};
     use gpui::{div, prelude::*, px, FontWeight, Hsla, SharedString, Stateful, WindowControlArea};
@@ -479,9 +475,7 @@ mod windows {
                 .when(!window.is_maximized(), |bar| {
                     bar.pt(px(RESIZE_INSET)).px(px(RESIZE_INSET))
                 })
-                .when(theme.glass, |bar| {
-                    bar.child(glass::backdrop(Kind::Glass, 0.))
-                })
+                .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
                 .when(!theme.glass, |bar| bar.bg(theme.side))
                 .text_color(theme.muted)
                 .border_b_1()

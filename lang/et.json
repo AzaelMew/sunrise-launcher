@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinthi modpack-vorming: Modrinthi ressursipaketid on loetletud nende allalaadimise järgi, ülejäänud kantakse sellesse.",
   "Mods": "Modifikatsioonid",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Modifikatsioonid ja varjundipaketid, mis on loodud Sunrisei jaoks tema enda läbivaadatud registrist, ja ressursipaketid Modrinthilt. Iga faili kontrollitakse selle allika kontrollsummaga, enne kui see teie mängukausta jõuab.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ei saanud teie kontot kinnitada. Logige uuesti sisse ja proovige uuesti.",
-  "Mojang's session server is not answering. Try again later.": "Mojangi seansiserver ei vasta. Proovige hiljem uuesti.",
   "Mojang's version list isn't here yet.": "Mojangi versioonide loend pole veel siin.",
   "More": "Rohkem",
   "Most players at once": "Enamik mängijaid korraga",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Logige sisse Microsoftiga",
   "Sign in with `sunrise-launcher account sign-in`.": "Logige sisse käsuga `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Logige mängimiseks sisse Microsofti kontoga, millele kuulub Minecraft: Java Edition",
-  "Sign in with a Minecraft account first.": "Logige esmalt sisse Minecrafti kontoga.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Logige sisse kontoga, millele kuulub Minecraft: Java Edition. Teie nimi ja välimus tulevad kaasa võrguserveritesse nagu teistes käivitajates.",
   "Sign out": "Logi välja",
   "Sign-in not checked": "Sisselogimine pole kontrollitud",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Käivitaja välimus on praegu lähtestatud, aga seda ei õnnestunud salvestada",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Klaas ja Udustus kujundavad tumeda välimuse hägusad paneelid; heled joonib ühtlaselt valged paneelid.",
   "Performance mode draws solid panels, without glass or blur.": "Jõudlusrežiim joonib ühtlased paneelid, ilma klaasi ja udustuseta.",
-  "This theme's night draws solid panels, without glass or blur.": "Selle teema öö joonib ühtlased paneelid, ilma klaasi ja udustuseta."
+  "This theme's night draws solid panels, without glass or blur.": "Selle teema öö joonib ühtlased paneelid, ilma klaasi ja udustuseta.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

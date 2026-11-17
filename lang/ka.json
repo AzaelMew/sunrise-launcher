@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ის modpack ფორმატი: რესურსების პაკეტები Modrinth-დან ჩამოთვლილია მათი ჩამოტვირთვის მიხედვით, დანარჩენი მასშია გადატანილი.",
   "Mods": "მოდიფიკაციები",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "მოდიფიკაციები და შადერის პაკეტები შექმნილია Sunrise-სთვის საკუთარი განხილული რეესტრიდან და რესურსების პაკეტები Modrinth-ისგან. თითოეული ფაილი მოწმდება მისი წყაროს საკონტროლო ჯამთან, სანამ ის თქვენს თამაშის საქაღალდეში მიაღწევს.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang-მა ვერ დაადასტურა თქვენი ანგარიში. შედით ხელახლა და ხელახლა სცადეთ.",
-  "Mojang's session server is not answering. Try again later.": "Mojang-ის სესიის სერვერი არ პასუხობს. სცადეთ მოგვიანებით.",
   "Mojang's version list isn't here yet.": "Mojang-ის ვერსიების სია ჯერ არ არის აქ.",
   "More": "მეტი",
   "Most players at once": "მოთამაშეების უმეტესობა ერთდროულად",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "შედით Microsoft-ით",
   "Sign in with `sunrise-launcher account sign-in`.": "შედით `sunrise-launcher account sign-in`-ით.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "შედით Microsoft-ის ანგარიშით, რომელსაც ფლობს Minecraft: Java Edition სათამაშოდ",
-  "Sign in with a Minecraft account first.": "ჯერ შედით Minecraft ანგარიშით.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "შედით ანგარიშით, რომელსაც ფლობს Minecraft: Java Edition. თქვენი სახელი და კანი მოდის ონლაინ სერვერებზე, ისევე როგორც სხვა გამშვებებში.",
   "Sign out": "გასვლა",
   "Sign-in not checked": "შესვლა შემოწმებული არ არის",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "გამშვების იერსახე ჯერჯერობით აღდგენილია, მაგრამ ვერ შეინახა",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "მინა და გაბუნდოვნება ქმნის მუქი იერსახის ბუნდოვან პანელებს; ღია ხატავს მყარ თეთრ პანელებს.",
   "Performance mode draws solid panels, without glass or blur.": "შესრულების რეჟიმი ხატავს მყარ პანელებს, მინის და გაბუნდოვნების გარეშე.",
-  "This theme's night draws solid panels, without glass or blur.": "ამ თემის ღამე ხატავს მყარ პანელებს, მინის და გაბუნდოვნების გარეშე."
+  "This theme's night draws solid panels, without glass or blur.": "ამ თემის ღამე ხატავს მყარ პანელებს, მინის და გაბუნდოვნების გარეშე.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

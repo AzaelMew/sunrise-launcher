@@ -73,7 +73,7 @@ impl Launcher {
                         .gap(px(12.))
                         .max_w(px(560.))
                         .p(px(20.))
-                        .rounded(px(16.))
+                        .rounded(px(crate::glass_ui::rad(16.)))
                         .border_1()
                         .border_color(t.danger.opacity(0.45))
                         .bg(t.danger.opacity(0.08))
@@ -94,18 +94,23 @@ impl Launcher {
                 ),
                 None => centered(&waiting, &t).child(actions),
             };
+            // The instance's sections (its mods, worlds, log...) open over the page as they do with
+            // a version: nothing installed yet is when the log is most wanted.
             return div()
+                .relative()
                 .flex()
                 .flex_col()
                 .gap(px(24.))
                 .pt(px(28.))
+                .when(t.glass, |d| d.min_h(px(self.first_screen())))
                 .child(page_header(
                     "Play",
                     "Start the game, or run a server for others to join.",
                     &t,
                 ))
                 .child(middle)
-                .children(memory);
+                .children(memory)
+                .children(t.glass.then(|| self.home_section_panel(cx)).flatten());
         };
         let prepared = backend::is_prepared(&tag);
         // Prepared without sounds (#1035): Prepare again is the fix, so it stands out.
@@ -312,16 +317,10 @@ impl Launcher {
             }
         }
 
-        // The glass look's head (the mockup's `HomeView`) replaces the banner; the preparation's
-        // steps stay right under it, where the player looks after pressing Play.
+        // The Outline look's head replaces the banner; the preparation's steps stay right under
+        // it, where the player looks after pressing Play.
         let banner = if t.glass {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(24.))
-                .child(self.glass_home_head(&tag, prepared, cx))
-                .children(steps)
-                .children(self.glass_build_notice(cx))
+            self.outline_home_head(&tag, prepared, steps, cx)
         } else {
             let hero = match &java {
                 // Its own game: the Minecraft version and the loader, never Sunrise's.
@@ -335,21 +334,15 @@ impl Launcher {
                 None => self.hero(&tag, &version, prepared, cx),
             };
             let actions = self.home_actions(prepared || java.is_some(), java.is_some(), cx);
-            // The banner: the hero and the Play row over the sky (`sky.rs`), or over the player's
+            // The banner: the hero and the Play row over the page, or over the player's
             // own picture under a veil of the page colour. It reaches the content's edges and the top
             // bar.
-            let veil = |angle: f32, from: f32, to: f32, at: f32| {
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .bg(gpui::linear_gradient(
-                        angle,
-                        gpui::linear_color_stop(t.page.opacity(from), 0.),
-                        gpui::linear_color_stop(t.page.opacity(to), at),
-                    ))
-            };
+            let veil = div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(t.page.opacity(0.6));
             // At the window's size (`picture_cache`): a chosen picture may be far bigger.
             let side = picture_cache::Look::Fit(self.window_side());
             let picture = self
@@ -364,8 +357,7 @@ impl Launcher {
                             .size_full()
                             .object_fit(gpui::ObjectFit::Cover)
                             .into_any_element(),
-                        veil(90., 0.82, 0., 0.62).into_any_element(),
-                        veil(180., 0., 0.75, 1.).into_any_element(),
+                        veil.into_any_element(),
                     ]
                 });
             div()
@@ -404,20 +396,22 @@ impl Launcher {
                 )
         };
         let mut page = div().flex().flex_col().gap(px(28.)).child(banner);
-        if let Some(e) = self.prepare_error.clone() {
+        // The glass look's head shows these under Play (`outline_home_head`).
+        if let Some(e) = self.prepare_error.clone().filter(|_| !t.glass) {
             page = page.child(notice(e, &t));
         }
         // On the instance, before its tabs: what crashed and the way back into the game.
-        if let Some(crash) = self.crash.clone() {
+        if let Some(crash) = self.crash.clone().filter(|_| !t.glass) {
             page = page.child(self.crash_notice(crash, cx));
         }
         page = if t.glass {
-            // What Play still needs (and an open export or launch panel), above the tabs.
-            page.child(rows).child(self.glass_home_tabs(cx))
+            // A Java instance's Game row; the sections are on the first screen's rail. Nothing
+            // else follows the first screen, so Home fits the window and never scrolls.
+            page.children(java.is_some().then_some(rows))
         } else {
             page.child(self.home_tabs(rows, cx))
         };
-        if let Some(e) = self.client_error.clone() {
+        if let Some(e) = self.client_error.clone().filter(|_| !t.glass) {
             page = page.child(notice(e, &t));
         }
         page

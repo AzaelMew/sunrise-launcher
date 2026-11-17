@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ի modpack ձևաչափը. Modrinth-ի ռեսուրսների փաթեթները թվարկված են իրենց ներբեռնմամբ, մնացածը տեղափոխվում է դրանում:",
   "Mods": "Ռեժիմներ",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mod և shader փաթեթներ, որոնք պատրաստված են Sunrise-ի համար՝ իր վերանայված ռեեստրից, և ռեսուրսների փաթեթներ Modrinth-ից: Յուրաքանչյուր ֆայլ ստուգվում է իր սկզբնաղբյուրի ստուգաչափով, նախքան ձեր խաղի թղթապանակը հասնելը:",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang-ը չկարողացավ հաստատել ձեր հաշիվը: Նորից մուտք գործեք և նորից փորձեք:",
-  "Mojang's session server is not answering. Try again later.": "Mojang-ի նիստերի սերվերը չի պատասխանում: Փորձեք ավելի ուշ:",
   "Mojang's version list isn't here yet.": "Mojang-ի տարբերակների ցանկը դեռ այստեղ չէ:",
   "More": "Ավելին",
   "Most players at once": "Շատ խաղացողներ միանգամից",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Մուտք գործեք Microsoft-ով",
   "Sign in with `sunrise-launcher account sign-in`.": "Մուտք գործեք `sunrise-launcher account sign-in` հրամանով։",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Մուտք գործեք Microsoft-ի հաշիվ, որին պատկանում է Minecraft: Java Edition խաղալու համար",
-  "Sign in with a Minecraft account first.": "Մուտք գործեք նախ Minecraft հաշիվով:",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Մուտք գործեք այն հաշիվով, որին պատկանում է Minecraft՝ Java Edition: Ձեր անունը և մաշկը գալիս են առցանց սերվերներին, ինչպես մյուս գործարկիչներում:",
   "Sign out": "Դուրս գալ",
   "Sign-in not checked": "Մուտքը ստուգված չէ",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Գործարկիչի տեսքը մի պահ վերակայվել է, բայց չի պահպանվել",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Ապակին և Լղոզումը ձևավորում են մուգ տեսքի մշուշոտ վահանակները. լուսավորը գծում է անընդմեջ սպիտակ վահանակներ։",
   "Performance mode draws solid panels, without glass or blur.": "Կատարողական ռեժիմը գծում է անընդմեջ վահանակներ՝ առանց ապակու և լղոզման։",
-  "This theme's night draws solid panels, without glass or blur.": "Այս թեմայի գիշերը գծում է անընդմեջ վահանակներ՝ առանց ապակու և լղոզման։"
+  "This theme's night draws solid panels, without glass or blur.": "Այս թեմայի գիշերը գծում է անընդմեջ վահանակներ՝ առանց ապակու և լղոզման։",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

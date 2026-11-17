@@ -50,20 +50,24 @@ impl Launcher {
             None => self.glass_no_server(cx),
         };
         let status = self.servers.status();
+        // Narrow, the list goes under the server instead of squeezing it.
+        let stacked = self.window_width < crate::glass_home::SIDE_BY_SIDE;
         let side = div()
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(SIDE))
+            .when(stacked, |d| d.w_full())
+            .when(!stacked, |d| d.w(px(SIDE)))
             .gap(px(10.))
             .child(self.glass_server_list(cx))
             .children(open.is_some().then(|| self.glass_addresses(&status, cx)));
         let mut page = div().flex().flex_col().child(head).child(
             div()
                 .flex()
+                .when(stacked, |d| d.flex_col())
                 .items_start()
                 .gap(px(10.))
-                .child(main.flex_1().min_w_0())
+                .child(main.flex_1().min_w_0().when(stacked, |d| d.w_full()))
                 .child(side),
         );
         if let Some(dir) = &open {
@@ -193,21 +197,21 @@ impl Launcher {
             let start = keyboard(
                 div()
                     .id("server-start")
+                    .relative()
                     .flex()
                     .flex_none()
                     .items_center()
                     .justify_center()
                     .h(px(44.))
                     .px(px(28.))
-                    .rounded(px(radius::LARGE))
-                    .bg(ui::color(look.accent))
+                    .child(ui::pixel_fill(ui::color(look.accent), ui::TEXTURE_BUTTON))
                     .text_color(ui::color(look.on_accent))
                     .font_family(sunrise_theme::glass::FONT)
                     .text_size(px(15.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.92))
-                    .child(tr("Start")),
+                    .child(div().relative().child(tr("Start"))),
                 &t,
             );
             buttons = buttons.child(if idle && status.phase == "stopped" {
@@ -306,7 +310,7 @@ impl Launcher {
                 .min_h(px(44.))
                 .px(px(16.))
                 .py(px(6.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(white(fill::ROW_HOVER))
                 .children(dot.map(|c| div().flex_none().size(px(7.)).rounded_full().bg(c)))
                 .child(
@@ -406,7 +410,7 @@ impl Launcher {
                 .gap(px(8.))
                 .h(px(320.))
                 .p(px(24.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(gpui::black().opacity(0.25))
                 .child(ui::icon("computer-terminal-01", 22., white(ink::NOTE)))
                 .child(
@@ -435,7 +439,7 @@ impl Launcher {
                 .h(px(320.))
                 .p(px(16.))
                 .overflow_y_scroll()
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .bg(gpui::black().opacity(0.25))
                 .font_family(theme::MONO)
                 .text_size(px(12.))
@@ -491,7 +495,7 @@ impl Launcher {
                     .h(px(44.))
                     .pl(px(16.))
                     .pr(px(6.))
-                    .rounded(px(radius::ROW))
+                    .rounded(px(crate::glass_ui::rad(radius::ROW)))
                     .bg(white(if focused {
                         fill::FIELD_FOCUS
                     } else {
@@ -519,7 +523,7 @@ impl Launcher {
             .min_h(px(220.))
             .px(px(24.))
             .py(px(28.))
-            .rounded(px(radius::ROW))
+            .rounded(px(crate::glass_ui::rad(radius::ROW)))
             .border_1()
             .border_color(white(0.08))
             .bg(white(0.03))
@@ -534,21 +538,16 @@ impl Launcher {
         if let Some(p) = self.servers.problem.clone() {
             card = card.child(glass_home_lists::danger_line(p.message).relative());
         }
-        glass::plate(radius::PANEL)
-            .flex()
-            .flex_col()
-            .p(px(16.))
-            .child(
-                card.child(
-                    button("server-create-empty", "Create a server", Kind::Primary, &t)
-                        .h(px(44.))
-                        .px(px(24.))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.open_create(cx);
-                            cx.notify();
-                        })),
-                ),
-            )
+        // The card alone: inside a plate it stood doubly framed.
+        card.child(
+            button("server-create-empty", "Create a server", Kind::Primary, &t)
+                .h(px(44.))
+                .px(px(24.))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.open_create(cx);
+                    cx.notify();
+                })),
+        )
     }
 
     /// The servers, the open one lit, then Create a server and (not in the mockup) adding a
@@ -566,7 +565,7 @@ impl Launcher {
                 .w_full()
                 .px(px(12.))
                 .py(px(10.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .cursor_pointer();
             if current {
                 d.bg(white(fill::SELECTED))
@@ -720,7 +719,10 @@ impl Launcher {
                         .flex()
                         .items_center()
                         .gap(px(12.))
-                        .child(self.head(&p.uuid, 28.).rounded(px(7.)))
+                        .child(
+                            self.head(&p.uuid, 28.)
+                                .rounded(px(crate::glass_ui::rad(7.))),
+                        )
                         .child(
                             ui::text(14., FontWeight::NORMAL, ink::FULL)
                                 .flex_1()
@@ -753,10 +755,6 @@ impl Launcher {
         if self.servers.tab == Tab::Overview {
             self.servers.tab = Tab::Players;
         }
-        let active = LOWER_TABS
-            .iter()
-            .position(|&(tab, _)| tab == self.servers.tab)
-            .unwrap_or(0);
         let items: Vec<_> = LOWER_TABS
             .iter()
             .map(|&(tab, label)| {
@@ -777,14 +775,7 @@ impl Launcher {
                 }))
             })
             .collect();
-        let strip = ui::pill_strip(
-            "server-tabs",
-            active,
-            36.,
-            0.,
-            div().flex().items_center().gap(px(4.)),
-            items,
-        );
+        let strip = div().flex().items_center().gap(px(4.)).children(items);
         let players = !matches!(self.servers.tab, Tab::Settings | Tab::Backups);
         let body = match self.servers.tab {
             Tab::Settings => self.settings_tab(status, cx),
@@ -940,7 +931,7 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .size(px(36.))
-                    .rounded(px(radius::CONTROL))
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
                     .cursor_pointer()
                     .hover(|s| s.bg(white(fill::BUTTON)))
                     .child(ui::icon(icon, 16., white(ink::FULL))),
@@ -960,7 +951,7 @@ impl Launcher {
             .items_center()
             .gap(px(4.))
             .p(px(4.))
-            .rounded(px(radius::LARGE))
+            .rounded(px(crate::glass_ui::rad(radius::LARGE)))
             .bg(white(0.04))
             .child(step("less", "minus-sign", value - 1, cx))
             .child(

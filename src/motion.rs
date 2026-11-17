@@ -47,7 +47,7 @@ pub const PRESS: f32 = 1.;
 
 /// Whether the player's system asks for reduced motion (or `SUNRISE_LAUNCHER_MOTION=off`).
 pub fn still() -> bool {
-    crate::sky::motion() == crate::sky::Motion::Still
+    crate::clock::motion() == crate::clock::Motion::Still
 }
 
 /// `motion` as GPUI plays it: its length on its own curve; at its end from the first frame under
@@ -62,6 +62,89 @@ fn eased_as(motion: tokens::Motion, still: bool) -> Animation {
         return animation.with_easing(|_| 1.);
     }
     animation.with_easing(move |t| motion.ease(t))
+}
+
+/// A hover easing on (to 1) or off (to 0) on its motion's curve, from wherever the last one
+/// had got to: a pointer that leaves halfway turns it around there, instead of the element
+/// jumping to fully lit first. The rest of the way takes its share of the motion's length.
+#[derive(Clone, Copy, Debug)]
+pub struct Fade {
+    pub on: bool,
+    from: f32,
+    at: Instant,
+    /// The motion it plays on, as it was last drawn with.
+    pub motion: tokens::Motion,
+}
+
+impl Fade {
+    /// Easing towards `on` from where `last` is now; from rest when there was none.
+    pub fn toward(last: Option<Fade>, on: bool, now: Instant) -> Fade {
+        let (from, motion) = match last {
+            Some(last) => (last.value(now), last.motion),
+            None => (if on { 0. } else { 1. }, tokens::QUICK),
+        };
+        Fade {
+            on,
+            from,
+            at: now,
+            motion,
+        }
+    }
+
+    fn target(self) -> f32 {
+        if self.on {
+            1.
+        } else {
+            0.
+        }
+    }
+
+    /// How long it plays: the motion's length, for the share of the way left.
+    fn length(self) -> std::time::Duration {
+        self.motion
+            .duration()
+            .mul_f32((self.target() - self.from).abs().min(1.))
+    }
+
+    /// The strength at `now`: 0 at rest, 1 lit (more, briefly, on an overshooting curve).
+    pub fn value(self, now: Instant) -> f32 {
+        let length = self.length().as_secs_f32();
+        if length <= 0. || still() {
+            return self.target();
+        }
+        let t = (now.saturating_duration_since(self.at).as_secs_f32() / length).min(1.);
+        self.from + (self.target() - self.from) * self.motion.ease(t)
+    }
+
+    /// Ended off: nothing is left to draw.
+    pub fn rested(self, now: Instant) -> bool {
+        !self.on && now.saturating_duration_since(self.at) >= self.length()
+    }
+
+    /// `el` drawn by `paint` at this fade's strength, which GPUI plays from here on. `key`
+    /// names the element; each fade plays under its own animation id.
+    pub fn play<E: IntoElement + 'static>(
+        self,
+        key: &gpui::SharedString,
+        el: E,
+        paint: impl Fn(E, f32) -> E + 'static,
+    ) -> AnyElement {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        let start = *START.get_or_init(Instant::now);
+        let id = ElementId::named_usize(
+            key.clone(),
+            self.at.saturating_duration_since(start).as_micros() as usize,
+        );
+        let (from, to, motion) = (self.from, self.target(), self.motion);
+        let length = self.length().max(std::time::Duration::from_millis(1));
+        let animation = if still() {
+            Animation::new(length).with_easing(|_| 1.)
+        } else {
+            Animation::new(length).with_easing(move |t| motion.ease(t))
+        };
+        el.with_animation(id, animation, move |d, p| paint(d, from + (to - from) * p))
+            .into_any_element()
+    }
 }
 
 thread_local! {
@@ -136,6 +219,33 @@ pub fn enter(key: impl Into<ElementId>, order: usize, el: Div) -> AnyElement {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn a_hover_left_halfway_turns_around_where_it_got_to() {
+        let linear = tokens::Motion {
+            name: "linear",
+            ms: 100,
+            curve: [0., 0., 1., 1.],
+        };
+        let at = Instant::now();
+        let ms = |n: u64| at + std::time::Duration::from_millis(n);
+        let on = Fade {
+            motion: linear,
+            ..Fade::toward(None, true, at)
+        };
+        assert!((on.value(ms(50)) - 0.5).abs() < 1e-3);
+        assert!(!on.rested(ms(1000)), "a lit element stays lit");
+        // The pointer leaves halfway: from 0.5 back to rest, over half the length.
+        let off = Fade::toward(Some(on), false, ms(50));
+        assert!((off.value(ms(50)) - 0.5).abs() < 1e-3);
+        assert!((off.value(ms(75)) - 0.25).abs() < 1e-3);
+        assert!(!off.rested(ms(99)));
+        assert!(off.rested(ms(100)));
+        // Back on before it rested: from where it was, not from 0.
+        let again = Fade::toward(Some(off), true, ms(75));
+        assert!((again.value(ms(75)) - 0.25).abs() < 1e-3);
+        assert!((again.value(ms(150)) - 1.).abs() < 1e-3);
+    }
 
     #[test]
     fn reduced_motion_draws_the_end_from_the_first_frame() {

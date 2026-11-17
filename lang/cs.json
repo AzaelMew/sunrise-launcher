@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinthův formát modpacku: zdrojové balíčky z Modrinthu jsou uvedeny podle jejich stažení, zbytek se nosí v něm.",
   "Mods": "Mody",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mody a balíčky shaderů vytvořené pro Sunrise z jeho vlastního revidovaného registru a balíčky zdrojů od Modrinth. Každý soubor je zkontrolován podle kontrolního součtu zdroje, než se dostane do vaší herní složky.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang nemohl potvrdit váš účet. Znovu se přihlaste a zkuste to znovu.",
-  "Mojang's session server is not answering. Try again later.": "Server relace Mojang neodpovídá. Zkuste to znovu později.",
   "Mojang's version list isn't here yet.": "Seznam verzí Mojang zde ještě není.",
   "More": "více",
   "Most players at once": "Většina hráčů najednou",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Přihlaste se pomocí Microsoftu",
   "Sign in with `sunrise-launcher account sign-in`.": "Přihlaste se pomocí příkazu `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Chcete-li hrát, přihlaste se pomocí účtu Microsoft, který vlastní Minecraft: Java Edition",
-  "Sign in with a Minecraft account first.": "Nejprve se přihlaste pomocí účtu Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Přihlaste se účtem, který vlastní Minecraft: Java Edition. Vaše jméno a skin vás doprovázejí na online servery, stejně jako v jiných launcherech.",
   "Sign out": "Odhlaste se",
   "Sign-in not checked": "Přihlášení není zaškrtnuto",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Vzhled launcheru je pro teď obnovený, ale nepodařilo se ho uložit",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Sklo a Rozostření tvarují matné panely tmavého vzhledu; světlý kreslí plné bílé panely.",
   "Performance mode draws solid panels, without glass or blur.": "Režim výkonu kreslí plné panely, bez skla a rozostření.",
-  "This theme's night draws solid panels, without glass or blur.": "Noc tohoto tématu kreslí plné panely, bez skla a rozostření."
+  "This theme's night draws solid panels, without glass or blur.": "Noc tohoto tématu kreslí plné panely, bez skla a rozostření.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

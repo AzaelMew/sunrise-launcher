@@ -37,25 +37,10 @@ impl ThemeAccent {
     }
 }
 
-/// How a theme with its own palette draws the launcher.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Look {
-    /// The same glass pages as Sunrise's own, over the pixel sunset in the accent's hue.
-    Glass,
-    /// The glass pages with a thin edge over the theme's own dark sky (true black for OLED
-    /// screens) instead of the sunset, its plates frosting it.
-    Oled,
-    /// The glass pages over the theme's own painted sky (`sky.rs`, with its drifting
-    /// [`Mood`](sunrise_theme::night::Mood)) instead of the sunset, its plates frosting it.
-    Painted,
-    /// The square, solid Blocks look (Nord, kept as it was).
-    Solid,
-}
-
 /// A launcher theme: free for everyone in Settings › Appearance, never sold or claimed. Each
 /// has a sky (six stops, top to bottom) and the accent it brings. A theme that brings a whole
-/// palette carries its one [`Night`] (there is no light and dark of a theme) and paints with it
-/// as its [`Look`] says; the other themes only change the sky.
+/// palette carries its one [`Night`] (there is no light and dark of a theme) and paints Sunrise's
+/// own pages with it; the other themes only change the sky.
 pub struct Theme {
     /// Its name in `Settings::theme`.
     pub id: &'static str,
@@ -68,8 +53,6 @@ pub struct Theme {
     pub accent: ThemeAccent,
     /// The theme's own palette, for a theme that is more than a sky: every theme is one look.
     pub palette: Option<&'static Night>,
-    /// How the palette is drawn; unused without one.
-    pub look: Look,
 }
 
 /// Nord's polar night and snow storm, with the frost accent.
@@ -122,7 +105,6 @@ pub const FIRST_LIGHT: Theme = Theme {
     sky: OLD_SCHOOL_NIGHT.sky,
     accent: ThemeAccent::Hue(246.),
     palette: Some(&OLD_SCHOOL_NIGHT),
-    look: Look::Painted,
 };
 
 /// Nord: the Nord palette's polar night, snow storm and frost.
@@ -133,7 +115,6 @@ pub const NORD: Theme = Theme {
     sky: NORD_DARK.sky,
     accent: ThemeAccent::Colour(0x88c0d0),
     palette: Some(&NORD_DARK),
-    look: Look::Solid,
 };
 
 /// Dawn's night: the Sunrise website's Morning palette (sunny `frontend/site/styles/globals.css`): a
@@ -218,7 +199,6 @@ pub const DAWN_THEME: Theme = Theme {
     sky: DAWN_DARK.sky,
     accent: ThemeAccent::Colour(0xb4552f),
     palette: Some(&DAWN_DARK),
-    look: Look::Glass,
 };
 
 /// Hypr Neon: OLED black with neon cyan and magenta, on Sunrise's pages with solid plates.
@@ -229,7 +209,6 @@ pub const HYPR_NEON: Theme = Theme {
     sky: HYPR_DARK.sky,
     accent: ThemeAccent::Colour(0x3fe0ff),
     palette: Some(&HYPR_DARK),
-    look: Look::Oled,
 };
 
 /// Deep Ocean's night: teal water under light shafts and rising bubbles.
@@ -275,7 +254,6 @@ pub const DEEP_OCEAN: Theme = Theme {
     sky: OCEAN_DARK.sky,
     accent: ThemeAccent::Colour(0x2cc4d6),
     palette: Some(&OCEAN_DARK),
-    look: Look::Painted,
 };
 
 /// Autumn Forest's night: embers of amber and rust, leaves falling.
@@ -321,7 +299,6 @@ pub const AUTUMN_FOREST: Theme = Theme {
     sky: AUTUMN_DARK.sky,
     accent: ThemeAccent::Colour(0xe0782a),
     palette: Some(&AUTUMN_DARK),
-    look: Look::Painted,
 };
 
 /// Cherry Blossom's night: a lavender twilight with pink petals drifting.
@@ -367,7 +344,6 @@ pub const CHERRY_BLOSSOM: Theme = Theme {
     sky: CHERRY_DARK.sky,
     accent: ThemeAccent::Colour(0xf59ac0),
     palette: Some(&CHERRY_DARK),
-    look: Look::Painted,
 };
 
 /// Midnight Aurora's night: deep blue with curtains of green and violet light.
@@ -413,7 +389,6 @@ pub const MIDNIGHT_AURORA: Theme = Theme {
     sky: AURORA_DARK.sky,
     accent: ThemeAccent::Colour(0x4fe0a0),
     palette: Some(&AURORA_DARK),
-    look: Look::Painted,
 };
 
 /// Overworld's night: a deep blue sky, stars, a square moon over stepped grassy land.
@@ -462,7 +437,6 @@ pub const OVERWORLD: Theme = Theme {
     sky: OVERWORLD_DARK.sky,
     accent: ThemeAccent::Colour(0x5fae3c),
     palette: Some(&OVERWORLD_DARK),
-    look: Look::Painted,
 };
 
 /// Taiga: what was the launcher's light appearance, now a theme of its own: a snowy blue hour
@@ -511,7 +485,6 @@ pub const TAIGA: Theme = Theme {
     sky: TAIGA_NIGHT.sky,
     accent: ThemeAccent::Colour(0x2b7690),
     palette: Some(&TAIGA_NIGHT),
-    look: Look::Painted,
 };
 
 /// Sunrise's own theme's line in Settings.
@@ -559,7 +532,7 @@ pub fn theme(id: Option<&str>) -> Option<&'static Theme> {
 
 /// The glass look's colour for each of [`Accent::ALL`]: the mockup's swatches.
 pub const SWATCHES: [u32; 7] = [
-    0x6b4bff, 0x2563eb, 0x0f766e, 0x15803d, 0xc2410c, 0xdc2626, 0xbe185d,
+    0x4f60e6, 0x2563eb, 0x0f766e, 0x15803d, 0xc2410c, 0xdc2626, 0xbe185d,
 ];
 
 /// [`Accent::ALL`]'s names, in its order.

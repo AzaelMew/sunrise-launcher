@@ -388,6 +388,16 @@ fn newest_release(versions: &[String]) -> Option<&str> {
         .map(String::as_str)
 }
 
+/// A project's licence as the window shows it: an SPDX id as it is (`MIT`, `LGPL-3.0-only`), and
+/// a project's own licence, which Modrinth names `LicenseRef-Words-And-Version`, as those words
+/// (`Polyform Shield 1.0.0`, `All Rights Reserved`). [`Project::license`] keeps the id itself.
+pub fn license_label(id: &str) -> String {
+    match id.strip_prefix("LicenseRef-") {
+        Some(own) if !own.is_empty() => own.replace('-', " "),
+        _ => id.to_owned(),
+    }
+}
+
 /// The version to install: the newest one that runs, or with `everything` the newest at all.
 /// `versions` is newest first, as [`Source::versions`] gives them.
 pub fn pick(kind: Kind, versions: &[Version], everything: bool) -> Option<&Version> {

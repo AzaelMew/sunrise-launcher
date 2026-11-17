@@ -8,10 +8,11 @@
 //! stars steps to its next brightness): a few frames a second. The sky stands still under reduced
 //! motion, and stops 10 s after the window loses focus ([`motion`]).
 use crate::art::bake;
+use crate::clock::{motion, Clock, Motion};
 use crate::rain::Keep;
 use gpui::{
-    canvas, div, fill, img, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
-    Bounds, Div, Hsla, Pixels, RenderImage, Window,
+    canvas, div, fill, img, point, prelude::*, px, rgb, size, Bounds, Div, Hsla, Pixels,
+    RenderImage, Window,
 };
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
@@ -173,142 +174,6 @@ const STAR_LEVELS: [f32; 4] = [0.95, 0.6, 0.3, 0.6];
 /// The clouds' speeds and these periods keep every change on a half-second beat, so the changes of
 /// different layers share frames: two a second at most.
 const STAR_PERIODS: [f32; 4] = [4., 6., 8., 10.];
-
-/// How the sky moves: not at all under reduced motion (the player's choice in Settings, else the
-/// system's: Windows' "Show animations", macOS's "Reduce motion") or with
-/// `SUNRISE_LAUNCHER_MOTION=off`; while the window is in front (and 10 s after); or always, with
-/// `SUNRISE_LAUNCHER_MOTION=always`, for recordings.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Motion {
-    Still,
-    InFront,
-    Always,
-}
-
-/// The player's choice (`Settings::reduce_motion`): 0 follows the system, 1 still, 2 moves.
-static PREFERENCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
-
-/// Takes the player's choice: `None` follows the system, `Some(true)` holds everything still.
-pub fn set_preference(reduce: Option<bool>) {
-    let v = match reduce {
-        None => 0,
-        Some(true) => 1,
-        Some(false) => 2,
-    };
-    PREFERENCE.store(v, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn motion() -> Motion {
-    static FORCED: LazyLock<Option<Motion>> =
-        LazyLock::new(
-            || match std::env::var("SUNRISE_LAUNCHER_MOTION").as_deref() {
-                Ok("off" | "reduced") => Some(Motion::Still),
-                Ok("always") => Some(Motion::Always),
-                Ok("full") => Some(Motion::InFront),
-                _ => None,
-            },
-        );
-    if let Some(forced) = *FORCED {
-        return forced;
-    }
-    let still = match PREFERENCE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => system_reduces_motion(),
-    };
-    if still {
-        Motion::Still
-    } else {
-        Motion::InFront
-    }
-}
-
-/// The system's reduced motion, asked again at most every 2 s, so turning it on or off applies
-/// without restarting the launcher.
-fn system_reduces_motion() -> bool {
-    static ASKED: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
-    let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
-    let now = Instant::now();
-    match *asked {
-        Some((at, reduce)) if now.duration_since(at) < Duration::from_secs(2) => reduce,
-        _ => {
-            let reduce = ask_system();
-            *asked = Some((now, reduce));
-            reduce
-        }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn ask_system() -> bool {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION,
-    };
-    let mut animate: i32 = 1;
-    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through the pointer it is given.
-    let ok = unsafe {
-        SystemParametersInfoW(
-            SPI_GETCLIENTAREAANIMATION,
-            0,
-            (&mut animate as *mut i32).cast(),
-            0,
-        )
-    };
-    ok != 0 && animate == 0
-}
-
-#[cfg(target_os = "macos")]
-fn ask_system() -> bool {
-    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
-}
-
-/// GNOME's "Animations" switch (`org.gnome.desktop.interface enable-animations`), read by
-/// `gsettings` on a worker thread: the answer lands for the next ask, and a desktop without the
-/// key or the tool answers "moves".
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn ask_system() -> bool {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static REDUCE: AtomicBool = AtomicBool::new(false);
-    static ASKING: AtomicBool = AtomicBool::new(false);
-    if !ASKING.swap(true, Ordering::AcqRel) {
-        std::thread::spawn(|| {
-            let off = std::process::Command::new("gsettings")
-                .args(["get", "org.gnome.desktop.interface", "enable-animations"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "false");
-            REDUCE.store(off, Ordering::Relaxed);
-            ASKING.store(false, Ordering::Release);
-        });
-    }
-    REDUCE.load(Ordering::Relaxed)
-}
-
-/// The animation's own time: it runs only while the sky moves, so a window that comes back
-/// picks up where it stopped instead of jumping.
-#[derive(Default)]
-pub struct Clock {
-    banked: Duration,
-    running: Option<Instant>,
-}
-
-impl Clock {
-    pub fn at(&self, now: Instant) -> Duration {
-        self.banked + self.running.map_or(Duration::ZERO, |since| now - since)
-    }
-
-    pub fn set(&mut self, run: bool, now: Instant) {
-        match (run, self.running) {
-            (true, None) => self.running = Some(now),
-            (false, Some(since)) => {
-                self.banked += now - since;
-                self.running = None;
-            }
-            _ => {}
-        }
-    }
-}
 
 struct Layers {
     clouds: [Arc<RenderImage>; 3],
@@ -477,7 +342,7 @@ impl Sky {
             );
         }
 
-        let next = self.clock.running.is_some().then(|| {
+        let next = self.clock.running().then(|| {
             let clouds = CLOUDS.iter().map(|l| until_next(t * l.speed) / l.speed);
             let stars = STAR_PERIODS.iter().enumerate().map(|(g, p)| {
                 let quarter = p / STAR_LEVELS.len() as f32;
@@ -539,13 +404,9 @@ fn cell(b: Bounds<Pixels>, x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
     )
 }
 
-/// A strip fading from `c` at `from` to `c` at `to` opacity, top to bottom.
-fn fade(c: u32, from: f32, to: f32) -> gpui::Background {
-    linear_gradient(
-        180.,
-        linear_color_stop(tone(c).opacity(from), 0.),
-        linear_color_stop(tone(c).opacity(to), 1.),
-    )
+/// A strip of `c` flat at the opacity halfway between `from` and `to`: the look has no gradients.
+fn fade(c: u32, from: f32, to: f32) -> gpui::Hsla {
+    tone(c).opacity((from + to) / 2.)
 }
 
 /// What a [`Mood`] paints behind the clouds and skylines: the water's light shafts and the
@@ -908,90 +769,6 @@ fn skyline_texels(line: &Skyline, art: &SkyArt, which: usize) -> (Vec<[u8; 4]>, 
     (out, w)
 }
 
-/// The sky's still parts as [`Sky::render`] lays them out in a window `w` × `h` (its bands, the
-/// clouds where they start, the sun and the skylines; not the stars or a mood's drift), a colour
-/// (0 to 1) per [`TEXEL`]: what a painted theme's plates blur. Returns the colours, columns and
-/// rows.
-pub fn still_texels(n: &Night, w: f32, h: f32) -> (Vec<[f64; 3]>, usize, usize) {
-    let cols = (w / TEXEL).ceil().max(1.) as usize;
-    let rows = (h / TEXEL).ceil().max(1.) as usize;
-    let rgbf = |c: u32| [16, 8, 0].map(|s| ((c >> s) & 255) as f64 / 255.);
-    let mut out = vec![[0.; 3]; cols * rows];
-    let row_of = |y: f32| ((y / TEXEL).round().max(0.) as usize).min(rows);
-    for (top, height, c) in bands(n, h) {
-        for row in row_of(top)..row_of(top + height) {
-            out[row * cols..(row + 1) * cols].fill(rgbf(c));
-        }
-    }
-    // `texels` (`sw` across, `unit` px each) with its corner at `(left, top)`, sampled at each
-    // texel's centre; `repeat` tiles it across the window.
-    let sprite = |out: &mut [[f64; 3]],
-                  texels: &[[u8; 4]],
-                  sw: usize,
-                  unit: f32,
-                  (left, top): (f32, f32),
-                  repeat: bool| {
-        let span = sw as f32 * unit;
-        let sh = texels.len() / sw;
-        for row in 0..rows {
-            let y = (row as f32 + 0.5) * TEXEL - top;
-            if y < 0. || y >= sh as f32 * unit {
-                continue;
-            }
-            let sy = ((y / unit) as usize).min(sh - 1);
-            for col in 0..cols {
-                let mut x = (col as f32 + 0.5) * TEXEL - left;
-                if repeat {
-                    x = x.rem_euclid(span);
-                } else if x < 0. || x >= span {
-                    continue;
-                }
-                let [r, g, b, a] = texels[sy * sw + ((x / unit) as usize).min(sw - 1)];
-                if a > 0 {
-                    out[row * cols + col] = [r, g, b].map(|v| f64::from(v) / 255.);
-                }
-            }
-        }
-    };
-    let art = &n.art;
-    if clouded(n) {
-        for (i, layer) in CLOUDS.iter().enumerate() {
-            let texels = clouds(layer, art, i);
-            sprite(
-                &mut out,
-                &texels,
-                layer.period,
-                TEXEL,
-                (0., h * layer.top),
-                true,
-            );
-        }
-    }
-    let sun_w = (SUN_RADIUS * 2) as f32 * LAND;
-    let sun_top = h - (SUN_RISE + SUN_RADIUS) as f32 * LAND;
-    sprite(
-        &mut out,
-        &sun(art),
-        SUN_RADIUS * 2,
-        LAND,
-        (w * SUN_X - sun_w / 2., sun_top),
-        false,
-    );
-    for (which, line, lift) in [(0, &FAR, 2.), (1, &NEAR, 0.)] {
-        let (texels, sw) = skyline_texels(line, art, which);
-        let period = sw as f32 * LAND;
-        let top = h - (line.rows as f32 + lift) * LAND;
-        let left = if lift > 0. { -period / 2. } else { 0. };
-        sprite(&mut out, &texels, sw, LAND, (left, top), true);
-        if lift > 0. {
-            for row in row_of(h - lift * LAND)..rows {
-                out[row * cols..(row + 1) * cols].fill(rgbf(art.far));
-            }
-        }
-    }
-    (out, cols, rows)
-}
-
 /// The upper half of a sun cut by the horizon, in three bands of colour, its lower half sliced by
 /// rows of sky like Sunrise's mark.
 fn sun(art: &SkyArt) -> Vec<[u8; 4]> {
@@ -1037,28 +814,6 @@ fn sun(art: &SkyArt) -> Vec<[u8; 4]> {
         }
     }
     out
-}
-
-/// A painted theme's plates frost its sky: its blurred copy, made once per size and blur.
-/// Called by the window before its plates are built, as the sky itself is drawn in its own view.
-pub fn frost(n: &Night, (w, h): (f32, f32)) {
-    crate::glass::frost_sky(n, (w, h), || {
-        let (texels, cols, rows) = still_texels(n, w, h);
-        (texels, cols, rows, TEXEL)
-    });
-}
-
-/// [`frost`] with a later blur made on a worker (`glass::frost_sky_later`): the job to run, if
-/// one is due, whose result goes to `glass::frost_done` on the main thread.
-pub fn frost_later(
-    n: &Night,
-    (w, h): (f32, f32),
-) -> Option<impl FnOnce() -> crate::glass::Frosted + Send + 'static> {
-    let n = *n;
-    crate::glass::frost_sky_later(&n, (w, h), move || {
-        let (texels, cols, rows) = still_texels(&n, w, h);
-        (texels, cols, rows, TEXEL)
-    })
 }
 
 /// The painted sky as a view of its own: its drift wakes only this view, so a sky frame draws
@@ -1155,20 +910,6 @@ mod tests {
     }
 
     #[test]
-    fn the_blurred_copy_holds_the_sky_sun_and_skyline() {
-        let (w, h) = (1000., 600.);
-        let (texels, cols, rows) = still_texels(&NIGHT, w, h);
-        assert_eq!((cols, rows), (250, 150));
-        let at = |x: f32, y: f32| texels[(y / TEXEL) as usize * cols + (x / TEXEL) as usize];
-        let rgbf = |c: u32| [16, 8, 0].map(|s| ((c >> s) & 255) as f64 / 255.);
-        // The top band, the near skyline at the bottom left, the sun's rim above the skyline.
-        assert_eq!(at(0., 0.), rgbf(NIGHT.sky[0]));
-        assert_eq!(at(2., h - 2.), rgbf(NIGHT.art.near));
-        let sun_top = h - (SUN_RISE + SUN_RADIUS) as f32 * LAND;
-        assert_eq!(at(w * SUN_X, sun_top + 2.), rgbf(NIGHT.art.sun[0]));
-    }
-
-    #[test]
     fn the_bands_cover_the_window_on_whole_texels() {
         for h in [600., 777., 1080.] {
             let bands = bands(&NIGHT, h);
@@ -1235,18 +976,6 @@ mod tests {
                 "star group {g}"
             );
         }
-    }
-
-    #[test]
-    fn the_clock_stops_and_resumes_without_a_jump() {
-        let start = Instant::now();
-        let mut clock = Clock::default();
-        clock.set(true, start);
-        let s = Duration::from_secs(1);
-        clock.set(false, start + 2 * s);
-        assert_eq!(clock.at(start + 10 * s), 2 * s);
-        clock.set(true, start + 10 * s);
-        assert_eq!(clock.at(start + 11 * s), 3 * s);
     }
 
     #[test]

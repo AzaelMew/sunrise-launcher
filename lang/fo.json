@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modpack sniðið hjá Modrinth: tilfeingispakkar frá Modrinth eru listaðir eftir teirra niðurtøku, restin er borin í tí.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods og shader pakkar gjørdir til Sunrise frá egnari ummældu skráseting, og tilfeingispakkar frá Modrinth. Hvør fíla verður kannað í mun til kanningarsummuna hjá kelduni, áðrenn hon kemur í tína spælmappu.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang kundi ikki vátta tína kontu. Rita inn aftur og royn aftur.",
-  "Mojang's session server is not answering. Try again later.": "Setu-ambætarin hjá Mojang svarar ikki. Royn aftur seinni.",
   "Mojang's version list isn't here yet.": "Útgávulistin hjá Mojang er ikki her enn.",
   "More": "Meira",
   "Most players at once": "Flestu spælarar í senn",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Rita inn við Microsoft Microsoft .",
   "Sign in with `sunrise-launcher account sign-in`.": "Rita inn við `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Rita inn við eina Microsoft kontu sum eigur Minecraft: Java Útgáva til at spæla",
-  "Sign in with a Minecraft account first.": "Rita inn við einari Minecraft kontu fyrst.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Rita inn við kontuni, sum eigur Minecraft: Java Útgáva. Títt navn og húð koma við á online ambætarar, eins og í øðrum launcher.",
   "Sign out": "Rita út",
   "Sign-in not checked": "Innritan ikki merkt",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Útsjóndin á sjósetaranum er nullstillað í løtuni, men hon kundi ikki goymast",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas og Sløring forða teir frostuðu panelini í myrku útsjóndini; tær ljósu teikna reinføst hvít panel.",
   "Performance mode draws solid panels, without glass or blur.": "Avrikshátturin tekna reinføst panel, uttan glas ella sløring.",
-  "This theme's night draws solid panels, without glass or blur.": "Náttin í hesum tema tekna reinføst panel, uttan glas ella sløring."
+  "This theme's night draws solid panels, without glass or blur.": "Náttin í hesum tema tekna reinføst panel, uttan glas ella sløring.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

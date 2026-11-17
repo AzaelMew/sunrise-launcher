@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Formatul modpack al lui Modrinth: pachetele de resurse de la Modrinth sunt listate după descărcarea lor, restul este transportat în el.",
   "Mods": "Moduri",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Moduri și pachete de shader create pentru Sunrise din propriul registru revizuit și pachete de resurse de la Modrinth. Fiecare fișier este verificat cu suma de control a sursei sale înainte de a ajunge în folderul jocului.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang nu a putut confirma contul dvs. Conectați-vă din nou și încercați din nou.",
-  "Mojang's session server is not answering. Try again later.": "Serverul de sesiune al lui Mojang nu răspunde. Încercați din nou mai târziu.",
   "Mojang's version list isn't here yet.": "Lista de versiuni a lui Mojang nu este încă aici.",
   "More": "Mai mult",
   "Most players at once": "Majoritatea jucătorilor deodată",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Conectați-vă cu Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Conectați-vă cu `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Conectați-vă cu un cont Microsoft care deține Minecraft: Java Edition pentru a juca",
-  "Sign in with a Minecraft account first.": "Conectați-vă mai întâi cu un cont Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Conectați-vă cu contul care deține Minecraft: Java Edition. Numele și skinul vă însoțesc pe serverele online, ca în alte lansatoare.",
   "Sign out": "Deconectați-vă",
   "Sign-in not checked": "Conectarea nu a fost verificată",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Aspectul launcherului a fost resetat deocamdată, dar nu a putut fi salvat",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Sticla și Estomparea formează panourile mate ale aspectului întunecat; cel luminos desenează panouri albe compacte.",
   "Performance mode draws solid panels, without glass or blur.": "Modul de performanță desenează panouri compacte, fără sticlă și fără estompare.",
-  "This theme's night draws solid panels, without glass or blur.": "Noaptea acestei teme desenează panouri compacte, fără sticlă și fără estompare."
+  "This theme's night draws solid panels, without glass or blur.": "Noaptea acestei teme desenează panouri compacte, fără sticlă și fără estompare.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }
