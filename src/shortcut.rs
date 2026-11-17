@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const DESKTOP_ENV: &str = "SUNRISE_LAUNCHER_DESKTOP";
-const MAC_ICON: &[u8] = include_bytes!("../../packaging/icons/sunrise.icns");
+const MAC_ICON: &[u8] = include_bytes!("../assets/icons/sunrise.icns");
 /// The key a Linux shortcut names its instance with.
 const INSTANCE_KEY: &str = "X-Sunrise-Instance";
 /// And a macOS one, in its Info.plist.

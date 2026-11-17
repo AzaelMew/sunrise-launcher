@@ -9,7 +9,7 @@
 use crate::backend::{self, Release};
 use crate::instances;
 use std::{fs, path::Path};
-use sunrise_release_sign::NIGHTLY;
+use sunrise_launcher_release_verify::NIGHTLY;
 
 /// The id of the instance (its folder in `instances/`) the opt-in Nightly played in.
 pub const INSTANCE: &str = "nightly";
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(date_of(&version_of(&r)), Some("2026-10-28"));
         assert_eq!(date_of("v0.2.95"), None);
         assert_eq!(date_of("nightly"), None);
-        assert!(sunrise_release_sign::is_nightly(&version_of(&r)));
+        assert!(sunrise_launcher_release_verify::is_nightly(&version_of(&r)));
     }
 
     #[test]

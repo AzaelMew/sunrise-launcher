@@ -7,7 +7,7 @@ use super::*;
 use crate::glass_ui::{self as ui, mono, white};
 use home_tabs::HomeTab;
 use sunrise_launcher::packs::Kind as PackKind;
-use sunrise_theme::glass::{ink, radius};
+use sunrise_launcher_theme::glass::{ink, radius};
 
 /// From this window width the right sidebar is as wide as the left; narrower, it is an icon
 /// column [`COMPACT`] wide.

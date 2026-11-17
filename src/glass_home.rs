@@ -4,7 +4,7 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 use gpui::deferred;
-use sunrise_theme::glass::{fill, ink, radius};
+use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 /// Play, the version and the big icons are this tall (`h-14`).
 const TALL: f32 = 52.;
@@ -223,7 +223,7 @@ impl Launcher {
                 .pl(px(20.))
                 .pr(px(44.))
                 .whitespace_nowrap()
-                .font_family(sunrise_theme::glass::FONT)
+                .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(18.))
                 .font_weight(FontWeight::SEMIBOLD)
                 // The glyph leans into the press while the pointer is on Play.
@@ -256,7 +256,7 @@ impl Launcher {
                         .pr(px(48.))
                         .whitespace_nowrap()
                         .text_color(on_accent)
-                        .font_family(sunrise_theme::glass::FONT)
+                        .font_family(sunrise_launcher_theme::glass::FONT)
                         .text_size(px(16.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(match progress {
@@ -641,7 +641,7 @@ impl Launcher {
             .when(!focused, |d| {
                 d.child(ui::back_edge(radius::LARGE, 0., true))
             })
-            .font_family(sunrise_theme::glass::FONT)
+            .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(14.))
             .text_color(white(ink::FULL))
             .cursor_text()
@@ -681,7 +681,7 @@ impl Launcher {
                 cx.notify();
             }));
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
-        let valid = sunrise_friends::invite::parse(self.friend_code.text()).is_some();
+        let valid = sunrise_launcher_friends::invite::parse(self.friend_code.text()).is_some();
         let can = valid && (tag.is_empty() || self.can_start(tag));
         let join = ui::quiet("join-friend", join_label, JOIN, &t);
         let join = if can {

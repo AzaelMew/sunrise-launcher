@@ -4,7 +4,7 @@
 //! below, a scroll away.
 use super::*;
 use crate::glass_ui::{self as ui, mono, white};
-use sunrise_theme::glass::{fill, ink};
+use sunrise_launcher_theme::glass::{fill, ink};
 
 /// The top bar above the first screen (before the page has been laid out once), and the room
 /// under its floor.
@@ -56,7 +56,7 @@ impl Launcher {
             .pt(px(20.))
             .max_w_full()
             .truncate()
-            .font_family(sunrise_theme::glass::DISPLAY_FONT)
+            .font_family(sunrise_launcher_theme::glass::DISPLAY_FONT)
             .font_weight(FontWeight::BOLD)
             .text_size(px(88.))
             .line_height(px(92.))
@@ -136,7 +136,7 @@ impl Launcher {
                 .h(px(32.))
                 .px(px(12.))
                 .rounded(px(ui::rad(0.)))
-                .font_family(sunrise_theme::glass::FONT)
+                .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(13.))
                 .line_height(px(18.))
                 .child(icon)

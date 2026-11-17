@@ -25,7 +25,7 @@ the MCP server is off.
 
 ## Reference
 
-[launcher-commands.md](../launcher-commands.md), generated from `launcher/src/cli.rs`: every command, its arguments
+[launcher-commands.md](../../launcher/docs/launcher-commands.md), generated from `launcher/src/cli.rs`: every command, its arguments
 and its MCP tool.
 
 ## Examples

@@ -240,7 +240,7 @@ impl Launcher {
                 .border_0()
                 .rounded(px(crate::glass_ui::rad(12.)))
                 .bg(crate::glass_ui::white(if focused { 0.11 } else { 0.07 }))
-                .font_family(sunrise_theme::glass::FONT)
+                .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(14.))
         } else {
             field

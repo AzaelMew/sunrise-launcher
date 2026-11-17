@@ -183,7 +183,7 @@ pub(super) fn warm_language_name(window: &mut Window) {
     let name: SharedString = choice_name(Some(language)).into();
     let run = gpui::TextRun {
         len: name.len(),
-        font: gpui::font(sunrise_theme::glass::FONT),
+        font: gpui::font(sunrise_launcher_theme::glass::FONT),
         color: gpui::white(),
         background_color: None,
         underline: None,

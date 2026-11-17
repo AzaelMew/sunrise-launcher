@@ -8,7 +8,7 @@ use std::{
     rc::Rc,
     time::Instant,
 };
-use sunrise_theme::glass::{fill, ink, radius};
+use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 /// An arrow's button.
 const ARROW: f32 = 32.;
@@ -34,7 +34,7 @@ struct Tween {
 }
 
 impl Tween {
-    fn sample(self, now: Instant, curve: sunrise_theme::Motion) -> (f32, bool) {
+    fn sample(self, now: Instant, curve: sunrise_launcher_theme::Motion) -> (f32, bool) {
         let progress = now.saturating_duration_since(self.began).as_secs_f32() / curve.secs();
         if progress >= 1. {
             (self.to, false)
@@ -57,7 +57,7 @@ impl Fade {
     fn sample(&self, now: Instant) -> (f32, bool) {
         self.tween
             .map_or((if self.shown { 1. } else { 0. }, false), |tween| {
-                tween.sample(now, sunrise_theme::QUICK)
+                tween.sample(now, sunrise_launcher_theme::QUICK)
             })
     }
 
@@ -106,7 +106,7 @@ impl Motion {
         let (offset, running) = if instant {
             (slide.to, false)
         } else {
-            slide.sample(now, sunrise_theme::MOVE)
+            slide.sample(now, sunrise_launcher_theme::MOVE)
         };
         if !running || max <= 0. {
             self.slide = None;
@@ -329,7 +329,11 @@ mod tests {
             .unwrap();
         assert!(reversed > visible && reversed < 0., "turn back immediately");
         assert_eq!(
-            state.step(midway + sunrise_theme::MOVE.duration(), 600., false),
+            state.step(
+                midway + sunrise_launcher_theme::MOVE.duration(),
+                600.,
+                false
+            ),
             Some(0.)
         );
         assert!(state.slide.is_none());
@@ -372,7 +376,7 @@ mod tests {
             "fade back in without flashing"
         );
         assert_eq!(
-            fade.sample(later + sunrise_theme::QUICK.duration()),
+            fade.sample(later + sunrise_launcher_theme::QUICK.duration()),
             (1., false)
         );
         assert_eq!(

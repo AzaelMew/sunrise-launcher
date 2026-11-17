@@ -16,39 +16,39 @@ use std::path::{Path, PathBuf};
 const ICONS: [(&str, &[u8]); 9] = [
     (
         "16x16",
-        include_bytes!("../../packaging/icons/hicolor/16x16/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/16x16/apps/sunrise.png"),
     ),
     (
         "24x24",
-        include_bytes!("../../packaging/icons/hicolor/24x24/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/24x24/apps/sunrise.png"),
     ),
     (
         "32x32",
-        include_bytes!("../../packaging/icons/hicolor/32x32/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/32x32/apps/sunrise.png"),
     ),
     (
         "48x48",
-        include_bytes!("../../packaging/icons/hicolor/48x48/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/48x48/apps/sunrise.png"),
     ),
     (
         "64x64",
-        include_bytes!("../../packaging/icons/hicolor/64x64/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/64x64/apps/sunrise.png"),
     ),
     (
         "128x128",
-        include_bytes!("../../packaging/icons/hicolor/128x128/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/128x128/apps/sunrise.png"),
     ),
     (
         "256x256",
-        include_bytes!("../../packaging/icons/hicolor/256x256/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/256x256/apps/sunrise.png"),
     ),
     (
         "512x512",
-        include_bytes!("../../packaging/icons/hicolor/512x512/apps/sunrise.png"),
+        include_bytes!("../assets/icons/hicolor/512x512/apps/sunrise.png"),
     ),
     (
         "scalable",
-        include_bytes!("../../packaging/icons/hicolor/scalable/apps/sunrise.svg"),
+        include_bytes!("../assets/icons/hicolor/scalable/apps/sunrise.svg"),
     ),
 ];
 
@@ -64,7 +64,7 @@ const ICON: &str = if cfg!(sunrise_fork_launcher) {
 } else {
     "horizon"
 };
-const GAME_ENTRY_TEXT: &str = include_str!("../../packaging/linux/sunrise.desktop");
+const GAME_ENTRY_TEXT: &str = include_str!("../assets/linux/sunrise.desktop");
 
 /// `$XDG_DATA_HOME`, or `~/.local/share` when it is unset or not absolute (as the spec says).
 pub fn data_home() -> Option<PathBuf> {

@@ -1,4 +1,4 @@
-//! Embeds Sunrise's icon (`packaging/icons/sunrise.ico`) in the Windows executables, as icon
+//! Embeds Sunrise's icon (`assets/icons/sunrise.ico`) in the Windows executables, as icon
 //! resource 1: Explorer and the task bar show it, and the window takes it as its icon.
 fn main() {
     println!("cargo:rerun-if-env-changed=SUNRISE_LAUNCHER_REPOSITORY");
@@ -41,7 +41,7 @@ fn main() {
         }
     }
     let icon = "sunrise.ico";
-    let ico = format!("{dir}/../packaging/icons/{icon}");
+    let ico = format!("{dir}/assets/icons/{icon}");
     println!("cargo:rerun-if-changed={ico}");
     #[cfg(windows)]
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use sunrise_launcher::instances::{Icon, Instance, Kind as InstanceKind};
-use sunrise_theme::glass::{fill, ink, radius};
+use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 /// The Outline look's sidebar, 14 from the window's edges.
 pub const SIDEBAR: f32 = 248.;
@@ -91,9 +91,9 @@ impl Launcher {
             .rounded(r)
             .bg(ui::color(colour))
             .font_family(if letter >= 40. {
-                sunrise_theme::glass::DISPLAY_FONT
+                sunrise_launcher_theme::glass::DISPLAY_FONT
             } else {
-                sunrise_theme::glass::HEADING_FONT
+                sunrise_launcher_theme::glass::HEADING_FONT
             })
             .font_weight(FontWeight::SEMIBOLD)
             .text_size(px(letter))
@@ -201,7 +201,7 @@ impl Launcher {
                 &self.rooms,
                 &room_key,
                 &i.name,
-                sunrise_theme::glass::FONT,
+                sunrise_launcher_theme::glass::FONT,
                 14.,
                 FontWeight::SEMIBOLD,
             );
@@ -270,7 +270,7 @@ impl Launcher {
                     &row_id,
                     move || more,
                     |d, t| d.opacity(t).right(px(2. + 4. * t)),
-                    sunrise_theme::QUICK,
+                    sunrise_launcher_theme::QUICK,
                 )
             };
             list = list.child(crate::motion::enter(

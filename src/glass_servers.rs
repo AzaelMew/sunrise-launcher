@@ -5,7 +5,7 @@
 //! Settings and Backups. Dark appearance only.
 use super::*;
 use crate::glass_ui::{self as ui, white, Tone};
-use sunrise_theme::glass::{fill, ink, radius};
+use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 /// The right column's width (`lg:grid-cols-[minmax(0,1fr)_320px]`).
 const SIDE: f32 = 320.;
@@ -206,7 +206,7 @@ impl Launcher {
                     .px(px(28.))
                     .child(ui::pixel_fill(ui::color(look.accent), ui::TEXTURE_BUTTON))
                     .text_color(ui::color(look.on_accent))
-                    .font_family(sunrise_theme::glass::FONT)
+                    .font_family(sunrise_launcher_theme::glass::FONT)
                     .text_size(px(15.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
@@ -257,7 +257,7 @@ impl Launcher {
                             .child(
                                 div()
                                     .truncate()
-                                    .font_family(sunrise_theme::glass::DISPLAY_FONT)
+                                    .font_family(sunrise_launcher_theme::glass::DISPLAY_FONT)
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_size(px(43.5))
                                     .line_height(px(43.5))
@@ -813,7 +813,9 @@ pub(super) fn glass_setting_row(
     control: AnyElement,
 ) -> Div {
     let note = match error {
-        Some(e) => ui::card_note(tr(e)).text_color(gpui::rgb(sunrise_theme::glass::DANGER)),
+        Some(e) => {
+            ui::card_note(tr(e)).text_color(gpui::rgb(sunrise_launcher_theme::glass::DANGER))
+        }
         None => ui::card_note(about).text_color(white(0.6)),
     };
     div()

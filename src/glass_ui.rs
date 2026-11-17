@@ -11,7 +11,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
-use sunrise_theme::glass::{fill, ink, radius, Glass};
+use sunrise_launcher_theme::glass::{fill, ink, radius, Glass};
 
 thread_local! {
     /// Whether this frame's pages draw the glass look (the dark appearance).
@@ -33,7 +33,7 @@ thread_local! {
 
 /// The light appearance's ink: the mockup's text on white (`#100a1f`), at the opacities the dark
 /// look gives white.
-const INK: u32 = sunrise_theme::glass::ON_LIGHT;
+const INK: u32 = sunrise_launcher_theme::glass::ON_LIGHT;
 
 /// Set as each frame's pages start being built: whether the appearance is light.
 pub fn set_light(light: bool) {
@@ -68,7 +68,7 @@ pub fn live() -> Hsla {
     color(if light() {
         0x15803d
     } else {
-        sunrise_theme::glass::LIVE
+        sunrise_launcher_theme::glass::LIVE
     })
 }
 
@@ -77,7 +77,7 @@ pub fn warn() -> Hsla {
     color(if light() {
         0xb45309
     } else {
-        sunrise_theme::glass::WARN
+        sunrise_launcher_theme::glass::WARN
     })
 }
 
@@ -86,7 +86,7 @@ pub fn danger() -> Hsla {
     color(if light() {
         0xdc2626
     } else {
-        sunrise_theme::glass::DANGER
+        sunrise_launcher_theme::glass::DANGER
     })
 }
 
@@ -196,7 +196,7 @@ pub fn wide_field(field: Stateful<Div>, focused: bool) -> Stateful<Div> {
         .border_0()
         .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .bg(white(if focused { 0.11 } else { 0.07 }))
-        .font_family(sunrise_theme::glass::FONT)
+        .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
         .relative()
         .when(focused, |d| d.child(focus_ring(radius::ROW)))
@@ -285,7 +285,7 @@ pub fn color(c: u32) -> Hsla {
 /// Text at `size` px in Geist, white at `a`, at `weight`.
 pub fn text(size: f32, weight: FontWeight, a: f32) -> Div {
     div()
-        .font_family(sunrise_theme::glass::FONT)
+        .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(size))
         .line_height(px((size * 1.4).round()))
         .font_weight(weight)
@@ -599,7 +599,7 @@ pub fn hover_nudge(id: &SharedString, gap: f32) -> AnyElement {
         id,
         || div().flex_none().h(px(1.)),
         move |d, t| d.w(px(NUDGE * t)).mr(px(-gap)),
-        sunrise_theme::QUICK,
+        sunrise_launcher_theme::QUICK,
     )
 }
 
@@ -902,7 +902,7 @@ pub fn nav_tab(
                 .px(px(13.))
                 .rounded(px(rad(radius::CONTROL)))
                 .cursor_pointer()
-                .font_family(sunrise_theme::glass::FONT)
+                .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(14.5))
                 .line_height(px(20.))
                 .font_weight(FontWeight::MEDIUM)
@@ -926,7 +926,7 @@ const POPOVER_PADDING: f32 = 6.;
 
 /// Width needed to fit the longest translated row, including the icon and both paddings.
 pub fn menu_content_width(window: &Window, labels: &[&str]) -> f32 {
-    let font = gpui::font(sunrise_theme::glass::FONT);
+    let font = gpui::font(sunrise_launcher_theme::glass::FONT);
     let widest = labels
         .iter()
         .map(|&label| {
@@ -967,7 +967,7 @@ pub fn menu_row(
         (white(ink::FULL), white(ink::NOTE))
     };
     let hover_color = if danger {
-        rgba(sunrise_theme::glass::DANGER_HOVER << 8 | 0x1f).into()
+        rgba(sunrise_launcher_theme::glass::DANGER_HOVER << 8 | 0x1f).into()
     } else {
         white(0.07)
     };
@@ -1026,7 +1026,7 @@ pub fn scrim_backdrop() -> impl IntoElement {
 /// The scrim over [`scrim_backdrop`]: 50 % in the dark look, 20 % in light, so the dimmed
 /// launcher stays day-lit.
 pub fn scrim() -> Hsla {
-    color(sunrise_theme::glass::SCRIM).opacity(if light() { 0.2 } else { 0.5 })
+    color(sunrise_launcher_theme::glass::SCRIM).opacity(if light() { 0.2 } else { 0.5 })
 }
 
 /// A dialog's plate, round at `radius` (`hzl-glass` over the scrim): its piece of the scene
@@ -1044,9 +1044,9 @@ pub fn dialog_plate(radius: f32) -> Div {
     crate::glass::plate(radius)
         // Light plates are already day-lit: no dimming under them.
         .child(layer(
-            color(sunrise_theme::glass::SCRIM).opacity(if light() { 0. } else { 0.5 }),
+            color(sunrise_launcher_theme::glass::SCRIM).opacity(if light() { 0. } else { 0.5 }),
         ))
-        .child(layer(white(sunrise_theme::glass::TINT)))
+        .child(layer(white(sunrise_launcher_theme::glass::TINT)))
 }
 
 /// Text on a white button (`SOLID`): `#100a1f`, medium.
@@ -1087,7 +1087,7 @@ pub fn solid(
                 }])
             })
             .active(|s| s.opacity(0.85))
-            .font_family(sunrise_theme::glass::FONT)
+            .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(size))
             .font_weight(FontWeight::MEDIUM)
             .text_color(on_paper())
@@ -1215,7 +1215,7 @@ pub fn quiet_icon(
         .border_1()
         .border_color(white(edge::REST))
         .cursor_pointer()
-        .font_family(sunrise_theme::glass::FONT)
+        .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(white(ink::FULL))
@@ -1331,7 +1331,7 @@ pub fn link(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stat
 /// 12 % while what it holds is refused.
 pub fn field(focused: bool, invalid: bool) -> Div {
     let bg: Hsla = if invalid {
-        rgba(sunrise_theme::glass::DANGER_HOVER << 8 | 0x1f).into()
+        rgba(sunrise_launcher_theme::glass::DANGER_HOVER << 8 | 0x1f).into()
     } else {
         white(if focused {
             fill::FIELD_FOCUS
@@ -1350,14 +1350,14 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         .bg(bg)
         .border_1()
         .border_color(if invalid {
-            color(sunrise_theme::glass::DANGER_HOVER).opacity(0.6)
+            color(sunrise_launcher_theme::glass::DANGER_HOVER).opacity(0.6)
         } else if focused {
             color(look().accent)
         } else {
             white(edge::REST)
         })
         .when(!focused, |d| d.child(back_edge(radius::ROW, 0., true)))
-        .font_family(sunrise_theme::glass::FONT)
+        .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
 }
 
@@ -1501,7 +1501,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         .px(px(14.))
         .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
-        .font_family(sunrise_theme::glass::FONT)
+        .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
         .line_height(px(20.))
         .font_weight(FontWeight::MEDIUM);
@@ -1556,7 +1556,7 @@ pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Sta
                 .px(px(12.))
                 .rounded(px(rad(radius::CONTROL)))
                 .cursor_pointer()
-                .font_family(sunrise_theme::glass::FONT)
+                .font_family(sunrise_launcher_theme::glass::FONT)
                 .font_weight(FontWeight::MEDIUM)
                 .border_1()
                 .text_color(white(if on { ink::FULL } else { ink::BODY }))
@@ -1607,7 +1607,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .px(px(12.))
             .rounded(px(rad(radius::CONTROL - 1.)))
             .cursor_pointer()
-            .font_family(sunrise_theme::glass::FONT)
+            .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(13.5))
             .line_height(px(20.))
             .font_weight(FontWeight::MEDIUM)
@@ -1687,7 +1687,7 @@ pub fn page_head(title: impl Into<SharedString>, note: impl Into<SharedString>) 
         .child(
             // A compact title: the page's content, not its name, gets the height.
             div()
-                .font_family(sunrise_theme::glass::DISPLAY_FONT)
+                .font_family(sunrise_launcher_theme::glass::DISPLAY_FONT)
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_size(px(32.))
                 .line_height(px(36.))
@@ -1732,7 +1732,7 @@ impl Render for Tip {
             .bg(rgb(look().base))
             .border_1()
             .border_color(white(0.12))
-            .font_family(sunrise_theme::glass::FONT)
+            .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(13.))
             .text_color(white(ink::FULL))
             .child(self.0.clone())

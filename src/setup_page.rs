@@ -410,7 +410,7 @@ impl Setup {
                     );
             }
         }
-        glass_ui::dialog_plate(sunrise_theme::glass::radius::MODAL)
+        glass_ui::dialog_plate(sunrise_launcher_theme::glass::radius::MODAL)
             .w(px(560.))
             .p(px(32.))
             .flex()

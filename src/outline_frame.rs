@@ -4,10 +4,10 @@
 use super::*;
 use crate::glass_home_tabs::COMPACT;
 use crate::glass_ui::{self as ui, mono, white};
-use sunrise_theme::glass::{fill, ink, radius};
+use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 /// A folded sidebar opening over the page while the pointer is near it, and closing again.
-const UNFOLD: sunrise_theme::Motion = sunrise_theme::Motion {
+const UNFOLD: sunrise_launcher_theme::Motion = sunrise_launcher_theme::Motion {
     name: "unfold",
     ms: 220,
     curve: [0.2, 0.7, 0.2, 1.],
@@ -52,7 +52,7 @@ impl Launcher {
             .map(|(_, label, _)| {
                 line_width(
                     window,
-                    sunrise_theme::glass::FONT,
+                    sunrise_launcher_theme::glass::FONT,
                     FontWeight::SEMIBOLD,
                     tab_size,
                     tr(label),
@@ -92,7 +92,7 @@ impl Launcher {
                     .h(px(34.))
                     .child(underline)
                     .cursor_pointer()
-                    .font_family(sunrise_theme::glass::FONT)
+                    .font_family(sunrise_launcher_theme::glass::FONT)
                     .text_size(px(tab_size))
                     .font_weight(if open {
                         FontWeight::SEMIBOLD
@@ -114,7 +114,7 @@ impl Launcher {
         // Without the sidebars the bar starts with the mark and the name.
         let name_width = line_width(
             window,
-            sunrise_theme::glass::FONT,
+            sunrise_launcher_theme::glass::FONT,
             FontWeight::BOLD,
             17.,
             "Sunrise",

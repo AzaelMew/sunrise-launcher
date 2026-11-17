@@ -144,7 +144,7 @@ impl Launcher {
             row_menu: Default::default(),
             islands: island::Islands::new(cx),
             sheet_tab: Default::default(),
-            look: sunrise_theme::glass::Glass::default_look(),
+            look: sunrise_launcher_theme::glass::Glass::default_look(),
             menu_closed_at: None,
             // The first draw takes the launcher theme from Settings.
             restyle: true,
