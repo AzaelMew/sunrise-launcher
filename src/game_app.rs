@@ -15,7 +15,7 @@ pub const APP: &str = "Sunrise.app";
 /// The game, then sunrise-ctl, which the game looks for beside itself (Copy Connection Details).
 const PROGRAMS: [&str; 2] = ["sunrise-client", "sunrise-ctl"];
 
-const ICON: &[u8] = include_bytes!("../../packaging/icons/sunrise.icns");
+const ICON: &[u8] = include_bytes!("../assets/icons/sunrise.icns");
 
 /// Its own identifier, so macOS keeps it apart from the launcher (dev.sunrise.launcher); the
 /// games category lets macOS turn Game Mode on when it plays full screen.

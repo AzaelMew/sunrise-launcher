@@ -14,9 +14,9 @@ use sunrise_launcher_theme::glass::{fill, ink, radius};
 static COVERS: LazyLock<[Arc<gpui::Image>; 3]> = LazyLock::new(|| {
     let webp = |bytes: &[u8]| Arc::new(gpui::Image::from_bytes(ImageFormat::Webp, bytes.to_vec()));
     [
-        webp(include_bytes!("../../docs/media/village.webp")),
-        webp(include_bytes!("../../docs/media/underwater.webp")),
-        webp(include_bytes!("../../docs/media/nether.webp")),
+        webp(include_bytes!("../assets/media/village.webp")),
+        webp(include_bytes!("../assets/media/underwater.webp")),
+        webp(include_bytes!("../assets/media/nether.webp")),
     ]
 });
 
