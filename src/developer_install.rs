@@ -188,7 +188,7 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
     }
     if !missing.is_empty() {
         let mut message = trf(
-            "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
+            "Missing developer packaging inputs: {files}. Build the game program (the --program file) and its companions with cargo build -p sunrise-game -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
             &[("files", &missing.join(", "))],
         );
         if wasm_std_missing {
@@ -381,7 +381,7 @@ mod tests {
         "sunrise-prepare",
         "sunrise-server",
     ];
-    const REMEDY: &str = "Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.";
+    const REMEDY: &str = "Build the game program (the --program file) and its companions with cargo build -p sunrise-game -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.";
     #[test]
     fn a_missing_wasm_standard_library_is_named_with_its_generation_command_before_packaging() {
         let (_folder, checkout, program) = packaging_inputs(&COMPANIONS);
