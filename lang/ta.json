@@ -1240,7 +1240,6 @@
   "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.": "Install a release or Nightly, or explicitly select a local unsigned developer base first: an imported build reuses its game files.",
   "Invalid developer build revision.": "Invalid developer build revision.",
   "Local unsigned developer build · {commit} · {id}": "Local unsigned developer build · {commit} · {id}",
-  "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.": "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
   "The checkout's release packager failed; no developer build was installed.": "The checkout's release packager failed; no developer build was installed.",
   "The developer checkout has dirty tracked inputs. Commit your changes first, then rebuild the game and retry.": "The developer checkout has dirty tracked inputs. Commit your changes first, then rebuild the game and retry.",
   "The developer checkout has no HEAD commit.": "The developer checkout has no HEAD commit.",
@@ -1275,5 +1274,6 @@
   "The launcher's look is reset for now, but it could not be saved": "துவக்கியின் தோற்றம் இப்போது மீட்டமைக்கப்பட்டுள்ளது, ஆனால் சேமிக்க முடியவில்லை",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "கண்ணாடியும் மங்கலும் இருள் தோற்றத்தின் பனிப்பூச்சு பேனல்களை வடிவமைக்கின்றன; ஒளி தோற்றம் திட வெள்ளை பேனல்களை வரையும்.",
   "Performance mode draws solid panels, without glass or blur.": "செயல்திறன் பயன்முறை கண்ணாடி அல்லது மங்கல் இன்றி திட பேனல்களை வரையும்.",
-  "This theme's night draws solid panels, without glass or blur.": "இந்தக் கருப்பொருளின் இரவு கண்ணாடி அல்லது மங்கல் இன்றி திட பேனல்களை வரையும்."
+  "This theme's night draws solid panels, without glass or blur.": "இந்தக் கருப்பொருளின் இரவு கண்ணாடி அல்லது மங்கல் இன்றி திட பேனல்களை வரையும்.",
+  "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.": "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/."
 }
