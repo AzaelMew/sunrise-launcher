@@ -17,7 +17,7 @@ use sunrise_launcher::browser::{
 };
 use sunrise_launcher::modpacks;
 use sunrise_launcher::native_status;
-use sunrise_port_pack::check::Check;
+use sunrise_launcher::porter::Check;
 
 /// The kinds, as the Mods page's tabs: name and icon.
 const KINDS: [(PackKind, &str, &str); 5] = [
@@ -830,10 +830,7 @@ impl Launcher {
         self.mods.updates.remove(&(source, id.clone()));
         let everything = self.mods.everything || self.mods.browse.filters.other_version();
         // A modpack is ported for the selected version as soon as it is imported.
-        let resources = self
-            .selected()
-            .filter(|tag| backend::is_prepared(tag))
-            .map(|tag| backend::resources(tag));
+        let tag = self.selected().map(|tag| tag.to_string());
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
         let java = self.mods.java.clone();
@@ -915,7 +912,8 @@ impl Launcher {
                             progress(&p.title, f)
                         })?;
                         let log = |line: String| progress(&line, 1.);
-                        let pack = modpacks::import_and_port(&file, resources.as_deref(), &log)?;
+                        let porter = modpacks::Porter::for_version(tag.as_deref())?;
+                        let pack = modpacks::import_and_port(&porter, &file, &log)?;
                         if let Some(url) = &p.icon {
                             sunrise_launcher::instances::adopt_icon(
                                 &modpacks::profile_home(&pack.work),

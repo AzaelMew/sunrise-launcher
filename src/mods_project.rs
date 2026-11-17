@@ -103,7 +103,7 @@ pub(super) struct Opened {
     details: Option<Result<Arc<Details>, String>>,
     versions: Option<Result<Arc<[ProjectVersion]>, String>>,
     version_list: cull::Cull,
-    checked_versions: HashMap<String, sunrise_port_pack::check::Verdict>,
+    checked_versions: HashMap<String, sunrise_launcher::porter::Verdict>,
     /// The gallery image shown large.
     shot: usize,
 }
@@ -112,7 +112,7 @@ pub(super) struct Opened {
 #[derive(Clone)]
 pub(super) struct ProjectVersion {
     version: Version,
-    verdict: Option<sunrise_port_pack::check::Verdict>,
+    verdict: Option<sunrise_launcher::porter::Verdict>,
 }
 
 /// The project page, filters and images' share of the Mods page's state.
@@ -137,7 +137,7 @@ pub(super) enum Loaded {
     Checked(
         (SourceId, String),
         String,
-        sunrise_port_pack::check::Verdict,
+        sunrise_launcher::porter::Verdict,
     ),
     Image((String, u32), Option<PathBuf>),
     Tags((SourceId, PackKind), Result<Tags, String>),

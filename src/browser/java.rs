@@ -1,16 +1,16 @@
 //! Java mods (Fabric, NeoForge, Forge) from the browser (docs/mod-browser.md). Sunrise doesn't
 //! run their code; it ports what they carry (blocks, items, recipes, loot, tags, worldgen) with
 //! `sunrise-port-pack`. Before a mod is offered for install its jar is downloaded (checked as
-//! every download is), carried over and its classes read (`sunrise_port_pack::check`): the
+//! every download is), carried over and its classes read (the game's porter, `sunrise-port-pack check`): the
 //! verdict (Works, Partly, Doesn't run) and the lists of what ports and what doesn't come from
 //! that, and are kept per file so a jar is checked once.
 //!
 //! Installing copies the carried-over folder mod into `sunrise-mods/<mod id>/` beside
 //! `options.txt` and turns it on in `sunrise-mods.txt`, where the game's Options > Mods reads it.
 use super::{installed::Entry, pick, FileRef, Kind, Project, Source, Support, Version};
+use crate::porter::{Check, Porter, Verdict};
 use std::fs;
 use std::path::{Path, PathBuf};
-use sunrise_port_pack::check::{self, Check, Verdict};
 
 /// Where the checks are kept, under the game folder. Its name changes when the check finds
 /// more, so older answers are checked again.
@@ -72,7 +72,7 @@ pub fn check_file(
     let jar = source.fetch(file, &checks(home).join(".downloads"), progress)?;
     let part = dir.with_extension("part");
     let _ = fs::remove_dir_all(&part);
-    let result = check::check(&jar, &part);
+    let result = check_jar(&jar, &part);
     let _ = fs::remove_file(&jar);
     let c = result.inspect_err(|_| {
         let _ = fs::remove_dir_all(&part);
@@ -86,6 +86,24 @@ pub fn check_file(
     fs::rename(&part, &dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     Ok(c)
 }
+
+/// Checks `jar` into `out` with the game's porter (the tests' own checker when they set one).
+fn check_jar(jar: &Path, out: &Path) -> Result<Check, String> {
+    #[cfg(test)]
+    if let Some(check) = FAKE_CHECK.with(std::cell::Cell::get) {
+        return check(jar, out);
+    }
+    Porter::for_version(None)?.check(jar, out)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What checks a jar in this thread's tests, in place of a game's porter.
+    pub(crate) static FAKE_CHECK: std::cell::Cell<Option<Checker>> = const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) type Checker = fn(&Path, &Path) -> Result<Check, String>;
 
 /// The version of `project` to install and its check.
 pub fn check_project(
@@ -108,6 +126,51 @@ pub fn check_project(
     let file = version.file().expect("pick keeps versions with a file");
     let check = check_file(home, source, file, progress)?;
     Ok((version, check))
+}
+
+/// A Java mod jar's name and version from its metadata (`neoforge.mods.toml`, `mods.toml`, else `fabric.mod.json`).
+pub fn jar_title(jar: &Path) -> Option<(String, String)> {
+    use std::io::Read;
+    let mut zip = crate::zip_intake::open(fs::File::open(jar).ok()?).ok()?;
+    let mut text = |name: &str| -> Option<String> {
+        let mut text = String::new();
+        zip.by_name(name)
+            .ok()?
+            .take(1 << 20)
+            .read_to_string(&mut text)
+            .ok()?;
+        Some(text)
+    };
+    let field = |value: Option<&str>| value.unwrap_or_default().to_owned();
+    let (name, version) = if let Some(toml) =
+        text("META-INF/neoforge.mods.toml").or_else(|| text("META-INF/mods.toml"))
+    {
+        let toml: toml::Value = toml::from_str(&toml).ok()?;
+        let first = toml.get("mods")?.as_array()?.first()?;
+        let get = |key: &str| first.get(key).and_then(toml::Value::as_str);
+        (
+            field(get("displayName").or(get("modId"))),
+            field(get("version")),
+        )
+    } else {
+        let json: serde_json::Value = serde_json::from_str(&text("fabric.mod.json")?).ok()?;
+        (
+            field(json["name"].as_str().or(json["id"].as_str())),
+            field(json["version"].as_str()),
+        )
+    };
+    // `${file.jarVersion}` is the manifest's version, filled in by the loader.
+    let version = match version.starts_with("${") {
+        true => text("META-INF/MANIFEST.MF")
+            .and_then(|m| {
+                m.lines().find_map(|l| {
+                    Some(l.strip_prefix("Implementation-Version:")?.trim().to_owned())
+                })
+            })
+            .unwrap_or_default(),
+        false => version,
+    };
+    (!name.is_empty()).then_some((name, version))
 }
 
 /// Whether mod `id` is on in `sunrise-mods.txt`.

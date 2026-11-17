@@ -339,9 +339,7 @@ fn child_holds(dir: &Path, file: &str) -> bool {
 /// (`minecraftinstance.json`, else `manifest.json`). An instance that records neither, or a
 /// loader Sunrise doesn't name, keeps none.
 fn with_curseforge_target(mut found: Found) -> Found {
-    let Some((minecraft, loader, version)) =
-        sunrise_port_pack::import::curseforge_instance_target(&found.game)
-    else {
+    let Some((minecraft, loader, version)) = curseforge_instance_target(&found.game) else {
         return found;
     };
     found.minecraft = Some(minecraft);
@@ -349,6 +347,46 @@ fn with_curseforge_target(mut found: Found) -> Found {
         .filter(|_| !version.is_empty())
         .map(|name| Loader { name, version });
     found
+}
+
+/// The Minecraft version, loader and loader version a CurseForge instance records, from `minecraftinstance.json`, else its `manifest.json`.
+fn curseforge_instance_target(dir: &Path) -> Option<(String, String, String)> {
+    let read = |name: &str| -> Option<serde_json::Value> {
+        let text = fs::read_to_string(dir.join(name)).ok()?;
+        serde_json::from_str(text.trim_start_matches('\u{feff}')).ok()
+    };
+    let text = |v: &serde_json::Value| v.as_str().unwrap_or_default().to_owned();
+    let from_instance = read("minecraftinstance.json").map(|v| {
+        let minecraft = text(&v["gameVersion"]);
+        let id = text(&v["baseModLoader"]["name"]);
+        let (loader, version) = id.split_once('-').unwrap_or((&id, ""));
+        // Fabric and Quilt ids end in the Minecraft version (`fabric-0.16.14-1.21.5`); it is not the loader's own.
+        let version = version
+            .strip_suffix(minecraft.as_str())
+            .and_then(|v| v.strip_suffix('-'))
+            .unwrap_or(version);
+        (minecraft, loader.to_owned(), version.to_owned())
+    });
+    let from_manifest = || {
+        read("manifest.json").map(|m| {
+            let primary = m["minecraft"]["modLoaders"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|l| l["primary"].as_bool().unwrap_or(true))
+                .map(|l| text(&l["id"]))
+                .unwrap_or_default();
+            let (loader, version) = primary.split_once('-').unwrap_or((&primary, ""));
+            (
+                text(&m["minecraft"]["version"]),
+                loader.to_owned(),
+                version.to_owned(),
+            )
+        })
+    };
+    from_instance
+        .filter(|(minecraft, ..)| !minecraft.is_empty())
+        .or_else(|| from_manifest().filter(|(minecraft, ..)| !minecraft.is_empty()))
 }
 
 /// The Modrinth App's instances: in its folder's `profiles/`.

@@ -2519,11 +2519,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 let file =
                     installed::fetch_modpack(&*source, &p, &folder, &progress(p.title.clone()))?;
                 let log = &|line: String| eprintln!("{line}");
-                let resources = backend::resolve_version(None)
-                    .ok()
-                    .filter(|t| backend::check_prepared(t))
-                    .map(|t| backend::resources(&t));
-                let pack = modpacks::import_and_port(&file, resources.as_deref(), log)?;
+                let porter = modpacks::Porter::for_version(None)?;
+                let pack = modpacks::import_and_port(&porter, &file, log)?;
                 println!("{} ({})", modpacks::outcome(&pack), pack.summary());
                 println!("Play it: sunrise-launcher modpack play {}", pack.slug);
                 return Ok(());
@@ -3163,7 +3160,11 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                     }
                 }
                 Dropped::Modpack => {
-                    let pack = modpacks::import(&file, &|line: String| eprintln!("{line}"))?;
+                    let pack = modpacks::import(
+                        &modpacks::Porter::for_version(None)?,
+                        &file,
+                        &|line: String| eprintln!("{line}"),
+                    )?;
                     println!("{} ({})", modpacks::outcome(&pack), pack.summary());
                     println!(
                         "Port and play it: sunrise-launcher modpack port {}",
@@ -3537,8 +3538,8 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
 
 fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     use sunrise_launcher::browser::sunrise;
+    use sunrise_launcher::modpacks::Status;
     use sunrise_launcher::modpacks::{self, Imported};
-    use sunrise_port_pack::report::Status;
     let log = &|line: String| eprintln!("{line}");
     let work = |pack: &str| {
         let registry = sunrise::pack::packs_dir().join(pack);
@@ -3604,23 +3605,21 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 }
             }
         }
-        ModpackCmd::Import { path } => show(&modpacks::import(&path, log)?),
+        ModpackCmd::Import { path } => show(&modpacks::import(
+            &modpacks::Porter::for_version(None)?,
+            &path,
+            log,
+        )?),
         ModpackCmd::Port {
             pack,
             from,
             version,
-        } => {
-            let tag = backend::resolve_version(version.as_deref()).ok();
-            let resources = tag
-                .filter(|t| backend::check_prepared(t))
-                .map(|t| backend::resources(&t));
-            show(&modpacks::port(
-                &work(&pack)?,
-                resources.as_deref(),
-                from.as_deref(),
-                log,
-            )?)
-        }
+        } => show(&modpacks::port(
+            &modpacks::Porter::for_version(version.as_deref())?,
+            &work(&pack)?,
+            from.as_deref(),
+            log,
+        )?),
         ModpackCmd::Play {
             pack,
             version,

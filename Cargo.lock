@@ -6012,7 +6012,6 @@ dependencies = [
  "sunrise-mod-vocab",
  "sunrise-native-build",
  "sunrise-platform",
- "sunrise-port-pack",
  "sunrise-prepare",
  "syn 2.0.119",
  "sys-locale",
@@ -6324,22 +6323,6 @@ dependencies = [
  "sunrise-perf-format",
  "sunrise-prepare",
  "sunrise-system",
-]
-
-[[package]]
-name = "sunrise-port-pack"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "sha1",
- "sha2",
- "sunrise-mod-api-gen",
- "sunrise-mod-package",
- "toml 1.1.8+spec-1.1.0",
- "ureq",
- "url",
- "zip",
 ]
 
 [[package]]

@@ -3,6 +3,7 @@
 pub mod leases;
 #[cfg(test)]
 mod output_tests;
+pub mod owned;
 #[cfg(unix)]
 pub mod supervisor;
 
