@@ -126,7 +126,7 @@ pub(super) fn update_left_out(found: &[Bundle], checks: &Checks) -> Result<Vec<L
         .map(|bundle| {
             dependencies::from_manifest(
                 &bundle.manifest.dependencies,
-                sunrise_mod_package::manifest::Side::Both,
+                sunrise_launcher_smod::manifest::Side::Both,
             )
         })
         .collect();
