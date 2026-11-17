@@ -14,7 +14,7 @@ impl Render for Launcher {
                 .child(specimen::render(&t));
         }
         // Settings measures its hidden sections one a frame (`glass_settings::Culled`).
-        if self.settings_culled.get().measuring() {
+        if self.page == Page::Settings && self.settings_culled.get().measuring() {
             window.request_animation_frame();
         }
         if std::mem::take(&mut self.restyle) {

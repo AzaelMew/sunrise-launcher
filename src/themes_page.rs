@@ -717,6 +717,7 @@ fn reset_look(s: &mut Settings) {
     s.blur = None;
     s.background = None;
     s.scenery_on = None;
+    s.corners_px = None;
     s.theme_accents.clear();
 }
 
@@ -732,6 +733,8 @@ mod tests {
             glass: Some(3.),
             blur: Some(9.),
             background: Some("mine.png".into()),
+            scenery_on: Some(false),
+            corners_px: Some(20),
             theme_accents: [("dawn".to_string(), Accent::TEAL)].into(),
             reduce_motion: Some(true),
             language: Some(i18n::Language::French),
@@ -750,6 +753,7 @@ mod tests {
             (s.theme, s.glass, s.blur, s.background),
             (None, None, None, None)
         );
+        assert_eq!((s.scenery_on, s.corners_px), (None, None));
         assert_eq!(s.language, Some(i18n::Language::French));
         assert!(s.skip_opening);
         assert_eq!(s.game_args, "-Xmx4G");

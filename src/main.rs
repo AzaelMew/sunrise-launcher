@@ -8,7 +8,6 @@ mod blocks_chrome;
 mod blocks_play;
 mod blocks_settings;
 mod blocks_versions;
-mod ferris;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;

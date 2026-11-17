@@ -79,8 +79,13 @@ pub struct Fade {
 impl Fade {
     /// Easing towards `on` from where `last` is now; from rest when there was none.
     pub fn toward(last: Option<Fade>, on: bool, now: Instant) -> Fade {
+        Fade::toward_as(last, on, now, still())
+    }
+
+    /// [`Fade::toward`] with the reduced-motion preference given, not read.
+    fn toward_as(last: Option<Fade>, on: bool, now: Instant, still: bool) -> Fade {
         let (from, motion) = match last {
-            Some(last) => (last.value(now), last.motion),
+            Some(last) => (last.value_as(now, still), last.motion),
             None => (if on { 0. } else { 1. }, tokens::QUICK),
         };
         Fade {
@@ -108,8 +113,13 @@ impl Fade {
 
     /// The strength at `now`: 0 at rest, 1 lit (more, briefly, on an overshooting curve).
     pub fn value(self, now: Instant) -> f32 {
+        self.value_as(now, still())
+    }
+
+    /// [`Fade::value`] with the reduced-motion preference given, not read.
+    fn value_as(self, now: Instant, still: bool) -> f32 {
         let length = self.length().as_secs_f32();
-        if length <= 0. || still() {
+        if length <= 0. || still {
             return self.target();
         }
         let t = (now.saturating_duration_since(self.at).as_secs_f32() / length).min(1.);
@@ -231,20 +241,20 @@ mod tests {
         let ms = |n: u64| at + std::time::Duration::from_millis(n);
         let on = Fade {
             motion: linear,
-            ..Fade::toward(None, true, at)
+            ..Fade::toward_as(None, true, at, false)
         };
-        assert!((on.value(ms(50)) - 0.5).abs() < 1e-3);
+        assert!((on.value_as(ms(50), false) - 0.5).abs() < 1e-3);
         assert!(!on.rested(ms(1000)), "a lit element stays lit");
         // The pointer leaves halfway: from 0.5 back to rest, over half the length.
-        let off = Fade::toward(Some(on), false, ms(50));
-        assert!((off.value(ms(50)) - 0.5).abs() < 1e-3);
-        assert!((off.value(ms(75)) - 0.25).abs() < 1e-3);
+        let off = Fade::toward_as(Some(on), false, ms(50), false);
+        assert!((off.value_as(ms(50), false) - 0.5).abs() < 1e-3);
+        assert!((off.value_as(ms(75), false) - 0.25).abs() < 1e-3);
         assert!(!off.rested(ms(99)));
         assert!(off.rested(ms(100)));
         // Back on before it rested: from where it was, not from 0.
-        let again = Fade::toward(Some(off), true, ms(75));
-        assert!((again.value(ms(75)) - 0.25).abs() < 1e-3);
-        assert!((again.value(ms(150)) - 1.).abs() < 1e-3);
+        let again = Fade::toward_as(Some(off), true, ms(75), false);
+        assert!((again.value_as(ms(75), false) - 0.25).abs() < 1e-3);
+        assert!((again.value_as(ms(150), false) - 1.).abs() < 1e-3);
     }
 
     #[test]
