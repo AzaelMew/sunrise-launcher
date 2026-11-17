@@ -109,11 +109,15 @@ pub(super) const API_PACKAGE: &str = "sunrise-mod-api";
 
 /// The per-mod facade's package, rewritten to its generated crate.
 pub(super) const INTERNALS_PACKAGE: &str = "sunrise-internals";
+/// The game's one wasmtime, for a mod that embeds a wasm engine. Native-only and unstable: it follows the
+/// game build, and a wasm mod cannot link it (`cargo sunrise-mod build` refuses the dependency).
+pub(super) const WASMTIME_PACKAGE: &str = "sunrise-wasmtime";
 /// Each game package a mod may depend on, with its library's name.
-pub(super) const PACKAGES: [(&str, &str); 3] = [
+pub(super) const PACKAGES: [(&str, &str); 4] = [
     (API_PACKAGE, "mod_api"),
     (POINTS_PACKAGE, "mod_points"),
     (INTERNALS_PACKAGE, "internals"),
+    (WASMTIME_PACKAGE, "sunrise_wasmtime"),
 ];
 
 /// Where a mod's `Cargo.toml` names the SDK package `package`: the copy of its pinned build that
@@ -756,6 +760,62 @@ mod tests {
                 (result, _) => panic!("{form}: {:?}", result.err()),
             }
         }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_native_mod_takes_the_games_wasmtime_by_its_path_form_only() {
+        let dir = fixture();
+        let api = "sunrise-mod-api={path='.sunrise/sdk/api/crates/sunrise-mod-api'}";
+        for (line, libraries, refusal) in [
+            (
+                "sunrise-wasmtime={path='.sunrise/sdk/api/crates/sunrise-wasmtime'}",
+                Some(("sunrise_wasmtime", "sunrise_wasmtime")),
+                None,
+            ),
+            (
+                "wasmtime={package='sunrise-wasmtime',path='.sunrise/sdk/api/crates/sunrise-wasmtime'}",
+                Some(("wasmtime", "sunrise_wasmtime")),
+                None,
+            ),
+            (
+                "sunrise-wasmtime='50'",
+                None,
+                Some("example: E_SDK_SOURCE: sunrise-wasmtime: a version names no source"),
+            ),
+            (
+                "sunrise-wasmtime={path='../sunrise-wasmtime'}",
+                None,
+                Some("example: E_SDK_SOURCE: sunrise-wasmtime: the path must be \".sunrise/sdk/api/crates/sunrise-wasmtime\""),
+            ),
+        ] {
+            let text = format!(
+                "[package]\nname='example-mod'\nversion='1.0.0'\n[dependencies]\n{api}\n{line}\n"
+            );
+            fs::write(dir.join("Cargo.toml"), text).unwrap();
+            let bundle = super::super::bundle_in(&dir).unwrap().unwrap();
+            match (Project::read(&bundle), libraries, refusal) {
+                (Ok(project), Some(library), None) => {
+                    assert!(project.api_dependencies().contains(&(library.0.to_owned(), library.1)));
+                    // The game's features are the only ones: a mod asking for its own is refused on the prebuilt route.
+                    assert!(super::super::prebuilt::project_refusal(&project).is_none());
+                }
+                (Err(error), None, Some(refusal)) => {
+                    assert!(error.to_string().starts_with(refusal), "{error}")
+                }
+                (result, ..) => panic!("{line}: {:?}", result.err()),
+            }
+        }
+        let own = format!(
+            "[package]\nname='example-mod'\nversion='1.0.0'\n[dependencies]\n{api}\nsunrise-wasmtime={{path='.sunrise/sdk/api/crates/sunrise-wasmtime',features=['wat']}}\n"
+        );
+        fs::write(dir.join("Cargo.toml"), own).unwrap();
+        let bundle = super::super::bundle_in(&dir).unwrap().unwrap();
+        let project = Project::read(&bundle).unwrap();
+        assert!(matches!(
+            super::super::prebuilt::project_refusal(&project),
+            Some(super::super::prebuilt::Refusal::Features { .. })
+        ));
         fs::remove_dir_all(dir).unwrap();
     }
 
