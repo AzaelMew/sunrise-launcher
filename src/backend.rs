@@ -1345,7 +1345,7 @@ pub fn forget_prepared() {
 /// document and no top-level table a killed preparation or an interrupted
 /// copy left empty. Such a folder used to count as prepared, so Play started
 /// the game on it and the loader crashed on the empty file.
-fn prepared_at(resources: &Path) -> bool {
+pub(crate) fn prepared_at(resources: &Path) -> bool {
     if read_json(&resources.join(RESOURCES_MANIFEST)).is_none() {
         return false;
     }
@@ -4128,6 +4128,11 @@ impl WhilePlaying {
     }
 }
 
+/// The roundest the look's corners go, in px (Settings > Appearance > Corners), and how round
+/// they are until the player picks.
+pub const MAX_CORNERS: u8 = 24;
+pub const DEFAULT_CORNERS: u8 = 4;
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4178,10 +4183,7 @@ pub struct Settings {
     /// started with `SUNRISE_NO_HEARTBEAT`. On by default, as upstream sends it.
     #[serde(default)]
     pub ping_off: bool,
-    /// The look's flourishes, each on or off (`effects`): glow, gradients, the hover shine.
-    #[serde(default)]
-    pub effects: crate::effects::Effects,
-    /// The player has been through the first-run welcome (theme, accent, effects).
+    /// The player has been through the first-run welcome (theme, accent).
     #[serde(default)]
     pub welcomed: bool,
     /// The player without an account that owns the game has read, once, why the launcher needs
@@ -4237,6 +4239,26 @@ pub struct Settings {
     /// move even when the system asks for less.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reduce_motion: Option<bool>,
+    /// How round the look's corners are: their radius in px, 0 (square) to [`MAX_CORNERS`];
+    /// unset is [`DEFAULT_CORNERS`] (read it with [`Settings::corners`]).
+    #[serde(default, rename = "corners", skip_serializing_if = "Option::is_none")]
+    pub corners_px: Option<u8>,
+    /// Home's scenery between the sidebars: the theme's animated pixel scene (or the player's
+    /// picture). Unset is on; off leaves the plain page (read it with [`Settings::scenery`]).
+    #[serde(default, rename = "scenery", skip_serializing_if = "Option::is_none")]
+    pub scenery_on: Option<bool>,
+}
+
+impl Settings {
+    /// The look's corner radius in px: the player's, else [`DEFAULT_CORNERS`].
+    pub fn corners(&self) -> u8 {
+        self.corners_px.unwrap_or(DEFAULT_CORNERS).min(MAX_CORNERS)
+    }
+
+    /// Whether Home shows its scenery: on unless the player turned it off.
+    pub fn scenery(&self) -> bool {
+        self.scenery_on.unwrap_or(true)
+    }
 }
 
 impl Settings {

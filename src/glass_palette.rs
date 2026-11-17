@@ -52,6 +52,8 @@ impl Launcher {
             window.focus(&self.root_focus, cx);
             return;
         }
+        // A menu left open would draw over the palette.
+        self.close_menus();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         self.palette = Some(Palette {
@@ -280,7 +282,7 @@ impl Launcher {
                     .gap(px(16.))
                     .h(px(44.))
                     .px(px(12.))
-                    .rounded(px(12.))
+                    .rounded(px(crate::glass_ui::rad(12.)))
                     .when(i == index, |d| d.bg(white(0.1)))
                     .cursor_pointer()
                     .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {

@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "รูปแบบม็อดแพ็กของ Modrinth: รีซอร์สแพ็กจาก Modrinth ใส่ไว้เป็นลิงก์ดาวน์โหลด ส่วนที่เหลือรวมอยู่ในไฟล์",
   "Mods": "ม็อด",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "ม็อดและเชดเดอร์แพ็กที่สร้างสำหรับ Sunrise จากรีจิสทรีที่ตรวจแล้วของ Sunrise เอง และรีซอร์สแพ็กจาก Modrinth ทุกไฟล์ถูกตรวจ checksum เทียบกับต้นทางก่อนเข้าโฟลเดอร์เกม",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ยืนยันบัญชีของคุณไม่ได้ ลงชื่อเข้าใช้อีกครั้งแล้วลองใหม่",
-  "Mojang's session server is not answering. Try again later.": "เซิร์ฟเวอร์เซสชันของ Mojang ไม่ตอบสนอง ลองใหม่ภายหลัง",
   "Mojang's version list isn't here yet.": "ยังไม่ได้รายการเวอร์ชันจาก Mojang",
   "More": "เพิ่มเติม",
   "Most players at once": "จำนวนผู้เล่นสูงสุดพร้อมกัน",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "ลงชื่อเข้าใช้ด้วย Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "ลงชื่อเข้าใช้ด้วย `sunrise-launcher account sign-in`",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "ลงชื่อเข้าใช้ด้วยบัญชี Microsoft ที่มี Minecraft: Java Edition เพื่อเริ่มเล่น",
-  "Sign in with a Minecraft account first.": "ลงชื่อเข้าใช้ด้วยบัญชี Minecraft ก่อน",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "ลงชื่อเข้าใช้ด้วยบัญชีที่เป็นเจ้าของ Minecraft: Java Edition ชื่อและสกินของคุณจะติดตัวไปยังเซิร์ฟเวอร์ออนไลน์ เหมือนในลันเชอร์อื่น ๆ",
   "Sign out": "ออกจากระบบ",
   "Sign-in not checked": "ไม่ได้ตรวจสอบการลงชื่อเข้าใช้",
@@ -1283,5 +1280,9 @@
   "The launcher's look is reset for now, but it could not be saved": "หน้าตาของลันเชอร์ถูกรีเซ็ตไว้ชั่วคราว แต่บันทึกไม่สำเร็จ",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "กระจกและความเบลอกำหนดแผงแบบกระจกฝ้าของหน้าตามืด ส่วนแบบสว่างวาดแผงสีขาวทึบ",
   "Performance mode draws solid panels, without glass or blur.": "โหมดประสิทธิภาพวาดแผงทึบ ไม่มีกระจกหรือความเบลอ",
-  "This theme's night draws solid panels, without glass or blur.": "กลางคืนของธีมนี้วาดแผงทึบ ไม่มีกระจกหรือความเบลอ"
+  "This theme's night draws solid panels, without glass or blur.": "กลางคืนของธีมนี้วาดแผงทึบ ไม่มีกระจกหรือความเบลอ",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

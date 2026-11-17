@@ -5,22 +5,25 @@ use super::*;
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         sunrise_launcher::storage::eviction::cleanup_after_start();
-        let (tx, rx) = channel();
+        let (tx, rx) = wake::channel();
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
             cx.notify();
         });
         let window_handle = window.window_handle();
+        #[cfg(feature = "frame-stats")]
+        perf::frame_overlay(window);
+        // The pump: on its tick, or at once when a worker says something (`wake.rs`).
         cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(80))
-                .await;
+            let tick = cx.background_executor().timer(wake::TICK);
+            futures_util::future::select(std::pin::pin!(tick), std::pin::pin!(wake::woken())).await;
             if this
                 .update(cx, |this, cx| this.drain(window_handle, cx))
                 .is_err()
             {
                 break;
             }
+            cx.background_executor().timer(wake::SETTLE).await;
         })
         .detach();
         let mut settings = Settings::load();
@@ -51,11 +54,11 @@ impl Launcher {
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
         titlebar::apply_appearance(window, settings.appearance);
-        let scene = cx.new(|_| scene::Scene::new());
+        let coast = cx.new(|cx| coast::Coast::new(window, cx));
         let sky = cx.new(|cx| sky::SkyView::new(window, cx));
         let rain = cx.new(|_| rain::Rain::new());
         let backdrop =
-            cx.new(|_| window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone()));
+            cx.new(|_| window_root::Backdrop::new(coast.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
@@ -68,6 +71,7 @@ impl Launcher {
             settings_query_focused: false,
             whats_new_open: None,
             settings_marked: 0,
+            settings_culled: Default::default(),
             settings_nav_open: false,
             credit_asked: false,
             version_menu: false,
@@ -133,13 +137,12 @@ impl Launcher {
             technical_open: Default::default(),
             picker: glass_home::PickerState::default(),
             accent_strip: false,
-            look_sliders: Default::default(),
             hue_area: std::rc::Rc::new(std::cell::Cell::new(None)),
             hue_dragging: false,
             language_menu: false,
             account_menu: false,
             row_menu: Default::default(),
-            rail: Default::default(),
+            islands: island::Islands::new(cx),
             sheet_tab: Default::default(),
             look: sunrise_launcher_theme::glass::Glass::default_look(),
             menu_closed_at: None,
@@ -194,7 +197,9 @@ impl Launcher {
             play_when_prepared: None,
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),
             friend_focused: false,
+            nav_strip: Default::default(),
             window_width: 0.,
+            window_height: 0.,
             window_long_side: 0.,
             scale_factor: 1.,
             friend_focus: cx.focus_handle(),
@@ -214,12 +219,11 @@ impl Launcher {
             prepare_started: None,
             download_seen: None,
             home_tab: home_tabs::HomeTab::from_env(),
+            home_panel: home_tabs::HomeTab::from_env() != home_tabs::HomeTab::Overview,
+            side_folds: [None; 2],
             home_menu: Default::default(),
-            folder_hovered: false,
             list_hover: None,
             list_menu: None,
-            home_strip: Default::default(),
-            client_since: None,
             instance_mods: Default::default(),
             mod_preview: Default::default(),
             project_icons: Default::default(),
@@ -254,10 +258,11 @@ impl Launcher {
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
             side_servers: sunrise_launcher::servers::list(),
+            coast,
             sky,
-            scene,
             rain,
             backdrop,
+            cover_at: Default::default(),
             pushed: None,
             scale: window.scale_factor(),
         };
@@ -412,10 +417,29 @@ impl Launcher {
                 self.mods.reset_lists();
             }
         }
+        self.close_menus();
+    }
+
+    /// Closes every dropdown and row menu, and says whether one was open: a page switch, the
+    /// palette and Escape each close them (Escape the menu first, then what is under it).
+    pub(crate) fn close_menus(&mut self) -> bool {
+        let open = self.picker.open
+            || self.language_menu
+            || self.mods.browse.sort_menu
+            || self.account_menu
+            || self.version_menu
+            || self.row_menu.open.is_some()
+            || self.home_menu != glass_home::HomeMenu::None
+            || self.list_menu.is_some();
         self.picker.open = false;
         self.language_menu = false;
         self.mods.browse.sort_menu = false;
         self.account_menu = false;
+        self.version_menu = false;
+        self.row_menu.open = None;
+        self.home_menu = glass_home::HomeMenu::None;
+        self.list_menu = None;
+        open
     }
 
     pub(crate) fn check_updates(&mut self) {

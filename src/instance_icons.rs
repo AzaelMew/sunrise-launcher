@@ -17,7 +17,7 @@ const FORGE: &[u8] = include_bytes!("../assets/logos/forge.png");
 /// Vanilla's mark: our own grass block (`tools/launcher_grass_block.py`), not Mojang's art.
 pub(super) const GRASS: &[u8] = include_bytes!("../assets/logos/grass-block.png");
 /// Sunrise's mark (`docs/media/brand/icon.svg`), as the icon theme holds it.
-const MARK: &[u8] = include_bytes!("../assets/icons/hicolor/256x256/apps/sunrise.png");
+const MARK: &[u8] = include_bytes!("../assets/logos/sunrise.png");
 /// The loaders a logo is drawn for.
 const LOADERS: [&str; 4] = ["fabric", "quilt", "forge", "neoforge"];
 
@@ -66,7 +66,7 @@ impl Launcher {
         self.icon_image("mark:grass".into(), size, false, || Some(GRASS.to_vec()))
     }
 
-    /// Sunrise's own mark, `size` points square: the brand icon, its tile already rounded.
+    /// Sunrise's own mark on its square tile (`assets/logos/sunrise.png`), `size` points square.
     pub(super) fn sunrise_mark(&mut self, size: f32) -> AnyElement {
         match self.icon_image("mark:sunrise".into(), size, false, || Some(MARK.to_vec())) {
             Some(image) => centred(image, size, self.scale).into_any_element(),

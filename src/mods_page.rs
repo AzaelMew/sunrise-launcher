@@ -77,6 +77,8 @@ pub(super) struct Mods {
     /// Which search is the current one; answers for older ones are dropped.
     search: u64,
     searching: bool,
+    /// A new list is on its way to replace the rows shown, which dim meanwhile.
+    refreshing: bool,
     searched: bool,
     results: Vec<Project>,
     results_list: cull::Cull,
@@ -84,6 +86,8 @@ pub(super) struct Mods {
     pub(super) report_list: cull::Cull,
     more: bool,
     error: Option<String>,
+    /// The failed search was Sunrise's own registry (its card offers Modrinth instead).
+    error_sunrise: bool,
     /// The failed search's own words are shown under its plain message.
     pub(super) error_details: bool,
     pub(super) installed: Vec<installed::Entry>,
@@ -110,6 +114,9 @@ pub(super) struct Mods {
     confirm_remove: Option<String>,
     /// The project the glass look's detail card shows; the first result when none is.
     pub(super) picked: Option<String>,
+    /// A project was just picked where its card sits under the list (a narrow window): the page
+    /// scrolls to the card once it is laid out (`glass_mods::reveal`).
+    pub(super) reveal: std::rc::Rc<glass_mods::Reveal>,
     /// The project the glass detail card showed last.
     pub(super) shown: Option<Project>,
     /// An install awaiting explicit native-code consent, before any download.
@@ -182,7 +189,7 @@ impl Mods {
     }
 
     pub(super) fn new(cx: &mut App) -> Self {
-        let (tx, rx) = channel();
+        let (tx, rx) = crate::wake::channel();
         let page = std::env::var("SUNRISE_LAUNCHER_PAGE");
         let kind = match page.as_deref() {
             Ok("modpacks") => PackKind::Modpack,
@@ -200,6 +207,7 @@ impl Mods {
             everything: false,
             search: 0,
             searching: false,
+            refreshing: false,
             searched: false,
             results: Vec::new(),
             results_list: cull::Cull::default(),
@@ -207,6 +215,7 @@ impl Mods {
             report_list: cull::Cull::default(),
             more: false,
             error: None,
+            error_sunrise: false,
             error_details: false,
             installed: Vec::new(),
             chosen: Default::default(),
@@ -229,6 +238,7 @@ impl Mods {
             updates: HashMap::new(),
             confirm_remove: None,
             picked: None,
+            reveal: Default::default(),
             shown: None,
             checks: HashMap::new(),
             about: HashMap::new(),
@@ -393,6 +403,7 @@ impl Launcher {
                 }
                 Event::Found(search, offset, result) if search == m.search => {
                     m.searching = false;
+                    m.refreshing = false;
                     m.searched = true;
                     match result {
                         Ok(found) => {
@@ -411,6 +422,8 @@ impl Launcher {
                                 m.more = false;
                                 m.results_list.reset();
                             }
+                            m.error_sunrise =
+                                m.source == SourceId::Sunrise && m.java_for(m.kind).is_none();
                             m.error = Some(e);
                         }
                     }
@@ -512,6 +525,7 @@ impl Launcher {
         let everything = m.everything && !(glass && m.source == SourceId::Sunrise);
         m.search += 1;
         m.searching = true;
+        m.refreshing = offset == 0 && keep;
         if offset == 0 {
             if !keep {
                 m.results.clear();
@@ -1023,14 +1037,14 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        // The glass look's: `rounded-[12px] h-11 bg-white/[0.07] px-3.5`, a 17 px search icon.
+        // The glass look's: the look's corners, `h-11 bg-white/[0.07] px-3.5`, a 17 px search icon.
         let field = if t.glass {
             field
                 .w_full()
                 .h(px(44.))
                 .px(px(14.))
                 .border_0()
-                .rounded(px(12.))
+                .rounded(px(crate::glass_ui::rad(12.)))
                 .bg(crate::glass_ui::white(if focused { 0.11 } else { 0.07 }))
                 .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(14.))
@@ -1092,7 +1106,8 @@ impl Launcher {
             self.mods.browse.filters = Default::default();
             self.mods.browse.open = None;
             self.mods.picked = None;
-            self.mods_search(0);
+            // What was shown stays until the new kind's answer replaces it.
+            self.mods_search_keeping(0, true);
         }
     }
 
@@ -1763,7 +1778,7 @@ impl Launcher {
                 by.push(trf("from {source}", &[("source", source)]));
             }
             if !p.license.is_empty() {
-                by.push(p.license.clone());
+                by.push(browser::license_label(&p.license));
             }
             let detail = div()
                 .flex()

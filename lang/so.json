@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Qaabka modpack Modrinth: baakadaha kheyraadka ee Modrinth waxaa lagu taxay soo dejintooda, inta soo hartayna waa lagu dhex qaadayaa.",
   "Mods": "Hababka",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Hababka iyo xidhmooyinka hadhka ee Sunrise laga sameeyay diiwaankeeda dib loo eegay, iyo xidhmooyinka agabka ee Modrinth. Fayl kastaa waxa lagu hubiyaa isha uu ka soo jeedo ka hor inta aanu gaadhin galkaaga ciyaarta.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ma xaqiijin karin akoonkaaga Mar kale soo gal oo isku day.",
-  "Mojang's session server is not answering. Try again later.": "Serfarka fadhiga Mojang kama jawaabayo. Isku day mar kale hadhow",
   "Mojang's version list isn't here yet.": "Liiska nooca Mojang ma jiro weli.",
   "More": "Wax badan",
   "Most players at once": "Inta badan ciyaartoyda hal mar",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Ku gal Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Ku gal `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Ku gal akoon Microsoft oo leh Minecraft: Java Edition si aad u ciyaarto",
-  "Sign in with a Minecraft account first.": "Marka hore ku gal akoon Minecraft",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Ku gal akoontada leh Minecraft: Java Edition. Magacaaga iyo maqaarkaaga ayaa la socda server-yada khadka ah, sida soosaarayaasha kale.",
   "Sign out": "Saxiix",
   "Sign-in not checked": "Soo gelida lama hubin",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Muuqaalka furaha waa la dib u dhigay hadda, laakiin lama kaydin karin",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Muraayadda iyo Khafiifyeynta waxay dhisaan baalasha khafiifka ah ee muuqaalka madow; kan khafiifka ah wuxuu sawiraa baalas cad oo adag.",
   "Performance mode draws solid panels, without glass or blur.": "Qaabka waxqabadka wuxuu sawiraa baalas adag, oo aan muraayad ama khafiifyeyn lahayn.",
-  "This theme's night draws solid panels, without glass or blur.": "Habeenka mowduucan wuxuu sawiraa baalas adag, oo aan muraayad ama khafiifyeyn lahayn."
+  "This theme's night draws solid panels, without glass or blur.": "Habeenka mowduucan wuxuu sawiraa baalas adag, oo aan muraayad ama khafiifyeyn lahayn.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

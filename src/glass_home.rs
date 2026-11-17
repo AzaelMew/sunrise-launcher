@@ -4,22 +4,19 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 use gpui::deferred;
-use std::time::Instant;
 use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 /// Play, the version and the big icons are this tall (`h-14`).
-const TALL: f32 = 56.;
+const TALL: f32 = 52.;
+/// The Join button inside the invite field, centred in it.
+const JOIN: f32 = 40.;
 /// The window width from which Home's head is laid out as the mockup's `xl` (1280 px); under it
 /// Play and the version are narrower and the invite code takes what is left of their row. The
 /// account page and the theme editor also put their two columns side by side from it.
 pub(super) const WIDE: f32 = 1280.;
-/// The window width from which the top bar's pages show at full size.
-pub(super) const TOP_BAR_WIDE: f32 = 1380.;
 /// The window width from which pages put their head and cards side by side (Overview, Mods,
 /// Versions, Settings' About); under it they stack, and Home's tabs drop their icons.
 pub(super) const SIDE_BY_SIDE: f32 = 1200.;
-/// Under this window width the top bar's tabs tighten and Settings' sections go above the page.
-pub(super) const COMPACT: f32 = 1180.;
 
 /// The Version menu's state (Home's picker).
 #[derive(Default)]
@@ -38,183 +35,6 @@ pub(super) enum HomeMenu {
 }
 
 impl Launcher {
-    /// The head: what Home shows above its tabs. `tag`: the Sunrise version it plays (empty for a
-    /// Java instance); `prepared`: whether that version's files are ready.
-    pub(super) fn glass_home_head(
-        &mut self,
-        tag: &str,
-        prepared: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let java = self.selected_instance().and_then(|i| i.java.clone());
-        // How long this game has run, for "Playing for 5 min now".
-        match (&self.client, self.client_since) {
-            (Some(_), None) => self.client_since = Some(Instant::now()),
-            (None, Some(_)) => self.client_since = None,
-            _ => {}
-        }
-        // The invite code stays on the actions' row at every width (unlike the mockup's
-        // `xl:flex-row`, which moves it under them): on the right, 340 wide from 1280 px; under
-        // that it takes what is left, and the puzzle (the Mods tab below does the same) gives
-        // way to it.
-        let wide = self.window_width >= WIDE;
-        let mods = ui::big_icon("home-mods", "puzzle", &self.theme)
-            .tooltip(ui::tip(tr("Mods in this instance")))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.home_tab = home_tabs::HomeTab::Mods;
-                cx.notify();
-            }));
-        // Instance settings: the sheet down the right side.
-        let settings = |this: &mut Self, cx: &mut Context<Self>| {
-            let instance = this.selected_instance().cloned()?;
-            // Memory is set only for Java instances.
-            let tip = match instance.java {
-                Some(_) => "Edit this instance: its name, version, memory and more",
-                None => "Edit this instance: its name, icon, version and more",
-            };
-            Some(
-                ui::big_icon("home-settings", "pencil-edit-02", &this.theme)
-                    .tooltip(ui::tip(tr(tip)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::General);
-                        cx.notify();
-                    })),
-            )
-        };
-        let actions = if wide {
-            div()
-                .mt(px(32.))
-                .flex()
-                // One line, unlike the mockup's `flex-wrap`: at 1280 px the folder's ⋯ would wrap the
-                // row away from under the pointer, which hides it again.
-                .items_center()
-                .gap(px(10.))
-                .child(self.play_group(tag, prepared || java.is_some(), cx))
-                .children(Some(mods))
-                .children(self.folder_group(java.is_none(), cx))
-                .children(settings(self, cx))
-                .child(div().flex_1().min_w(px(22.)))
-                .child(self.glass_join_friend(tag, true, cx))
-        } else {
-            div()
-                .mt(px(32.))
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(self.play_group(tag, prepared || java.is_some(), cx))
-                        .children(self.folder_group(java.is_none(), cx))
-                        .children(settings(self, cx)),
-                )
-                .child(self.glass_join_friend(tag, false, cx))
-        };
-        div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .pt(px(64. - crate::glass::CONTENT_INSET))
-            .child(motion::enter(
-                ElementId::named_usize("home-title", self.switches),
-                1,
-                self.home_title(cx),
-            ))
-            .child(motion::enter(
-                ElementId::named_usize("home-status", self.switches),
-                2,
-                self.played_text(),
-            ))
-            .child(motion::enter(
-                ElementId::named_usize("home-actions", self.switches),
-                3,
-                actions,
-            ))
-    }
-
-    /// The edition switch over the rail, in the top bar where Sunrise's mark was: Sunrise's mark
-    /// and the grass block on a segmented control whose lit pill slides to the selected
-    /// instance's edition. An instance's edition is chosen when it is made, so the other side
-    /// goes to an instance of that edition ([`Self::switch_edition`]).
-    pub(super) fn edition_switch(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        const ID: &str = "edition-switch";
-        let java = self.selected_instance().is_some_and(|i| i.java.is_some());
-        let sunrise = self.sunrise_mark(20.);
-        let grass = match self.grass_mark(20.) {
-            Some(image) => gpui::img(image)
-                .flex_none()
-                .size(px(20.))
-                .rounded(px(5.))
-                .into_any_element(),
-            None => div().into_any_element(),
-        };
-        let origin = ui::PillOrigin::default();
-        let mut seg = div()
-            .id(ID)
-            .relative()
-            .flex()
-            .flex_none()
-            .gap(px(2.))
-            .p(px(3.))
-            .rounded(px(radius::LARGE))
-            .bg(white(0.04))
-            .border_1()
-            .border_color(white(ui::edge::REST))
-            .child(ui::pill_origin(&origin));
-        for (i, (label, mark)) in [
-            ("Sunrise: your Sunrise instances", sunrise),
-            ("Java Edition: your Java instances", grass),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let on = (i == 1) == java;
-            let d = div()
-                .id(SharedString::from(format!("{ID}-{i}")))
-                .relative()
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .size(px(30.))
-                .rounded(px(radius::CONTROL - 1.))
-                .child(
-                    div()
-                        .relative()
-                        .opacity(if on { 1. } else { 0.5 })
-                        .child(mark),
-                )
-                .child(ui::pill_probe(ID, i, origin.clone()))
-                .tooltip(ui::tip(tr(label)));
-            let d = if on {
-                d
-            } else {
-                d.cursor_pointer()
-                    .hover(|s| s.bg(white(fill::ROW_HOVER)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.switch_edition(i == 1, cx);
-                        this.go(Page::Play);
-                        cx.notify();
-                    }))
-            };
-            seg = seg.child(crate::keyboard(d, &self.theme));
-        }
-        let pill = ui::sliding_pill(ID, usize::from(java), || {
-            div()
-                .absolute()
-                .top(px(3.))
-                .bottom(px(3.))
-                .rounded(px(radius::CONTROL - 1.))
-                .border_1()
-                .border_color(ui::color(ui::look().accent).opacity(0.6))
-                .bg(ui::color(ui::look().accent).opacity(0.2))
-        });
-        // The pill first, so the marks are drawn over it.
-        seg.children(pill)
-    }
-
     /// An edition tab's click: the instance of that edition (`java`) played last, or, with none,
     /// the New instance dialog on Vanilla or Sunrise.
     pub(super) fn switch_edition(&mut self, java: bool, cx: &mut Context<Self>) {
@@ -233,141 +53,9 @@ impl Launcher {
         }
     }
 
-    /// The instance's icon and its name in Bricolage, 64 px at this width
-    /// (`clamp(2.75rem, 5vw, 4rem)`). Clickable to open the edit dialog (fixes #8689).
-    fn home_title(&mut self, cx: &mut Context<Self>) -> Div {
-        let Some(instance) = self.selected_instance().cloned() else {
-            return div();
-        };
-        let edit = instance.clone();
-        let cut = ui::cut(
-            cx,
-            &self.rooms,
-            "home-title",
-            &instance.name,
-            sunrise_launcher_theme::glass::DISPLAY_FONT,
-            44.,
-            FontWeight::SEMIBOLD,
-        );
-        let version = self.version_chip(cx);
-        let whats_new = self.whats_new_link(cx);
-        div()
-            .mt(px(16.))
-            .flex()
-            .items_center()
-            .gap(px(16.))
-            .min_w_0()
-            .child(
-                div()
-                    .id("home-instance-icon")
-                    .cursor_pointer()
-                    .hover(|s| s.opacity(0.85))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_instance_sheet(edit.clone(), glass_sheet::SheetTab::General);
-                        cx.notify();
-                    }))
-                    .child(self.glass_instance_icon(&instance, 56.)),
-            )
-            .child(
-                div()
-                    .id("home-title")
-                    .relative()
-                    .min_w_0()
-                    .truncate()
-                    .font_family(sunrise_launcher_theme::glass::DISPLAY_FONT)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(44.))
-                    .line_height(px(48.))
-                    .text_color(white(ink::FULL))
-                    // A long name is cut at the header's width: the whole of it on hover.
-                    .when(cut, |d| d.tooltip(ui::tip(instance.name.clone())))
-                    .child(ui::room(&self.rooms, "home-title".into()))
-                    .child(instance.name),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(8.))
-                    .children(version)
-                    .children(whats_new),
-            )
-    }
-
-    /// "You've played for 41 h 06 min! Last played today.", or how long it has run now; then
-    /// the players counts the launcher knows (not in the mockup).
-    fn played_text(&self) -> Div {
-        let line = match (self.client_since, self.selected_instance()) {
-            (Some(since), _) => trf(
-                "Playing for {time} now. Have fun!",
-                &[("time", &instances::play_time(since.elapsed()))],
-            ),
-            (None, Some(i)) => match i.last_played {
-                Some(when) => trf(
-                    "You've played for {time}! Last played {when}.",
-                    &[
-                        ("time", &played_for(i.played)),
-                        ("when", &last_played(when)),
-                    ],
-                ),
-                // Signed out, the button says "Sign in to play": the line says the same.
-                None if self.owner == Some(false)
-                    && !sunrise_launcher::developer_offline::selected() =>
-                {
-                    tr("You haven't played this one yet. Sign in to start.").into()
-                }
-                None => tr("You haven't played this one yet. Press Play to start.").into(),
-            },
-            (None, None) => String::new(),
-        };
-        let link = |id: &'static str, label: String| {
-            div()
-                .id(id)
-                .cursor_pointer()
-                .hover(|s| s.text_color(white(ink::FULL)))
-                .child(label)
-        };
-        let playing = self.playing.map(|count| {
-            let label = format!(
-                "· {}",
-                trf("{count} playing now", &[("count", &thousands(count))])
-            );
-            let url = telemetry::stats_url(&self.links.website);
-            link("playing-now", label).on_click(move |_: &ClickEvent, _, cx| {
-                if let Some(url) = &url {
-                    cx.open_url(url);
-                }
-            })
-        });
-        // A local unsigned developer base is said as such, with its trust warning.
-        let developer = self
-            .selected_instance()
-            .and_then(|i| self.version_of(i))
-            .and_then(|tag| {
-                sunrise_launcher::developer_install::instance_status(tag, backend::is_prepared(tag))
-            });
-        // A soft dark scrim keeps the line readable over the brightest sky (a low sun, snow).
-        ui::text(15., FontWeight::NORMAL, ink::STRONG)
-            .mt(px(10.))
-            .ml(px(-10.))
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(radius::CONTROL))
-            .bg(gpui::black().opacity(0.28))
-            .self_start()
-            .flex()
-            .flex_wrap()
-            .gap(px(4.))
-            .child(line)
-            .children(playing)
-            .children(developer.map(|status| div().w_full().text_color(ui::warn()).child(status)))
-    }
-
     /// Play and its ⋯ menu (`PlayGroup`): Stop while the game runs, Update when the launcher's
     /// version has a newer one, the progress while preparing, updating or starting.
-    fn play_group(&mut self, tag: &str, ready: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn play_group(&mut self, tag: &str, ready: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let accent = ui::color(self.look.accent);
         let running = self.client.is_some();
@@ -465,18 +153,17 @@ impl Launcher {
             .id("play-more")
             .occlude()
             .absolute()
-            .right(px(8.))
+            .right_0()
             .flex()
             .items_center()
             .justify_center()
-            .size(px(40.))
-            .rounded(px(radius::CONTROL))
+            .w(px(44.))
+            .h(px(TALL))
             .cursor_pointer()
-            .when(open, |d| d.bg(gpui::black().opacity(0.2)))
-            .when(!open, |d| {
-                d.child(ui::back_tint(radius::CONTROL, gpui::black().opacity(0.2)))
-            })
-            .child(ui::icon("more-horizontal", 20., glyph).relative())
+            .border_l_1()
+            .border_color(gpui::black().opacity(0.2))
+            .when(!open, |d| d.opacity(0.85).hover(|s| s.opacity(1.)))
+            .child(ui::fold_chevron("play-more", open, 20., glyph))
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if !this.closed_by_this_press(event) {
@@ -493,14 +180,17 @@ impl Launcher {
                 .id("play-cancel")
                 .occlude()
                 .absolute()
-                .right(px(8.))
+                .right_0()
                 .flex()
                 .items_center()
                 .justify_center()
-                .size(px(40.))
-                .rounded(px(radius::CONTROL))
+                .w(px(44.))
+                .h(px(TALL))
                 .cursor_pointer()
-                .hover(|s| s.bg(gpui::black().opacity(0.2)))
+                .border_l_1()
+                .border_color(gpui::black().opacity(0.2))
+                .opacity(0.85)
+                .hover(|s| s.opacity(1.))
                 .child(ui::icon("stop", 18., glyph))
                 .tooltip(ui::tip(tr("Stop the build")))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -517,17 +207,11 @@ impl Launcher {
             .flex()
             .items_center()
             .flex_none()
-            // At least the mockup's width, wider when the label needs it ("Prepare & play",
+            // At least the design's 300, wider when the label needs it ("Prepare & play",
             // "Sign in to play", a long translation).
-            .min_w(px(if self.window_width >= WIDE {
-                200.
-            } else {
-                160.
-            }))
+            .min_w(px(300.))
             .h(px(TALL))
-            .overflow_hidden()
-            .border_1()
-            .rounded(px(radius::LARGE));
+            .overflow_hidden();
         let body = |label: SharedString, icon: &'static str| {
             div()
                 .flex()
@@ -537,7 +221,7 @@ impl Launcher {
                 .justify_center()
                 .gap(px(10.))
                 .pl(px(20.))
-                .pr(px(52.))
+                .pr(px(44.))
                 .whitespace_nowrap()
                 .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(18.))
@@ -552,8 +236,7 @@ impl Launcher {
         let busy_none = busy.is_none();
         let group = match busy {
             Some((label, progress)) => base
-                .bg(accent.opacity(0.35))
-                .border_color(accent.opacity(0.5))
+                .child(ui::pixel_fill(accent.opacity(0.35), ui::TEXTURE_BUTTON))
                 .child(
                     div()
                         .absolute()
@@ -561,7 +244,7 @@ impl Launcher {
                         .left_0()
                         .h_full()
                         .w(gpui::relative(progress.unwrap_or(0.).clamp(0., 1.)))
-                        .bg(accent),
+                        .child(ui::pixel_fill(accent, ui::TEXTURE_BUTTON)),
                 )
                 .child(
                     div()
@@ -582,8 +265,7 @@ impl Launcher {
                         }),
                 ),
             None if running => base
-                .bg(white(0.14))
-                .border_color(white(ui::edge::HOVER))
+                .child(ui::pixel_fill(white(0.14), ui::TEXTURE_BUTTON))
                 .child(
                     body(tr("Stop").into(), "stop")
                         .id("play")
@@ -680,74 +362,19 @@ impl Launcher {
                     }
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
-                // The gradient's far end leans away from the label's ink (deeper under white
-                // ink, lighter under dark ink), so the label and the menu dots on that end
-                // keep their contrast across the whole button.
-                let (accent_hex, ink) = (self.look.accent, self.look.on_accent);
-                let far = if sunrise_launcher_theme::contrast(ink, 0x000000)
-                    > sunrise_launcher_theme::contrast(ink, 0xffffff)
-                {
-                    sunrise_launcher_theme::glass::mix_oklab(accent_hex, 0x000000, 0.75)
-                } else {
-                    ui::accent2()
-                };
-                base.bg(ui::grad(135., accent, ui::color(far)))
-                    .border_color(white(0.16))
-                    .shadow(ui::glows(vec![
-                        // The site's primary: a light line along the top edge, a glow under it.
-                        gpui::BoxShadow {
-                            color: white(0.22),
-                            offset: gpui::point(px(0.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        gpui::BoxShadow {
-                            color: accent.opacity(0.7),
-                            offset: gpui::point(px(0.), px(6.)),
-                            blur_radius: px(22.),
-                            spread_radius: px(-8.),
-                            inset: false,
-                        },
-                    ]))
+                base.child(ui::pixel_fill(accent, ui::TEXTURE_BUTTON))
                     .text_color(on_accent)
                     .child(main)
-                    .child(ui::sheen(&SharedString::from("play")))
             }
         };
-        // Ready to play: the accent's glow comes up under the pointer, a press dims it.
+        // Ready to play: it brightens a little under the pointer, and a press dims it.
         let primary = !running && busy_none;
-        let soft = ui::color(self.look.accent_soft);
         let group = group
             .id("play-group")
             .group("play-glyph")
             .when(primary, |d| {
-                d.hover(move |s| {
-                    s.border_color(white(0.34)).shadow(ui::glows(vec![
-                        gpui::BoxShadow {
-                            color: white(0.28),
-                            offset: gpui::point(px(0.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        gpui::BoxShadow {
-                            color: accent.opacity(0.95),
-                            offset: gpui::point(px(0.), px(12.)),
-                            blur_radius: px(34.),
-                            spread_radius: px(-8.),
-                            inset: false,
-                        },
-                        gpui::BoxShadow {
-                            color: soft.opacity(0.5),
-                            offset: gpui::point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(1.),
-                            inset: false,
-                        },
-                    ]))
-                })
-                .active(|s| s.opacity(0.92).shadow(Vec::new()))
+                d.hover(|s| s.opacity(0.92))
+                    .active(|s| s.opacity(theme::PRESSED))
             });
         let mut wrap = div().relative().child(keyboard(group, &t).child(more));
         if open {
@@ -852,68 +479,36 @@ impl Launcher {
         wrap
     }
 
-    /// "What's new" beside the version button: the Versions page with the played build's notes
-    /// open.
-    fn whats_new_link(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let tag = self.whats_new_tag()?;
-        Some(
-            hero_button("home-whats-new", "sparkles", tr("What's new").into()).on_click(
-                cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.whats_new_open = Some(std::iter::once(tag.clone()).collect());
-                    this.go(Page::Versions);
-                    cx.notify();
-                }),
-            ),
-        )
-    }
-
-    /// What the instance plays, at the title's right: "Latest version", "Nov 11 update",
-    /// "26.3 · Fabric 0.17". Its versions are in instance settings, which a click opens on
-    /// Installation.
-    fn version_chip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let instance = self.selected_instance()?.clone();
-        let label = self.sheet_version(&instance);
-        Some(
-            hero_button("home-version", "package-01", label.into())
-                .tooltip(ui::tip(tr("Change the version in instance settings")))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
-                    cx.notify();
-                })),
-        )
-    }
-
     /// The folder button and its ⋯ (`FolderGroup`), which shows under the pointer or while its
     /// menu is open: the instance's folder, its screenshots, and (Sunrise) the Minecraft folder.
-    fn folder_group(&self, sunrise: bool, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn folder_group(&self, sunrise: bool, cx: &mut Context<Self>) -> Option<Div> {
         let t = self.theme;
         let instance = self.selected_instance()?;
         let home = instance.home.clone();
         let open = self.home_menu == HomeMenu::Folder;
         let opener = home.clone();
-        let more = div()
-            .id("folder-more")
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .h(px(40.))
-            .w(px(36.))
-            .mr(px(8.))
-            .rounded(px(radius::CONTROL))
-            .cursor_pointer()
-            .when(open, |d| {
-                d.w(px(36.))
-                    .mr(px(8.))
-                    .opacity(1.)
-                    .bg(white(fill::SELECTED))
-            })
-            .group_hover("folder-group", |s| s.w(px(36.)).mr(px(8.)).opacity(1.))
-            .when(!open, |d| {
-                d.child(ui::back_tint(radius::CONTROL, white(fill::SELECTED)))
-            })
-            .child(ui::icon("more-horizontal", 20., white(ink::STRONG)).relative())
+        // The design's folder menu: the folder and its ⋯, two 52 px cells on one quiet fill.
+        let cell = |id: &'static str| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(TALL))
+                .rounded(px(ui::rad(0.)))
+                .cursor_pointer()
+                .hover(|s| s.bg(white(fill::HOVER)))
+                .active(|s| s.bg(white(fill::SELECTED)))
+        };
+        let more = cell("folder-more")
+            .when(open, |d| d.bg(white(fill::SELECTED)))
+            .child(ui::fold_chevron(
+                "folder-more",
+                open,
+                20.,
+                white(ink::STRONG),
+            ))
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 if !this.closed_by_this_press(event) {
                     this.home_menu = match this.home_menu {
@@ -925,41 +520,21 @@ impl Launcher {
             }));
         let group = div()
             .id("folder-group")
-            .relative()
             .flex()
             .items_center()
             .h(px(TALL))
-            .rounded(px(radius::LARGE))
+            .rounded(px(ui::rad(0.)))
             .bg(white(fill::BUTTON))
-            .border_1()
-            .border_color(white(if open {
-                ui::edge::STRONG
-            } else {
-                ui::edge::REST
-            }))
-            .child(ui::back_edge(radius::LARGE, 0.05, true))
             .child(
-                div()
-                    .id("home-folder")
-                    .relative()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(TALL - 2.))
-                    .cursor_pointer()
-                    .active(|s| s.bg(white(0.1)))
-                    .child(ui::icon("folder-01", 21., white(ink::STRONG)))
+                cell("home-folder")
+                    .child(ui::icon("folder-01", 20., white(ink::STRONG)))
                     .tooltip(ui::tip(tr("Open this instance's folder")))
                     .on_click(move |_, _, cx| {
                         let _ = std::fs::create_dir_all(&opener);
                         crate::glass_toast::open(cx, &opener);
                     }),
             )
-            .when(open || self.folder_hovered, |d| d.child(more))
-            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                this.folder_hovered = *hovered;
-                cx.notify();
-            }));
+            .child(more);
         let mut wrap = div().relative().child(keyboard(group, &t));
         if open {
             let shots = home.join("screenshots");
@@ -1041,7 +616,7 @@ impl Launcher {
 
     /// The invite code field (`JoinFriend`): 340 wide (`wide`), else what its row leaves, with a
     /// shorter placeholder; the icon inside on the left, Join inside on the right.
-    fn glass_join_friend(&self, tag: &str, wide: bool, cx: &mut Context<Self>) -> Div {
+    pub(super) fn glass_join_friend(&self, tag: &str, wide: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let focused = self.friend_focused;
         let join_label = tr("Join");
@@ -1054,16 +629,18 @@ impl Launcher {
             .size_full()
             .pl(px(48.))
             .pr(px(pr))
-            .rounded(px(radius::LARGE))
+            .rounded(px(crate::glass_ui::rad(radius::LARGE)))
             .bg(white(if focused { 0.09 } else { 0.06 }))
             .border_1()
             .border_color(if focused {
-                ui::color(ui::look().accent_soft).opacity(0.7)
+                ui::color(ui::look().accent)
             } else {
                 white(ui::edge::REST)
             })
             .relative()
-            .child(ui::back_edge(radius::LARGE, 0., true))
+            .when(!focused, |d| {
+                d.child(ui::back_edge(radius::LARGE, 0., true))
+            })
             .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(14.))
             .text_color(white(ink::FULL))
@@ -1106,7 +683,7 @@ impl Launcher {
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
         let valid = sunrise_launcher_friends::invite::parse(self.friend_code.text()).is_some();
         let can = valid && (tag.is_empty() || self.can_start(tag));
-        let join = ui::quiet("join-friend", join_label, 40., &t);
+        let join = ui::quiet("join-friend", join_label, JOIN, &t);
         let join = if can {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_friend();
@@ -1129,7 +706,13 @@ impl Launcher {
                     .top(px((TALL - 19.) / 2.))
                     .child(ui::icon("user-add-01", 19., white(ink::NOTE))),
             )
-            .child(div().absolute().right(px(8.)).top(px(8.)).child(join))
+            .child(
+                div()
+                    .absolute()
+                    .right(px((TALL - JOIN) / 2.))
+                    .top(px((TALL - JOIN) / 2.))
+                    .child(join),
+            )
     }
 }
 
@@ -1142,48 +725,6 @@ fn friend_code_padding_right(join_label: &str) -> f32 {
     (8. + btn_width + 12.).max(84.)
 }
 
-/// The instance of one edition (`java`) an edition tab goes to: of those the player can select,
-/// the one played last; among never played ones, the first listed.
-/// One of the two buttons at the hero title's right: 40 px glass with an 18 px icon and its
-/// label, the icons in one stroke and ink so the pair reads as one.
-fn hero_button(id: &'static str, icon: &'static str, label: SharedString) -> Stateful<Div> {
-    let id = SharedString::from(id);
-    let group = SharedString::from(format!("{id}-group"));
-    track_hover(
-        div()
-            .id(id.clone())
-            .group(group.clone())
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(8.))
-            .h(px(40.))
-            .pl(px(14.))
-            .pr(px(16.))
-            .rounded(px(radius::CONTROL))
-            .bg(white(fill::BUTTON))
-            .border_1()
-            .border_color(white(ui::edge::REST))
-            .cursor_pointer()
-            .font_family(sunrise_launcher_theme::glass::FONT)
-            .text_size(px(14.))
-            .line_height(px(20.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(white(ink::BODY))
-            .hover(|s| s.text_color(white(ink::FULL)))
-            .active(|s| s.bg(white(0.18)))
-            .child(ui::hover_edge(&id, radius::CONTROL, 0.06, true))
-            .child(
-                ui::icon(icon, 18., white(ink::STRONG))
-                    .group_hover(group, |s| s.text_color(white(ink::FULL)))
-                    .relative(),
-            )
-            .child(div().relative().child(label)),
-        id,
-    )
-}
-
 fn edition_pick(
     list: &[sunrise_launcher::instances::Instance],
     java: bool,
@@ -1193,16 +734,6 @@ fn edition_pick(
         .filter(|i| matches!(i.kind, Kind::Default | Kind::Own) && i.java.is_some() == java)
         .rev()
         .max_by_key(|i| i.last_played)
-}
-
-/// How long an instance was played, as the mockup writes it: "41 hours", "1 hour", "25 min".
-fn played_for(played: Duration) -> String {
-    match played.as_secs() / 60 {
-        0 => tr("under a minute").into(),
-        m @ 1..=59 => trf("{count} min", &[("count", &m.to_string())]),
-        60..=119 => tr("1 hour").into(),
-        m => trf("{count} hours", &[("count", &(m / 60).to_string())]),
-    }
 }
 
 /// When something was last played, as the mockup writes it: "just now", "25 min ago", "2 hours
@@ -1287,14 +818,6 @@ mod tests {
         ];
         assert_eq!(edition_pick(&fresh, true).map(|i| i.id.as_str()), Some("a"));
         assert!(edition_pick(&fresh, false).is_none());
-    }
-
-    #[test]
-    fn played_time_reads_as_the_mockup_writes_it() {
-        let h = |s: u64| played_for(Duration::from_secs(s));
-        assert_eq!(h(148_000), "41 hours");
-        assert_eq!(h(5_400), "1 hour");
-        assert_eq!(h(1_500), "25 min");
     }
 
     #[test]

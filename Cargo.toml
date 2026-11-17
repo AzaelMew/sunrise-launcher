@@ -10,6 +10,12 @@ description = "Downloads, prepares and starts Sunrise builds"
 members = ["crates/addresses", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/release-verify", "crates/resolver", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
 default-members = [".", "crates/addresses", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/release-verify", "crates/resolver", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
 
+[features]
+# GPUI Fast's frame profiler, for measuring animations: the frame-time overlay
+# (`SUNRISE_LAUNCHER_FRAME_OVERLAY`) and each frame's work in `sunrise-launcher benchmark`
+# (README, Performance log). Off in every published build.
+frame-stats = ["gpui/profiler"]
+
 [dependencies]
 # Native mods compile against the signed SDK (`native_mods.rs`); `cargo sunrise-mod native-build` runs the same code.
 sunrise-native-build = { path = "../crates/sunrise-native-build" }

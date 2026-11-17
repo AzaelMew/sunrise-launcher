@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "It modpack-formaat fan Modrinth: boarnepakketten fan Modrinth wurde fermeld troch har download, de rest wurdt deryn droegen.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods en shader-pakketten makke foar Sunrise út syn eigen hifke register, en boarnepakketten fan Modrinth. Elk bestân wurdt kontrolearre tsjin de kontrôlesum fan 'e boarne foardat it jo spielmap berikt.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang koe jo akkount net befêstigje. Oanmelde nochris en besykje it nochris.",
-  "Mojang's session server is not answering. Try again later.": "De sesjetsjinner fan Mojang antwurdet net. Besykje it letter nochris.",
   "Mojang's version list isn't here yet.": "De ferzjelist fan Mojang is hjir noch net.",
   "More": "Mear",
   "Most players at once": "De measte spilers tagelyk",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Oanmelde mei Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Meld jo oan mei `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Oanmelde mei in Microsoft-akkount dat Minecraft: Java Edition hat om te spyljen",
-  "Sign in with a Minecraft account first.": "Meld jo earst oan mei in Minecraft akkount.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Oanmelde mei it akkount dat eigner is fan Minecraft: Java Edition. Jo namme en hûd komme mei nei online servers, lykas yn oare lansearders.",
   "Sign out": "Útmelde",
   "Sign-in not checked": "Oanmelde net kontrolearre",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "It uterlik fan de launcher is no weromset, mar it koe net bewarre wurde",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glês en Dizigens foarmje de matte panielen fan it dûnkere uterlik; it ljochte tekenet massyf wite panielen.",
   "Performance mode draws solid panels, without glass or blur.": "Prestaasjemodus tekenet massyf panielen, sûnder glês of dizigens.",
-  "This theme's night draws solid panels, without glass or blur.": "De nacht fan dit tema tekenet massyf panielen, sûnder glês of dizigens."
+  "This theme's night draws solid panels, without glass or blur.": "De nacht fan dit tema tekenet massyf panielen, sûnder glês of dizigens.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

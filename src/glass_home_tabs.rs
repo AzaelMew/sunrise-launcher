@@ -1,92 +1,255 @@
-//! Home's tabbed panel in the glass look (the mockup's `TabbedPanel` and `Overview`,
-//! `launcher-views.tsx`): one glass plate whose top-left corner is the tab strip, and under it
-//! the open tab. Overview shows the instance's last screenshots beside the newest patch log,
-//! then what Play still needs (the launcher's rows). Dark appearance only.
+//! The right sidebar, the left one's mirror: the player's side of the top bar in its top cell,
+//! then the selected instance's sections (installed mods, worlds, saved servers, packs, shaders,
+//! screenshots, the log) as rows with their counts, and how many play at its foot. A row slides
+//! its section in at Home's right edge; the same row or the panel's close puts it away. Narrow
+//! windows keep the sections as an icon column and the player's side in the top bar.
 use super::*;
-use crate::glass_ui::{self as ui, white};
+use crate::glass_ui::{self as ui, mono, white};
 use home_tabs::HomeTab;
 use sunrise_launcher::packs::Kind as PackKind;
-use sunrise_launcher_theme::glass::ink;
+use sunrise_launcher_theme::glass::{ink, radius};
 
-/// The tabbed panel's own body is at least this tall (`min-h-[340px]`), and so is the patch log.
-const BODY: f32 = 340.;
+/// From this window width the right sidebar is as wide as the left; narrower, it is an icon
+/// column [`COMPACT`] wide.
+const FULL_FROM: f32 = 1180.;
+pub(crate) const COMPACT: f32 = 64.;
+/// The open section's panel is this wide where the page has the room, and never narrower
+/// than [`PANEL_MIN`].
+const PANEL: f32 = 520.;
+const PANEL_MIN: f32 = 320.;
+/// How far the panel slides in from.
+const SLIDE: f32 = 16.;
 
 impl Launcher {
-    /// The tabbed panel: the strip, then the open tab.
-    pub(super) fn glass_home_tabs(&mut self, cx: &mut Context<Self>) -> Div {
+    /// Whether the window is wide enough for both sidebars at full width (the right one then
+    /// holds the player's side of the top bar); narrower, both fold to icon columns.
+    pub(super) fn outline_wide(&self) -> bool {
+        self.window_width >= FULL_FROM
+    }
+
+    /// Whether the sidebars show: on Home, and on Settings opened over it. The other pages have
+    /// the window to themselves.
+    pub(super) fn outline_sides(&self) -> bool {
+        self.page == Page::Play || (self.page == Page::Settings && self.behind == Page::Play)
+    }
+
+    /// How wide each sidebar is (none where they don't show).
+    pub(super) fn outline_side_width(&self) -> f32 {
+        if !self.outline_sides() {
+            0.
+        } else if self.outline_wide() {
+            frame::SIDEBAR
+        } else {
+            COMPACT
+        }
+    }
+
+    /// The right sidebar, `full` or folded to its icon column.
+    pub(super) fn outline_right_sidebar(&mut self, full: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let tabs: Vec<_> = self
             .home_tab_list(cx)
             .into_iter()
             .filter(|(tab, _)| *tab != HomeTab::Overview)
             .collect();
-        let open = tabs
-            .iter()
-            .map(|(tab, _)| *tab)
-            .find(|tab| *tab == self.home_tab)
-            .unwrap_or(HomeTab::Mods);
-        // Icons beside the names only where every tab still has the room for both.
-        let icons = self.window_width >= crate::glass_home::SIDE_BY_SIDE + 160.;
-        let active = tabs.iter().position(|(tab, _)| *tab == open).unwrap_or(0);
-        let items: Vec<_> = tabs
-            .into_iter()
-            .map(|(tab, count)| {
-                let (name, icon) = match tab {
-                    HomeTab::Overview => (tr("Overview"), "dashboard-square-01"),
-                    HomeTab::Mods => (tr("Installed mods"), "puzzle"),
-                    HomeTab::Packs => (tr("Resource packs"), "image-01"),
-                    HomeTab::Shaders => (tr("Shaders"), "flash"),
-                    HomeTab::Worlds => (tr("Worlds"), "earth"),
-                    HomeTab::Multiplayer => (tr("Saved servers"), "user-multiple-02"),
-                    HomeTab::Screenshots => (tr("Screenshots"), "image-01"),
-                    HomeTab::Console => (tr("Log"), "computer-terminal-01"),
-                };
-                let on = tab == open;
-                let ink_of = white(if on { ink::FULL } else { ink::BODY });
-                ui::pill_tab(format!("home-tab-{tab:?}"), on, 38., &t)
-                    // Each grows from its own width, so long names keep their room.
-                    .flex_auto()
-                    .min_w_0()
-                    .px(px(8.))
-                    .text_size(px(14.))
-                    .line_height(px(20.))
-                    .children(icons.then(|| ui::icon(icon, 16., ink_of).relative()))
-                    .child(
-                        div()
-                            .relative()
-                            .min_w_0()
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(name),
+        let open = (self.page == Page::Play && self.home_panel).then_some(self.home_tab);
+        let rows = tabs.into_iter().map(|(tab, count)| {
+            let (name, icon) = section(tab);
+            let on = open == Some(tab);
+            let ink_of = white(if on { ink::FULL } else { ink::BODY });
+            let row = ui::row(format!("side-section-{tab:?}"), on, 8., &t)
+                .h(px(40.))
+                .child(ui::icon(icon, 18., ink_of).relative());
+            let row = if full {
+                row.child(
+                    ui::text(
+                        14.,
+                        FontWeight::MEDIUM,
+                        if on { ink::FULL } else { ink::BODY },
                     )
-                    .children(count.filter(|n| *n > 0).map(|n| {
-                        div()
-                            .relative()
-                            .flex_none()
-                            .text_color(white(ink::DIM))
-                            .child(n.to_string())
-                    }))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.home_tab = tab;
-                        cx.notify();
-                    }))
-            })
-            .collect();
-        let row = div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(name),
+                )
+                .children(
+                    count
+                        .filter(|n| *n > 0)
+                        .map(|n| mono(12., ink::DIM).relative().child(n.to_string())),
+                )
+            } else {
+                row.justify_center().tooltip(ui::tip(name))
+            };
+            row.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let again = this.page == Page::Play && this.home_panel && this.home_tab == tab;
+                if this.page != Page::Play {
+                    this.go(Page::Play);
+                }
+                this.home_tab = tab;
+                this.home_panel = !again;
+                cx.notify();
+            }))
+        });
+        let rows: Vec<_> = rows.collect();
+        let line = |at_top: bool| {
+            let d = div().absolute().left_0().right_0().h(px(1.));
+            if at_top {
+                d.top(px(70.)).bg(white(0.08))
+            } else {
+                d.bottom(px(24.)).bg(white(0.10))
+            }
+        };
+        let width = if full { frame::SIDEBAR } else { COMPACT };
+        // On a wide window the top cell holds the account alone: "Sign in with Microsoft" where it
+        // fits (mono 12, uppercase, about 7.4 px a letter, beside the logo and padding), else
+        // "Sign in". Narrower, the account stays in the top bar and Settings takes the cell.
+        let label = tr("Sign in with Microsoft").chars().count() as f32;
+        let short = 48. + 7.4 * label > width - 24. - 12.;
+        let wide = self.outline_wide();
+        let in_cell = if wide {
+            self.outline_account(false, short, false, cx)
+                .into_any_element()
+        } else {
+            self.outline_settings(cx).into_any_element()
+        };
+        let cell = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .h(px(70.))
+            .pt(px(14.))
             .flex()
             .items_center()
-            .w_full()
-            .min_w_0()
-            .gap(px(2.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(4.))
-            .child(crate::glass::measure(self.home_strip.clone()));
-        let strip = ui::pill_strip("home-tabs", active, 38., 8., row, items).w_full();
-        let body: Option<AnyElement> = match open {
-            // The glass look has no Overview: its pieces live in their own tabs, Versions has the
-            // patch notes, and what Play needs sits above the tabs.
+            .when(full, |d| d.pr(px(24.)).justify_end())
+            .when(!full, |d| d.justify_center())
+            .child(in_cell);
+        // Folded, the label keeps its room unseen, so the rows don't jump as the sidebar opens.
+        let label = div()
+            .p(px(8.))
+            // One line in either width: wrapped in the folded column it would stand taller.
+            .whitespace_nowrap()
+            .overflow_hidden()
+            .when(!full, |d| d.invisible())
+            .child(mono(12., ink::QUIET).child(tr("This instance").to_uppercase()));
+        let foot = full
+            .then(|| self.outline_playing())
+            .flatten()
+            .map(|p| div().px(px(8.)).child(p));
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .gap(px(4.))
+            .w(px(width))
+            .h_full()
+            .pt(px(82.))
+            .px(px(if full { 12. } else { 10. }))
+            .pb(px(32.))
+            .border_l_1()
+            .border_color(white(0.08))
+            .child(ui::grain(
+                ui::color(t.night.side),
+                ui::TEXTURE_QUIET,
+                width,
+                self.window_height,
+                self.scale,
+            ))
+            .child(line(true))
+            .child(line(false))
+            .child(cell)
+            .child(label)
+            .child(
+                div()
+                    .id("side-sections")
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .children(rows),
+            )
+            .child(div().flex_1())
+            .children(foot)
+    }
+
+    /// The open section's panel at Home's right edge, while one is open.
+    pub(super) fn home_section_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open = self.home_panel.then_some(self.home_tab)?;
+        (open != HomeTab::Overview).then(|| self.home_panel_view(open, 0., cx))
+    }
+
+    /// The open section at the page's right edge, `right` px in: its name and a close over its
+    /// content, which scrolls on its own. It slides and fades in.
+    fn home_panel_view(&mut self, tab: HomeTab, right: f32, cx: &mut Context<Self>) -> AnyElement {
+        let t = self.theme;
+        let (name, _) = section(tab);
+        let close = ui::icon_button(
+            "home-panel-close",
+            "cancel-01",
+            32.,
+            16.,
+            radius::CONTROL,
+            false,
+            &t,
+        )
+        .tooltip(ui::tip(tr("Close")))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.home_panel = false;
+            cx.notify();
+        }));
+        let room = self.outline_page_width() - right - 2. * theme::PAGE_GUTTER;
+        let width = PANEL.min(room).max(PANEL_MIN);
+        let body = self.section_body(tab, cx);
+        crate::glass::float(0.)
+            .absolute()
+            .top(px(16.))
+            .bottom(px(16.))
+            .right(px(right))
+            .w(px(width))
+            .border_1()
+            .border_color(ui::line())
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_between()
+                    .h(px(52.))
+                    .pl(px(16.))
+                    .pr(px(10.))
+                    .border_b_1()
+                    .border_color(ui::line())
+                    .child(ui::text(15., FontWeight::SEMIBOLD, ink::FULL).child(name))
+                    .child(close),
+            )
+            .child(
+                div()
+                    .id("home-panel-body")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .gap(px(12.))
+                    .p(px(16.))
+                    .overflow_y_scroll()
+                    .child(body),
+            )
+            .with_animation(
+                ElementId::Name(format!("home-panel-{tab:?}").into()),
+                crate::motion::eased(crate::motion::POP),
+                move |d, p| d.opacity(p).right(px(right - SLIDE * (1. - p))),
+            )
+            .into_any_element()
+    }
+
+    /// A section's content, or one line where it has none yet.
+    fn section_body(&mut self, tab: HomeTab, cx: &mut Context<Self>) -> AnyElement {
+        let content = match tab {
             HomeTab::Overview => None,
             HomeTab::Mods => Some(self.glass_instance_mods(cx).into_any_element()),
             HomeTab::Worlds => self.glass_worlds(cx).map(IntoElement::into_any_element),
@@ -99,40 +262,31 @@ impl Launcher {
             HomeTab::Shaders => self
                 .glass_packs(PackKind::Shader, cx)
                 .map(IntoElement::into_any_element),
-            HomeTab::Screenshots => Some(
-                self.glass_screenshots(cx)
-                    .map(IntoElement::into_any_element)
-                    .unwrap_or_else(|| empty_tab(tr("No screenshots yet. Press F2 in the game."))),
-            ),
+            HomeTab::Screenshots => self
+                .glass_screenshots(cx)
+                .map(IntoElement::into_any_element),
             HomeTab::Console => self.glass_console(cx).map(IntoElement::into_any_element),
         };
-        div()
-            .relative()
-            // `mt-12` under the head, of which Home's own gap gives 28.
-            .mt(px(20.))
-            .child(crate::glass::tabbed(self.home_strip.clone()))
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .w_full()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .child(strip),
-            )
-            .child(
-                div().relative().p(px(8.)).child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.))
-                        .min_h(px(BODY))
-                        .px(px(4.))
-                        .pt(px(8.))
-                        .pb(px(4.))
-                        .children(body),
-                ),
-            )
+        content.unwrap_or_else(|| {
+            empty_tab(match tab {
+                HomeTab::Screenshots => tr("No screenshots yet. Press F2 in the game."),
+                _ => tr("Nothing here yet."),
+            })
+        })
+    }
+}
+
+/// A section's name and its icon.
+fn section(tab: HomeTab) -> (&'static str, &'static str) {
+    match tab {
+        HomeTab::Overview => (tr("Overview"), "dashboard-square-01"),
+        HomeTab::Mods => (tr("Installed mods"), "puzzle"),
+        HomeTab::Packs => (tr("Resource packs"), "image-01"),
+        HomeTab::Shaders => (tr("Shaders"), "flash"),
+        HomeTab::Worlds => (tr("Worlds"), "earth"),
+        HomeTab::Multiplayer => (tr("Saved servers"), "user-multiple-02"),
+        HomeTab::Screenshots => (tr("Screenshots"), "view"),
+        HomeTab::Console => (tr("Log"), "computer-terminal-01"),
     }
 }
 

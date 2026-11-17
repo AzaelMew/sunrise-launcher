@@ -62,14 +62,13 @@ impl Launcher {
         let head = ui::page_head(
             tr("Mods"),
             trf(
-                "Everything you install goes into {instance}. Pick another instance on the left to fill that one.",
+                "Everything you install goes into {instance}. Pick another instance on Home to fill that one.",
                 &[("instance", &instance)],
             ),
         )
         .pt_0()
         .mb_0();
         let open = self.mods.kind;
-        let active = KINDS.iter().position(|(k, _, _)| *k == open).unwrap_or(0);
         let items: Vec<_> = KINDS
             .into_iter()
             .map(|(kind, label, _)| {
@@ -81,15 +80,12 @@ impl Launcher {
                     }))
             })
             .collect();
-        let tabs = ui::pill_strip(
-            "mods-kinds",
-            active,
-            32.,
-            0.,
-            div().flex().flex_none().items_center().gap(px(4.)),
-            items,
-        )
-        .flex_none();
+        let tabs = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(4.))
+            .children(items);
         let wide = self.window_width >= crate::glass_home::SIDE_BY_SIDE;
         let header = if wide {
             div()
@@ -156,7 +152,7 @@ impl Launcher {
                         .child(ui::text(13., FontWeight::NORMAL, 0.7).child(tr("Show everything")))
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.mods.everything = !this.mods.everything;
-                            this.mods_search(0);
+                            this.mods_search_keeping(0, true);
                             cx.notify();
                         })),
                 )
@@ -181,16 +177,25 @@ impl Launcher {
             .flex_col()
             .flex_1()
             .min_w_0()
+            .relative()
             .p(px(8.))
+            .when(self.mods.searching, |d| d.child(ui::loading_line()))
             .child(search)
             .child(extras)
             .child(self.glass_mods_list(cx));
         // The card stays in view as the list scrolls (`lg:sticky lg:top-0`, `sticky.rs`).
+        // Beside the list (a wide window) the card is in view already.
+        if wide {
+            self.mods.reveal.wanted.set(0);
+        }
         let detail = self.glass_mod_detail(&instance, cx).map(|d| {
             let down = self.mods_sticky.offset(&self.content_scroll.handle);
             d.flex_none()
                 .when(wide, |d| d.w(px(DETAIL)).top(px(down)))
-                .when(!wide, |d| d.w_full())
+                .when(!wide, |d| {
+                    d.w_full()
+                        .child(card_in_view(&self.mods.reveal, &self.content_scroll.handle))
+                })
                 .child(self.mods_sticky.panel())
         });
         let cards = div()
@@ -213,14 +218,21 @@ impl Launcher {
             more.push(card(self.github_panel(cx)));
         }
         more.extend(self.mods_installed_list(cx).map(card));
-        div().flex().flex_col().child(header).child(cards).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(10.))
-                .mt(px(10.))
-                .children(more),
-        )
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(page_top(&self.mods.reveal))
+            .child(header)
+            .child(cards)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .mt(px(10.))
+                    .children(more),
+            )
     }
 
     /// The source switch (`switches`): Sunrise's registry or Modrinth as small tabs, CurseForge
@@ -228,7 +240,6 @@ impl Launcher {
     fn glass_source_switch(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let current = self.mods.source;
-        let active = SOURCES.iter().position(|(s, _)| *s == current).unwrap_or(0);
         let items: Vec<_> = SOURCES
             .into_iter()
             .map(|(source, label)| {
@@ -240,7 +251,7 @@ impl Launcher {
                             this.mods.browse.filters = Default::default();
                             this.mods.browse.open = None;
                             this.mods.picked = None;
-                            this.mods_search(0);
+                            this.mods_search_keeping(0, true);
                         }
                         cx.notify();
                     }))
@@ -250,14 +261,7 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(ui::pill_strip(
-                "mods-sources",
-                active,
-                32.,
-                0.,
-                div().flex().items_center().gap(px(4.)),
-                items,
-            ));
+            .child(div().flex().items_center().gap(px(4.)).children(items));
         row.child(
             div()
                 .flex()
@@ -298,7 +302,7 @@ impl Launcher {
                 .gap(px(8.))
                 .h(px(44.))
                 .px(px(14.))
-                .rounded(px(12.))
+                .rounded(px(crate::glass_ui::rad(12.)))
                 .bg(white(if open { 0.11 } else { 0.07 }))
                 .hover(|s| s.bg(white(0.11)))
                 .cursor_pointer()
@@ -390,7 +394,7 @@ impl Launcher {
             // A failed search stays as an amber card: what happened in plain words, Try again,
             // Modrinth while Sunrise's own list is down, and the error's own words on request.
             let details = m.error_details;
-            let sunrise = m.source == SourceId::Sunrise && m.java_for(m.kind).is_none();
+            let sunrise = m.error_sunrise;
             let what = if sunrise {
                 tr("Couldn't load Sunrise's mod list.")
             } else {
@@ -417,7 +421,7 @@ impl Launcher {
                         this.mods.browse.filters = Default::default();
                         this.mods.browse.open = None;
                         this.mods.picked = None;
-                        this.mods_search(0);
+                        this.mods_search_keeping(0, true);
                         cx.notify();
                     })),
                 );
@@ -434,14 +438,14 @@ impl Launcher {
                     cx.notify();
                 })),
             );
-            return div()
+            let card = div()
                 .flex()
                 .items_start()
                 .gap(px(10.))
                 .m(px(8.))
                 .px(px(14.))
                 .py(px(12.))
-                .rounded(px(radius::ROW))
+                .rounded(px(crate::glass_ui::rad(radius::ROW)))
                 .border_1()
                 .border_color(ui::warn())
                 .child(ui::dot(ui::Tone::Warn).mt(px(6.)))
@@ -458,6 +462,7 @@ impl Launcher {
                         }))
                         .child(actions),
                 );
+            return Self::while_searching(m, card);
         }
         if m.results.is_empty() {
             let line = if m.searching || !m.searched {
@@ -492,6 +497,7 @@ impl Launcher {
             self.content_scroll.handle.clone(),
         );
         let total = self.mods.results.len();
+        let refreshing = self.mods.refreshing;
         let row = |i: usize| {
             let p = self.mods.results[i].clone();
             let icon = self.mods_icon(&p, 40.);
@@ -522,6 +528,10 @@ impl Launcher {
                     tr("Checking…")
                 } else if busy {
                     tr("Installing…")
+                } else if p.kind == PackKind::Modpack
+                    && self.window_width < crate::glass_home::SIDE_BY_SIDE
+                {
+                    tr("Import")
                 } else if p.kind == PackKind::Modpack {
                     tr("Import as an instance")
                 } else {
@@ -579,7 +589,7 @@ impl Launcher {
                 div()
                     .flex_none()
                     .size(px(40.))
-                    .rounded(px(8.))
+                    .rounded(px(crate::glass_ui::rad(8.)))
                     .overflow_hidden()
                     .child(icon),
             )
@@ -618,6 +628,7 @@ impl Launcher {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.mods.picked = Some(id.clone());
                 this.mods.confirm_remove = None;
+                this.mods.reveal.wanted.set(Reveal::TRIES);
                 cx.notify();
             }))
         };
@@ -642,7 +653,19 @@ impl Launcher {
                 ),
             );
         }
+        if refreshing {
+            return div().child(ui::waiting(list, self.mods.search as usize));
+        }
         list
+    }
+
+    /// `d`, dimmed after a moment while a search runs.
+    fn while_searching(m: &Mods, d: Div) -> Div {
+        if m.searching {
+            div().child(ui::waiting(d, m.search as usize))
+        } else {
+            d
+        }
     }
 
     /// The picked result, else the first; when a search finds nothing, the card shown last stays
@@ -686,7 +709,7 @@ impl Launcher {
             by.push(trf("from {source}", &[("source", source)]));
         }
         if !p.license.is_empty() {
-            by.push(p.license.clone());
+            by.push(browser::license_label(&p.license));
         }
         let (tone, reason) = match &support {
             Support::Works => (ui::live(), None),
@@ -773,7 +796,7 @@ impl Launcher {
                 .child(
                     div()
                         .size(px(64.))
-                        .rounded(px(12.))
+                        .rounded(px(crate::glass_ui::rad(12.)))
                         .overflow_hidden()
                         .child(icon),
                 )
@@ -880,4 +903,76 @@ fn kind_name(kind: PackKind) -> &'static str {
         PackKind::Shader => "Shader pack",
         PackKind::DataPack => "Data pack",
     }
+}
+
+/// Bringing a picked project's card into view where it sits under the list (a narrow window):
+/// a click on a row would otherwise seem to do nothing, its card twenty rows further down.
+#[derive(Default)]
+pub(crate) struct Reveal {
+    /// A project was just picked: the next layouts scroll the page to its card, this many more
+    /// times at most. The list above it builds only its nearby rows and guesses the others'
+    /// heights, so scrolling there measures some and moves the card: the next frame corrects.
+    pub wanted: std::cell::Cell<u8>,
+    /// Where the page's top was laid out, measured as the card is: the page scrolls in its own
+    /// layer, so only the distance between the two means the same in every frame.
+    top: std::cell::Cell<Option<gpui::Pixels>>,
+}
+
+impl Reveal {
+    /// Frames the scroll to a card takes at most.
+    pub(crate) const TRIES: u8 = 4;
+}
+
+/// A child at the page's top, taking no room, that notes where the page starts for [`card_in_view`].
+fn page_top(reveal: &std::rc::Rc<Reveal>) -> impl IntoElement {
+    let reveal = reveal.clone();
+    gpui::canvas(
+        move |page, _, _| reveal.top.set(Some(page.top())),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_0()
+}
+
+/// A child of the picked project's card, taking no room, that scrolls the page so the card's top
+/// shows, once both are laid out, when [`Reveal::wanted`] asks.
+fn card_in_view(reveal: &std::rc::Rc<Reveal>, page: &gpui::ScrollHandle) -> impl IntoElement {
+    let (reveal, page) = (reveal.clone(), page.clone());
+    gpui::canvas(
+        move |card, window, _| {
+            let Some(top) = reveal.top.get() else {
+                return;
+            };
+            let tries = reveal.wanted.get();
+            if tries == 0 {
+                return;
+            }
+            // How far down the page the card is, and how far the page is scrolled.
+            let (down, scrolled) = (card.top() - top, -page.offset().y);
+            let view = page.bounds().size.height;
+            let first = tries == Reveal::TRIES;
+            // In view at the click, with room to read it: nothing moves.
+            if first && down >= scrolled && down + px(160.) <= scrolled + view {
+                reveal.wanted.set(0);
+                return;
+            }
+            let mut offset = page.offset();
+            offset.y = (px(16.) - down).min(px(0.)).max(-page.max_offset().y);
+            // Where it should be already: done.
+            if !first && (offset.y - page.offset().y).abs() < px(1.) {
+                reveal.wanted.set(0);
+                return;
+            }
+            reveal.wanted.set(tries - 1);
+            page.set_offset(offset);
+            window.refresh();
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_0()
 }

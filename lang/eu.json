@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-en modpack formatua: Modrinth-en baliabide paketeak deskargaren arabera zerrendatzen dira, gainerakoa bertan eramaten da.",
   "Mods": "Moduak",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise-rako egindako modak eta itzal-paketeak bere berrikusitako erregistrotik eta Modrinth-en baliabide-paketeak. Fitxategi bakoitza bere iturburuko kontrol-sumarekin egiaztatzen da zure jokoaren karpetara iritsi aurretik.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang-ek ezin izan du zure kontua baieztatu. Hasi saioa berriro eta saiatu berriro.",
-  "Mojang's session server is not answering. Try again later.": "Mojang-en saio zerbitzariak ez du erantzuten ari. Saiatu berriro geroago.",
   "Mojang's version list isn't here yet.": "Mojang-en bertsio-zerrenda ez dago oraindik hemen.",
   "More": "Gehiago",
   "Most players at once": "Jokalari gehienak aldi berean",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Hasi saioa Microsoft-ekin",
   "Sign in with `sunrise-launcher account sign-in`.": "Hasi saioa `sunrise-launcher account sign-in` komandoarekin.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Hasi saioa Minecraft: Java Edition jabea den Microsoft kontu batekin jolasteko",
-  "Sign in with a Minecraft account first.": "Hasi saioa Minecraft kontu batekin lehenik.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Hasi saioa Minecraft: Java Edition jabea den kontuarekin. Zure izena eta azala lineako zerbitzarietara datoz, beste abiarazle batzuetan bezala.",
   "Sign out": "Amaitu saioa",
   "Sign-in not checked": "Saio-hasiera ez da egiaztatu",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Abiarazlearen itxura oraingoz berrezarri da, baina ezin izan da gorde",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Beirak eta Lausotzeak itxura ilunaren beiraztatutako panelak osatzen dituzte; argiak panel zuri solidoak marrazten ditu.",
   "Performance mode draws solid panels, without glass or blur.": "Errendimendu moduak panel solidoak marrazten ditu, beira edo lausotzerik gabe.",
-  "This theme's night draws solid panels, without glass or blur.": "Gai honen gauak panel solidoak marrazten ditu, beira edo lausotzerik gabe."
+  "This theme's night draws solid panels, without glass or blur.": "Gai honen gauak panel solidoak marrazten ditu, beira edo lausotzerik gabe.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

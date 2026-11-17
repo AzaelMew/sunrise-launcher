@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Fformat modpack Modrinth: mae pecynnau adnoddau o Modrinth yn cael eu rhestru wrth eu llwytho i lawr, mae'r gweddill yn cael ei gludo ynddo.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods a phecynnau lliwiwr wedi'u gwneud ar gyfer Sunrise o'i gofrestrfa wedi'i hadolygu ei hun, a phecynnau adnoddau gan Modrinth. Mae pob ffeil yn cael ei gwirio yn erbyn siec ei ffynhonnell cyn iddi gyrraedd eich ffolder gêm.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Ni allai Mojang gadarnhau eich cyfrif. Mewngofnodwch eto a cheisiwch eto.",
-  "Mojang's session server is not answering. Try again later.": "Nid yw gweinydd sesiwn Mojang yn ateb. Ceisiwch eto yn nes ymlaen.",
   "Mojang's version list isn't here yet.": "Nid yw rhestr fersiynau Mojang yma eto.",
   "More": "Mwy",
   "Most players at once": "Rhan fwyaf o chwaraewyr ar unwaith",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Mewngofnodwch gyda Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Mewngofnodwch gyda `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Mewngofnodwch gyda chyfrif Microsoft sy'n berchen ar Minecraft: Java Edition i'w chwarae",
-  "Sign in with a Minecraft account first.": "Mewngofnodwch gyda chyfrif Minecraft yn gyntaf.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Mewngofnodwch gyda'r cyfrif sy'n berchen ar Minecraft: Java Edition. Daw eich enw a'ch croen i weinyddion ar-lein, fel mewn lanswyr eraill.",
   "Sign out": "Arwyddo allan",
   "Sign-in not checked": "Nid yw mewngofnodi wedi'i wirio",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Mae golwg y lansiwr wedi'i hailosod am y tro, ond ni chydafeiddiwyd hi",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Mae Gwydr a Chymylu yn siapio paneli rhewllyd y wedd dywyll; mae'r un olau yn tynnu paneli gwyn solet.",
   "Performance mode draws solid panels, without glass or blur.": "Mae modd perfformiad yn tynnu paneli solet, heb wydr na chymylu.",
-  "This theme's night draws solid panels, without glass or blur.": "Mae nos y thema hon yn tynnu paneli solet, heb wydr na chymylu."
+  "This theme's night draws solid panels, without glass or blur.": "Mae nos y thema hon yn tynnu paneli solet, heb wydr na chymylu.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

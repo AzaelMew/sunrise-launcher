@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Formato modpack di Modrinth: i pacchetti di risorse di Modrinth sono elencati in base al download, il resto viene contenuto al loro interno.",
   "Mods": "Mod",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mod e pacchetti shader realizzati per Sunrise dal proprio registro revisionato e pacchetti di risorse da Modrinth. Ogni file viene controllato rispetto al checksum della sua origine prima che raggiunga la cartella del gioco.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang non è riuscito a confermare il tuo account. Accedi di nuovo e riprova.",
-  "Mojang's session server is not answering. Try again later.": "Il server di sessione di Mojang non risponde. Riprova più tardi.",
   "Mojang's version list isn't here yet.": "L'elenco delle versioni di Mojang non è ancora qui.",
   "More": "Di più",
   "Most players at once": "La maggior parte dei giocatori contemporaneamente",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Accedi con Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Accedi con `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Accedi con un account Microsoft che possiede Minecraft: Java Edition per giocare",
-  "Sign in with a Minecraft account first.": "Accedi prima con un account Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Accedi con l'account che possiede Minecraft: Java Edition. Il tuo nome e la tua skin ti seguono sui server online, come negli altri launcher.",
   "Sign out": "Esci",
   "Sign-in not checked": "Accesso non verificato",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "L'aspetto del launcher è stato ripristinato per ora, ma non è stato possibile salvarlo",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Vetro e Sfocatura formano i pannelli smerigliati dell'aspetto scuro; quello chiaro disegna pannelli bianchi pieni.",
   "Performance mode draws solid panels, without glass or blur.": "Modalità prestazioni disegna pannelli pieni, senza vetro né sfocatura.",
-  "This theme's night draws solid panels, without glass or blur.": "La notte di questo tema disegna pannelli pieni, senza vetro né sfocatura."
+  "This theme's night draws solid panels, without glass or blur.": "La notte di questo tema disegna pannelli pieni, senza vetro né sfocatura.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

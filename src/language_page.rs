@@ -25,7 +25,7 @@ impl Launcher {
     }
 
     /// The glass look's list: a popover like the others, its rows scrolling past ten.
-    fn glass_language_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn glass_language_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = self.theme;
         let mut rows = div()
             .id("language-list")
@@ -110,8 +110,8 @@ impl Launcher {
                     cx.notify();
                 })),
         );
-        if self.language_menu && t.glass {
-            wrap = wrap.child(self.glass_language_menu(cx));
+        if t.glass {
+            wrap = wrap.child(self.islands.language_menu.clone());
         } else if self.language_menu {
             let mut menu = div()
                 .id("language-menu")
@@ -167,6 +167,29 @@ impl Launcher {
         });
         index_row(0, tr("Language"), said, Some(wrap.into_any_element()), &t)
     }
+}
+
+/// How many languages' own names [`warm_language_name`] has shaped.
+static WARMED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Shapes the next language's own name as the language menu draws it. Its script's fallback
+/// font (Chinese, Arabic, Devanagari...) is loaded then, while the window rests, instead of all
+/// of them on the frame the menu first opens: 42 ms that frame took, 10 once they were loaded.
+pub(super) fn warm_language_name(window: &mut Window) {
+    use std::sync::atomic::Ordering;
+    let Some(&language) = Language::ALL.get(WARMED.fetch_add(1, Ordering::Relaxed)) else {
+        return;
+    };
+    let name: SharedString = choice_name(Some(language)).into();
+    let run = gpui::TextRun {
+        len: name.len(),
+        font: gpui::font(sunrise_launcher_theme::glass::FONT),
+        color: gpui::white(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let _ = window.text_system().shape_line(name, px(14.), &[run], None);
 }
 
 #[cfg(test)]

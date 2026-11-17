@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth modpack formāts: resursu pakotnes no Modrinth tiek uzskaitītas pēc to lejupielādes, pārējās tiek pārvadātas tajā.",
   "Mods": "Modi",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Modifikācijas un ēnotāju pakotnes, kas izstrādātas programmai Sunrise no paša pārskatītā reģistra, un resursu pakotnes no Modrinth. Katrs fails tiek pārbaudīts pret tā avota kontrolsummu, pirms tas sasniedz jūsu spēles mapi.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang nevarēja apstiprināt jūsu kontu. Pierakstieties vēlreiz un mēģiniet vēlreiz.",
-  "Mojang's session server is not answering. Try again later.": "Mojang sesijas serveris neatbild. Vēlāk mēģiniet vēlreiz.",
   "Mojang's version list isn't here yet.": "Mojang versiju saraksts vēl nav šeit.",
   "More": "Vairāk",
   "Most players at once": "Lielākā daļa spēlētāju uzreiz",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Pierakstieties ar Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Pierakstieties ar `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Lai spēlētu, pierakstieties, izmantojot Microsoft kontu, kuram pieder Minecraft: Java Edition",
-  "Sign in with a Minecraft account first.": "Vispirms pierakstieties, izmantojot Minecraft kontu.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Pierakstieties ar kontu, kuram pieder Minecraft: Java Edition. Jūsu vārds un āda līdzi nonāk tiešsaistes serveros, tāpat kā citās palaišanas programmās.",
   "Sign out": "Izrakstīties",
   "Sign-in not checked": "Pierakstīšanās nav pārbaudīta",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Palaišanas programmas izskats pagaidām atiestatīts, bet to neizdevās saglabāt",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Stikls un Aizmiglojums veido tumšā izskata matētos paneļus; gaišais zīmē viendabīgus baltus paneļus.",
   "Performance mode draws solid panels, without glass or blur.": "Veiktspējas režīms zīmē viendabīgus paneļus, bez stikla un aizmiglojuma.",
-  "This theme's night draws solid panels, without glass or blur.": "Šīs tēmas nakts zīmē viendabīgus paneļus, bez stikla un aizmiglojuma."
+  "This theme's night draws solid panels, without glass or blur.": "Šīs tēmas nakts zīmē viendabīgus paneļus, bez stikla un aizmiglojuma.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

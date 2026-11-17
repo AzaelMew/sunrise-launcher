@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Lo format modpack de Modrinth : los paquets de ressorsas de Modrinth son listats per lor telecargament, lo rèsta es portat dins el.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods e paquets de shader faches per Sunrise dempuèi son pròpri registre revisat, e paquets de ressorsas a partir de Modrinth. Cada fichièr es verificat contra la soma de contraròtle de sa font abans qu'arribe a vòstre dorsièr de jòc.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang a pas pogut confirmar vòstre compte. Connectatz-vos tornarmai e ensajatz tornarmai.",
-  "Mojang's session server is not answering. Try again later.": "Lo servidor de sesilha de Mojang respond pas. Tornatz ensajar mai tard.",
   "Mojang's version list isn't here yet.": "La lista de versions de Mojang es pas encara aquí.",
   "More": "Mai",
   "Most players at once": "La màger part dels jogaires a l'encòp",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Connectatz-vos amb Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Connectatz-vos amb `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Connectatz-vos amb un compte Microsoft que possedís Minecraft : Java Edicion per jogar",
-  "Sign in with a Minecraft account first.": "Connectatz-vos d'en primièr amb un compte Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Connectatz-vos amb lo compte que possedís Minecraft: Java Edicion. Vòstre nom e pèl venon als servidors en linha, coma dins d'autres lançaires.",
   "Sign out": "Desconnectar",
   "Sign-in not checked": "Connexion pas marcada",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "L'aspècte del lançaire es reïnicializat pel moment, mas a pas pogut èsser enregistrat",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Veire e Flou fòrman los panèls givrats de l'aspècte escur; lo clar dessenha de panèls blancs solids.",
   "Performance mode draws solid panels, without glass or blur.": "Mòde performància dessenha de panèls solids, sens veire nimai flou.",
-  "This theme's night draws solid panels, without glass or blur.": "La nuèch d'aqueste tèma dessenha de panèls solids, sens veire nimai flou."
+  "This theme's night draws solid panels, without glass or blur.": "La nuèch d'aqueste tèma dessenha de panèls solids, sens veire nimai flou.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -52,6 +52,7 @@ pub(crate) fn install_as(
     let target = version_dir(tag);
     let _ = fs::remove_dir_all(&target);
     fs::rename(&top, &target).map_err(|e| e.to_string())?;
+    crate::nightly::record_install_time(&target, release).map_err(|e| e.to_string())?;
     crate::run_leases::publish(&target).map_err(crate::native_mods::cache_error)?;
     fs::write(target.join(COMPLETE), "").map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&partial);

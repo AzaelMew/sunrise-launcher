@@ -374,7 +374,7 @@ impl Launcher {
             .gap(px(12.))
             .p(px(16.))
             .when(t.glass, |d| {
-                d.rounded(px(sunrise_launcher_theme::glass::radius::LARGE))
+                d.rounded(px(ui::rad(sunrise_launcher_theme::glass::radius::LARGE)))
                     .bg(ui::white(0.04))
             })
             .when(!t.glass, |d| {
@@ -902,7 +902,7 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .size(px(28.))
-                .rounded(px(8.))
+                .rounded(px(ui::rad(8.)))
                 .bg(color.opacity(if open { 0.24 } else { 0.14 }))
                 .cursor_pointer()
                 .child(ui::icon(glyph, 16., color)),
@@ -1152,7 +1152,7 @@ impl Render for NoteTooltip {
             .flex()
             .flex_col()
             .p(px(8.))
-            .rounded(px(8.))
+            .rounded(px(ui::rad(8.)))
             .bg(self.background)
             .children(
                 self.lines

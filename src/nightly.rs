@@ -8,6 +8,7 @@
 //! that instance, and its worlds, stay, and keep following the Nightly.
 use crate::backend::{self, Release};
 use crate::instances;
+use std::{fs, path::Path};
 use sunrise_launcher_release_verify::NIGHTLY;
 
 /// The id of the instance (its folder in `instances/`) the opt-in Nightly played in.
@@ -66,31 +67,68 @@ pub fn day(date: &str) -> String {
 /// (`HH:MM` UTC) each came out: [`same_day_time`] reads it for every screen that names a version.
 static SAME_DAY: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
 
+/// The publication time kept beside an installed Nightly so it survives a launcher restart.
+pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
+
+/// Keeps the publication time that came with an installed Nightly.
+pub(crate) fn record_install_time(dir: &Path, release: &Release) -> std::io::Result<()> {
+    if release.nightly.is_some() && !release.time.is_empty() {
+        fs::write(dir.join(INSTALLED_TIME), &release.time)?;
+    }
+    Ok(())
+}
+
+/// Publication times saved beside installed Nightlies, including ones no longer in the release
+/// list after a restart.
+fn installed_times() -> Vec<(String, String)> {
+    backend::installed()
+        .into_iter()
+        .filter_map(|tag| {
+            date_of(&tag)?;
+            let time = fs::read_to_string(backend::version_dir(&tag).join(INSTALLED_TIME))
+                .ok()?
+                .trim()
+                .to_owned();
+            (!time.is_empty()).then_some((tag, time))
+        })
+        .collect()
+}
+
 /// Keeps, from the release list `releases`, when each Nightly that shares its day with another
 /// came out, so every name of it says its time. A Nightly the list no longer has (older than a
 /// week, say) keeps the time it was seen with, and still counts toward its day.
 pub fn note_published(releases: &[Release]) {
+    let installed = installed_times();
     let mut kept = SAME_DAY
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *kept = same_day_times(&kept, releases, &installed);
+}
+
+/// Rebuilds the same-day table from the current releases, process-local history, and times saved
+/// with installed Nightlies.
+fn same_day_times(
+    kept: &[(String, String)],
+    releases: &[Release],
+    installed: &[(String, String)],
+) -> Vec<(String, String)> {
     let mut known: Vec<(&str, &str, &str)> = releases
         .iter()
         .filter(|r| r.nightly.is_some())
         .map(|r| (r.tag.as_str(), r.date.as_str(), r.time.as_str()))
         .collect();
-    for (tag, time) in kept.iter() {
+    for (tag, time) in kept.iter().chain(installed) {
         if let Some(date) = date_of(tag).filter(|_| known.iter().all(|(t, ..)| t != tag)) {
             known.push((tag, date, time));
         }
     }
-    let same_day = known
+    known
         .iter()
         .filter(|(_, date, time)| {
             !time.is_empty() && known.iter().filter(|(_, d, _)| d == date).count() > 1
         })
         .map(|(tag, _, time)| (tag.to_string(), time.to_string()))
-        .collect();
-    *kept = same_day;
+        .collect()
 }
 
 /// When Nightly `version` came out, `HH:MM` UTC, if another came out the same day.
@@ -216,6 +254,15 @@ mod tests {
         }
     }
 
+    fn nightly_release(version: &str, date: &str, time: &str) -> Release {
+        Release {
+            tag: version.into(),
+            time: time.into(),
+            nightly: Some(NIGHTLY.into()),
+            ..release("", date)
+        }
+    }
+
     #[test]
     fn a_nightly_installs_under_its_date_and_commit() {
         let r = release("Nightly 2026-10-28 · 0c02067", "2026-10-28");
@@ -274,6 +321,38 @@ mod tests {
         assert_eq!(
             same_day_time("nightly-2032-05-06-bbbbbbb").as_deref(),
             Some("18:05")
+        );
+    }
+
+    #[test]
+    fn an_installed_nightly_keeps_its_time_after_restart() {
+        let current = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
+        let installed = [("nightly-2033-06-07-aaaaaaa".to_owned(), "07:22".to_owned())];
+        let table = same_day_times(&[], &[current], &installed);
+        assert_eq!(
+            table
+                .iter()
+                .find(|(tag, _)| tag == "nightly-2033-06-07-aaaaaaa")
+                .map(|(_, time)| time.as_str()),
+            Some("07:22")
+        );
+        assert_eq!(
+            table
+                .iter()
+                .find(|(tag, _)| tag == "nightly-2033-06-07-bbbbbbb")
+                .map(|(_, time)| time.as_str()),
+            Some("18:05")
+        );
+    }
+
+    #[test]
+    fn an_installed_nightly_records_its_publication_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let release = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
+        record_install_time(dir.path(), &release).unwrap();
+        assert_eq!(
+            fs::read_to_string(dir.path().join(INSTALLED_TIME)).unwrap(),
+            "18:05"
         );
     }
 

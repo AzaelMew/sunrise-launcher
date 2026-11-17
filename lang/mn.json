@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth-ийн modpack формат: Modrinth-ийн нөөцийн багцуудыг татаж авсан жагсаалтаар нь жагсаасан, үлдсэнийг нь дотор нь авч явдаг.",
   "Mods": "Модууд",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Sunrise-д зориулж хийсэн мод болон шэйдер багцуудыг өөрийн хянуулсан бүртгэлээс, мөн Modrinth-ээс нөөцийн багцуудыг хийсэн. Файл бүрийг таны тоглоомын хавтсанд хүрэхээс өмнө эх сурвалжийн хяналтын нийлбэртэй харьцуулан шалгана.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang таны бүртгэлийг баталгаажуулж чадсангүй. Дахин нэвтэрч дахин оролдоно уу.",
-  "Mojang's session server is not answering. Try again later.": "Mojang-н сесс сервер хариу өгөхгүй байна. Дараа дахин оролдоно уу.",
   "Mojang's version list isn't here yet.": "Mojang-ийн хувилбарын жагсаалт хараахан гараагүй байна.",
   "More": "Илүү",
   "Most players at once": "Ихэнх тоглогчид нэгэн зэрэг",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Microsoft-оор нэвтэрнэ үү",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in`-ээр нэвтэрнэ үү.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Тоглуулахын тулд Minecraft: Java Edition-ийг эзэмшдэг Microsoft бүртгэлээр нэвтэрнэ үү",
-  "Sign in with a Minecraft account first.": "Эхлээд Minecraft бүртгэлээр нэвтэрнэ үү.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Minecraft: Java Edition-ийг эзэмшдэг бүртгэлээр нэвтэрнэ үү. Таны нэр болон арьс бусад эхлүүлэгчтэй адил онлайн серверүүдтэй хамт ирдэг.",
   "Sign out": "Гарах",
   "Sign-in not checked": "Нэвтрэхийг шалгаагүй",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Эхлүүлэгчийн харагдах байдал одоогоор сэргээгдсэн, гэхдээ хадгалагдаагүй",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Шил болон Бүдгэрүүлэлт бараан төрхийн бүдэгрүүлсэн панелийг хэлбэржүүлнэ; гэрэлт нь цагаан хатуу панель зурна.",
   "Performance mode draws solid panels, without glass or blur.": "Гүйцэтгэлийн горим шил, бүдгэрүүлэлтгүй хатуу панель зурна.",
-  "This theme's night draws solid panels, without glass or blur.": "Энэ сэдэвийн шөнө шил, бүдгэрүүлэлтгүй хатуу панель зурна."
+  "This theme's night draws solid panels, without glass or blur.": "Энэ сэдэвийн шөнө шил, бүдгэрүүлэлтгүй хатуу панель зурна.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Il formât modpack di Modrinth: i pachetis di risorsis di Modrinth a son elencâts secont il lôr scaricament, il rest al è puartât dentri.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods e pachetis shader fatis par Sunrise dal so regjistri revisionât, e pachetis di risorsis di Modrinth. Ogni file al è controlât cuintri la sume di control de sô font prime di rivâ inte cjarte dal zûc.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang nol è rivât a confermâ il to conto. Accedi di gnûf e provâ di gnûf.",
-  "Mojang's session server is not answering. Try again later.": "Il servidôr di session di Mojang nol rispuint. Prove di gnûf plui tart.",
   "Mojang's version list isn't here yet.": "La liste des versions di Mojang no je ancjemò culì.",
   "More": "Altris",
   "Most players at once": "La plui part dai zuiadôrs une volte",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Accedi cun Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Fâ l'acès cun `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Accedi cuntun conto Microsoft che al à Minecraft: Edizion Java par zuiâ",
-  "Sign in with a Minecraft account first.": "Accedi prin cuntun conto Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Accedi cul conto che al à Minecraft: Java Edizion. Il to non e la tô piel a vegnin dongje dai servidôrs in rêt, come in altris lançadôrs.",
   "Sign out": "Disconneti",
   "Sign-in not checked": "Accedi no marcât",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "L'aspiet dal lançadôr al è azernât par cumò, ma nol è stât salvât",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Veri e Sfume a formin i panels smalziâts dal aspiet scûr; chel clâr al disene panels blancs solits.",
   "Performance mode draws solid panels, without glass or blur.": "Modalitât di prestazion al disene panels solits, cence veri ni sfume.",
-  "This theme's night draws solid panels, without glass or blur.": "La gnot di chest teme e disene panels solits, cence veri ni sfume."
+  "This theme's night draws solid panels, without glass or blur.": "La gnot di chest teme e disene panels solits, cence veri ni sfume.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

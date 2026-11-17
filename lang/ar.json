@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "تنسيق حزمة تعديلات Modrinth: يتم إدراج حزم الموارد من Modrinth حسب روابط تنزيلها، ويتم تضمين الباقي.",
   "Mods": "التعديلات",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "التعديلات وحزم التظليل المصممة لهورايزون من سجلها المراجع الخاص، وحزم الموارد من Modrinth. يتم التحقق من كل ملف مقابل المجموع الاختصاري لمدرجه قبل وصوله إلى مجلد اللعبة.",
-  "Mojang could not confirm your account. Sign in again and retry.": "لم تستطع موجانج تأكيد حسابك. سجّل الدخول مرة أخرى وأعد المحاولة.",
-  "Mojang's session server is not answering. Try again later.": "خادم الجلسات في موجانج لا يستجيب. أعد المحاولة لاحقًا.",
   "Mojang's version list isn't here yet.": "قائمة إصدارات موجانج غير متوفرة هنا بعد.",
   "More": "المزيد",
   "Most players at once": "أقصى عدد من اللاعبين معًا",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "تسجيل الدخول بواسطة مايكروسوفت",
   "Sign in with `sunrise-launcher account sign-in`.": "سجّل الدخول باستخدام `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "تسجيل الدخول بحساب مايكروسوفت يمتلك ماين كرافت: إصدار جافا للعب",
-  "Sign in with a Minecraft account first.": "سجّل الدخول بحساب ماين كرافت أولًا.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "سجّل الدخول بالحساب الذي يملك Minecraft: Java Edition. يرافقك اسمك ومظهرك إلى الخوادم عبر الإنترنت، كما في المشغلات الأخرى.",
   "Sign out": "تسجيل الخروج",
   "Sign-in not checked": "لم يتم التحقق من تسجيل الدخول",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "أُعيد مظهر المشغّل إلى أصله الآن، لكن تعذّر حفظه",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "الزجاج والتمويه يشكّلان الألواح المصنفرة للمظهر الداكن؛ أما الفاتح فيرسم ألواحًا بيضاء مصمتة.",
   "Performance mode draws solid panels, without glass or blur.": "وضع الأداء يرسم ألواحًا مصمتة، دون زجاج أو تمويه.",
-  "This theme's night draws solid panels, without glass or blur.": "ليل هذه السمة يرسم ألواحًا مصمتة، دون زجاج أو تمويه."
+  "This theme's night draws solid panels, without glass or blur.": "ليل هذه السمة يرسم ألواحًا مصمتة، دون زجاج أو تمويه.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

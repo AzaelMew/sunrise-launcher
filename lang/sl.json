@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinthov format modpack: paketi virov iz Modrintha so navedeni po njihovem prenosu, ostali so v njem.",
   "Mods": "Modifikacije",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Modifikacije in paketi senčil, izdelani za Sunrise iz lastnega pregledanega registra, in paketi virov iz Modrintha. Vsaka datoteka se preveri glede na kontrolno vsoto vira, preden pride v mapo z igro.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojang ni mogel potrditi vašega računa. Ponovno se prijavite in poskusite znova.",
-  "Mojang's session server is not answering. Try again later.": "Mojangov strežnik seje se ne odziva. Poskusite znova pozneje.",
   "Mojang's version list isn't here yet.": "Mojangov seznam različic še ni tukaj.",
   "More": "več",
   "Most players at once": "Več igralcev hkrati",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Prijavite se z Microsoftom",
   "Sign in with `sunrise-launcher account sign-in`.": "Prijavite se z `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Za igranje se prijavite z Microsoftovim računom, ki ima v lasti Minecraft: Java Edition",
-  "Sign in with a Minecraft account first.": "Najprej se prijavite z računom Minecraft.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Prijavite se z računom, ki ima Minecraft: Java Edition. Vaše ime in koža vas spremljata na spletne strežnike, kot v drugih zaganjalnikih.",
   "Sign out": "Odjavite se",
   "Sign-in not checked": "Prijava ni potrjena",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Videz zaganjalnika je za zdaj ponastavljen, vendar ga ni bilo mogoče shraniti",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Steklo in Zameglitev oblikujeta zamotnjene panele temnega videza; svetli riše polne bele panele.",
   "Performance mode draws solid panels, without glass or blur.": "Način zmogljivosti riše polne panele, brez stekla in zameglitve.",
-  "This theme's night draws solid panels, without glass or blur.": "Noč te teme riše polne panele, brez stekla in zameglitve."
+  "This theme's night draws solid panels, without glass or blur.": "Noč te teme riše polne panele, brez stekla in zameglitve.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

@@ -10,24 +10,24 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use sunrise_launcher::effects::Effects;
+use std::sync::Arc;
 use sunrise_launcher_theme::glass::{fill, ink, radius, Glass};
 
 thread_local! {
     /// Whether this frame's pages draw the glass look (the dark appearance).
     static ON: Cell<bool> = const { Cell::new(false) };
+    /// Its corners' radius ([`set_corners`]).
+    static CORNERS: Cell<f32> = const { Cell::new(0.) };
     /// The look's colours for the player's accent.
     static LOOK: Cell<Glass> = Cell::new(Glass::default_look());
     /// Whether the rows being built go in a Settings card ([`flat_rows`]).
     static FLAT: Cell<bool> = const { Cell::new(false) };
     /// The light appearance: the glass look's white ink and fills turn to [`INK`].
     static LIGHT: Cell<bool> = const { Cell::new(false) };
-    /// The player's flourishes ([`effects`]).
-    static EFFECTS: Cell<Effects> = const { Cell::new(Effects::ALL) };
     /// How many [`hover_back`] layers this frame has built so far: the next one's name.
     static BACKS: Cell<usize> = const { Cell::new(0) };
-    /// Each [`hover_back`] layer's pointer: on or off, and since when.
-    static BACK_HOVER: RefCell<HashMap<SharedString, (bool, std::time::Instant)>> =
+    /// Each [`hover_back`] layer's pointer: easing on or off, from where.
+    static BACK_HOVER: RefCell<HashMap<SharedString, crate::motion::Fade>> =
         RefCell::new(HashMap::new());
 }
 
@@ -120,7 +120,7 @@ pub fn setting_row(
         .gap_y(px(12.))
         .px(px(14.))
         .py(px(13.))
-        .rounded(px(12.))
+        .rounded(px(rad(12.)))
         .border_1()
         .border_color(gpui::transparent_black())
         .relative()
@@ -160,7 +160,7 @@ pub fn setting_row_stacked(
         .gap(px(16.))
         .px(px(14.))
         .py(px(13.))
-        .rounded(px(12.))
+        .rounded(px(rad(12.)))
         .border_1()
         .border_color(gpui::transparent_black())
         .relative()
@@ -194,7 +194,7 @@ pub fn wide_field(field: Stateful<Div>, focused: bool) -> Stateful<Div> {
         .h(px(44.))
         .px(px(16.))
         .border_0()
-        .rounded(px(radius::ROW))
+        .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .bg(white(if focused { 0.11 } else { 0.07 }))
         .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
@@ -202,18 +202,18 @@ pub fn wide_field(field: Stateful<Div>, focused: bool) -> Stateful<Div> {
         .when(focused, |d| d.child(focus_ring(radius::ROW)))
 }
 
-/// The mockup's focus ring (`.hzl :focus-visible`: 2 px of the accent's soft shade) over a
-/// focused field, inside its edge with the field's corners: GPUI has no outline, and a field
-/// clips what lies outside it. Put it in a `relative` field round at `radius`.
+/// The focus ring: one solid 1 px line of the accent over a focused field, inside its edge with
+/// the field's corners (GPUI has no outline, and a field clips what lies outside it). Put it in a
+/// `relative` field round at `radius`.
 pub fn focus_ring(radius: f32) -> Div {
     div()
         .absolute()
         .top_0()
         .left_0()
         .size_full()
-        .rounded(px(radius))
-        .border_2()
-        .border_color(color(look().accent_soft))
+        .rounded(px(crate::glass_ui::rad(radius)))
+        .border_1()
+        .border_color(color(look().accent))
 }
 
 /// Whether the pages being built draw the glass look: helpers with no theme at hand ask.
@@ -225,6 +225,36 @@ pub fn on() -> bool {
 pub fn set_on(on: bool) {
     ON.set(on);
     BACKS.set(0);
+    crate::glass::set_outline(on);
+}
+
+/// A corner of the glass parts: square, as the Outline look draws them (`docs/design-system.md`).
+pub fn rad(r: f32) -> f32 {
+    if on() {
+        CORNERS.get()
+    } else {
+        r
+    }
+}
+
+/// Set as each frame starts: the glass look's corner radius in px, the same for every corner
+/// (Settings > Appearance > Corners; a small element rounds no further than half its side).
+pub fn set_corners(radius: f32) {
+    CORNERS.set(radius);
+}
+
+/// The Outline look's 1 px edge.
+pub fn line() -> Hsla {
+    white(0.12)
+}
+
+/// A label in the Outline look: Geist Mono, upper case, spaced out.
+pub fn mono(size: f32, a: f32) -> Div {
+    div()
+        .font_family(crate::theme::MONO)
+        .text_size(px(size))
+        .line_height(px(size * 1.4))
+        .text_color(white(a))
 }
 
 /// Set as each frame's pages start being built: the colours for the player's accent.
@@ -235,38 +265,6 @@ pub fn set_look(look: Glass) {
 /// The look's colours.
 pub fn look() -> Glass {
     LOOK.get()
-}
-
-/// Set as each frame's pages start being built: the flourishes the player keeps.
-pub fn set_effects(effects: Effects) {
-    EFFECTS.set(effects);
-}
-
-/// The flourishes the player keeps (Settings > Appearance).
-pub fn effects() -> Effects {
-    EFFECTS.get()
-}
-
-/// A two-colour fill from `from` to `to` at `angle`, or `from` alone with Gradients off.
-pub fn grad(angle: f32, from: Hsla, to: Hsla) -> gpui::Background {
-    if effects().gradients {
-        gpui::linear_gradient(
-            angle,
-            gpui::linear_color_stop(from, 0.),
-            gpui::linear_color_stop(to, 1.),
-        )
-    } else {
-        from.into()
-    }
-}
-
-/// `shadows` with Glow on; with it off only the inset ones (a control's edge light, not a halo).
-pub fn glows(shadows: Vec<gpui::BoxShadow>) -> Vec<gpui::BoxShadow> {
-    if effects().glow {
-        shadows
-    } else {
-        shadows.into_iter().filter(|s| s.inset).collect()
-    }
 }
 
 /// White at `a`: the dark look's ink and fills. In light, the ink at `a`, so every part keeps
@@ -351,13 +349,216 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
 
 /// A layer filling its parent, round at `r`, for hover fills.
 fn layer(r: f32) -> impl Fn() -> Div {
-    move || div().absolute().top_0().left_0().size_full().rounded(px(r))
+    move || {
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .rounded(px(crate::glass_ui::rad(r)))
+    }
 }
 
 /// `id`'s fill eased between `from` (white at that opacity) and `to` while hovered, as the
 /// mockup's `transition-colors` does.
 fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement {
     hover_edge(id, r, to - from, false)
+}
+
+/// The side of one texel in a [`pixel_fill`].
+pub(crate) const TEXEL: f32 = 4.;
+
+/// How far a texel's lightness strays from its fill: on a coloured button, and on a sidebar,
+/// where it stays well under the rows.
+pub const TEXTURE_BUTTON: f32 = 0.02;
+pub const TEXTURE_QUIET: f32 = 0.009;
+
+/// A fill of `c` as a block texture: square texels `step` of lightness off it either way, the
+/// same every frame, so it never shimmers. The steps are fixed, not a share of `c`'s lightness, so
+/// a near-black sidebar shows them too. Put it first in a `relative` element, so its content is
+/// drawn over it.
+pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
+    let shades = texel_shades(c, step);
+    // The look's corners, which a canvas can't clip to: the fill is drawn round, and the
+    // texels in its corners keep the fill's colour.
+    let r = rad(0.);
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let (w, h) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+            let r = r.min(w / 2.).min(h / 2.);
+            window.paint_quad(gpui::fill(bounds, c).corner_radii(px(r)));
+            let (cols, rows) = ((w / TEXEL).ceil() as u32, (h / TEXEL).ceil() as u32);
+            // A texel is a square: one that reaches into a round corner would square it off,
+            // so those keep the base colour.
+            let inside = |x: u32, y: u32| {
+                let (left, top) = (x as f32 * TEXEL, y as f32 * TEXEL);
+                let side = |a: f32, len: f32| a < r || a + TEXEL > len - r;
+                r <= 0. || !(side(left, w) && side(top, h))
+            };
+            // Most texels keep the base colour; the rest take one of the shades.
+            let tone = |x: u32, y: u32| {
+                shades
+                    .get((texel_noise(x, y) % 9) as usize)
+                    .copied()
+                    .filter(|_| inside(x, y))
+            };
+            for y in 0..rows {
+                let top = y as f32 * TEXEL;
+                let tall = TEXEL.min(h - top);
+                let mut x = 0;
+                while x < cols {
+                    let Some(this) = tone(x, y) else {
+                        x += 1;
+                        continue;
+                    };
+                    // A run of one shade along the row is one quad, so a tall sidebar stays cheap.
+                    let start = x;
+                    while x < cols && tone(x, y) == Some(this) {
+                        x += 1;
+                    }
+                    let left = start as f32 * TEXEL;
+                    let wide = (x as f32 * TEXEL).min(w) - left;
+                    let at = gpui::point(bounds.origin.x + px(left), bounds.origin.y + px(top));
+                    let size = gpui::size(px(wide), px(tall));
+                    window.paint_quad(gpui::fill(gpui::Bounds::new(at, size), this));
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// How many texels a side of the window grain's tile has: it repeats every 256 px, which at
+/// this faintness never shows.
+const GRAIN_TILE: usize = 64;
+
+thread_local! {
+    /// The grain tile last baked, and what for (colour, step and scale, as bits).
+    static GRAIN: RefCell<Option<([u32; 6], Arc<gpui::RenderImage>)>> = const { RefCell::new(None) };
+}
+
+/// A large area's grain (the sidebars, the top bar): `c` as the block texture of [`pixel_fill`],
+/// `width` by `height`. One tile is baked once (at the window's `scale`, its texels on whole device
+/// pixels) and repeated, so a full-height sidebar costs a few images rather than thousands of quads
+/// each frame. Put it first in a `relative` element.
+pub fn grain(c: Hsla, step: f32, width: f32, height: f32, scale: f32) -> Div {
+    let tile = grain_tile(c, step, scale);
+    let side = GRAIN_TILE as f32 * TEXEL;
+    let (cols, rows) = (
+        (width / side).ceil() as usize,
+        (height / side).ceil() as usize,
+    );
+    let mut layer = div()
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .overflow_hidden()
+        .bg(c);
+    for y in 0..rows {
+        for x in 0..cols {
+            layer = layer.child(
+                gpui::img(tile.clone())
+                    .absolute()
+                    .left(px(x as f32 * side))
+                    .top(px(y as f32 * side))
+                    .size(px(side)),
+            );
+        }
+    }
+    layer
+}
+
+fn grain_tile(c: Hsla, step: f32, scale: f32) -> Arc<gpui::RenderImage> {
+    let key = [
+        c.h.to_bits(),
+        c.s.to_bits(),
+        c.l.to_bits(),
+        c.a.to_bits(),
+        step.to_bits(),
+        scale.to_bits(),
+    ];
+    if let Some(tile) = GRAIN.with_borrow(|g| {
+        g.as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, t)| t.clone())
+    }) {
+        return tile;
+    }
+    let bytes = |h: Hsla| {
+        let rgba = gpui::Rgba::from(h);
+        [rgba.r, rgba.g, rgba.b, rgba.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8)
+    };
+    let shades = texel_shades(c, step).map(bytes);
+    let base = bytes(c);
+    let texels: Vec<[u8; 4]> = (0..GRAIN_TILE * GRAIN_TILE)
+        .map(|i| {
+            let (x, y) = ((i % GRAIN_TILE) as u32, (i / GRAIN_TILE) as u32);
+            shades
+                .get((texel_noise(x, y) % 9) as usize)
+                .copied()
+                .unwrap_or(base)
+        })
+        .collect();
+    let tile = crate::art::bake(&texels, GRAIN_TILE, GRAIN_TILE, TEXEL, scale);
+    GRAIN.set(Some((key, tile.clone())));
+    tile
+}
+
+thread_local! {
+    /// Each fold chevron's last state (open or not) and how often it has changed, so it turns
+    /// only when its menu opens or closes, never as a page is first drawn.
+    static FOLDS: RefCell<HashMap<&'static str, (bool, usize)>> = RefCell::new(HashMap::new());
+}
+
+/// A menu's chevron: pointing down while it is closed, turning up on the spring while it opens,
+/// and back down as it closes. `id` names it among the others.
+pub fn fold_chevron(id: &'static str, open: bool, size: f32, ink: Hsla) -> AnyElement {
+    let turns = FOLDS.with_borrow_mut(|folds| {
+        let (was, turns) = folds.entry(id).or_insert((open, 0));
+        if *was != open {
+            *was = open;
+            *turns += 1;
+        }
+        *turns
+    });
+    let at = move |up: f32| gpui::Transformation::rotate(gpui::radians(std::f32::consts::PI * up));
+    let chevron = icon("arrow-down-01", size, ink);
+    if turns == 0 {
+        return chevron.with_transformation(at(0.)).into_any_element();
+    }
+    chevron
+        .with_animation(
+            ElementId::named_usize(id, turns),
+            crate::motion::eased(crate::motion::POP),
+            move |d, t| d.with_transformation(at(if open { t } else { 1. - t })),
+        )
+        .into_any_element()
+}
+
+/// The texture's three shades of `c`, `step` of lightness off it.
+pub(crate) fn texel_shades(c: Hsla, step: f32) -> [Hsla; 3] {
+    let shade = move |d: f32| gpui::hsla(c.h, c.s, (c.l + d).clamp(0., 1.), c.a);
+    [shade(step), shade(-step), shade(1.75 * step)]
+}
+
+/// A fixed scramble of a texel's place.
+pub(crate) fn texel_noise(x: u32, y: u32) -> u32 {
+    let mut n = x.wrapping_mul(0x9e37_79b1) ^ y.wrapping_mul(0x85eb_ca77);
+    n ^= n >> 15;
+    n = n.wrapping_mul(0x2c1b_3c6d);
+    n ^ (n >> 12)
+}
+
+/// `accent` a little lighter, for a coloured button under the pointer.
+pub fn lit_accent(accent: u32) -> Hsla {
+    let c = color(accent);
+    gpui::hsla(c.h, c.s, (c.l * 1.1).min(1.), 1.)
 }
 
 /// How opaque white outlines are: every control and inner card at rest, under the pointer, and
@@ -368,8 +569,9 @@ pub mod edge {
     pub const STRONG: f32 = 0.30;
 }
 
-/// `id`'s hover layer: a white fill at `fill` and an outline at [`edge::HOVER`], both eased in
-/// and out. `bordered`: the element has its own 1 px outline, which the layer's covers.
+/// `id`'s hover layer: a white fill at `fill`, eased in and out (no outline: a line flashing round
+/// a row read as a glitch, not a hover). `bordered`: the element has its own 1 px outline, which
+/// the layer reaches over.
 pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -> gpui::AnyElement {
     let inset = if bordered { -1. } else { 0. };
     hover_fade(
@@ -381,13 +583,23 @@ pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -
                 .left(px(inset))
                 .right(px(inset))
                 .bottom(px(inset))
-                .rounded(px(r))
+                .rounded(px(rad(r)))
         },
-        move |d, t| {
-            d.bg(white(fill * t))
-                .border_1()
-                .border_color(white(edge::HOVER * t))
-        },
+        move |d, t| d.bg(white(fill * t)),
+    )
+}
+
+/// How far a row's content slides along while the pointer is on it.
+const NUDGE: f32 = 3.;
+
+/// A row's content sliding [`NUDGE`] px along under the pointer, eased in and out: put it first
+/// in a row whose children are `gap` px apart (it takes no gap of its own). Nothing at rest.
+pub fn hover_nudge(id: &SharedString, gap: f32) -> AnyElement {
+    crate::hover_ease(
+        id,
+        || div().flex_none().h(px(1.)),
+        move |d, t| d.w(px(NUDGE * t)).mr(px(-gap)),
+        sunrise_launcher_theme::QUICK,
     )
 }
 
@@ -403,51 +615,40 @@ fn hover_back(inset: f32, r: f32, paint: impl Fn(Div, f32) -> Div + 'static) -> 
     // shortcut: a row hovered as its page is swapped by the keyboard may stay lit until the
     // pointer moves over it; give the callers ids if that shows.
     let id = SharedString::from(format!("hover-back-{n}"));
-    let state = BACK_HOVER.with_borrow(|all| all.get(&id).copied());
-    let shown = back_phase(state, sunrise_launcher_theme::QUICK.duration()).map(|(on, at)| {
-        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        let start = *START.get_or_init(std::time::Instant::now);
-        let key = ElementId::named_usize(
-            format!("{id}-{on}"),
-            at.saturating_duration_since(start).as_micros() as usize,
-        );
-        div()
-            .absolute()
-            .top(px(inset))
-            .left(px(inset))
-            .right(px(inset))
-            .bottom(px(inset))
-            .rounded(px(r))
-            .with_animation(
-                key,
-                crate::motion::eased(sunrise_launcher_theme::QUICK),
-                move |d, t| paint(d, if on { t } else { 1. - t }),
-            )
+    let now = std::time::Instant::now();
+    let fade = BACK_HOVER.with_borrow(|all| all.get(&id).copied());
+    let shown = fade.filter(|f| !f.rested(now)).map(|fade| {
+        fade.play(
+            &id,
+            div()
+                .absolute()
+                .top(px(inset))
+                .left(px(inset))
+                .right(px(inset))
+                .bottom(px(inset))
+                .rounded(px(rad(r))),
+            paint,
+        )
     });
     let key = id.clone();
+    let owner = crate::widgets::Owner::default();
     div()
         .id(id)
         .absolute()
         .top_0()
         .left_0()
         .size_full()
-        .on_hover(move |hovered, window, _| {
+        .child(owner.noting())
+        .on_hover(move |hovered, window, cx| {
             BACK_HOVER.with_borrow_mut(|all| {
-                all.insert(key.clone(), (*hovered, std::time::Instant::now()));
+                let last = all.get(&key).copied();
+                let fade = crate::motion::Fade::toward(last, *hovered, std::time::Instant::now());
+                all.insert(key.clone(), fade);
             });
-            window.refresh();
+            owner.redraw(window, cx);
         })
         .children(shown)
         .into_any_element()
-}
-
-/// What a [`hover_back`] layer plays from its last pointer change (`state`): easing in while on,
-/// out for `len` after the pointer left, nothing at rest.
-fn back_phase(
-    state: Option<(bool, std::time::Instant)>,
-    len: std::time::Duration,
-) -> Option<(bool, std::time::Instant)> {
-    state.filter(|&(on, at)| on || at.elapsed() < len)
 }
 
 /// [`hover_back`] as [`hover_edge`]: white at `fill` and the hover outline. `bordered`: the
@@ -475,35 +676,18 @@ pub fn towards(a: Hsla, b: Hsla, t: f32) -> Hsla {
     }
 }
 
-/// A lifting card's glow under it, at `t` of its strength (the site's `0 14px 36px -12px`).
-fn lift_glow(t: f32) -> Vec<gpui::BoxShadow> {
-    glows(vec![gpui::BoxShadow {
-        color: color(look().accent).opacity(0.6 * t),
-        offset: gpui::point(px(0.), px(14.)),
-        blur_radius: px(36.),
-        spread_radius: px(-12.),
-        inset: false,
-    }])
-}
-
-/// The accent's lighter end, for the primary button's gradient (the mockup's `--accent2`).
-pub fn accent2() -> u32 {
-    sunrise_launcher_theme::glass::mix_oklab(look().accent, 0xffffff, 0.25)
-}
-
 /// `d`, a card built by [`card`] with its children in, wrapped to rise [`crate::motion::LIFT`] px
-/// on the spring while the pointer is on it: its outline warms from white to the accent and a glow
-/// opens under it, as the site's cards do. Pressing sinks it [`crate::motion::PRESS`] px instead.
+/// on the spring while the pointer is on it, its outline brightening. Pressing sinks it
+/// [`crate::motion::PRESS`] px instead.
 pub fn lift(id: &SharedString, d: Stateful<Div>) -> AnyElement {
     let rest = white(edge::REST + 0.03);
-    let warm = color(look().accent).opacity(0.65);
+    let lit = white(edge::HOVER);
     crate::hover_move(
         id,
         d.border_1().active(|s| s.top(px(crate::motion::PRESS))),
         move |d, t| {
             d.top(px(-crate::motion::LIFT * t))
-                .border_color(towards(rest, warm, t))
-                .shadow(lift_glow(t))
+                .border_color(towards(rest, lit, t))
         },
     )
 }
@@ -517,7 +701,7 @@ pub fn card(id: impl Into<SharedString>, r: f32, t: &Theme) -> Stateful<Div> {
             div()
                 .id(id.clone())
                 .relative()
-                .rounded(px(r))
+                .rounded(px(rad(r)))
                 .bg(white(0.035))
                 .border_1()
                 .border_color(white(edge::REST + 0.03))
@@ -526,65 +710,6 @@ pub fn card(id: impl Into<SharedString>, r: f32, t: &Theme) -> Stateful<Div> {
         ),
         t,
     )
-}
-
-/// One pass of light across a primary button while the pointer is on it (the site's sheen): a
-/// narrow band of white, sliding through on the spring. Put it inside the button, before its
-/// label; it is gone again by the time the spring settles. Reduced motion shows nothing.
-pub fn sheen(id: &SharedString) -> AnyElement {
-    // Out of the flow in every state: an in-flow rest div would sit in the button's gap and
-    // widen it, so the button would narrow the moment the pointer arrives.
-    let nothing = || div().absolute().into_any_element();
-    if crate::motion::still() || !effects().sheen {
-        return nothing();
-    }
-    let hovered = crate::hover_is(id);
-    let since = HOVER_SINCE.with_borrow(|times| times.get(id).copied());
-    if !hovered {
-        return nothing();
-    }
-    let Some(at) = since else {
-        return nothing();
-    };
-    let band = div()
-        .absolute()
-        .top_0()
-        .bottom_0()
-        .w(gpui::relative(0.55))
-        // shortcut: GPUI gradients stop at two colours, so the sheen fades in but not out
-        // again; a second band mirrored would restore the full pass.
-        .bg(gpui::linear_gradient(
-            105.,
-            gpui::linear_color_stop(gpui::white().opacity(0.), 0.),
-            gpui::linear_color_stop(gpui::white().opacity(0.3), 1.),
-        ));
-    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    let start = *START.get_or_init(std::time::Instant::now);
-    let key =
-        gpui::ElementId::named_usize(format!("{id}-sheen"), (at - start).as_micros() as usize);
-    // One slow pass of light, as the site plays it (750 ms on a long ease-in-out).
-    const SHEEN: sunrise_launcher_theme::Motion = sunrise_launcher_theme::Motion {
-        name: "sheen",
-        ms: 750,
-        curve: [0.3, 0.7, 0.2, 1.],
-    };
-    band.with_animation(key, crate::motion::eased(SHEEN), |d, t| {
-        d.left(gpui::relative(-0.6 + 1.65 * t))
-    })
-    .into_any_element()
-}
-
-thread_local! {
-    /// When each element's hover began, for one-shot animations like [`sheen`].
-    static HOVER_SINCE: RefCell<HashMap<SharedString, std::time::Instant>> =
-        RefCell::new(HashMap::new());
-}
-
-/// Records hover times for [`sheen`]; called from [`crate::note_hover`].
-pub(crate) fn note_hover_since(id: &SharedString, at: std::time::Instant) {
-    HOVER_SINCE.with_borrow_mut(|times| {
-        times.insert(id.clone(), at);
-    });
 }
 
 /// The state dot before a row's second line (`Dot`): live green, amber for busy (the mockup
@@ -614,13 +739,13 @@ pub fn bar(value: f32, accent_soft: u32) -> Div {
     div()
         .h(px(4.))
         .w_full()
-        .rounded_full()
+        .rounded(px(rad(2.)))
         .overflow_hidden()
         .bg(white(fill::ACTIVE))
         .child(
             div()
                 .h_full()
-                .rounded_full()
+                .rounded(px(rad(2.)))
                 .w(gpui::relative(value.clamp(0., 1.)))
                 .bg(color(accent_soft)),
         )
@@ -640,21 +765,15 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
         .w_full()
         .p(px(8.))
         .pr(px(pr))
-        .rounded(px(radius::ROW))
-        .border_1()
+        .rounded(px(rad(radius::ROW)))
         .cursor_pointer();
-    // The one shown: tinted with the accent and outlined in it.
+    // The one shown: white at 10 %, as the design's selected instance row.
     let d = if current {
-        d.bg(color(look().accent).opacity(0.16))
-            .border_color(color(look().accent_soft).opacity(0.55))
+        d.bg(white(fill::SELECTED))
     } else {
-        d.border_color(gpui::transparent_black()).child(hover_edge(
-            &id,
-            radius::ROW,
-            fill::ROW_HOVER,
-            true,
-        ))
+        d.child(hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
     };
+    let d = d.child(hover_nudge(&id, 12.));
     keyboard(track_hover(d, id), t)
 }
 
@@ -711,8 +830,9 @@ pub fn icon_button(
         .items_center()
         .justify_center()
         .size(px(size))
-        .rounded(px(r))
-        .cursor_pointer();
+        .rounded(px(crate::glass_ui::rad(r)))
+        .cursor_pointer()
+        .active(|s| s.top(px(1.)));
     let d = if active {
         d.bg(white(fill::ACTIVE))
             .border_1()
@@ -731,8 +851,8 @@ pub fn icon_button(
 }
 
 /// A top-bar page, as the site's nav: a naked tab — no plate, no pill — its label brightening and
-/// a faint fill arriving under the pointer, with the sunrise bar growing under it: a gradient
-/// line, half out on hover and all the way out with a glow on the page it names (`open`).
+/// a faint fill arriving under the pointer, with the accent bar growing under it: half out on
+/// hover and all the way out on the page it names (`open`).
 pub fn nav_tab(
     id: impl Into<SharedString>,
     label: impl Into<SharedString>,
@@ -745,19 +865,10 @@ pub fn nav_tab(
         .absolute()
         .bottom(px(1.))
         .h(px(2.))
-        .rounded(px(2.))
-        .bg(grad(90., color(look.accent_soft), color(look.accent)));
+        .rounded(px(rad(2.)))
+        .bg(color(look.accent));
     let bar = if open {
-        bar.left(px(12.))
-            .right(px(12.))
-            .shadow(glows(vec![gpui::BoxShadow {
-                color: color(look.accent).opacity(0.9),
-                offset: gpui::point(px(0.), px(0.)),
-                blur_radius: px(10.),
-                spread_radius: px(0.),
-                inset: false,
-            }]))
-            .into_any_element()
+        bar.left(px(12.)).right(px(12.)).into_any_element()
     } else {
         // Grows from the middle out to 80 % of the tab, at 70 % strength, on the spring.
         crate::hover_ease(
@@ -767,8 +878,8 @@ pub fn nav_tab(
                     .absolute()
                     .bottom(px(1.))
                     .h(px(2.))
-                    .rounded(px(2.))
-                    .bg(grad(90., color(look.accent_soft), color(look.accent)))
+                    .rounded(px(rad(2.)))
+                    .bg(color(look.accent))
             },
             move |d, t| {
                 d.left(gpui::relative(0.5 - 0.4 * t))
@@ -789,7 +900,7 @@ pub fn nav_tab(
                 .items_center()
                 .h(px(36.))
                 .px(px(13.))
-                .rounded(px(radius::CONTROL))
+                .rounded(px(rad(radius::CONTROL)))
                 .cursor_pointer()
                 .font_family(sunrise_launcher_theme::glass::FONT)
                 .text_size(px(14.5))
@@ -869,12 +980,20 @@ pub fn menu_row(
         .h(px(40.))
         .w_full()
         .px(px(MENU_ROW_PADDING))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
+        .group(id.clone())
         .child(hover_fade(&id, layer(radius::CONTROL), move |d, a| {
             d.bg(hover_color.opacity(hover_color.a * a))
         }))
-        .child(icon(name, MENU_ICON_SIZE, icon_color).relative())
+        .child(hover_nudge(&id, MENU_ROW_GAP))
+        .child(
+            icon(name, MENU_ICON_SIZE, icon_color)
+                .relative()
+                .when(!danger, |d| {
+                    d.group_hover(id.clone(), |s| s.text_color(white(ink::FULL)))
+                }),
+        )
         .child(
             text(MENU_FONT_SIZE, FontWeight::NORMAL, 1.)
                 .relative()
@@ -886,11 +1005,10 @@ pub fn menu_row(
     keyboard(track_hover(d, id), t)
 }
 
-/// A popover (`POPOVER`): the cards' glass (the mockup's darker `hzl-float` read as a different
-/// material beside them), round at 16 with 6 px around its rows, a shadow setting it above the
-/// card under it.
+/// A popover (`POPOVER`): a menu's near-opaque plate (the page's plates let the scene through),
+/// 6 px around its rows, a shadow setting it above the card under it.
 pub fn popover(width: f32) -> Div {
-    crate::glass::plate(radius::POPOVER)
+    crate::glass::float(radius::POPOVER)
         .shadow_lg()
         .w(px(width))
         .p(px(POPOVER_PADDING))
@@ -902,7 +1020,7 @@ pub fn popover(width: f32) -> Div {
 /// GPUI can't blur what it drew, so the scene's blurred copy (a menu's, `hzl-float`) covers the
 /// page. The scrim goes over it.
 pub fn scrim_backdrop() -> impl IntoElement {
-    crate::glass::backdrop(crate::glass::Kind::Float, 0.)
+    crate::glass::backdrop(0.)
 }
 
 /// The scrim over [`scrim_backdrop`]: 50 % in the dark look, 20 % in light, so the dimmed
@@ -920,7 +1038,7 @@ pub fn dialog_plate(radius: f32) -> Div {
             .top_0()
             .left_0()
             .size_full()
-            .rounded(px(radius))
+            .rounded(px(crate::glass_ui::rad(radius)))
             .bg(c)
     };
     crate::glass::plate(radius)
@@ -953,7 +1071,7 @@ pub fn solid(
             .min_h(px(h))
             .py(px(4.))
             .px(px(16.))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
             .text_center()
             .bg(paper())
             .border_1()
@@ -978,35 +1096,6 @@ pub fn solid(
     )
 }
 
-/// A big square button with one icon (`BIG_ICON`): 56 px, white at 8 %, 13 % under the pointer;
-/// the glyph white at 80 %, white under the pointer.
-pub fn big_icon(id: impl Into<SharedString>, name: &'static str, t: &Theme) -> Stateful<Div> {
-    let id = id.into();
-    let group = SharedString::from(format!("{id}-group"));
-    let glyph = icon(name, 21., white(ink::STRONG))
-        .group_hover(group.clone(), |s| s.text_color(white(ink::FULL)));
-    keyboard(
-        div()
-            .id(id)
-            .group(group)
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(56.))
-            .rounded(px(radius::LARGE))
-            .bg(white(fill::BUTTON))
-            .border_1()
-            .border_color(white(edge::REST))
-            .active(|s| s.bg(white(0.18)))
-            .cursor_pointer()
-            .child(back_edge(radius::LARGE, 0.05, true))
-            .child(glyph.relative()),
-        t,
-    )
-}
-
 /// A menu row with a note under its label (`MENU_ITEM`): 14 px medium over 12 px at 55 %, white
 /// at 7 % under the pointer; at 40 % when `locked`. A mark (a tick) can follow on the right.
 pub fn menu_item(
@@ -1027,7 +1116,7 @@ pub fn menu_item(
         .w_full()
         .px(px(12.))
         .py(px(8.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .when(!locked, |d| {
             d.cursor_pointer()
                 .child(hover_fade(&id, layer(radius::CONTROL), |d, a| {
@@ -1077,7 +1166,7 @@ pub fn pick_row(
         .h(px(36.))
         .w_full()
         .px(px(12.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
         .child(hover_fade(&id, layer(radius::CONTROL), |d, a| {
             d.bg(white(0.07 * a))
@@ -1121,11 +1210,10 @@ pub fn quiet_icon(
         .gap(px(8.))
         .h(px(h))
         .px(px(14.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(rad(radius::CONTROL)))
         .bg(white(fill::BUTTON))
         .border_1()
         .border_color(white(edge::REST))
-        .active(|s| s.bg(white(0.18)))
         .cursor_pointer()
         .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
@@ -1134,7 +1222,9 @@ pub fn quiet_icon(
         .child(hover_edge(&id, radius::CONTROL, 0.06, true))
         .children(name.map(|n| icon(n, 16., white(ink::FULL)).relative()))
         .child(div().relative().child(label.into()));
-    keyboard(track_hover(d, id), t)
+    crate::press(keyboard(track_hover(d, id.clone()), t), &id, |d| {
+        d.bg(white(0.18)).top(px(1.))
+    })
 }
 
 /// A list row (`ROW`): `rounded-[12px] px-3 py-2.5`, white at 6 % under the pointer. `on_hover`
@@ -1149,6 +1239,7 @@ pub fn list_row(
 ) -> Stateful<Div> {
     let id = id.into();
     let key = id.clone();
+    let owner = crate::widgets::Owner::default();
     let fill = if held && !hover_is(&id) {
         layer(radius::ROW)()
             .bg(white(fill::ROW_HOVER))
@@ -1167,10 +1258,11 @@ pub fn list_row(
         .w_full()
         .px(px(12.))
         .py(px(10.))
-        .rounded(px(radius::ROW))
+        .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .child(fill)
+        .child(owner.noting())
         .on_hover(move |hovered, window, cx| {
-            note_hover(&key, *hovered, window);
+            note_hover(&key, *hovered, &owner, window, cx);
             on_hover(hovered, window, cx);
         });
     keyboard(d, t)
@@ -1254,19 +1346,106 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         .h(px(44.))
         .px(px(16.))
         .overflow_hidden()
-        .rounded(px(radius::ROW))
+        .rounded(px(crate::glass_ui::rad(radius::ROW)))
         .bg(bg)
         .border_1()
         .border_color(if invalid {
             color(sunrise_launcher_theme::glass::DANGER_HOVER).opacity(0.6)
         } else if focused {
-            color(look().accent_soft).opacity(0.7)
+            color(look().accent)
         } else {
             white(edge::REST)
         })
-        .child(back_edge(radius::ROW, 0., true))
+        .when(!focused, |d| d.child(back_edge(radius::ROW, 0., true)))
         .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
+}
+
+thread_local! {
+    /// The slider being dragged, if one is.
+    static SLIDING: RefCell<Option<SharedString>> = const { RefCell::new(None) };
+}
+
+/// A slider from `min` to `max` in whole `step`s, standing at `value`, `width` px long: a 4 px
+/// track filled in the accent up to a square knob. A press sets it where the pointer is, and it
+/// follows a drag anywhere in the window until the button comes up; `on_change` hears each value.
+pub fn slider(
+    id: impl Into<SharedString>,
+    value: f32,
+    (min, max, step): (f32, f32, f32),
+    width: f32,
+    on_change: impl Fn(f32, &mut Window, &mut App) + 'static,
+) -> Div {
+    let id = id.into();
+    let share = ((value - min) / (max - min)).clamp(0., 1.);
+    let on_change = Rc::new(on_change);
+    const KNOB: f32 = 14.;
+    // The window's own mouse events, read where the slider was painted: a drag keeps going past
+    // its ends, which an element's listeners (heard only under the pointer) would lose.
+    let listen = canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let at = move |x: Pixels| {
+                let share = ((x - bounds.origin.x) / bounds.size.width).clamp(0., 1.);
+                ((min + share * (max - min)) / step).round() * step
+            };
+            let (down_id, change) = (id.clone(), on_change.clone());
+            window.on_mouse_event(move |e: &gpui::MouseDownEvent, phase, window, cx| {
+                if phase == gpui::DispatchPhase::Bubble
+                    && e.button == gpui::MouseButton::Left
+                    && bounds.contains(&e.position)
+                {
+                    SLIDING.set(Some(down_id.clone()));
+                    change(at(e.position.x), window, cx);
+                }
+            });
+            let (move_id, change) = (id.clone(), on_change.clone());
+            window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, window, cx| {
+                let mine = SLIDING.with_borrow(|s| s.as_ref() == Some(&move_id));
+                if phase == gpui::DispatchPhase::Bubble && mine && e.dragging() {
+                    change(at(e.position.x), window, cx);
+                }
+            });
+            window.on_mouse_event(|_: &gpui::MouseUpEvent, _, _, _| SLIDING.set(None));
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full();
+    div()
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .w(px(width))
+        .h(px(24.))
+        .cursor_pointer()
+        .child(
+            div()
+                .relative()
+                .w_full()
+                .h(px(4.))
+                .rounded(px(rad(0.).min(2.)))
+                .overflow_hidden()
+                .bg(white(fill::ACTIVE))
+                .child(
+                    div()
+                        .h_full()
+                        .w(gpui::relative(share))
+                        .bg(color(look().accent)),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(gpui::relative(share))
+                .ml(px(-KNOB / 2.))
+                .size(px(KNOB))
+                .rounded(px(rad(KNOB / 2.)))
+                .bg(white(ink::FULL)),
+        )
+        .child(listen)
 }
 
 /// A switch (`Toggle`): 40×24, round; the accent with an `on_accent` knob on the right while on,
@@ -1320,7 +1499,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         .gap(px(8.))
         .h(px(36.))
         .px(px(14.))
-        .rounded(px(radius::CONTROL))
+        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
         .cursor_pointer()
         .font_family(sunrise_launcher_theme::glass::FONT)
         .text_size(px(14.))
@@ -1328,182 +1507,40 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         .font_weight(FontWeight::MEDIUM);
     let d = match kind {
         Kind::Primary => {
-            let id2 = id.clone();
-            let accent2 = self::accent2();
-            d.overflow_hidden()
-                .bg(grad(135., color(look.accent), color(accent2)))
-                .border_1()
-                .border_color(white(0.16))
-                .text_color(color(look.on_accent))
+            let c = if hover_is(&id) {
+                lit_accent(look.accent)
+            } else {
+                color(look.accent)
+            };
+            d.text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
-                .shadow(glows(vec![
-                    // The site's primary: a light line along the top edge, a glow under it.
-                    gpui::BoxShadow {
-                        color: gpui::white().opacity(0.22),
-                        offset: gpui::point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    },
-                    gpui::BoxShadow {
-                        color: color(look.accent).opacity(0.7),
-                        offset: gpui::point(px(0.), px(6.)),
-                        blur_radius: px(22.),
-                        spread_radius: px(-8.),
-                        inset: false,
-                    },
-                ]))
-                .hover(move |s| {
-                    s.border_color(white(0.34)).shadow(glows(vec![
-                        gpui::BoxShadow {
-                            color: gpui::white().opacity(0.28),
-                            offset: gpui::point(px(0.), px(1.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(0.),
-                            inset: true,
-                        },
-                        gpui::BoxShadow {
-                            color: color(look.accent).opacity(0.95),
-                            offset: gpui::point(px(0.), px(12.)),
-                            blur_radius: px(34.),
-                            spread_radius: px(-8.),
-                            inset: false,
-                        },
-                        gpui::BoxShadow {
-                            color: color(look.accent).opacity(0.5),
-                            offset: gpui::point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(1.),
-                            inset: false,
-                        },
-                    ]))
-                })
-                .active(|s| s.opacity(0.92).shadow(Vec::new()))
-                .child(sheen(&id2))
+                .child(pixel_fill(c, TEXTURE_BUTTON))
         }
         Kind::Secondary => d
             .bg(white(fill::BUTTON))
             .border_1()
             .border_color(white(edge::REST))
             .text_color(white(ink::FULL))
-            .active(|s| s.bg(white(0.18)))
             .child(hover_edge(&id, radius::CONTROL, 0.06, true)),
         Kind::Ghost => d
             .text_color(white(ink::BODY))
             .hover(|s| s.text_color(white(ink::FULL)))
-            .active(|s| s.bg(white(0.1)))
             .child(hover_edge(&id, radius::CONTROL, 0.06, false)),
     };
-    keyboard(track_hover(d.child(div().relative().child(label)), id), t)
-}
-
-/// A pill's resting place (left, width) and the slide it plays: when it began, and from where.
-type PillState = ((f32, f32), Option<(std::time::Instant, (f32, f32))>);
-
-thread_local! {
-    /// Where each segmented control's options were last drawn, and its pill: the option's place
-    /// and width from the control's left edge; where the pill rests, and the slide it is playing
-    /// (when it started, and where it came from) while one runs.
-    static SEG_BOUNDS: RefCell<HashMap<String, Vec<(f32, f32)>>> = RefCell::new(HashMap::new());
-    static SEG_PILL: RefCell<HashMap<String, PillState>> = RefCell::new(HashMap::new());
-}
-
-/// The pill's slide between a segmented control's options (the site's, a hair short of the
-/// card spring).
-const SEG_SLIDE: sunrise_launcher_theme::Motion = sunrise_launcher_theme::Motion {
-    name: "seg-slide",
-    ms: 280,
-    curve: [0.22, 0.9, 0.3, 1.12],
-};
-
-/// Where a row of options with a sliding pill starts: its options' places are kept from it.
-pub type PillOrigin = Rc<Cell<Option<gpui::Point<Pixels>>>>;
-
-/// Records the row's origin (an absolute layer filling the row).
-pub fn pill_origin(origin: &PillOrigin) -> impl IntoElement {
-    let origin = origin.clone();
-    canvas(
-        move |bounds, _, _| origin.set(Some(bounds.origin)),
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
-
-/// Records option `i`'s place and width in row `id` (an absolute layer filling the option).
-pub fn pill_probe(id: impl Into<String>, i: usize, origin: PillOrigin) -> impl IntoElement {
-    let key = id.into();
-    canvas(
-        move |bounds, _, _| {
-            if let Some(o) = origin.get() {
-                let left = f32::from(bounds.origin.x - o.x);
-                let width = f32::from(bounds.size.width);
-                SEG_BOUNDS.with_borrow_mut(|all| {
-                    let row = all.entry(key.clone()).or_default();
-                    if row.len() <= i {
-                        row.resize(i + 1, (0., 0.));
-                    }
-                    row[i] = (left, width);
-                });
-            }
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
-
-/// The pill of row `id`, drawn by `base` (absolute, its height set) at option `active`'s
-/// recorded place, sliding there on [`SEG_SLIDE`] when it changes. None until the row has been
-/// drawn once.
-pub fn sliding_pill(id: &str, active: usize, base: impl Fn() -> Div) -> Option<AnyElement> {
-    let at = SEG_BOUNDS.with_borrow(|all| {
-        all.get(id)
-            .and_then(|row| row.get(active).copied())
-            .filter(|&(_, w)| w > 0.)
-    })?;
-    // A new place starts a slide; while one runs the pill keeps being built on its animation
-    // (a rebuild that drops it would snap it to the end), and once it is done the pill rests.
-    // As `motion::knob` does for a switch.
-    let running = SEG_PILL.with_borrow_mut(|pills| {
-        let entry = pills.entry(id.to_string()).or_insert((at, None));
-        if entry.0 != at {
-            entry.1 = Some((std::time::Instant::now(), entry.0));
-            entry.0 = at;
-        }
-        match entry.1 {
-            Some((since, from)) if since.elapsed() < SEG_SLIDE.duration() => Some((since, from)),
-            _ => {
-                entry.1 = None;
-                None
-            }
-        }
-    });
-    Some(match running {
-        None => base().left(px(at.0)).w(px(at.1)).into_any_element(),
-        Some((since, from)) => {
-            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-            let start = *START.get_or_init(std::time::Instant::now);
-            let key = ElementId::named_usize(
-                format!("{id}-pill"),
-                since.saturating_duration_since(start).as_micros() as usize,
-            );
-            base()
-                .with_animation(key, crate::motion::eased(SEG_SLIDE), move |d, p| {
-                    d.left(px(from.0 + (at.0 - from.0) * p))
-                        .w(px(from.1 + (at.1 - from.1) * p))
-                })
-                .into_any_element()
-        }
+    let el = keyboard(
+        track_hover(d.child(div().relative().child(label)), id.clone()),
+        t,
+    );
+    crate::press(el, &id, move |d| match kind {
+        Kind::Primary => d.opacity(0.92).top(px(1.)),
+        Kind::Secondary => d.bg(white(0.18)).top(px(1.)),
+        Kind::Ghost => d.bg(white(0.1)).top(px(1.)),
     })
 }
 
-/// A tab of a [`pill_strip`], `h` tall: one weight open or not (the pill and the ink mark the
-/// open one, so no name changes width), a faint fill under the pointer otherwise.
+/// A tab in a row of tabs, `h` tall: the open one on a lit fill, the others with a faint fill
+/// under the pointer. One weight and a 1 px edge on every tab (clear when not open), so
+/// opening one moves nothing.
 pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Stateful<Div> {
     let id = id.into();
     keyboard(
@@ -1517,13 +1554,16 @@ pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Sta
                 .gap(px(7.))
                 .h(px(h))
                 .px(px(12.))
-                .rounded(px(radius::CONTROL))
+                .rounded(px(rad(radius::CONTROL)))
                 .cursor_pointer()
                 .font_family(sunrise_launcher_theme::glass::FONT)
                 .font_weight(FontWeight::MEDIUM)
+                .border_1()
                 .text_color(white(if on { ink::FULL } else { ink::BODY }))
+                .when(on, |d| d.bg(white(0.12)).border_color(white(edge::STRONG)))
                 .when(!on, |d| {
-                    d.child(hover_edge(&id, radius::CONTROL, 0.05, false))
+                    d.border_color(gpui::transparent_black())
+                        .child(hover_edge(&id, radius::CONTROL, 0.05, false))
                         .hover(|s| s.text_color(white(ink::FULL)))
                 }),
             id,
@@ -1532,57 +1572,8 @@ pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Sta
     )
 }
 
-/// A row of [`pill_tab`]s (`h` tall, `top` below the row's top edge) whose open one, `active`,
-/// sits on a lit pane of glass that slides to the tab chosen. `row` lays the tabs out (its flex
-/// and padding); the strip records where each one is drawn.
-pub fn pill_strip(
-    id: &'static str,
-    active: usize,
-    h: f32,
-    top: f32,
-    row: Div,
-    tabs: impl IntoIterator<Item = Stateful<Div>>,
-) -> Div {
-    let origin = PillOrigin::default();
-    let row = row.relative().child(pill_origin(&origin)).children(
-        tabs.into_iter()
-            .enumerate()
-            .map(|(i, tab)| tab.child(pill_probe(id, i, origin.clone()))),
-    );
-    let accent = look().accent;
-    let pill = sliding_pill(id, active, move || {
-        div()
-            .absolute()
-            .top(px(top))
-            .h(px(h))
-            .rounded(px(radius::CONTROL))
-            .bg(grad(180., white(0.16), white(0.07)))
-            .border_1()
-            .border_color(white(edge::STRONG))
-            .shadow(glows(vec![
-                gpui::BoxShadow {
-                    color: gpui::white().opacity(0.18),
-                    offset: gpui::point(px(0.), px(1.)),
-                    blur_radius: px(0.),
-                    spread_radius: px(0.),
-                    inset: true,
-                },
-                gpui::BoxShadow {
-                    color: color(accent).opacity(0.45),
-                    offset: gpui::point(px(0.), px(6.)),
-                    blur_radius: px(18.),
-                    spread_radius: px(-8.),
-                    inset: false,
-                },
-            ]))
-    });
-    // The pill first, so the names are drawn over it.
-    div().relative().children(pill).child(row)
-}
-
 /// A segmented control in the glass look (the site's): white at 4 % round at 12, 3 px around
-/// 32 px options round at 9; the chosen one's place is held by a pill in the accent's tint that
-/// slides to it when the choice changes, and the labels stay put.
+/// 32 px options round at 9; the chosen one in the accent's tint.
 pub fn segments<T: Copy + PartialEq + 'static>(
     id: &'static str,
     options: &[(T, &'static str)],
@@ -1590,7 +1581,6 @@ pub fn segments<T: Copy + PartialEq + 'static>(
     t: &Theme,
     on_pick: impl Fn(T, &mut Window, &mut App) + Clone + 'static,
 ) -> Stateful<Div> {
-    let origin = PillOrigin::default();
     let mut seg = div()
         .id(id)
         .relative()
@@ -1598,18 +1588,16 @@ pub fn segments<T: Copy + PartialEq + 'static>(
         .flex_none()
         .gap(px(2.))
         .p(px(3.))
-        .rounded(px(radius::LARGE))
+        .rounded(px(rad(radius::LARGE)))
         .bg(white(0.04))
         .border_1()
-        .border_color(white(edge::REST))
-        .child(pill_origin(&origin));
-    for (i, &(value, label)) in options.iter().enumerate() {
+        .border_color(white(edge::REST));
+    for &(value, label) in options {
         let active = current == value;
         let pick = on_pick.clone();
-        let origin = origin.clone();
-        let key = id.to_string();
+        let option = SharedString::from(format!("{id}-{label}"));
         let d = div()
-            .id(SharedString::from(format!("{id}-{label}")))
+            .id(option.clone())
             .relative()
             .flex()
             .flex_none()
@@ -1617,41 +1605,73 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .justify_center()
             .h(px(32.))
             .px(px(12.))
-            .rounded(px(radius::CONTROL - 1.))
+            .rounded(px(rad(radius::CONTROL - 1.)))
             .cursor_pointer()
             .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(13.5))
             .line_height(px(20.))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(white(if active { ink::FULL } else { ink::MUTED }))
-            .when(!active, |d| d.hover(|s| s.text_color(white(ink::FULL))))
-            .child(crate::tr(label))
-            .child(pill_probe(key, i, origin))
-            .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx));
-        seg = seg.child(keyboard(d, t));
-    }
-    let active = options
-        .iter()
-        .position(|&(value, _)| value == current)
-        .unwrap_or(0);
-    let pill = sliding_pill(id, active, || {
-        div()
-            .absolute()
-            .top(px(3.))
-            .bottom(px(3.))
-            .rounded(px(radius::CONTROL - 1.))
             .border_1()
-            .border_color(color(look().accent).opacity(0.6))
-            .bg(color(look().accent).opacity(0.2))
-            .shadow(glows(vec![gpui::BoxShadow {
-                color: color(look().accent).opacity(0.8),
-                offset: gpui::point(px(0.), px(4.)),
-                blur_radius: px(14.),
-                spread_radius: px(-6.),
-                inset: false,
-            }]))
-    });
-    seg.children(pill)
+            .text_color(white(if active { ink::FULL } else { ink::MUTED }))
+            .when(active, |d| {
+                d.border_color(color(look().accent).opacity(0.6))
+                    .bg(color(look().accent).opacity(0.2))
+            })
+            .when(!active, |d| {
+                d.border_color(gpui::transparent_black())
+                    .hover(|s| s.text_color(white(ink::FULL)))
+                    .child(hover_edge(&option, radius::CONTROL - 1., 0.06, false))
+            })
+            .child(div().relative().child(crate::tr(label)))
+            .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx));
+        seg = seg.child(keyboard(track_hover(d, option.clone()), t));
+    }
+    seg
+}
+
+/// A 2 px line along a panel's top (absolute) with a short accent segment sweeping across it:
+/// shown the moment a wait starts, so a click answers at once, and taking no room.
+pub fn loading_line() -> impl IntoElement {
+    div()
+        .absolute()
+        .top_0()
+        .left(px(rad(radius::PANEL)))
+        .right(px(rad(radius::PANEL)))
+        .h(px(2.))
+        .overflow_hidden()
+        .child({
+            let segment = div()
+                .absolute()
+                .top_0()
+                .h_full()
+                .w(gpui::relative(0.3))
+                .bg(color(look().accent));
+            // Reduced motion: the segment holds still in sight.
+            if crate::motion::still() {
+                segment.left(gpui::relative(0.35)).into_any_element()
+            } else {
+                segment
+                    .with_animation(
+                        "loading-line",
+                        gpui::Animation::new(std::time::Duration::from_millis(1100))
+                            .repeat()
+                            .with_easing(gpui::ease_in_out),
+                        |d, p| d.left(gpui::relative(-0.3 + 1.3 * p)),
+                    )
+                    .into_any_element()
+            }
+        })
+}
+
+/// `d` dimmed while a slow wait runs (search `n`): unchanged for its first 200 ms, then easing
+/// to half, so a quick answer swaps what is shown with nothing in between.
+pub fn waiting(d: Div, n: usize) -> AnyElement {
+    d.with_animation(
+        ElementId::named_usize("waiting", n),
+        gpui::Animation::new(std::time::Duration::from_millis(400)),
+        |d, p| d.opacity(1. - 0.5 * ((p - 0.5) * 2.).clamp(0., 1.)),
+    )
+    .into_any_element()
 }
 
 /// A page's head (`PageHead`): its title in Bricolage, 46 px at this width
@@ -1708,7 +1728,7 @@ impl Render for Tip {
             .max_w(px(360.))
             .px(px(10.))
             .py(px(6.))
-            .rounded(px(radius::CONTROL))
+            .rounded(px(rad(radius::CONTROL)))
             .bg(rgb(look().base))
             .border_1()
             .border_color(white(0.12))
@@ -1723,22 +1743,4 @@ impl Render for Tip {
 pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
     let label: SharedString = label.into();
     move |_, cx| cx.new(|_| Tip(label.clone())).into()
-}
-
-#[cfg(test)]
-mod hover_back_tests {
-    use super::back_phase;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn plays_while_on_and_briefly_after() {
-        let len = Duration::from_millis(150);
-        assert_eq!(back_phase(None, len), None);
-        let now = Instant::now();
-        assert!(back_phase(Some((true, now)), len).is_some());
-        assert!(back_phase(Some((false, now)), len).is_some());
-        let old = now - Duration::from_secs(1);
-        assert!(back_phase(Some((true, old)), len).is_some());
-        assert_eq!(back_phase(Some((false, old)), len), None);
-    }
 }

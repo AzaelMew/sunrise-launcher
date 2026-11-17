@@ -199,7 +199,7 @@ impl Launcher {
                 .relative()
                 .flex_none()
                 .size(px(36.))
-                .rounded(px(9.))
+                .rounded(px(crate::glass_ui::rad(9.)))
                 .overflow_hidden()
                 .child(self.mod_icon(row.entry.as_ref(), row.icon.clone(), 36.))
                 .into_any_element()
@@ -284,7 +284,7 @@ impl Launcher {
                     .relative()
                     .flex()
                     .items_center()
-                    .rounded(px(radius::CONTROL)),
+                    .rounded(px(crate::glass_ui::rad(radius::CONTROL))),
             )
             .child(menu)
             .text_color(white(1.))
@@ -377,7 +377,7 @@ impl Launcher {
                 .items_center()
                 .h(px(28.))
                 .px(px(8.))
-                .rounded(px(radius::SMALL))
+                .rounded(px(crate::glass_ui::rad(radius::SMALL)))
                 .cursor_pointer()
                 .bg(facts.color().opacity(if open { 0.2 } else { 0. }))
                 .hover(|s| s.bg(white(0.07)))
@@ -605,7 +605,7 @@ fn kind_pill(kind: ModKind) -> Div {
         .items_center()
         .h(px(20.))
         .px(px(8.))
-        .rounded_full()
+        .rounded(px(ui::rad(10.)))
         .bg(white(0.07))
         .child(ui::text(11., FontWeight::MEDIUM, 0.6).child(kind.label()))
 }

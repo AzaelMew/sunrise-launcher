@@ -524,8 +524,6 @@
   "Modrinth's modpack format: resource packs from Modrinth are listed by their download, the rest is carried in it.": "Modrinth'S modpack forma: resource sarcinas aModrintheorum download recensentur, reliqua in eo portantur.",
   "Mods": "Mods",
   "Mods and shader packs made for Sunrise from its own reviewed registry, and resource packs from Modrinth. Each file is checked against its source's checksum before it reaches your game folder.": "Mods et shader sarcinae factae forSunrisee proprio registro recognitum, et subsidiorum sarcinas aModrinth. Quisque fasciculus inhibetur contra checksum sui fontis antequam ad ludum folder perveniat.",
-  "Mojang could not confirm your account. Sign in again and retry.": "Mojangvestram non confirmant. Inscribe iterum atque retry.",
-  "Mojang's session server is not answering. Try again later.": "MojangSessionem server non respondet. Conare iterum postea.",
   "Mojang's version list isn't here yet.": "MojangIn indice versionis nondum est hic.",
   "More": "Plura",
   "Most players at once": "Maxime histriones simul",
@@ -873,7 +871,6 @@
   "Sign in with Microsoft": "Sign in withMicrosoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Inscribe cum `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Sign in cum aMicrosoftideo non solumMinecraft:JavaEdition ludere",
-  "Sign in with a Minecraft account first.": "Sign in cum aMinecraftideo prius.",
   "Sign in with the account that owns Minecraft: Java Edition. Your name and skin come along to online servers, like in other launchers.": "Sign in cum ratione quae possidetMinecraft:JavaEditio altera. Tuum nomen et pellis pervenerunt ad servientes online, sicut in aliis launchers.",
   "Sign out": "Exire",
   "Sign-in not checked": "Adscribe in not sedatus",
@@ -1275,5 +1272,9 @@
   "The launcher's look is reset for now, but it could not be saved": "Vultus Launcher nunc restitutus est, sed servari non potuit",
   "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Vitrum et Obscuratio tabulata vitrea speciei obscurae formant; lucida tabulata alba solida pingit.",
   "Performance mode draws solid panels, without glass or blur.": "Modus efficientiae tabulata solida pingit, sine vitro et obscurazione.",
-  "This theme's night draws solid panels, without glass or blur.": "Nox huius tematis tabulata solida pingit, sine vitro et obscurazione."
+  "This theme's night draws solid panels, without glass or blur.": "Nox huius tematis tabulata solida pingit, sine vitro et obscurazione.",
+  "The game is already running.": "The game is already running.",
+  "Choose a version on the Versions page first.": "Choose a version on the Versions page first.",
+  "Wait for the preparation to finish, then press Play.": "Wait for the preparation to finish, then press Play.",
+  "{version} isn't prepared yet: choose Prepare in Play's menu.": "{version} isn't prepared yet: choose Prepare in Play's menu."
 }

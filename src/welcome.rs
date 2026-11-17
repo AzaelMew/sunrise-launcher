@@ -1,5 +1,5 @@
 //! The first-run welcome: before the data question, the player picks how the launcher looks:
-//! theme, accent, each flourish (glow, gradients, the hover shine), motion and the "I'm playing"
+//! theme, accent, motion and the "I'm playing"
 //! ping (pinned above Continue, with what it sends one click away). The rows are Settings' own,
 //! so a choice made here is the same one Settings shows later.
 use super::*;
@@ -28,7 +28,6 @@ impl Launcher {
         let (rows, ping) = ui::flat_rows(|| {
             let mut rows = vec![self.launcher_theme_row(cx), self.glass_accent_row(cx)];
             rows.push(self.motion_row(cx));
-            rows.extend(self.effects_rows(cx));
             // Not in the scrolling list: it stays in view above Continue.
             let detail = div()
                 .flex()
@@ -96,28 +95,12 @@ impl Launcher {
             .px(px(16.))
             .overflow_y_scroll()
             .children(rows);
-        // A fade at the foot says the list goes on under it.
-        let fade = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .right_0()
-            .h(px(36.))
-            .bg(gpui::linear_gradient(
-                180.,
-                gpui::linear_color_stop(ui::scrim().opacity(0.), 0.),
-                gpui::linear_color_stop(
-                    ui::scrim().opacity(if ui::light() { 0.2 } else { 0.5 }),
-                    1.,
-                ),
-            ));
         let body = self
             .collection
             .welcome_scroll
             .wrap(body, &t)
             .flex_1()
-            .min_h_0()
-            .child(fade);
+            .min_h_0();
         // Pinned between the scrolling list and the buttons, so it is seen before Continue.
         let ping = div()
             .flex()
@@ -155,19 +138,6 @@ impl Launcher {
                                 &((p.clamp(0., 1.) * 100.).round() as u32).to_string(),
                             )],
                         ))
-                    }))
-                    .child(
-                        ui::text(12., FontWeight::NORMAL, ink::BODY)
-                            .child(tr("Fewer effects turns off glow, gradients and shine.")),
-                    ),
-            )
-            .child(
-                button("welcome-calm", "Fewer effects", Kind::Secondary, &t)
-                    .tooltip(ui::tip(tr("Turns off glow, gradients and shine")))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.settings.effects = sunrise_launcher::effects::Effects::CALM;
-                        this.save_settings();
-                        cx.notify();
                     })),
             )
             .child(
