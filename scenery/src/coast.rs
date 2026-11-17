@@ -21,7 +21,7 @@ const BEAT: Duration = Duration::from_millis(180);
 /// How long the scene keeps moving after the window loses focus.
 const UNFOCUSED: Duration = Duration::from_secs(10);
 /// The horizon, as a share of the height; the sun's radius as one too.
-const SUNRISE: f32 = 0.82;
+const SKY_SHARE: f32 = 0.82;
 const SUN_RADIUS: f32 = 0.10;
 const SUN_X: f32 = 0.74;
 /// The island's blocks, in texels, and each column's height in blocks from the left edge.
@@ -285,7 +285,7 @@ struct Layout {
 }
 
 fn layout(cols: usize, rows: usize) -> Layout {
-    let sunrise = (rows as f32 * SUNRISE).round() as usize;
+    let sunrise = (rows as f32 * SKY_SHARE).round() as usize;
     let r = (rows as f32 * SUN_RADIUS).max(6.);
     Layout {
         sunrise,
