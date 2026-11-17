@@ -46,8 +46,8 @@ pub(super) enum Event {
     Progress(String, f32),
     Done(Result<String, String>, bool),
     Updates(HashMap<(SourceId, String), String>),
-    /// A Java mod's check: its jar read, or why it couldn't be.
-    Checked((SourceId, String), Result<Box<Check>, String>),
+    /// A Java mod's check (its jar read, or why it couldn't be), for the Minecraft version it picked the jar for.
+    Checked((SourceId, String), String, Result<Box<Check>, String>),
     /// What a Sunrise registry project says before install: signed or not, what it may do.
     About(HashMap<String, Vec<String>>),
     /// Registry files taken down that the launcher turned off.
@@ -459,13 +459,15 @@ impl Launcher {
                     }
                 }
                 Event::Updates(found) => m.updates = found,
-                Event::Checked(key, result) => {
+                // A check for another Minecraft version than the page's (the instance moved) is dropped.
+                Event::Checked(key, game, result) if game == m.game => {
                     let state = match result {
                         Ok(c) => Checking::Done(c),
                         Err(e) => Checking::Failed(e),
                     };
                     m.checks.insert(key, state);
                 }
+                Event::Checked(..) => {}
                 Event::Loaded(l) => loaded.push(l),
                 Event::About(about) => {
                     // Rows grow by a line: measure them again (`cull`).
@@ -562,6 +564,10 @@ impl Launcher {
                 }
             }
         };
+        // Checks are of the jar picked for one Minecraft version: another version checks again.
+        if m.game != query.game {
+            m.checks.clear();
+        }
         m.game = query.game.clone();
         // A Java instance's files are Modrinth's; Sunrise's registry is for Sunrise.
         let source = match m.java_for(m.kind) {
@@ -746,7 +752,7 @@ impl Launcher {
                                     )));
                             }
                             let result = result.map(|(_, check)| Box::new(check));
-                            let _ = tx.send(Event::Checked((p.source, p.id), result));
+                            let _ = tx.send(Event::Checked((p.source, p.id), game.clone(), result));
                         }
                     });
                 }
