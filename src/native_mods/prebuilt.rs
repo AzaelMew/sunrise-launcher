@@ -460,6 +460,10 @@ fn facade_refused(krate: &str) -> String {
 /// the dylib links the game's crates only through `sunrise_mod_host`.
 pub(super) const PATCH_HOST_LINK: &str = "\nextern crate sunrise_mod_host as _;\n";
 
+/// The game's one wasmtime is code only inside `libsunrise_mod_wasm` (`sunrise-wasmtime` is metadata in `deps/`), so a
+/// mod that names it links that library: edition 2024 loads an `--extern` only when the source names it.
+pub(super) const WASMTIME_LINK: &str = "\nextern crate sunrise_mod_wasm as _;\n";
+
 pub(super) fn facade_library(deps: &Path, krate: &str, sdk: &Identity) -> Result<PathBuf, String> {
     if !sdk.facade_crates.contains(krate) {
         return Err(facade_refused(krate));
@@ -730,6 +734,7 @@ pub(super) fn compile(
     let game_library = library(&deps, "sunrise_client")?;
     let mut facades = std::collections::HashMap::new();
     libraries.insert("mod_vocab", library(&deps, "mod_vocab")?);
+    libraries.insert("sunrise_mod_wasm", library(&deps, "sunrise_mod_wasm")?);
     let mut rlibs: std::collections::HashMap<&str, PathBuf> = std::collections::HashMap::new();
     let mut crate_names: std::collections::HashMap<&str, String> = std::collections::HashMap::new();
     for (n, &index) in resolution.order.iter().enumerate() {
@@ -941,6 +946,13 @@ pub(super) fn compile_mod<'a>(
     root.push_str(
         "\n#[allow(unsafe_code)]\n#[path = \"__sunrise_entry.rs\"] mod __sunrise_entry;\n",
     );
+    if project.uses_wasmtime() {
+        root.push_str(WASMTIME_LINK);
+        cmd.arg("--extern").arg(format!(
+            "sunrise_mod_wasm={}",
+            library("sunrise_mod_wasm").display()
+        ));
+    }
     fs::write(&source, root).map_err(|e| e.to_string())?;
     cmd.args(["--crate-type", "dylib", "--crate-name", &krate])
         .arg("-C")

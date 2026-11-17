@@ -32,7 +32,8 @@ pub(super) fn compile(
         |edition: &str| prebuilt::rustc_with(rust, &[&deps, &host, &runtime_deps, out], edition);
     let mut libraries = HashMap::new();
     for (package, name) in api::PACKAGES {
-        if package != api::INTERNALS_PACKAGE {
+        // The API route has no game's wasmtime: only a mod with a `[[native.*]]` row may name it.
+        if package != api::INTERNALS_PACKAGE && package != api::WASMTIME_PACKAGE {
             libraries.insert(name, prebuilt::library(&runtime_deps, name)?);
         }
     }

@@ -376,6 +376,13 @@ impl<'a> Project<'a> {
         dependency_tables(&self.cargo)
     }
 
+    /// Whether the mod links the game's wasmtime ([`WASMTIME_PACKAGE`]).
+    pub(super) fn uses_wasmtime(&self) -> bool {
+        self.api_deps
+            .iter()
+            .any(|api| api.package == WASMTIME_PACKAGE)
+    }
+
     /// The names the mod's code calls the game's packages by (`mod_api` or a
     /// renamed dependency's key), each with its package's library name.
     pub(super) fn api_dependencies(&self) -> std::collections::BTreeSet<(String, &'static str)> {
