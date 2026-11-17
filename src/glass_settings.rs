@@ -344,7 +344,7 @@ impl Launcher {
                         .h(px(44.))
                         .px(px(14.))
                         .cursor_pointer()
-                        .font_family(sunrise_theme::glass::FONT)
+                        .font_family(sunrise_launcher_theme::glass::FONT)
                         .text_size(px(14.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(white(ink::FULL))

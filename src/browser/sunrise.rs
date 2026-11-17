@@ -45,11 +45,11 @@ pub fn check_file(
 }
 
 /// Where the registry publishes its index (GitHub Pages of sunrise-org/sunrise-mods).
-pub const INDEX_URL: &str = sunrise_addresses::MOD_INDEX;
+pub const INDEX_URL: &str = sunrise_launcher_addresses::MOD_INDEX;
 /// The registry's pages on the website, `<SITE>/<id>`.
-const SITE: &str = sunrise_addresses::MOD_PAGES;
+const SITE: &str = sunrise_launcher_addresses::MOD_PAGES;
 /// The report form of a project.
-const REPORT: &str = sunrise_addresses::MOD_REPORT;
+const REPORT: &str = sunrise_launcher_addresses::MOD_REPORT;
 /// The loader name the browser gives registry versions, so `support` and `pick` know them.
 pub const LOADER: &str = "sunrise";
 /// How long a fetched index is used before it is fetched again.
