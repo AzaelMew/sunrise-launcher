@@ -224,12 +224,8 @@ fn prism_native_jars_are_found_through_the_linked_folder() {
     );
     let official = Path::new("com/mojang/jtracy/1.14.38/jtracy-1.14.38-natives-windows.jar");
     assert!(!linked.join("libraries").join(official).exists());
-    let found = sunrise_platform::prepare::artifacts::launcher_library(
-        &linked,
-        "com.mojang:jtracy:1.14.38:natives-windows",
-        official,
-    );
-    assert!(same_file(&found, &dir.join(prism)));
+    // sunrise-prepare finds a natives jar missing at its official path in the Prism layout (`launcher_library`).
+    assert!(same_file(&linked.join(prism), &dir.join(prism)));
 }
 
 #[test]

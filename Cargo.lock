@@ -6023,7 +6023,6 @@ dependencies = [
  "sunrise-mod-vocab",
  "sunrise-native-build",
  "sunrise-platform",
- "sunrise-prepare",
  "syn 2.0.119",
  "sys-locale",
  "tar",
@@ -6332,21 +6331,7 @@ dependencies = [
  "sunrise-mod-api-gen",
  "sunrise-mod-point-shape",
  "sunrise-perf-format",
- "sunrise-prepare",
  "sunrise-system",
-]
-
-[[package]]
-name = "sunrise-prepare"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "libc",
- "regex",
- "sha1",
- "sha2",
- "sunrise-core",
- "zip",
 ]
 
 [[package]]

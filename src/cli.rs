@@ -1466,16 +1466,9 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             let (preparer, minecraft) =
                 backend::preparer(&tag, &minecraft, from, &|line| eprintln!("{line}"))?;
             backend::sounds(&tag, &minecraft, &|line| println!("{line}"));
-            match preparer {
-                backend::Preparer::Process(cmd) => {
-                    let code = attached(cmd)?;
-                    if code != 0 {
-                        return Ok(code);
-                    }
-                }
-                backend::Preparer::InProcess(options) => {
-                    backend::prepare_in_process(&options, &|line| println!("{line}"))?
-                }
+            let code = attached(preparer)?;
+            if code != 0 {
+                return Ok(code);
             }
             println!("{tag} is prepared.");
         }
