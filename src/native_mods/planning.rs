@@ -149,6 +149,8 @@ pub struct UpdateCheck {
     /// The worlds saved with a mod the update would switch off: then backing them up is the
     /// other choice to staying.
     pub worlds: Vec<String>,
+    /// A mod the tool refuses on any build: `summary` names it, and there is no update to take until it is fixed or removed.
+    pub blocked: bool,
 }
 
 /// [`UpdateCheck`] for the native mods turned on in game folder `home`, on the installed release
@@ -175,7 +177,17 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
         None => Checks::default(),
     };
     let shown = sdk.shown();
-    let left = update_left_out(&found, &checks)?;
+    let left = match update_left_out(&found, &checks) {
+        Ok(left) => left,
+        Err(refusal) => {
+            return Ok(UpdateCheck {
+                to: to.to_owned(),
+                summary: refusal,
+                worlds: Vec::new(),
+                blocked: true,
+            })
+        }
+    };
     let off: Vec<(String, String)> = left
         .iter()
         .map(|l| {
@@ -200,5 +212,6 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
         to: to.to_owned(),
         summary: fit::update_summary(&shown, found.len(), &off),
         worlds,
+        blocked: false,
     })
 }

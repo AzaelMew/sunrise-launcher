@@ -304,6 +304,10 @@ impl Launcher {
             .flex_col()
             .gap(px(8.))
             .child(text_in(13., pal.ink).child(check.summary.clone()));
+        // A refused mod stops any build: the card says which and why, and offers no update.
+        if check.blocked {
+            return self.panel().child(body.child(div().flex().child(stay)));
+        }
         if back_up {
             body = body.child(
                 text_in(13., pal.warn).child(native_mods::fit::update_worlds(&check.worlds)),

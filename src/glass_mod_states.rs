@@ -310,6 +310,7 @@ impl Launcher {
                     to,
                     summary,
                     worlds,
+                    blocked: false,
                 });
                 self.mod_preview.state = Some(native_status::State::UpToDate);
             }
