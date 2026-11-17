@@ -123,17 +123,49 @@ fn run(
         .stderr(Stdio::piped());
     let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
     let stderr = child.child().stderr.take().expect("piped");
-    let errors = std::thread::spawn(move || {
-        BufReader::new(stderr)
-            .lines()
-            .map_while(Result::ok)
-            .collect::<Vec<_>>()
-    });
-    for text in BufReader::new(child.child().stdout.take().expect("piped")).lines() {
-        out(text.map_err(unrun)?);
+    let errors = std::thread::spawn(move || tail(stderr));
+    let mut read = 0;
+    for text in lines(child.child().stdout.take().expect("piped")) {
+        let text = text.map_err(unrun)?;
+        read += text.len();
+        // Past the cap the rest is drained unread, so the preparer never blocks on a full pipe.
+        if read <= MAX_OUTPUT {
+            out(text);
+        }
     }
     let status = child.wait().map_err(unrun)?;
     Ok((status, errors.join().unwrap_or_default()))
+}
+
+/// The most a preparer's standard output is read for, and the most of its error output kept (its last lines).
+const MAX_OUTPUT: usize = 8 << 20;
+const MAX_ERRORS: usize = 16 << 10;
+/// The longest line kept whole; a longer one is cut.
+const MAX_LINE: usize = 64 << 10;
+
+/// `stream`'s lines, each read lossily (bytes that aren't UTF-8 become U+FFFD) and cut at [`MAX_LINE`].
+fn lines(stream: impl std::io::Read) -> impl Iterator<Item = std::io::Result<String>> {
+    BufReader::new(stream).split(b'\n').map(|line| {
+        line.map(|mut bytes| {
+            bytes.truncate(MAX_LINE);
+            let text = String::from_utf8_lossy(&bytes);
+            text.trim_end_matches('\r').to_owned()
+        })
+    })
+}
+
+/// The last lines of `stream`, at most [`MAX_ERRORS`] bytes of them.
+fn tail(stream: impl std::io::Read) -> Vec<String> {
+    let mut kept = std::collections::VecDeque::new();
+    let mut size = 0;
+    for line in lines(stream).map_while(Result::ok) {
+        size += line.len();
+        kept.push_back(line);
+        while size > MAX_ERRORS {
+            size -= kept.pop_front().map_or(0, |line| line.len());
+        }
+    }
+    kept.into()
 }
 
 /// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't); its log lines go to `line`.
@@ -357,5 +389,26 @@ esac"#,
         assert_eq!(needs(&old, &dir, &log).unwrap(), None);
         assert_eq!(sounds(&old, &dir, &dir, &log).unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn output_is_read_lossily_and_only_the_last_errors_are_kept() {
+        let mixed = b"plain\n\xff\xfe broken\r\nlast".as_slice();
+        let read: Vec<String> = lines(mixed).map(Result::unwrap).collect();
+        assert_eq!(read, ["plain", "\u{fffd}\u{fffd} broken", "last"]);
+        let long = format!("{}\n", "x".repeat(MAX_LINE + 10));
+        assert_eq!(
+            lines(long.as_bytes()).next().unwrap().unwrap().len(),
+            MAX_LINE
+        );
+        let many: String = (0..2000)
+            .map(|n| format!("line {n:04} {}\n", "y".repeat(40)))
+            .collect();
+        let kept = tail(many.as_bytes());
+        assert_eq!(
+            kept.last().map(String::as_str),
+            Some(&*format!("line 1999 {}", "y".repeat(40)))
+        );
+        assert!(kept.iter().map(String::len).sum::<usize>() <= MAX_ERRORS);
     }
 }

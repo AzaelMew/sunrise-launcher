@@ -1880,7 +1880,10 @@ fn complete_assets_in(
                     .iter()
                     .find(|(k, _)| *k == kind)
                     .map_or(kind.as_str(), |(_, what)| what.as_str());
-                log(format!("{tag}: {what} not added: {error}"));
+                log(crate::i18n::trf(
+                    "{version}: {what} not added: {error}",
+                    &[("version", tag), ("what", what), ("error", &error)],
+                ));
             }
         }
         Ok(None) => {}
@@ -3907,6 +3910,42 @@ pub fn spawn_attached(cmd: &mut Command) -> std::io::Result<std::process::Child>
 }
 
 pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String> {
+    spawn_holding(job, cmd, tx, None)
+}
+
+/// Holds `version`'s preparation lock, so a second preparation of it can't start while one runs; it is released when the guard drops.
+pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+    prepare_lock_at(&version_dir(version), version)
+}
+
+fn prepare_lock_at(
+    dir: &Path,
+    version: &str,
+) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+    let path = dir.join(".preparing.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    sunrise_launcher_smod::locks::locked(file, sunrise_launcher_smod::locks::LockMode::Exclusive)
+        .map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => crate::i18n::trf(
+                "Sunrise {version} is already being prepared.",
+                &[("version", version)],
+            ),
+            std::fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
+        })
+}
+
+/// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
+pub fn spawn_holding(
+    job: Job,
+    cmd: Command,
+    tx: Sender<Msg>,
+    hold: Option<sunrise_launcher_smod::locks::Locked>,
+) -> Result<Running, String> {
     let (mut cmd, runtime) = prepare_command(cmd)?;
     #[cfg(unix)]
     {
@@ -3918,6 +3957,11 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = play_log::spawn(&mut cmd)?;
+    let pid = child.id();
+    let group = matches!(job, Job::Prepare);
+    if group {
+        crate::process::owned::CHILDREN.track_group(pid);
+    }
     let stdin = child.stdin.take();
     let mut readers = Vec::new();
     let out = child
@@ -3954,6 +3998,10 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
             Err(e) => Err(e.to_string()),
         };
         drop(runtime);
+        if group {
+            crate::process::owned::CHILDREN.release(pid);
+        }
+        drop(hold);
         let _ = tx.send(Msg::Exit(job, result));
     });
     Ok(Running { child, stdin })
@@ -6295,6 +6343,24 @@ pub fn {f}("
         fs::write(dir.join(RESOURCES_MANIFEST), "").unwrap();
         assert!(!prepared_at(&dir), "an empty manifest is not prepared");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_version_is_prepared_once_at_a_time() {
+        let dir = std::env::temp_dir().join(format!(
+            "sunrise-launcher-prepare-lock-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let first = prepare_lock_at(&dir, "v1").unwrap();
+        let second = prepare_lock_at(&dir, "v1").err().unwrap();
+        assert!(second.contains("already being prepared"), "{second}");
+        drop(first);
+        assert!(
+            prepare_lock_at(&dir, "v1").is_ok(),
+            "free once the first ends"
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
