@@ -104,23 +104,22 @@ pub(super) fn classify(
     Ok(result)
 }
 
-/// The mods an update leaves out: the unfit and the refused, then every mod that needs one of them.
-pub(super) fn update_left_out(found: &[Bundle], checks: &Checks) -> Vec<LeftOut> {
-    let left_out = |id: &str, why: String| {
-        let bundle = found.iter().find(|b| b.manifest.id == id)?;
-        Some(LeftOut::new(bundle, isolate::Why::Unfit(why)))
-    };
+/// The mods an update leaves out: the unfit, then every mod that needs one of them. A mod the tool refuses can't be built on any build, so it stops the update as it stops a build, by name.
+pub(super) fn update_left_out(found: &[Bundle], checks: &Checks) -> Result<Vec<LeftOut>, String> {
+    if let Some((id, why)) = checks.refusals.first() {
+        return Err(refusal_text(id, why));
+    }
     let unfit: Vec<LeftOut> = checks
         .verdicts
         .iter()
         .filter(|(_, verdict)| !verdict.usable())
-        .filter_map(|(id, verdict)| left_out(id, fit::short(verdict)))
-        .chain(
-            checks
-                .refusals
-                .iter()
-                .filter_map(|(id, why)| left_out(id, why.clone())),
-        )
+        .filter_map(|(id, verdict)| {
+            let bundle = found.iter().find(|b| &b.manifest.id == id)?;
+            Some(LeftOut::new(
+                bundle,
+                isolate::Why::Unfit(fit::short(verdict)),
+            ))
+        })
         .collect();
     let declared: Vec<Vec<dependencies::Dependency>> = found
         .iter()
@@ -136,7 +135,7 @@ pub(super) fn update_left_out(found: &[Bundle], checks: &Checks) -> Vec<LeftOut>
         .zip(&declared)
         .map(|(b, d)| (b, d.as_slice()))
         .collect();
-    isolate::with_dependents(&unfit, &pairs)
+    Ok(isolate::with_dependents(&unfit, &pairs))
 }
 
 /// What updating an instance's native mods to a newer release or Nightly would do, told before
@@ -176,7 +175,7 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
         None => Checks::default(),
     };
     let shown = sdk.shown();
-    let left = update_left_out(&found, &checks);
+    let left = update_left_out(&found, &checks)?;
     let off: Vec<(String, String)> = left
         .iter()
         .map(|l| {

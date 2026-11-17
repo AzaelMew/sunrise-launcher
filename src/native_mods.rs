@@ -1616,9 +1616,11 @@ fn pipeline(
                 let route = match route.clone() {
                     Some(route) => route,
                     None => {
-                        check_all(&incoming, &ids, sdk, &sdk_base)
-                            .map_err(refused)?
-                            .route
+                        let checks = check_all(&incoming, &ids, sdk, &sdk_base).map_err(refused)?;
+                        if let Some((id, why)) = checks.refusals.first() {
+                            return Err(refusal_text(id, why).into());
+                        }
+                        checks.route
                     }
                 }
                 .ok_or_else(|| {
@@ -3428,7 +3430,7 @@ mod tests {
     }
 
     #[test]
-    fn an_update_leaves_out_refused_mods_and_the_mods_that_need_them() {
+    fn an_update_leaves_out_unfit_mods_and_their_dependents_and_stops_on_a_refused_one() {
         let root = dir("update-left-out");
         let bundle = |id: &str, needs: &str| {
             let folder = root.join(id);
@@ -3443,17 +3445,31 @@ mod tests {
         };
         let found = [
             bundle("fine", ""),
+            bundle("old", ""),
+            bundle("addon", "old"),
             bundle("scripted", ""),
-            bundle("addon", "scripted"),
         ];
-        let checks = Checks {
-            verdicts: vec![("fine".into(), fit::Verdict::MadeFor)],
-            refusals: vec![("scripted".into(), "build scripts aren't allowed".into())],
+        let exact = fit::Verdict::Exact {
+            made_for: "b".into(),
+            why: "internals".into(),
+        };
+        let mut checks = Checks {
+            verdicts: vec![
+                ("fine".into(), fit::Verdict::MadeFor),
+                ("old".into(), exact),
+            ],
+            refusals: Vec::new(),
             route: Some("prebuilt-api".into()),
         };
-        let left = planning::update_left_out(&found, &checks);
+        let left = planning::update_left_out(&found, &checks).unwrap();
         let ids: Vec<&str> = left.iter().map(|l| l.id.as_str()).collect();
-        assert_eq!(ids, ["scripted", "addon"]);
+        assert_eq!(ids, ["old", "addon"]);
+        checks.refusals = vec![("scripted".into(), "build scripts aren't allowed".into())];
+        let stopped = planning::update_left_out(&found, &checks).err().unwrap();
+        assert!(
+            stopped.contains("scripted") && stopped.ends_with("build scripts aren't allowed"),
+            "{stopped}"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
