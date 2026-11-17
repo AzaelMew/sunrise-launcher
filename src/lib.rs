@@ -29,6 +29,7 @@ pub mod instances;
 pub mod instances_mrpack;
 pub mod java;
 pub mod java_launch;
+pub mod jdk;
 pub mod launch;
 pub mod loaders;
 #[cfg(target_os = "macos")]
@@ -47,6 +48,7 @@ pub mod other_launchers;
 pub mod packs;
 pub mod pictures;
 pub mod porter;
+pub mod preparer;
 pub mod private_window;
 pub mod process;
 pub mod proxy;

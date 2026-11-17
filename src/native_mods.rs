@@ -1944,7 +1944,7 @@ fn copy_runtime(from: &Path, to: &Path) -> std::io::Result<()> {
         if entry.file_type()?.is_dir() {
             copy_runtime(&entry.path(), &destination)?;
         } else {
-            sunrise_prepare::clone_or_copy(&entry.path(), &destination)?;
+            crate::preparer::clone_or_copy(&entry.path(), &destination)?;
             fs::set_permissions(&destination, entry.metadata()?.permissions())?;
         }
     }
@@ -1973,7 +1973,7 @@ pub(crate) fn copy_base(
             backend::copy_dir(&entry.path(), &to)
         } else {
             // A clone is a new file: sunrise-ctl and sunrise-server keep their permissions.
-            sunrise_prepare::clone_or_copy(&entry.path(), &to)
+            crate::preparer::clone_or_copy(&entry.path(), &to)
                 .and_then(|()| fs::set_permissions(&to, entry.metadata()?.permissions()))
         };
         copied.map_err(|e| format!("Could not copy {}: {e}", entry.path().display()))?;

@@ -157,7 +157,7 @@ impl Launcher {
             .settings
             .minecraft_dir
             .clone()
-            .unwrap_or_else(|| sunrise_platform::prepare::artifacts::minecraft_dir(None));
+            .unwrap_or_else(|| sunrise_launcher::preparer::minecraft_dir(None));
         self.prepare_log.clear();
         self.prepare_error = None;
         self.prepare_log
@@ -168,29 +168,23 @@ impl Launcher {
             let log = |line| {
                 let _ = tx.send(Msg::Line(Job::Prepare, line));
             };
+            let lock = match backend::prepare_lock(&tag) {
+                Ok(lock) => lock,
+                Err(e) => {
+                    let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
+                    return;
+                }
+            };
             let result = backend::preparer(&tag, &minecraft, from, &log)
                 .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log))
                 .map(|(p, _)| {
                     backend::set_prepare_step(backend::PrepareStep::Prepare);
                     p
                 })
-                .and_then(|p| match p {
-                    backend::Preparer::Process(cmd) => {
-                        backend::spawn(Job::Prepare, cmd, tx.clone()).map(|_running| false)
-                    }
-                    backend::Preparer::InProcess(options) => {
-                        backend::prepare_in_process(&options, &log).map(|_| true)
-                    }
-                });
-            match result {
-                // A process sends its own Exit when it ends.
-                Ok(false) => {}
-                Ok(true) => {
-                    let _ = tx.send(Msg::Exit(Job::Prepare, Ok(())));
-                }
-                Err(e) => {
-                    let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
-                }
+                .and_then(|cmd| backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some(lock)));
+            // A running preparer sends its own Exit when it ends.
+            if let Err(e) = result {
+                let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));
             }
         });
         self.preparing = true;

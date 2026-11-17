@@ -52,26 +52,6 @@ fn hidden_children_report_failure_and_keep_their_logs() {
 }
 
 #[test]
-fn exporters_write_to_their_log_file_without_a_console() {
-    let root = probe().parent().unwrap();
-    let path = root.join("exporter.log");
-    let log = fs::File::create(&path).unwrap();
-    let jdk = sunrise_platform::prepare::java::Jdk {
-        java: probe().into(),
-        javac: probe().into(),
-    };
-    jdk.java(&[], Some(root), &log).unwrap();
-    let output = fs::read_to_string(path).unwrap();
-    for expected in [
-        "console_window_visible=false",
-        "stdout is captured",
-        "stderr is captured",
-    ] {
-        assert!(output.contains(expected), "missing {expected}: {output}");
-    }
-}
-
-#[test]
 fn cli_keeps_redirected_stdout_and_stderr() {
     let executable = env!("CARGO_BIN_EXE_sunrise-launcher");
     let version = process::command(executable)

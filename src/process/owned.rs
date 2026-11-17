@@ -1,76 +1,149 @@
-//! Children a worker waits on (a version's preparer and porter): the launcher stops those still running when it quits, so none outlives it.
+//! Children a worker waits on (a version's preparer and porter, a preparation's process group): the launcher stops those still running when it quits, so none outlives it.
 use std::io;
 use std::process::{Child, Command, ExitStatus};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-static RUNNING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-
-fn running() -> MutexGuard<'static, Vec<u32>> {
-    RUNNING.lock().unwrap_or_else(PoisonError::into_inner)
+/// A child process, or the process group it leads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Entry {
+    pid: u32,
+    group: bool,
 }
 
-fn forget(pid: u32) {
-    running().retain(|&running| running != pid);
+/// The children a set of workers own: the launcher's is [`CHILDREN`]; a test keeps its own.
+pub struct Registry(Mutex<Vec<Entry>>);
+
+/// The launcher's children, stopped as it quits ([`stop_all`]).
+pub static CHILDREN: Registry = Registry::new();
+
+impl Default for Registry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Registry {
+    pub const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    fn entries(&self) -> MutexGuard<'_, Vec<Entry>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Spawns `command` as a child of this registry.
+    pub fn spawn(&'static self, command: &mut Command) -> io::Result<Owned> {
+        let child = command.spawn()?;
+        self.entries().push(Entry {
+            pid: child.id(),
+            group: false,
+        });
+        Ok(Owned {
+            child,
+            registry: self,
+        })
+    }
+
+    /// Stops the process group `pid` leads (it was started in its own group) with the others, until [`Registry::release`].
+    pub fn track_group(&self, pid: u32) {
+        self.entries().push(Entry { pid, group: true });
+    }
+
+    /// Forgets `pid`, which ended.
+    pub fn release(&self, pid: u32) {
+        self.entries().retain(|entry| entry.pid != pid);
+    }
+
+    /// Stops every child and group still running.
+    pub fn stop_all(&self) {
+        for entry in std::mem::take(&mut *self.entries()) {
+            stop(entry);
+        }
+    }
+
+    #[cfg(test)]
+    fn holds(&self, pid: u32) -> bool {
+        self.entries().iter().any(|entry| entry.pid == pid)
+    }
 }
 
 /// A child the launcher stops when it quits; one dropped before it ended is stopped then.
-pub struct Owned(Child);
+pub struct Owned {
+    child: Child,
+    registry: &'static Registry,
+}
 
 impl Owned {
     pub fn spawn(command: &mut Command) -> io::Result<Self> {
-        let child = command.spawn()?;
-        running().push(child.id());
-        Ok(Self(child))
+        CHILDREN.spawn(command)
     }
 
     pub fn child(&mut self) -> &mut Child {
-        &mut self.0
+        &mut self.child
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
-        let status = self.0.wait();
-        forget(self.0.id());
+        let status = self.child.wait();
+        self.registry.release(self.child.id());
         status
     }
 }
 
 impl Drop for Owned {
     fn drop(&mut self) {
-        if matches!(self.0.try_wait(), Ok(None)) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         }
-        forget(self.0.id());
+        self.registry.release(self.child.id());
     }
 }
 
-/// Stops every owned child still running: the launcher calls it as it quits.
+/// Stops every child the launcher still runs: called as it quits.
 pub fn stop_all() {
-    for pid in std::mem::take(&mut *running()) {
-        stop(pid);
-    }
+    CHILDREN.stop_all();
 }
 
 #[cfg(unix)]
-fn stop(pid: u32) {
-    // SAFETY: a signal to a process id; the id is a child this launcher started and hasn't reaped.
+fn stop(entry: Entry) {
+    let pid = entry.pid as libc::pid_t;
+    // SAFETY: a signal to a child (or the group it leads) this launcher started and hasn't reaped.
     unsafe {
-        libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        libc::kill(if entry.group { -pid } else { pid }, libc::SIGTERM);
     }
 }
 
 #[cfg(windows)]
-fn stop(pid: u32) {
+fn stop(entry: Entry) {
+    if entry.group {
+        let _ = std::process::Command::new(taskkill())
+            .args(["/PID", &entry.pid.to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        return;
+    }
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     // SAFETY: the handle is checked before use and closed after.
     unsafe {
-        let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
+        let handle = OpenProcess(PROCESS_TERMINATE, 0, entry.pid);
         if !handle.is_null() {
             TerminateProcess(handle, 1);
             CloseHandle(handle);
         }
     }
+}
+
+/// Windows' own `taskkill`, by its full path: never one a folder on `PATH` puts first.
+#[cfg(windows)]
+pub fn taskkill() -> std::path::PathBuf {
+    std::env::var_os("SystemRoot")
+        .map_or_else(
+            || std::path::PathBuf::from(r"C:\Windows"),
+            std::path::PathBuf::from,
+        )
+        .join(r"System32\taskkill.exe")
 }
 
 #[cfg(all(test, unix))]
@@ -79,13 +152,21 @@ mod tests {
 
     #[test]
     #[ignore = "daily"]
-    fn quitting_stops_the_children_still_running() {
-        let mut child = Owned::spawn(Command::new("sleep").arg("30")).unwrap();
+    fn quitting_stops_the_children_and_groups_still_running() {
+        use std::os::unix::process::CommandExt;
+        static OWN: Registry = Registry::new();
+        let mut child = OWN.spawn(Command::new("sleep").arg("30")).unwrap();
         let pid = child.child().id();
-        assert!(running().contains(&pid));
-        stop_all();
-        let status = child.wait().unwrap();
-        assert!(!status.success(), "stopped by its signal: {status:?}");
-        assert!(!running().contains(&pid));
+        let mut group = Command::new("sh")
+            .args(["-c", "sleep 30 & wait"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        OWN.track_group(group.id());
+        assert!(OWN.holds(pid) && OWN.holds(group.id()));
+        OWN.stop_all();
+        assert!(!child.wait().unwrap().success(), "stopped by its signal");
+        assert!(!group.wait().unwrap().success(), "its group stopped too");
+        assert!(!OWN.holds(pid));
     }
 }

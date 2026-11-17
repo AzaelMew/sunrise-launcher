@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use sunrise_platform::{prepare, prepared_files};
 
 /// Authority for game, launcher and native SDK release reads on this fork.
 pub const REPO: &str = "sunrise-org/sunrise";
@@ -1478,12 +1477,39 @@ const LEGACY_EXPORTERS: [&str; 18] = [
     "VanillaPlayerHealthOracle.java",
 ];
 
+/// The digest `sunrise_prepare::sources_sha256` gives a preparer crate's sources: `Cargo.toml`, `build.rs` and `src/*.rs`, CRs dropped.
+fn preparer_sources_sha256(crate_dir: &Path) -> Option<String> {
+    use sha2::Digest;
+    let mut files = Vec::new();
+    for name in ["Cargo.toml", "build.rs"] {
+        files.push((name.to_string(), fs::read(crate_dir.join(name)).ok()?));
+    }
+    let mut sources: Vec<String> = fs::read_dir(crate_dir.join("src"))
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".rs"))
+        .collect();
+    sources.sort();
+    for name in sources {
+        let data = fs::read(crate_dir.join("src").join(&name)).ok()?;
+        files.push((format!("src/{name}"), data));
+    }
+    let mut hash = sha2::Sha256::new();
+    for (name, data) in files {
+        let data: Vec<u8> = data.into_iter().filter(|b| *b != b'\r').collect();
+        hash.update(format!("{name}\0{}\0", data.len()));
+        hash.update(&data);
+    }
+    Some(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// A version folder's preparer as the launchers before `OUTPUT_VERSION` compared it: the digest
-/// of its sources (`prepare::sources_sha256`) and of the exporters it ran, line endings
+/// of its sources ([`preparer_sources_sha256`]) and of the exporters it ran, line endings
 /// as checked out ignored.
 fn legacy_fingerprint(dir: &Path) -> Option<String> {
     use sha2::Digest;
-    let sources = prepare::sources_sha256(&dir.join(PREPARER_CRATE))?;
+    let sources = preparer_sources_sha256(&dir.join(PREPARER_CRATE))?;
     let mut hash = sha2::Sha256::new();
     hash.update(sources.as_bytes());
     for name in LEGACY_EXPORTERS {
@@ -1585,7 +1611,7 @@ pub(crate) fn copy_dir_except(from: &Path, to: &Path, skip: Option<&Path>) -> st
         if entry.file_type()?.is_dir() {
             copy_dir_except(&entry.path(), &target, skip)?;
         } else {
-            prepare::clone_or_copy(&entry.path(), &target)?;
+            crate::preparer::clone_or_copy(&entry.path(), &target)?;
         }
     }
     Ok(())
@@ -1621,7 +1647,7 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
         let partial = to.with_file_name(format!(".{version}.partial-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&partial);
         // Without the data file: it names its own root, so the copy could not use it.
-        let data_file = from.join(prepared_files::FILE_NAME);
+        let data_file = from.join(crate::preparer::DATA_FILE);
         let copied = copy_dir_except(&from, &partial, Some(&data_file)).and_then(|_| {
             if to.join(RESOURCES_MANIFEST).exists() {
                 return Ok(false); // Prepared meanwhile, by another copy or the player.
@@ -1667,11 +1693,11 @@ pub(crate) fn reuse_prepared_for(tag: &str) {
 /// The game still writes it when this didn't finish. Only looks for the file, as
 /// `prepared_files::open` keeps it open for the whole run, which would stop a removal on Windows.
 fn write_data_file(resources: &Path) -> std::io::Result<()> {
-    if !prepared_at(resources) || resources.join(prepared_files::FILE_NAME).exists() {
+    if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
         return Ok(());
     }
     let readers = std::thread::available_parallelism().map_or(1, |n| n.get().min(8));
-    prepared_files::write_with_readers(resources, readers)
+    sunrise_platform::prepared_files::write_with_readers(resources, readers)
 }
 
 /// `reuse_prepared` for every installed version that is not prepared, oldest first, so a
@@ -1763,30 +1789,9 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
     complete
 }
 
-/// What a prepared version may lack that the launcher adds without preparing again, each copied
-/// from the player's own Minecraft asset store as `sunrise-prepare <kind>` does: what the
-/// player misses without it, its kind (`prepare::missing_extras`, the same check as
-/// `sunrise-prepare --check`), and the copy.
-type Completion = (
-    &'static str,
-    &'static str,
-    fn(&Path, Option<&Path>, prepare::Log) -> Result<PathBuf, String>,
-);
-
-const COMPLETIONS: [Completion; 5] = [
-    // Preparers before #1538 left the built-in packs out.
-    ("Programmer Art and High Contrast", "packs", prepare::packs),
-    // A preparation that could not read the asset store keeps the client jar's 1x1 grey
-    // placeholders, its English alone, and no sounds (#1867: Prism Launcher installs prepared
-    // since 0.2.48).
-    ("The title panorama", "panorama", prepare::panorama),
-    ("The Unifont glyphs", "fonts", prepare::fonts),
-    ("The languages", "languages", prepare::languages),
-    ("The sounds", "sounds", prepare::sounds),
-];
-
-/// Adds what a prepared version lacks of `COMPLETIONS`: a new version reuses the resources of the
-/// one before (`reuse_prepared`), which may come from a preparer that left them out. Without them
+/// Adds the extras a prepared version lacks (packs, panorama, fonts, languages, sounds), through its own
+/// `sunrise-prepare extras`: a new version reuses the resources of the one before (`reuse_prepared`), which may
+/// come from a preparer that left them out. Without them
 /// in any Minecraft folder, one line each in the log, once per launcher run, and the version plays
 /// as before. Nothing is prepared again.
 pub fn complete_assets(tag: &str) {
@@ -1802,11 +1807,21 @@ pub fn complete_assets(tag: &str) {
 fn refill_own_store(tag: &str) {
     static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let own = data_dir().join("minecraft");
-    let resources = resources_at(&versions_dir().join(tag));
+    let root = versions_dir().join(tag);
+    let resources = resources_at(&root);
+    let lacks_store_extras = crate::preparer::binary(&root)
+        .and_then(|binary| {
+            crate::preparer::missing_extras(&binary, &root, &resources)
+                .ok()
+                .flatten()
+        })
+        .is_some_and(|missing| {
+            missing
+                .iter()
+                .any(|(kind, _)| matches!(kind.as_str(), "languages" | "sounds"))
+        });
     if !own.join("assets/indexes").is_dir()
-        || !prepare::missing_extras(&resources)
-            .iter()
-            .any(|(kind, _)| matches!(*kind, "languages" | "sounds"))
+        || !lacks_store_extras
         || ASKED.swap(true, std::sync::atomic::Ordering::Relaxed)
     {
         return;
@@ -1836,57 +1851,43 @@ fn complete_assets_in(
     folders: impl Fn() -> Vec<PathBuf>,
     log: &dyn Fn(String),
 ) {
-    // The versions tried this run. Held while copying: the start, an install and Play can
-    // complete the same version at once, and the copies' temporary names are per process.
+    // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
     let root = versions.join(tag);
     let resources = resources_at(&root);
-    let lacking = || -> Vec<&Completion> {
-        if !resources.join(RESOURCES_MANIFEST).exists() {
-            return Vec::new();
-        }
-        let missing = prepare::missing_extras(&resources);
-        COMPLETIONS
-            .iter()
-            .filter(|(_, kind, _)| missing.iter().any(|(m, _)| m == kind))
-            .collect()
-    };
-    if lacking().is_empty() {
+    if !resources.join(RESOURCES_MANIFEST).exists() {
         return;
     }
+    // A version whose preparer has no `missing-extras` (from before it) keeps what it has.
+    let Some(binary) = crate::preparer::binary(&root) else {
+        return;
+    };
+    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources) {
+        Ok(Some(lacking)) if !lacking.is_empty() => lacking,
+        Ok(_) => return,
+        Err(e) => return log(format!("{tag}: {e}")),
+    };
     let mut tried = TRIED.lock().unwrap_or_else(|e| e.into_inner());
-    let to_add = lacking();
-    if tried.contains(&root) || to_add.is_empty() {
+    if tried.contains(&root) {
         return;
     }
     tried.push(root.clone());
-    let folders = folders();
-    let lacked = to_add.len();
-    for (what, _, copy) in to_add {
-        let mut first_error = None;
-        let added = folders.iter().any(|folder| {
-            let copied = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                copy(&root, Some(folder), &|line| log(line.to_string()))
-            }))
-            .unwrap_or_else(|_| Err("the copy stopped unexpectedly".into()));
-            copied.map_err(|e| first_error.get_or_insert(e)).is_ok()
-        });
-        if !added {
-            log(format!(
-                "{tag}: {what} not added: {}",
-                first_error.unwrap_or_else(|| "no Minecraft folder found".into())
-            ));
-        }
-    }
-    // The data file answers "missing" for what it lacks, so one from before these copies would
-    // hide them. Only when something was added: a version that stays lacking keeps its file.
-    if lacking().len() < lacked {
-        let data_file = resources.join(prepared_files::FILE_NAME);
-        if let Err(e) = fs::remove_file(&data_file) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log(format!("{}: not removed: {e}", data_file.display()));
+    let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
+    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log) {
+        Ok(Some(added)) => {
+            for (kind, error) in added.failed {
+                let what = lacking
+                    .iter()
+                    .find(|(k, _)| *k == kind)
+                    .map_or(kind.as_str(), |(_, what)| what.as_str());
+                log(crate::i18n::trf(
+                    "{version}: {what} not added: {error}",
+                    &[("version", tag), ("what", what), ("error", &error)],
+                ));
             }
         }
+        Ok(None) => {}
+        Err(e) => log(format!("{tag}: {e}")),
     }
 }
 
@@ -1897,7 +1898,7 @@ fn complete_assets_in(
 fn minecraft_folders() -> Vec<PathBuf> {
     let mut folders: Vec<PathBuf> = Settings::load().minecraft_dir.into_iter().collect();
     folders.extend([
-        prepare::artifacts::minecraft_dir(None),
+        crate::preparer::minecraft_dir(None),
         data_dir().join("linked-minecraft"),
         data_dir().join("minecraft"),
     ]);
@@ -1925,43 +1926,6 @@ pub fn default_minecraft_dir() -> Option<PathBuf> {
         .into_iter()
         .map(|(_, dir)| dir)
         .find(|dir| dir.is_dir())
-}
-
-fn found(program: &str, arg: &str) -> bool {
-    crate::process::command(program)
-        .arg(arg)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok()
-}
-
-fn python() -> Option<&'static str> {
-    let candidates: &[&'static str] = if cfg!(windows) {
-        &["py", "python"]
-    } else {
-        &["python3", "python"]
-    };
-    candidates.iter().copied().find(|p| found(p, "--version"))
-}
-
-/// How a version's resources are prepared.
-pub enum Preparer {
-    /// sunrise-prepare, linked into the launcher: the version ships the same preparer sources.
-    InProcess(prepare::Options),
-    /// The version's own preparer: its sunrise-prepare binary when its sources differ from the
-    /// launcher's (a newer or older release), or the Python script of versions made before it.
-    Process(Command),
-}
-
-/// The version's sunrise-prepare binary, when it ships one.
-fn preparer_binary(dir: &Path) -> Option<PathBuf> {
-    let binary = dir.join(if cfg!(windows) {
-        "sunrise-prepare.exe"
-    } else {
-        "sunrise-prepare"
-    });
-    binary.is_file().then_some(binary)
 }
 
 /// Downloads the pinned version from Mojang into `dir` when an account in the launcher owns
@@ -2163,9 +2127,9 @@ fn java(
     log: &dyn Fn(String),
 ) -> Result<PathBuf, String> {
     let find = if compiler {
-        prepare::java::find
+        crate::jdk::find
     } else {
-        prepare::java::find_runtime
+        crate::jdk::find_runtime
     };
     if let Ok(jdk) = find(major, &[]) {
         return Ok(jdk.home());
@@ -2173,7 +2137,7 @@ fn java(
     let mut runtimes: Vec<PathBuf> = Vec::new();
     for home in games
         .iter()
-        .flat_map(|game| prepare::java::minecraft_runtimes(&game.join("runtime")))
+        .flat_map(|game| crate::java::minecraft_runtimes(&game.join("runtime")))
     {
         if !runtimes.contains(&home) {
             runtimes.push(home);
@@ -2310,11 +2274,15 @@ pub fn preparer(
     minecraft: &Path,
     from: MinecraftFrom,
     log: &dyn Fn(String),
-) -> Result<(Preparer, PathBuf), String> {
+) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     let version = game_version(tag);
     let dir = version_dir(tag);
-    let reused = prepare::artifacts::reuse_imported(&dir, &|line| log(line.to_string()))?;
+    let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
+    // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
+    let needs =
+        crate::preparer::needs(&binary, &dir, log)?.ok_or_else(|| crate::preparer::too_old(tag))?;
+    let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
     // Resolved even when the game files are reused: the assets still come from the install.
     let minecraft = {
@@ -2362,13 +2330,6 @@ pub fn preparer(
         .join("versions")
         .join(&version)
         .join(format!("{version}.json"));
-    let binary = preparer_binary(&dir);
-    let python = match binary {
-        Some(_) => None,
-        None => Some(python().ok_or(
-            "This version prepares with Python: Python 3.10 or newer is needed. Install it, or pick a newer version.",
-        )?),
-    };
     // The Java the version pins, found as sunrise-prepare finds it, so a missing one is
     // reported (or downloaded) before the server jar is downloaded. Versions from before
     // java_major ran Java 25.
@@ -2384,13 +2345,7 @@ pub fn preparer(
             .map(|(_, dir)| dir),
     );
     set_prepare_step(PrepareStep::Java);
-    let java_home = java(
-        major,
-        !prepare::exporters::available(&dir),
-        &games,
-        &manifest,
-        log,
-    )?;
+    let java_home = java(major, needs.jdk, &games, &manifest, log)?;
     let jar = data_dir()
         .join("server-jars")
         .join(format!("{version}.jar"));
@@ -2413,97 +2368,33 @@ pub fn preparer(
             .and_then(|_| fs::rename(&partial, &jar))
             .map_err(|e| e.to_string())?;
     }
-    if let Some(binary) = binary {
-        if prepare::sources_sha256(&dir.join(PREPARER_CRATE)).as_deref()
-            == Some(prepare::SOURCES_SHA256)
-        {
-            let options = prepare::Options {
-                root: dir,
-                import: !reused,
-                minecraft_dir: Some(minecraft.clone()),
-                server_jar: (!reused).then_some(jar),
-                java_home: Some(java_home.clone()),
-                inputs: Default::default(),
-                output: None,
-            };
-            return Ok((Preparer::InProcess(options), minecraft));
-        }
-        let mut cmd = Command::new(binary);
-        with_java(&mut cmd, &java_home);
-        cmd.current_dir(&dir).arg("--root").arg(&dir);
-        if !reused {
-            cmd.args(["--prepare", "--server-jar"]).arg(&jar);
-        }
-        cmd.arg("--minecraft-dir").arg(&minecraft);
-        return Ok((Preparer::Process(cmd), minecraft));
-    }
-    let mut cmd = Command::new(python.unwrap());
+    let mut cmd = Command::new(binary);
     with_java(&mut cmd, &java_home);
-    cmd.current_dir(&dir)
-        .args(["-u", "tools/prepare_native_client.py"]);
+    cmd.current_dir(&dir).arg("--root").arg(&dir);
     if !reused {
         cmd.args(["--prepare", "--server-jar"]).arg(&jar);
     }
     cmd.arg("--minecraft-dir").arg(&minecraft);
-    Ok((Preparer::Process(cmd), minecraft))
+    Ok((cmd, minecraft))
 }
 
-/// Copies the pinned version's sounds from the player's own launcher install into the version's
-/// resources (`sunrise-prepare sounds`), each line to `log`. Sound is optional, so a launcher
-/// install without them is a line in the log, never a failed preparation. The version's own
-/// preparer does it when it is not the launcher's and knows how; versions from before it read
-/// the sounds where the launcher's preparer puts them.
+/// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
 pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
+    use crate::i18n::{tr, trf};
     let dir = version_dir(tag);
-    let own = prepare::sources_sha256(&dir.join(PREPARER_CRATE)).as_deref()
-        == Some(prepare::SOURCES_SHA256);
-    let binary = preparer_binary(&dir).filter(|binary| {
-        !own && crate::process::command(binary)
-            .arg("--help")
-            .output()
-            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("sunrise-prepare sounds"))
-    });
     set_prepare_step(PrepareStep::Sounds);
-    log("Copying the sounds from your Minecraft install".into());
-    let result = match binary {
-        Some(binary) => crate::process::command(binary)
-            .current_dir(&dir)
-            .arg("sounds")
-            .arg("--root")
-            .arg(&dir)
-            .arg("--minecraft-dir")
-            .arg(minecraft)
-            .output()
-            .map_err(|e| e.to_string())
-            .and_then(|o| {
-                let text = |b: &[u8]| String::from_utf8_lossy(b).trim().to_string();
-                for line in text(&o.stdout).lines() {
-                    log(line.to_string());
-                }
-                match o.status.success() {
-                    true => Ok(()),
-                    false => Err(text(&o.stderr).trim_start_matches("error: ").to_string()),
-                }
-            }),
-        None => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prepare::sounds(&dir, Some(minecraft), &|line| log(line.to_string()))
-        }))
-        .unwrap_or_else(|_| Err("The sound copy stopped unexpectedly".into()))
-        .map(|_| ()),
+    log(tr("Copying the sounds from your Minecraft install").into());
+    let result = match crate::preparer::binary(&dir) {
+        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log)
+            .and_then(|done| done.ok_or_else(|| crate::preparer::too_old(tag))),
+        None => Err(crate::preparer::too_old(tag)),
     };
-    if let Err(e) = result {
-        log(format!("No sound (the game will be silent): {e}"));
+    if let Err(why) = result {
+        log(trf(
+            "No sound (the game will be silent): {why}",
+            &[("why", &why)],
+        ));
     }
-}
-
-/// Runs `Preparer::InProcess` on this thread, each progress line to `log`. A panic is an
-/// error like any other, so the window never waits on a preparation that died.
-pub fn prepare_in_process(options: &prepare::Options, log: &dyn Fn(String)) -> Result<(), String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        prepare::prepare(options, &|line| log(line.to_string()))
-    }))
-    .unwrap_or_else(|_| Err("The preparation stopped unexpectedly".into()))
-    .map(|_| ())
 }
 
 /// Where the game keeps saves and options.txt: `SUNRISE_HOME`, else `sunrise` in the platform's
@@ -3014,7 +2905,7 @@ pub fn minecraft_dir(requested: Option<PathBuf>) -> Result<PathBuf, String> {
     Ok(requested
         .or(Settings::load().minecraft_dir)
         .or_else(default_minecraft_dir)
-        .unwrap_or_else(|| prepare::artifacts::minecraft_dir(None)))
+        .unwrap_or_else(|| crate::preparer::minecraft_dir(None)))
 }
 
 /// The server folder: the one given, the one chosen in the launcher, or `server/` in the data folder.
@@ -4019,6 +3910,42 @@ pub fn spawn_attached(cmd: &mut Command) -> std::io::Result<std::process::Child>
 }
 
 pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String> {
+    spawn_holding(job, cmd, tx, None)
+}
+
+/// Holds `version`'s preparation lock, so a second preparation of it can't start while one runs; it is released when the guard drops.
+pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+    prepare_lock_at(&version_dir(version), version)
+}
+
+fn prepare_lock_at(
+    dir: &Path,
+    version: &str,
+) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+    let path = dir.join(".preparing.lock");
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    sunrise_launcher_smod::locks::locked(file, sunrise_launcher_smod::locks::LockMode::Exclusive)
+        .map_err(|error| match error {
+            std::fs::TryLockError::WouldBlock => crate::i18n::trf(
+                "Sunrise {version} is already being prepared.",
+                &[("version", version)],
+            ),
+            std::fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
+        })
+}
+
+/// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
+pub fn spawn_holding(
+    job: Job,
+    cmd: Command,
+    tx: Sender<Msg>,
+    hold: Option<sunrise_launcher_smod::locks::Locked>,
+) -> Result<Running, String> {
     let (mut cmd, runtime) = prepare_command(cmd)?;
     #[cfg(unix)]
     {
@@ -4030,6 +3957,11 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = play_log::spawn(&mut cmd)?;
+    let pid = child.id();
+    let group = matches!(job, Job::Prepare);
+    if group {
+        crate::process::owned::CHILDREN.track_group(pid);
+    }
     let stdin = child.stdin.take();
     let mut readers = Vec::new();
     let out = child
@@ -4066,6 +3998,10 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
             Err(e) => Err(e.to_string()),
         };
         drop(runtime);
+        if group {
+            crate::process::owned::CHILDREN.release(pid);
+        }
+        drop(hold);
         let _ = tx.send(Msg::Exit(job, result));
     });
     Ok(Running { child, stdin })
@@ -6410,8 +6346,26 @@ pub fn {f}("
     }
 
     #[test]
+    fn a_version_is_prepared_once_at_a_time() {
+        let dir = std::env::temp_dir().join(format!(
+            "sunrise-launcher-prepare-lock-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        let first = prepare_lock_at(&dir, "v1").unwrap();
+        let second = prepare_lock_at(&dir, "v1").err().unwrap();
+        assert!(second.contains("already being prepared"), "{second}");
+        drop(first);
+        assert!(
+            prepare_lock_at(&dir, "v1").is_ok(),
+            "free once the first ends"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_prepared_version_gets_a_data_file_that_holds_its_files() {
-        use sunrise_platform::prepared_files::FILE_NAME;
+        use crate::preparer::DATA_FILE as FILE_NAME;
         let resources =
             std::env::temp_dir().join(format!("sunrise-launcher-data-file-{}", std::process::id()));
         let _ = fs::remove_dir_all(&resources);
@@ -6480,7 +6434,7 @@ pub fn {f}("
         release("v2026.10.12", "26.2");
         prepared("v2026.10.12", "26.2");
         // A data file names its own root: the new version writes its own.
-        let data_file = sunrise_platform::prepared_files::FILE_NAME;
+        let data_file = crate::preparer::DATA_FILE;
         write(
             "v2026.10.13",
             &format!(".local/sunrise-client/26.3/{data_file}"),
@@ -6707,177 +6661,83 @@ pub fn {f}("
         let _ = fs::remove_dir_all(&versions);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn prepared_versions_get_what_the_asset_store_adds_without_preparing_again() {
-        let dir = std::env::temp_dir().join(format!(
-            "sunrise-launcher-packs-test-{}",
-            std::process::id()
-        ));
+    #[ignore = "daily"]
+    fn prepared_versions_get_the_extras_their_own_preparer_adds_once() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("sunrise-launcher-extras-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
-        let (versions, store, empty) = (dir.join("versions"), dir.join("store"), dir.join("none"));
-        let write = |path: PathBuf, data: &[u8]| {
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(path, data).unwrap();
-        };
-        // An official launcher folder whose asset store holds the two packs, a panorama (fake
-        // 2x2 PNG headers), Unifont, a language and the sound list.
-        let background = "minecraft/textures/gui/title/background";
-        let png = |n: u8| {
-            let mut data = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x02\0\0\0\x02".to_vec();
-            data.push(n);
-            data
-        };
-        let mut assets: Vec<(String, Vec<u8>)> = prepare::BUILT_IN_PACKS
-            .iter()
-            .map(|name| (name.to_string(), name.as_bytes().to_vec()))
-            .collect();
-        for face in ["0", "1", "2", "3", "4", "5", "overlay"] {
-            assets.push((
-                format!("{background}/panorama_{face}.png"),
-                png(face.as_bytes()[0]),
-            ));
-        }
-        for name in [
-            "minecraft/font/include/unifont.json",
-            "minecraft/font/unifont.zip",
-            "pack.mcmeta",
-            "minecraft/lang/fr_fr.json",
-            "minecraft/sounds.json",
-        ] {
-            assets.push((name.into(), format!("{{\"{name}\": 1}}").into_bytes()));
-        }
-        let mut index = serde_json::Map::new();
-        for (name, data) in &assets {
-            let hash = sources::sha1_hex(data);
-            write(
-                store.join("assets/objects").join(&hash[..2]).join(&hash),
-                data,
-            );
-            index.insert(
-                name.clone(),
-                serde_json::json!({"hash": hash, "size": data.len()}),
-            );
-        }
-        let index = serde_json::json!({ "objects": index }).to_string();
-        write(store.join("assets/indexes/7.json"), index.as_bytes());
-        let manifest = serde_json::json!({
-            "id": "9.9",
-            "assetIndex": {"id": "7", "sha1": sources::sha1_hex(index.as_bytes())},
-            "downloads": {"client": {"sha1": "c"}, "server": {"sha1": "s"}},
-            "javaVersion": {"majorVersion": 25},
-        })
-        .to_string();
-        write(store.join("versions/9.9/9.9.json"), manifest.as_bytes());
-        fs::create_dir_all(&empty).unwrap();
-        // The client jar's 1x1 placeholder.
-        let placeholder = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR\0\0\0\x01\0\0\0\x01";
-        let release = |tag: &str, prepared: bool| {
+        let versions = dir.join("versions");
+        // Each version's own preparer: what its resources lack, and what `extras` did with the folders it got.
+        let version = |tag: &str, prepared: bool, preparer: &str| {
             let root = versions.join(tag);
-            write(root.join(COMPLETE), b"");
-            let lock = serde_json::json!({"minecraft": {"version": "9.9", "java_major": 25,
-                "client_sha1": "c", "server_sha1": "s", "manifest_sha1": sources::sha1_hex(manifest.as_bytes())}});
-            write(root.join("research-lock.json"), lock.to_string().as_bytes());
+            fs::create_dir_all(&root).unwrap();
             if prepared {
                 let resources = resources_at(&root);
-                write(resources.join(RESOURCES_MANIFEST), b"{}");
-                write(resources.join("assets/minecraft/lang/en_us.json"), b"{}");
-                write(
-                    resources.join("assets/minecraft/lang/deprecated.json"),
-                    b"{}",
-                );
-                write(
-                    resources
-                        .join("assets")
-                        .join(background)
-                        .join("panorama_0.png"),
-                    placeholder,
-                );
+                fs::create_dir_all(&resources).unwrap();
+                fs::write(resources.join(RESOURCES_MANIFEST), b"{}").unwrap();
             }
+            let binary = root.join("sunrise-prepare");
+            fs::write(&binary, format!("#!/bin/sh\n{preparer}\n")).unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+            root
         };
+        let lacking = r#"{"format": 1, "prepared": true, "missing": [{"kind": "packs", "what": "The built-in packs"}, {"kind": "sounds", "what": "The sounds"}]}"#;
+        let added = r#"{"format": 1, "added": ["packs"], "failed": [{"kind": "sounds", "error": "no sound index"}], "missing": [{"kind": "sounds", "what": "The sounds"}]}"#;
+        let preparer = format!(
+            r#"case "$1" in
+missing-extras) printf '%s\n' '{lacking}' ;;
+extras) printf '%s\n' "$@" >> "$(dirname "$0")/extras-calls"; printf '%s\n' '{{"message": "Built-in packs ready"}}' '{added}'; exit 1 ;;
+*) exit 2 ;;
+esac"#
+        );
         let lines = std::cell::RefCell::new(Vec::new());
         let log = |line: String| lines.borrow_mut().push(line);
-        let asset = |tag: &str, name: &str| {
-            fs::read(resources_at(&versions.join(tag)).join("assets").join(name)).ok()
+        let asked = std::cell::Cell::new(0);
+        let folders = || {
+            asked.set(asked.get() + 1);
+            vec![dir.join("official"), dir.join("prism")]
         };
 
-        // Resources prepared without any of them: a folder without an asset store is skipped.
-        release("v0.2.1", true);
-        let data_file = sunrise_platform::prepared_files::FILE_NAME;
-        write(
-            resources_at(&versions.join("v0.2.1")).join(data_file),
-            b"older",
-        );
-        complete_assets_in(
-            &versions,
-            "v0.2.1",
-            || vec![empty.clone(), store.clone()],
-            &log,
-        );
-        // Written before them, it would answer "missing" for what was just added.
-        assert!(!resources_at(&versions.join("v0.2.1"))
-            .join(data_file)
-            .exists());
+        let root = version("v1", true, &preparer);
+        complete_assets_in(&versions, "v1", folders, &log);
+        complete_assets_in(&versions, "v1", folders, &log);
         assert_eq!(
             *lines.borrow(),
             [
-                "Built-in pack assets ready: 2 files, 0.0 MB",
-                "Panorama assets ready: 7 files, 0.0 MB",
-                "Font assets ready: 2 files, 0.0 MB",
-                "Language assets ready: 2 files, 0.0 MB",
-                "Sound assets ready: 1 files, 0.0 MB",
+                "Built-in packs ready",
+                "v1: The sounds not added: no sound index"
             ]
         );
-        for (name, data) in &assets {
-            assert_eq!(asset("v0.2.1", name).as_ref(), Some(data), "{name}");
+        assert_eq!(asked.get(), 1, "one try per run");
+        let calls = fs::read_to_string(root.join("extras-calls")).unwrap();
+        let args: Vec<&str> = calls.lines().collect();
+        for wanted in [
+            &["--only", "packs,sounds"][..],
+            &["--minecraft-dir", dir.join("official").to_str().unwrap()],
+            &["--minecraft-dir", dir.join("prism").to_str().unwrap()],
+        ] {
+            assert!(
+                args.windows(2).any(|pair| pair == wanted),
+                "{wanted:?} in {args:?}"
+            );
         }
-        // Nothing else is prepared again.
-        let resources = resources_at(&versions.join("v0.2.1"));
-        assert_eq!(fs::read(resources.join(RESOURCES_MANIFEST)).unwrap(), b"{}");
 
-        // No asset store anywhere: one line each, the version stays prepared, and no second try.
+        // A preparer from before `missing-extras`, a version not prepared, and one that lacks nothing: no folder is asked for.
         lines.borrow_mut().clear();
-        release("v0.2.2", true);
-        write(
-            resources_at(&versions.join("v0.2.2")).join(data_file),
-            b"kept",
+        version("v0", true, "exit 2");
+        version("v2", false, &preparer);
+        version(
+            "v3",
+            true,
+            r#"printf '%s\n' '{"format": 1, "prepared": true, "missing": []}'"#,
         );
-        complete_assets_in(&versions, "v0.2.2", || vec![empty.clone()], &log);
-        complete_assets_in(&versions, "v0.2.2", || vec![empty.clone()], &log);
-        // Nothing was added: its data file is still good.
-        assert!(resources_at(&versions.join("v0.2.2"))
-            .join(data_file)
-            .exists());
-        let what = lines
-            .borrow()
-            .iter()
-            .map(|line| line.split(" not added: ").next().unwrap().to_string())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            what,
-            [
-                "v0.2.2: Programmer Art and High Contrast",
-                "v0.2.2: The title panorama",
-                "v0.2.2: The Unifont glyphs",
-                "v0.2.2: The languages",
-                "v0.2.2: The sounds",
-            ]
-        );
-        assert!(resources_at(&versions.join("v0.2.2"))
-            .join(RESOURCES_MANIFEST)
-            .exists());
-        assert_eq!(
-            asset("v0.2.2", &format!("{background}/panorama_0.png")).as_deref(),
-            Some(&placeholder[..])
-        );
-
-        // Not prepared, or complete: nothing to do, without even looking for a Minecraft folder.
-        lines.borrow_mut().clear();
-        release("v0.2.3", false);
-        let unasked = || -> Vec<PathBuf> { unreachable!("no folder is needed") };
-        complete_assets_in(&versions, "v0.2.3", unasked, &log);
-        complete_assets_in(&versions, "v0.2.1", unasked, &log);
-        assert!(lines.borrow().is_empty());
-        assert!(!resources_at(&versions.join("v0.2.3")).exists());
+        for tag in ["v0", "v2", "v3"] {
+            complete_assets_in(&versions, tag, || unreachable!("no folder is needed"), &log);
+        }
+        assert!(lines.borrow().is_empty(), "{:?}", lines.borrow());
         let _ = fs::remove_dir_all(&dir);
     }
 

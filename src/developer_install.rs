@@ -220,7 +220,12 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
         )
         .into());
     }
-    if !sunrise_prepare::exporters::available(&package) {
+    let exporters_ship = crate::preparer::binary(&package)
+        .map(|binary| crate::preparer::needs(&binary, &package, &|_| {}))
+        .transpose()?
+        .flatten()
+        .is_some_and(|needs| !needs.jdk);
+    if !exporters_ship {
         return Err(tr("The packaged exporters are missing, changed or do not match the checkout sources. Recompile the exporters before installing.").into());
     }
     fs::write(
