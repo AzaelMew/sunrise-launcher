@@ -292,3 +292,42 @@ fn the_game_mode_comes_from_server_toml() {
     assert_eq!(game_mode(&dir), None);
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn the_engine_command_reply_becomes_the_command_and_its_problems() {
+    let reply = br#"{"format": 1, "program": "/opt/sunrise/sunrise-engine", "args": ["--dedicated", "--nogui"],
+        "cwd": "/srv/mc", "env": {"SUNRISE_NO_AUDIO": "1", "GONE": null}, "resources": "/srv/mc/resources"}"#;
+    let engine = engine_from_reply(reply, Some(0)).unwrap();
+    assert_eq!(engine.get_program(), "/opt/sunrise/sunrise-engine");
+    assert_eq!(
+        engine.get_args().collect::<Vec<_>>(),
+        ["--dedicated", "--nogui"]
+    );
+    assert_eq!(engine.get_current_dir(), Some(Path::new("/srv/mc")));
+    let env: Vec<_> = engine.get_envs().collect();
+    assert!(env.contains(&(
+        std::ffi::OsStr::new("SUNRISE_NO_AUDIO"),
+        Some(std::ffi::OsStr::new("1"))
+    )));
+    assert!(env.contains(&(std::ffi::OsStr::new("GONE"), None)));
+
+    let missing =
+        br#"{"format": 1, "error": {"kind": "resources", "message": "no prepared game files"}}"#;
+    let problem = engine_from_reply(missing, Some(3)).unwrap_err();
+    assert_eq!(
+        (problem.message.as_str(), problem.fix),
+        ("no prepared game files", Some(Fix::Prepare))
+    );
+    let other =
+        br#"{"format": 1, "error": {"kind": "configuration", "message": "server.toml: bad"}}"#;
+    assert_eq!(engine_from_reply(other, Some(1)).unwrap_err().fix, None);
+
+    let too_old = engine_from_reply(b"", Some(2)).unwrap_err();
+    assert!(too_old.message.contains("too old"), "{}", too_old.message);
+    let newer = engine_from_reply(br#"{"format": 2, "program": "x"}"#, Some(0)).unwrap_err();
+    assert!(
+        newer.message.contains("update the launcher"),
+        "{}",
+        newer.message
+    );
+}

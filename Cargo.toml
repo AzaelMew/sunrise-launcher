@@ -42,7 +42,6 @@ dirs = "5"
 sys-locale = "0.3"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
-sunrise-server-launch = { path = "../crates/sunrise-server-launch" }
 sunrise-prepare = { path = "../crates/sunrise-prepare" }
 # The launcher's own copies of what it used from the game's crates (crates/), so it can leave the game repository.
 sunrise-launcher-addresses = { path = "crates/addresses" }

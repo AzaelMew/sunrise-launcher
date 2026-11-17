@@ -9,6 +9,7 @@
 //! launcher prepared: nothing of Mojang's is downloaded or shipped.
 
 use crate::backend;
+use crate::i18n::tr;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -397,22 +398,68 @@ pub fn run_managed(
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
     let supervisor = command(dir, args).map_err(Problem::plain)?;
-    let mut engine =
-        sunrise_server_launch::engine_command(Path::new(supervisor.get_program()), dir).map_err(
-            |error| {
-                let mut problem = Problem::plain(error.to_string());
-                if matches!(
-                    error,
-                    sunrise_server_launch::EngineCommandError::Resources(_)
-                ) {
-                    problem.fix = Some(Fix::Prepare);
-                }
-                problem
-            },
-        )?;
+    let mut engine = engine_command(dir)?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
     stream(dir, supervisor, line)
+}
+
+/// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).
+const ENGINE_COMMAND_FORMAT: u64 = 1;
+
+/// The engine `sunrise-server run` would start in `dir`, as the folder's own `sunrise-server` describes it.
+fn engine_command(dir: &Path) -> Result<Command, Problem> {
+    let output = command(dir, &["engine-command", "--json"])
+        .map_err(Problem::plain)?
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| Problem::plain(format!("Couldn't run sunrise-server: {e}")))?;
+    engine_from_reply(&output.stdout, output.status.code())
+}
+
+/// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
+fn engine_from_reply(stdout: &[u8], code: Option<i32>) -> Result<Command, Problem> {
+    let reply: serde_json::Value = match (code, serde_json::from_slice(stdout)) {
+        (_, Ok(reply)) => reply,
+        (Some(2), Err(_)) => {
+            return Err(Problem::plain(tr(
+                "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
+            )))
+        }
+        (_, Err(e)) => return Err(Problem::plain(format!("sunrise-server engine-command: {e}"))),
+    };
+    if reply["format"]
+        .as_u64()
+        .is_none_or(|format| format > ENGINE_COMMAND_FORMAT)
+    {
+        return Err(Problem::plain(tr(
+            "This server's Sunrise build is newer than the launcher understands: update the launcher.",
+        )));
+    }
+    if let Some(error) = reply.get("error") {
+        let mut problem = Problem::plain(error["message"].as_str().unwrap_or_default());
+        if error["kind"] == "resources" {
+            problem.fix = Some(Fix::Prepare);
+        }
+        return Err(problem);
+    }
+    let text = |key: &str| {
+        reply[key]
+            .as_str()
+            .ok_or_else(|| Problem::plain(format!("sunrise-server engine-command: no {key}")))
+    };
+    let mut engine = crate::process::command(text("program")?);
+    for arg in reply["args"].as_array().into_iter().flatten() {
+        engine.arg(arg.as_str().unwrap_or_default());
+    }
+    engine.current_dir(text("cwd")?);
+    for (key, value) in reply["env"].as_object().into_iter().flatten() {
+        match value.as_str() {
+            Some(value) => engine.env(key, value),
+            None => engine.env_remove(key),
+        };
+    }
+    Ok(engine)
 }
 
 fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(), Problem> {
