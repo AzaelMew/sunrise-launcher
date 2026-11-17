@@ -248,6 +248,9 @@ machine can read it in the process list. Sunrise keeps it out of argv:
 - The game reads the file at start and deletes it at once; the token lives only in the game's memory.
   A file older than two minutes is refused (and deleted), so a stale file can't be replayed.
 - Without a session file the game is offline as today (`--name`, offline UUID).
+- When the launcher plays offline (no answer from Microsoft, a sign-in to renew, a keyring that
+  didn't open), it says why in the game's `SUNRISE_OFFLINE_REASON`; the game shows that, or why its
+  session file could not be read, as a "Playing offline" toast on the title screen.
 - `SUNRISE_SESSION_FILE` is the same as `--session-file` (development and harnesses).
 - `--session-stdin` takes the same JSON on standard input instead, so nothing touches the disk (for other
   launchers: [the Launch API](api/launch.md)).
