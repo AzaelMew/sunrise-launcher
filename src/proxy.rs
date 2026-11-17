@@ -62,7 +62,7 @@ pub fn refuse(spec: &str) -> Option<String> {
     None
 }
 
-/// Tells the parts that build their own agents (`sunrise-port-pack`) which proxy to use, and keeps
+/// Tells the parts that build their own agents (`net`, and `sunrise-port-pack`'s) which proxy to use, and keeps
 /// the setting for the launcher's own requests. Called with what `settings.json` holds: at start,
 /// and whenever the player changes the setting.
 ///
@@ -73,6 +73,8 @@ pub fn announce(setting: Option<String>) {
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty());
     *held() = Some(spec.clone());
+    // Modpack imports and their jars still go through sunrise-port-pack's own agents.
+    sunrise_port_pack::net::set_proxy(spec.clone());
     crate::net::set_proxy(spec);
 }
 
