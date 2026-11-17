@@ -32,12 +32,11 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
     crate::browser::sunrise::before_play(&game_home());
     let mut cmd = client_command(tag);
     if let Some(session) = session {
-        if let Some(file) = session.file {
-            cmd.arg("--session-file").arg(file);
-        }
-        cmd.envs(session.env);
-        if let Some(e) = session.offline {
-            eprintln!("Playing offline: {e}");
+        if let Some(e) = session.apply(&mut cmd) {
+            eprintln!(
+                "{}",
+                crate::i18n::trf("Playing offline: {reason}", &[("reason", &e)])
+            );
         }
         if let Some(e) = account::take_unsaved() {
             eprintln!("{e}");

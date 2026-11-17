@@ -25,15 +25,11 @@ impl Launcher {
                     return;
                 }
             };
-            if let Some(account::GameSession { file, offline, env }) = pass {
+            if let Some(session) = pass {
                 self.owner = Some(true);
-                if let Some(file) = file {
-                    cmd.arg("--session-file").arg(file);
-                }
-                cmd.envs(env);
                 // Still play, offline, and say why.
-                if let Some(e) = offline {
-                    self.client_error = Some(format!("Playing offline: {e}"));
+                if let Some(e) = session.apply(&mut cmd) {
+                    self.client_error = Some(trf("Playing offline: {reason}", &[("reason", &e)]));
                 } else if let Some(e) = account::take_unsaved() {
                     self.client_error = Some(e);
                 }
