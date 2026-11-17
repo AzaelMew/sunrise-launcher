@@ -109,8 +109,10 @@ pub(super) const API_PACKAGE: &str = "sunrise-mod-api";
 
 /// The per-mod facade's package, rewritten to its generated crate.
 pub(super) const INTERNALS_PACKAGE: &str = "sunrise-internals";
-/// The game's one wasmtime, for a mod that embeds a wasm engine. Native-only and unstable: it follows the
-/// game build, and a wasm mod cannot link it (`cargo sunrise-mod build` refuses the dependency).
+/// The game's one wasmtime, for a mod that embeds a wasm engine. Native-only and unstable: it follows the exact
+/// game build, so only a mod with a `[[native.*]]` row (which is built for one build) may name it; an API-only mod
+/// installs on any build its surface items allow, and a wasm mod cannot link it (`cargo sunrise-mod build` refuses
+/// the dependency).
 pub(super) const WASMTIME_PACKAGE: &str = "sunrise-wasmtime";
 /// Each game package a mod may depend on, with its library's name.
 pub(super) const PACKAGES: [(&str, &str); 4] = [
@@ -341,6 +343,16 @@ impl<'a> Project<'a> {
                     continue;
                 }
             }
+        }
+        if api_deps.iter().any(|api| api.package == WASMTIME_PACKAGE)
+            && !(bundle.needs_mixins() || !bundle.native().r#loop.is_empty())
+        {
+            return Err(ProjectError::Cargo {
+                mod_id: mod_id(),
+                reason: format!(
+                    "E_NATIVE_ONLY_PACKAGE: {WASMTIME_PACKAGE} is the game's own wasmtime, pinned to one exact game build, so only a mod with a [[native.*]] row may depend on it; an API-only mod installs on any build its surface items allow"
+                ),
+            });
         }
         if !api_deps
             .iter()
@@ -766,6 +778,25 @@ mod tests {
     #[test]
     fn a_native_mod_takes_the_games_wasmtime_by_its_path_form_only() {
         let dir = fixture();
+        let wasmtime = "[dependencies]\nsunrise-mod-api={path='.sunrise/sdk/api/crates/sunrise-mod-api'}\nsunrise-wasmtime={path='.sunrise/sdk/api/crates/sunrise-wasmtime'}\n";
+        fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname='example-mod'\nversion='1.0.0'\n{wasmtime}"),
+        )
+        .unwrap();
+        // An API-only mod (no [[native.*]] row) installs on any build its surface allows: it may not name the game's wasmtime.
+        let bundle = super::super::bundle_in(&dir).unwrap().unwrap();
+        let error = Project::read(&bundle).err().unwrap().to_string();
+        assert!(
+            error.starts_with(
+                "example: E_NATIVE_ONLY_PACKAGE: sunrise-wasmtime is the game's own wasmtime"
+            ),
+            "{error}"
+        );
+        let path = dir.join(sunrise_mod_package::manifest::MANIFEST);
+        let text = fs::read_to_string(&path).unwrap()
+            + "[[native.module]]\nid='test'\nfile='crates/sunrise-client/src/game.rs'\nname='support'\nsource='src/lib.rs'\n";
+        fs::write(&path, text).unwrap();
         let api = "sunrise-mod-api={path='.sunrise/sdk/api/crates/sunrise-mod-api'}";
         for (line, libraries, refusal) in [
             (
