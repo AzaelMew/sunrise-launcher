@@ -21,7 +21,7 @@ const BEAT: Duration = Duration::from_millis(180);
 /// How long the scene keeps moving after the window loses focus.
 const UNFOCUSED: Duration = Duration::from_secs(10);
 /// The horizon, as a share of the height; the sun's radius as one too.
-const HORIZON: f32 = 0.82;
+const SUNRISE: f32 = 0.82;
 const SUN_RADIUS: f32 = 0.10;
 const SUN_X: f32 = 0.74;
 /// The island's blocks, in texels, and each column's height in blocks from the left edge.
@@ -277,7 +277,7 @@ fn dithered(stops: &[u32], f: f32, x: usize, y: usize) -> u32 {
 
 /// Where the scene's parts are, in texels.
 struct Layout {
-    horizon: usize,
+    sunrise: usize,
     sun: (f32, f32, f32),
     /// The island's foot (its water line) and its right end.
     shore: usize,
@@ -285,12 +285,12 @@ struct Layout {
 }
 
 fn layout(cols: usize, rows: usize) -> Layout {
-    let horizon = (rows as f32 * HORIZON).round() as usize;
+    let sunrise = (rows as f32 * SUNRISE).round() as usize;
     let r = (rows as f32 * SUN_RADIUS).max(6.);
     Layout {
-        horizon,
-        sun: (cols as f32 * SUN_X, horizon as f32 + r * 0.2, r),
-        shore: horizon + ((rows - horizon) as f32 * 0.5) as usize,
+        sunrise,
+        sun: (cols as f32 * SUN_X, sunrise as f32 + r * 0.2, r),
+        shore: sunrise + ((rows - sunrise) as f32 * 0.5) as usize,
         island_end: ISLAND.len() * BLOCK,
     }
 }
@@ -332,10 +332,10 @@ fn still(p: &Palette, cols: usize, rows: usize) -> Vec<[u8; 4]> {
     let mut out = vec![[0u8; 4]; cols * rows];
     for y in 0..rows {
         for x in 0..cols {
-            let mut c = if y < l.horizon {
-                let mut c = dithered(&p.sky, y as f32 / l.horizon as f32, x, y);
+            let mut c = if y < l.sunrise {
+                let mut c = dithered(&p.sky, y as f32 / l.sunrise as f32, x, y);
                 // A few dim stars in the night above.
-                let f = y as f32 / l.horizon as f32;
+                let f = y as f32 / l.sunrise as f32;
                 let n = hash((y * 7919 + x) as u32);
                 if f < 0.45 && n > 0.996 - f * 0.004 {
                     c = mix(c, p.star, 0.5);
@@ -344,14 +344,14 @@ fn still(p: &Palette, cols: usize, rows: usize) -> Vec<[u8; 4]> {
             } else {
                 dithered(
                     &p.sea,
-                    (y - l.horizon) as f32 / (rows - l.horizon) as f32,
+                    (y - l.sunrise) as f32 / (rows - l.sunrise) as f32,
                     x,
                     y,
                 )
             };
             let (dx, dy) = (x as f32 + 0.5 - sx, y as f32 + 0.5 - sy);
             let d = (dx * dx + dy * dy).sqrt();
-            if y < l.horizon {
+            if y < l.sunrise {
                 // The glow: three stepped rings, then the sun, its rim dithered into its middle.
                 for (ring, strength) in [(1.8, 0.12), (1.45, 0.22), (1.2, 0.34)] {
                     if d < r * ring {
@@ -374,7 +374,7 @@ fn still(p: &Palette, cols: usize, rows: usize) -> Vec<[u8; 4]> {
                     }
                     let s = ((xf - a) / (b - a) * std::f32::consts::PI).sin();
                     let h = (s * high).round() as usize;
-                    y + h >= l.horizon
+                    y + h >= l.sunrise
                 };
                 if far(0.24, 0.36, 3.) || far(0.84, 0.97, 4.) {
                     c = p.haze;
@@ -382,8 +382,8 @@ fn still(p: &Palette, cols: usize, rows: usize) -> Vec<[u8; 4]> {
             } else {
                 // The sun's light lies on the water below it, a column that widens towards
                 // the viewer, on every other row.
-                let depth = (y - l.horizon) as f32;
-                if dx.abs() < r * 0.55 + depth * 0.22 && (y - l.horizon).is_multiple_of(2) {
+                let depth = (y - l.sunrise) as f32;
+                if dx.abs() < r * 0.55 + depth * 0.22 && (y - l.sunrise).is_multiple_of(2) {
                     c = mix(c, p.glint_far, 0.22);
                 }
             }
@@ -417,10 +417,10 @@ fn moving(p: &Palette, cols: usize, rows: usize, beat: u32) -> Vec<(usize, usize
     let colour = |c: u32| -> Hsla { gpui::rgb(c).into() };
     let mut out = Vec::new();
     // The sun's glints on the water: short runs in its column, new ones every beat.
-    for y in (l.horizon + 1..rows).step_by(2) {
-        let depth = (y - l.horizon) as f32;
+    for y in (l.sunrise + 1..rows).step_by(2) {
+        let depth = (y - l.sunrise) as f32;
         let half = r * 0.55 + depth * 0.22;
-        let near = 1. - depth / (rows - l.horizon) as f32;
+        let near = 1. - depth / (rows - l.sunrise) as f32;
         for j in 0..3u32 {
             let n = hash(y as u32 * 131 + j * 17 + beat * 7);
             if n < 0.35 {
@@ -442,7 +442,7 @@ fn moving(p: &Palette, cols: usize, rows: usize, beat: u32) -> Vec<(usize, usize
     for i in 0..28u32 {
         let slot = beat / 4 + i * 97;
         let x = (hash(slot * 3) * cols as f32) as usize;
-        let y = l.horizon + 2 + (hash(slot * 5) * (rows - l.horizon - 2) as f32) as usize;
+        let y = l.sunrise + 2 + (hash(slot * 5) * (rows - l.sunrise - 2) as f32) as usize;
         if !over_island(&l, x, y) {
             out.push((x, y, 3 + (hash(slot * 11) * 6.) as usize, colour(p.ripple)));
         }
@@ -455,7 +455,7 @@ fn moving(p: &Palette, cols: usize, rows: usize, beat: u32) -> Vec<(usize, usize
     {
         let span = (cols + len) as f32;
         let x = ((hash(i as u32 * 41) * span + t * speed) % span) as i32 - len as i32;
-        let y = (l.horizon as f32 * at) as usize;
+        let y = (l.sunrise as f32 * at) as usize;
         for (row, inset, c) in [
             (0usize, 6usize, p.cloud),
             (1, 0, p.cloud_lit),
@@ -479,7 +479,7 @@ fn moving(p: &Palette, cols: usize, rows: usize, beat: u32) -> Vec<(usize, usize
     for i in 0..3u32 {
         let span = cols as f32 + 40.;
         let x = span - ((hash(i * 23) * span + t * (5. + i as f32)) % span) - 20.;
-        let y = l.horizon as f32 * (0.84 + 0.045 * i as f32) + (t * 0.8 + i as f32).sin() * 1.5;
+        let y = l.sunrise as f32 * (0.84 + 0.045 * i as f32) + (t * 0.8 + i as f32).sin() * 1.5;
         let wings = if (beat + i * 2) % 4 < 2 { &UP } else { &DOWN };
         for &(dx, dy) in wings {
             let (bx, by) = (x as i32 + dx, y as i32 + dy);
@@ -494,7 +494,7 @@ fn moving(p: &Palette, cols: usize, rows: usize, beat: u32) -> Vec<(usize, usize
             continue;
         }
         let x = (hash(i * 13) * cols as f32) as usize;
-        let y = (hash(i * 19) * l.horizon as f32 * 0.4) as usize;
+        let y = (hash(i * 19) * l.sunrise as f32 * 0.4) as usize;
         out.push((x, y, 1, colour(p.star)));
     }
     out
