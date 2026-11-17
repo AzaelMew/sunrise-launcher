@@ -128,6 +128,11 @@ fn stage(source: &Path, slot: &Path) -> io::Result<Guard> {
         slot.join("source.json"),
         serde_json::to_vec(&fs::canonicalize(source)?)?,
     )?;
+    // The game runs from this copy and, finding the launcher's lease registry above it, locks
+    // the copy and its folders up to the data folder: they need lease entries, as an installed
+    // version's have.
+    crate::run_leases::publish(&game)
+        .map_err(|error| io::Error::other(crate::native_mods::cache_error(error)))?;
     Ok(Guard {
         _slot: lock,
         _source: source_file,
@@ -259,6 +264,45 @@ mod tests {
         assert!(!in_use_in(&source, &root.join("run")));
         drop(prepare_in(&cmd, &root.join("run")).unwrap());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_game_finds_every_folder_it_locks_leased_when_played_from_its_slot() {
+        use sunrise_mod_package::runtime_leases::{open_directory, Registry};
+        let data = crate::backend::data_dir();
+        let name = format!("slot-lease-{}", std::process::id());
+        let source = data.join("versions").join(&name);
+        let home = data.join("instances").join(&name);
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        fs::write(source.join(crate::backend::CLIENT), "game").unwrap();
+        fs::write(source.join(".installed"), "").unwrap();
+        crate::run_leases::publish(&source).unwrap();
+        let mut cmd = Command::new(source.join(crate::backend::CLIENT));
+        cmd.current_dir(&home).env("SUNRISE_HOME", &home);
+        crate::run_leases::mark(&mut cmd, &source);
+        // Play's own preparation: the leases, the slot and its copy of the game.
+        let (cmd, _runtime) = crate::backend::prepare_command(redirect(cmd)).unwrap();
+        let executable = Path::new(cmd.get_program());
+        assert!(executable.starts_with(data.join("run")));
+        // The lease check the game makes at start, on what it would lock.
+        let selection = sunrise_mod_package::selection::LaunchArguments::for_command(&cmd).unwrap();
+        let data = data.canonicalize().unwrap();
+        let paths =
+            sunrise_mod_package::holder::lease_paths(executable, &selection, &data, &home).unwrap();
+        let registry = Registry::existing(&data).unwrap();
+        for (path, _) in paths {
+            assert!(
+                registry
+                    .lock(
+                        &open_directory(&path).unwrap(),
+                        crate::native_cache::LockMode::Shared
+                    )
+                    .is_ok(),
+                "{} has no lease",
+                path.display()
+            );
+        }
     }
 
     #[test]
