@@ -70,8 +70,7 @@ fn check(file: &Path) -> Result<(), String> {
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let archive = fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let zip = sunrise_port_pack::zip_intake::open(archive)
-        .map_err(|e| format!("{}: {e}", file.display()))?;
+    let zip = crate::zip_intake::open(archive).map_err(|e| format!("{}: {e}", file.display()))?;
     if zip.index_for_name("pack.mcmeta").is_none() {
         return Err(format!("{name} is not a pack: it has no pack.mcmeta."));
     }
@@ -257,8 +256,7 @@ fn counts(list: &[(String, usize)]) -> String {
 /// it doesn't yet.
 pub fn coverage(file: &Path) -> Result<Coverage, String> {
     let archive = fs::File::open(file).map_err(|e| format!("{}: {e}", file.display()))?;
-    let zip = sunrise_port_pack::zip_intake::open(archive)
-        .map_err(|e| format!("{}: {e}", file.display()))?;
+    let zip = crate::zip_intake::open(archive).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut kinds = std::collections::BTreeMap::<String, usize>::new();
     let names: Vec<_> = zip
         .file_names()

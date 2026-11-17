@@ -24,16 +24,16 @@ static SET: Mutex<Option<Option<String>>> = Mutex::new(None);
 /// The proxy address to reach `url` through: the launcher's setting, else the environment's, unless
 /// `url` is a local address or `NO_PROXY` names its host.
 pub fn spec_for(url: &str) -> Option<String> {
-    let scheme = sunrise_port_pack::net::scheme_of(url)?;
-    if sunrise_port_pack::net::direct(url) {
+    let scheme = crate::net::scheme_of(url)?;
+    if crate::net::direct(url) {
         return None;
     }
-    setting().or_else(|| sunrise_port_pack::net::env_for(scheme))
+    setting().or_else(|| crate::net::env_for(scheme))
 }
 
 /// The proxy to reach `url` through: `spec_for`'s address, read as one.
 pub fn for_url(url: &str) -> Option<ureq::Proxy> {
-    spec_for(url).and_then(|spec| sunrise_port_pack::net::parse(&spec))
+    spec_for(url).and_then(|spec| crate::net::parse(&spec))
 }
 
 /// `builder`, reaching `url` through the proxy when one is set. For the parts that ask for a few
@@ -53,12 +53,10 @@ pub fn refuse(spec: &str) -> Option<String> {
     }
     // `ureq` takes `http://` without a host, which would leave a download failing with nothing
     // said about the proxy.
-    if sunrise_port_pack::net::parse(spec).is_none()
-        || sunrise_port_pack::net::host_of(spec).is_none_or(str::is_empty)
-    {
+    if crate::net::parse(spec).is_none() || crate::net::host_of(spec).is_none_or(str::is_empty) {
         return Some(format!(
             "{} isn't a proxy address. Write it as http://host:port or socks5://host:port.",
-            sunrise_port_pack::net::redacted(spec)
+            crate::net::redacted(spec)
         ));
     }
     None
@@ -75,7 +73,7 @@ pub fn announce(setting: Option<String>) {
         .map(|p| p.trim().to_owned())
         .filter(|p| !p.is_empty());
     *held() = Some(spec.clone());
-    sunrise_port_pack::net::set_proxy(spec);
+    crate::net::set_proxy(spec);
 }
 
 /// The launcher's setting: read from `settings.json` the first time it is needed and kept after

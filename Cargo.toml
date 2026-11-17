@@ -65,6 +65,8 @@ sunrise-platform = { path = "../crates/sunrise-platform", features = ["prepare",
 sunrise-port-pack = { path = "../crates/sunrise-port-pack" }
 # The native build's SDK, mixins and fit test, and the content fence a mod's files pass before install.
 sunrise-mod-package = { path = "../crates/sunrise-mod-package", features = ["index", "prebuilt", "runtime-process"] }
+# Parses proxy and download addresses (`net.rs`); already in the lockfile through ureq.
+url = "2"
 # Deleting a world moves it to the system's trash
 trash = "5"
 # Backup names carry the local time, as vanilla's do
