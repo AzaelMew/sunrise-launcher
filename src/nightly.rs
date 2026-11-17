@@ -122,14 +122,13 @@ fn same_day_times(
             known.push((tag, date, time));
         }
     }
-    let same_day = known
+    known
         .iter()
         .filter(|(_, date, time)| {
             !time.is_empty() && known.iter().filter(|(_, d, _)| d == date).count() > 1
         })
         .map(|(tag, _, time)| (tag.to_string(), time.to_string()))
-        .collect();
-    same_day
+        .collect()
 }
 
 /// When Nightly `version` came out, `HH:MM` UTC, if another came out the same day.
@@ -255,6 +254,15 @@ mod tests {
         }
     }
 
+    fn nightly_release(version: &str, date: &str, time: &str) -> Release {
+        Release {
+            tag: version.into(),
+            time: time.into(),
+            nightly: Some(NIGHTLY.into()),
+            ..release("", date)
+        }
+    }
+
     #[test]
     fn a_nightly_installs_under_its_date_and_commit() {
         let r = release("Nightly 2026-10-28 · 0c02067", "2026-10-28");
@@ -318,7 +326,7 @@ mod tests {
 
     #[test]
     fn an_installed_nightly_keeps_its_time_after_restart() {
-        let current = nightly("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
+        let current = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
         let installed = [("nightly-2033-06-07-aaaaaaa".to_owned(), "07:22".to_owned())];
         let table = same_day_times(&[], &[current], &installed);
         assert_eq!(
@@ -340,7 +348,7 @@ mod tests {
     #[test]
     fn an_installed_nightly_records_its_publication_time() {
         let dir = tempfile::tempdir().unwrap();
-        let release = nightly("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
+        let release = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
         record_install_time(dir.path(), &release).unwrap();
         assert_eq!(
             fs::read_to_string(dir.path().join(INSTALLED_TIME)).unwrap(),
