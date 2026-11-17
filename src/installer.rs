@@ -338,12 +338,15 @@ pub fn install(options: &Options, progress: impl Fn(Step, f32)) -> Result<PathBu
     if !same_path(&source, &exe) {
         place(&source, &exe).map_err(|e| format!("{}: {e}", exe.display()))?;
     }
-    fs::write(dir.join("LICENSE"), include_str!("../../LICENSE"))
-        .map_err(|e| format!("The licence: {e}"))?;
+    fs::write(
+        dir.join("LICENSE"),
+        include_str!("../assets/licenses/LICENSE"),
+    )
+    .map_err(|e| format!("The licence: {e}"))?;
     fs::create_dir_all(dir.join("LICENSES")).map_err(|e| format!("The licences: {e}"))?;
     fs::write(
         dir.join("LICENSES/MIT-Horizon.txt"),
-        include_str!("../../LICENSES/MIT-Horizon.txt"),
+        include_str!("../assets/licenses/MIT-Horizon.txt"),
     )
     .map_err(|e| format!("The MIT notice: {e}"))?;
     progress(Step::Shortcuts, 0.6);
