@@ -6663,6 +6663,7 @@ pub fn {f}("
 
     #[cfg(unix)]
     #[test]
+    #[ignore = "daily"]
     fn prepared_versions_get_the_extras_their_own_preparer_adds_once() {
         use std::os::unix::fs::PermissionsExt;
         let dir =
