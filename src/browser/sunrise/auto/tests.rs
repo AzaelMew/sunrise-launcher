@@ -642,3 +642,37 @@ fn auto_update_does_not_revive_concurrently_removed_mod() {
 
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn content_ids_are_the_declaration_files_of_the_mods_own_namespace() {
+    let dir = scratch("auto-content-ids");
+    let files: [(&str, &[u8]); 8] = [
+        ("data/ruby/sunrise/block/gem_block.json", BLOCK),
+        ("data/ruby/sunrise/item/gem.json", ITEM),
+        ("data/ruby/sunrise/entity_type/golem.json", b"{}"),
+        ("data/ruby/sunrise/mob_effect/shine.json", b"{}"),
+        ("data/ruby/sunrise/menu/forge.json", b"{}"),
+        ("data/ruby/sunrise/creative_tab/gems.json", b"{}"),
+        ("data/ruby/recipe/gem.json", b"{}"),
+        ("assets/ruby/lang/en_us.json", b"{}"),
+    ];
+    let manifest = format!("{MANIFEST}version = \"1.0.0\"\n");
+    let path = dir.join("ruby.smod");
+    fs::write(
+        &path,
+        sunrise_launcher_smod::Package::write_files(&manifest, &files).unwrap(),
+    )
+    .unwrap();
+    let ids: Vec<String> = content_ids(&path).unwrap().into_iter().collect();
+    assert_eq!(
+        ids,
+        [
+            "block ruby:gem_block",
+            "creative tab ruby:gems",
+            "effect ruby:shine",
+            "entity ruby:golem",
+            "item ruby:gem",
+            "menu ruby:forge",
+        ]
+    );
+}

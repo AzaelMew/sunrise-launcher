@@ -59,7 +59,7 @@ pub(crate) fn check_namespace(name: &str, manifest: &Manifest) -> Result<(), Str
 }
 
 /// The mod folder's sorted `assets/` and `data/` files, listed and capped as `Content::read` does.
-pub(crate) fn content_files(root: &Path) -> Result<Vec<String>, String> {
+pub fn content_files(root: &Path) -> Result<Vec<String>, String> {
     let mut files = Vec::new();
     let mut total = 0u64;
     for (name, size) in folder_files(root)? {

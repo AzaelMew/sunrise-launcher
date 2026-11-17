@@ -100,21 +100,46 @@ pub fn decide<'a>(index: &'a Index, entry: &installed::Entry, ctx: &Context) -> 
     Decision::Update(target)
 }
 
-/// The blocks, items, entities, effects, menus and creative tabs a content mod adds.
+/// The kinds a content mod declares one file each for (`data/<namespace>/sunrise/<kind>/<id>.json`), as notices name them.
+const DECLARED: [(&str, &str); 6] = [
+    ("block", "block"),
+    ("item", "item"),
+    ("entity_type", "entity"),
+    ("mob_effect", "effect"),
+    ("menu", "menu"),
+    ("creative_tab", "creative tab"),
+];
+
+/// The blocks, items, entities, effects, menus and creative tabs a content mod declares, read from its files' paths: the game checks their contents when it loads the mod.
 pub fn content_ids(path: &Path) -> Result<BTreeSet<String>, String> {
-    let manifest = sunrise_mod_package::Package::read(path)?.manifest;
-    let c = sunrise_mod_package::Content::read(path, &manifest)?;
-    let ids = c.blocks.iter().map(|b| format!("block {}", b.id));
-    let ids = ids.chain(c.items.iter().map(|i| format!("item {}", i.id)));
-    let ids = ids.chain(c.entity_types.iter().map(|e| format!("entity {}", e.id)));
-    let ids = ids.chain(c.effects.iter().map(|e| format!("effect {}", e.id)));
-    let ids = ids.chain(c.menu_types.iter().map(|m| format!("menu {}", m.id)));
-    Ok(ids
-        .chain(
-            c.creative_tabs
-                .iter()
-                .map(|t| format!("creative tab {}", t.id)),
-        )
+    let manifest = sunrise_launcher_smod::Package::read(path)?.manifest;
+    let names = if path.is_dir() {
+        sunrise_launcher_smod::files::content_files(path)?
+    } else {
+        let file = fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        zip::ZipArchive::new(file)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            .file_names()
+            .map(|name| {
+                name.map(|name| name.into_owned())
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            })
+            .collect::<Result<_, _>>()?
+    };
+    let owned: BTreeSet<&str> = manifest.owned_namespaces().collect();
+    Ok(names
+        .iter()
+        .filter_map(|name| {
+            let rest = name.strip_prefix("data/")?;
+            let (namespace, rest) = rest.split_once('/')?;
+            let rest = rest.strip_prefix("sunrise/")?;
+            let (kind, file) = rest.split_once('/')?;
+            let id = file.strip_suffix(".json")?;
+            let label = DECLARED.iter().find(|(dir, _)| *dir == kind)?.1;
+            owned
+                .contains(namespace)
+                .then(|| format!("{label} {namespace}:{id}"))
+        })
         .collect())
 }
 

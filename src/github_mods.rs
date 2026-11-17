@@ -384,11 +384,13 @@ fn checked(bytes: &[u8], dir: &Path) -> Result<Packed, String> {
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = dir.join(format!("{}.smod", &sum[..16]));
     fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
-    let facts =
-        crate::browser::sunrise::inspect(&sunrise_launcher_smod::index::Kind::NativeMod, &file)
-            .inspect_err(|_| {
-                let _ = fs::remove_file(&file);
-            })?;
+    let facts = sunrise_launcher_smod::index::inspect(
+        &sunrise_launcher_smod::index::Kind::NativeMod,
+        &file,
+    )
+    .inspect_err(|_| {
+        let _ = fs::remove_file(&file);
+    })?;
     Ok(Packed {
         id: facts.id.expect("native bundle has an id"),
         version: facts.version.expect("native bundle has a version"),
@@ -433,7 +435,6 @@ pub fn find_mods(root: &Path) -> Result<Vec<Bundle>, String> {
 
 /// Deterministically package a validated flat mod project.
 pub fn pack(bundle: &Bundle) -> Result<Vec<u8>, String> {
-    crate::browser::sunrise::content_fence(&sunrise_launcher_smod::index::Kind::Mod, &bundle.dir)?;
     sunrise_launcher_smod::Package::pack_directory(&bundle.dir)
 }
 
