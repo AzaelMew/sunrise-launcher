@@ -22,10 +22,27 @@ pub(super) struct DeveloperInstall {
 pub(super) fn install(args: DeveloperInstall, as_json: bool) -> Result<(), String> {
     let tag = developer_install::install(&args.checkout, &args.program, args.trust_unsigned)?;
     let label = developer_install::label(&tag).unwrap();
+    let prepared = backend::check_prepared(&tag);
     if as_json {
-        super::json(serde_json::json!({"version": tag, "label": label}));
+        super::json(serde_json::json!({"version": tag, "label": label, "prepared": prepared}));
     } else {
         println!("{label}");
+        if prepared {
+            println!(
+                "{}",
+                tr(
+                    "Its resources are prepared: the checkout's prepared folder, copied beside the game."
+                )
+            );
+        } else {
+            println!(
+                "{}",
+                trf(
+                    "Prepare its resources next, or prepare them in the checkout and repeat this command to copy them: sunrise-launcher prepare --version {version}",
+                    &[("version", &tag)]
+                )
+            );
+        }
     }
     Ok(())
 }
@@ -44,9 +61,21 @@ pub(super) fn import(
     if as_json {
         super::json(serde_json::json!({ "imported": tag, "prepared": prepared }));
     } else if prepared {
-        println!("{}", trf("Imported {version} and selected it. It is prepared already, from another installed version.", &[("version", &tag)]));
+        println!(
+            "{}",
+            trf(
+                "Imported {version} and selected it. It is prepared already, from another installed version.",
+                &[("version", &tag)]
+            )
+        );
     } else {
-        println!("{}", trf("Imported {version} and selected it. Prepare it next: sunrise-launcher prepare --version {version}", &[("version", &tag)]));
+        println!(
+            "{}",
+            trf(
+                "Imported {version} and selected it. Prepare it next: sunrise-launcher prepare --version {version}",
+                &[("version", &tag)]
+            )
+        );
     }
     Ok(())
 }
