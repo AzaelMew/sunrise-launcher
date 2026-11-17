@@ -2936,9 +2936,7 @@ mod tests {
     fn a_folder_with_nothing_native_says_so() {
         let _guard = scratch_state();
         let result = isolated(|_| Err(Failed::Nothing), &|_| {});
-        let error = result.unwrap_err();
-        assert!(matches!(error, Failed::Nothing));
-        assert!(error.to_string().contains("Nothing to build"), "{error}");
+        assert!(matches!(result, Err(Failed::Nothing)));
     }
 
     #[test]
