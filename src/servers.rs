@@ -9,7 +9,7 @@
 //! launcher prepared: nothing of Mojang's is downloaded or shipped.
 
 use crate::backend;
-use crate::i18n::tr;
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs;
@@ -374,7 +374,7 @@ pub fn run(dir: &Path, args: &[&str]) -> Result<String, Problem> {
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| Problem::plain(format!("Couldn't run sunrise-server: {e}")))?;
+        .map_err(|e| unrun(&e))?;
     let out = String::from_utf8_lossy(&output.stdout).into_owned();
     if output.status.success() {
         Ok(out)
@@ -413,20 +413,28 @@ fn engine_command(dir: &Path) -> Result<Command, Problem> {
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
         .output()
-        .map_err(|e| Problem::plain(format!("Couldn't run sunrise-server: {e}")))?;
-    engine_from_reply(&output.stdout, output.status.code())
+        .map_err(|e| unrun(&e))?;
+    engine_from_reply(&output.stdout)
+}
+
+/// Why `sunrise-server` couldn't be run, in the launcher's language.
+fn unrun(error: &std::io::Error) -> Problem {
+    Problem::plain(trf(
+        "Couldn't run sunrise-server: {error}",
+        &[("error", &error.to_string())],
+    ))
 }
 
 /// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
-fn engine_from_reply(stdout: &[u8], code: Option<i32>) -> Result<Command, Problem> {
-    let reply: serde_json::Value = match (code, serde_json::from_slice(stdout)) {
-        (_, Ok(reply)) => reply,
-        (Some(2), Err(_)) => {
-            return Err(Problem::plain(tr(
-                "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
-            )))
-        }
-        (_, Err(e)) => return Err(Problem::plain(format!("sunrise-server engine-command: {e}"))),
+fn engine_from_reply(stdout: &[u8]) -> Result<Command, Problem> {
+    // A build from before `engine-command` answers with its usage, never with a JSON object, whatever its exit code.
+    let Some(reply) = serde_json::from_slice::<serde_json::Value>(stdout)
+        .ok()
+        .filter(serde_json::Value::is_object)
+    else {
+        return Err(Problem::plain(tr(
+            "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
+        )));
     };
     if reply["format"]
         .as_u64()
@@ -443,14 +451,15 @@ fn engine_from_reply(stdout: &[u8], code: Option<i32>) -> Result<Command, Proble
         }
         return Err(problem);
     }
-    let text = |key: &str| {
-        reply[key]
-            .as_str()
-            .ok_or_else(|| Problem::plain(format!("sunrise-server engine-command: no {key}")))
+    let unreadable = || {
+        Problem::plain(tr(
+            "This server's Sunrise build answered with a start command the launcher can't read: update the launcher.",
+        ))
     };
+    let text = |key: &str| reply[key].as_str().ok_or_else(unreadable);
     let mut engine = crate::process::command(text("program")?);
     for arg in reply["args"].as_array().into_iter().flatten() {
-        engine.arg(arg.as_str().unwrap_or_default());
+        engine.arg(arg.as_str().ok_or_else(unreadable)?);
     }
     engine.current_dir(text("cwd")?);
     for (key, value) in reply["env"].as_object().into_iter().flatten() {
@@ -470,7 +479,7 @@ fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(),
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| Problem::plain(format!("Couldn't run sunrise-server: {e}")))?;
+        .map_err(|e| unrun(&e))?;
     let (tx_err, rx_err) = std::sync::mpsc::channel();
     let mut err = child.stderr.take();
     std::thread::spawn(move || {

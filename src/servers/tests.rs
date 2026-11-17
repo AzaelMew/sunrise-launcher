@@ -297,7 +297,7 @@ fn the_game_mode_comes_from_server_toml() {
 fn the_engine_command_reply_becomes_the_command_and_its_problems() {
     let reply = br#"{"format": 1, "program": "/opt/sunrise/sunrise-engine", "args": ["--dedicated", "--nogui"],
         "cwd": "/srv/mc", "env": {"SUNRISE_NO_AUDIO": "1", "GONE": null}, "resources": "/srv/mc/resources"}"#;
-    let engine = engine_from_reply(reply, Some(0)).unwrap();
+    let engine = engine_from_reply(reply).unwrap();
     assert_eq!(engine.get_program(), "/opt/sunrise/sunrise-engine");
     assert_eq!(
         engine.get_args().collect::<Vec<_>>(),
@@ -313,18 +313,29 @@ fn the_engine_command_reply_becomes_the_command_and_its_problems() {
 
     let missing =
         br#"{"format": 1, "error": {"kind": "resources", "message": "no prepared game files"}}"#;
-    let problem = engine_from_reply(missing, Some(3)).unwrap_err();
+    let problem = engine_from_reply(missing).unwrap_err();
     assert_eq!(
         (problem.message.as_str(), problem.fix),
         ("no prepared game files", Some(Fix::Prepare))
     );
     let other =
         br#"{"format": 1, "error": {"kind": "configuration", "message": "server.toml: bad"}}"#;
-    assert_eq!(engine_from_reply(other, Some(1)).unwrap_err().fix, None);
+    assert_eq!(engine_from_reply(other).unwrap_err().fix, None);
 
-    let too_old = engine_from_reply(b"", Some(2)).unwrap_err();
-    assert!(too_old.message.contains("too old"), "{}", too_old.message);
-    let newer = engine_from_reply(br#"{"format": 2, "program": "x"}"#, Some(0)).unwrap_err();
+    // Builds from before engine-command: a usage line (exit 1, "unknown command"), nothing, or no object.
+    for usage in [
+        &b"error: unknown command engine-command\nusage: sunrise-server ..."[..],
+        b"",
+        b"[]",
+    ] {
+        let too_old = engine_from_reply(usage).unwrap_err();
+        assert!(too_old.message.contains("too old"), "{}", too_old.message);
+    }
+    let odd = engine_from_reply(
+        br#"{"format": 1, "program": "x", "args": ["--dedicated", 7], "cwd": "/"}"#,
+    );
+    assert!(odd.unwrap_err().message.contains("can't read"));
+    let newer = engine_from_reply(br#"{"format": 2, "program": "x"}"#).unwrap_err();
     assert!(
         newer.message.contains("update the launcher"),
         "{}",
