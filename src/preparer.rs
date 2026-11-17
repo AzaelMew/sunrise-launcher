@@ -6,7 +6,7 @@ use std::io::{self, BufRead, BufReader};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
-/// The game's cache of prepared data in a resources folder (`sunrise_core::prepared_files::FILE_NAME`).
+/// The game's cache of prepared data in a resources folder (`sunrise_core::prepared_files::FILE_NAME`, checked by tests/test_launcher_copies.py).
 pub const DATA_FILE: &str = "sunrise-data.bin";
 
 /// The `format` of the preparer's JSON replies this launcher reads.
@@ -290,6 +290,13 @@ pub fn missing_extras(
     let mut command = json_command(binary, root, "missing-extras");
     command.arg("--output").arg(resources);
     Ok(reply(command, &|_| {})?.map(|value| extras(&value["missing"])))
+}
+
+/// Writes the prepared `resources`' cache of prepared data (`data-file --json`): whether it wrote one; `None` when the preparer is too old to.
+pub fn data_file(binary: &Path, root: &Path, resources: &Path) -> Result<Option<bool>, String> {
+    let mut command = json_command(binary, root, "data-file");
+    command.arg("--output").arg(resources);
+    Ok(reply(command, &|_| {})?.map(|value| value["written"].as_bool().unwrap_or(false)))
 }
 
 /// What `extras` did: the kinds added, each that failed with why, and what still lacks.
