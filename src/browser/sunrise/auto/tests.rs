@@ -21,7 +21,7 @@ fn ruby(dir: &Path, version: &str, blocks: &[&str], items: &[&str]) -> PathBuf {
         .collect();
     let files: Vec<(&str, &[u8])> = names.iter().map(|(n, b)| (n.as_str(), *b)).collect();
     let manifest = format!("{MANIFEST}version = \"{version}\"\n");
-    let bytes = sunrise_mod_package::Package::write_files(&manifest, &files).unwrap();
+    let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &files).unwrap();
     let path = dir.join(format!("ruby-{version}.smod"));
     fs::write(&path, bytes).unwrap();
     path
@@ -37,8 +37,8 @@ fn index_of(versions: &[(&str, &str, &Path)]) -> Index {
             native_binaries: Vec::new(),
             version: (*version).into(),
             api: "0.2".into(),
-            side: Some(mod_vocab::Side::Both),
-            capabilities: vec![sunrise_mod_package::Capability::Registries].into(),
+            side: Some(sunrise_launcher_smod::manifest::Side::Both),
+            capabilities: vec![sunrise_launcher_smod::Capability::Registries].into(),
             game: (*game).into(),
             requires: Vec::new(),
             file: index::File {
@@ -267,12 +267,12 @@ fn wasm_update_waits_for_the_player() {
     ];
     let manifest = format!(
         "{MANIFEST}version = \"1.1.0\"\n[wasm]\nsha512 = \"{}\"\ntoolchain = \"1.99.1\"\nbuilt_with = \"test\"\n",
-        sunrise_mod_package::manifest::sha512_of(module)
+        sunrise_launcher_smod::manifest::sha512_of(module)
     );
     let new = dir.join("ruby-1.1.0.smod");
     fs::write(
         &new,
-        sunrise_mod_package::Package::write_files(&manifest, &[("mod.wasm", module)]).unwrap(),
+        sunrise_launcher_smod::Package::write_files(&manifest, &[("mod.wasm", module)]).unwrap(),
     )
     .unwrap();
     let first = index_of(&[("1.0.0", GAME, &old)]);
@@ -641,4 +641,38 @@ fn auto_update_does_not_revive_concurrently_removed_mod() {
     assert_eq!(ruby_entry.version, "1.1.0");
 
     fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn content_ids_are_the_declaration_files_of_the_mods_own_namespace() {
+    let dir = scratch("auto-content-ids");
+    let files: [(&str, &[u8]); 8] = [
+        ("data/ruby/sunrise/block/gem_block.json", BLOCK),
+        ("data/ruby/sunrise/item/gem.json", ITEM),
+        ("data/ruby/sunrise/entity_type/golem.json", b"{}"),
+        ("data/ruby/sunrise/mob_effect/shine.json", b"{}"),
+        ("data/ruby/sunrise/menu/forge.json", b"{}"),
+        ("data/ruby/sunrise/creative_tab/gems.json", b"{}"),
+        ("data/ruby/recipe/gem.json", b"{}"),
+        ("assets/ruby/lang/en_us.json", b"{}"),
+    ];
+    let manifest = format!("{MANIFEST}version = \"1.0.0\"\n");
+    let path = dir.join("ruby.smod");
+    fs::write(
+        &path,
+        sunrise_launcher_smod::Package::write_files(&manifest, &files).unwrap(),
+    )
+    .unwrap();
+    let ids: Vec<String> = content_ids(&path).unwrap().into_iter().collect();
+    assert_eq!(
+        ids,
+        [
+            "block ruby:gem_block",
+            "creative tab ruby:gems",
+            "effect ruby:shine",
+            "entity ruby:golem",
+            "item ruby:gem",
+            "menu ruby:forge",
+        ]
+    );
 }

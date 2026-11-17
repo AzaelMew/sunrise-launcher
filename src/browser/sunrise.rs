@@ -1,8 +1,8 @@
 //! Sunrise's own registry (docs/modding/src/reference/registry-index.md): mods, modpacks and resource packs made for
 //! Sunrise, reviewed as pull requests in sunrise-org/sunrise-mods. One file lists them all,
 //! `index.json`; every download is checked against it before it reaches the game folder
-//! (`sunrise_mod_package::index::check_file`: size, SHA-256, the author's signature, the file's own
-//! manifest), and files the index says were taken down are refused and turned off.
+//! ([`index::check_file`]: size, SHA-256, the author's signature and the file's own manifest; the game refuses
+//! content it can't load, with its own error), and files the index says were taken down are refused and turned off.
 use super::{
     details::{Details, GitHub, Link},
     download, installed, java, FileRef, Kind, Project, Query, Source, SourceId, Version, GAME,
@@ -13,14 +13,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use sunrise_mod_package::index::{self, Index, Trust};
+use sunrise_launcher_smod::index::{self, Index, Trust};
 
 /// Where the registry publishes its index (GitHub Pages of sunrise-org/sunrise-mods).
-pub const INDEX_URL: &str = sunrise_addresses::MOD_INDEX;
+pub const INDEX_URL: &str = sunrise_launcher_addresses::MOD_INDEX;
 /// The registry's pages on the website, `<SITE>/<id>`.
-const SITE: &str = sunrise_addresses::MOD_PAGES;
+const SITE: &str = sunrise_launcher_addresses::MOD_PAGES;
 /// The report form of a project.
-const REPORT: &str = sunrise_addresses::MOD_REPORT;
+const REPORT: &str = sunrise_launcher_addresses::MOD_REPORT;
 /// The loader name the browser gives registry versions, so `support` and `pick` know them.
 pub const LOADER: &str = "sunrise";
 /// How long a fetched index is used before it is fetched again.
@@ -319,7 +319,7 @@ fn tags_of(index: &Index, kind: Kind) -> Vec<String> {
 }
 
 /// Where the registry's mod policy is: who owns and answers for a project, takedowns.
-pub const POLICY: &str = sunrise_addresses::MOD_POLICY;
+pub const POLICY: &str = sunrise_launcher_addresses::MOD_POLICY;
 
 /// Whether the Sunrise project made `p` (the mod policy's "Official": author Sunrise, source in
 /// the horizon-rust organisation).

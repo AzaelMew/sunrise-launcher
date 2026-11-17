@@ -110,7 +110,12 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
         return Err(tr("Choose a real sunrise-client executable built for this computer.").into());
     }
     let mut missing = Vec::new();
-    for name in ["sunrise-ctl", "sunrise-prepare", "sunrise-server"] {
+    for name in [
+        "sunrise-ctl",
+        "sunrise-perf",
+        "sunrise-prepare",
+        "sunrise-server",
+    ] {
         let name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
         if !program.with_file_name(&name).is_file() {
             missing.push(name);
@@ -127,7 +132,7 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
     }
     if !missing.is_empty() {
         let mut message = trf(
-            "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
+            "Missing developer packaging inputs: {files}. Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
             &[("files", &missing.join(", "))],
         );
         if wasm_std_missing {
@@ -286,7 +291,7 @@ mod tests {
         let program = bin.join(backend::CLIENT);
         fs::write(
             &program,
-            [magic, &sunrise_mod_package::game_identity::MARK[..]].concat(),
+            [magic, &sunrise_launcher_smod::game_identity::MARK[..]].concat(),
         )
         .unwrap();
         for name in companions {
@@ -298,8 +303,13 @@ mod tests {
         }
         (folder, checkout, program)
     }
-    const COMPANIONS: [&str; 3] = ["sunrise-ctl", "sunrise-prepare", "sunrise-server"];
-    const REMEDY: &str = "Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.";
+    const COMPANIONS: [&str; 4] = [
+        "sunrise-ctl",
+        "sunrise-perf",
+        "sunrise-prepare",
+        "sunrise-server",
+    ];
+    const REMEDY: &str = "Build companions with cargo build -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.";
     #[test]
     fn a_missing_wasm_standard_library_is_named_with_its_generation_command_before_packaging() {
         let (_folder, checkout, program) = packaging_inputs(&COMPANIONS);
@@ -321,6 +331,7 @@ mod tests {
         let (_folder, checkout, program) = packaging_inputs(&["sunrise-ctl"]);
         let error = install(&checkout, &program, true).unwrap_err();
         let missing = [
+            format!("sunrise-perf{}", std::env::consts::EXE_SUFFIX),
             format!("sunrise-prepare{}", std::env::consts::EXE_SUFFIX),
             format!("sunrise-server{}", std::env::consts::EXE_SUFFIX),
             "sunrise-wasm-std.wasm".to_owned(),
@@ -340,7 +351,8 @@ mod tests {
             install(&checkout, &program, true).unwrap_err(),
             "The developer checkout has no HEAD commit."
         );
-        let (_other, checkout, program) = packaging_inputs(&["sunrise-ctl", "sunrise-prepare"]);
+        let (_other, checkout, program) =
+            packaging_inputs(&["sunrise-ctl", "sunrise-perf", "sunrise-prepare"]);
         fs::write(program.with_file_name("sunrise-wasm-std.wasm"), "").unwrap();
         let error = install(&checkout, &program, true).unwrap_err();
         assert!(

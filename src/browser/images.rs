@@ -18,7 +18,7 @@ const HOSTS: [&str; 8] = [
     "https://files.minecraftforge.net/static/images/",
     "https://media.forgecdn.net/",
     "https://edge.forgecdn.net/",
-    sunrise_addresses::MOD_IMAGES,
+    sunrise_launcher_addresses::MOD_IMAGES,
     // Horizon's registry, and the mirror kept at the address it had before it moved to horizon-rust.
     "https://horizon-rust.github.io/horizon-mods/",
     "https://ludovic111.github.io/sunrise-mods/",

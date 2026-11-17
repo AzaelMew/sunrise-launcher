@@ -265,3 +265,72 @@ fn the_post_exit_command_runs_with_the_instance_variables() {
         .any(|(k, _)| *k == "INST_JAVA"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #772: Play's account reaches the game however it starts: straight, through a wrapper or a
+/// pre-launch command, from the Unix holder's copy of the game's words, and from Windows'
+/// runtime slot. An offline Play tells the game why.
+#[test]
+fn the_account_session_reaches_the_game_through_every_launch() {
+    let source = std::env::temp_dir().join("sunrise-session-launch");
+    let launches = [
+        Launch::default(),
+        Launch {
+            wrapper: "nice -n 5".into(),
+            ..Launch::default()
+        },
+        Launch {
+            pre_launch: "echo ready".into(),
+            ..Launch::default()
+        },
+    ];
+    for launch in launches {
+        let mut cmd = Command::new(source.join(crate::backend::CLIENT));
+        cmd.current_dir(&source).env("SUNRISE_HOME", &source);
+        crate::run_leases::mark(&mut cmd, &source);
+        let session = crate::account::GameSession {
+            file: Some("session-1.json".into()),
+            ..Default::default()
+        };
+        assert_eq!(session.apply(&mut cmd), None);
+        let cmd = wrap(cmd, &launch);
+        let line = |words: Vec<OsString>| {
+            words
+                .iter()
+                .map(|w| w.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let env = |key: &str| {
+            cmd.get_envs()
+                .find(|(k, _)| *k == key)
+                .and_then(|(_, v)| v)
+                .map(OsStr::to_owned)
+        };
+        assert!(
+            line(cmd.get_args().map(OsStr::to_owned).collect())
+                .contains("--session-file session-1.json"),
+            "{launch:?}"
+        );
+        let game = env(crate::run_leases::GAME).unwrap();
+        let game: Vec<OsString> = serde_json::from_str(game.to_str().unwrap()).unwrap();
+        assert!(line(game).contains("--session-file session-1.json"));
+        assert_eq!(env("SUNRISE_OFFLINE_REASON"), None);
+        #[cfg(windows)]
+        assert!(env("SUNRISE_WINDOWS_RUNTIME_SLOT").is_some());
+    }
+    let mut cmd = Command::new(source.join(crate::backend::CLIENT));
+    let offline = crate::account::GameSession {
+        offline: Some("No answer from Microsoft".into()),
+        ..Default::default()
+    };
+    assert_eq!(
+        offline.apply(&mut cmd).as_deref(),
+        Some("No answer from Microsoft")
+    );
+    let cmd = wrap(cmd, &Launch::default());
+    assert!(!cmd.get_args().any(|a| a == "--session-file"));
+    assert!(cmd
+        .get_envs()
+        .any(|(k, v)| k == "SUNRISE_OFFLINE_REASON"
+            && v == Some(OsStr::new("No answer from Microsoft"))));
+}

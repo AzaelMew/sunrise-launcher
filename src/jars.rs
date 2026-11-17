@@ -7,7 +7,7 @@ use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
 };
-use sunrise_mod_package::manifest::{JarRef, JarRequirement, MissingJar};
+use sunrise_launcher_smod::manifest::{JarRef, JarRequirement, MissingJar};
 use sunrise_port_pack::{fetch, modrinth};
 
 /// Download consent for this mod set, never a permission to execute Java code.
@@ -113,9 +113,36 @@ pub fn prepare(
         home,
         jars,
         permission,
-        modrinth::jar_urls,
-        fetch::download_jar,
+        |jars| {
+            let jars = jars
+                .iter()
+                .map(|jar| to_game(jar))
+                .collect::<Result<Vec<_>, _>>()?;
+            modrinth::jar_urls(&jars.iter().collect::<Vec<_>>())
+        },
+        |url, jar, dest| fetch::download_jar(url, &to_game(jar)?, dest),
     )
+}
+
+/// A jar as the game's crates spell it, for sunrise-port-pack until it runs as its own process.
+fn to_game(jar: &JarRef) -> Result<sunrise_mod_package::manifest::JarRef, String> {
+    sunrise_mod_package::manifest::JarRef::new(
+        jar.id().into(),
+        jar.version().into(),
+        jar.sha512().into(),
+    )
+    .map_err(|error| copies_disagree(jar.id(), &error))
+}
+
+/// A jar of a game-crate manifest (the native build's) in the launcher's own types.
+pub fn from_game(jar: &sunrise_mod_package::manifest::JarRef) -> Result<JarRef, String> {
+    JarRef::new(jar.id().into(), jar.version().into(), jar.sha512().into())
+        .map_err(|error| copies_disagree(jar.id(), &error))
+}
+
+/// The two crates' jar checks are copies, so one refusing what the other accepted is a launcher bug to report.
+fn copies_disagree(id: &str, error: &str) -> String {
+    format!("jar {id}: the launcher's and the game's jar checks disagree ({error}); report it on the launcher")
 }
 
 fn prepare_with(
