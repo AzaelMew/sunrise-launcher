@@ -1,13 +1,15 @@
-//! What the launcher just did, said for 4.2 s (the mockup's `say`): on a wide window (1280 px
-//! and more) a line in the top bar between the pages and the account, right-aligned at 70 %;
-//! narrower, a glass toast along the window's bottom (`hzl-float`, 20 px corners).
+//! What the launcher just did, said for 4.2 s in a floating toast. It doesn't take
+//! space from navigation or steal focus. Hover pauses the dwell; a click dismisses it.
 //!
 //! Any handler can say something, even one with only `&mut App`: the line waits here, wakes the
 //! launcher's drain (`wake.rs`), which draws it, then lets it go.
 
 use super::*;
 
+use crate::{glass_ui, paint::palette};
+use gpui::rgb;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// How long a line stays (`setTimeout(…, 4200)`).
@@ -29,7 +31,8 @@ static LINE: Mutex<Option<Line>> = Mutex::new(None);
 
 fn say_parts(parts: Parts) {
     let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
-    let n = line.as_ref().map_or(1, |l| l.n + 1);
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
     *line = Some(Line {
         parts,
         since: Instant::now(),
@@ -74,11 +77,18 @@ fn current_parts() -> Option<(Parts, u64)> {
     line.as_ref().map(|l| (l.parts.clone(), l.n))
 }
 
-fn current() -> Option<(String, u64)> {
-    current_parts().map(|(parts, n)| {
-        let text: Vec<_> = parts.iter().map(|(p, _)| p.trim()).collect();
-        (text.join(" "), n)
-    })
+fn hold(n: u64, hovered: bool) {
+    let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(line) = line.as_mut().filter(|line| line.n == n) {
+        match (hovered, line.held) {
+            (true, None) => line.held = Some(Instant::now()),
+            (false, Some(start)) => {
+                line.since += start.elapsed();
+                line.held = None;
+            }
+            _ => {}
+        }
+    }
 }
 
 /// `/Users/me/x` as `~/x`, as the mockup writes folders.
@@ -105,9 +115,69 @@ impl Launcher {
         if let Some(freed) = sunrise_launcher::storage::eviction::take_toast() {
             say(freed);
         }
-        let now = current().map(|l| l.1);
+        let now = current_parts().map(|(_, n)| n);
         let changed = now != self.toast_seen;
         self.toast_seen = now;
         changed
+    }
+
+    pub(super) fn toast(&self) -> Option<Div> {
+        let (parts, n) = current_parts()?;
+        let p = palette();
+        let mut line = div()
+            .flex()
+            .flex_wrap()
+            .items_baseline()
+            .gap_x(px(5.))
+            .min_w_0();
+        for (text, mono) in parts {
+            line = line.child(
+                div()
+                    .max_w_full()
+                    .truncate()
+                    .when(mono, |d| d.font_family(sunrise_launcher_theme::MONO))
+                    .child(text.trim().to_string()),
+            );
+        }
+        Some(
+            div()
+                .absolute()
+                .left(px(tokens::FRAME_INSET))
+                .right(px(tokens::FRAME_INSET))
+                .bottom(px(tokens::FRAME_INSET))
+                .flex()
+                .justify_end()
+                .child(
+                    div()
+                        .id(ElementId::named_usize("toast", n as usize))
+                        .occlude()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .max_w(px(
+                            (self.window_width - 2. * tokens::FRAME_INSET).clamp(0., 560.)
+                        ))
+                        .px(px(14.))
+                        .py(px(10.))
+                        .rounded(px(tokens::R_PANEL))
+                        .bg(rgb(p.raised))
+                        .text_color(rgb(p.text))
+                        .text_size(px(tokens::LABEL))
+                        .border_1()
+                        .border_color(rgb(p.line))
+                        .shadow_lg()
+                        .cursor_pointer()
+                        .on_hover(move |hovered, _, _| hold(n, *hovered))
+                        .on_click(move |_, window, _| {
+                            let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
+                            if line.as_ref().is_some_and(|line| line.n == n) {
+                                *line = None;
+                                window.refresh();
+                            }
+                        })
+                        .child(glass_ui::icon("tick-02", 16., rgb(p.accent_ink).into()).flex_none())
+                        .child(line),
+                ),
+        )
     }
 }

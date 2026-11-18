@@ -616,7 +616,7 @@ impl Launcher {
             .flatten()
             .collect();
         let top = self.modal(layers.pop(), window, cx);
-        frame = frame.children(layers).children(top);
+        frame = frame.children(self.toast()).children(layers).children(top);
         self.pictures.free_retired(window);
         // A picture, the player's or their theme's, stands behind Home only.
         let photo = (page == Page::Home)
