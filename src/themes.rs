@@ -771,6 +771,12 @@ const PICTURES: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 /// A picture above this is refused: a screen's worth is far less.
 const MAX_BYTES: u64 = 40 << 20;
 
+/// A picture of more pixels than this is refused: decoded, it is a quarter of a gigabyte, many
+/// times any screen.
+const MAX_PIXELS: u64 = crate::pictures::WHOLE_DECODE_MAX / 4;
+/// The longest side the background is drawn from: a 4K screen's width.
+pub const BACKGROUND_SIDE: u32 = 3840;
+
 /// Keeps `file` as Home's background in `dir` (`background-<hash>.<ext>`: a new picture gets a
 /// new name, so the window doesn't show the one it cached), after checking it is a picture, and
 /// returns the kept file's name. An older background goes.
@@ -797,6 +803,9 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     if w < 64 || h < 64 {
         return Err(format!("{shown} is {w}×{h}: too small to fill Home."));
     }
+    if u64::from(w) * u64::from(h) > MAX_PIXELS {
+        return Err(format!("{shown} is {w}×{h}: too large for a background."));
+    }
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let hash = crate::sources::sha1_hex(&bytes);
     let name = format!("background-{}.{ext}", &hash[..12]);
@@ -814,6 +823,15 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
 pub fn background(dir: &Path, name: Option<&str>) -> Option<PathBuf> {
     let name = name.filter(|n| n.starts_with("background-") && !n.contains(['/', '\\']))?;
     Some(dir.join(name)).filter(|p| p.is_file())
+}
+
+/// The kept background at `path` as the window draws it: fitted inside [`BACKGROUND_SIDE`] and
+/// `limit`, the largest picture the GPU holds ([`crate::pictures::gpu_limit`]), whatever size the
+/// file is (one kept by an earlier launcher was never measured). For a worker: it reads and
+/// decodes the file. An error is a picture too large to decode or no picture at all; Home then
+/// shows its own scenery.
+pub fn load_background(path: &Path, limit: u32) -> Result<image::RgbaImage, String> {
+    crate::pictures::load_fitted(path, BACKGROUND_SIDE.min(limit))
 }
 
 #[cfg(test)]

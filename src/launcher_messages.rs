@@ -424,6 +424,7 @@ impl Launcher {
         changed |= self.mods_drain();
         changed |= self.github_tick();
         changed |= self.toast_tick();
+        changed |= self.ui.backdrop.poll();
         if let Some(sign_in) = &self.sign_in {
             if let Some(state) = sign_in_change(&mut self.sign_in_state, sign_in.state()) {
                 if let SignInState::Done(Ok(ref account)) = state {
