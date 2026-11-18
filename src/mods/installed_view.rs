@@ -662,7 +662,7 @@ impl Launcher {
                 Some(_) => div().flex_none().w(px(18.)),
                 None => div().flex_none().child(check),
             })
-            .child(tile(picture, &r.title, 32.));
+            .child(tile(picture, &r.id, &r.title, 32.));
         let row = if wide {
             row.child(title.flex_1().min_w(px(140.)))
                 .child(

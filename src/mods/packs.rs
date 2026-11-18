@@ -268,20 +268,13 @@ impl Launcher {
                     d.border_t_1().border_color(c(palette().divider))
                 });
             shown += 1;
-            let image = div()
-                .size(px(36.))
-                .flex_none()
-                .rounded(px(tokens::R_SMALL))
-                .bg(c(palette().selected))
-                .overflow_hidden()
-                .flex()
-                .items_center()
-                .justify_center();
             row = row
-                .child(match icon {
-                    Some(icon) => image.child(gpui::img(icon.clone()).size_full()),
-                    None => image.child(blocks::icon("package", 16., c(palette().muted))),
-                })
+                .child(crate::mod_icons::tile(
+                    icon.clone(),
+                    &pack.file,
+                    &pack.title,
+                    36.,
+                ))
                 .child(
                     div()
                         .flex_1()

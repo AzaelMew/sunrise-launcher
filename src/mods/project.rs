@@ -273,7 +273,7 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(16.))
-            .child(tile(picture, &p.name, 64.))
+            .child(tile(picture, &p.id, &p.name, 64.))
             .child(
                 div()
                     .flex_1()

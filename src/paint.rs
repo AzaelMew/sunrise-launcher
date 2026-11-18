@@ -85,6 +85,40 @@ pub(crate) struct Palette {
     pub scrim_alpha: f32,
 }
 
+/// The colours of a picture's stand-in ([`Palette::tile`]): its fill, and the letter on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Tile {
+    pub fill: u32,
+    pub ink: u32,
+}
+
+/// How far a tile's fill stands from the card (a contrast ratio): enough to be a shape of its
+/// own, not enough to shout.
+const TILE_APART: f32 = 1.4;
+/// How much of its hue a tile's fill carries over the card, and its letter over the text.
+const TILE_HUE: f32 = 0.24;
+const TILE_INK_HUE: f32 = 0.3;
+
+/// The hue `id` always gets, as a turn (0 to 1): FNV-1a over its bytes, then mixed (the last
+/// step of MurmurHash3) so that ids a letter apart land far apart.
+fn tile_hue(id: &str) -> f32 {
+    let mut hash = id.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    hash = (hash ^ hash >> 16).wrapping_mul(0x85eb_ca6b);
+    hash = (hash ^ hash >> 13).wrapping_mul(0xc2b2_ae35);
+    (hash >> 16) as f32 / 65536.
+}
+
+/// The full colour at `turn` of the hue wheel.
+fn hue_colour(turn: f32) -> u32 {
+    let channel = |shift: f32| {
+        let wave = ((turn - shift) * std::f32::consts::TAU).cos();
+        ((0.5 + 0.5 * wave) * 255.).round() as u32
+    };
+    channel(0.) << 16 | channel(1. / 3.) << 8 | channel(2. / 3.)
+}
+
 impl Inputs {
     fn of(settings: &Settings, theme: &Theme) -> Inputs {
         Inputs {
@@ -291,6 +325,40 @@ impl Palette {
         Inputs::of(settings, theme).palette()
     }
 
+    /// What stands in for the picture of a mod or pack that has none: a quiet colour of its own
+    /// from `id`, the same every time, under its first letter. The fill is the card washed with
+    /// the id's hue and set [`TILE_APART`] from the card, lighter on a dark theme and darker
+    /// on a light one, so every tile of a theme weighs the same; the letter is the text washed
+    /// with the same hue, and reads on it (4.5:1).
+    pub(crate) fn tile(&self, id: &str) -> Tile {
+        use sunrise_launcher_theme::glass::luminance;
+        let hue = hue_colour(tile_hue(id));
+        let card = self.card_color;
+        let lighter = luminance(self.text) > luminance(card);
+        // The one luminance every tile of this theme has. A card too bright (or too dark) to
+        // step away from in its own direction is stepped away from in the other.
+        let (up, down) = (
+            (luminance(card) + 0.05) * TILE_APART - 0.05,
+            (luminance(card) + 0.05) / TILE_APART - 0.05,
+        );
+        let level = match lighter {
+            true if up <= 1. => up,
+            false if down < 0. => up,
+            _ => down,
+        };
+        let washed = over(hue, TILE_HUE, card);
+        let brighten = luminance(washed) < level;
+        let fill = fit(washed, brighten, |c| (luminance(c) >= level) == brighten);
+        let reads = |c: u32| contrast(c, fill) >= TEXT;
+        let letter = over(hue, TILE_INK_HUE, self.text);
+        let ink = [lighter, !lighter]
+            .into_iter()
+            .map(|l| fit(letter, l, reads))
+            .find(|&c| reads(c))
+            .unwrap_or(self.text);
+        Tile { fill, ink }
+    }
+
     /// A card, caption or plate: the theme's tint at the plates' opacity.
     pub(crate) fn card(&self) -> Hsla {
         Hsla::from(rgb(self.card_color)).opacity(self.alpha)
@@ -379,6 +447,22 @@ mod tests {
         }
         looks
     }
+
+    /// Ids as the registry and the packs' folders spell them.
+    const IDS: [&str; 12] = [
+        "jei",
+        "coords_hud",
+        "lanterns",
+        "sodium",
+        "iris",
+        "waystones",
+        "minimap",
+        "splitscreen",
+        "replay",
+        "Faithful 32x.zip",
+        "complementary-reimagined",
+        "",
+    ];
 
     /// The channel-wise hue, in radians.
     fn hue(c: u32) -> f32 {
@@ -478,6 +562,41 @@ mod tests {
                 );
             }
         }
+        // A tile without a picture: its letter reads, and every tile stands the same small way
+        // off the card (lighter on a dark theme, darker on a light one), in a quiet colour.
+        let lighter = luminance(p.text) > luminance(p.card_color);
+        for id in IDS {
+            let t = p.tile(id);
+            reads(
+                &format!("the letter of {id}'s tile"),
+                t.ink,
+                &[t.fill],
+                TEXT,
+            );
+            let apart = contrast(t.fill, p.card_color);
+            assert!(
+                (TILE_APART - 0.08..=TILE_APART + 0.08).contains(&apart),
+                "{name}: {id}'s tile {:06x} is {apart:.2} from the card",
+                t.fill
+            );
+            // Only a card with no room on its own side (a white one under pale text, say)
+            // sends its tiles the other way.
+            let room = match lighter {
+                true => (luminance(p.card_color) + 0.05) * TILE_APART <= 1.05,
+                false => (luminance(p.card_color) + 0.05) / TILE_APART >= 0.05,
+            };
+            assert_eq!(
+                luminance(t.fill) > luminance(p.card_color),
+                lighter == room,
+                "{name}: {id}'s tile {:06x} is on the wrong side of the card",
+                t.fill
+            );
+            assert!(
+                spread(t.fill) <= spread(p.card_color) + 64,
+                "{name}: {id}'s tile {:06x} is loud",
+                t.fill
+            );
+        }
         // Fields, selections, tooltips and menus are opaque: a bright page behind changes nothing.
         reads("field text", p.text, &[p.field], TEXT);
         reads("placeholder", p.muted, &[p.field], TEXT);
@@ -508,6 +627,42 @@ mod tests {
         for (name, settings, theme) in looks(true) {
             check(&name, &settings, &theme);
         }
+    }
+
+    /// A mod without a picture keeps one colour of its own: the same whenever it is asked for,
+    /// another mod's is another colour, and the ids' hues go all the way round the wheel.
+    #[test]
+    fn a_tile_is_one_colour_per_id() {
+        let ids = [Some("twilight"), None]
+            .into_iter()
+            .chain(themes::THEMES.iter().map(|t| Some(t.id)));
+        for id in ids {
+            let own = themes::starting_accent(id, &Default::default());
+            let (settings, theme) = look(id, own, 6., true);
+            let p = Palette::of(&settings, &theme);
+            let tiles = IDS.map(|mod_id| p.tile(mod_id));
+            assert_eq!(tiles, IDS.map(|mod_id| p.tile(mod_id)), "{id:?}: stable");
+            for (i, a) in tiles.iter().enumerate() {
+                for b in &tiles[i + 1..] {
+                    assert_ne!(a.fill, b.fill, "{id:?}: {tiles:06x?}");
+                }
+            }
+            // Coloured, not the grey every tile used to be.
+            assert!(
+                tiles.iter().all(|t| spread(t.fill) >= 12),
+                "{id:?}: {tiles:06x?}"
+            );
+        }
+        assert_eq!(tile_hue("jei"), tile_hue("jei"));
+        // Ids a letter apart land far apart, and a thousand ids leave no twelfth of the wheel
+        // empty.
+        let apart = (tile_hue("mod-a") - tile_hue("mod-b")).abs();
+        assert!(apart.min(1. - apart) > 0.02, "{apart}");
+        let mut sectors = [0; 12];
+        for n in 0..1000 {
+            sectors[(tile_hue(&format!("mod-{n}")) * 12.) as usize] += 1;
+        }
+        assert!(sectors.iter().all(|&n| n >= 40), "{sectors:?}");
     }
 
     /// Dawn's Play is the site's brand orange as it is, under white; a lighter orange would

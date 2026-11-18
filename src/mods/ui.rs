@@ -177,27 +177,7 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .children(on.then(|| blocks::icon("check", 12., c(palette().background))))
 }
 
-/// A mod's picture, or its first letter until it arrives.
-pub(super) fn tile(path: Option<PathBuf>, name: &str, side: f32) -> Div {
-    let t = div()
-        .flex_none()
-        .size(px(side))
-        .rounded(px(tokens::R_CONTROL))
-        .overflow_hidden()
-        .bg(palette().card())
-        .border_1()
-        .border_color(c(palette().line))
-        .flex()
-        .items_center()
-        .justify_center();
-    match path {
-        Some(p) => t.child(gpui::img(p).size(px(side))),
-        None => t
-            .text_size(px(side * 0.45))
-            .text_color(c(palette().muted))
-            .child(name.chars().next().map(String::from).unwrap_or_default()),
-    }
-}
+pub(super) use crate::mod_icons::tile;
 
 /// How many cards fit side by side in a Discover list `width` wide: three on a roomy window,
 /// fewer as it narrows, so a card never gets narrower than its own text needs.
@@ -213,6 +193,7 @@ pub(super) fn columns(width: f32) -> u16 {
 pub(super) fn browse_card(
     id: impl Into<ElementId>,
     picture: Option<PathBuf>,
+    project: &str,
     name: &str,
     author: &str,
     summary: &str,
@@ -236,7 +217,7 @@ pub(super) fn browse_card(
         .tab_index(0)
         .seen()
         .focus_visible(|s| s.border_color(c(palette().focus)))
-        .child(tile(picture, name, 48.))
+        .child(tile(picture, project, name, 48.))
         .child(
             div()
                 .flex_1()
