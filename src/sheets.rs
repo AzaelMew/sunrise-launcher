@@ -897,10 +897,35 @@ impl Launcher {
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| tr("your mods").into());
         let building = matches!(pending, Some(PendingConsent::Build(_)));
-        // One row per package.
-        let rows = match pending.map(PendingConsent::rows) {
-            Some(rows) if building && !rows.is_empty() => rows,
-            _ => vec![name.clone()],
+        let heading = match pending {
+            Some(PendingConsent::Build(inputs)) if inputs.len() == 1 => {
+                tr("Build this mod?").into()
+            }
+            Some(PendingConsent::Build(_)) => {
+                trf("Build {name} on this computer?", &[("name", &name)])
+            }
+            _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
+        };
+        let rows = pending.map(PendingConsent::rows).unwrap_or_default();
+        let mods = if rows.is_empty() {
+            fact(tr("Mods"), name.clone(), false)
+        } else {
+            let packages = div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .children(rows.into_iter().map(|row| {
+                    let picture = row.icon.and_then(|url| {
+                        self.mods_image(&url, sunrise_launcher::browser::images::ROW)
+                    });
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(crate::mod_icons::tile(picture, &row.id, &row.name, 32.))
+                        .child(div().min_w_0().child(row.label))
+                }));
+            fact(tr("Mods"), packages, false)
         };
         let host = sunrise_launcher::rust_toolchain::host();
         let downloads = match (host, sunrise_launcher::rust_toolchain::installed()) {
@@ -932,32 +957,22 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(title(match pending {
-                Some(PendingConsent::Build(inputs)) if inputs.len() == 1 => {
-                    tr("Build this mod?").into()
-                }
-                Some(PendingConsent::Build(_)) => {
-                    trf("Build {name} on this computer?", &[("name", &name)])
-                }
-                _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
-            }))
+            .child(title(heading))
             .child(muted(tr(
                 "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.",
             )))
             .child(
                 card()
-                    .children(rows.into_iter().enumerate().map(|(n, row)| {
-                        fact(if n == 0 { tr("Mods") } else { "" }, row, false)
-                    }))
+                    .child(mods)
                     .child(fact(tr("Downloads"), downloads, true))
                     .child(fact(
                         tr("While building"),
-                        tr("If a code library the mod uses wants to run its own programs, Sunrise stops and shows you the list first. Nothing runs before you say so.").into(),
+                        tr("If a code library the mod uses wants to run its own programs, Sunrise stops and shows you the list first. Nothing runs before you say so."),
                         true,
                     ))
                     .child(fact(
                         tr("When you play"),
-                        tr("The mod, inside the game, with the same access to your files and programs as the game has.").into(),
+                        tr("The mod, inside the game, with the same access to your files and programs as the game has."),
                         true,
                     )),
             )
@@ -1446,7 +1461,7 @@ fn list_or_none(names: &[String]) -> String {
     }
 }
 
-fn fact(label: &str, value: String, rule: bool) -> Div {
+fn fact(label: &str, value: impl IntoElement, rule: bool) -> Div {
     div()
         .flex()
         .gap(px(16.))

@@ -6,7 +6,7 @@ use gpui::{div, prelude::*, px, rgb, Div, FontWeight, ImageSource, ObjectFit};
 
 /// The picture of a mod or pack in a square `side` wide: it fills the square edge to edge,
 /// cropped rather than boxed, with a button's corners and no outline. Without a picture (it has
-/// none, or it has not arrived), the first letter of `name` on the colour `id` always gets
+/// none, it has not arrived, or it fails to load), the first letter of `name` on the colour `id` always gets
 /// ([`Palette::tile`](crate::paint::Palette::tile)).
 pub(crate) fn tile(
     picture: Option<impl Into<ImageSource>>,
@@ -20,25 +20,32 @@ pub(crate) fn tile(
     } else {
         tokens::R_CONTROL
     });
-    let square = div().flex_none().size(px(side)).rounded(corners);
+    let colours = palette().tile(id);
+    let initial = crate::join::initial(name);
+    let letter = move || {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(colours.fill))
+            .text_size(px(side * 0.45))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(colours.ink))
+            .child(initial.clone())
+    };
+    let square = div()
+        .flex_none()
+        .size(px(side))
+        .rounded(corners)
+        .overflow_hidden();
     match picture {
         Some(picture) => square.child(
             gpui::img(picture)
                 .size_full()
-                .rounded(corners)
-                .object_fit(ObjectFit::Cover),
+                .object_fit(ObjectFit::Cover)
+                .with_fallback(move || letter().into_any_element()),
         ),
-        None => {
-            let colours = palette().tile(id);
-            square
-                .flex()
-                .items_center()
-                .justify_center()
-                .bg(rgb(colours.fill))
-                .text_size(px(side * 0.45))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(colours.ink))
-                .child(crate::join::initial(name))
-        }
+        None => square.child(letter()),
     }
 }

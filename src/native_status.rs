@@ -261,8 +261,8 @@ pub struct BuildInput {
 /// What the registry says about a package's file.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Registry {
-    /// This very file is one the registry lists for the package's id, under this name.
-    Listed(String),
+    /// This very file is listed for the package's id, under this name and artwork.
+    Listed { name: String, icon: Option<String> },
     /// The registry lists no such file for that id.
     NotListed,
     /// The registry has taken this file or its project down, even if it still lists it.
@@ -295,7 +295,10 @@ pub fn build_inputs(
                                 .iter()
                                 .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
                         })
-                        .map_or(Registry::NotListed, |p| Registry::Listed(p.name.clone())),
+                        .map_or(Registry::NotListed, |p| Registry::Listed {
+                            name: p.name.clone(),
+                            icon: p.icon.clone(),
+                        }),
                     Err(_) => Registry::NotListed,
                 },
             };
@@ -898,7 +901,10 @@ mod tests {
         listed.versions[0].file.sha256 = sunrise_launcher_smod::index::sha256_file(&local).unwrap();
         assert_eq!(
             build_inputs(home.path(), Some(&index)),
-            [input(Registry::Listed("Coordinates HUD".into()))]
+            [input(Registry::Listed {
+                name: "Coordinates HUD".into(),
+                icon: index.project("coords_hud").unwrap().icon.clone(),
+            })]
         );
         assert_eq!(build_inputs(home.path(), None), unchecked);
         let hash = index.project("coords_hud").unwrap().versions[0]

@@ -51,31 +51,46 @@ impl PendingConsent {
 
     /// The question's Mods rows: one per package, so two packages never read as one name or one
     /// as two. A build's rows carry each package's id and where its file is from.
-    pub(super) fn rows(&self) -> Vec<String> {
+    pub(super) fn rows(&self) -> Vec<BuildRow> {
         match self {
-            Self::Build(inputs) => inputs.iter().map(build_label).collect(),
-            _ => vec![self.name()],
+            Self::Build(inputs) => inputs.iter().map(build_row).collect(),
+            _ => Vec::new(),
         }
     }
 }
 
-/// A build's package as the question names it: the registry's name only for a file the registry
-/// lists (`native_status::build_inputs`), else its id and file, so a package put in the folder
-/// under a registry mod's id never reads as that mod.
-fn build_label(input: &BuildInput) -> String {
+pub(super) struct BuildRow {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) label: String,
+    pub(super) icon: Option<String>,
+}
+
+/// A build's package as the question names it: only a file the registry lists gets its name
+/// and artwork. A package put in the folder under that mod's id never reads as that mod.
+fn build_row(input: &BuildInput) -> BuildRow {
     let own = [("id", input.id.as_str()), ("file", input.file.as_str())];
-    match &input.registry {
-        Registry::Listed(name) if !name.is_empty() => crate::i18n::trf(
-            "{name} ({id}, from the Sunrise registry)",
-            &[("name", name), ("id", &input.id)],
+    let on_disk = |label| (input.id.as_str(), None, crate::i18n::trf(label, &own));
+    let (name, icon, label) = match &input.registry {
+        Registry::Listed { name, icon } if !name.is_empty() => (
+            name.as_str(),
+            icon.clone(),
+            crate::i18n::trf(
+                "{name} ({id}, from the Sunrise registry)",
+                &[("name", name), ("id", &input.id)],
+            ),
         ),
-        Registry::Listed(_) | Registry::NotListed => {
-            crate::i18n::trf("{id} ({file}, not from the registry)", &own)
+        Registry::Listed { .. } | Registry::NotListed => {
+            on_disk("{id} ({file}, not from the registry)")
         }
-        Registry::Revoked => crate::i18n::trf("{id} ({file}, taken down)", &own),
-        Registry::Unchecked => {
-            crate::i18n::trf("{id} ({file}, not checked against the registry)", &own)
-        }
+        Registry::Revoked => on_disk("{id} ({file}, taken down)"),
+        Registry::Unchecked => on_disk("{id} ({file}, not checked against the registry)"),
+    };
+    BuildRow {
+        id: input.id.clone(),
+        name: name.to_owned(),
+        label,
+        icon,
     }
 }
 
@@ -162,23 +177,30 @@ mod tests {
             file: "jei.smod".into(),
             registry,
         };
-        let build_row = |i| PendingConsent::Build(vec![i]).rows().pop().unwrap();
+        let row = |i| PendingConsent::Build(vec![i]).rows().pop().unwrap();
+        let listed = row(input(Registry::Listed {
+            name: "JEI".into(),
+            icon: Some("https://example.com/jei.png".into()),
+        }));
+        assert_eq!(listed.name, "JEI");
+        assert_eq!(listed.icon.as_deref(), Some("https://example.com/jei.png"));
+        assert_eq!(listed.label, "JEI (jei, from the Sunrise registry)");
         assert_eq!(
-            build_row(input(Registry::Listed("JEI".into()))),
-            "JEI (jei, from the Sunrise registry)"
-        );
-        assert_eq!(
-            build_row(input(Registry::NotListed)),
+            row(input(Registry::NotListed)).label,
             "jei (jei.smod, not from the registry)"
         );
         assert_eq!(
-            build_row(input(Registry::Listed(String::new()))),
+            row(input(Registry::Listed {
+                name: String::new(),
+                icon: None
+            }))
+            .label,
             "jei (jei.smod, not from the registry)"
         );
-        assert_eq!(
-            build_row(input(Registry::Revoked)),
-            "jei (jei.smod, taken down)"
-        );
+        let revoked = row(input(Registry::Revoked));
+        assert_eq!(revoked.name, "jei");
+        assert!(revoked.icon.is_none());
+        assert_eq!(revoked.label, "jei (jei.smod, taken down)");
     }
 
     #[test]
@@ -190,8 +212,8 @@ mod tests {
         }]);
         assert_eq!(build.name(), "this mod");
         assert_eq!(
-            build.rows(),
-            ["jei (jei.smod, not checked against the registry)"]
+            build.rows()[0].label,
+            "jei (jei.smod, not checked against the registry)"
         );
     }
 
@@ -200,7 +222,10 @@ mod tests {
         let input = |id: &str, registry: Option<&str>| BuildInput {
             id: id.into(),
             file: format!("{id}.smod"),
-            registry: registry.map_or(Registry::NotListed, |name| Registry::Listed(name.into())),
+            registry: registry.map_or(Registry::NotListed, |name| Registry::Listed {
+                name: name.into(),
+                icon: None,
+            }),
         };
         // A name with a comma, the same name twice, and a package the registry doesn't list.
         let build = PendingConsent::Build(vec![
@@ -210,7 +235,11 @@ mod tests {
             input("own", None),
         ]);
         assert_eq!(
-            build.rows(),
+            build
+                .rows()
+                .into_iter()
+                .map(|r| r.label)
+                .collect::<Vec<_>>(),
             [
                 "Maps, Tools (maps_tools, from the Sunrise registry)",
                 "Recipes (recipes, from the Sunrise registry)",
