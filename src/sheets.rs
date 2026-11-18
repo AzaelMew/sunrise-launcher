@@ -787,10 +787,7 @@ impl Launcher {
             .map(PendingConsent::name)
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| tr("your mods").into());
-        let building = matches!(
-            pending,
-            Some(PendingConsent::Build(_) | PendingConsent::Local(_))
-        );
+        let building = matches!(pending, Some(PendingConsent::Build(_)));
         let host = sunrise_launcher::rust_toolchain::host();
         let downloads = match (host, sunrise_launcher::rust_toolchain::installed()) {
             (None, _) => tr("Unavailable on this platform").into(),
@@ -899,16 +896,6 @@ impl Launcher {
                         self.mods_install(source, id, known)
                     }
                     PendingConsent::Github(found, only) => self.github_install(found, only),
-                    PendingConsent::Local(id) => {
-                        self.mods.message = sunrise_launcher::browser::java::set_enabled(
-                            &self.mods.home(),
-                            &id,
-                            true,
-                        )
-                        .err()
-                        .map(Err);
-                        self.instance_mods_changed();
-                    }
                 }
             }
         }

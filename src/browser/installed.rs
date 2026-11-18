@@ -1,7 +1,7 @@
 //! What the browser installed into the game folder, and installing, updating and removing it.
 //!
 //! `mod-browser.json` beside `options.txt` lists each file the browser put in `resourcepacks/`,
-//! and each Java mod it ported into `sunrise-mods/`: where it came from, its version and its
+//! and each Sunrise mod it put in `sunrise-mods/`: where it came from, its version and its
 //! checksum. Files the player put there themselves are never touched: the browser only replaces
 //! or removes what it lists.
 use super::{pick, safe_name, Kind, Project, Source, SourceId, Support, Version};
@@ -15,7 +15,7 @@ const FOLDERS: [&str; 5] = [
     "mods",
     "resourcepacks",
     "shaderpacks",
-    super::java::MODS_DIR,
+    super::mod_list::MODS_DIR,
     crate::native_mods::INSTALLED,
 ];
 /// How deep required dependencies are followed.
@@ -38,15 +38,9 @@ pub struct Entry {
     /// Installed because another pack needs it.
     #[serde(default)]
     pub dependency: bool,
-    /// A Java mod's verdict when it was installed: `Works` or `Partly`.
+    /// What a Sunrise mod's trust was when it was installed (`trust_label`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
-    /// What of a Java mod didn't port.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub skipped: Vec<String>,
-    /// A Java mod's namespaces: two installed mods never share one.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub namespaces: Vec<String>,
 }
 
 /// Whether `file` names something inside one of the folders the browser installs into, made of
@@ -152,15 +146,15 @@ pub fn plan(
     everything: bool,
     game: &str,
 ) -> Result<Vec<Step>, String> {
-    if project.kind == Kind::Modpack {
-        return Err(format!(
-            "{} is a modpack: it is imported, not installed.",
-            project.title
+    if project.kind == Kind::Mod {
+        return Err(crate::i18n::trf(
+            "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.",
+            &[("title", &project.title)],
         ));
     }
     if project.kind.folder().is_none() {
         return Err(format!(
-            "{} is ported, not installed as a file.",
+            "{} isn't a pack Sunrise installs as a file.",
             project.title
         ));
     }
@@ -205,7 +199,7 @@ fn add(
     for id in &version.required {
         let needed = source.project(id).map_err(|_| {
             format!(
-                "{} needs {id} on {}, which isn't a pack Sunrise loads (a Java mod?).",
+                "{} needs {id} on {}, which isn't a pack Sunrise loads.",
                 project.title,
                 source.id().label()
             )
@@ -236,9 +230,6 @@ pub fn install(
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     if project.source == SourceId::Sunrise {
         return super::sunrise::install(project, home, game, progress);
-    }
-    if project.kind == Kind::Mod {
-        return super::java::install(source, project, everything, home, game, progress);
     }
     let steps = plan(source, project, everything, game)?;
     put(
@@ -313,8 +304,6 @@ pub(super) fn put(
             // Asked for by the player once: it stays theirs.
             dependency: step.dependency && old.as_ref().is_none_or(|o| o.dependency),
             verdict: None,
-            skipped: Vec::new(),
-            namespaces: Vec::new(),
         };
         debug_assert!(path.ends_with(name));
         installed
@@ -327,6 +316,18 @@ pub(super) fn put(
     Ok(done)
 }
 
+/// Whether `file` is a folder directly in `sunrise-mods/`, which is itself a real folder of
+/// `home` (a link in the way is not followed): where an earlier launcher put a ported mod.
+fn legacy_mod_folder(home: &Path, file: &str) -> bool {
+    let mut parts = Path::new(file).components();
+    let (Some(Component::Normal(top)), Some(Component::Normal(_)), None) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    top == "sunrise-mods" && fs::symlink_metadata(home.join(top)).is_ok_and(|m| m.is_dir())
+}
+
 /// Removes what the browser installed for `name` (a project id or slug): its file and its entry.
 pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
@@ -335,17 +336,37 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
         .lookup(name)
         .cloned()
         .ok_or_else(|| format!("{name} wasn't installed by the browser."))?;
-    if entry.kind == Kind::Mod && entry.source != SourceId::Sunrise {
-        super::java::remove(home, &entry)?;
-    } else {
-        match entry.path(home).map_or(Ok(()), fs::remove_file) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", entry.file)),
-        }
+    // A mod an earlier launcher ported from Modrinth is a folder in `sunrise-mods/`, and only
+    // that is removed recursively; a pack is a file, and a folder where a pack's file was is the
+    // player's own and stays.
+    let removed = match entry.path(home) {
+        None => Ok(()),
+        Some(p) => match fs::symlink_metadata(&p) {
+            Ok(m) if m.is_dir() => {
+                if legacy_mod_folder(home, &entry.file) {
+                    fs::remove_dir_all(&p)
+                } else {
+                    return Err(crate::i18n::trf(
+                        "{file} is a folder, not a file the browser installed. Nothing was removed: move it away yourself.",
+                        &[("file", &entry.file)],
+                    ));
+                }
+            }
+            Ok(_) => fs::remove_file(&p),
+            Err(e) => Err(e),
+        },
+    };
+    match removed {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", entry.file)),
     }
-    if let Some(id) = super::sunrise::mod_id(&entry).filter(|_| entry.source == SourceId::Sunrise) {
-        super::java::set_enabled(home, id, false)?;
+    let mod_id = match entry.source {
+        SourceId::Sunrise => super::sunrise::mod_id(&entry),
+        SourceId::Modrinth => entry.file.strip_prefix("sunrise-mods/"),
+    };
+    if let Some(id) = mod_id {
+        super::mod_list::set_enabled(home, id, false)?;
     }
     installed
         .entries
@@ -365,24 +386,6 @@ pub fn update_for(
     Ok(pick(project.kind, &versions, true, game)
         .filter(|v| v.id != entry.version)
         .cloned())
-}
-
-/// Downloads a modpack's file, checked, into `folder` (kept there: the import reads it).
-pub fn fetch_modpack(
-    source: &dyn Source,
-    project: &Project,
-    folder: &Path,
-    game: &str,
-    progress: &dyn Fn(f32),
-) -> Result<PathBuf, String> {
-    if project.kind != Kind::Modpack {
-        return Err(format!("{} isn't a modpack.", project.title));
-    }
-    let versions = source.versions(project)?;
-    let version = pick(Kind::Modpack, &versions, true, game)
-        .ok_or_else(|| format!("{} has no file to download.", project.title))?;
-    let file = version.file().expect("pick keeps versions with a file");
-    source.fetch(file, folder, progress)
 }
 
 /// A data pack installed into a world.

@@ -6,15 +6,13 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-/// Modrinth's file server, also where mods' required jars come from (`jars`).
+/// Modrinth's file server: packs, and the original jars a Sunrise mod's `[[jar]]` asks for (`jars`).
 pub(crate) const MODRINTH_CDN: &str = "https://cdn.modrinth.com/";
-/// Hosts a file may come from: Modrinth's and CurseForge's file servers, and the release assets
+/// Hosts a file may come from: Modrinth's file server, and the release assets
 /// of Sunrise's registry (and, see [`github_release_asset`], of the repository a registry entry
 /// names).
-const HOSTS: [&str; 5] = [
+const HOSTS: [&str; 3] = [
     MODRINTH_CDN,
-    "https://edge.forgecdn.net/",
-    "https://mediafilez.forgecdn.net/",
     sunrise_launcher_smod::index::FILE_HOST,
     // The registry's files at their address before the move to horizon-rust (GitHub redirects it).
     "https://github.com/ludovic111/sunrise-mods/releases/download/",
@@ -70,7 +68,7 @@ pub(super) fn agent(url: &str) -> ureq::Agent {
 pub fn refuse(file: &FileRef) -> Option<String> {
     if !HOSTS.iter().any(|h| file.url.starts_with(h)) && !github_release_asset(&file.url) {
         return Some(format!(
-            "{} isn't on Modrinth's, CurseForge's or Sunrise's file servers, or a GitHub release.",
+            "{} isn't on Modrinth's or Sunrise's file servers, or a GitHub release.",
             file.url
         ));
     }

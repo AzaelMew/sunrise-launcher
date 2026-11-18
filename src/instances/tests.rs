@@ -131,18 +131,17 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     // A launcher with instances, on a player's existing folders: no instances.json yet.
     let all = list_in(&home, &data);
     let ids: Vec<&str> = all.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(ids, [DEFAULT, "pack:cozy", "port:small-pack"]);
+    // A pack an earlier launcher ported (`ports/`) is not listed: its folder is left as it is.
+    assert_eq!(ids, [DEFAULT, "pack:cozy"]);
     assert_eq!(all[0].name, "Sunrise");
     assert_eq!(all[0].home, home);
     assert_eq!(all[1].home, home.join("sunrise-packs/cozy/home"));
-    assert_eq!(all[2].name, "Small Pack");
-    assert_eq!(all[2].home, home.join("ports/small-pack/home"));
 
     // Everything the player can do with instances, then not one byte of theirs has moved.
     let empty = create_in(&home, &data, "Survival", None, None).unwrap();
     let copy = create_in(&home, &data, "My copy", Some(&all[0]), None).unwrap();
     edit_in(&home, &data, DEFAULT, |m| m.name = Some("Main".into())).unwrap();
-    edit_in(&home, &data, "Small Pack", |m| {
+    edit_in(&home, &data, "Cozy", |m| {
         m.icon = Some(Icon::Texture("diamond".into()));
         m.group = Some("Modded".into());
     })
@@ -176,9 +175,8 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
 
     let all = list_in(&home, &data);
     assert_eq!(all[0].name, "Main");
-    let port = find_in(&all, "port:small-pack").unwrap();
-    assert_eq!(port.group.as_deref(), Some("Modded"));
-    assert_eq!(port.home, home.join("ports/small-pack/home"));
+    let cozy = find_in(&all, "pack:cozy").unwrap();
+    assert_eq!(cozy.group.as_deref(), Some("Modded"));
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -204,7 +202,7 @@ fn names_stay_unique_and_packs_are_not_copied() {
     assert!(edit_in(&home, &data, "survival-2", |m| m.name =
         Some("SURVIVAL".into()))
     .is_err());
-    let port = find_in(&list_in(&home, &data), "small-pack").unwrap();
+    let port = find_in(&list_in(&home, &data), "pack:cozy").unwrap();
     assert!(create_in(&home, &data, "Pack copy", Some(&port), None).is_err());
     assert!(!home.join("instances/pack-copy").exists());
     // An empty group is no group.
@@ -388,15 +386,11 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     );
     assert!(find_in(&list_in(&home, &data), "Survival").is_err());
     assert!(!Store::load(&data).instances.contains_key("survival"));
-    // The game's home stays; an imported pack goes like an instance.
+    // The game's home stays.
     assert!(delete_in(&home, &data, DEFAULT, &to_trash)
         .unwrap_err()
         .contains("can't be deleted"));
     assert!(home.join("saves/World/level.dat").is_file());
-    delete_in(&home, &data, "small-pack", &to_trash).unwrap();
-    assert!(trash
-        .join("small-pack/home/saves/Modded/level.dat")
-        .is_file());
     // A folder removed by hand: its choices are dropped, a new one of that name starts clean.
     create_in(&home, &data, "Skyblock", None, None).unwrap();
     edit_in(&home, &data, "Skyblock", |m| m.group = Some("Old".into())).unwrap();
@@ -406,29 +400,6 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let again = create_in(&home, &data, "Skyblock", None, None).unwrap();
     assert_eq!(again.group, None);
     fs::remove_dir_all(&root).unwrap();
-}
-
-#[test]
-fn the_mod_browser_installs_for_the_instance_loader() {
-    let vanilla = JavaGame {
-        minecraft: "1.21.1".into(),
-        ..JavaGame::default()
-    };
-    assert_eq!(vanilla.target().loader, None);
-    let quilt = JavaGame {
-        loader: Some(crate::loaders::Loader {
-            kind: crate::loaders::Kind::Quilt,
-            version: "0.30.1".into(),
-        }),
-        ..vanilla
-    };
-    let target = quilt.target();
-    assert_eq!(
-        (target.minecraft.as_str(), target.loader.as_deref()),
-        ("1.21.1", Some("quilt"))
-    );
-    // A Quilt instance takes Fabric mods too.
-    assert!(target.accepts("fabric") && !target.accepts("neoforge"));
 }
 
 /// A chosen picture is kept scaled to 128 pixels in the instance's folder; removing it moves it
@@ -474,7 +445,7 @@ fn switching_what_an_instance_plays_keeps_its_worlds_mods_and_settings() {
     put(
         &made
             .home
-            .join(crate::browser::java::MODS_DIR)
+            .join(crate::browser::mod_list::MODS_DIR)
             .join("minimap.smod"),
         "content smod",
     );
@@ -594,4 +565,39 @@ fn an_instance_without_a_channel_is_nightly_and_an_unknown_one_too() {
     assert_eq!(meta.channel, Some(Channel::Stable));
     let meta: Meta = serde_json::from_str(r#"{"channel":"beta","group":"g"}"#).unwrap();
     assert_eq!((meta.channel, meta.group.as_deref()), (None, Some("g")));
+}
+
+/// A saved selection that names a ported pack (listed by an earlier launcher, its folder still in
+/// `ports/`) is retired: a command with no `--instance` refuses and names it instead of acting
+/// on Sunrise's setup, and the window clears it. Listed and unset selections are untouched.
+#[test]
+fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
+    let root = scratch("retired");
+    let (home, data) = (root.join("sunrise"), root.join("launcher"));
+    put(&home.join("ports/old-pack/saves/World/level.dat"), "world");
+    let ported = files(&home.join("ports"));
+    let all = list_in(&home, &data);
+    assert!(all.iter().all(|i| !i.id.contains("old-pack")));
+
+    let refused = selection_in(&all, Some("port:old-pack")).unwrap_err();
+    assert!(refused.contains("old-pack"), "{refused}");
+    assert!(refused.contains("instance select"), "{refused}");
+    assert_eq!(
+        retired_in(&all, Some("port:old-pack")).as_deref(),
+        Some("port:old-pack")
+    );
+
+    let made = create_in(&home, &data, "Survival", None, None).unwrap();
+    let all = list_in(&home, &data);
+    assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
+    assert_eq!(selection_in(&all, Some(DEFAULT)).unwrap().id, DEFAULT);
+    assert_eq!(selection_in(&all, Some(&made.id)).unwrap().id, made.id);
+    assert_eq!(retired_in(&all, Some(&made.id)), None);
+    assert_eq!(retired_in(&all, None), None);
+    assert_eq!(
+        files(&home.join("ports")),
+        ported,
+        "its files are untouched"
+    );
+    fs::remove_dir_all(&root).unwrap();
 }

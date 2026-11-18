@@ -523,14 +523,13 @@ MCP: `instance_version`.
 
 ## `sunrise-launcher instance export`
 
-Export an instance (or a port) to share: its settings, packs, Sunrise mods and the worlds named, as a .mrpack (resource packs from Modrinth listed by download) or a zip. Never logs, screenshots or account data; worlds go without their per-player files.
+Export an instance to share as a zip: its settings, packs, Sunrise mods and the worlds named. Never logs, screenshots or account data; worlds go without their per-player files.
 
     sunrise-launcher instance export [INSTANCE]
 
 - `INSTANCE`: The instance (default: the selected one)
-- `--format` (mrpack, zip)
 - `--world`: A world to put in it (its name or folder); repeat for more
-- `--out`: Where to write it (default: "<name>.mrpack" in the current folder)
+- `--out`: Where to write it (default: "<name>.zip" in the current folder)
 
 MCP: `instance_export`.
 
@@ -564,13 +563,12 @@ MCP: `instance_shortcut`.
 
 ## `sunrise-launcher instance import`
 
-Import what a file is, as dropping it on the window does: a shared instance (a .mrpack without mod loaders, such as `instance export` writes, or a game folder zip) becomes a new instance; a Java modpack goes to the Modpacks import; a resource or shader pack into the instance (default: the selected one).
+Import what a file is: a shared instance (a game folder zip, such as `instance export` writes) becomes a new instance; a resource or shader pack goes into the instance (default: the selected one).
 
     sunrise-launcher instance import <FILE>
 
 - `FILE`
 - `--instance`: The instance a pack goes into
-- `--java`: A .mrpack becomes a Minecraft: Java Edition instance with its Minecraft version, mod loader, mods and overrides, instead of a Sunrise instance or a Modpacks import
 
 MCP: `instance_import`.
 
@@ -807,37 +805,15 @@ MCP: `multiplayer_remove`, needs `confirm: true`.
 
 ## `sunrise-launcher modpack list`
 
-The imported packs and their coverage (the default).
+The installed Sunrise modpacks (the default).
 
     sunrise-launcher modpack list
 
 MCP: `modpack_list`.
 
-## `sunrise-launcher modpack import`
-
-Import a .mrpack, a CurseForge zip or an instance folder, and write its coverage report.
-
-    sunrise-launcher modpack import <PATH>
-
-- `PATH`
-
-MCP: `modpack_import`.
-
-## `sunrise-launcher modpack port`
-
-Get the jars of what this computer can port and carry them over.
-
-    sunrise-launcher modpack port <PACK>
-
-- `PACK`: The pack's folder name, as list shows it
-- `--from`: A folder with your own jars (an installed instance, a downloads folder)
-- `--version`: The installed version the ports are for (default: the selected one)
-
-MCP: `modpack_port`.
-
 ## `sunrise-launcher modpack play`
 
-Play a ported pack as its own profile.
+Play a Sunrise modpack as its own profile.
 
     sunrise-launcher modpack play <PACK>
 
@@ -849,7 +825,7 @@ MCP: `modpack_play`.
 
 ## `sunrise-launcher modpack remove`
 
-Remove an imported pack: its jars, ports and the profile's saves.
+Remove a Sunrise modpack and the profile's saves.
 
     sunrise-launcher modpack remove <PACK>
 
@@ -876,26 +852,14 @@ Search for packs Sunrise loads, or for what a Java instance runs (made for its M
 - `TEXT`
 - `--kind` (mod, resource, modpack, shader, datapack)
 - `--everything`: Also what was made for other versions or runs only partly, each marked
-- `--source` (modrinth, curseforge, sunrise)
+- `--source` (modrinth, sunrise)
 - `--instance`: The instance (default: the selected one)
 
 MCP: `mods_search`.
 
-## `sunrise-launcher mods check`
-
-Say how well a Java mod runs in Sunrise: its jar is downloaded (checksum checked), carried over and read; the answer is kept.
-
-    sunrise-launcher mods check <PROJECT>
-
-- `PROJECT`
-- `--everything`: Allow a version made for another Minecraft version (1.21 and later)
-- `--source` (modrinth, curseforge, sunrise)
-
-MCP: `mods_check`.
-
 ## `sunrise-launcher mods install`
 
-Install a pack and what it needs into an instance, by its id or slug (checksums checked); a Java mod is ported into sunrise-mods and turned on (a Java instance gets the jar made for its version and loader in mods/); a modpack is imported as an instance of its own; a data pack goes into the world `--world` names.
+Install a pack or a Sunrise mod and what it needs into an instance, by its id or slug (checksums checked); a Sunrise modpack is installed as an instance of its own; a data pack goes into the world `--world` names.
 
     sunrise-launcher mods install <PROJECT>
 
@@ -903,7 +867,7 @@ Install a pack and what it needs into an instance, by its id or slug (checksums 
 - `--world`: Install the project's data pack into this world of the instance (its name or folder)
 - `--instance`: The instance (default: the selected one)
 - `--everything`: Allow a version made for another Minecraft version
-- `--source` (modrinth, curseforge, sunrise)
+- `--source` (modrinth, sunrise)
 
 MCP: `mods_install`.
 

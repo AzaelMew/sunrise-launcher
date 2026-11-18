@@ -1,18 +1,16 @@
-//! The mod browser's sources: search Modrinth (CurseForge support is coming soon) for what
-//! Sunrise loads, say how well each result runs, and download a file only after its checksum
-//! matches (docs/mod-browser.md).
+//! The mod browser's sources: Sunrise's own registry (mods, modpacks, resource and shader packs)
+//! and Modrinth, searched only for resource packs, data packs and Iris-format shader packs. Each
+//! result says how well it runs, and a file is downloaded only after its checksum matches
+//! (docs/mod-browser.md).
 //!
-//! Offered: Java mods (Fabric, NeoForge, Forge), whose content Sunrise ports and whose jar is
-//! checked before install ([`java`]), modpacks (imported and ported), resource packs
-//! (`resourcepacks/`) and data packs (into a world, [`installed::install_datapack`]). Java code
-//! itself doesn't run in Sunrise (docs/modding/src/how-to/content-mods.md).
-pub mod curseforge;
+//! Java mods and modpacks are not offered from Modrinth: Sunrise doesn't run Java code
+//! (docs/modding/src/how-to/content-mods.md). Packs go to `resourcepacks/` and `shaderpacks/`,
+//! data packs into a world ([`installed::install_datapack`]).
 pub mod details;
 pub mod download;
 pub mod images;
 pub mod installed;
-pub mod java;
-pub mod java_instance;
+pub mod mod_list;
 pub mod modrinth;
 pub mod sunrise;
 
@@ -75,7 +73,6 @@ impl Kind {
 #[serde(rename_all = "kebab-case")]
 pub enum SourceId {
     Modrinth,
-    CurseForge,
     /// Sunrise's own registry of reviewed mods, modpacks and resource packs ([`sunrise`]).
     Sunrise,
 }
@@ -84,7 +81,6 @@ impl SourceId {
     pub fn label(self) -> &'static str {
         match self {
             SourceId::Modrinth => "Modrinth",
-            SourceId::CurseForge => "CurseForge",
             SourceId::Sunrise => "Sunrise",
         }
     }
@@ -291,22 +287,16 @@ pub const IRIS: &str = "iris";
 /// What an Iris-format shader pack is labelled with.
 pub const IRIS_LABEL: &str = "Iris-format pack: most work, some effects may not";
 
-/// What the launcher says wherever CurseForge would be.
-pub const CURSEFORGE_SOON: &str = "CurseForge support is coming soon.";
 /// What another source answers for shader packs: Sunrise's own are on its registry only.
 pub const SHADERS_ON_SUNRISE: &str =
     "Sunrise's shader packs are on Sunrise's registry: pick Sunrise.";
 
-/// The sources this launcher uses: Modrinth and Sunrise's registry. CurseForge support is coming
-/// soon: its API needs a paid key, so no search or install goes to it; `curseforge` is kept for
-/// then.
-pub fn sources() -> Vec<Box<dyn Source>> {
-    vec![Box::new(modrinth::Modrinth), Box::new(sunrise::Registry)]
-}
-
-/// The source of that id, when this launcher can use it.
-pub fn source(id: SourceId) -> Option<Box<dyn Source>> {
-    sources().into_iter().find(|s| s.id() == id)
+/// The source of that id.
+pub fn source(id: SourceId) -> Box<dyn Source> {
+    match id {
+        SourceId::Modrinth => Box::new(modrinth::Modrinth),
+        SourceId::Sunrise => Box::new(sunrise::Registry),
+    }
 }
 
 /// How well a project of `kind` made for `game_versions` and `loaders` runs in Sunrise on `game`.
@@ -333,9 +323,6 @@ pub fn support(kind: Kind, game_versions: &[String], loaders: &[String], game: &
                 Support::Partial("Lists no Minecraft version.".into())
             }
         }
-        Kind::Modpack => {
-            Support::Partial("Sunrise runs the mods it can port, from your own downloads.".into())
-        }
         // Iris-format packs from Modrinth: a shaders/-folder zip, which most of Sunrise's
         // shader pipeline reads; the registry's own `.sshader` packs took the first branch.
         Kind::Shader if loaders.iter().any(|l| l == IRIS) => {
@@ -350,19 +337,9 @@ pub fn support(kind: Kind, game_versions: &[String], loaders: &[String], game: &
             };
             Support::Partial(format!("{made_for}{}", datapack_support()))
         }
-        Kind::Mod => {
-            if !loaders.iter().any(|l| java::LOADERS.contains(&l.as_str())) {
-                Support::No("Not a Fabric, NeoForge or Forge mod.".into())
-            } else if !game_versions.iter().any(|v| portable_version(v)) {
-                let newest = newest_release(game_versions).unwrap_or("an unknown version");
-                Support::No(format!(
-                    "Made for {newest}: Sunrise ports mods made for 1.21 and later."
-                ))
-            } else {
-                Support::Partial(
-                    "Not checked yet: the launcher reads its jar to say what of it ports.".into(),
-                )
-            }
+        // Sunrise's own mods and modpacks took the first branch; nothing else is a Sunrise mod.
+        Kind::Mod | Kind::Modpack => {
+            Support::No("Sunrise doesn't run Java mods or modpacks.".into())
         }
     }
 }
@@ -373,17 +350,6 @@ pub fn datapack_support() -> &'static str {
     crate::i18n::tr(
         "Sunrise runs a data pack's functions, function tags, predicates, item modifiers, recipes, loot tables, advancements, villager trades, damage types, most tags and most worldgen (biomes, features, structures, dimensions). Other files, such as world presets, are not read yet.",
     )
-}
-
-/// A Minecraft version whose mods port-pack carries over: 1.21 and later (the data folders
-/// took their current names in 1.21).
-pub fn portable_version(v: &str) -> bool {
-    let parts: Vec<u32> = v.split('.').map_while(|p| p.parse().ok()).collect();
-    match parts.as_slice() {
-        [1, minor, ..] => *minor >= 21 && v.split('.').count() == parts.len(),
-        [year, ..] => *year >= 26 && v.split('.').count() == parts.len(),
-        [] => false,
-    }
 }
 
 /// The newest plain release (`1.21.4`, `26.2`) in a list of Minecraft versions.
@@ -428,20 +394,6 @@ pub fn pick<'a>(
         .any(|v| v.loaders.iter().any(|l| l == sunrise::LOADER))
     {
         return usable.find(|v| v.game_versions.iter().any(|g| g == game));
-    }
-    if kind == Kind::Mod {
-        let java = |v: &&Version| {
-            v.loaders
-                .iter()
-                .any(|l| java::LOADERS.contains(&l.as_str()))
-        };
-        let made_for = |v: &&Version| v.game_versions.iter().any(|g| g == game);
-        let ported = |v: &&Version| v.game_versions.iter().any(|g| portable_version(g));
-        return usable
-            .clone()
-            .filter(java)
-            .find(made_for)
-            .or_else(|| usable.filter(java).find(|v| everything && ported(v)));
     }
     if kind == Kind::Shader {
         // An Iris-format zip: never a jar or another loader's file.

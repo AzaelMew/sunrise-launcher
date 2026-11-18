@@ -10,7 +10,7 @@
 //! Nothing here runs the mod's code, and nothing here trusts it: the registry has not reviewed it.
 //! Callers show [`WARNING`] and ask first (`--trust-native-code`).
 use crate::backend;
-use crate::browser::java;
+use crate::browser::mod_list;
 use crate::i18n::{tr, trf};
 use crate::native_mods::{self, Bundle, INSTALLED};
 use serde::{Deserialize, Serialize};
@@ -614,7 +614,7 @@ pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin,
     let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
     let path = origin_path(home, &packed.id);
     fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    java::set_enabled(home, &packed.id, true)?;
+    mod_list::set_enabled(home, &packed.id, true)?;
     let _ = fs::remove_file(&packed.file);
     Ok(record)
 }
@@ -635,7 +635,7 @@ pub fn remove(home: &Path, id: &str) -> Result<bool, String> {
             }
         }
     }
-    java::set_enabled(home, id, false)?;
+    mod_list::set_enabled(home, id, false)?;
     Ok(true)
 }
 

@@ -197,11 +197,7 @@ impl Launcher {
         p.status = Status::Searching;
         let (seq, scope, tx) = (p.seq, p.scope, self.ui.mods.tx.clone());
         std::thread::spawn(move || {
-            let ask = |id| {
-                browser::source(id)
-                    .ok_or_else(|| tr("Modrinth isn't set up.").to_string())
-                    .and_then(|s| s.search(&q))
-            };
+            let ask = |id| browser::source(id).search(&q);
             let modrinth = ask(SourceId::Modrinth);
             // Sunrise's own shader packs lead; the registry failing leaves Modrinth's.
             let mut hits = match scope {
@@ -539,8 +535,7 @@ fn install(
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<String, String> {
-    let source = browser::source(project.source)
-        .ok_or_else(|| tr("This source isn't set up.").to_string())?;
+    let source = browser::source(project.source);
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
         tr("This setup is busy. Try again when the operation finishes.").to_string()
     })?;

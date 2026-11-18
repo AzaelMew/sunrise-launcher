@@ -48,7 +48,6 @@ mod markdown;
 mod mcp;
 mod microsoft;
 mod mod_icons;
-mod modpacks_page;
 mod mods;
 mod mods_page;
 mod mods_project;
@@ -366,18 +365,6 @@ struct Launcher {
     play_pressed: Option<Instant>,
     /// `sunrise-launcher benchmark` started this window to measure it.
     bench: Option<perf::Bench>,
-    /// The Modpacks page: the imported packs (read when the page first opens), the one shown,
-    /// the report's filter, and the pipeline step running now with its log.
-    packs: Vec<sunrise_launcher::modpacks::Imported>,
-    packs_loaded: Option<Instant>,
-    pack_open: Option<String>,
-    pack_busy: bool,
-    pack_log: VecDeque<String>,
-    pack_error: Option<String>,
-    /// Other launchers' modpacks on this computer, offered above the imported ones, and whether
-    /// the scan for them runs now.
-    found_packs: Vec<sunrise_launcher::other_launchers::Found>,
-    found_scanning: bool,
     /// The game starting now plays this pack's profile (its work folder).
     starting_pack: Option<std::path::PathBuf>,
     /// The Mods page: the browser's search, installs and updates (`mods_page.rs`).

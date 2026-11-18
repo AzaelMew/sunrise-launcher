@@ -100,8 +100,6 @@ jobs:
       BIN: ${{ matrix.target && format('target/{0}/release', matrix.target) || 'target/release' }}
       # Sunrise's Azure app for Microsoft sign-in: a repository variable, not a secret; unset, sign-in says it isn't configured.
       SUNRISE_MSA_CLIENT_ID: ${{ vars.SUNRISE_MSA_CLIENT_ID }}
-      # The mod browser's CurseForge source: a repository secret; unset, the launcher searches Modrinth only.
-      SUNRISE_CURSEFORGE_API_KEY: ${{ secrets.SUNRISE_CURSEFORGE_API_KEY }}
       # The release's version and tag, built in (backend::VERSION and own_tag): no version-bump commits.
       SUNRISE_LAUNCHER_VERSION: ${{ needs.decide.outputs.version }}
       SUNRISE_LAUNCHER_TAG: ${{ needs.decide.outputs.tag }}

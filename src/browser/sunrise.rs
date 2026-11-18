@@ -5,7 +5,7 @@
 //! content it can't load, with its own error), and files the index says were taken down are refused and turned off.
 use super::{
     details::{Details, GitHub, Link},
-    download, installed, java, FileRef, Kind, Project, Query, Source, SourceId, Version,
+    download, installed, mod_list, FileRef, Kind, Project, Query, Source, SourceId, Version,
 };
 use crate::i18n::{tr, trf};
 use std::collections::HashMap;
@@ -678,7 +678,6 @@ impl Source for Registry {
                     header: "categories".into(),
                 })
                 .collect(),
-            ..Default::default()
         })
     }
 
@@ -813,7 +812,7 @@ fn trust_label(trust: Trust) -> &'static str {
 /// The game folder path a registry project's file goes to.
 fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
     match kind {
-        Kind::Mod => Ok(format!("{}/{id}.smod", java::MODS_DIR)),
+        Kind::Mod => Ok(format!("{}/{id}.smod", mod_list::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
         Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
@@ -918,7 +917,7 @@ fn install_version(
     // through the guarded function alone, so it leaves the player's on/off choice as it was
     // (#10071).
     if entry.kind == Kind::Mod {
-        java::set_enabled(home, &p.id, true)?;
+        mod_list::set_enabled(home, &p.id, true)?;
     }
     Ok(entry)
 }
@@ -974,7 +973,7 @@ fn install_version_guarded(
     }
     let target = home.join(&relative);
     let taken_by = list.entries.iter().find(|e| !ours(e) && e.file == relative);
-    let folder_mod = home.join(java::MODS_DIR).join(&p.id);
+    let folder_mod = home.join(mod_list::MODS_DIR).join(&p.id);
     if let Some(other) = taken_by {
         return Err(format!(
             "{relative} belongs to {}: remove it first.",
@@ -986,7 +985,7 @@ fn install_version_guarded(
         return Err(format!(
             "A mod with the id {} is already in {}: move it away first.",
             p.id,
-            java::MODS_DIR
+            mod_list::MODS_DIR
         ));
     }
     if clash {
@@ -1035,8 +1034,6 @@ fn install_version_guarded(
         page: project.page.clone(),
         dependency: false,
         verdict: Some(trust_label(trust).into()),
-        skipped: Vec::new(),
-        namespaces: Vec::new(),
     };
     list.entries.retain(|e| !ours(e));
     list.entries.push(entry.clone());
@@ -1050,7 +1047,10 @@ pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
     if let Some(rest) = entry.file.strip_prefix(crate::native_mods::INSTALLED) {
         return rest.strip_prefix('/')?.strip_suffix(".smod");
     }
-    let rest = entry.file.strip_prefix(java::MODS_DIR)?.strip_prefix('/')?;
+    let rest = entry
+        .file
+        .strip_prefix(mod_list::MODS_DIR)?
+        .strip_prefix('/')?;
     Some(rest.strip_suffix(".smod").unwrap_or(rest))
 }
 
@@ -1074,7 +1074,7 @@ pub fn turn_off_revoked(index: &Index, home: &Path) -> Vec<String> {
             continue;
         };
         if let (Kind::Mod, Some(id)) = (e.kind, mod_id(&e)) {
-            if java::is_enabled(home, id) && java::set_enabled(home, id, false).is_ok() {
+            if mod_list::is_enabled(home, id) && mod_list::set_enabled(home, id, false).is_ok() {
                 out.push(format!(
                     "{} was taken down and is off: {}",
                     e.title, r.reason

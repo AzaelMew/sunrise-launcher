@@ -177,7 +177,7 @@ jobs:
         run: cargo test --locked --workspace --lib --bins
       - name: The tests/ targets that start no process (Windows)
         if: runner.os == 'Windows'
-        run: cargo test --locked --test developer_install --test modpack_headline --test storage_consent
+        run: cargo test --locked --test developer_install --test storage_consent
       - name: Doc tests
         if: runner.os == 'Linux'
         run: cargo test --locked --workspace --doc

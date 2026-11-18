@@ -7,72 +7,57 @@ const SITE: &str = "https://modrinth.com";
 
 pub struct Modrinth;
 
-/// Modrinth's project type for a kind.
-fn project_type(kind: Kind) -> &'static str {
+/// Modrinth's project type for a kind it is searched for: packs only. Java mods and modpacks
+/// are not offered from Modrinth.
+fn project_type(kind: Kind) -> Option<&'static str> {
     match kind {
-        Kind::ResourcePack => "resourcepack",
-        Kind::Modpack => "modpack",
-        Kind::Mod => "mod",
-        Kind::Shader => "shader",
-        Kind::DataPack => "datapack",
+        Kind::ResourcePack => Some("resourcepack"),
+        Kind::Shader => Some("shader"),
+        Kind::DataPack => Some("datapack"),
+        Kind::Mod | Kind::Modpack => None,
     }
 }
+
+const PACKS_ONLY: &str =
+    "Modrinth is searched for resource packs, data packs and shader packs only.";
 
 /// The kind of a Modrinth project; its shader packs are Iris-format ones ([`Project::support`]
 /// says which run). A data pack says it is a `mod` (most also ship a mod build): the search for data packs marks
-/// its hits, and an install into a world asks for its data pack files.
+/// its hits, and an install into a world asks for its data pack files. Nothing else is kept as a
+/// mod: [`Project::support`] refuses it.
 fn kind_of(project_type: &str) -> Option<Kind> {
-    Kind::ALL
-        .into_iter()
-        .filter(|k| !matches!(k, Kind::DataPack))
-        .find(|k| self::project_type(*k) == project_type)
+    match project_type {
+        "resourcepack" => Some(Kind::ResourcePack),
+        "shader" => Some(Kind::Shader),
+        "mod" => Some(Kind::Mod),
+        _ => None,
+    }
 }
 
-/// The search's facets (AND of ORs): the kind, the filters, and unless `everything` what runs.
-pub(super) fn facets(query: &Query) -> String {
+/// The search's facets (AND of ORs): the pack type, the categories, and unless `everything` what
+/// runs.
+pub(super) fn facets(query: &Query) -> Option<String> {
     let f = &query.filters;
-    let mut all = vec![vec![format!("project_type:{}", project_type(query.kind))]];
+    let mut all = vec![vec![format!("project_type:{}", project_type(query.kind)?)]];
     match &f.game_version {
         Some(v) => all.push(vec![format!("versions:{v}")]),
-        None if !query.everything
-            && matches!(
-                query.kind,
-                Kind::ResourcePack | Kind::Mod | Kind::DataPack | Kind::Shader
-            ) =>
-        {
-            all.push(vec![format!("versions:{}", query.game)])
-        }
+        None if !query.everything => all.push(vec![format!("versions:{}", query.game)]),
         None => {}
     }
-    let loaders: Vec<String> = match &f.loader {
-        // Shader packs: only the Iris format (`iris`), whatever else a pack also lists.
-        _ if query.kind == Kind::Shader => vec!["categories:iris".into()],
-        // Quilt loads Fabric mods: what runs on Quilt.
-        Some(l) if l == "quilt" => vec!["categories:quilt".into(), "categories:fabric".into()],
-        Some(l) => vec![format!("categories:{l}")],
-        None => details::default_loaders(query.kind)
-            .iter()
-            .map(|l| format!("categories:{l}"))
-            .collect(),
-    };
-    if !loaders.is_empty() {
-        all.push(loaders);
+    // Shader packs: only the Iris format (`iris`), whatever else a pack also lists.
+    if query.kind == Kind::Shader {
+        all.push(vec!["categories:iris".into()]);
     }
     for c in &f.categories {
         all.push(vec![format!("categories:{c}")]);
     }
-    match f.environment {
-        Some(details::Environment::Client) => all.push(vec!["client_side!=unsupported".into()]),
-        Some(details::Environment::Server) => all.push(vec!["server_side!=unsupported".into()]),
-        None => {}
-    }
-    serde_json::to_string(&all).unwrap_or_default()
+    Some(serde_json::to_string(&all).unwrap_or_default())
 }
 
-pub(super) fn search_url(query: &Query) -> String {
+pub(super) fn search_url(query: &Query) -> Option<String> {
     let mut url = format!(
         "{API}/search?facets={}&index={}&offset={}&limit={}",
-        encode(&facets(query)),
+        encode(&facets(query)?),
         query.filters.sort(&query.text).modrinth(),
         query.offset,
         query.limit.clamp(1, 100),
@@ -81,7 +66,7 @@ pub(super) fn search_url(query: &Query) -> String {
         url.push_str("&query=");
         url.push_str(&encode(&query.text));
     }
-    url
+    Some(url)
 }
 
 fn strings(v: &Value) -> Vec<String> {
@@ -103,7 +88,7 @@ pub(super) fn parse_hit(hit: &Value) -> Option<Project> {
     Some(Project {
         source: SourceId::Modrinth,
         id: hit["project_id"].as_str()?.to_owned(),
-        page: format!("{SITE}/{}/{slug}", project_type(kind)),
+        page: format!("{SITE}/{}/{slug}", project_type(kind).unwrap_or("mod")),
         slug,
         title: text(&hit["title"]),
         summary: text(&hit["description"]),
@@ -128,7 +113,7 @@ pub(super) fn parse_project(p: &Value) -> Option<Project> {
     Some(Project {
         source: SourceId::Modrinth,
         id: p["id"].as_str()?.to_owned(),
-        page: format!("{SITE}/{}/{slug}", project_type(kind)),
+        page: format!("{SITE}/{}/{slug}", project_type(kind).unwrap_or("mod")),
         slug,
         title: text(&p["title"]),
         summary: text(&p["description"]),
@@ -209,7 +194,7 @@ impl Source for Modrinth {
     }
 
     fn search(&self, query: &Query) -> Result<Vec<Project>, String> {
-        let found = get(&search_url(query))?;
+        let found = get(&search_url(query).ok_or(PACKS_ONLY)?)?;
         Ok(found["hits"]
             .as_array()
             .into_iter()
@@ -246,28 +231,6 @@ impl Source for Modrinth {
         let p = get(&format!("{API}/project/{id}"))?;
         let members = get(&format!("{API}/project/{id}/members")).unwrap_or_default();
         Ok(details::modrinth_details(&p, &members))
-    }
-
-    fn tags(&self, kind: Kind) -> Result<details::Tags, String> {
-        static TAGS: std::sync::Mutex<Option<(Value, Value, Value)>> = std::sync::Mutex::new(None);
-        let mut cached = TAGS.lock().map_err(|_| "tags".to_string())?;
-        if cached.is_none() {
-            *cached = Some((
-                get(&format!("{API}/tag/category"))?,
-                get(&format!("{API}/tag/loader"))?,
-                get(&format!("{API}/tag/game_version"))?,
-            ));
-        }
-        let (c, l, v) = cached.as_ref().expect("filled above");
-        // Data packs share the mods' categories; their one loader is `datapack`.
-        let mut tags = match kind {
-            Kind::DataPack => details::modrinth_tags("mod", c, l, v),
-            _ => details::modrinth_tags(project_type(kind), c, l, v),
-        };
-        if kind == Kind::DataPack {
-            tags.loaders.clear();
-        }
-        Ok(tags)
     }
 }
 

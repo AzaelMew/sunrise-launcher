@@ -84,7 +84,7 @@ impl Session {
                 }
                 let instance = match arg_str(args, "instance") {
                     Some(name) => instances::find(name)?,
-                    None => instances::selected(),
+                    None => instances::selection()?,
                 };
                 let tag = instance.resolve_version(arg_str(args, "version"))?;
                 let mut cmd = backend::client(&tag)?;

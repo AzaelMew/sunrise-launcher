@@ -909,11 +909,9 @@ impl Launcher {
             limit: POPULAR * 4,
             ..Query::new("", Kind::Mod)
         };
-        let task = cx.background_executor().spawn(async move {
-            browser::source(SourceId::Sunrise)
-                .ok_or_else(|| tr("The mod registry isn't set up.").to_string())
-                .and_then(|source| source.search(&query))
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { browser::source(SourceId::Sunrise).search(&query) });
         cx.spawn(async move |this, cx| {
             let found = task.await;
             let _ = this.update(cx, |this, cx| {

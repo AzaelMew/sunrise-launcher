@@ -1,6 +1,6 @@
 //! Project icons and gallery images, fetched at run time from the sources' image servers and
 //! kept on disk: nothing of a project's art is in the launcher. A URL is fetched only over HTTPS
-//! from Modrinth's or CurseForge's CDN, at most [`MAX_DOWNLOAD`] bytes, decoded (PNG, JPEG, WebP,
+//! from Modrinth's CDN or Sunrise's registry, at most [`MAX_DOWNLOAD`] bytes, decoded (PNG, JPEG, WebP,
 //! GIF), scaled down and stored as a PNG the UI draws; the cache is kept under [`MAX_CACHE`] by
 //! dropping the oldest files. After [`FRESH`] an image is asked for again with its server's
 //! validators (`If-None-Match`, `If-Modified-Since`): unchanged, it costs one small answer.
@@ -10,14 +10,12 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Hosts images may come from.
-const HOSTS: [&str; 8] = [
+const HOSTS: [&str; 6] = [
     "https://cdn.modrinth.com/",
     // Fabric's and Forge's own icons, for instances that play them (no published logo licence:
     // drawn from their sites, never shipped).
     "https://raw.githubusercontent.com/FabricMC/fabric-loader/",
     "https://files.minecraftforge.net/static/images/",
-    "https://media.forgecdn.net/",
-    "https://edge.forgecdn.net/",
     sunrise_launcher_addresses::MOD_IMAGES,
     // Horizon's registry, and the mirror kept at the address it had before it moved to horizon-rust.
     "https://horizon-rust.github.io/horizon-mods/",
@@ -42,7 +40,7 @@ fn dir(home: &Path) -> PathBuf {
 /// Why `url` is never fetched.
 pub fn refuse(url: &str) -> Option<&'static str> {
     if !HOSTS.iter().any(|h| url.starts_with(h)) {
-        return Some("not on Modrinth's or CurseForge's image servers over HTTPS");
+        return Some("not on Modrinth's or Sunrise's image servers over HTTPS");
     }
     if url.len() > 2048 || url.contains(char::is_whitespace) {
         return Some("not a plain URL");
@@ -342,7 +340,7 @@ mod tests {
     #[test]
     fn only_the_sources_image_servers() {
         assert!(refuse("https://cdn.modrinth.com/data/AANobbMI/icon.png").is_none());
-        assert!(refuse("https://media.forgecdn.net/avatars/1/2.png").is_none());
+        assert!(refuse("https://media.forgecdn.net/avatars/1/2.png").is_some());
         assert!(refuse("http://cdn.modrinth.com/data/x/icon.png").is_some());
         assert!(refuse("https://cdn.modrinth.com.evil.example/x.png").is_some());
         assert!(refuse("https://example.com/x.png").is_some());

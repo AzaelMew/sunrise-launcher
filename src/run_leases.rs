@@ -97,7 +97,7 @@ pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
         for folder in [mod_list::DIR, mod_list::NATIVE_DIR] {
             for path in sunrise_launcher_smod::find(&home.join(folder)) {
                 if let Ok(package) = Package::read(&path) {
-                    if crate::browser::java::is_enabled(&home, &package.manifest.id) {
+                    if crate::browser::mod_list::is_enabled(&home, &package.manifest.id) {
                         for jar in package.manifest.jar {
                             crate::storage::mark_used(&jar.cache_path(&home.join("jars")))?;
                         }

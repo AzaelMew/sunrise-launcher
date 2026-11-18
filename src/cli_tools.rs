@@ -396,7 +396,7 @@ mod tests {
             "logs",
             "mods_search",
             "mods_install",
-            "modpack_import",
+            "modpack_play",
             "servers_create",
             "servers_run",
             "data_status",

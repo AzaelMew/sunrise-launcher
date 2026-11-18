@@ -1,6 +1,5 @@
 use super::*;
 use std::collections::BTreeMap;
-const GAME: &str = crate::backend::PINNED_GAME;
 
 fn scratch(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -40,13 +39,6 @@ fn level_dat() -> Vec<u8> {
     gz.finish().unwrap()
 }
 
-fn sha512(bytes: &[u8]) -> String {
-    sha2::Sha512::digest(bytes)
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
-}
-
 /// A game folder with settings, packs, a mod, two worlds, and what never goes out.
 fn home(name: &str) -> PathBuf {
     let home = scratch(name);
@@ -81,7 +73,7 @@ fn home(name: &str) -> PathBuf {
         "source": "modrinth", "project": "P1", "slug": "glass", "title": "Glass",
         "kind": "resource-pack", "version": "V1", "number": "1.0",
         "file": "resourcepacks/Glass.zip",
-        "checksum": format!("SHA-512:{}", sha512(b"glass pack")),
+        "checksum": "SHA-512:00",
         "page": "https://modrinth.com/resourcepack/glass",
     }]});
     put(
@@ -108,24 +100,12 @@ fn read(zip: &Path, name: &str) -> Vec<u8> {
     out
 }
 
-fn served(e: &Entry) -> Option<FileRef> {
-    (e.version == "V1").then(|| FileRef {
-        url: "https://cdn.modrinth.com/data/P1/versions/V1/Glass.zip".into(),
-        name: "Glass.zip".into(),
-        size: 10,
-        sha512: Some(sha512(b"glass pack")),
-        sha256: None,
-        sha1: Some("ab".repeat(20)),
-        primary: true,
-    })
-}
-
 #[test]
 fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     let home = home("zip");
     let out = home.join("out/Hardcore.zip");
-    let done = export(&home, "Hardcore", Format::Zip, &["Base".into()], &[], &out).unwrap();
-    assert_eq!((done.copied, done.linked), (8, 0));
+    let done = export(&home, "Hardcore", &["Base".into()], &out).unwrap();
+    assert_eq!(done.copied, 8);
     // Settings, packs, the mod and the picked world, without its per-player files; no logs,
     // screenshots, backups, caches, account files or the other world.
     assert_eq!(
@@ -157,9 +137,9 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     assert_eq!(player.get(&"XpLevel".into()), Some(&Tag::Int(7)));
     assert!(!out.with_extension("part").exists());
 
-    assert!(export(&home, "Hardcore", Format::Zip, &["../x".into()], &[], &out).is_err());
+    assert!(export(&home, "Hardcore", &["../x".into()], &out).is_err());
     let empty = scratch("empty");
-    let refused = export(&empty, "New", Format::Zip, &[], &[], &empty.join("New.zip"));
+    let refused = export(&empty, "New", &[], &empty.join("New.zip"));
     assert_eq!(
         refused.unwrap_err(),
         "New has nothing to share yet: no settings, packs, mods or worlds."
@@ -170,46 +150,14 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
 }
 
 #[test]
-fn an_mrpack_lists_what_modrinth_serves_and_carries_the_rest() {
-    let home = home("mrpack");
-    let linked = linkable(&home, &served);
-    assert_eq!(linked.len(), 1);
-    let out = free_path(&home, "Hard: core", Format::Mrpack);
-    assert_eq!(out.file_name().unwrap(), "Hard- core.mrpack");
-    let done = export(&home, "Hardcore", Format::Mrpack, &[], &linked, &out).unwrap();
-    assert_eq!((done.copied, done.linked), (5, 1));
+fn a_free_path_is_a_zip_named_after_the_instance() {
+    let home = home("free-path");
+    let out = free_path(&home, "Hard: core");
+    assert_eq!(out.file_name().unwrap(), "Hard- core.zip");
+    put(&out, b"taken");
     assert_eq!(
-        names(&out),
-        [
-            "modrinth.index.json",
-            "overrides/options.txt",
-            "overrides/resourcepacks/Own.zip",
-            "overrides/servers.dat",
-            "overrides/sunrise-graphics.txt",
-            "overrides/sunrise-mods/coords/sunrise-mod.toml",
-        ]
+        free_path(&home, "Hard: core").file_name().unwrap(),
+        "Hard- core (2).zip"
     );
-    let index: serde_json::Value =
-        serde_json::from_slice(&read(&out, "modrinth.index.json")).unwrap();
-    assert_eq!(index["formatVersion"], 1);
-    assert_eq!(index["game"], "minecraft");
-    assert_eq!(index["dependencies"]["minecraft"], GAME);
-    let file = &index["files"][0];
-    assert_eq!(file["path"], "resourcepacks/Glass.zip");
-    assert_eq!(
-        file["downloads"][0],
-        "https://cdn.modrinth.com/data/P1/versions/V1/Glass.zip"
-    );
-    assert_eq!(file["hashes"]["sha512"], sha512(b"glass pack"));
-    assert_eq!(
-        free_path(&home, "Hard: core", Format::Mrpack)
-            .file_name()
-            .unwrap(),
-        "Hard- core (2).mrpack"
-    );
-
-    // A pack changed since its install is carried, not linked.
-    put(&home.join("resourcepacks/Glass.zip"), b"edited");
-    assert!(linkable(&home, &served).is_empty());
     fs::remove_dir_all(&home).unwrap();
 }

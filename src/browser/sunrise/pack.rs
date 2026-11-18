@@ -5,7 +5,7 @@
 //! registry mod, turned on or off as the pack says. The pack's overrides (settings, resource
 //! packs, a mod's saved settings) are copied in once, when it is installed.
 use super::{fetch, index, install_version, local, newest, Index};
-use crate::browser::{java, FileRef};
+use crate::browser::{mod_list, FileRef};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -141,9 +141,9 @@ fn install_version_in(
         let was = before
             .iter()
             .any(|s| s.split(' ').next() == Some(m.id.as_str()))
-            .then(|| java::is_enabled(&home, &m.id));
+            .then(|| mod_list::is_enabled(&home, &m.id));
         install_version(index, local, mp, mv, &home, progress)?;
-        java::set_enabled(&home, &m.id, was.unwrap_or(m.on))?;
+        mod_list::set_enabled(&home, &m.id, was.unwrap_or(m.on))?;
         mods.push(format!("{} {}", m.id, m.version));
     }
     // Settings once: the player's own changes to the profile stay on updates.
@@ -273,7 +273,7 @@ mod tests {
         let home = home(&packs.join("cozy"));
         assert!(home.join("sunrise-mods/coords_hud.smod").is_file());
         assert!(
-            !java::is_enabled(&home, "coords_hud"),
+            !mod_list::is_enabled(&home, "coords_hud"),
             "the pack turns it off"
         );
         assert_eq!(
@@ -312,25 +312,25 @@ mod tests {
         install_in(&first, true, "cozy", &packs, &|_, _| {}).unwrap();
         let home = home(&packs.join("cozy"));
         assert!(
-            java::is_enabled(&home, "coords_hud"),
+            mod_list::is_enabled(&home, "coords_hud"),
             "the pack turns it on"
         );
 
         // The player turns it off on the Mods page; the next pack version leaves it off.
-        java::set_enabled(&home, "coords_hud", false).unwrap();
+        mod_list::set_enabled(&home, "coords_hud", false).unwrap();
         let second = registry_at(&dir, "1.1.0", true, "");
         let pack = install_in(&second, true, "cozy", &packs, &|_, _| {}).unwrap();
         assert_eq!(pack.version, "1.1.0", "it was an update");
         assert!(
-            !java::is_enabled(&home, "coords_hud"),
+            !mod_list::is_enabled(&home, "coords_hud"),
             "the update kept it off"
         );
 
         // Turned back on, the next one leaves it on.
-        java::set_enabled(&home, "coords_hud", true).unwrap();
+        mod_list::set_enabled(&home, "coords_hud", true).unwrap();
         let third = registry_at(&dir, "1.2.0", true, "");
         install_in(&third, true, "cozy", &packs, &|_, _| {}).unwrap();
-        assert!(java::is_enabled(&home, "coords_hud"));
+        assert!(mod_list::is_enabled(&home, "coords_hud"));
         fs::remove_dir_all(&dir).unwrap();
     }
 

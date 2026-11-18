@@ -184,22 +184,9 @@ enum DataCmd {
 
 #[derive(Subcommand)]
 enum ModpackCmd {
-    /// The imported packs and their coverage (the default)
+    /// The installed Sunrise modpacks (the default)
     List,
-    /// Import a .mrpack, a CurseForge zip or an instance folder, and write its coverage report
-    Import { path: PathBuf },
-    /// Get the jars of what this computer can port and carry them over
-    Port {
-        /// The pack's folder name, as list shows it
-        pack: String,
-        /// A folder with your own jars (an installed instance, a downloads folder)
-        #[arg(long)]
-        from: Option<PathBuf>,
-        /// The installed version the ports are for (default: the selected one)
-        #[arg(long)]
-        version: Option<String>,
-    },
-    /// Play a ported pack as its own profile
+    /// Play a Sunrise modpack as its own profile
     Play {
         pack: String,
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
@@ -208,7 +195,7 @@ enum ModpackCmd {
         #[arg(long)]
         version: Option<String>,
     },
-    /// Remove an imported pack: its jars, ports and the profile's saves
+    /// Remove a Sunrise modpack and the profile's saves
     Remove { pack: String },
 }
 
@@ -290,18 +277,15 @@ enum InstanceCmd {
     Select { instance: String },
     /// Keep an instance on one installed Sunrise version, or "latest" to follow updates again
     Version { instance: String, version: String },
-    /// Export an instance (or a port) to share: its settings, packs, Sunrise mods and the worlds
-    /// named, as a .mrpack (resource packs from Modrinth listed by download) or a zip. Never
-    /// logs, screenshots or account data; worlds go without their per-player files
+    /// Export an instance to share as a zip: its settings, packs, Sunrise mods and the worlds
+    /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
         /// The instance (default: the selected one)
         instance: Option<String>,
-        #[arg(long, value_enum, default_value_t = ExportFormat::Mrpack)]
-        format: ExportFormat,
         /// A world to put in it (its name or folder); repeat for more
         #[arg(long)]
         world: Vec<String>,
-        /// Where to write it (default: "<name>.mrpack" in the current folder)
+        /// Where to write it (default: "<name>.zip" in the current folder)
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -340,19 +324,14 @@ enum InstanceCmd {
         #[arg(long)]
         remove: bool,
     },
-    /// Import what a file is, as dropping it on the window does: a shared instance (a .mrpack
-    /// without mod loaders, such as `instance export` writes, or a game folder zip) becomes a
-    /// new instance; a Java modpack goes to the Modpacks import; a resource or shader pack into
-    /// the instance (default: the selected one)
+    /// Import what a file is: a shared instance (a game folder zip, such as `instance export`
+    /// writes) becomes a new instance; a resource or shader pack goes into the instance
+    /// (default: the selected one)
     Import {
         file: PathBuf,
         /// The instance a pack goes into
         #[arg(long)]
         instance: Option<String>,
-        /// A .mrpack becomes a Minecraft: Java Edition instance with its Minecraft version, mod
-        /// loader, mods and overrides, instead of a Sunrise instance or a Modpacks import
-        #[arg(long)]
-        java: bool,
     },
     /// List the instances other launchers keep (Prism Launcher, MultiMC, the official
     /// launcher, the CurseForge app, the Modrinth App), read without changing anything there
@@ -379,14 +358,6 @@ enum InstanceCmd {
         #[arg(long)]
         minecraft: Option<String>,
     },
-}
-
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum ExportFormat {
-    /// Modrinth's modpack format
-    Mrpack,
-    /// The game folder's layout, zipped
-    Zip,
 }
 
 #[derive(Subcommand)]
@@ -564,20 +535,9 @@ enum ModsCmd {
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Say how well a Java mod runs in Sunrise: its jar is downloaded (checksum checked),
-    /// carried over and read; the answer is kept
-    Check {
-        project: String,
-        /// Allow a version made for another Minecraft version (1.21 and later)
-        #[arg(long)]
-        everything: bool,
-        #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
-        source: SourceArg,
-    },
-    /// Install a pack and what it needs into an instance, by its id or slug (checksums
-    /// checked); a Java mod is ported into sunrise-mods and turned on (a Java instance gets the
-    /// jar made for its version and loader in mods/); a modpack is imported as an instance of
-    /// its own; a data pack goes into the world `--world` names
+    /// Install a pack or a Sunrise mod and what it needs into an instance, by its id or slug
+    /// (checksums checked); a Sunrise modpack is installed as an instance of its own; a data pack
+    /// goes into the world `--world` names
     Install {
         project: String,
         /// Install the project's data pack into this world of the instance (its name or folder)
@@ -675,21 +635,17 @@ enum KindArg {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum SourceArg {
     Modrinth,
-    /// CurseForge support is coming soon
-    Curseforge,
     /// Sunrise's own registry: mods, modpacks and resource packs made for Sunrise, reviewed
     Sunrise,
 }
 
 impl SourceArg {
-    fn get(self) -> Result<Box<dyn sunrise_launcher::browser::Source>, String> {
+    fn get(self) -> Box<dyn sunrise_launcher::browser::Source> {
         use sunrise_launcher::browser::{self, SourceId};
-        let id = match self {
+        browser::source(match self {
             SourceArg::Modrinth => SourceId::Modrinth,
-            SourceArg::Curseforge => SourceId::CurseForge,
             SourceArg::Sunrise => SourceId::Sunrise,
-        };
-        browser::source(id).ok_or_else(|| browser::CURSEFORGE_SOON.into())
+        })
     }
 }
 
@@ -984,8 +940,7 @@ enum Cmd {
         #[command(subcommand)]
         action: Option<MultiplayerCmd>,
     },
-    /// Modpacks: import a Java pack, see its coverage report, port what this computer can and
-    /// play it as its own profile (docs/modpacks.md)
+    /// Sunrise modpacks from the registry: list them, play one as its own profile, or remove it
     Modpack {
         #[command(subcommand)]
         action: Option<ModpackCmd>,
@@ -1386,7 +1341,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             }
             let target = match &instance {
                 Some(name) => instances::find(name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let target = match profile {
                 Some(profile) => {
@@ -1480,7 +1435,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
         } => {
             let instance = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             if instance.java.is_some() {
                 if version.is_some()
@@ -1675,7 +1630,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             use sunrise_launcher::game_log;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let path = i.home.join("logs/latest.log");
             let text =
@@ -2215,10 +2170,8 @@ fn servers(action: ServersCmd, as_json: bool) -> Result<(), String> {
 /// Installs the native mods of `found` (a GitHub link, resolved) into the game folder `home`: the
 /// warning and the exact source link first, and nothing downloaded without `trust`.
 fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
-    use sunrise_launcher::browser::{installed, java_instance, sunrise, Kind, Query, SourceId};
-    use sunrise_launcher::modpacks;
-    // What the browser installs goes into an instance's game folder; Java mods' checks are kept
-    // in the default one, shared by all.
+    use sunrise_launcher::browser::{installed, sunrise, Kind, Query, SourceId};
+    // What the browser installs goes into an instance's game folder.
     let instance = match &action {
         ModsCmd::List { instance }
         | ModsCmd::Search { instance, .. }
@@ -2229,22 +2182,16 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         | ModsCmd::UpdateGithub { instance, .. }
         | ModsCmd::Enable { instance, .. }
         | ModsCmd::Disable { instance, .. } => match instance {
-            Some(name) => Some(instances::find(name)?),
-            None => Some(instances::selected()),
+            Some(name) => instances::find(name)?,
+            None => instances::selection()?,
         },
-        ModsCmd::Check { .. } => None,
     };
-    // A Java instance gets the source's own files, for its version and loader.
-    let java = instance
-        .as_ref()
-        .and_then(|i| i.java.as_ref())
-        .map(|j| j.target());
-    let home = match (&action, &instance) {
-        (ModsCmd::Search { .. }, _) | (_, None) => backend::game_home(),
-        (_, Some(i)) => i.home.clone(),
+    let home = match &action {
+        ModsCmd::Search { .. } => backend::game_home(),
+        _ => instance.home.clone(),
     };
     // The Minecraft version the instance's own build plays (its pinned build), else the launcher's.
-    let game = backend::played_version_id_by(instance.as_ref().and_then(|i| i.version.as_deref()));
+    let game = backend::played_version_id_by(instance.version.as_deref());
     let entry_json = |e: &installed::Entry| serde_json::to_value(e).unwrap_or_default();
     let line = |label: &str, f: f32| progress(label.to_string())(f);
     let from_registry = installed::Installed::load(&home)
@@ -2271,7 +2218,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             }
             for o in sunrise_launcher::github_mods::origins(&home)
                 .iter()
-                .filter(|_| !as_json && java.is_none())
+                .filter(|_| !as_json)
             {
                 println!(
                     "{} {}  (native mod, from GitHub: {})\n  {}",
@@ -2282,11 +2229,10 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 );
             }
             for e in list.iter().filter(|_| !as_json) {
-                let off = java.is_some() && !java_instance::is_on(&home, e);
                 println!(
-                    "{}{}  {}  ({}, {})\n  {}  {}",
+                    "{}  {}  ({}, {})
+  {}  {}",
                     e.title,
-                    if off { " (off)" } else { "" },
                     e.number,
                     e.source.label(),
                     e.slug,
@@ -2309,24 +2255,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 KindArg::Shader => Kind::Shader,
                 KindArg::Datapack => Kind::DataPack,
             };
-            if let Some(target) = &java {
-                let found = source.get()?.search(&target.query(&text.join(" "), kind))?;
-                if as_json {
-                    json(found.iter().map(|p| serde_json::json!({
-                        "id": p.id, "slug": p.slug, "title": p.title, "summary": p.summary,
-                        "author": p.author, "downloads": p.downloads, "page": p.page,
-                        "license": p.license,
-                    })).collect());
-                }
-                for p in found.iter().filter(|_| !as_json) {
-                    println!(
-                        "{}  ({})  {} downloads\n  {}",
-                        p.title, p.slug, p.downloads, p.summary
-                    );
-                }
-                return Ok(());
-            }
-            let source = source.get()?;
+            let source = source.get();
             // A registry modpack becomes a profile of its own, on the launcher's build, as its import does.
             let game = match (kind, source.id()) {
                 (Kind::Modpack, SourceId::Sunrise) => sunrise_launcher::browser::game(),
@@ -2346,7 +2275,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                         "id": p.id, "slug": p.slug, "title": p.title, "summary": p.summary,
                         "author": p.author, "downloads": p.downloads, "page": p.page,
                         "license": p.license, "support": support.label(), "reason": support.reason(),
-                        "about": if p.source == SourceId::Sunrise { sunrise::trust_and_capabilities(&p.id, instance.as_ref(), &query.game) } else { Vec::new() },
+                        "about": if p.source == SourceId::Sunrise { sunrise::trust_and_capabilities(&p.id, Some(&instance), &query.game) } else { Vec::new() },
                     })
                 }).collect());
             } else {
@@ -2358,74 +2287,27 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     if p.source == SourceId::Sunrise {
                         println!("{}  ({})  {}\n  {}", p.title, p.slug, p.author, p.summary);
                         for line in
-                            sunrise::trust_and_capabilities(&p.id, instance.as_ref(), &query.game)
+                            sunrise::trust_and_capabilities(&p.id, Some(&instance), &query.game)
                         {
                             println!("  {line}");
                         }
                         continue;
                     }
-                    let unchecked = p.kind == Kind::Mod && support.installable();
                     println!(
-                        "{}  ({})  {} · {} downloads\n  {}",
+                        "{}  ({})  {} · {} downloads
+  {}",
                         p.title,
                         p.slug,
-                        if unchecked {
-                            "Not checked"
-                        } else {
-                            support.label()
-                        },
+                        support.label(),
                         p.downloads,
                         p.summary
                     );
-                    if unchecked {
-                        println!("  sunrise-launcher mods check {}", p.slug);
-                    } else if datapack {
+                    if datapack {
                         println!("  sunrise-launcher mods install {} --world <world>", p.slug);
                     } else if let Some(why) = support.reason() {
                         println!("  {why}");
                     }
                 }
-            }
-        }
-        ModsCmd::Check {
-            project,
-            everything,
-            source,
-        } => {
-            let source = source.get()?;
-            let p = source.project(&project)?;
-            if p.kind != Kind::Mod {
-                return Err(format!("{} isn't a Java mod.", p.title));
-            }
-            let (version, c) = sunrise_launcher::browser::java::check_project(
-                &home,
-                &*source,
-                &p,
-                everything,
-                &game,
-                &progress(p.title.clone()),
-            )?;
-            if as_json {
-                let mut v = serde_json::to_value(&c).unwrap_or_default();
-                v["version"] = version.number.clone().into();
-                v["label"] = c.verdict.label().into();
-                println!("{v}");
-                return Ok(());
-            }
-            println!(
-                "{} {} ({} {}): {}. {}",
-                p.title,
-                version.number,
-                c.loader,
-                c.mod_id,
-                c.verdict.label(),
-                c.summary
-            );
-            for line in &c.ports {
-                println!("  ports: {line}");
-            }
-            for line in &c.skipped {
-                println!("  doesn't: {line}");
             }
         }
         ModsCmd::Install {
@@ -2435,7 +2317,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             world,
             ..
         } => {
-            let source = source.get()?;
+            let source = source.get();
             let p = source.project(&project)?;
             if let Some(world) = world {
                 let world = sunrise_launcher::worlds::find(&home, &world)?;
@@ -2488,34 +2370,12 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
                 return Ok(());
             }
-            if p.kind == Kind::Modpack {
-                let folder = modpacks::ports_dir().join("downloads");
-                let file = installed::fetch_modpack(
-                    &*source,
-                    &p,
-                    &folder,
-                    &game,
-                    &progress(p.title.clone()),
-                )?;
-                let log = &|line: String| eprintln!("{line}");
-                let porter = modpacks::Porter::for_version(None)?;
-                let pack = modpacks::import_and_port(&porter, &file, log)?;
-                println!("{} ({})", modpacks::outcome(&pack), pack.summary());
-                println!("Play it: sunrise-launcher modpack play {}", pack.slug);
-                return Ok(());
-            }
-            let done = match &java {
-                Some(target) => java_instance::install(&*source, target, &p, &home, &line)?,
-                None => installed::install(&*source, &p, everything, &home, &game, &line)?,
-            };
+            let done = installed::install(&*source, &p, everything, &home, &game, &line)?;
             if as_json {
                 json(done.iter().map(entry_json).collect());
             }
             for e in done.iter().filter(|_| !as_json) {
                 println!("{} {}: {} ({})", e.title, e.number, e.file, e.checksum);
-                for s in &e.skipped {
-                    println!("  not ported: {s}");
-                }
             }
         }
         ModsCmd::Update { project, check, .. } => {
@@ -2535,14 +2395,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 });
             }
             for e in chosen {
-                let Some(source) = sunrise_launcher::browser::source(e.source) else {
-                    println!("{}: {} isn't available here.", e.title, e.source.label());
-                    continue;
-                };
-                let newer = match &java {
-                    Some(target) => java_instance::update_for(&*source, target, e)?,
-                    None => installed::update_for(&*source, e, &game)?,
-                };
+                let source = sunrise_launcher::browser::source(e.source);
+                let newer = installed::update_for(&*source, e, &game)?;
                 match newer {
                     None => println!("{} {}: up to date.", e.title, e.number),
                     Some(v) if check => {
@@ -2550,12 +2404,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     }
                     Some(_) => {
                         let p = source.project(&e.project)?;
-                        let done = match &java {
-                            Some(target) => {
-                                java_instance::install(&*source, target, &p, &home, &line)?
-                            }
-                            None => installed::install(&*source, &p, true, &home, &game, &line)?,
-                        };
+                        let done = installed::install(&*source, &p, true, &home, &game, &line)?;
                         for done in done {
                             println!("{} {}: {}", done.title, done.number, done.file);
                         }
@@ -2574,7 +2423,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             let found = github_mods::resolve(&link, &github_mods::api)?;
             github_native(
                 &home,
-                java.is_some(),
+                instance.java.is_some(),
                 &found,
                 mod_id.as_deref(),
                 all,
@@ -2587,7 +2436,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             trust_native_code,
             ..
         } => {
-            if java.is_some() {
+            if instance.java.is_some() {
                 return Err("Native mods from GitHub are for Sunrise instances.".into());
             }
             let mut origins = github_mods::origins(&home);
@@ -2615,26 +2464,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
             }
         }
-        ModsCmd::Remove { project, .. }
-            if java.is_none() && github_mods::origin(&home, &project).is_some() =>
-        {
+        ModsCmd::Remove { project, .. } if github_mods::origin(&home, &project).is_some() => {
             github_mods::remove(&home, &project)?;
             println!("Removed {project} (installed from GitHub).");
         }
         ModsCmd::Remove { project, .. } => {
-            let e = match java {
-                Some(_) => java_instance::remove(&home, &project)?,
-                None => installed::remove(&home, &project)?,
-            };
+            let e = installed::remove(&home, &project)?;
             println!("Removed {} ({}).", e.title, e.file);
-        }
-        ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } if java.is_some() => {
-            let e = installed::Installed::load(&home)
-                .lookup(&project)
-                .cloned()
-                .ok_or_else(|| format!("{project} wasn't installed by the browser."))?;
-            java_instance::set_on(&home, &e, on)?;
-            println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
             let e = installed::Installed::load(&home)
@@ -2656,7 +2492,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     return Err(format!("{} was taken down: {}", e.title, r.reason));
                 }
             }
-            sunrise_launcher::browser::java::set_enabled(&home, id, on)?;
+            sunrise_launcher::browser::mod_list::set_enabled(&home, id, on)?;
             println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
     }
@@ -3031,7 +2867,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             use sunrise_launcher::shortcut;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let paths = match remove {
                 false => shortcut::make(&backend::update_target(), &i.id, &i.name)?,
@@ -3105,25 +2941,8 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             }
             changed(made);
         }
-        InstanceCmd::Import {
-            file, java: true, ..
-        } => {
-            let i =
-                sunrise_launcher::instances_mrpack::import(&file, &|line, _| eprintln!("{line}"))?;
-            if as_json {
-                json(value(&i, false));
-            } else {
-                println!(
-                    "Made the Java instance {} in {}: sunrise-launcher play --instance \"{}\"",
-                    i.name,
-                    i.home.display(),
-                    i.name
-                );
-            }
-        }
-        InstanceCmd::Import { file, instance, .. } => {
+        InstanceCmd::Import { file, instance } => {
             use sunrise_launcher::import::{self, Dropped};
-            use sunrise_launcher::modpacks;
             match import::what(&file)? {
                 Dropped::Instance => {
                     let i = import::import_instance(&file, &|line, _| eprintln!("{line}"))?;
@@ -3137,18 +2956,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                             i.name
                         );
                     }
-                }
-                Dropped::Modpack => {
-                    let pack = modpacks::import(
-                        &modpacks::Porter::for_version(None)?,
-                        &file,
-                        &|line: String| eprintln!("{line}"),
-                    )?;
-                    println!("{} ({})", modpacks::outcome(&pack), pack.summary());
-                    println!(
-                        "Port and play it: sunrise-launcher modpack port {}",
-                        pack.slug
-                    );
                 }
                 // A game build is its own command: it installs a version
                 // rather than touching an instance, and takes a `--version` to
@@ -3164,7 +2971,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 Dropped::Pack(_) => {
                     let i = match instance {
                         Some(name) => instances::find(&name)?,
-                        None => instances::selected(),
+                        None => instances::selection()?,
                     };
                     let p = sunrise_launcher::packs::add(&i.home, &file)?;
                     println!(
@@ -3183,48 +2990,37 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
         }
         InstanceCmd::Export {
             instance,
-            format,
             world,
             out,
         } => {
-            use sunrise_launcher::export::{self, Format};
+            use sunrise_launcher::export;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
-            };
-            let format = match format {
-                ExportFormat::Mrpack => Format::Mrpack,
-                ExportFormat::Zip => Format::Zip,
+                None => instances::selection()?,
             };
             let worlds = world
                 .iter()
                 .map(|w| sunrise_launcher::worlds::find(&i.home, w).map(|w| w.folder))
                 .collect::<Result<Vec<_>, _>>()?;
-            let linked = match format {
-                Format::Mrpack => export::linkable(&i.home, &export::from_modrinth),
-                Format::Zip => Vec::new(),
-            };
             let out = match out {
                 Some(out) => out,
                 None => export::free_path(
                     &std::env::current_dir().map_err(|e| e.to_string())?,
                     &i.name,
-                    format,
                 ),
             };
-            let done = export::export(&i.home, &i.name, format, &worlds, &linked, &out)?;
+            let done = export::export(&i.home, &i.name, &worlds, &out)?;
             if as_json {
                 json(serde_json::json!({
-                    "path": done.path, "copied": done.copied, "linked": done.linked,
+                    "path": done.path, "copied": done.copied,
                     "worlds": done.worlds,
                 }));
             } else {
                 println!(
-                    "Exported {} to {}: {} files, {} listed by their Modrinth download{}.",
+                    "Exported {} to {}: {} files{}.",
                     i.name,
                     done.path.display(),
                     done.copied,
-                    done.linked,
                     match done.worlds.is_empty() {
                         true => String::new(),
                         false => format!(", worlds: {}", done.worlds.join(", ")),
@@ -3241,7 +3037,7 @@ fn game_packs(action: PacksCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     let value = |p: &packs::Pack| {
@@ -3325,7 +3121,7 @@ fn screenshots(action: ScreenshotsCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     match action {
@@ -3368,7 +3164,7 @@ fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     match action {
@@ -3418,7 +3214,7 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     let value = |w: &World| {
@@ -3517,57 +3313,20 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
 
 fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     use sunrise_launcher::browser::sunrise;
-    use sunrise_launcher::modpacks::Status;
-    use sunrise_launcher::modpacks::{self, Imported};
-    let log = &|line: String| eprintln!("{line}");
     let work = |pack: &str| {
-        let registry = sunrise::pack::packs_dir().join(pack);
-        if sunrise::pack::is_pack(&registry) {
-            return Ok(registry);
-        }
-        let work = modpacks::ports_dir().join(pack);
-        modpacks::load(&work).map(|_| work)
-    };
-    let show = |p: &Imported| {
-        let counts: Vec<String> = Status::ALL
-            .iter()
-            .map(|s| format!("{} {}", p.count(*s), s.label()))
-            .collect();
-        if as_json {
-            json(serde_json::json!({
-                "pack": p.slug, "name": p.title(), "summary": p.summary(),
-                "counts": Status::ALL.iter().map(|s| (s.label(), p.count(*s))).collect::<std::collections::BTreeMap<_, _>>(),
-                "portable": p.portable, "ported_mods": p.mods.len(), "jars": p.jars(),
-                "report": p.work.join("coverage.md"),
-            }));
+        let work = sunrise::pack::packs_dir().join(pack);
+        if sunrise::pack::is_pack(&work) {
+            Ok(work)
         } else {
-            println!(
-                "{}  ({})\n  {}\n  {}",
-                p.title(),
-                p.slug,
-                p.summary(),
-                counts.join(", ")
-            );
-            println!(
-                "  {} portable, {} carried over, {} data packs for new worlds",
-                p.portable,
-                p.mods.len(),
-                p.datapacks
-            );
-            if let Some(jars) = p.jars() {
-                println!("  {jars}");
-            }
-            println!("  {}", p.work.join("coverage.md").display());
+            Err(format!("{pack} isn't an installed modpack."))
         }
     };
     match action {
         ModpackCmd::List => {
-            let packs = modpacks::list();
             let registry = sunrise::pack::list();
-            if packs.is_empty() && registry.is_empty() && !as_json {
-                println!("No modpack imported yet: sunrise-launcher modpack import <pack>");
+            if registry.is_empty() && !as_json {
+                println!("No modpack installed yet: sunrise-launcher mods install <modpack> --source sunrise");
             }
-            packs.iter().for_each(show);
             for p in &registry {
                 if as_json {
                     json(
@@ -3575,7 +3334,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                     );
                 } else {
                     println!(
-                        "{} {}  ({}, from Sunrise's registry)\n  {}",
+                        "{} {}  ({})\n  {}",
                         p.name,
                         p.version,
                         p.id,
@@ -3584,28 +3343,13 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 }
             }
         }
-        ModpackCmd::Import { path } => show(&modpacks::import(
-            &modpacks::Porter::for_version(None)?,
-            &path,
-            log,
-        )?),
-        ModpackCmd::Port {
-            pack,
-            from,
-            version,
-        } => show(&modpacks::port(
-            &modpacks::Porter::for_version(version.as_deref())?,
-            &work(&pack)?,
-            from.as_deref(),
-            log,
-        )?),
         ModpackCmd::Play {
             pack,
             version,
             allow_jar_downloads,
         } => {
             let mut cmd = backend::client(&backend::resolve_version(version.as_deref())?)?;
-            modpacks::apply_profile(&mut cmd, &work(&pack)?)?;
+            sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
             sunrise_launcher::jars::prepare_launch(
                 &mut cmd,
                 &Default::default(),
@@ -3614,7 +3358,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
             .map_err(|error| error.to_string())?;
             return attached(cmd);
         }
-        ModpackCmd::Remove { pack } => modpacks::remove(&work(&pack)?)?,
+        ModpackCmd::Remove { pack } => sunrise::pack::remove(&work(&pack)?)?,
     }
     Ok(0)
 }

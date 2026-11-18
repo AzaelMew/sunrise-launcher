@@ -19,23 +19,15 @@ use std::sync::Arc;
 use sunrise_launcher::browser::{
     self,
     details::{Details, Filters},
-    images, java, Kind as PackKind, Project, SourceId, Version,
+    images, Project, SourceId, Version,
 };
 
 /// The open project page.
 pub(super) struct Opened {
     pub(super) project: Project,
     details: Option<Result<Arc<Details>, String>>,
-    versions: Option<Result<Arc<[ProjectVersion]>, String>>,
+    versions: Option<Result<Arc<[Version]>, String>>,
     version_list: cull::Cull,
-    checked_versions: HashMap<String, sunrise_launcher::porter::Verdict>,
-}
-
-/// Cached verdicts are read with the version request, never while drawing a frame.
-#[derive(Clone)]
-pub(super) struct ProjectVersion {
-    version: Version,
-    verdict: Option<sunrise_launcher::porter::Verdict>,
 }
 
 /// The project page, filters and images' share of the Mods page's state.
@@ -52,12 +44,7 @@ pub(super) struct Browse {
 #[allow(dead_code)]
 pub(super) enum Loaded {
     Details((SourceId, String), Result<Arc<Details>, String>),
-    Versions((SourceId, String), Result<Vec<ProjectVersion>, String>),
-    Checked(
-        (SourceId, String),
-        String,
-        sunrise_launcher::porter::Verdict,
-    ),
+    Versions((SourceId, String), Result<Vec<Version>, String>),
     Image((String, u32), Option<PathBuf>),
 }
 
@@ -81,14 +68,7 @@ impl Launcher {
             Loaded::Versions(key, v) => {
                 if let Some(o) = open(b, &key) {
                     o.versions = Some(v.map(Arc::from));
-                    o.apply_checks();
                     o.version_list.reset();
-                }
-            }
-            Loaded::Checked(key, version, verdict) => {
-                if let Some(o) = open(b, &key) {
-                    o.checked_versions.insert(version, verdict);
-                    o.apply_checks();
                 }
             }
             Loaded::Image(key, path) => {
@@ -108,26 +88,10 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let p = project.clone();
         std::thread::spawn(move || {
-            let Some(source) = browser::source(p.source) else {
-                return;
-            };
+            let source = browser::source(p.source);
             let d = source.details(&p).map(Arc::new);
             let _ = tx.send(Event::Loaded(Loaded::Details(key.clone(), d)));
-            let v = source.versions(&p).map(|versions| {
-                let home = backend::game_home();
-                versions
-                    .into_iter()
-                    .map(|version| {
-                        let verdict = version.file().and_then(|file| {
-                            (p.kind == PackKind::Mod)
-                                .then(|| java::cached(&home, file))
-                                .flatten()
-                                .map(|check| check.verdict)
-                        });
-                        ProjectVersion { version, verdict }
-                    })
-                    .collect()
-            });
+            let v = source.versions(&p);
             let _ = tx.send(Event::Loaded(Loaded::Versions(key, v)));
         });
         self.mods.browse.open = Some(Opened {
@@ -135,7 +99,6 @@ impl Launcher {
             details: None,
             versions: None,
             version_list: cull::Cull::default(),
-            checked_versions: HashMap::new(),
         });
     }
 
@@ -204,19 +167,5 @@ impl Launcher {
             .clone()
             .and_then(|url| self.mods_image(&url, images::ICON));
         blocks::slot(path.map(gpui::ImageSource::from), &p.title, side, &t).into_any_element()
-    }
-}
-
-impl Opened {
-    /// A check can finish before or after the version request; retain either event order.
-    fn apply_checks(&mut self) {
-        let Some(Ok(versions)) = &mut self.versions else {
-            return;
-        };
-        for row in Arc::make_mut(versions) {
-            if let Some(verdict) = self.checked_versions.get(&row.version.id) {
-                row.verdict = Some(*verdict);
-            }
-        }
     }
 }

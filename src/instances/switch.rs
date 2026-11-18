@@ -118,8 +118,9 @@ fn mod_files(home: &Path, sunrise: bool) -> usize {
         })
     };
     if sunrise {
-        count(crate::browser::java::MODS_DIR, &|n| n.ends_with(".smod"))
-            + count(crate::native_mods::INSTALLED, &|n| n.ends_with(".smod"))
+        count(crate::browser::mod_list::MODS_DIR, &|n| {
+            n.ends_with(".smod")
+        }) + count(crate::native_mods::INSTALLED, &|n| n.ends_with(".smod"))
     } else {
         count("mods", &|n| {
             n.ends_with(".jar") || n.ends_with(".jar.disabled")

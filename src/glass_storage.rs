@@ -78,7 +78,7 @@ impl Launcher {
             let mut failure = None;
             for instance in instances::list() {
                 for (id, _, _) in native_status::enabled(&instance.home) {
-                    if let Err(error) = browser::java::set_enabled(&instance.home, &id, false) {
+                    if let Err(error) = browser::mod_list::set_enabled(&instance.home, &id, false) {
                         failure.get_or_insert((id, instance.name.clone(), error));
                     }
                 }

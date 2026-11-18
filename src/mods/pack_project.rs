@@ -88,9 +88,8 @@ impl Launcher {
         self.ui.page = Page::PackProject;
         let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
-            let result = browser::source(project.source)
-                .ok_or_else(|| tr("This source isn't set up.").to_string())
-                .and_then(|s| Ok(Box::new((s.details(&project)?, s.versions(&project)?))));
+            let s = browser::source(project.source);
+            let result = (|| Ok(Box::new((s.details(&project)?, s.versions(&project)?))))();
             let _ = tx.send(Event::PackPage((project.source, project.id), result));
         });
     }

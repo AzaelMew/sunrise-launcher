@@ -11,7 +11,7 @@
 //! **Not here, said on screen or in the handoff:** Featured (the registry carries no editorial
 //! list), a version picker (the registry installs the newest that fits), dependency lists for
 //! plain mods (the index lists a mod's needs for packs only), "Add from a file…", resource,
-//! shader and data packs, Modrinth, Java and registry modpacks.
+//! shader and data packs, and registry modpacks.
 //!
 //! **Writes** happen only for an action the player took: install, update, on/off, remove. Showing
 //! the screens reads the index (its own cache refresh, in a worker), `mod-browser.json`,
@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use sunrise_launcher::browser::{
     installed::{self, Entry},
-    java, sunrise, Source, SourceId,
+    mod_list, sunrise, Source, SourceId,
 };
 
 mod actions;
@@ -463,13 +463,13 @@ impl Launcher {
             let mut enabled: HashSet<String> = entries
                 .iter()
                 .filter_map(|e| sunrise::mod_id(e))
-                .filter(|id| java::is_enabled(&home, id))
+                .filter(|id| mod_list::is_enabled(&home, id))
                 .map(str::to_owned)
                 .collect();
             enabled.extend(
                 local
                     .iter()
-                    .filter(|l| java::is_enabled(&home, &l.id))
+                    .filter(|l| mod_list::is_enabled(&home, &l.id))
                     .map(|l| l.id.clone()),
             );
             let chosen = sunrise::chosen(&home);
