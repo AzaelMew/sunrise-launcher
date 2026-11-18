@@ -77,11 +77,10 @@ impl Launcher {
                 .flex_col()
                 .gap(px(6.))
                 .max_w(px(420.))
-                .child(
-                    div()
-                        .truncate()
-                        .child(trf("{stage} · {step}", &[("stage", &self.build_stage()), ("step", &step)])),
-                )
+                .child(div().truncate().child(trf(
+                    "{stage} · {step}",
+                    &[("stage", &self.build_stage()), ("step", &step)],
+                )))
                 .child(self.build_bar()),
         )
     }

@@ -49,6 +49,7 @@ pub(super) struct Browse {
 }
 
 /// What the background sends this module.
+#[allow(dead_code)]
 pub(super) enum Loaded {
     Details((SourceId, String), Result<Arc<Details>, String>),
     Versions((SourceId, String), Result<Vec<ProjectVersion>, String>),
@@ -99,7 +100,9 @@ impl Launcher {
         }
     }
 
-    /// Opens a project's page and asks its source for the rest of it.
+    /// Opens a project's page and asks its source for the rest of it. Nothing opens one now; the
+    /// Modrinth and Java removal deletes it with the state around it.
+    #[allow(dead_code)]
     pub(super) fn mods_open(&mut self, project: Project) {
         let key = (project.source, project.id.clone());
         let tx = self.mods.tx.clone();

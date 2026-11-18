@@ -30,9 +30,7 @@ impl Launcher {
         let t = self.theme;
         let n = t.night;
         let configured = account::client_id().is_some();
-        // The screenshot preview shows a code without asking Microsoft for one.
         let state = match &self.sign_in_state {
-            _ if sign_in_preview() => Shown::Code("https://www.microsoft.com/link", "K7Q-4MXR"),
             _ if !configured => Shown::Error(tr(account::NOT_CONFIGURED)),
             Some(SignInState::Starting) => Shown::Starting("Asking Microsoft…"),
             Some(SignInState::Working(phase)) => Shown::Starting(phase.label()),
@@ -515,13 +513,6 @@ enum Shown<'a> {
     /// The page and the code to enter there.
     Code(&'a str, &'a str),
     Error(&'a str),
-}
-
-/// `SUNRISE_LAUNCHER_PAGE=sign-in` opens the sheet with a made-up code, for screenshots: nothing
-/// asks Microsoft, and the gate itself is as it was (no account, no Play).
-pub(super) fn sign_in_preview() -> bool {
-    static PREVIEW: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *PREVIEW.get_or_init(|| std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() == Ok("sign-in"))
 }
 
 /// `https://www.microsoft.com/link` as `microsoft.com/link`.

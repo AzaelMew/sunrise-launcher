@@ -605,8 +605,18 @@ impl Launcher {
             .gap(px(4.))
             .child(div().mb(px(12.)).child(crate::mark(36.)))
             .child(rail_link(Page::Home, "alt-nav-home", tr("Home"), "home"))
-            .child(rail_link(Page::Discover, "alt-nav-mods", tr("Mods"), "package"))
-            .child(rail_link(Page::Packs, "alt-nav-packs", tr("Packs"), "archive"))
+            .child(rail_link(
+                Page::Discover,
+                "alt-nav-mods",
+                tr("Mods"),
+                "package",
+            ))
+            .child(rail_link(
+                Page::Packs,
+                "alt-nav-packs",
+                tr("Packs"),
+                "archive",
+            ))
             .child(rail_link(
                 Page::Hosting,
                 "alt-nav-hosting",
