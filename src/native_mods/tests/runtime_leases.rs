@@ -58,6 +58,7 @@ fn fresh_native_install_starts_directly_without_a_launcher_launch() {
         &[],
         &serde_json::json!({}),
         &[],
+        &Cancellation::default(),
     )
     .unwrap();
     crate::run_leases::publish(&root.join("home")).unwrap();
@@ -72,6 +73,7 @@ fn fresh_native_install_starts_directly_without_a_launcher_launch() {
             &[],
             &serde_json::json!({}),
             &[],
+            &Cancellation::default(),
         )
         .unwrap_err();
         assert_eq!(
@@ -90,6 +92,7 @@ fn fresh_native_install_starts_directly_without_a_launcher_launch() {
         &[],
         &serde_json::json!({}),
         &[],
+        &Cancellation::default(),
     )
     .unwrap();
     assert!(

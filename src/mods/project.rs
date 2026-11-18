@@ -374,12 +374,12 @@ impl Launcher {
                         .flex_1()
                         .min_w_0()
                         .child(match (&v.fit.reason(), installed, will) {
-                            (_, true, _) => {
-                                div().text_color(c(palette().success)).child(tr("Added"))
-                            }
+                            (_, true, _) => div()
+                                .text_color(c(palette().success))
+                                .child(tr("Installed")),
                             (None, _, true) => div()
                                 .text_color(c(palette().success))
-                                .child(tr("Fits your game · what Add installs")),
+                                .child(tr("Fits your game · what Install adds")),
                             (None, _, false) => div()
                                 .text_color(c(palette().success))
                                 .child(tr("Fits your game")),
@@ -394,19 +394,51 @@ impl Launcher {
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let busy = self.mods_busy();
         let native = p.make == Make::Native;
+        let requires = p.requires.clone();
+        // An update is offered here too: the version Add would install, over the one installed.
+        let update = match (&installed_here, &p.will_install) {
+            (Some(have), Some(will)) if p.fit.fits() && *have != will.number => {
+                Some((have.clone(), will.number.clone()))
+            }
+            _ => None,
+        };
         let action: AnyElement = match (&installed_here, &p.fit, &p.will_install) {
-            (Some(n), ..) => div()
+            (Some(_), ..) if update.is_some() => {
+                let (from, to) = update.clone().unwrap_or_default();
+                let b = primary(
+                    "alt-project-update",
+                    trf("Update {from} → {to}", &[("from", &from), ("to", &to)]),
+                )
+                .w_full()
+                .h(px(tokens::ACTION));
+                if busy {
+                    dim(b).into_any_element()
+                } else {
+                    let id = p.id.clone();
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.update_mod(&id);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+                }
+            }
+            (Some(_), ..) => div()
                 .h(px(tokens::ACTION))
                 .flex()
                 .items_center()
                 .justify_center()
+                .gap(px(8.))
+                .rounded(px(tokens::R_CONTROL))
+                .border_1()
+                .border_color(c(palette().divider))
                 .text_color(c(palette().success))
-                .child(trf("Added · version {version}", &[("version", n)]))
+                .child(blocks::icon("check", 14., c(palette().success)))
+                .child(tr("Installed"))
                 .into_any_element(),
-            (None, fit, Some(will)) if fit.fits() => {
+            (None, fit, Some(_)) if fit.fits() => {
                 let label = match (native, native_allowed) {
-                    (true, false) => tr("Add to my game…"),
-                    _ => tr("Add to my game"),
+                    (true, false) => tr("Install…"),
+                    _ => tr("Install"),
                 };
                 let b = primary("alt-project-add", label)
                     .w_full()
@@ -415,7 +447,6 @@ impl Launcher {
                     dim(b).into_any_element()
                 } else {
                     let id = p.id.clone();
-                    let _ = will;
                     b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.add(id.clone());
                         cx.notify();
@@ -427,7 +458,7 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .child(dim(primary("alt-project-add", tr("Add to my game"))
+                .child(dim(primary("alt-project-add", tr("Install"))
                     .w_full()
                     .h(px(tokens::ACTION))))
                 .child(note(fit.reason().unwrap_or_else(|| {
@@ -435,61 +466,222 @@ impl Launcher {
                 })))
                 .into_any_element(),
         };
-        let facts_line = p.will_install.as_ref().map(|w| {
-            let code = match p.make {
-                Make::Native => tr("native code, built on this computer after you allow it"),
-                Make::Content => tr("content only, no native code"),
-            };
-            trf(
-                "Version {version} · {size} to download · {code}",
-                &[
-                    ("version", &w.number),
-                    ("size", &model::size(w.size)),
-                    ("code", code),
-                ],
-            )
+        // The version this panel is about: what would be installed, else what is.
+        let shown_version = p
+            .will_install
+            .as_ref()
+            .map(|w| w.number.clone())
+            .or_else(|| installed_here.clone());
+        // ---- the facts, as chips: a glyph, a few words, the whole sentence on hover and
+        // under Details.
+        let fact = |id: &'static str, icon: &'static str, label: String, tip: String, tone: u32| {
+            div()
+                .id(id)
+                .flex_none()
+                .max_w_full()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .px(px(9.))
+                .h(px(28.))
+                .rounded(px(tokens::R_CONTROL))
+                .border_1()
+                .border_color(c(palette().divider))
+                .bg(c(palette().field))
+                .text_size(px(tokens::SMALL))
+                .text_color(c(palette().text))
+                .tooltip(crate::glass_ui::tip(tip))
+                .child(crate::glass_ui::icon(icon, 14., c(tone)))
+                .child(div().min_w_0().truncate().child(label))
+        };
+        let mut facts = div().flex().flex_wrap().gap(px(6.));
+        if let Some(w) = &p.will_install {
+            facts = facts.child(fact(
+                "alt-fact-size",
+                "download-04",
+                model::size(w.size),
+                trf("{size} to download", &[("size", &model::size(w.size))]),
+                palette().muted,
+            ));
+        }
+        facts = facts.child(match p.make {
+            Make::Native => fact(
+                "alt-fact-code",
+                "shield",
+                tr("Native code").into(),
+                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.").into(),
+                palette().accent_ink,
+            ),
+            Make::Content => fact(
+                "alt-fact-code",
+                "package-01",
+                tr("Content only").into(),
+                tr("Content only: it adds no native code.").into(),
+                palette().muted,
+            ),
         });
-        let changes = |title: String, detail: String, glyph: &'static str| {
+        if !p.signed {
+            facts = facts.child(fact(
+                "alt-fact-signed",
+                "information-circle",
+                tr("Not signed by its author").into(),
+                tr("Not signed by its author: Sunrise checks the download arrives complete and unchanged.").into(),
+                palette().warning,
+            ));
+        }
+        if !p.authors.is_empty() {
+            let by = trf("By {authors}", &[("authors", &p.authors.join(", "))]);
+            facts = facts.child(fact(
+                "alt-fact-by",
+                "user",
+                by,
+                p.trust.first().cloned().unwrap_or_default(),
+                palette().muted,
+            ));
+        }
+        let game_line = p.another_build.then(|| {
+            div()
+                .flex()
+                .items_start()
+                .gap(px(8.))
+                .text_size(px(tokens::SMALL))
+                .text_color(c(palette().muted))
+                .child(crate::glass_ui::icon("clock", 14., c(palette().muted)))
+                .child(div().flex_1().min_w_0().child(tr(
+                    "Made for an older game version; it's checked before it runs.",
+                )))
+        });
+        // ---- what the press changes, only when it is more than this one mod
+        let change = |glyph: &'static str, title: String, detail: String| {
             div()
                 .flex()
                 .items_center()
-                .gap(px(12.))
-                .py(px(10.))
-                .child(div().w(px(22.)).text_color(c(palette().muted)).child(glyph))
+                .gap(px(10.))
+                .py(px(6.))
+                .child(crate::glass_ui::icon(glyph, 14., c(palette().muted)))
                 .child(
                     div()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .text_size(px(tokens::LABEL))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(title),
-                        )
-                        .child(note(detail)),
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(tokens::LABEL))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title),
                 )
+                .child(note(detail).flex_none())
         };
-        let mut what = div().flex().flex_col().child(
+        let pending = installed_here.is_none() || update.is_some();
+        let changes = (pending && !requires.is_empty()).then(|| {
+            let mut list = div().flex().flex_col().child(
+                div()
+                    .text_size(px(tokens::CAPTION))
+                    .text_color(c(palette().muted))
+                    .pb(px(2.))
+                    .child(trf(
+                        "{count} CHANGES",
+                        &[("count", &(requires.len() + 1).to_string())],
+                    )),
+            );
+            list = list.child(match &update {
+                Some((from, to)) => change(
+                    "refresh",
+                    p.name.clone(),
+                    trf("{from} → {to}", &[("from", from), ("to", to)]),
+                ),
+                None => change(
+                    "plus-sign",
+                    p.name.clone(),
+                    shown_version.clone().unwrap_or_default(),
+                ),
+            });
+            for (name, version) in &requires {
+                list = list.child(change(
+                    "plus-sign",
+                    name.clone(),
+                    trf("comes with it · {version}", &[("version", version)]),
+                ));
+            }
+            list
+        });
+        // ---- everything else, as whole sentences, behind Details
+        let open = self.ui.mods.facts_open;
+        let details_toggle = div()
+            .id("alt-project-details")
+            .reach()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(tokens::SMALL))
+            .text_color(c(palette().muted))
+            .cursor_pointer()
+            .child(blocks::icon(
+                if open {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                },
+                12.,
+                c(palette().muted),
+            ))
+            .child(tr("Details"))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.ui.mods.facts_open = !this.ui.mods.facts_open;
+                cx.notify();
+            }));
+        let details = open.then(|| {
+            let facts_line = p.will_install.as_ref().map(|w| {
+                let code = match p.make {
+                    Make::Native => tr("native code, built on this computer after you allow it"),
+                    Make::Content => tr("content only, no native code"),
+                };
+                trf(
+                    "Version {version} · {size} to download · {code}",
+                    &[
+                        ("version", &w.number),
+                        ("size", &model::size(w.size)),
+                        ("code", code),
+                    ],
+                )
+            });
             div()
-                .text_size(px(tokens::CAPTION))
-                .text_color(c(palette().muted))
-                .pb(px(6.))
-                .child(tr("WHAT THIS CHANGES")),
-        );
-        if let Some(w) = &p.will_install {
-            what = what.child(changes(
-                p.name.clone(),
-                trf("Added · {version}", &[("version", &w.number)]),
-                "+",
-            ));
-        }
-        for (name, version) in &p.requires {
-            what = what.child(changes(
-                name.clone(),
-                trf("Comes with it · {version}", &[("version", version)]),
-                "•",
-            ));
-        }
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .children(facts_line.map(note))
+                .children(p.trust.iter().map(|line| note(line.clone())))
+        });
+        let panel_head = div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(tile(
+                p.icon
+                    .clone()
+                    .and_then(|u| self.mods_image(&u, images::ROW)),
+                &p.id,
+                &p.name,
+                40.,
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .truncate()
+                            .font_weight(FontWeight::BOLD)
+                            .child(p.name.clone()),
+                    )
+                    .children(shown_version.clone().map(|v| {
+                        div()
+                            .text_size(px(tokens::SMALL))
+                            .font_family(crate::theme::MONO)
+                            .text_color(c(palette().muted))
+                            .child(v)
+                    })),
+            );
         let scroll = crate::frame::scrolls("project");
         let right = div()
             .relative()
@@ -504,16 +696,14 @@ impl Launcher {
                     .p(px(16.))
                     .flex()
                     .flex_col()
-                    .gap(px(10.))
+                    .gap(px(12.))
+                    .child(panel_head)
                     .child(action)
-                    .children(facts_line.map(|l| {
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .child(crate::selectable::selectable(l))
-                    }))
-                    .child(what)
-                    .children(p.trust.iter().map(|line| note(line.clone()))),
+                    .child(facts)
+                    .children(game_line)
+                    .children(changes)
+                    .child(details_toggle)
+                    .children(details),
             )
             .child({
                 let row = about_row;

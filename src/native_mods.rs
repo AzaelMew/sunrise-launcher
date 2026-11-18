@@ -17,8 +17,7 @@ mod bundle;
 use build_log::log_warning;
 pub(crate) use build_log::root;
 pub use build_log::{
-    append_log, check_cancelled, clear_log, compiling as compiling_mod, failure, log_path, Refusal,
-    CANCELLED,
+    append_log, clear_log, compiling as compiling_mod, failure, log_path, Refusal, CANCELLED,
 };
 use bundle::{bundle_files, is_revision};
 pub use bundle::{
@@ -37,7 +36,7 @@ pub mod sdk_cache;
 
 pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
-pub use tool::Consent;
+pub use tool::{Cancellation, Consent};
 mod uses;
 
 // Settings and logs are shared by native-build and diagnostics tests.
@@ -262,12 +261,6 @@ static MIXINS_FROM_SOURCE: std::sync::atomic::AtomicBool =
 /// Builds horizon-mixins from its pinned source instead of downloading its release, so CI keeps that path proven.
 pub fn mixins_from_source(on: bool) {
     MIXINS_FROM_SOURCE.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Stops the native build running: its tool and every compiler that started.
-pub fn cancel() {
-    build_log::cancel();
-    tool::stop();
 }
 
 /// The failed build's error, led by its blamed mod in the launcher's own words, as [`compile_failed_mod`] and [`refused_mod`] read it.
@@ -1064,6 +1057,7 @@ pub fn require_consent() -> Result<(), Failed> {
 /// Isolation and jar-download choices for an explicit build.
 #[derive(Default)]
 struct BuildOptions<'a> {
+    cancellation: Cancellation,
     allow_jar_downloads: bool,
     skip: &'a [LeftOut],
     registry_consent: Option<&'a dyn Fn(&Consent) -> bool>,
@@ -1110,6 +1104,7 @@ fn check_all(
     ids: &[&str],
     sdk: &sdk_cache::Sdk,
     base: &sdk_cache::Base,
+    cancellation: &Cancellation,
 ) -> Result<Checks, sdk_cache::Refusal> {
     if ids.is_empty() {
         return Ok(Checks::default());
@@ -1121,7 +1116,7 @@ fn check_all(
     let program = sdk_cache::tool(sdk, base, &|_| {})?;
     let mut plan = serde_json::json!({"contract": 2, "mods": folder, "build": sdk.commit()});
     let checked = loop {
-        let checked = tool::check(&program, &plan).map_err(refused)?;
+        let checked = tool::check(&program, &plan, cancellation).map_err(refused)?;
         let needs = |what: &str| {
             checked
                 .mods
@@ -1290,6 +1285,8 @@ fn pipeline(
     options: BuildOptions<'_>,
     progress: &impl Fn(Step),
 ) -> Result<Built, Failed> {
+    let cancellation = &options.cancellation;
+    cancellation.check()?;
     let started = std::time::Instant::now();
     let built_on = checked_about(base)?;
     backend::need_prepared(base)?;
@@ -1435,7 +1432,8 @@ fn pipeline(
     let mut route = None;
     if let Some(sdk) = &sdk {
         progress(Step::Checking(ids.len()));
-        let checks = check_all(&incoming, &ids, sdk, &sdk_base).map_err(|r| r.to_string())?;
+        let checks =
+            check_all(&incoming, &ids, sdk, &sdk_base, cancellation).map_err(|r| r.to_string())?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1582,7 +1580,7 @@ fn pipeline(
                         )
                     })?;
                 (
-                    sdk_cache::developer(&program, &revision, target, &local)?,
+                    sdk_cache::developer(&program, &revision, target, &local, cancellation)?,
                     program,
                 )
             }
@@ -1617,7 +1615,8 @@ fn pipeline(
                 let route = match route.clone() {
                     Some(route) => route,
                     None => {
-                        let checks = check_all(&incoming, &ids, sdk, &sdk_base).map_err(refused)?;
+                        let checks = check_all(&incoming, &ids, sdk, &sdk_base, cancellation)
+                            .map_err(refused)?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
                         }
@@ -1640,7 +1639,7 @@ fn pipeline(
     if prebuilt.is_some() {
         timed("Checking the prebuilt game", fetching)?;
     }
-    check_cancelled()?;
+    cancellation.check()?;
     let plan = if exists {
         Plan::UpToDate
     } else {
@@ -1732,8 +1731,11 @@ fn pipeline(
                     total,
                 })
             },
-        )
-        .map_err(|failure| blame(blamed_text(failure)))?;
+            cancellation,
+        );
+        // Don't turn a stopped tool into a compile failure or retry it as an omitted mod.
+        cancellation.check()?;
+        let built = built.map_err(|failure| blame(blamed_text(failure)))?;
         let _ = fs::remove_dir_all(&compiled);
         append_log(&trf(
             "Native mods route: {route}.",
@@ -1749,7 +1751,7 @@ fn pipeline(
             )],
         ))
         .map_err(blame)?;
-        check_cancelled()?;
+        cancellation.check()?;
         progress(Step::Install);
         let installing = std::time::Instant::now();
         install(
@@ -1760,6 +1762,7 @@ fn pipeline(
             &built.libraries,
             &about(&built.route, &built.internals, &built.records),
             &ordered,
+            cancellation,
         )?;
         timed("Installing the build", installing)?;
     } else {
@@ -1872,14 +1875,15 @@ fn isolated(
 fn select_build_profile(
     _saved: Profile,
     requested: Option<Profile>,
+    cancellation: &Cancellation,
     plan: impl FnOnce() -> Result<Routes, Failed>,
 ) -> Result<Profile, String> {
-    check_cancelled()?;
+    cancellation.check()?;
     match requested {
         Some(profile) => Ok(profile),
         None => {
             let routes = plan();
-            check_cancelled()?;
+            cancellation.check()?;
             routes.map_err(String::from)?;
             Ok(Profile::Optimized)
         }
@@ -1900,19 +1904,20 @@ pub fn build(
     instance: &Instance,
     profile: Option<Profile>,
     back_up: bool,
+    cancellation: &Cancellation,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
+    cancellation.check()?;
     require_consent()?;
-    build_log::clear_cancel();
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
     logged(|cache| {
         let lease = cache.map_err(|error| Failed::Other(error.into()))?;
-        let profile = select_build_profile(instance.native_profile, profile, || {
-            planning::classify(folder, Some(base), lease)
+        let profile = select_build_profile(instance.native_profile, profile, cancellation, || {
+            planning::classify(folder, Some(base), lease, cancellation)
         })?;
         let built = isolated(
             |skip| {
@@ -1923,6 +1928,7 @@ pub fn build(
                     profile,
                     Target::Client,
                     BuildOptions {
+                        cancellation: cancellation.clone(),
                         skip,
                         registry_consent: Some(&registry_consent),
                         worlds: Some(&instance.home),
@@ -1934,11 +1940,13 @@ pub fn build(
             },
             &progress,
         );
+        // Before using the result (including a cached one), check Stop directly. The UI
+        // may not have received any progress yet.
+        cancellation.check()?;
         // Every mod with native code was left out: the game is the plain one, as it is. The
         // instance plays it (following its channel when that is the build the channel gives),
         // and keeps which mods wait and why.
         if let Err(Failed::Mods { left, .. }) = &built {
-            check_cancelled()?;
             let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
             isolate::keep(&instance.home, &plain, left)?;
             let installed = backend::installed();
@@ -1951,7 +1959,7 @@ pub fn build(
                 selected.as_deref(),
                 &installed,
                 catalogue,
-                check_cancelled,
+                || cancellation.check(),
             )?;
             instances::edit(&instance.id, |meta| {
                 let unchanged = meta.version == instance.version
@@ -1971,7 +1979,7 @@ pub fn build(
             })),
             other => other,
         })?;
-        check_cancelled()?;
+        cancellation.check()?;
         isolate::forget(&instance.home);
         // A version or channel the player saved while this built wins: the build stays
         // available, the instance keeps their choice.
@@ -2061,7 +2069,7 @@ pub fn build_server(
     registry_consent: impl Fn(&Consent) -> bool,
 ) -> Result<PathBuf, Failed> {
     require_consent()?;
-    build_log::clear_cancel();
+    let cancellation = Cancellation::default();
     logged(|cache| {
         if output.symlink_metadata().is_ok() {
             return Err(trf(
@@ -2088,8 +2096,8 @@ pub fn build_server(
             }
         }
         let lease = cache.map_err(str::to_owned)?;
-        let profile = select_build_profile(Profile::default(), profile, || {
-            planning::classify(folder, Some(base), lease)
+        let profile = select_build_profile(Profile::default(), profile, &cancellation, || {
+            planning::classify(folder, Some(base), lease, &cancellation)
         })?;
         let built = pipeline(
             lease,
@@ -2098,6 +2106,7 @@ pub fn build_server(
             profile,
             Target::Server,
             BuildOptions {
+                cancellation,
                 allow_jar_downloads,
                 registry_consent: Some(&registry_consent),
                 ..BuildOptions::default()
@@ -2241,6 +2250,47 @@ mod tests {
     use std::process::{Command, Stdio};
 
     #[test]
+    fn stop_before_worker_start_aborts_before_any_step() {
+        // The GUI owns one handle and gives the worker a clone before showing Stop. Schedule
+        // the stop first, then enter the real build worker. This needs no game or valid paths:
+        // it must fail as cancelled before consent, progress, catalogue or file access.
+        let control = Cancellation::default();
+        let worker = control.clone();
+        control.stop();
+        let instance = Instance {
+            id: "fixture".into(),
+            name: "Fixture".into(),
+            kind: instances::Kind::Own,
+            work: PathBuf::new(),
+            home: PathBuf::new(),
+            icon: None,
+            group: None,
+            version: None,
+            channel: Default::default(),
+            native_profile: Default::default(),
+            played: Default::default(),
+            last_played: None,
+            launch: Default::default(),
+        };
+        let result = build(
+            "fixture",
+            Path::new(""),
+            &instance,
+            None,
+            false,
+            &worker,
+            |_| panic!("a stopped attempt cannot report a step"),
+            |_| panic!("a stopped attempt cannot request consent"),
+            || panic!("a stopped attempt cannot read a catalogue"),
+        );
+        assert!(matches!(result, Err(Failed::Other(error)) if error == CANCELLED));
+        assert!(
+            Cancellation::default().check().is_ok(),
+            "the next attempt starts fresh"
+        );
+    }
+
+    #[test]
     fn the_window_says_build_steps_in_player_words() {
         let rust = Step::Rust(0.42).shown();
         assert!(!rust.contains("Rust") && !rust.contains('%'), "{rust}");
@@ -2368,6 +2418,7 @@ mod tests {
             &[],
             &serde_json::json!({"base": base, "sunrise": "0".repeat(40), "target": "client"}),
             &[],
+            &Cancellation::default(),
         )
         .unwrap();
         backend::need_prepared(native).unwrap();
@@ -3528,6 +3579,7 @@ mod tests {
             &[],
             &serde_json::json!({"target":"server"}),
             &[bundle],
+            &Cancellation::default(),
         )
         .unwrap_or_else(|error| {
             // install's public error is a String. Recover only the numeric std
@@ -3677,6 +3729,7 @@ mod tests {
             &instance,
             None,
             false,
+            &Cancellation::default(),
             |_| {},
             |_| false,
             || None,
@@ -3790,7 +3843,7 @@ mod tests {
         fs::write(&sentinel, b"retained").unwrap();
         let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
         // Its refusal is the SDK tool's to say (`native-check`); without an installed base none is asked.
-        let routes = planning::classify(&folder, None, &lease).unwrap();
+        let routes = planning::classify(&folder, None, &lease, &Cancellation::default()).unwrap();
         assert!(
             matches!(&routes.mods[..], [(id, Route::Unchecked { reason })]
                 if id == "snapshot" && reason.contains("Install Sunrise first")),
@@ -3835,6 +3888,7 @@ mod tests {
                 &instances::selected(),
                 choice,
                 false,
+                &Cancellation::default(),
                 |_| {},
                 |_| false,
                 || None,

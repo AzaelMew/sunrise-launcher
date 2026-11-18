@@ -25,6 +25,7 @@ impl Launcher {
             .child(header)
             .children(self.strip(cx));
 
+        self.ui.mods.build_button_drawn = false;
         let rows = self.rows();
         if rows.is_empty() {
             return page
@@ -52,6 +53,10 @@ impl Launcher {
 
         let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
+        // Whether this page draws the Build button, and with it a running build's bar: the
+        // status strip, drawn after the page, leaves its own bar out only then.
+        let build = model::build_in_head(&rows, &visible);
+        self.ui.mods.build_button_drawn = build.is_some();
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
                 .iter()
@@ -397,7 +402,7 @@ impl Launcher {
                     .items_center()
                     .justify_between()
                     .px(px(14.))
-                    .h(px(tokens::FIELD))
+                    .min_h(px(tokens::FIELD))
                     .bg(c(palette().background))
                     .child(
                         div()
@@ -408,6 +413,10 @@ impl Launcher {
                                 &[("title", title), ("count", &count.to_string())],
                             ))),
                     );
+                if let Some(waiting) = build.filter(|_| g == Group::NeedsYou) {
+                    // The button has as much room above and below as beside it.
+                    head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
+                }
                 if g == Group::Updates {
                     let b = crate::frame::button(
                         "alt-update-all",
@@ -508,103 +517,79 @@ impl Launcher {
             ))
         };
 
-        // What the row says on the right: one verdict, with its one action.
-        // Roomy, the row is one line of columns; narrow, what it says moves under the name and
-        // wraps there, so nothing is pushed out of the row.
+        // The list's shared columns (`model::cells`): kind, version, status, the one action
+        // and the switch, each in its own fixed place on every row of every group. Narrow,
+        // kind and version move under the name with the status after them, in fixed places
+        // too; the action and the switch keep theirs.
         let wide = self.content_width() >= 860.;
-        let say = move |text: String, color: u32| {
-            div()
+        use super::build_run::State;
+        let building = self.build_here().and_then(|run| {
+            if run.failed(&r.id, &r.version) {
+                return Some(model::InBuild::Failed);
+            }
+            match run.state_of(&r.id)? {
+                State::Waiting => Some(model::InBuild::Waiting),
+                State::Building => Some(model::InBuild::Building),
+                State::Built => Some(model::InBuild::Built),
+                _ => None,
+            }
+        });
+        let failed = building == Some(model::InBuild::Failed) && r.need == Some(Need::Build);
+        let cells = model::cells(&r, error.as_deref(), building);
+        let tone = |tone: model::Tone| match tone {
+            model::Tone::Warning => palette().warning,
+            model::Tone::Info => palette().info,
+            model::Tone::Accent => palette().accent_ink,
+            model::Tone::Success => palette().success,
+            model::Tone::Muted => palette().muted,
+        };
+        let status_cell: AnyElement = match (&cells.status, r.unfit.clone()) {
+            (Some(_), Some(unfit)) if cells.popover => {
+                self.unfit(n, &r, unfit, cx).into_any_element()
+            }
+            // A mod the last build could not build: its status opens that build's window
+            // again, where Details and the build log are.
+            (Some(said), _) if failed => status(said.icon, said.label.clone(), tone(said.tone))
+                .id(("alt-row-failed", n))
+                .reach()
                 .min_w_0()
-                .text_size(px(tokens::LABEL))
-                .text_color(c(color))
-                .when(wide, |d| d.truncate())
-                .child(text)
-        };
-        let mut notes: Vec<Div> = Vec::new();
-        let act = |id: &'static str, label: &'static str, on: bool| {
-            let b = crate::frame::button((id, n), tr(label));
-            if on && !busy {
-                b
-            } else {
-                dim(b)
-            }
-        };
-        let mut verdict = div().flex().flex_none().items_center().gap(px(12.));
-        if let Some(local) = &r.local {
-            notes.push(say(
-                match local.github {
-                    true => tr("From GitHub, not the registry: read-only here").to_string(),
-                    false => tr("A local file, not from the registry: read-only here").to_string(),
-                },
-                palette().muted,
-            ));
-        }
-        if let Some(why) = error {
-            notes.push(say(why, palette().warning));
-        }
-        if let Some(why) = &r.left_out {
-            notes.push(say(why.clone(), palette().warning));
-        }
-        match &r.need {
-            Some(Need::TakenDown(why)) => {
-                notes.push(say(
-                    trf("Taken down: {reason}", &[("reason", why)]),
-                    palette().warning,
-                ));
-            }
-            Some(Need::Build) => {
-                let building = self.native_step.is_some();
-                let b = act(
-                    "alt-row-build",
-                    if building { "Building…" } else { "Build…" },
-                    true,
-                );
-                notes.push(say(
-                    tr("Not built for this computer yet").to_string(),
-                    palette().warning,
-                ));
-                verdict = verdict.child(if !busy && !building {
-                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.build();
-                        cx.notify();
-                    }))
-                } else {
-                    b
-                });
-            }
-            Some(Need::Permission) => {
-                let b = act("alt-row-allow", "Allow…", true);
-                notes.push(say(
-                    tr("Needs your permission to run native code").to_string(),
-                    palette().warning,
-                ));
-                verdict = verdict.child(if !busy {
-                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.allow();
-                        cx.notify();
-                    }))
-                } else {
-                    b
-                });
-            }
-            None => {}
-        }
-        if let Some(to) = &r.update {
-            let b = act("alt-row-update", "Update", true);
-            let row = r.clone();
-            notes.push(say(trf("→ {to}", &[("to", to)]), palette().info));
-            verdict = verdict.child(if !busy {
-                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.update_one(&row);
+                .cursor_pointer()
+                .hover(|s| s.text_color(c(palette().text)))
+                .tooltip(crate::glass_ui::tip(said.tip.clone()))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.open_sheet(crate::sheets::Sheet::ModBuild);
+                    cx.stop_propagation();
                     cx.notify();
                 }))
-            } else {
-                b
-            });
-        }
+                .into_any_element(),
+            (Some(said), _) => status(said.icon, said.label.clone(), tone(said.tone))
+                .id(("alt-row-status", n))
+                .min_w_0()
+                .tooltip(crate::glass_ui::tip(said.tip.clone()))
+                .into_any_element(),
+            (None, _) => div().into_any_element(),
+        };
+        let action = cells.action.map(|action| {
+            let (id, label) = match action {
+                model::RowAction::Allow => ("alt-row-allow", tr("Allow…")),
+                model::RowAction::Update => ("alt-row-update", tr("Update")),
+            };
+            let b = crate::frame::button((id, n), label);
+            if busy {
+                return dim(b);
+            }
+            let row = r.clone();
+            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                match action {
+                    model::RowAction::Allow => this.allow(),
+                    model::RowAction::Update => this.update_one(&row),
+                }
+                cx.notify();
+            }))
+        });
         let sw = {
             let s = ui::switch(("alt-row-switch", n), r.on);
-            if r.local.is_none() && !matches!(r.need, Some(Need::TakenDown(_))) {
+            if cells.switch {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.toggle(&row);
@@ -649,7 +634,24 @@ impl Launcher {
                 None => d,
             }
         };
-        let kind = r.make.map_or("", Make::label);
+        use model::column;
+        let kind = |width: f32| {
+            div()
+                .w(px(width))
+                .flex_none()
+                .text_size(px(tokens::LABEL))
+                .text_color(c(palette().muted))
+                .child(cells.kind)
+        };
+        let version = |width: f32| {
+            div()
+                .w(px(width))
+                .flex_none()
+                .truncate()
+                .text_size(px(tokens::LABEL))
+                .font_family(crate::theme::MONO)
+                .child(cells.version.clone())
+        };
         let row = div()
             .id(("alt-row", n))
             .flex()
@@ -678,30 +680,23 @@ impl Launcher {
             .child(tile(picture, &r.id, &r.title, 32.));
         let row = if wide {
             row.child(title.flex_1().min_w(px(140.)))
+                .child(kind(column::KIND))
+                .child(version(column::VERSION))
                 .child(
                     div()
-                        .w(px(64.))
+                        .w(px(column::STATUS))
                         .flex_none()
-                        .text_size(px(tokens::LABEL))
-                        .text_color(c(palette().muted))
-                        .child(kind),
-                )
-                .child(
-                    div()
-                        .w(px(64.))
-                        .flex_none()
-                        .text_size(px(tokens::LABEL))
-                        .font_family(crate::theme::MONO)
-                        .child(r.version.clone()),
-                )
-                .child(
-                    div()
                         .flex()
                         .items_center()
-                        .gap(px(12.))
-                        .flex_shrink(1.)
-                        .min_w_0()
-                        .children(notes),
+                        .child(status_cell),
+                )
+                .child(
+                    div()
+                        .w(px(column::ACTION))
+                        .flex_none()
+                        .flex()
+                        .justify_end()
+                        .children(action),
                 )
         } else {
             row.child(
@@ -716,24 +711,22 @@ impl Launcher {
                     .child(
                         div()
                             .flex()
-                            .flex_wrap()
-                            .items_baseline()
-                            .gap_x(px(10.))
-                            .child(muted(match kind {
-                                "" => r.version.clone(),
-                                kind => trf(
-                                    "{kind} · {version}",
-                                    &[("kind", kind), ("version", &r.version)],
-                                ),
-                            }))
-                            .children(notes),
+                            .items_center()
+                            .child(kind(64.))
+                            .child(version(60.))
+                            .child(div().flex_1().min_w_0().flex().child(status_cell)),
                     ),
             )
+            .children(action)
         };
-        match r.unfit.clone() {
-            Some(unfit) => row.child(verdict).child(self.unfit(n, &r, unfit, cx)),
-            None => row.child(verdict).child(sw),
-        }
+        row.child(
+            div()
+                .w(px(column::SWITCH))
+                .flex_none()
+                .flex()
+                .justify_end()
+                .child(sw),
+        )
     }
 
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
@@ -742,56 +735,44 @@ impl Launcher {
         use crate::frame::button;
         let open = self.ui.mods.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
-        let help = div()
-            .id(("alt-unfit-help", n))
-            .tab_index(0)
-            .seen()
-            .flex_none()
-            .size(px(16.))
-            .rounded_full()
-            .border_1()
-            .border_color(c(if open { palette().text } else { palette().line }))
-            .flex()
-            .items_center()
-            .justify_center()
-            .text_size(px(tokens::CAPTION))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(c(if open {
-                palette().text
-            } else {
-                palette().muted
-            }))
-            .cursor_pointer()
-            .focus_visible(|s| s.border_color(c(palette().focus)))
-            .child("?")
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let m = &mut this.ui.mods;
-                m.unfit_open = match m.unfit_open.as_ref() == Some(&id) {
-                    true => None,
-                    false => Some(id.clone()),
-                };
-                m.unfit_details = false;
-                cx.stop_propagation();
-                cx.notify();
-            }));
+        let help = status(
+            "information-circle",
+            tr("Needs an update"),
+            palette().warning,
+        )
+        .id(("alt-unfit-help", n))
+        .reach()
+        // Its glyph stands where every other row's does.
+        .px(px(8.))
+        .ml(px(-8.))
+        .h(px(28.))
+        .when(open, |d| d.bg(c(palette().hover)))
+        .hover(|s| s.bg(c(palette().hover)))
+        .cursor_pointer()
+        .tooltip(crate::glass_ui::tip(trf(
+            "{mod} needs an update for {build}. It comes back when its author releases one.",
+            &[("mod", &r.title), ("build", &unfit.on)],
+        )))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            let m = &mut this.ui.mods;
+            m.unfit_open = match m.unfit_open.as_ref() == Some(&id) {
+                true => None,
+                false => Some(id.clone()),
+            };
+            m.unfit_details = false;
+            cx.stop_propagation();
+            cx.notify();
+        }));
         let said = open.then(|| {
-            let sentence = match (&unfit.made_for, unfit.changes.is_empty()) {
-                (Some((_, made)), false) => trf(
-                    "Made for {made}. {on} changed things it uses, so it waits for an update from its author. It stays installed.",
-                    &[("made", made), ("on", &unfit.on)],
+            let sentence = match &unfit.made_for {
+                Some((_, made)) => trf(
+                    "{mod} needs an update for {on}. It was made for {made}, and comes back when its author releases a new version. It stays installed.",
+                    &[("mod", &r.title), ("on", &unfit.on), ("made", made)],
                 ),
-                (Some((_, made)), true) => trf(
-                    "Made for {made}, so it waits for an update from its author. It stays installed.",
-                    &[("made", made)],
+                None => trf(
+                    "{mod} needs an update for {on}. It comes back when its author releases a new version. It stays installed.",
+                    &[("mod", &r.title), ("on", &unfit.on)],
                 ),
-                (None, false) => trf(
-                    "Made for another build. {on} changed things it uses, so it waits for an update from its author. It stays installed.",
-                    &[("on", &unfit.on)],
-                ),
-                (None, true) => tr(
-                    "Made for another build, so it waits for an update from its author. It stays installed.",
-                )
-                .to_string(),
             };
             let details = self.ui.mods.unfit_details;
             let technical = (!unfit.changes.is_empty()).then(|| {
@@ -814,7 +795,7 @@ impl Launcher {
                                 12.,
                                 c(palette().muted),
                             ))
-                            .child(tr("Technical details"))
+                            .child(tr("Details"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.ui.mods.unfit_details = !this.ui.mods.unfit_details;
                                 cx.stop_propagation();
@@ -829,8 +810,9 @@ impl Launcher {
                             .children(unfit.changes.iter().map(|change| {
                                 div()
                                     .text_size(px(tokens::SMALL))
+                                    .font_family(crate::theme::MONO)
                                     .text_color(c(palette().muted))
-                                    .child(format!("• {change}"))
+                                    .child(change.clone())
                             }))
                     }))
             });
@@ -863,7 +845,16 @@ impl Launcher {
                         cx.notify();
                     })))
                 }
-                _ => None,
+                _ => {
+                    let id = r.id.clone();
+                    Some(button("alt-unfit-check", tr("Check for update")).on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.check_mod_update(&id);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ))
+                }
             };
             // Opens under the "?", or over it when the row is low in the window.
             let popup = div()
@@ -897,7 +888,6 @@ impl Launcher {
             .flex_none()
             .items_center()
             .gap(px(8.))
-            .child(muted(trf("Not on {build}", &[("build", &unfit.on)])))
             .child(div().relative().flex_none().child(help).children(said))
     }
 

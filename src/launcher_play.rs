@@ -118,7 +118,7 @@ impl Launcher {
         self.download_seen = None;
     }
 
-    pub(crate) fn play(&mut self) {
+    pub(crate) fn play(&mut self, accepted: Option<String>) {
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
@@ -130,7 +130,11 @@ impl Launcher {
             return;
         }
         self.starting_pack = None;
-        self.start_client(tag, self.selected_instance().map(|i| i.id.clone()));
+        self.start_client(
+            tag,
+            self.selected_instance().map(|i| i.id.clone()),
+            accepted,
+        );
     }
 
     /// Why `tag` cannot start now, as the player reads it; None when it can ([`Self::can_start`]).
@@ -158,7 +162,7 @@ impl Launcher {
 
     /// Starts the game: the session first (a network round trip when the token needs
     /// renewing), then `drain` starts the process when it arrives.
-    pub(crate) fn start_client(&mut self, tag: String, instance_id: Option<String>) {
+    fn start_client(&mut self, tag: String, instance_id: Option<String>, accepted: Option<String>) {
         self.client_error = None;
         self.crash = None;
         // Every way to Play ends here, so this is where a build with native code is held to
@@ -205,7 +209,6 @@ impl Launcher {
         // session arrives.
         self.starting_client = Some(tag.clone());
         self.starting_instance = instance_id.clone();
-        let accepted = self.accounts.selected().map(|a| a.uuid.clone());
         self.starting_account = accepted.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();

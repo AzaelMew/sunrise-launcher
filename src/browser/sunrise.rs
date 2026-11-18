@@ -52,6 +52,14 @@ pub fn local() -> bool {
 
 static LOADED: Mutex<Option<(Instant, Arc<Index>)>> = Mutex::new(None);
 
+/// The index, asked for again now whatever was read last: "Check for update".
+pub fn refreshed_index() -> Result<Arc<Index>, String> {
+    if let Some((at, _)) = LOADED.lock().unwrap().as_mut() {
+        *at = Instant::now().checked_sub(FRESH).unwrap_or(*at);
+    }
+    index()
+}
+
 /// The index read last in this run, without asking the network: for what must not wait.
 pub fn known_index() -> Option<Arc<Index>> {
     LOADED
@@ -399,6 +407,26 @@ pub fn trust_and_capabilities(
         }
     }
     lines
+}
+
+/// Whether native mod `id`'s version for `game` was made for another game build than the one
+/// `instance` plays: the build then checks whether it fits before it runs. False when either
+/// side can't be told.
+pub fn made_for_another_build(id: &str, instance: &crate::instances::Instance, game: &str) -> bool {
+    let Ok(index) = index() else {
+        return false;
+    };
+    let pin = index
+        .project(id)
+        .filter(|p| p.kind == index::Kind::NativeMod)
+        .and_then(|p| p.versions.iter().find(|v| v.game == game))
+        .and_then(|v| v.api.split('/').nth(1).map(str::to_owned));
+    match (pin, crate::native_fit::plays(instance)) {
+        (Some(pin), Some(plays)) => {
+            crate::native_fit::fit(&pin, &plays) != crate::native_fit::Fit::Fits
+        }
+        _ => false,
+    }
 }
 
 /// How long the registry lets a summary be: it cuts a longer one there, mid-word.

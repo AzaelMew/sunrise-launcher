@@ -248,13 +248,11 @@ struct Launcher {
     native_step: Option<String>,
     /// Where the build under way is, for the card's stages and bar.
     native_progress: Option<native_mods::Progress>,
+    native_cancellation: Option<native_mods::Cancellation>,
     /// The first build's one-time download (the compiler), in bytes; `None` once it is there.
     first_build: Option<u64>,
-    /// Play was pressed while this instance's native mods needed a build (Build and play): the
-    /// game starts once the build worked, if it is still the instance selected.
-    play_after_build: Option<String>,
-    /// How the last native build ended ("Your mods are built", or "Up to date").
-    native_done: Option<String>,
+    /// Play is waiting for a build, with the profile and account that pressed it.
+    play_after_build: Option<mods::build_run::PlayAfterBuild>,
     native_error: Option<String>,
     /// The mods that stopped the last build (`native_mods::Failed::Mods`): their rows say Failed,
     /// the others keep their own state.

@@ -42,8 +42,8 @@ pub enum Msg {
         run: Option<String>,
         prepared: Box<Result<Command, String>>,
     },
-    /// Where the native-mods build is (`native_mods::Step::label`), and how far along.
-    NativeProgress(String, crate::native_mods::Progress),
+    /// Where the native-mods build is.
+    NativeProgress(crate::native_mods::Step),
     NativeRegistryConsent(crate::native_mods::Consent, std::sync::mpsc::Sender<bool>),
     /// The native-mods build ended: the version built, or why not.
     Native(Result<String, crate::native_mods::Failed>),

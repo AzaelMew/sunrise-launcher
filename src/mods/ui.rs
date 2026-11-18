@@ -353,7 +353,7 @@ pub(super) fn browse_card(
         )
 }
 
-/// "Added", where a card's control would be.
+/// "Installed", where a card's control would be.
 pub(super) fn added_mark() -> AnyElement {
     div()
         .flex()
@@ -362,8 +362,21 @@ pub(super) fn added_mark() -> AnyElement {
         .text_size(px(tokens::LABEL))
         .text_color(c(palette().success))
         .child(blocks::icon("check", 12., c(palette().success)))
-        .child(tr("Added"))
+        .child(tr("Installed"))
         .into_any_element()
+}
+
+/// A row's quiet status: a small glyph in `color` and a few words, never a sentence.
+pub(super) fn status(icon: &'static str, label: impl Into<SharedString>, color: u32) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .text_size(px(tokens::LABEL))
+        .text_color(c(palette().muted))
+        .child(crate::glass_ui::icon(icon, 14., c(color)))
+        .child(label.into())
 }
 
 pub(super) fn card() -> Div {

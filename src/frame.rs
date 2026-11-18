@@ -331,14 +331,18 @@ impl Launcher {
             return;
         }
         self.native_error = None;
+        let account = self.accounts.selected().map(|a| a.uuid.clone());
         if matches!(
             self.native_state_of(&instance),
             native_status::State::NotBuilt | native_status::State::Outdated
         ) {
-            self.play_after_build = Some(instance.id);
+            self.play_after_build = Some(crate::mods::build_run::PlayAfterBuild {
+                instance: instance.id,
+                account,
+            });
             self.build_native();
         } else {
-            self.play();
+            self.play(account);
         }
     }
 

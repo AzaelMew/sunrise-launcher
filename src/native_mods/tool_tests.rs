@@ -53,6 +53,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         r#"{"contract":2}"#,
         Some(&consent),
         &on_mod,
+        &Cancellation::default(),
     )
     .unwrap();
     assert_eq!(
@@ -78,6 +79,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         "{}",
         None,
         &on_mod,
+        &Cancellation::default(),
     )
     .unwrap_err();
     assert_eq!(
@@ -87,7 +89,14 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             kind: BlameKind::Compile
         })
     );
-    let silent = run(fake(&dir, &[]), "{}", None, &on_mod).unwrap_err();
+    let silent = run(
+        fake(&dir, &[]),
+        "{}",
+        None,
+        &on_mod,
+        &Cancellation::default(),
+    )
+    .unwrap_err();
     assert!(
         silent.error.contains("without saying why"),
         "{}",
@@ -118,7 +127,14 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
     ));
     let _ = std::fs::remove_dir_all(&dir);
     super::super::clear_log().unwrap();
-    let failed = run(fake(&dir, &["ERRORS", "EXIT3"]), "{}", None, &|_, _, _| {}).unwrap_err();
+    let failed = run(
+        fake(&dir, &["ERRORS", "EXIT3"]),
+        "{}",
+        None,
+        &|_, _, _| {},
+        &Cancellation::default(),
+    )
+    .unwrap_err();
     assert!(
         failed.error.contains("update the launcher"),
         "{}",
@@ -208,10 +224,10 @@ fn a_check_by_a_tool_on_another_contract_or_from_before_the_command_says_which_t
     let _ = std::fs::remove_dir_all(&dir);
     let plan = serde_json::json!({"contract": CONTRACT});
     fake(&dir, &["ERRORS", "EXIT3"]);
-    let newer = check(&dir.join("tool"), &plan).unwrap_err();
+    let newer = check(&dir.join("tool"), &plan, &Cancellation::default()).unwrap_err();
     assert!(newer.contains("update the launcher"), "{newer}");
     fake(&dir, &["ERRORS"]);
-    let older = check(&dir.join("tool"), &plan).unwrap_err();
+    let older = check(&dir.join("tool"), &plan, &Cancellation::default()).unwrap_err();
     assert!(older.contains("install a newer version"), "{older}");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -235,6 +251,7 @@ fn a_one_line_command_gets_its_name_and_a_contract_and_answers_one_line() {
         std::process::Command::new(&program),
         "native-lock",
         &serde_json::json!({"mods": "/m", "update": true}),
+        &Cancellation::default(),
     )
     .unwrap();
     assert_eq!(reply["lock"], "/m/Cargo.lock");

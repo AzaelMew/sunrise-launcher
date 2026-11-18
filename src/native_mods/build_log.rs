@@ -1,9 +1,8 @@
-//! The native build's log, its cancel and how its failures read: copied from the game's `sunrise-native-build` (tests/test_launcher_copies.py).
+//! The native build's log and how its failures read: copied from the game's `sunrise-native-build` (tests/test_launcher_copies.py).
 use crate::i18n::{tr, trf};
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// The native build's folder, under the launcher's build folder.
 pub(crate) fn root() -> PathBuf {
@@ -45,26 +44,6 @@ pub fn log_warning(text: &str) {
 
 /// What a cancelled build fails with: the card shows no error for it.
 pub const CANCELLED: &str = "Build cancelled";
-
-/// Ends the build with [`CANCELLED`] when the player cancelled it, so a cancel never ends as a finished build.
-pub fn check_cancelled() -> Result<(), String> {
-    if CANCEL.load(Ordering::Relaxed) {
-        return Err(CANCELLED.into());
-    }
-    Ok(())
-}
-
-static CANCEL: AtomicBool = AtomicBool::new(false);
-
-/// Stops the build under way: it ends with [`CANCELLED`].
-pub fn cancel() {
-    CANCEL.store(true, Ordering::Relaxed);
-}
-
-/// Forgets a cancel the last build ended with, as a new build starts.
-pub fn clear_cancel() {
-    CANCEL.store(false, Ordering::Relaxed);
-}
 
 /// A failed step's error: the `errors` lines not already among the last ones (`tail`), then those.
 pub fn failure(what: &str, status: &str, errors: &[String], tail: &[String]) -> String {

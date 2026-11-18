@@ -426,7 +426,7 @@ impl Launcher {
 
     pub(crate) fn launch_act(&mut self, act: &Act) {
         match act {
-            Act::StopBuild => native_mods::cancel(),
+            Act::StopBuild => self.stop_build(),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), *way_out),
             Act::Resolve => self.open_sheet(Sheet::Resolve),
             Act::Update => {

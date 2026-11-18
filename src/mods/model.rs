@@ -288,11 +288,21 @@ pub(super) struct Page {
     pub(super) will_install: Option<VersionLine>,
     /// What the registry says about who made it and what it may do (`trust_and_capabilities`).
     pub(super) trust: Vec<String>,
+    /// Its author signs its files.
+    pub(super) signed: bool,
+    /// Native code made for another game build than the one played: checked before it runs.
+    pub(super) another_build: bool,
     /// Mods the newest version lists as part of itself (a registry modpack's rule; a mod rarely has any).
     pub(super) requires: Vec<(String, String)>,
 }
 
-pub(super) fn page(index: &Index, id: &str, game: &str, trust: Vec<String>) -> Option<Page> {
+pub(super) fn page(
+    index: &Index,
+    id: &str,
+    game: &str,
+    trust: Vec<String>,
+    another_build: bool,
+) -> Option<Page> {
     let p = index.project(id)?;
     let make = make_of(p)?;
     let lines: Vec<VersionLine> = p
@@ -338,6 +348,8 @@ pub(super) fn page(index: &Index, id: &str, game: &str, trust: Vec<String>) -> O
         will_install,
         versions: lines,
         trust,
+        signed: p.key.is_some(),
+        another_build,
         requires: p
             .versions
             .first()
@@ -436,6 +448,197 @@ pub(super) fn mark_left_out(
             }
             _ => row.left_out = Some(l.label()),
         }
+    }
+}
+
+/// How a status reads: which of the theme's colours its glyph takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Tone {
+    Warning,
+    Info,
+    Accent,
+    Success,
+    Muted,
+}
+
+/// A row's status: a glyph, a few words, and the whole sentence for the tooltip.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Status {
+    pub(super) icon: &'static str,
+    pub(super) label: String,
+    pub(super) tone: Tone,
+    pub(super) tip: String,
+}
+
+/// The one button a row may hold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RowAction {
+    Allow,
+    Update,
+}
+
+/// What a row puts in the list's shared columns. Every row has every column: one with nothing
+/// to say leaves its status and action cells empty, and the switch's place is always kept, so
+/// nothing in a row moves with what another row says.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Cells {
+    /// "Native" or "Content"; empty when the registry doesn't say.
+    pub(super) kind: &'static str,
+    pub(super) version: String,
+    pub(super) status: Option<Status>,
+    /// The status opens the "needs an update" popover.
+    pub(super) popover: bool,
+    pub(super) action: Option<RowAction>,
+    /// The switch can be flipped (a local file's or a taken-down mod's is drawn dim).
+    pub(super) switch: bool,
+}
+
+/// The widths of the list's fixed columns on a roomy window.
+pub(super) mod column {
+    pub(in super::super) const KIND: f32 = 64.;
+    pub(in super::super) const VERSION: f32 = 72.;
+    pub(in super::super) const STATUS: f32 = 176.;
+    pub(in super::super) const ACTION: f32 = 96.;
+    pub(in super::super) const SWITCH: f32 = 44.;
+}
+
+/// Where a row's mod stands in its setup's build while that runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum InBuild {
+    Waiting,
+    Building,
+    Built,
+    /// The build ended and this mod's own code did not compile.
+    Failed,
+}
+
+/// `row`'s cells. `error` is why its last update failed, `building` where it stands in its
+/// setup's build while that runs. The status is the first thing that applies, most pressing first; whatever else
+/// applies is in its tooltip.
+pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -> Cells {
+    let mut said: Vec<Status> = Vec::new();
+    let mut say = |icon, label: String, tone, tip: String| {
+        said.push(Status {
+            icon,
+            label,
+            tone,
+            tip,
+        })
+    };
+    if let Some(why) = error {
+        say(
+            "information-circle",
+            tr("Update failed").into(),
+            Tone::Warning,
+            why.to_owned(),
+        );
+    }
+    match &row.need {
+        Some(Need::TakenDown(why)) => say(
+            "cancel-01",
+            tr("Taken down").into(),
+            Tone::Warning,
+            trf("Taken down: {reason}", &[("reason", why)]),
+        ),
+        Some(Need::Permission) => say(
+            "shield",
+            tr("Needs permission").into(),
+            Tone::Warning,
+            tr("Needs your permission to run native code").into(),
+        ),
+        Some(Need::Build) if building == Some(InBuild::Building) => say(
+            "hammer",
+            tr("Building").into(),
+            Tone::Accent,
+            tr("Its build is running").into(),
+        ),
+        Some(Need::Build) if building == Some(InBuild::Built) => say(
+            "tick-02",
+            tr("Built").into(),
+            Tone::Success,
+            tr("Built. It is in the game once the build is done.").into(),
+        ),
+        Some(Need::Build) if building == Some(InBuild::Waiting) => say(
+            "clock",
+            tr("Waiting").into(),
+            Tone::Muted,
+            tr("Its build is running").into(),
+        ),
+        Some(Need::Build) if building == Some(InBuild::Failed) => say(
+            "cancel-01",
+            tr("Didn't build").into(),
+            Tone::Warning,
+            tr("Didn't build. The problem is in the mod, not in your game.").into(),
+        ),
+        Some(Need::Build) => say(
+            "clock",
+            tr("Needs a build").into(),
+            Tone::Warning,
+            tr("Not built for this computer yet").into(),
+        ),
+        None => {}
+    }
+    if let Some(unfit) = &row.unfit {
+        say(
+            "information-circle",
+            tr("Needs an update").into(),
+            Tone::Warning,
+            trf(
+                "{mod} needs an update for {build}. It comes back when its author releases one.",
+                &[("mod", &row.title), ("build", &unfit.on)],
+            ),
+        );
+    }
+    if let Some(why) = &row.left_out {
+        say(
+            "information-circle",
+            tr("Not in this build").into(),
+            Tone::Warning,
+            why.clone(),
+        );
+    }
+    if let Some(to) = &row.update {
+        say(
+            "refresh",
+            trf("{version} is out", &[("version", to)]),
+            Tone::Info,
+            trf("Version {version} is out", &[("version", to)]),
+        );
+    }
+    if let Some(local) = &row.local {
+        say(
+            "folder-01",
+            match local.github {
+                true => tr("From GitHub").into(),
+                false => tr("Local file").into(),
+            },
+            Tone::Muted,
+            match local.github {
+                true => tr("From GitHub, not the registry: read-only here").into(),
+                false => tr("A local file, not from the registry: read-only here").into(),
+            },
+        );
+    }
+    let popover = row.unfit.is_some()
+        && said
+            .first()
+            .is_some_and(|s| s.label == tr("Needs an update"));
+    let tip = said
+        .iter()
+        .map(|s| s.tip.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Cells {
+        kind: row.make.map_or("", Make::label),
+        version: row.version.clone(),
+        status: said.into_iter().next().map(|first| Status { tip, ..first }),
+        popover,
+        action: match (&row.need, &row.update) {
+            (Some(Need::Permission), _) => Some(RowAction::Allow),
+            (_, Some(_)) => Some(RowAction::Update),
+            _ => None,
+        },
+        switch: row.local.is_none() && !matches!(row.need, Some(Need::TakenDown(_))),
     }
 }
 
@@ -625,6 +828,15 @@ impl Default for RowFilter {
             makes: BTreeSet::new(),
         }
     }
+}
+
+/// How many mods the one Build button builds, when the list shows it: it sits in the head of
+/// the NEEDS YOU group, so a search or filter that hides every row of that group hides it.
+/// `visible` are the rows shown ([`visible`]). Whoever draws a build's bar elsewhere asks
+/// this, so a build is never left without one.
+pub(super) fn build_in_head(rows: &[Row], visible: &[usize]) -> Option<usize> {
+    let waiting = rows.iter().filter(|r| r.need == Some(Need::Build)).count();
+    (waiting > 0 && visible.iter().any(|&i| rows[i].group() == Group::NeedsYou)).then_some(waiting)
 }
 
 /// Indexes into `rows` that pass the filter; the order of `rows` (grouped, by name) is kept.
