@@ -63,6 +63,7 @@ impl Launcher {
         let backdrop =
             cx.new(|_| window_root::Backdrop::new(coast.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
+            alt: Default::default(),
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
             behind: Page::Play,

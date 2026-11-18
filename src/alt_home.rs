@@ -807,6 +807,7 @@ impl Launcher {
                             .text_color(rgb(GOLD))
                             .child(tr("Privacy choices"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.alt.settings.privacy = true;
                                 this.alt.page = crate::alt::Page::Settings;
                                 cx.notify();
                             })),
@@ -932,10 +933,12 @@ impl Launcher {
             format!("alt-popular-{i}-add"),
             tr(if this_busy { "Adding…" } else { "Add" }),
         );
-        let add = if busy.is_none() {
+        let add = if !self.alt_launch_busy() && self.alt_mods_locked().is_none() {
             let p = project.clone();
             add.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.mods_install(p.source, p.id.clone(), Some(p.clone()));
+                if !this.alt_launch_busy() && this.alt_mods_locked().is_none() {
+                    this.mods_install(p.source, p.id.clone(), Some(p.clone()));
+                }
                 cx.notify();
             }))
         } else {

@@ -449,6 +449,10 @@ impl Launcher {
     }
 
     pub(crate) fn cancel_sign_in(&mut self) {
+        if self.alt.after_sign_in.take().is_some() {
+            self.quick_play = None;
+            self.joining = None;
+        }
         if let Some(old) = self.sign_in.take() {
             old.cancel();
         }

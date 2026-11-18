@@ -22,10 +22,6 @@ pub(crate) enum Sheet {
     Build,
     /// Choose what to do with a held update.
     Resolve,
-    /// Permission for native code: shown whenever `pending_consent` is set.
-    Consent,
-    /// The worker's question before dependency build programs run: shown while one is pending.
-    Libraries,
 }
 
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
@@ -491,10 +487,6 @@ impl Launcher {
                     None
                 }
             },
-            Some(Sheet::Consent | Sheet::Libraries) => {
-                self.alt.sheet = None;
-                None
-            }
             None => match example().filter(|_| !self.alt.sheets.example_closed)? {
                 Example::Resolve => Some(self.resolve_sheet(example_held(), true, cx)),
                 Example::Consent => Some(self.example_consent_sheet(cx)),
@@ -529,7 +521,7 @@ impl Launcher {
             .border_color(rgb(LINE))
             .bg(rgb(BG))
             .children((!head.is_empty()).then(|| div().text_size(px(13.)).child(head)))
-            .children(lines.into_iter().map(|l| muted(l)));
+            .children(lines.into_iter().map(muted));
         let stay = button("alt-resolve-stay", native_mods::fit::stay(&plays)).on_click(
             cx.listener(|this, _: &ClickEvent, _, cx| {
                 // Staying is what already happens: nothing is written.

@@ -117,10 +117,12 @@ pub fn index() -> Result<Arc<Index>, String> {
     let cache = crate::backend::game_home().join(CACHE);
     let index = match fetch_index() {
         Ok((index, text)) => {
-            if let Some(dir) = cache.parent() {
-                let _ = fs::create_dir_all(dir);
+            if !cfg!(feature = "redesign-preview") {
+                if let Some(dir) = cache.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                let _ = fs::write(&cache, text);
             }
-            let _ = fs::write(&cache, text);
             index
         }
         Err(e) => {

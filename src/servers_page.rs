@@ -3434,13 +3434,21 @@ mod tests {
             let (tx, rx) = std::sync::mpsc::channel();
             let dir = root.path().to_path_buf();
             let job = std::thread::spawn(move || run_managed_server(&tx, &dir, &[action], &|_| {}));
-            let message = rx.recv_timeout(Duration::from_secs(10)).unwrap();
-            let backend::Msg::JarConsent { jars, reply } = message else {
-                panic!("expected jar consent")
-            };
-            assert_eq!(jars.len(), 1);
-            assert_eq!(jars[0].id(), "fixture");
-            reply.send(false).unwrap();
+            let message = rx.recv_timeout(Duration::from_secs(10));
+            if cfg!(feature = "redesign-preview") {
+                // The preview has no Modrinth flow. It refuses the launch without prompting.
+                assert!(matches!(
+                    message,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+                ));
+            } else {
+                let backend::Msg::JarConsent { jars, reply } = message.unwrap() else {
+                    panic!("expected jar consent")
+                };
+                assert_eq!(jars.len(), 1);
+                assert_eq!(jars[0].id(), "fixture");
+                reply.send(false).unwrap();
+            }
             assert!(job.join().unwrap().is_err());
             assert!(!root.path().join("ran").exists());
         }

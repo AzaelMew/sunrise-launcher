@@ -161,6 +161,11 @@ impl Launcher {
                         };
                         self.perf.record_since(name, started);
                     }
+                    let resume = self.alt.after_install.take().filter(|(id, wanted)| {
+                        result.is_ok()
+                            && *wanted == tag
+                            && self.selected_instance().is_some_and(|i| i.id == *id)
+                    });
                     match result {
                         Ok(()) => {
                             if as_update.is_some()
@@ -189,11 +194,11 @@ impl Launcher {
                                 )
                             }) && (!for_instance || self.launcher_version().is_none());
                             if select {
-                                self.settings.selected = Some(tag);
+                                self.settings.selected = Some(tag.clone());
                             }
                             // Pruning reads settings from disk: protect the selection only once
                             // it has been saved there. A failed save leaves all versions in place.
-                            if self.save_settings() {
+                            if self.save_settings() && !cfg!(feature = "redesign-preview") {
                                 let tx = self.tx.clone();
                                 std::thread::spawn(move || {
                                     let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
@@ -201,6 +206,9 @@ impl Launcher {
                             }
                         }
                         Err(e) => self.install_error = Some((tag, e)),
+                    }
+                    if resume.is_some_and(|(_, wanted)| self.selected() == Some(&wanted)) {
+                        self.alt_play();
                     }
                     if let Some(next) = self.install_next.take() {
                         self.install_for_instance(next);
@@ -249,7 +257,11 @@ impl Launcher {
                 }
                 Msg::Updates(Err(e)) => self.update_error = Some(e),
                 Msg::NativeRegistryConsent(inventory, reply) => {
-                    native_registry_consent::show(window, inventory, reply, cx)
+                    if cfg!(feature = "redesign-preview") {
+                        self.alt_registry_consent(inventory, reply);
+                    } else {
+                        native_registry_consent::show(window, inventory, reply, cx)
+                    }
                 }
                 Msg::NativeProgress(step, progress) => {
                     self.native_step = Some(step);
@@ -360,7 +372,17 @@ impl Launcher {
                             if let Some((tag, instance)) = self.play_when_prepared.take() {
                                 if error.is_none() && backend::check_prepared(&tag) {
                                     self.starting_pack = None;
-                                    self.start_client(tag, Some(instance));
+                                    if cfg!(feature = "redesign-preview") {
+                                        if self
+                                            .selected_instance()
+                                            .is_some_and(|i| i.id == instance)
+                                            && self.selected() == Some(&tag)
+                                        {
+                                            self.alt_play();
+                                        }
+                                    } else {
+                                        self.start_client(tag, Some(instance));
+                                    }
                                 }
                             }
                             if let (None, Some(started)) = (&error, self.prepare_started.take()) {
@@ -453,6 +475,7 @@ impl Launcher {
             changed |= self.servers_tick();
         }
         changed |= self.mods_tick();
+        changed |= self.alt_mods_drain();
         changed |= self.github_tick();
         changed |= self.native_log_read(cx);
         changed |= self.toast_tick();
@@ -471,6 +494,14 @@ impl Launcher {
                     if !self.settings.owner_notice_seen {
                         self.settings.owner_notice_seen = true;
                         self.save_settings();
+                    }
+                    if self
+                        .alt
+                        .after_sign_in
+                        .take()
+                        .is_some_and(|id| self.selected_instance().is_some_and(|i| i.id == id))
+                    {
+                        self.alt_play();
                     }
                 }
                 changed = true;
