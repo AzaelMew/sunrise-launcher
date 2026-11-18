@@ -44,9 +44,10 @@ pub fn face(skin_png: &[u8]) -> Option<Vec<[u8; 4]>> {
     if skin.width() < 64 || skin.height() < 32 {
         return None;
     }
-    // An old skin saved without transparency has a solid block where its hat would be: the
-    // game draws no hat for it, so neither does this.
-    let hatless = (32..64).all(|x| (0..16).all(|y| skin.get_pixel(x, y).0[3] == 255));
+    // An old 64x32 skin saved without transparency has a solid block where its hat would be:
+    // the game draws no hat for it, so neither does this. A 64x64 skin's hat is drawn as saved.
+    let hatless =
+        skin.height() == 32 && (32..64).all(|x| (0..16).all(|y| skin.get_pixel(x, y).0[3] == 255));
     let mut out = Vec::with_capacity(64);
     for y in 0..8 {
         for x in 0..8 {
