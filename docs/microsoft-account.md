@@ -54,7 +54,9 @@ All requests use HTTPS and JSON except the two OAuth calls (form-encoded):
    browser's private window (`launcher/src/private_window.rs`: the `https` ProgId on Windows, LaunchServices
    on macOS, `xdg-settings` on Linux; `--incognito`, `--inprivate`, `--private`, `--private-window`) has no
    Microsoft session. Safari and unknown browsers get **Copy link** and a hint instead. **Use a different
-   Microsoft account** opens `login.live.com/logout.srf` and then the code page.
+   Microsoft account** opens the end-session page `…/consumers/oauth2/v2.0/logout` and then the code page.
+   It signs the browser out of login.live.com and ends on Microsoft's signed-out page;
+   `login.live.com/logout.srf` opened on its own continues to msn.com (#2034).
 2. **Poll** `POST …/consumers/oauth2/v2.0/token` (`grant_type=urn:ietf:params:oauth:grant-type:device_code`)
    every `interval` seconds; `authorization_pending` waits, `slow_down` adds 5 s, `authorization_declined`,
    `expired_token` and `bad_verification_code` end the sign-in with a message. Result: the Microsoft
