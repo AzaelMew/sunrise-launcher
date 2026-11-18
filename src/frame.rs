@@ -270,6 +270,7 @@ impl Launcher {
         }
         self.prepare_error = None;
         self.client_error = None;
+        self.play_registry_notices.clear();
         self.crash = None;
         self.install_error = None;
         let Some(instance) = self.selected_instance().map(|i| i.id.clone()) else {
@@ -541,6 +542,7 @@ impl Launcher {
             })
             .overflow_hidden()
             .children(status)
+            .children(self.registry_notice_strip(cx))
             .child(content);
         let mut frame = div()
             .id("launcher-frame")

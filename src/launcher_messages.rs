@@ -105,16 +105,14 @@ impl Launcher {
                         account::discard_launch_session(session_file);
                         continue;
                     };
-                    if !registry_notices.is_empty() {
-                        crate::glass_toast::say(registry_notices.join("\n"));
-                        for notice in registry_notices {
-                            console_page::keep_line(
-                                &mut self.prepare_log,
-                                &mut self.log_revision,
-                                notice,
-                            );
-                        }
+                    for notice in &registry_notices {
+                        console_page::keep_line(
+                            &mut self.prepare_log,
+                            &mut self.log_revision,
+                            notice.clone(),
+                        );
                     }
+                    self.play_registry_notices = registry_notices;
                     let started = prepared.and_then(|cmd| {
                         self.accounts = Accounts::load();
                         if let Some(uuid) = accepted.as_deref() {
@@ -129,7 +127,11 @@ impl Launcher {
                         Ok(r) => {
                             self.client = Some(r);
                             self.client_run = run.map(|id| (id, Instant::now()));
-                            self.step_aside(cx);
+                            // Do not hide or minimize the window when the registry has
+                            // something the player needs to see about this run.
+                            if self.play_registry_notices.is_empty() {
+                                self.step_aside(cx);
+                            }
                         }
                         // A start that does not happen leaves no session file behind.
                         Err(e) => {

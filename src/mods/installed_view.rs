@@ -634,6 +634,20 @@ impl Launcher {
                 None => d,
             }
         };
+        let title =
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(title)
+                .when(r.registry_unchecked, |d| {
+                    d.child(
+                        div()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(palette().muted))
+                            .child(tr("Registry not checked")),
+                    )
+                });
         use model::column;
         let kind = |width: f32| {
             div()

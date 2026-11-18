@@ -137,6 +137,7 @@ impl Launcher {
             prepare_error: None,
             client: None,
             client_error: None,
+            play_registry_notices: Vec::new(),
             client_started: None,
             client_home: None,
             crash: None,

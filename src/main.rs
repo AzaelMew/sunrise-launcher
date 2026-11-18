@@ -290,6 +290,8 @@ struct Launcher {
     prepare_error: Option<String>,
     client: Option<Running>,
     client_error: Option<String>,
+    /// The latest Play's registry warnings, shown until dismissed or a new Play is accepted.
+    play_registry_notices: Vec<String>,
     /// When the running client started, to tell its crash report from older ones.
     client_started: Option<std::time::SystemTime>,
     /// The folder the running game keeps its settings in: the game home, or a modpack's.

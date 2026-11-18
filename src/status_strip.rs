@@ -9,6 +9,40 @@ use crate::paint::palette;
 use gpui::rgb;
 
 impl Launcher {
+    /// A registry warning can coexist with progress, Stop, or a separate launch error.
+    pub(super) fn registry_notice_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let line = self.play_registry_notices.first()?.clone();
+        Some(
+            strip()
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(8.))
+                        .rounded_full()
+                        .bg(rgb(palette().warning)),
+                )
+                .child(div().flex_1().min_w_0().child(line))
+                .when(self.play_registry_notices.len() > 1, |d| {
+                    d.child(
+                        button("play-registry-details", tr("Details…")).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.open_notice(this.play_registry_notices.join("\n"), None);
+                                cx.notify();
+                            },
+                        )),
+                    )
+                })
+                .child(
+                    button("play-registry-dismiss", tr("Dismiss")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.play_registry_notices.clear();
+                            cx.notify();
+                        },
+                    )),
+                ),
+        )
+    }
+
     /// The strip, for the frame to place above the page: one row, as wide as it is given.
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let home = self.ui.page == crate::frame::Page::Home;
