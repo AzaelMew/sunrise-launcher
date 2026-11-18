@@ -4,31 +4,15 @@
 //! world, game mode, difficulty, how many players, who may join and whether accounts are
 //! checked; the EULA, Cancel and Create at the foot. Dark appearance only.
 use super::*;
-use crate::glass_instance::{choice, list_box, list_choice, section, tick};
-use crate::glass_ui::{ white};
-use gpui::{img};
 
-use sunrise_launcher_theme::glass::{fill, ink, radius};
+
+
+
+
 
 /// A player name Minecraft accepts: 3 to 16 letters, digits or underscores.
 fn valid_name(name: &str) -> bool {
     (3..=16).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// A click that changes the draft with `f`.
-fn set(
-    cx: &mut Context<Launcher>,
-    f: fn(&mut Create),
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    let this = cx.entity().downgrade();
-    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-        let _ = this.update(cx, |this, cx| {
-            if let Some(c) = &mut this.servers.create {
-                f(c);
-            }
-            cx.notify();
-        });
-    }
 }
 
 impl Launcher {

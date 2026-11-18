@@ -11,16 +11,14 @@
 use super::*;
 use gpui::RenderImage;
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{ PathBuf};
 use std::sync::Arc;
-use sunrise_launcher::pictures::{self, Lru};
+use sunrise_launcher::pictures::{ Lru};
 
 /// What the made pictures may take together, unless more than that is on screen at once.
 const BUDGET: u64 = 384 << 20;
 /// A picture drawn this recently is on screen: it stays even over the budget.
 const GRACE: Duration = Duration::from_secs(2);
-/// Pictures made at the same time; the others wait for the next frame.
-const AT_ONCE: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Look {
@@ -51,17 +49,6 @@ impl Default for Pictures {
 }
 
 impl Pictures {
-    fn retire(&mut self, gone: Vec<Option<Arc<RenderImage>>>) {
-        self.retired.extend(gone.into_iter().flatten());
-    }
-
-    /// The picture if it is already made, without making it.
-    pub(super) fn made(&self, path: &Path, look: Look) -> Option<Arc<RenderImage>> {
-        self.made
-            .peek(&(path.to_path_buf(), look))
-            .cloned()
-            .flatten()
-    }
 
     /// Frees the pictures dropped since the last frame where GPUI keeps them too.
     pub(super) fn free_retired(&mut self, window: &mut Window) {
@@ -71,60 +58,4 @@ impl Pictures {
     }
 }
 
-impl Launcher {
 
-    /// The picture at `path` as `look`; None while it is being made, or when it can't be read
-    /// (draw a plain fill then).
-    pub(super) fn picture(
-        &mut self,
-        path: &Path,
-        look: Look,
-        cx: &mut Context<Self>,
-    ) -> Option<Arc<RenderImage>> {
-        let now = Instant::now();
-        let key = (path.to_path_buf(), look);
-        if let Some(made) = self.pictures.made.get(&key, now).cloned() {
-            if self.pictures.made.over_budget() {
-                let gone = self.pictures.made.trim(now);
-                self.pictures.retire(gone);
-            }
-            return made;
-        }
-        if self.pictures.making.len() < AT_ONCE && self.pictures.making.insert(key.clone()) {
-            let task = cx.background_executor().spawn(async move {
-                let image = make(&key.0, look);
-                (key, image)
-            });
-            cx.spawn(async move |this, cx| {
-                let (key, image) = task.await;
-                let _ = this.update(cx, |this, cx| {
-                    this.pictures.making.remove(&key);
-                    let bytes = image
-                        .as_ref()
-                        .and_then(|i| i.as_bytes(0))
-                        .map_or(0, |b| b.len() as u64);
-                    let gone = this.pictures.made.insert(key, image, bytes, Instant::now());
-                    this.pictures.retire(gone);
-                    cx.notify();
-                });
-            })
-            .detach();
-        }
-        None
-    }
-}
-
-/// Makes the picture as GPUI draws it (BGRA, as its own loader does). Runs off the UI thread.
-fn make(path: &Path, look: Look) -> Option<Arc<RenderImage>> {
-    match look {
-        Look::Blurred => glass_shot_blur::blurred(path),
-        Look::Fit(max) => {
-            // Never above the GPU's limit, whatever the caller asked: GPUI's atlas can't hold it.
-            let mut image = pictures::load_fitted(path, max.min(pictures::gpu_limit())).ok()?;
-            for p in image.pixels_mut() {
-                p.0.swap(0, 2);
-            }
-            Some(Arc::new(RenderImage::new([image::Frame::new(image)])))
-        }
-    }
-}

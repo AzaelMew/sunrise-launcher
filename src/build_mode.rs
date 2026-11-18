@@ -3,7 +3,7 @@
 //! cancels it. A chip on each native mod says how it reaches the game; its menu gives the reason
 //! and the actions.
 use super::*;
-use crate::glass_ui as ui;
+
 use native_mods::{Profile};
 use native_status::State;
 
@@ -30,86 +30,8 @@ pub(super) enum ModKind {
     Content,
 }
 
-impl ModKind {
-    pub(super) fn of(manifest: &sunrise_launcher_smod::manifest::Manifest) -> Self {
-        if manifest.native.is_some() {
-            Self::Native
-        } else if manifest.wasm.is_some() {
-            Self::Wasm
-        } else {
-            Self::Content
-        }
-    }
 
-    /// What the badge means, for its tooltip.
-    pub(super) fn hint(self) -> &'static str {
-        match self {
-            Self::Native => tr("Has its own program code. It runs inside your game and is built on this computer, so it needs your permission first."),
-            Self::Wasm => tr("Has its own program code, run in a protected sandbox. It never needs a build."),
-            Self::Content => tr("Only data and pictures, no program code. It never needs a build."),
-        }
-    }
 
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            Self::Native => tr("Native"),
-            Self::Wasm => tr("WebAssembly"),
-            Self::Content => tr("Content"),
-        }
-    }
-}
-
-/// The colours a card or chip draws with, in either look.
-#[derive(Clone, Copy)]
-struct Pal {
-    ink: Hsla,
-    muted: Hsla,
-    faint: Hsla,
-    accent: Hsla,
-    success: Hsla,
-    warn: Hsla,
-    danger: Hsla,
-}
-
-impl Pal {
-    fn of(t: &Theme) -> Self {
-        if t.glass {
-            Self {
-                ink: ui::white(1.),
-                muted: ui::white(0.6),
-                faint: ui::white(0.07),
-                accent: t.accent,
-                success: ui::live(),
-                warn: ui::warn(),
-                danger: ui::danger(),
-            }
-        } else {
-            Self {
-                ink: t.ink,
-                muted: t.muted,
-                faint: t.well,
-                accent: t.accent,
-                success: t.success,
-                warn: t.warn,
-                danger: t.danger,
-            }
-        }
-    }
-}
-
-/// What a native mod's chip and menu say about how it reaches the game.
-pub(super) struct RouteFacts {
-    glyph: &'static str,
-    color: Hsla,
-    headline: SharedString,
-    reason: String,
-}
-
-impl RouteFacts {
-    pub(super) fn color(&self) -> Hsla {
-        self.color
-    }
-}
 
 impl Launcher {
 
@@ -187,30 +109,5 @@ impl Launcher {
             .is_some_and(|(_, _, unbuilt)| unbuilt.iter().any(|u| u == id))
     }
 
-    /// A bordered panel, as the build card and its warning sit on the page.
-    pub(super) fn panel(&self) -> Div {
-        let t = self.theme;
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .p(px(16.))
-            .when(t.glass, |d| {
-                d.rounded(px(ui::rad(sunrise_launcher_theme::glass::radius::LARGE)))
-                    .bg(ui::white(0.04))
-            })
-            .when(!t.glass, |d| {
-                d.bg(t.well).border_2().border_color(t.outline)
-            })
-    }
-
 }
 
-/// Text at `size` px in `color`, in the look's face.
-fn text_in(size: f32, color: Hsla) -> Div {
-    div()
-        .font_family(sunrise_launcher_theme::glass::FONT)
-        .text_size(px(size))
-        .line_height(px((size * 1.4).round()))
-        .text_color(color)
-}

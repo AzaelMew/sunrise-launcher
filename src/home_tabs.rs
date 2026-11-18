@@ -1,7 +1,7 @@
 //! The selected instance's tabs under Home's hero (docs/design-system.md, "Night"; plan R0, screen
 //! 5): Overview (what Play needs), then its worlds, servers, packs, screenshots and, once the game
 //! has said something, its console. One at a time, instead of one long page under the hero.
-use super::*;
+
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum HomeTab {
@@ -36,7 +36,3 @@ impl HomeTab {
 }
 
 
-/// A tab's buttons and content, as the strip and the page take them.
-fn split(tab: (Div, impl IntoElement)) -> (Option<Div>, AnyElement) {
-    (Some(tab.0), tab.1.into_any_element())
-}

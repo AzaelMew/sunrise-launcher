@@ -3,16 +3,13 @@
 //! its version from Mojang's public list (`minecraft_versions`), fetched once when the dialog first
 //! needs it; the game itself comes with the first Play, for an account that owns it.
 use super::*;
-use crate::plate::alpha;
-use crate::shell::{c};
+
+
 use servers_page::Field;
 use std::sync::Arc;
 use sunrise_launcher::loaders::{self, Kind as Loader};
 use sunrise_launcher::minecraft_versions::{ Versions};
-use theme::night;
 
-/// Rows the version list shows at most: the search finds the others.
-const ROWS: usize = 60;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NewKind {
@@ -46,17 +43,6 @@ pub(super) enum LoaderVersions {
     Failed(Loader, String, String),
 }
 
-impl LoaderVersions {
-    /// The loader and Minecraft version they are for.
-    fn of(&self) -> Option<(Loader, &str)> {
-        match self {
-            LoaderVersions::NotAsked => None,
-            LoaderVersions::Loading(l, mc)
-            | LoaderVersions::Ready(l, mc, _)
-            | LoaderVersions::Failed(l, mc, _) => Some((*l, mc)),
-        }
-    }
-}
 
 impl Default for JavaChoice {
     fn default() -> Self {

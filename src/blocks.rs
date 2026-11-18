@@ -80,20 +80,6 @@ pub fn edges(top: Hsla, bottom: Hsla, lip: f32) -> [AnyElement; 2] {
     ]
 }
 
-/// A panel: rows, cards, notices, dialogs.
-pub fn panel(t: &Theme) -> Div {
-    // The glass look: a glass plate, round at 16 (its tokens leave no border or bevel to see).
-    if t.glass {
-        return crate::glass::plate(sunrise_launcher_theme::glass::radius::POPOVER);
-    }
-    div()
-        .relative()
-        .bg(t.panel)
-        .border_2()
-        .border_color(t.outline)
-        .children(edges(t.bevel, t.lip, theme::BEVEL))
-}
-
 /// A square slot for an icon: the picture at `source` when there is one, else the first letter of
 /// `name` on a raised block.
 pub fn slot(source: Option<ImageSource>, name: &str, size: f32, t: &Theme) -> Div {

@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -21,8 +21,6 @@ pub fn process_started() -> Instant {
     *STARTED.get_or_init(Instant::now)
 }
 
-/// Frames further apart than this are the UI resting, not UI frame times.
-const IDLE_GAP: Duration = Duration::from_millis(250);
 pub use sunrise_launcher::backend::GAME_FIRST_FRAME;
 
 pub struct Perf {
@@ -49,15 +47,6 @@ struct Machine {
     load_average: Option<f64>,
 }
 
-impl Machine {
-    fn detect() -> Self {
-        Self {
-            hardware: Hardware::detect(),
-            power: sunrise_bench::power_source().map(str::to_owned),
-            load_average: sunrise_bench::load_average(),
-        }
-    }
-}
 
 impl Perf {
     pub fn new(scenario: &str) -> Perf {
@@ -107,26 +96,6 @@ impl Perf {
 
     pub fn record_since(&mut self, name: &str, since: Instant) {
         self.record(name, since.elapsed().as_secs_f64() * 1000.0);
-    }
-
-    /// Called on every frame the window draws. Returns true for the first.
-    pub fn frame(&mut self) -> bool {
-        let now = Instant::now();
-        let first = self.first_frame.is_none();
-        if first {
-            self.first_frame = Some(now);
-            self.record_since("launcher.start_ms", process_started());
-            let (sender, receiver) = mpsc::channel();
-            self.hardware = Some(receiver);
-            std::thread::spawn(move || {
-                // The window may close before the optional report details finish.
-                let _ = sender.send(Machine::detect());
-            });
-        } else if let Some(gap) = self.last_frame.map(|t| now - t).filter(|g| *g < IDLE_GAP) {
-            self.ui_frames.push(gap.as_secs_f32() * 1000.0);
-        }
-        self.last_frame = Some(now);
-        first
     }
 
     /// The window has drawn its first frame a while ago and none since `quiet`: nothing moves,
@@ -509,6 +478,7 @@ fn binary_bytes() -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
 
     #[test]
     fn performance_tracking_starts_without_hardware_probes() {
@@ -545,46 +515,4 @@ mod tests {
         assert!(perf.hardware.is_none());
     }
 
-    #[test]
-    fn the_first_frame_is_the_start_and_close_frames_are_ui_frames() {
-        let mut perf = Perf::new("test");
-        perf.keep_local_log(false);
-        assert!(perf.frame(), "the first frame");
-        assert!(!perf.frame());
-        std::thread::sleep(IDLE_GAP + Duration::from_millis(20));
-        perf.frame();
-        assert_eq!(
-            perf.ui_frame_times().len(),
-            1,
-            "a resting UI is not a slow frame"
-        );
-        perf.record("launcher.release_list_ms", 120.0);
-        perf.record("launcher.release_list_ms", 80.0);
-        let report = perf.report();
-        assert!(report.metrics.contains_key("launcher.start_ms"));
-        assert!(report.metrics.contains_key("launcher.binary_bytes"));
-        assert_eq!(report.metrics["launcher.release_list_ms"].mean, 100.0);
-        assert_eq!(report.frames[0].phase, "ui");
-    }
-
-    #[test]
-    fn a_bench_window_waits_for_its_first_frame_then_switches_pages() {
-        let mut perf = Perf::new("test");
-        perf.keep_local_log(false);
-        let mut bench = Bench {
-            out: std::env::temp_dir().join("unused"),
-            began: None,
-            page: 0,
-            switched: None,
-            idle_cpu: None,
-            scroll: None,
-        };
-        assert!(matches!(bench.tick(&perf), Step::Wait));
-        perf.frame();
-        assert!(matches!(bench.tick(&perf), Step::Go(1)));
-        // A message woke the pump within the tick: the page stays.
-        assert!(matches!(bench.tick(&perf), Step::Wait));
-        bench.switched = bench.switched.map(|at| at - crate::wake::TICK);
-        assert!(matches!(bench.tick(&perf), Step::Go(2)));
-    }
 }

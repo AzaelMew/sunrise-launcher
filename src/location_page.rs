@@ -21,13 +21,6 @@ pub(super) fn startup_error() -> Option<String> {
         })
 }
 
-fn open_error(error: &str) -> String {
-    trf(
-        "Could not open the data folder: {error}",
-        &[("error", error)],
-    )
-}
-
 pub(super) fn startup_note() -> Option<String> {
     env_value("SUNRISE_RELOCATION_BACKUP").map(|paths| {
         trf(

@@ -11,7 +11,7 @@
 //!   a placeholder stands in until one arrives.
 use super::mods_page::{ Event};
 use super::*;
-use gpui::img;
+
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -28,12 +28,6 @@ pub(super) enum Tab {
     Gallery,
     Versions,
 }
-
-const TABS: [(Tab, &str); 3] = [
-    (Tab::Description, "Description"),
-    (Tab::Gallery, "Gallery"),
-    (Tab::Versions, "Versions"),
-];
 
 /// The open project page.
 pub(super) struct Opened {

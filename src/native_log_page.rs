@@ -6,10 +6,10 @@
 //! the panel never shows the last attempt as the latest, and an open panel reads again when a
 //! build starts or ends.
 use super::*;
-use crate::glass_ui::{ white};
+
 use gpui::{ ScrollHandle, SharedString};
 use sunrise_launcher::native_mods;
-use sunrise_launcher_theme::glass::{ink, radius};
+
 
 /// How much of the log the panel shows: its last lines. Copy log still copies all of it.
 const SHOWN: usize = LOG_LINES;

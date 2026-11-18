@@ -4,7 +4,7 @@
 //! what it plays, its name and group, and its icon; Cancel and Create at the foot. Dark
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
-use crate::glass_ui::{self as ui, white};
+
 use new_instance::{ VersionList};
 
 
@@ -12,99 +12,7 @@ use sunrise_launcher::instances::{ stable_builds, Channel, StableBuild};
 use sunrise_launcher::loaders::Kind as Loader;
 use sunrise_launcher_theme::glass::{fill, ink, radius};
 
-/// The loaders Prism Launcher offers, in the mockup's order. Those `loaders::Kind` can install
-/// are shown; the others join when the launcher learns them.
-const LOADERS: [&str; 5] = ["fabric", "quilt", "neoforge", "forge", "liteloader"];
 
-/// The loaders a new modded instance can use now.
-pub(super) fn loaders() -> Vec<Loader> {
-    LOADERS
-        .iter()
-        .filter_map(|id| Loader::parse(id).ok())
-        .collect()
-}
-
-/// A choice card (`CHOICE`): round at 16, white at 12 % when chosen, else 4 %, 7 % under the
-/// pointer.
-pub(super) fn choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div> {
-    keyboard(
-        div()
-            .id(id.into())
-            .relative()
-            .flex()
-            .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
-            .cursor_pointer()
-            .bg(white(if on { fill::ACTIVE } else { 0.04 }))
-            .when(!on, |d| {
-                d.child(ui::back_tint(radius::POPOVER, white(0.03)))
-            }),
-        t,
-    )
-}
-
-/// A `Section`: its title at 13 px, white at 60 %, anything `aside` at its right, then `body`.
-pub(super) fn section(title: SharedString, aside: Option<Div>, body: impl IntoElement) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .flex_none()
-        .child(
-            div()
-                .flex()
-                .items_end()
-                .justify_between()
-                .gap(px(16.))
-                .mb(px(12.))
-                .child(ui::text(13., FontWeight::MEDIUM, ink::NOTE).child(title))
-                .children(aside),
-        )
-        .child(body)
-}
-
-/// A list's row of choices: round at 12, white at 11 % when chosen, 5 % under the pointer.
-pub(super) fn list_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div> {
-    keyboard(
-        div()
-            .id(id.into())
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(16.))
-            .px(px(16.))
-            .rounded(px(crate::glass_ui::rad(radius::ROW)))
-            .cursor_pointer()
-            .when(on, |d| d.bg(white(0.11)))
-            .when(!on, |d| {
-                d.child(ui::back_tint(radius::ROW, white(fill::HOVER)))
-            }),
-        t,
-    )
-}
-
-/// The tick at a list row's end, the accent's soft shade, in a 20 px column.
-pub(super) fn tick(on: bool, soft: u32) -> Div {
-    div()
-        .flex()
-        .flex_none()
-        .justify_center()
-        .w(px(20.))
-        .children(on.then(|| ui::icon("tick-02", 18., ui::color(soft))))
-}
-
-/// A list of rows on white at 4 %, round at 16, scrolling past `max` px.
-pub(super) fn list_box(id: &'static str, max: f32) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex()
-        .flex_col()
-        .max_h(px(max))
-        .overflow_y_scroll()
-        .on_scroll(|_, _, cx| cx.stop_propagation())
-        .p(px(6.))
-        .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
-        .bg(white(0.04))
-}
 
 impl Launcher {
 

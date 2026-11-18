@@ -197,38 +197,6 @@ pub(crate) fn hover_ease(
     }
 }
 
-/// The element `el` itself — not a layer inside it — eased between its rest and hovered looks on
-/// the spring, as the site's cards lift: `paint` draws it at a strength from 0 (rest) to 1
-/// (hovered), and the change plays out in reverse when the pointer leaves. `el` is made
-/// `relative()`, so a `top` offset moves it without moving its neighbours.
-pub(crate) fn hover_move(
-    id: &SharedString,
-    el: Stateful<Div>,
-    paint: impl Fn(Stateful<Div>, f32) -> Stateful<Div> + 'static,
-) -> AnyElement {
-    match hover_now(id, motion::SPRING) {
-        Some(fade) => fade.play(id, el.relative(), paint),
-        None => el.into_any_element(),
-    }
-}
-
-/// Text set in one step of the type scale: headings (heading, title, display) in the pixel face.
-pub(crate) fn text(step: theme::Step) -> Div {
-    let d = div().text_size(px(step.px)).line_height(px(step.line_px()));
-    let d = if step.mono {
-        d.font_family(theme::MONO)
-    } else if step.px >= theme::HEADING.px {
-        d.font_family(theme::PIXEL)
-    } else {
-        d
-    };
-    if step.weight >= 500 {
-        d.font_weight(FontWeight::MEDIUM)
-    } else {
-        d
-    }
-}
-
 /// Sunrise's mark (`docs/media/brand/icon.svg`), cell for cell on its 16 grid: the rays, the sun
 /// and the horizon on the dark tile.
 pub(crate) fn mark(size: f32) -> Div {
@@ -420,6 +388,7 @@ pub(crate) fn sync_system_clipboard(text: String) {
 }
 
 /// An on/off switch: a square knob sliding in a sunk track that turns violet when on.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub(crate) fn switch(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div> {
     if t.glass {
         let look = glass_ui::look();
@@ -458,56 +427,6 @@ pub(crate) fn switch(id: impl Into<SharedString>, on: bool, t: &Theme) -> Statef
                     move |d, p| d.left(px(if on { 2. + 20. * p } else { 22. - 20. * p })),
                 ),
         )
-}
-
-/// A segmented control: a sunk track, the chosen segment a raised block.
-pub(crate) fn segments<T: Copy + PartialEq + 'static>(
-    id: &'static str,
-    options: &[(T, &'static str)],
-    current: T,
-    t: &Theme,
-    on_pick: impl Fn(T, &mut Window, &mut App) + Clone + 'static,
-) -> Stateful<Div> {
-    if t.glass {
-        return glass_ui::segments(id, options, current, t, on_pick);
-    }
-    let t = *t;
-    div()
-        .id(id)
-        .flex()
-        .flex_none()
-        .p(px(2.))
-        .gap(px(2.))
-        .border_2()
-        .border_color(t.outline)
-        .bg(t.well)
-        .children(options.iter().map(|&(value, label)| {
-            let active = current == value;
-            let pick = on_pick.clone();
-            keyboard(div().id(SharedString::from(format!("{id}-{label}"))), &t)
-                .relative()
-                .flex()
-                .items_center()
-                .h(px(theme::SEGMENT))
-                .px(px(14.))
-                .pb(px(2.))
-                .font_family(theme::PIXEL)
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
-                .cursor_pointer()
-                .when(active, |d| {
-                    d.bg(t.button).text_color(t.ink).children(blocks::edges(
-                        t.button_bevel,
-                        t.lip,
-                        3.,
-                    ))
-                })
-                .when(!active, |d| {
-                    d.text_color(t.muted).hover(move |s| s.text_color(t.ink))
-                })
-                .child(div().relative().child(tr(label)))
-                .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx))
-        }))
 }
 
 /// What the Play button does for the selected version.
@@ -551,22 +470,6 @@ pub(crate) fn starts_now(prepared: bool, preparing: bool, running: bool) -> bool
     play_press(prepared, None, preparing || running) == PlayPress::Play
 }
 
-/// Whether `tag` can start being deleted now: it is installed, no instance plays it (`used_by`),
-/// no install is writing it, and it is not already going. Another version deleting at the same
-/// time does not stop it.
-pub(crate) fn removable(
-    installed: &[String],
-    installing: Option<&str>,
-    removing: &[String],
-    used_by: &[&str],
-    tag: &str,
-) -> bool {
-    used_by.is_empty()
-        && installing != Some(tag)
-        && installed.iter().any(|t| t == tag)
-        && !removing.iter().any(|t| t == tag)
-}
-
 /// The selected version once one has been removed: the saved choice if it is still installed,
 /// else the newest left.
 pub(crate) fn selection_after_removal(
@@ -582,121 +485,6 @@ pub(crate) fn disabled(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(theme::DISABLED).cursor_default().tab_stop(false)
 }
 
-/// One row of a list, as its own panel: a name in the pixel face with an optional detail under
-/// it, then a value or a control on the right. Rows were numbered in the quiet look; `_n` keeps
-/// the call sites as they are.
-/// How an available update is named: a Nightly by its title ("Nightly 2026-10-28 · 0c02067"), a
-/// release by its tag.
-pub(crate) fn update_name(release: &Release) -> &str {
-    match release.nightly {
-        Some(_) => &release.name,
-        None => &release.tag,
-    }
-}
-
-/// A plate that stands apart from the page: notices, the console, the agents note.
-pub(crate) fn plate(t: &Theme) -> Div {
-    blocks::panel(t)
-}
-
-/// Something went wrong: a dot in the danger colour, then what happened. The glass look draws it
-/// as its other notices are, outlined in 1 px of that colour.
-pub(crate) fn notice(text_: String, t: &Theme) -> Div {
-    if glass_ui::on() {
-        return outlined_note(text_, t.danger, Some(t.danger));
-    }
-    plate(t)
-        .flex()
-        .gap(px(12.))
-        .p(px(16.))
-        .text_size(px(theme::UI.px))
-        .line_height(px(21.))
-        .text_color(t.ink)
-        .border_l(px(6.))
-        .child(
-            div()
-                .absolute()
-                .top(px(-2.))
-                .bottom(px(-2.))
-                .left(px(-6.))
-                .w(px(6.))
-                .bg(t.danger),
-        )
-        .child(blocks::icon("info-box", 20., t.danger))
-        .child(div().flex_1().min_w_0().child(text_))
-}
-
-/// Something worth knowing, nothing wrong: in the glass look, a quiet outline and an info mark.
-pub(crate) fn hint(text_: String, t: &Theme) -> Div {
-    if glass_ui::on() {
-        return outlined_note(text_, glass_ui::white(glass_ui::edge::REST), None);
-    }
-    plate(t)
-        .flex()
-        .gap(px(12.))
-        .p(px(16.))
-        .text_size(px(theme::UI.px))
-        .line_height(px(21.))
-        .text_color(t.muted)
-        .child(div().flex_1().min_w_0().child(text_))
-}
-
-/// A note in the glass look: `edge` around it, a dot in `dot` (or an info mark without one),
-/// then the text.
-fn outlined_note(text_: String, edge: Hsla, dot: Option<Hsla>) -> Div {
-    use sunrise_launcher_theme::glass::ink;
-    let mark = match dot {
-        Some(c) => div()
-            .flex_none()
-            .mt(px(7.))
-            .size(px(7.))
-            .rounded_full()
-            .bg(c)
-            .into_any_element(),
-        None => glass_ui::icon("information-circle", 18., glass_ui::white(ink::QUIET))
-            .flex_none()
-            .into_any_element(),
-    };
-    div()
-        .flex()
-        .items_start()
-        .gap(px(12.))
-        .px(px(16.))
-        .py(px(14.))
-        .border_1()
-        .border_color(edge)
-        .font_family(sunrise_launcher_theme::glass::FONT)
-        .text_size(px(14.))
-        .line_height(px(21.))
-        .text_color(glass_ui::white(ink::FULL))
-        .child(mark)
-        .child(div().flex_1().min_w_0().child(text_))
-}
-
-/// An empty state: a short sentence, and the one thing to do about it.
-pub(crate) fn centered(text_: &str, t: &Theme) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .items_start()
-        .gap(px(16.))
-        .py(px(48.))
-        .child(text(theme::UI).text_color(t.muted).child(text_.to_string()))
-}
-
-/// `1234` as `1,234`.
-pub(crate) fn thousands(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
 pub(crate) fn short(path: &std::path::Path) -> String {
     let home = dirs::home_dir().unwrap_or_default();
     match path.strip_prefix(&home) {
@@ -705,18 +493,9 @@ pub(crate) fn short(path: &std::path::Path) -> String {
     }
 }
 
-pub(crate) fn megabytes(bytes: u64) -> String {
-    if bytes < 1_000_000 {
-        return tr("under 1 MB").to_string();
-    }
-    trf(
-        "{count} MB",
-        &[("count", &format!("{:.0}", bytes as f64 / 1_000_000.0))],
-    )
-}
-
 /// A thin bar. A known fraction eases from its previous value; an unknown one shuttles slowly.
 /// Progress: a plate-coloured track filling with the accent; work of unknown length shuttles.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub(crate) fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
     // Night: a thin accent line on a plate's colour, square like the art. Glass: the mockup's
     // `Bar`, 4 px and round, in the accent's soft shade on white at 12 %.

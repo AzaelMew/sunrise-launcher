@@ -6,12 +6,8 @@ use super::*;
 use gpui::RenderImage;
 use std::sync::Arc;
 use sunrise_launcher::browser::images;
-use sunrise_launcher::instances::{self};
 
-/// Sunrise's mark (`docs/media/brand/icon.svg`), as the icon theme holds it.
-const MARK: &[u8] = include_bytes!("../assets/logos/sunrise.png");
-/// The loaders a logo is drawn for.
-const LOADERS: [&str; 4] = ["fabric", "quilt", "forge", "neoforge"];
+
 
 impl Launcher {
 
@@ -47,14 +43,6 @@ fn fitted(bytes: Vec<u8>, size: f32, scale: f32) -> Option<Arc<RenderImage>> {
     let texels: Vec<[u8; 4]> = image.pixels().map(|p| p.0).collect();
     let whole = (side as usize / w.max(h)).max(1) as f32;
     Some(art::bake(&texels, w, h, whole / scale, scale))
-}
-
-/// An image file's bytes as a picture chosen in the instance dialog: a loader's logo, Minecraft's
-/// grass block.
-pub(super) fn chosen(bytes: Vec<u8>, scale: f32) -> Option<Chosen> {
-    let png = instances::picture(bytes).ok()?;
-    let preview = fitted(png.clone(), 28., scale)?;
-    Some(Chosen { png, preview })
 }
 
 /// A picture chosen in the instance dialog, written on Save.

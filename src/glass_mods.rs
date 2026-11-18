@@ -19,8 +19,8 @@
 //! install's progress (cards under the two).
 
 
-use crate::glass_ui::{ white};
-use sunrise_launcher_theme::glass::{ink, radius};
+
+
 
 
 /// Bringing a picked project's card into view where it sits under the list (a narrow window):

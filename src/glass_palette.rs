@@ -8,14 +8,11 @@
 
 use super::line_edit::{ LineEdit};
 use super::*;
-use crate::glass_ui::{ white};
+
 
 use sunrise_launcher::browser::Project;
 
-use sunrise_launcher_theme::glass::ink;
 
-/// Commands listed at most (`slice(0, 8)`).
-const SHOWN: usize = 8;
 
 pub(super) struct Palette {
     query: LineEdit,

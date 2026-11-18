@@ -3,7 +3,7 @@
 //! that happens only after the player confirms, without their home folder or names.
 
 use super::*;
-use crate::scrollbar::TakeWheel;
+
 
 use sunrise_launcher::game_log::{ Shared};
 

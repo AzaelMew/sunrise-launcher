@@ -4,13 +4,6 @@ use super::*;
 use storage::Category;
 use sunrise_launcher::browser;
 
-/// What a Clear click asks to confirm, and what answering does: `Some(clear)` starts that
-/// cleanup, `None` (Cancel) clears nothing. Either answer ends the question.
-fn answer(pending: &mut Option<Option<Category>>, accept: bool) -> Option<Option<Category>> {
-    let asked = pending.take()?;
-    accept.then_some(asked)
-}
-
 impl Launcher {
     pub(super) fn refresh_storage(&mut self, clear: Option<Category>, all: bool) {
         if self.storage_pending {
@@ -143,27 +136,3 @@ pub(crate) fn category_about(category: Category) -> &'static str {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cancel_clears_nothing_and_accept_clears_what_was_asked() {
-        let mut pending = Some(Some(Category::PrebuiltGames));
-        assert_eq!(answer(&mut pending, false), None);
-        assert_eq!(pending, None);
-        assert_eq!(
-            answer(&mut pending, true),
-            None,
-            "nothing asked, nothing cleared"
-        );
-        let mut pending = Some(None);
-        assert_eq!(answer(&mut pending, true), Some(None), "Clear all");
-        assert_eq!(pending, None);
-        let mut pending = Some(Some(Category::RustCompiler));
-        assert_eq!(
-            answer(&mut pending, true),
-            Some(Some(Category::RustCompiler))
-        );
-    }
-}

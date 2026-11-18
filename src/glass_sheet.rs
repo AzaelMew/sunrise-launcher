@@ -4,12 +4,12 @@
 //! right, under its name and what it is for, its rows in groups; Save and Cancel and the
 //! instance's folder along the foot. The page behind is frosted and dimmed, as under Settings.
 use super::*;
-use crate::glass_instance::section;
-use crate::glass_ui::{self as ui, white};
+
+
 use new_instance::NewKind;
 use servers_page::Field;
-use sunrise_launcher::instances::{Channel, Icon, Instance, Kind as InstanceKind, Plays};
-use sunrise_launcher_theme::glass::{ink, radius};
+use sunrise_launcher::instances::{Channel, Icon, Instance, Plays};
+
 
 /// The sheet's sections.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -30,14 +30,6 @@ impl SheetTab {
         SheetTab::Hooks,
         SheetTab::Storage,
     ];
-
-    /// The sections `instance` has something to set in: the Launch section is for a Java instance
-    /// (Sunrise's own edition runs without Java).
-    fn shown(instance: &Instance) -> impl Iterator<Item = SheetTab> + '_ {
-        SheetTab::ALL
-            .into_iter()
-            .filter(|t| *t != SheetTab::Launch || instance.java.is_some())
-    }
 
     /// Its name, icon and the line under its name.
     fn about(self) -> (&'static str, &'static str, &'static str) {
@@ -79,31 +71,6 @@ impl SheetTab {
     }
 }
 
-/// The dialog's largest size: Settings' own.
-const WIDTH: f32 = 960.;
-const HEIGHT: f32 = 660.;
-
-/// A group of rows (the mockup's `grp`): its name over a faint rounded box.
-fn group(title: Option<SharedString>, rows: Div) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .children(title.map(|title| {
-            ui::text(12.5, FontWeight::SEMIBOLD, ink::QUIET)
-                .px(px(4.))
-                .pb(px(7.))
-                .child(title)
-        }))
-        .child(
-            rows.flex()
-                .flex_col()
-                .p(px(2.))
-                .rounded(px(crate::glass_ui::rad(14.)))
-                .bg(white(0.03))
-                .border_1()
-                .border_color(white(0.1)),
-        )
-}
 
 /// What the dialog would keep, as typed or picked.
 struct Draft {
@@ -224,6 +191,7 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sunrise_launcher::instances::Kind as InstanceKind;
 
     fn saved() -> Instance {
         Instance {

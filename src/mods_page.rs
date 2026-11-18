@@ -12,20 +12,11 @@ use java_instance::Target;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use sunrise_launcher::browser::{
-    self, installed, java, java_instance, sunrise, Kind as PackKind, Project, SourceId,
-    Support};
+    self, installed, java, java_instance, sunrise, Kind as PackKind, Project, SourceId};
 use sunrise_launcher::modpacks;
 use sunrise_launcher::native_status;
 use sunrise_launcher::porter::Check;
 
-/// The kinds, as the Mods page's tabs: name and icon.
-const KINDS: [(PackKind, &str, &str); 5] = [
-    (PackKind::Mod, "Mods", "box"),
-    (PackKind::Modpack, "Modpacks", "archive"),
-    (PackKind::ResourcePack, "Resource packs", "image"),
-    (PackKind::Shader, "Shader packs", "zap"),
-    (PackKind::DataPack, "Data packs", "notes"),
-];
 /// Java mods checked at once.
 const CHECKING: usize = 2;
 const PAGE: usize = 20;
@@ -251,44 +242,11 @@ impl Mods {
         self.focused = self.focus.is_focused(window);
     }
 
-    pub(super) fn entry(&self, p: &Project) -> Option<&installed::Entry> {
-        self.installed
-            .iter()
-            .find(|e| e.source == p.source && e.project == p.id)
-    }
-
     /// The Java instance `kind` goes into as files, when one is selected.
     pub(super) fn java_for(&self, kind: PackKind) -> Option<&Target> {
         self.java.as_ref().filter(|t| t.takes(kind))
     }
 
-    /// How well a result runs: a Java mod's from its check once it has one. In a Java
-    /// instance, a result was searched for its version and loader: installing checks the file.
-    pub(super) fn support(&self, p: &Project) -> Support {
-        if self.java_for(p.kind).is_some() {
-            return Support::Works;
-        }
-        let metadata = p.support(&self.game);
-        if p.kind != PackKind::Mod || p.source == SourceId::Sunrise || !metadata.installable() {
-            return metadata;
-        }
-        match self.checks.get(&(p.source, p.id.clone())) {
-            Some(Checking::Done(c)) => java::support_of(c),
-            Some(Checking::Failed(e)) => {
-                Support::Partial(trf("Not checked: {error}", &[("error", e)]))
-            }
-            _ => Support::Partial(tr("Checking its jar…").into()),
-        }
-    }
-}
-
-/// `51404735` → `51.4M`.
-fn count(n: u64) -> String {
-    match n {
-        0..1_000 => n.to_string(),
-        1_000..1_000_000 => format!("{:.1}k", n as f64 / 1e3),
-        _ => format!("{:.1}M", n as f64 / 1e6),
-    }
 }
 
 impl Launcher {

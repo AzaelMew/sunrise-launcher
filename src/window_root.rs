@@ -55,17 +55,6 @@ impl Backdrop {
         }
     }
 
-    /// Called from the launcher's frame: draws again only when something changed.
-    pub fn set(&mut self, back: Back, cx: &mut Context<Self>) {
-        if self.back.as_ref() != Some(&back) {
-            let was = self.back.as_ref().is_some_and(|b| b.cover.is_some());
-            if !was && back.cover.is_some() {
-                self.arrivals += 1;
-            }
-            self.back = Some(back);
-            cx.notify();
-        }
-    }
 }
 
 impl Render for Backdrop {

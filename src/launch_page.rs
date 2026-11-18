@@ -2,8 +2,7 @@
 //! (`sunrise_launcher::launch`): a command before it, a wrapper, and environment variables.
 use super::servers_page::Field;
 use super::*;
-use gpui::{
-    canvas, relative, Bounds, Pixels};
+use gpui::{ Bounds, Pixels};
 use sunrise_launcher::launch;
 
 pub(super) struct LaunchPanel {
@@ -51,14 +50,6 @@ impl MemorySlider {
         self.shown = None;
     }
 
-}
-
-/// A Linux switch: which one, its label, and what it does.
-#[derive(Clone, Copy)]
-enum Toggle {
-    GameMode,
-    MangoHud,
-    Gpu,
 }
 
 impl Launcher {
@@ -113,29 +104,6 @@ impl Launcher {
         });
         if let Some(p) = &mut self.launch {
             p.saved = Some(saved);
-        }
-    }
-
-    /// Flips a Linux switch in the draft: Save keeps it with the rest, Cancel drops it.
-    fn flip(&mut self, toggle: Toggle) {
-        let Some(panel) = &self.launch else {
-            return;
-        };
-        let Some(saved) = self.instances.list.iter().find(|i| i.id == panel.instance) else {
-            return;
-        };
-        let l = &saved.launch;
-        let mut switches = panel
-            .switches
-            .unwrap_or([l.gamemode, l.mangohud, l.dedicated_gpu]);
-        let i = match toggle {
-            Toggle::GameMode => 0,
-            Toggle::MangoHud => 1,
-            Toggle::Gpu => 2,
-        };
-        switches[i] = !switches[i];
-        if let Some(panel) = &mut self.launch {
-            panel.switches = Some(switches);
         }
     }
 

@@ -1,9 +1,9 @@
 //! The glass look's controls ("Glass" in `docs/design-system.md`): the parts of the mockup's
 //! `components/launcher/launcher-ui.tsx` and its shell (`launcher-app.tsx`), at its sizes. White
 //! text and fills at a few opacities over [`glass`](crate::glass) plates; Geist throughout.
-use crate::{hover_fade, hover_is, keyboard, note_hover, theme::Theme, track_hover, Kind};
+use crate::{hover_fade, hover_is, keyboard, theme::Theme, track_hover, Kind};
 use gpui::{
-    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, ClickEvent, Div, FontWeight, Hsla, SharedString, Stateful, Svg, TextRun, Window};
+    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, Div, FontWeight, Hsla, SharedString, Stateful, Svg, TextRun, Window};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -34,6 +34,7 @@ thread_local! {
 const INK: u32 = sunrise_launcher_theme::glass::ON_LIGHT;
 
 /// Set as each frame's pages start being built: whether the appearance is light.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub fn set_light(light: bool) {
     LIGHT.set(light);
 }
@@ -41,24 +42,6 @@ pub fn set_light(light: bool) {
 /// Whether the light appearance is drawn.
 pub fn light() -> bool {
     LIGHT.get()
-}
-
-/// The look's green (`--live`): darker in light, to read on white plates.
-pub fn live() -> Hsla {
-    color(if light() {
-        0x15803d
-    } else {
-        sunrise_launcher_theme::glass::LIVE
-    })
-}
-
-/// The look's amber (`--warn`).
-pub fn warn() -> Hsla {
-    color(if light() {
-        0xb45309
-    } else {
-        sunrise_launcher_theme::glass::WARN
-    })
 }
 
 /// The look's red (`--danger`).
@@ -76,6 +59,7 @@ pub fn on() -> bool {
 }
 
 /// Set as each frame's pages start being built.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub fn set_on(on: bool) {
     ON.set(on);
     BACKS.set(0);
@@ -91,12 +75,8 @@ pub fn rad(r: f32) -> f32 {
     }
 }
 
-/// The Outline look's 1 px edge.
-pub fn line() -> Hsla {
-    white(0.12)
-}
-
 /// Set as each frame's pages start being built: the colours for the player's accent.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub fn set_look(look: Glass) {
     LOOK.set(look);
 }
@@ -134,33 +114,6 @@ pub fn text(size: f32, weight: FontWeight, a: f32) -> Div {
 /// The widths text was laid out in, by key, as [`room`] recorded them on the last frame: what
 /// [`cut`] compares a text's own width against.
 pub type Rooms = Rc<RefCell<HashMap<SharedString, f32>>>;
-
-/// Whether `text` in `family` at `size` and `weight` is wider than the room recorded under `key`,
-/// so a truncating parent cuts it: decides a full-text hover label. False until a room is known.
-pub fn cut(
-    cx: &App,
-    rooms: &Rooms,
-    key: &str,
-    text: &str,
-    family: &'static str,
-    size: f32,
-    weight: FontWeight,
-) -> bool {
-    let Some(room) = rooms.borrow().get(key).copied() else {
-        return false;
-    };
-    let system = cx.text_system();
-    let font = system.resolve_font(&gpui::Font {
-        weight,
-        ..gpui::font(family)
-    });
-    let width: f32 = text
-        .chars()
-        .filter_map(|c| system.advance(font, px(size), c).ok())
-        .map(|a| f32::from(a.width))
-        .sum();
-    width > room + 0.5
-}
 
 /// One of the mockup's Hugeicons, stroked in `color`.
 pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
@@ -380,173 +333,6 @@ pub fn back_edge(r: f32, fill: f32, bordered: bool) -> AnyElement {
     })
 }
 
-/// [`hover_back`] in one colour (white at a few %, a dark tint, the danger red), no outline.
-pub fn back_tint(r: f32, c: Hsla) -> AnyElement {
-    hover_back(0., r, move |d, t| d.bg(c.opacity(c.a * t)))
-}
-
-/// `a` towards `b` by `t`, for hover-eased colours.
-pub fn towards(a: Hsla, b: Hsla, t: f32) -> Hsla {
-    Hsla {
-        h: a.h + (b.h - a.h) * t,
-        s: a.s + (b.s - a.s) * t,
-        l: a.l + (b.l - a.l) * t,
-        a: a.a + (b.a - a.a) * t,
-    }
-}
-
-/// `d`, a card built by [`card`] with its children in, wrapped to rise [`crate::motion::LIFT`] px
-/// on the spring while the pointer is on it, its outline brightening. Pressing sinks it
-/// [`crate::motion::PRESS`] px instead.
-pub fn lift(id: &SharedString, d: Stateful<Div>) -> AnyElement {
-    let rest = white(edge::REST + 0.03);
-    let lit = white(edge::HOVER);
-    crate::hover_move(
-        id,
-        d.border_1().active(|s| s.top(px(crate::motion::PRESS))),
-        move |d, t| {
-            d.top(px(-crate::motion::LIFT * t))
-                .border_color(towards(rest, lit, t))
-        },
-    )
-}
-
-/// The site's card: white at 3.5 %, a quiet 1 px outline, `r` corners, its hover eased by [`lift`].
-/// The look (outline, rise, glow) is [`lift`]'s; a card that should not lift takes this alone.
-pub fn card(id: impl Into<SharedString>, r: f32, t: &Theme) -> Stateful<Div> {
-    let id = id.into();
-    keyboard(
-        track_hover(
-            div()
-                .id(id.clone())
-                .relative()
-                .rounded(px(rad(r)))
-                .bg(white(0.035))
-                .border_1()
-                .border_color(white(edge::REST + 0.03))
-                .cursor_pointer(),
-            id,
-        ),
-        t,
-    )
-}
-
-/// The state dot before a row's second line (`Dot`): live green, amber for busy (the mockup
-/// pulses it) and for a warning, the accent's soft shade (given) for an update, white at 35 % for
-/// nothing yet.
-#[derive(Clone, Copy, PartialEq)]
-pub enum Tone {
-    Live,
-    Busy,
-    Warn,
-    Accent(u32),
-    Off,
-}
-
-pub fn dot(tone: Tone) -> Div {
-    let c = match tone {
-        Tone::Live => live(),
-        Tone::Busy | Tone::Warn => warn(),
-        Tone::Accent(soft) => color(soft),
-        Tone::Off => white(0.35),
-    };
-    div().flex_none().size(px(7.)).rounded_full().bg(c)
-}
-
-/// A sidebar row (an instance, a server): `rounded-[12px] p-2`, white at 10 % when it is the one
-/// shown, 5 % under the pointer. Its icon and lines go in as children; `pr` leaves room for a
-/// button laid over its right end.
-pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> Stateful<Div> {
-    let id = id.into();
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .items_center()
-        .gap(px(12.))
-        .w_full()
-        .p(px(8.))
-        .pr(px(pr))
-        .rounded(px(rad(radius::ROW)))
-        .cursor_pointer();
-    // The one shown: white at 10 %, as the design's selected instance row.
-    let d = if current {
-        d.bg(white(fill::SELECTED))
-    } else {
-        d.child(hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
-    };
-    let d = d.child(hover_nudge(&id, 12.));
-    keyboard(track_hover(d, id), t)
-}
-
-/// A top-bar page, as the site's nav: a naked tab — no plate, no pill — its label brightening and
-/// a faint fill arriving under the pointer, with the accent bar growing under it: half out on
-/// hover and all the way out on the page it names (`open`).
-pub fn nav_tab(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    open: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let look = look();
-    let bar = div()
-        .absolute()
-        .bottom(px(1.))
-        .h(px(2.))
-        .rounded(px(rad(2.)))
-        .bg(color(look.accent));
-    let bar = if open {
-        bar.left(px(12.)).right(px(12.)).into_any_element()
-    } else {
-        // Grows from the middle out to 80 % of the tab, at 70 % strength, on the spring.
-        crate::hover_ease(
-            &id,
-            move || {
-                div()
-                    .absolute()
-                    .bottom(px(1.))
-                    .h(px(2.))
-                    .rounded(px(rad(2.)))
-                    .bg(color(look.accent))
-            },
-            move |d, t| {
-                d.left(gpui::relative(0.5 - 0.4 * t))
-                    .right(gpui::relative(0.5 - 0.4 * t))
-                    .opacity(0.7 * t)
-            },
-            crate::motion::SPRING,
-        )
-    };
-    let label: SharedString = label.into();
-    keyboard(
-        track_hover(
-            div()
-                .id(id.clone())
-                .relative()
-                .flex()
-                .flex_none()
-                .items_center()
-                .h(px(36.))
-                .px(px(13.))
-                .rounded(px(rad(radius::CONTROL)))
-                .cursor_pointer()
-                .font_family(sunrise_launcher_theme::glass::FONT)
-                .text_size(px(14.5))
-                .line_height(px(20.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(white(if open { ink::FULL } else { ink::MUTED }))
-                .when(!open, |d| {
-                    d.hover(|s| s.text_color(white(ink::FULL)))
-                        .child(back_tint(radius::CONTROL, white(0.04)))
-                })
-                .child(div().relative().child(label))
-                .child(bar),
-            id,
-        ),
-        t,
-    )
-}
 const MENU_FONT_SIZE: f32 = 14.;
 const MENU_ICON_SIZE: f32 = 17.;
 const MENU_ROW_GAP: f32 = 12.;
@@ -757,17 +543,6 @@ pub fn quiet_icon(
     })
 }
 
-/// A link in a line of text (`font-medium text-white underline-offset-4 hover:underline`).
-pub fn link(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
-    div()
-        .id(id.into())
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(white(ink::FULL))
-        .cursor_pointer()
-        .hover(|s| s.underline())
-        .child(label.into())
-}
-
 /// A field (`WIDE_FIELD`): 44 px, round at 12, white at 7 %, 11 % with the focus, 14 px. Red at
 /// 12 % while what it holds is refused.
 pub fn field(focused: bool, invalid: bool) -> Div {
@@ -809,6 +584,7 @@ thread_local! {
 
 /// A switch (`Toggle`): 40×24, round; the accent with an `on_accent` knob on the right while on,
 /// white at 14 % with a white knob at 70 % on the left while off.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub fn toggle(
     id: impl Into<SharedString>,
     on: bool,
@@ -895,63 +671,6 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         Kind::Secondary => d.bg(white(0.18)).top(px(1.)),
         Kind::Ghost => d.bg(white(0.1)).top(px(1.)),
     })
-}
-
-/// A segmented control in the glass look (the site's): white at 4 % round at 12, 3 px around
-/// 32 px options round at 9; the chosen one in the accent's tint.
-pub fn segments<T: Copy + PartialEq + 'static>(
-    id: &'static str,
-    options: &[(T, &'static str)],
-    current: T,
-    t: &Theme,
-    on_pick: impl Fn(T, &mut Window, &mut App) + Clone + 'static,
-) -> Stateful<Div> {
-    let mut seg = div()
-        .id(id)
-        .relative()
-        .flex()
-        .flex_none()
-        .gap(px(2.))
-        .p(px(3.))
-        .rounded(px(rad(radius::LARGE)))
-        .bg(white(0.04))
-        .border_1()
-        .border_color(white(edge::REST));
-    for &(value, label) in options {
-        let active = current == value;
-        let pick = on_pick.clone();
-        let option = SharedString::from(format!("{id}-{label}"));
-        let d = div()
-            .id(option.clone())
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .h(px(32.))
-            .px(px(12.))
-            .rounded(px(rad(radius::CONTROL - 1.)))
-            .cursor_pointer()
-            .font_family(sunrise_launcher_theme::glass::FONT)
-            .text_size(px(13.5))
-            .line_height(px(20.))
-            .font_weight(FontWeight::MEDIUM)
-            .border_1()
-            .text_color(white(if active { ink::FULL } else { ink::MUTED }))
-            .when(active, |d| {
-                d.border_color(color(look().accent).opacity(0.6))
-                    .bg(color(look().accent).opacity(0.2))
-            })
-            .when(!active, |d| {
-                d.border_color(gpui::transparent_black())
-                    .hover(|s| s.text_color(white(ink::FULL)))
-                    .child(hover_edge(&option, radius::CONTROL - 1., 0.06, false))
-            })
-            .child(div().relative().child(crate::tr(label)))
-            .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx));
-        seg = seg.child(keyboard(track_hover(d, option.clone()), t));
-    }
-    seg
 }
 
 /// A tooltip's view: one line on a solid float, for controls shown by their icon alone.

@@ -5,15 +5,13 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 
-use gpui::{anchored, canvas, deferred, point};
+use gpui::{anchored, deferred, point};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use sunrise_launcher::instances::{ Instance, Kind as InstanceKind};
-use sunrise_launcher_theme::glass::{fill, ink, radius};
+use sunrise_launcher_theme::glass::{ ink, radius};
 
-/// The Outline look's sidebar, 14 from the window's edges.
-pub const SIDEBAR: f32 = 248.;
 /// The ⋮ menu of a sidebar row while open: whose, and whether Delete… was pressed once.
 #[derive(Clone, Default)]
 pub struct RowMenu {

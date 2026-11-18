@@ -3,7 +3,7 @@
 //! add where the client has a CLI (run only on that click, its command shown first), and a test
 //! that starts the MCP server and lists its tools. With No AI on, only the switch shows.
 
-use sunrise_launcher::agents;
+
 
 #[derive(Default)]
 pub(crate) struct AgentsUi {

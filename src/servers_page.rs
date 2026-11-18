@@ -1262,29 +1262,6 @@ impl Launcher {
         d
     }
 
-    /// A row's small button.
-    fn small(
-        &self,
-        id: impl Into<SharedString>,
-        label: &'static str,
-        enabled: bool,
-        cx: &mut Context<Self>,
-        action: impl Fn(&mut Self) + 'static,
-    ) -> Stateful<Div> {
-        let b = button(id, label, Kind::Ghost, &self.theme)
-            .h(px(28.))
-            .px(px(10.))
-            .text_size(px(theme::CAPTION.px));
-        if enabled {
-            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                action(this);
-                cx.notify();
-            }))
-        } else {
-            disabled(b)
-        }
-    }
-
     // ----- The page -------------------------------------------------------------------------
 
     fn add_server_folder(&mut self, cx: &mut Context<Self>) {
@@ -1338,29 +1315,6 @@ impl Launcher {
             })();
             let _ = tx.send(Event::Created(result));
         });
-    }
-
-    fn choice(
-        &self,
-        id: &'static str,
-        key: &'static str,
-        options: &[(&'static str, &'static str)],
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let (section, field) = key.split_once('.').unwrap_or_default();
-        let current = self.servers.shown(section, field);
-        let current: &'static str = options
-            .iter()
-            .find(|(v, _)| *v == current)
-            .map_or("", |(v, _)| v);
-        let this = cx.entity().downgrade();
-        segments(id, options, current, &self.theme, move |value, _, cx| {
-            let _ = this.update(cx, |this, cx| {
-                this.set_setting(key, value.to_string());
-                cx.notify();
-            });
-        })
-        .into_any_element()
     }
 
     /// The server's details came back without its settings: its sunrise-server predates

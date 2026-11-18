@@ -55,10 +55,6 @@ impl Github {
         }
     }
 
-    pub(super) fn note_focus(&mut self, window: &Window) {
-        self.focused = self.focus.is_focused(window);
-    }
-
     fn reread(&mut self, home: &Path) {
         self.home = Some(home.to_owned());
     }

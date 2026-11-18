@@ -34,8 +34,6 @@ mod frame;
 mod game_tools;
 mod github_mods_page;
 mod glass_home;
-mod glass_home_lists;
-mod glass_home_tabs;
 mod glass_instance;
 mod glass_instance_java;
 mod glass_mod_states;
@@ -624,47 +622,6 @@ mod tests {
     }
 
     #[test]
-    fn a_second_version_can_be_removed_while_another_deletes() {
-        let installed = ["v0.2.97".to_string(), "v0.2.76".to_string()];
-        let removing = ["v0.2.97".to_string()];
-        assert!(super::removable(
-            &installed,
-            None,
-            &removing,
-            &[],
-            "v0.2.76"
-        ));
-        assert!(!super::removable(
-            &installed,
-            None,
-            &removing,
-            &[],
-            "v0.2.97"
-        ));
-        assert!(!super::removable(
-            &installed,
-            Some("v0.2.76"),
-            &[],
-            &[],
-            "v0.2.76"
-        ));
-        assert!(!super::removable(&installed, None, &[], &[], "v0.2.85"));
-    }
-
-    #[test]
-    fn a_version_an_instance_plays_cannot_be_removed() {
-        let installed = ["v0.2.97".to_string(), "v0.2.76".to_string()];
-        assert!(!super::removable(
-            &installed,
-            None,
-            &[],
-            &["Sunrise"],
-            "v0.2.97"
-        ));
-        assert!(super::removable(&installed, None, &[], &[], "v0.2.97"));
-    }
-
-    #[test]
     fn the_selection_survives_a_removal_or_moves_to_the_newest_left() {
         let left = ["v0.2.49".to_string(), "v0.2.48".to_string()];
         let pick =
@@ -751,14 +708,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn counts_get_thousands_separators() {
-        let shown: Vec<String> = [0, 7, 999, 1000, 12_300, 1_234_500]
-            .into_iter()
-            .map(super::thousands)
-            .collect();
-        assert_eq!(shown, ["0", "7", "999", "1,000", "12,300", "1,234,500"]);
-    }
 }
 
 mod native_build;

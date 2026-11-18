@@ -465,15 +465,6 @@ impl Launcher {
     }
 }
 
-/// The first letter or digit of a name, for an icon without a picture.
-pub(super) fn initial(name: &str) -> String {
-    name.chars()
-        .find(|c| c.is_alphanumeric())
-        .unwrap_or('?')
-        .to_uppercase()
-        .to_string()
-}
-
 /// Validate the two fields together, without treating an invalid edit as an empty size.
 fn validate_window(width: &str, height: &str) -> Result<Option<(u32, u32)>, ()> {
     let (width, height) = (width.trim(), height.trim());

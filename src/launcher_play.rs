@@ -72,32 +72,6 @@ impl Launcher {
         });
     }
 
-    /// Deletes an installed version on a background thread: a version is thousands of files and
-    /// the window must keep drawing meanwhile. `Msg::Removed` ends it.
-    pub(crate) fn remove(&mut self, tag: &str) {
-        self.confirm_remove = None;
-        let installing = self.installing.as_ref().map(|(t, _)| t.as_str());
-        if !removable(
-            &self.installed,
-            installing,
-            &self.removing,
-            &self.instances_using(tag),
-            tag,
-        ) {
-            return;
-        }
-        self.install_error = None;
-        self.removing.push(tag.to_string());
-        self.installed.retain(|t| t != tag);
-        self.settings.selected =
-            selection_after_removal(&self.installed, self.settings.selected.take());
-        let (tag, tx) = (tag.to_string(), self.tx.clone());
-        std::thread::spawn(move || {
-            let result = backend::remove_version(&tag);
-            let _ = tx.send(Msg::Removed(tag, result));
-        });
-    }
-
 
     /// Prepares the selected version, its Minecraft files from the player's install or, for an
     /// owner who asks, from Mojang.
@@ -335,29 +309,6 @@ impl Launcher {
                 let _ = tx.send(Msg::AccountStatus(account.uuid, generation, status));
             });
         }
-    }
-
-    pub(crate) fn refresh_account(&mut self, uuid: String) {
-        let Some(generation) = self.begin_auth_job(&uuid) else {
-            return;
-        };
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let progress = |phase| {
-                let _ = tx.send(Msg::AccountProgress(uuid.clone(), generation, phase));
-            };
-            progress(account::session::Phase::Keychain);
-            if let Ok(status) = account::session::refresh_with_progress(&uuid, &progress) {
-                let _ = tx.send(Msg::AccountStatus(uuid, generation, status));
-            } else {
-                // It may have been removed through the CLI while this window was open.
-                let _ = tx.send(Msg::AccountRemoved(
-                    uuid,
-                    generation,
-                    Ok(Accounts::load().has_owner(account::store())),
-                ));
-            }
-        });
     }
 
     /// Generic Add account and targeted re-sign-in share the launcher-owned device-code flow.

@@ -9,7 +9,7 @@
 use super::*;
 
 
-use sunrise_launcher_theme::glass::{ink, radius};
+
 
 /// A release's day as the mockup writes it ("Nov 1"), with its time in UTC when known.
 pub(super) fn published(date: &str, time: &str) -> String {
@@ -19,19 +19,6 @@ pub(super) fn published(date: &str, time: &str) -> String {
     } else {
         trf("{day}, {time} UTC", &[("day", &day), ("time", time)])
     }
-}
-
-/// The compact title and commit line for a published Nightly.
-///
-/// A nightly's short commit, which only a tooltip shows; empty for any other version.
-fn commit_of(tag: &str) -> String {
-    sunrise_launcher::nightly::label(tag)
-        .and_then(|label| {
-            label
-                .split_once(" · ")
-                .map(|(_, commit)| commit.chars().take(7).collect())
-        })
-        .unwrap_or_default()
 }
 
 impl Launcher {
@@ -48,22 +35,7 @@ impl Launcher {
         }
     }
 
-    /// The names of the Sunrise instances that play `tag`.
-    pub(crate) fn instances_using(&self, tag: &str) -> Vec<&str> {
-        self.instances
-            .list
-            .iter()
-            .filter(|i| i.java.is_none() && self.version_of(i).map(String::as_str) == Some(tag))
-            .map(|i| i.name.as_str())
-            .collect()
-    }
-
 }
 
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}
