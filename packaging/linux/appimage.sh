@@ -31,6 +31,7 @@ mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" \
 mkdir -p "$appdir/LICENSES"
 cp "$repo/LICENSE" "$appdir/LICENSE"
 cp "$repo/LICENSES/MIT-Horizon.txt" "$appdir/LICENSES/"
+cp "$repo/assets/fonts/OFL-Figtree.txt" "$appdir/LICENSES/"
 
 # The program.
 cp "$binary" "$appdir/usr/bin/sunrise-launcher"
