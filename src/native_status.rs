@@ -265,13 +265,16 @@ pub enum Registry {
     Listed(String),
     /// The registry lists no such file for that id.
     NotListed,
+    /// The registry has taken this file or its project down, even if it still lists it.
+    Revoked,
     /// The registry hasn't answered in this run, so nothing says whose file it is.
     Unchecked,
 }
 
 /// What a build of game folder `home` takes in ([`enabled`]'s packages), each named from its own
 /// file: a package gets the registry's name only when its bytes are a file `index` lists for its
-/// id. A package someone put there under a registry mod's id stays an id and a file name.
+/// id and has not taken down. A package someone put there under a registry mod's id stays an
+/// id and a file name.
 /// `index` is the registry's own answer (`sunrise::fetched_index`), never the copy kept in the
 /// game folder, which a package there could have written to list itself.
 pub fn build_inputs(
@@ -281,17 +284,20 @@ pub fn build_inputs(
     enabled_files(home)
         .into_iter()
         .map(|(path, (id, _, _))| {
-            let listed = |index: &sunrise_launcher_smod::index::Index| {
-                let p = index.project(&id)?;
-                let hash = sunrise_launcher_smod::index::sha256_file(&path).ok()?;
-                p.versions
-                    .iter()
-                    .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
-                    .then(|| p.name.clone())
-            };
             let registry = match index {
                 None => Registry::Unchecked,
-                Some(index) => listed(index).map_or(Registry::NotListed, Registry::Listed),
+                Some(index) => match sunrise_launcher_smod::index::sha256_file(&path) {
+                    Ok(hash) if index.revoked(&id, &hash).is_some() => Registry::Revoked,
+                    Ok(hash) => index
+                        .project(&id)
+                        .filter(|p| {
+                            p.versions
+                                .iter()
+                                .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
+                        })
+                        .map_or(Registry::NotListed, |p| Registry::Listed(p.name.clone())),
+                    Err(_) => Registry::NotListed,
+                },
             };
             let file = path
                 .file_name()
@@ -895,11 +901,24 @@ mod tests {
             [input(Registry::Listed("Coordinates HUD".into()))]
         );
         assert_eq!(build_inputs(home.path(), None), unchecked);
-        // Listed under another project's id only: still not the registry's.
         let hash = index.project("coords_hud").unwrap().versions[0]
             .file
             .sha256
             .clone();
+        // The exact bytes still appear in the catalogue, but the takedown wins.
+        index.revoked.push(sunrise_launcher_smod::index::Revoked {
+            id: "coords_hud".into(),
+            sha256: Some(hash.clone()),
+            reason: "Test takedown".into(),
+            date: String::new(),
+        });
+        assert_eq!(
+            build_inputs(home.path(), Some(&index)),
+            [input(Registry::Revoked)]
+        );
+        assert_eq!(build_inputs(home.path(), None), unchecked);
+        index.revoked.clear();
+        // Listed under another project's id only: still not the registry's.
         for p in &mut index.projects {
             let own = p.id == "coords_hud";
             p.versions[0].file.sha256 = if own { "0".repeat(64) } else { hash.clone() };

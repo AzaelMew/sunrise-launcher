@@ -60,6 +60,7 @@ fn build_label(input: &BuildInput) -> String {
         Registry::Listed(_) | Registry::NotListed => {
             crate::i18n::trf("{id} ({file}, not from the registry)", &own)
         }
+        Registry::Revoked => crate::i18n::trf("{id} ({file}, taken down)", &own),
         Registry::Unchecked => {
             crate::i18n::trf("{id} ({file}, not checked against the registry)", &own)
         }
@@ -156,6 +157,10 @@ mod tests {
         assert_eq!(
             build(input(Registry::Listed(String::new()))),
             "jei (jei.smod, not from the registry)"
+        );
+        assert_eq!(
+            build(input(Registry::Revoked)),
+            "jei (jei.smod, taken down)"
         );
     }
 
