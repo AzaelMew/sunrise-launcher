@@ -49,6 +49,7 @@ pub(crate) fn chip(
         .h(px(tokens::CONTROL))
         .flex()
         .items_center()
+        .justify_center()
         .rounded(px(tokens::R_PANEL))
         .border_1()
         .border_color(if on {
@@ -100,12 +101,15 @@ pub(crate) fn choices(
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)));
     for (n, (label, on, pick)) in chips.into_iter().enumerate() {
-        group = group.child(chip((id, n), label, on).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
-                pick(this, cx);
-                cx.notify();
-            },
-        )));
+        // A few options side by side: short words don't make one smaller than the others.
+        group = group.child(
+            chip((id, n), label, on)
+                .min_w(px(96.))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    pick(this, cx);
+                    cx.notify();
+                })),
+        );
     }
     group.on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
         let step = match ev.keystroke.key.as_str() {
