@@ -28,8 +28,12 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let header = self.alt_mods_header(true, &focus, window, cx);
-        let kind = self.alt.mods.collection;
+        let kind = self.alt.mods.shelf.kind();
         let home = self.alt_mods_home();
+        let list = match kind {
+            Some(kind) => self.installed_packs(kind, cx),
+            None => self.installed_data_packs(cx),
+        };
         div()
             .id("alt-packs-page")
             .size_full()
@@ -42,25 +46,29 @@ impl Launcher {
             .child(header)
             .children(self.alt_strip(cx))
             .child(self.collection_tabs(cx))
-            .child(self.installed_packs(kind, cx))
-            .drag_over::<ExternalPaths>(|s, _, _, _| s.border_1().border_color(c(MUTED)))
-            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
-                this.import_pack_files(home.clone(), kind, paths.paths().to_vec(), cx);
-                cx.stop_propagation();
-            }))
+            .child(list)
+            // A file dropped on the page joins the collection shown; a data pack needs a world.
+            .when_some(kind, |page, kind| {
+                page.drag_over::<ExternalPaths>(|s, _, _, _| s.border_1().border_color(c(MUTED)))
+                    .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                        this.import_pack_files(home.clone(), kind, paths.paths().to_vec(), cx);
+                        cx.stop_propagation();
+                    }))
+            })
             .into_any_element()
     }
 
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
         let mut tabs = div().flex().flex_wrap().items_center().gap(px(8.));
         for (index, (kind, label)) in [
-            (Kind::Resource, tr("Resource packs")),
-            (Kind::Shader, tr("Shader packs")),
+            (Shelf::Resource, tr("Resource packs")),
+            (Shelf::Shader, tr("Shader packs")),
+            (Shelf::Data, tr("Data packs")),
         ]
         .into_iter()
         .enumerate()
         {
-            let chosen = self.alt.mods.collection == kind;
+            let chosen = self.alt.mods.shelf == kind;
             tabs = tabs.child(
                 chip(
                     ElementId::named_usize("alt-collection", index),
@@ -68,9 +76,11 @@ impl Launcher {
                     chosen,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.alt.mods.collection != kind {
-                        this.alt.mods.collection = kind;
+                    if this.alt.mods.shelf != kind {
+                        this.alt.mods.shelf = kind;
                         this.reset_pack_view();
+                        this.worlds.stale();
+                        this.alt.mods.data.reread();
                     }
                     cx.notify();
                 })),
@@ -85,7 +95,7 @@ impl Launcher {
             && !self.alt_mutating()
             && !self.alt.mods.examples
             && self.alt.page == Page::Packs
-            && self.alt.mods.collection == kind
+            && self.alt.mods.shelf.kind() == Some(kind)
             && self
                 .selected_instance()
                 .is_some_and(|i| i.java.is_none() && i.home == home)

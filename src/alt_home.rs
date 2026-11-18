@@ -26,8 +26,6 @@ use gpui::{rgb, rgba};
 use sunrise_launcher::browser::{self, Kind, Project, Query, SourceId};
 use sunrise_launcher::worlds::World;
 
-mod world_packs;
-
 /// Worlds shown across the top.
 const WORLDS: usize = 3;
 /// Popular mods listed.
@@ -60,8 +58,6 @@ pub(crate) struct AltHomeState {
     installed_home: Option<std::path::PathBuf>,
     /// An install was under way last frame: the list is read again when it ends.
     was_busy: bool,
-    /// The inline data packs view of one explicitly chosen world.
-    packs: world_packs::WorldPacks,
 }
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
@@ -191,7 +187,7 @@ pub(crate) fn popular_rows(
         .collect()
 }
 
-fn sentence(text: &str) -> String {
+pub(crate) fn sentence(text: &str) -> String {
     let mut chars = text.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
@@ -226,15 +222,36 @@ fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// A server's own picture, or its first letter when it has none.
-fn server_picture(icon: Option<std::sync::Arc<gpui::Image>>, name: &str) -> AnyElement {
-    match icon {
-        Some(image) => gpui::img(image)
+/// The host an address names, without its port, in lower case.
+fn host(address: &str) -> Option<String> {
+    sunrise_launcher_telemetry::server_status::split_address(address)
+        .map(|(host, _)| host.to_ascii_lowercase())
+}
+
+/// The featured server at `address`'s host, whatever port or letter case it was saved with.
+fn featured_at(address: &str) -> Option<Featured> {
+    let host = host(address)?;
+    featured()
+        .into_iter()
+        .find(|f| f.address.and_then(self::host).as_ref() == Some(&host))
+}
+
+/// A server's picture: its own, else the bundled one of a featured server, else its first
+/// letter.
+fn server_picture(
+    icon: Option<std::sync::Arc<gpui::Image>>,
+    badge: Option<Badge>,
+    name: &str,
+) -> AnyElement {
+    match (icon, badge) {
+        (Some(image), _) => gpui::img(image)
             .flex_none()
             .size(px(36.))
             .rounded(px(8.))
             .into_any_element(),
-        None => tile(name, 36.).into_any_element(),
+        (None, Some(Badge::Horizon)) => horizon_mark(36.).into_any_element(),
+        (None, Some(Badge::Sunrise)) => crate::mark(36.).into_any_element(),
+        (None, None) => tile(name, 36.).into_any_element(),
     }
 }
 
@@ -275,18 +292,6 @@ impl Launcher {
         self.alt_refresh_installed(&home);
         self.alt_ping_featured(cx);
         self.alt_popular_load(cx);
-        if self.alt.home.packs.is_open() {
-            // Only check worlds for the chooser when the chooser is actually open.
-            let present: Option<Vec<World>> =
-                (self.worlds.home.as_ref() == Some(&home)).then(|| {
-                    let list = self.worlds.list.iter();
-                    list.filter(|w| w.path.is_dir()).cloned().collect()
-                });
-            self.alt.home.packs.sync(&home, present.as_deref());
-            if self.alt.home.packs.is_open() {
-                return self.alt_world_packs(cx);
-            }
-        }
         let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
         let worlds = if first_start {
             self.alt_welcome(cx)
@@ -345,30 +350,11 @@ impl Launcher {
         } else {
             row
         };
-        // Worlds past the first few are reached from the chooser, never by default.
-        let more = (self.worlds.list.len() > WORLDS).then(|| {
-            let home = self.worlds.home.clone();
-            button("alt-worlds-more", tr("Data packs for other worlds")).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
-                    if let Some(home) = home.clone() {
-                        this.alt.home.packs.open(home, None);
-                    }
-                    cx.notify();
-                },
-            ))
-        });
         div()
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(heading(tr("Your worlds")))
-                    .children(more),
-            )
+            .child(heading(tr("Your worlds")))
             .child(body)
     }
 
@@ -439,7 +425,7 @@ impl Launcher {
     fn alt_world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
         let folder = world.folder.clone();
         let packs = {
-            let (world, home) = (world.clone(), self.worlds.home.clone());
+            let path = world.path.clone();
             Some(
                 button(format!("alt-world-packs-{}", world.folder), "")
                     .size(px(36.))
@@ -447,9 +433,7 @@ impl Launcher {
                     .child(blocks::icon("archive", 17., rgb(TEXT).into()))
                     .tooltip(crate::glass_ui::tip(tr("Data packs")))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(home) = home.clone() {
-                            this.alt.home.packs.open(home, Some(&world));
-                        }
+                        this.alt_show_world_packs(path.clone());
                         cx.notify();
                     })),
             )
@@ -600,10 +584,10 @@ impl Launcher {
         let saved = self.multiplayer.list.clone();
         let mut shown = 0;
         for server in featured() {
-            // Saved already: it shows once, as saved.
-            if server
-                .address
-                .is_some_and(|a| saved.iter().any(|(s, _)| s.ip.eq_ignore_ascii_case(a)))
+            // Saved already, on any port: it shows once, as the saved row marked Featured.
+            if saved
+                .iter()
+                .any(|(s, _)| featured_at(&s.ip).as_ref() == Some(&server))
             {
                 continue;
             }
@@ -676,18 +660,13 @@ impl Launcher {
             .border_t_1()
             .border_color(rgb(SOFT))
             // The picture the server sends wins; until it does, the bundled one.
-            .child(
-                match server
+            .child(server_picture(
+                server
                     .address
-                    .and_then(|a| self.multiplayer.icons.get(a).cloned())
-                {
-                    Some(icon) => server_picture(Some(icon), server.name),
-                    None => match server.badge {
-                        Badge::Horizon => horizon_mark(36.).into_any_element(),
-                        Badge::Sunrise => crate::mark(36.).into_any_element(),
-                    },
-                },
-            )
+                    .and_then(|a| self.multiplayer.icons.get(a).cloned()),
+                Some(server.badge),
+                server.name,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -799,8 +778,10 @@ impl Launcher {
             )),
         };
         // The picture the game saved, else the one the server just sent.
+        let featured = featured_at(&server.ip);
         let picture = server_picture(
             icon.or_else(|| self.multiplayer.icons.get(&server.ip).cloned()),
+            featured.as_ref().map(|f| f.badge),
             &server.name,
         );
         div()
@@ -818,13 +799,27 @@ impl Launcher {
                     .min_w(px(0.))
                     .child(
                         div()
-                            .text_size(px(14.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT))
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(server.name),
+                            .flex()
+                            .items_baseline()
+                            .gap(px(8.))
+                            .child(
+                                div()
+                                    .min_w(px(0.))
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(TEXT))
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(server.name),
+                            )
+                            .children(featured.map(|_| {
+                                div()
+                                    .flex_none()
+                                    .text_size(px(11.))
+                                    .text_color(rgb(MUTED))
+                                    .child(tr("Featured"))
+                            })),
                     )
                     .child(muted(line)),
             )

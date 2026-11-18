@@ -28,11 +28,13 @@ use sunrise_launcher::browser::{
 };
 
 mod actions;
+mod data_packs;
 mod discover;
 mod examples;
 mod installed_view;
 mod model;
 mod pack_discover;
+mod pack_project;
 mod packs;
 mod project;
 mod ui;
@@ -85,6 +87,8 @@ enum Event {
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
+    /// A pack's page, by its source and id.
+    PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
     PackDone(Result<String, String>),
     /// Worlds would be affected: nothing was changed, the player decides.
@@ -93,6 +97,26 @@ enum Event {
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
     Done(String, Vec<(String, String)>),
+}
+
+/// The kinds of pack Packs › Installed lists, one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shelf {
+    Resource,
+    Shader,
+    /// Data packs, which live in worlds (`data_packs`).
+    Data,
+}
+
+impl Shelf {
+    /// The setup's own collection it lists; none for data packs.
+    fn kind(self) -> Option<sunrise_launcher::packs::Kind> {
+        match self {
+            Shelf::Resource => Some(sunrise_launcher::packs::Kind::Resource),
+            Shelf::Shader => Some(sunrise_launcher::packs::Kind::Shader),
+            Shelf::Data => None,
+        }
+    }
 }
 
 pub(crate) struct AltModsState {
@@ -108,9 +132,12 @@ pub(crate) struct AltModsState {
     filters: model::Filters,
     menu: Option<Menu>,
     row_filter: model::RowFilter,
-    collection: sunrise_launcher::packs::Kind,
+    /// The kind Packs › Installed shows.
+    shelf: Shelf,
     /// Discover's resource and data pack scopes (`pack_discover`).
     packs: pack_discover::PackState,
+    /// The worlds' data packs and the world picker (`data_packs`).
+    data: data_packs::DataState,
     selection: BTreeSet<String>,
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
@@ -146,8 +173,9 @@ impl Default for AltModsState {
             filters: model::Filters::default(),
             menu: None,
             row_filter: model::RowFilter::default(),
-            collection: sunrise_launcher::packs::Kind::Resource,
+            shelf: Shelf::Resource,
             packs: Default::default(),
+            data: Default::default(),
             selection: BTreeSet::new(),
             anchor: None,
             confirm: None,
@@ -185,6 +213,7 @@ impl Launcher {
             Page::Project => self.alt_project(cx),
             Page::Installed => self.alt_installed(window, &have_focus, cx),
             Page::PackFind => self.alt_pack_find(window, &find_focus, cx),
+            Page::PackProject => self.alt_pack_project(cx),
             _ => self.alt_discover(window, &find_focus, cx),
         }
     }
@@ -251,7 +280,10 @@ impl Launcher {
 
     /// Mods and Packs share their search fields: going from one to the other starts them empty.
     fn alt_leave_section(&mut self, to_packs: bool) {
-        let in_packs = matches!(self.alt.page, Page::Packs | Page::PackFind);
+        let in_packs = matches!(
+            self.alt.page,
+            Page::Packs | Page::PackFind | Page::PackProject
+        );
         let in_mods = matches!(
             self.alt.page,
             Page::Discover | Page::Installed | Page::Project
@@ -264,7 +296,8 @@ impl Launcher {
         m.find.set(String::new());
         m.filters.text.clear();
         m.menu = None;
-        m.packs.target = None;
+        m.packs.hint = None;
+        m.data = Default::default();
     }
 
     /// Discover or Installed, chosen on the header's switch: remembered for the session.
@@ -279,26 +312,21 @@ impl Launcher {
         m.confirm = None;
         m.menu = None;
         self.game_packs.confirm_remove = None;
-        // Packs keeps the kind across the switch where both sides have it.
+        // Packs keeps the kind across the switch.
         match page {
-            Page::PackFind => {
-                let scope = match self.alt.mods.collection {
-                    sunrise_launcher::packs::Kind::Resource => pack_discover::Scope::Resource,
-                    sunrise_launcher::packs::Kind::Shader => pack_discover::Scope::Shader,
+            Page::PackFind => self.alt_pack_scope(match self.alt.mods.shelf {
+                Shelf::Resource => pack_discover::Scope::Resource,
+                Shelf::Shader => pack_discover::Scope::Shader,
+                Shelf::Data => pack_discover::Scope::Data,
+            }),
+            Page::Packs => {
+                self.alt.mods.shelf = match self.alt.mods.packs.scope {
+                    pack_discover::Scope::Resource => Shelf::Resource,
+                    pack_discover::Scope::Shader => Shelf::Shader,
+                    pack_discover::Scope::Data => Shelf::Data,
                 };
-                if self.alt.mods.packs.scope != pack_discover::Scope::Data {
-                    self.alt_pack_scope(scope);
-                }
+                self.alt.mods.data.reread();
             }
-            Page::Packs => match self.alt.mods.packs.scope {
-                pack_discover::Scope::Resource => {
-                    self.alt.mods.collection = sunrise_launcher::packs::Kind::Resource
-                }
-                pack_discover::Scope::Shader => {
-                    self.alt.mods.collection = sunrise_launcher::packs::Kind::Shader
-                }
-                pack_discover::Scope::Data => {}
-            },
             _ => {}
         }
         self.alt.page = page;
@@ -333,6 +361,7 @@ impl Launcher {
                 }
                 Event::Progress(line, f) => m.busy = Some((line, f)),
                 Event::Packs(seq, result) => self.alt_pack_answer(seq, result),
+                Event::PackPage(key, page) => self.alt_pack_page_answer(key, page),
                 Event::PackDone(result) => self.alt_pack_done(result),
                 Event::Stake(home, action, worlds) => {
                     m.busy = None;
@@ -583,7 +612,10 @@ impl Launcher {
                 .map(|(_, line, f)| (line.clone(), *f))
         });
         // A build is of mods: its strip is Mods' own. The play bar shows it on every page.
-        if !matches!(self.alt.page, Page::Packs | Page::PackFind) {
+        if !matches!(
+            self.alt.page,
+            Page::Packs | Page::PackFind | Page::PackProject
+        ) {
             if let Some(build) = self.alt_build_strip(cx) {
                 return Some(build);
             }
@@ -621,7 +653,14 @@ impl Launcher {
                 .items_center()
                 .justify_between()
                 .gap(px(12.))
-                .child(div().text_size(px(13.)).text_color(c(color)).child(text))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(13.))
+                        .text_color(c(color))
+                        .child(text),
+                )
                 .child(
                     muted(tr("Dismiss"))
                         .id("alt-mods-dismiss")
@@ -654,9 +693,10 @@ impl Launcher {
                 pack_discover::Scope::Shader => tr("Search shader packs"),
                 pack_discover::Scope::Data => tr("Search data packs"),
             },
-            (true, true) => match self.alt.mods.collection {
-                sunrise_launcher::packs::Kind::Resource => tr("Search your resource packs"),
-                sunrise_launcher::packs::Kind::Shader => tr("Search your shader packs"),
+            (true, true) => match self.alt.mods.shelf {
+                Shelf::Resource => tr("Search your resource packs"),
+                Shelf::Shader => tr("Search your shader packs"),
+                Shelf::Data => tr("Search your data packs"),
             },
         }
         .into();

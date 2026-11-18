@@ -97,19 +97,6 @@ fn a_linked_world_or_datapacks_folder_is_refused() {
     assert!(check_world(linked_saves.path(), &linked_saves.path().join("saves/One")).is_err());
 }
 
-#[test]
-fn a_target_belongs_only_to_the_setup_it_was_chosen_in() {
-    let t = Target {
-        instance: "sunrise".into(),
-        home: "/a".into(),
-        world: "/a/saves/W".into(),
-        name: "W".into(),
-    };
-    assert!(target_belongs(&t, "sunrise", Path::new("/a")));
-    assert!(!target_belongs(&t, "other", Path::new("/a")));
-    assert!(!target_belongs(&t, "sunrise", Path::new("/b")));
-}
-
 /// Serves bytes that don't match the checksum the version lists.
 struct Tampered(Project);
 

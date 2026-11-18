@@ -5,11 +5,10 @@
 //! **Scope.** Only packs of the chosen kind: no mods or modpacks come from here, and a hit of
 //! any other kind or source is dropped ([`keep`]).
 //!
-//! **Where a pack goes.** A resource pack goes into the selected setup's `resourcepacks/`. A data
-//! pack goes into one *explicit* world of the selected setup: the one Home's "Data packs" opened
-//! Discover for ([`Launcher::alt_discover_for_world`]). There is no default world and the
-//! world list is never read to pick one. The target is checked again when the player presses
-//! Add and once more in the worker, under the setup's lock ([`check_world`]).
+//! **Where a pack goes.** A resource or shader pack goes into the selected setup's folder. A
+//! data pack goes into the worlds the player ticks in the world picker (`data_packs`): there is
+//! no default world. Each world is checked again in the worker, under the setup's lock
+//! ([`check_world`]).
 //!
 //! **Nothing else changes.** Installing never turns a pack on, starts the game or edits options;
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
@@ -56,16 +55,6 @@ impl Scope {
     }
 }
 
-/// The world a data pack will go into, chosen explicitly for one setup.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Target {
-    /// The setup (instance id) and its game folder the world was chosen in.
-    pub(super) instance: String,
-    pub(super) home: PathBuf,
-    pub(super) world: PathBuf,
-    pub(super) name: String,
-}
-
 pub(super) enum Status {
     Idle,
     Searching,
@@ -79,7 +68,14 @@ pub(super) struct PackState {
     pub(super) status: Status,
     /// The number of the latest search: only its answer is taken.
     pub(super) seq: u64,
-    pub(super) target: Option<Target>,
+    /// The world "Find data packs" was pressed for: the picker opens with it ticked.
+    pub(super) hint: Option<PathBuf>,
+    /// The grid keeps its place while a pack's page is open.
+    pub(super) scroll: gpui::ScrollHandle,
+    /// The pack whose page is open.
+    pub(super) open: Option<super::pack_project::PackOpen>,
+    /// The "?" beside what Sunrise runs of a data pack: under the pointer, pressed open.
+    help: (bool, bool),
 }
 
 impl Default for PackState {
@@ -89,7 +85,10 @@ impl Default for PackState {
             results: Vec::new(),
             status: Status::Idle,
             seq: 0,
-            target: None,
+            hint: None,
+            scroll: gpui::ScrollHandle::new(),
+            open: None,
+            help: (false, false),
         }
     }
 }
@@ -125,7 +124,7 @@ pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
 /// a real folder directly in `saves/`, with neither it, `saves/` nor `datapacks/` a link to
 /// somewhere else. Gives the world's name.
 pub(super) fn check_world(home: &Path, world: &Path) -> Result<String, String> {
-    let stale = || tr("That world is no longer in this setup. Open its Data packs again.");
+    let stale = || tr("That world is no longer in this setup.");
     let plain_dir = |p: &Path| {
         std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
     };
@@ -147,11 +146,6 @@ pub(super) fn check_world(home: &Path, world: &Path) -> Result<String, String> {
         .ok_or_else(|| stale().to_string())
 }
 
-/// Whether `target` still belongs to the setup `instance` with game folder `home`.
-pub(super) fn target_belongs(target: &Target, instance: &str, home: &Path) -> bool {
-    target.instance == instance && target.home == home
-}
-
 impl Launcher {
     /// The selected setup that packs may go into: a Sunrise one, with its folder readable.
     fn pack_setup(&self) -> Option<(String, PathBuf)> {
@@ -160,30 +154,14 @@ impl Launcher {
             .map(|i| (i.id.clone(), i.home.clone()))
     }
 
-    /// Records `world` of the selected setup as the data pack target, after checking it.
-    fn pack_set_target(&mut self, world: PathBuf) -> Result<(), String> {
-        let (instance, home) = self
-            .pack_setup()
-            .ok_or_else(|| tr("Select a Sunrise setup first.").to_string())?;
-        let name = check_world(&home, &world)?;
-        self.alt.mods.packs.target = Some(Target {
-            instance,
-            home,
-            world,
-            name,
-        });
-        Ok(())
-    }
-
-    /// Switches Discover to `scope`. A new scope never keeps a world target: only
-    /// [`Self::alt_discover_for_world`] sets one.
+    /// Switches Discover to `scope`.
     pub(super) fn alt_pack_scope(&mut self, scope: Scope) {
         let p = &mut self.alt.mods.packs;
         if p.scope == scope && !matches!(p.status, Status::Idle) {
             return;
         }
         p.scope = scope;
-        p.target = None;
+        p.hint = None;
         p.results.clear();
         p.status = Status::Idle;
         p.seq += 1;
@@ -191,30 +169,19 @@ impl Launcher {
         self.alt_pack_search();
     }
 
-    /// The Home child's entry: Discover for data packs, aimed at `world` of the selected setup.
-    /// Validates the world, then searches. Changes no file.
-    pub(crate) fn alt_discover_for_world(&mut self, world: PathBuf) {
-        self.alt.page = Page::PackFind;
-        // Discard any prior setup's snapshot before recording this explicit world.
-        self.alt_mods_refresh();
-        self.alt.mods.menu = None;
-        let p = &mut self.alt.mods.packs;
-        p.scope = Scope::Data;
-        p.target = None;
-        p.results.clear();
-        p.status = Status::Idle;
-        p.seq += 1;
-        match self.pack_set_target(world) {
-            Ok(()) => self.alt_dismiss_notice(),
-            Err(why) => self.alt.mods.notice = Some(Err(why)),
-        }
-        self.alt_pack_search();
+    /// "Find data packs" on a world: Discover's data packs, with that world ticked in the
+    /// picker. Changes no file.
+    pub(super) fn alt_find_data_packs(&mut self, world: Option<PathBuf>) {
+        self.alt_choose_view(Page::PackFind);
+        self.alt_pack_scope(Scope::Data);
+        self.alt.mods.packs.hint = world;
     }
 
     /// The setup changed: nothing chosen for the old one carries over.
     pub(super) fn alt_pack_setup_moved(&mut self) {
         let p = &mut self.alt.mods.packs;
-        p.target = None;
+        p.hint = None;
+        p.open = None;
         p.results.clear();
         p.status = Status::Idle;
         p.seq += 1;
@@ -276,11 +243,12 @@ impl Launcher {
         self.alt.mods.notice = Some(result);
         self.game_packs.stale();
         self.world_packs.reread();
+        self.alt.mods.data.reread();
     }
 
-    /// Add on a result: checked against the scope, the selected setup and (for a data pack) the
-    /// chosen world, then installed in a worker.
-    fn alt_pack_install(&mut self, source: SourceId, id: &str) {
+    /// Add on a result: a data pack asks which worlds; a resource or shader pack is checked
+    /// against the scope and the selected setup, then installed in a worker.
+    pub(super) fn alt_pack_install(&mut self, source: SourceId, id: &str) {
         let scope = self.alt.mods.packs.scope;
         let Some(project) = self
             .alt
@@ -293,44 +261,89 @@ impl Launcher {
         else {
             return;
         };
+        if project.kind == Kind::DataPack {
+            let hint = self.alt.mods.packs.hint.clone();
+            self.alt_pick_worlds(super::data_packs::What::Project(project), hint);
+            return;
+        }
         if !self.alt_guard() {
             return;
         }
-        let Some((instance, home)) = self.pack_setup() else {
+        let Some((_, home)) = self.pack_setup() else {
             self.alt.mods.notice = Some(Err(tr("Select a Sunrise setup first.").to_string()));
             return;
-        };
-        // A resource pack never uses a world; a data pack needs the explicit, still valid one.
-        let world = match project.kind {
-            Kind::DataPack => {
-                let target = self.alt.mods.packs.target.clone();
-                let ok = target
-                    .filter(|t| target_belongs(t, &instance, &home))
-                    .ok_or_else(|| {
-                        tr("Open a world's Data packs, then Add, to choose where this goes.")
-                            .to_string()
-                    })
-                    .and_then(|t| check_world(&home, &t.world).map(|_| t));
-                match ok {
-                    Ok(t) => Some(t),
-                    Err(why) => {
-                        self.alt.mods.packs.target = None;
-                        self.alt.mods.notice = Some(Err(why));
-                        return;
-                    }
-                }
-            }
-            _ => None,
         };
         self.alt_dismiss_notice();
         self.alt.mods.busy = Some((tr("Checking the pack…").into(), 0.));
         let (tx, game) = (self.alt.mods.tx.clone(), self.mods_game());
         std::thread::spawn(move || {
-            let result = install(&project, &home, world.as_ref(), &game, &|line, f| {
+            let result = install(&project, &home, &game, &|line, f| {
                 let _ = tx.send(Event::Progress(line.to_owned(), f));
             });
             let _ = tx.send(Event::PackDone(result));
         });
+    }
+
+    /// Where data packs come from and how much of one Sunrise runs, said once for every card:
+    /// the short of it, and the whole list behind a "?".
+    fn data_pack_line(&self, cx: &mut Context<Self>) -> AnyElement {
+        use crate::alt::{CARD, GOLD, LINE, MUTED};
+        let (over, pinned) = self.alt.mods.packs.help;
+        let help = div()
+            .id("alt-data-help")
+            .tab_index(0)
+            .flex_none()
+            .size(px(16.))
+            .rounded_full()
+            .border_1()
+            .border_color(c(if pinned { TEXT } else { LINE }))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(10.5))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(c(if pinned { TEXT } else { MUTED }))
+            .cursor_pointer()
+            .focus_visible(|s| s.border_color(c(GOLD)))
+            .child("?")
+            .on_hover(cx.listener(|this, over: &bool, _, cx| {
+                this.alt.mods.packs.help.0 = *over;
+                cx.notify();
+            }))
+            // A press pins it open, for keyboards and touch; another press closes it.
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                let pinned = &mut this.alt.mods.packs.help.1;
+                *pinned = !*pinned;
+                cx.notify();
+            }));
+        let said = (over || pinned).then(|| {
+            gpui::deferred(
+                div()
+                    .absolute()
+                    .top(px(24.))
+                    .right_0()
+                    .w(px(360.))
+                    .max_w(px(self.alt_content_width()))
+                    .p(px(12.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(c(LINE))
+                    .bg(c(CARD))
+                    .shadow_lg()
+                    .occlude()
+                    .child(muted(browser::datapack_support())),
+            )
+            .with_priority(10)
+        });
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(muted(tr(
+                "From Modrinth, into the worlds you choose. Sunrise runs most of what a data pack does.",
+            )))
+            .child(div().relative().flex_none().child(help).children(said))
+            .into_any_element()
     }
 
     /// Packs › Discover: the header Mods has, the three kinds, where they come from, the cards.
@@ -359,29 +372,19 @@ impl Launcher {
                 })),
             );
         }
-        let setup = self.pack_setup();
-        let target = self
-            .alt
-            .mods
-            .packs
-            .target
-            .clone()
-            .filter(|t| setup.as_ref().is_some_and(|(i, h)| target_belongs(t, i, h)));
-        let from: SharedString = match (scope, &target) {
-            (Scope::Data, Some(t)) => trf(
-                "From Modrinth, into the world {world}.",
-                &[("world", &t.name)],
-            )
-            .into(),
-            (Scope::Data, None) => tr(
-                "From Modrinth. A data pack goes into one world: open a world on Home, then its Data packs, then Add.",
-            )
-            .into(),
-            (Scope::Shader, _) => {
-                tr("From Sunrise's registry and Modrinth, into this setup's shader packs.").into()
+        let from: AnyElement = match scope {
+            Scope::Data => self.data_pack_line(cx),
+            Scope::Shader => muted(tr(
+                "From Sunrise's registry and Modrinth, into this setup's shader packs.",
+            ))
+            .into_any_element(),
+            Scope::Resource => {
+                muted(tr("From Modrinth, into this setup's resource packs.")).into_any_element()
             }
-            (Scope::Resource, _) => tr("From Modrinth, into this setup's resource packs.").into(),
         };
+        if scope == Scope::Data {
+            self.alt_data_list(cx);
+        }
         let page = div()
             .size_full()
             .flex()
@@ -392,7 +395,7 @@ impl Launcher {
             .child(header)
             .children(self.alt_strip(cx))
             .child(kinds)
-            .child(muted(from));
+            .child(from);
         let added: HashSet<(SourceId, String)> = self
             .alt
             .mods
@@ -445,15 +448,16 @@ impl Launcher {
                         .clone()
                         .and_then(|url| self.mods_image(&url, images::ICON));
                     let support = p.support(&game);
-                    let is_added =
-                        added.contains(&(p.source, p.id.clone())) && p.kind != Kind::DataPack;
-                    let no_world = p.kind == Kind::DataPack && target.is_none();
+                    let data = p.kind == Kind::DataPack;
+                    let is_added = added.contains(&(p.source, p.id.clone())) && !data;
                     let control = if is_added {
                         Some(added_mark())
-                    } else if !support.installable() || no_world {
+                    } else if !support.installable() {
                         None
                     } else {
-                        let b = button(ElementId::named_usize("alt-pack-add", n), tr("Add"));
+                        // A data pack asks which worlds first.
+                        let label = if data { tr("Add…") } else { tr("Add") };
+                        let b = button(ElementId::named_usize("alt-pack-add", n), label);
                         Some(if working {
                             dim(b).into_any_element()
                         } else {
@@ -467,18 +471,26 @@ impl Launcher {
                             .into_any_element()
                         })
                     };
-                    // How well it runs here, in the source's words; the world line above says
-                    // where a data pack would go.
-                    let note = support.reason().map(str::to_owned);
-                    let mut facts = vec![tag(match p.source {
-                        SourceId::Sunrise => tr("Sunrise registry"),
-                        other => other.label(),
-                    })];
-                    if !matches!(support, browser::Support::Works) {
+                    // How well it runs here, in the source's words. What Sunrise runs of any
+                    // data pack is said once, above the cards.
+                    let common = data && support.reason() == Some(browser::datapack_support());
+                    let note = support.reason().filter(|_| !common).map(str::to_owned);
+                    let mut facts = vec![tag(source_label(p.source))];
+                    if !matches!(support, browser::Support::Works) && !common {
                         facts.push(tag(support.label()));
                     }
                     facts.push(muted(model::downloads(p.downloads)));
-                    let page_url = p.page.clone();
+                    if data {
+                        match self.alt.mods.data.worlds_with(p.source, &p.id) {
+                            0 => {}
+                            1 => facts.push(muted(tr("In 1 world"))),
+                            n => facts.push(muted(trf(
+                                "In {count} worlds",
+                                &[("count", &n.to_string())],
+                            ))),
+                        }
+                    }
+                    let (source, id) = (p.source, p.id.clone());
                     grid = grid.child(
                         browse_card(
                             ElementId::named_usize("alt-pack-card", n),
@@ -491,8 +503,9 @@ impl Launcher {
                             note,
                         )
                         .on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| {
-                                Launcher::alt_open_url(&page_url, cx);
+                            move |this, _: &ClickEvent, _, cx| {
+                                this.alt_pack_show(source, &id);
+                                cx.notify();
                             },
                         )),
                     );
@@ -506,6 +519,7 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&self.alt.mods.packs.scroll)
                 .child(body),
         )
         .bg(c(crate::alt::BG))
@@ -513,13 +527,19 @@ impl Launcher {
     }
 }
 
-/// Puts `project` in place with the browser's checked install: a resource pack in the setup's
-/// `resourcepacks/`, a data pack in `target`'s world. Under the setup's lock, with the world
-/// checked again. Nothing is turned on.
+/// The words a card and a pack's page name a source by.
+pub(super) fn source_label(source: SourceId) -> &'static str {
+    match source {
+        SourceId::Sunrise => tr("Sunrise registry"),
+        other => other.label(),
+    }
+}
+
+/// Puts a resource or shader pack in place with the browser's checked install, under the
+/// setup's lock. Nothing is turned on.
 fn install(
     project: &Project,
     home: &Path,
-    target: Option<&Target>,
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<String, String> {
@@ -528,26 +548,8 @@ fn install(
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
         tr("This setup is busy. Try again when the operation finishes.").to_string()
     })?;
-    match (project.kind, target) {
-        (Kind::DataPack, Some(t)) => {
-            let name = check_world(home, &t.world)?;
-            let done =
-                installed::install_datapack(&*source, project, false, &t.world, game, &|f| {
-                    progress(&project.title, f)
-                })?;
-            Ok(trf(
-                "Put {pack} {version} in {world}'s data packs, checksum checked: the game turns \
-                 it on when the world opens. {coverage}",
-                &[
-                    ("pack", &project.title),
-                    ("version", &done.number),
-                    ("world", &name),
-                    ("coverage", &done.coverage.summary()),
-                ],
-            ))
-        }
-        (Kind::DataPack, None) => Err(tr("Choose a world first.").to_string()),
-        (Kind::ResourcePack | Kind::Shader, _) => {
+    match project.kind {
+        Kind::ResourcePack | Kind::Shader => {
             let done = installed::install(&*source, project, false, home, game, progress)?;
             let names: Vec<String> = done
                 .iter()

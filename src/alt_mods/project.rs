@@ -5,6 +5,94 @@ use super::*;
 use crate::alt::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use sunrise_launcher::browser::images;
 
+/// A page's pictures: the first large, up to three small beside it. None when it has none.
+pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
+    if shots.is_empty() {
+        return None;
+    }
+    let pic = |path: Option<PathBuf>| match path {
+        Some(path) => div()
+            .rounded(px(10.))
+            .overflow_hidden()
+            // Filled edge to edge: a picture of another shape is cropped, never boxed.
+            .child(
+                gpui::img(path)
+                    .size_full()
+                    .object_fit(gpui::ObjectFit::Cover),
+            ),
+        None => div().rounded(px(10.)).bg(c(CARD)),
+    };
+    let mut shots = shots.into_iter();
+    Some(
+        div()
+            .flex()
+            .gap(px(10.))
+            .h(px(280.))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(pic(shots.next().flatten()).size_full()),
+            )
+            .children((shots.len() > 0).then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .w(px(150.))
+                    .children(shots.map(|s| pic(s).flex_1().w_full()))
+            })),
+    )
+}
+
+/// A page's description, written in Markdown, in this look's colours.
+pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
+    let mut t = field_theme(theme);
+    t.ink_soft = c(0xcfc9c0);
+    t.plate_soft = c(CARD);
+    t.rule = c(SOFT);
+    crate::markdown::render(text, &t)
+}
+
+/// "‹ Discover": the way back from a page.
+pub(super) fn back(label: &'static str) -> Stateful<Div> {
+    div()
+        .id("alt-project-back")
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .text_size(px(13.))
+        .text_color(c(MUTED))
+        .cursor_pointer()
+        .child("‹")
+        .child(label)
+}
+
+/// One line of a page's About card.
+pub(super) fn about_row(key: &'static str, value: String) -> Div {
+    div()
+        .flex()
+        .justify_between()
+        .gap(px(12.))
+        .py(px(5.))
+        .text_size(px(13.))
+        .child(div().flex_none().text_color(c(MUTED)).child(key))
+        .child(div().min_w_0().truncate().child(value))
+}
+
+/// The line of an About card that opens a web page.
+pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .justify_between()
+        .py(px(5.))
+        .text_size(px(13.))
+        .cursor_pointer()
+        .child(div().text_color(c(MUTED)).child(key))
+        .child(div().text_color(c(GOLD)).child(tr("Open ↗")))
+}
+
 impl Launcher {
     pub(super) fn alt_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let back_to = self
@@ -25,20 +113,10 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(TEXT))
             .child(
-                div()
-                    .id("alt-project-back")
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .text_size(px(13.))
-                    .text_color(c(MUTED))
-                    .cursor_pointer()
-                    .child("‹")
-                    .child(back_label)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt.page = back_to;
-                        cx.notify();
-                    })),
+                back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.alt.page = back_to;
+                    cx.notify();
+                })),
             )
             .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
@@ -133,40 +211,8 @@ impl Launcher {
                     ),
             );
 
-        // Gallery: the first picture large, up to three small beside it.
-        let gallery = (!shots.is_empty()).then(|| {
-            let pic = |path: Option<PathBuf>| match path {
-                Some(path) => div()
-                    .rounded(px(10.))
-                    .overflow_hidden()
-                    .child(gpui::img(path).size_full()),
-                None => div().rounded(px(10.)).bg(c(CARD)),
-            };
-            let mut shots = shots.into_iter();
-            div()
-                .flex()
-                .gap(px(10.))
-                .h(px(280.))
-                .child(
-                    div()
-                        .flex_1()
-                        .child(pic(shots.next().flatten()).size_full()),
-                )
-                .children((shots.len() > 0).then(|| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(10.))
-                        .w(px(150.))
-                        .children(shots.map(|s| pic(s).flex_1().w_full()))
-                }))
-        });
-
-        let mut prose = field_theme(self.theme);
-        prose.ink_soft = c(0xcfc9c0);
-        prose.plate_soft = c(CARD);
-        prose.rule = c(SOFT);
-        let about = crate::markdown::render(&p.description, &prose);
+        let gallery = gallery(shots);
+        let about = prose(self.theme, &p.description);
 
         let versions = card().children(p.versions.iter().enumerate().map(|(i, v)| {
             let installed = installed_here.as_deref() == Some(v.number.as_str());
@@ -322,15 +368,7 @@ impl Launcher {
                     .children(p.trust.iter().map(|line| muted(line.clone()))),
             )
             .child({
-                let row = |k: &'static str, v: String| {
-                    div()
-                        .flex()
-                        .justify_between()
-                        .py(px(5.))
-                        .text_size(px(13.))
-                        .child(div().text_color(c(MUTED)).child(k))
-                        .child(v)
-                };
+                let row = about_row;
                 let source = p.source.clone();
                 card()
                     .p(px(16.))
@@ -347,18 +385,9 @@ impl Launcher {
                     .child(row(tr("Updated"), p.updated.clone()))
                     .child(row(tr("Licence"), p.license.clone()))
                     .children((source.starts_with("https://")).then(|| {
-                        div()
-                            .id("alt-project-source")
-                            .flex()
-                            .justify_between()
-                            .py(px(5.))
-                            .text_size(px(13.))
-                            .cursor_pointer()
-                            .child(div().text_color(c(MUTED)).child(tr("Source code")))
-                            .child(div().text_color(c(GOLD)).child(tr("Open ↗")))
-                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                Launcher::alt_open_url(&source, cx)
-                            }))
+                        about_link("alt-project-source", tr("Source code")).on_click(cx.listener(
+                            move |_, _: &ClickEvent, _, cx| Launcher::alt_open_url(&source, cx),
+                        ))
                     }))
             });
 

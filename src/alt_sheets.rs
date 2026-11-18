@@ -24,6 +24,8 @@ pub(crate) enum Sheet {
     Resolve,
     /// A problem's whole text, opened from the play bar's one sentence.
     Notice,
+    /// The worlds a data pack goes into (`alt_mods::data_packs`).
+    Worlds,
 }
 
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
@@ -171,7 +173,12 @@ fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
 }
 
 /// The scrim and the sheet's frame. A press outside closes the sheet; inside, nothing does.
-fn frame(id: &'static str, width: f32, body: Div, cx: &mut Context<Launcher>) -> Stateful<Div> {
+pub(crate) fn frame(
+    id: &'static str,
+    width: f32,
+    body: Div,
+    cx: &mut Context<Launcher>,
+) -> Stateful<Div> {
     div()
         .id(id)
         .absolute()
@@ -216,7 +223,7 @@ fn frame(id: &'static str, width: f32, body: Div, cx: &mut Context<Launcher>) ->
         )
 }
 
-fn title(text: String) -> Div {
+pub(crate) fn title(text: String) -> Div {
     div()
         .text_size(px(24.))
         .font_weight(FontWeight::BOLD)
@@ -445,6 +452,13 @@ impl Launcher {
         match self.alt.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
+            Some(Sheet::Worlds) => {
+                let sheet = self.alt_world_pick_sheet(cx);
+                if sheet.is_none() {
+                    self.alt.sheet = None;
+                }
+                sheet
+            }
             Some(Sheet::Resolve) => match self.alt_held_update() {
                 Some(held) => {
                     let sample = held.base == EXAMPLE_BASE;
