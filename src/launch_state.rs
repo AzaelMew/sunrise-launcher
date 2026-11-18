@@ -99,14 +99,97 @@ pub(crate) struct View {
     pub mods_off: Option<usize>,
 }
 
-/// The first sentence of `text`, or its first line when that is shorter: what there is room
-/// to say beside Play.
+/// The first sentence of `text`, or its first line when that is shorter.
 fn first_sentence(text: &str) -> &str {
     let line = text.trim().lines().next().unwrap_or_default();
     match line.find(". ") {
         Some(end) => &line[..=end],
         None => line,
     }
+}
+
+/// The step of Play a problem came from: what the plain sentence says could not be done.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Step {
+    /// Checking the builds, signing in, starting the game's process.
+    Start,
+    /// Copying the game's own files.
+    Prepare,
+    /// Building native mods.
+    Build,
+    /// Downloading and unpacking a game build.
+    Install,
+    /// The game ran and stopped: the launcher wrote the summary itself.
+    Crash,
+}
+
+/// The longest sentence said beside Play: more is cut at a word, and opens whole as Details.
+const BRIEF: usize = 110;
+/// How every message for a connection that could not be made starts (`backend`, `github`,
+/// `browser::download`).
+const NO_CONNECTION: &str = "No connection";
+
+/// Whether `sentence` is one the launcher could have written for a player: it starts with a
+/// capital or a digit, ends as a sentence does, and holds only words, numbers and a
+/// sentence's punctuation. An address, a path, an identifier, a code or a bare diagnostic is
+/// not one. This lets through what reads as plain words, not what is known to be harmless: a
+/// message that fails it is never said, only kept for Details.
+fn plain_sentence(sentence: &str) -> bool {
+    let starts = sentence
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_uppercase() || c.is_ascii_digit());
+    let ends = sentence.ends_with(['.', '!', '?', '…']);
+    let words = sentence.split_whitespace().count() >= 3;
+    let plain = sentence
+        .chars()
+        .all(|c| c.is_alphanumeric() || " .,'’\"“”!?…-–():;%".contains(c));
+    // "name: value" chains and codes in brackets are a program's, not a sentence's.
+    let coded = sentence.matches(": ").count() > 1 || sentence.contains("::");
+    starts && ends && words && plain && !coded
+}
+
+/// What a step could not do, when nothing more can be said in plain words.
+fn stopped(step: Step) -> &'static str {
+    match step {
+        Step::Start => tr("The game couldn't start."),
+        Step::Prepare => tr("The game's files couldn't be prepared."),
+        Step::Build => tr("The mods couldn't be built."),
+        Step::Install => tr("The game couldn't be installed."),
+        Step::Crash => tr("The game stopped."),
+    }
+}
+
+/// One short, plain sentence for a problem. A connection that could not be made says so, by
+/// the step that needed it. A message whose first sentence reads as plain words is the
+/// launcher's own and is said as written, cut at a word when long. Anything else (an address,
+/// a system error, a path, a program's output, a diagnostic) is not said at all: the step says
+/// what it could not do, and the whole message opens word for word behind "Details…".
+fn plain(step: Step, raw: &str) -> String {
+    if raw.trim_start().starts_with(NO_CONNECTION) {
+        return match step {
+            Step::Install => tr("No connection: the game couldn't be downloaded."),
+            Step::Build => tr("No connection: the mod tools couldn't be downloaded."),
+            Step::Prepare => tr("No connection: the game's files couldn't be downloaded."),
+            Step::Start | Step::Crash => {
+                tr("No connection: Sunrise couldn't check what it needs to play.")
+            }
+        }
+        .to_string();
+    }
+    let sentence = first_sentence(raw);
+    // The system's own words end in its error number, however much like a sentence they read.
+    let systems = raw.lines().next().is_some_and(|l| l.contains("(os error"));
+    if systems || !plain_sentence(sentence) {
+        return stopped(step).to_string();
+    }
+    if sentence.chars().count() <= BRIEF {
+        return sentence.to_string();
+    }
+    // Cut at a word, never inside one.
+    let cut: String = sentence.chars().take(BRIEF).collect();
+    let at = cut.rfind(' ').unwrap_or(cut.len());
+    format!("{}…", cut[..at].trim_end_matches([',', ';', ':']))
 }
 
 impl Facts {
@@ -142,17 +225,21 @@ impl Facts {
         };
         // A held update says so itself and its sheet carries the build's words: only then is
         // the build's error left to it.
-        let problem = self
-            .client_error
-            .clone()
-            .or_else(|| self.prepare_error.clone())
-            .or_else(|| self.native_error.clone().filter(|_| self.held.is_none()))
-            .or_else(|| self.install_error.clone())
-            .or_else(|| self.crash.clone());
-        // A problem is said in one sentence; the rest opens as a sheet.
-        let brief = problem.as_deref().map(first_sentence);
-        let more =
-            brief.is_some_and(|b| b.len() < problem.as_deref().unwrap_or_default().trim().len());
+        let step = |step: Step, error: &Option<String>| error.clone().map(|e| (step, e));
+        let problem = step(Step::Start, &self.client_error)
+            .or_else(|| step(Step::Prepare, &self.prepare_error))
+            .or_else(|| step(Step::Build, &self.native_error).filter(|_| self.held.is_none()))
+            .or_else(|| step(Step::Install, &self.install_error))
+            .or_else(|| step(Step::Crash, &self.crash));
+        // A problem is said in one plain sentence; whatever else there is opens as a sheet,
+        // word for word.
+        let brief = problem.as_ref().map(|(step, raw)| plain(*step, raw));
+        // The way out belongs to the step whose problem is said, never to another's left over.
+        let failed_at = problem.as_ref().map(|(step, _)| *step);
+        let problem = problem.map(|(_, raw)| raw);
+        let more = brief
+            .as_deref()
+            .is_some_and(|b| b != problem.as_deref().unwrap_or_default().trim());
         let hold = self
             .held
             .as_ref()
@@ -163,16 +250,13 @@ impl Facts {
             .filter(|_| self.installed && !busy && !self.running);
         let failed = brief.is_some() && !self.building;
         let said = brief
-            .map(str::to_owned)
             .filter(|_| !self.building)
             .or_else(|| hold.clone())
             .or_else(|| update.map(|build| trf("{build} is available", &[("build", build)])));
-        let way_out = if problem.is_none() {
-            None
-        } else if self.prepare_error.is_some() {
-            Some(WayOut::MinecraftFolder)
-        } else {
-            self.build_gone.filter(|_| !busy).map(WayOut::Newest)
+        let way_out = match failed_at {
+            Some(Step::Prepare) => Some(WayOut::MinecraftFolder),
+            Some(Step::Build) => self.build_gone.filter(|_| !busy).map(WayOut::Newest),
+            _ => None,
         };
         let act = if self.building {
             Some(Act::StopBuild)
