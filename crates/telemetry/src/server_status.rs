@@ -57,6 +57,16 @@ pub fn players_at(
     target: (&str, u16),
     timeout: Duration,
 ) -> Result<Players, String> {
+    status_at(address, target, timeout).map(|(players, _)| players)
+}
+
+/// [`players_at`], with the server's picture when its answer carries one: the PNG as the base64
+/// text it was sent as.
+pub fn status_at(
+    address: &str,
+    target: (&str, u16),
+    timeout: Duration,
+) -> Result<(Players, Option<String>), String> {
     let (host, port) = split_address(address).ok_or("not a server address")?;
     let addr = target
         .to_socket_addrs()
@@ -72,7 +82,14 @@ pub fn players_at(
         .write_all(&request(&host, port))
         .map_err(|e| e.to_string())?;
     let json = read_answer(&mut stream)?;
-    parse_players(&json)
+    Ok((parse_players(&json)?, parse_favicon(&json)))
+}
+
+/// The `favicon` of a status answer (`data:image/png;base64,…`), as its base64 text.
+pub fn parse_favicon(json: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let text = value.get("favicon")?.as_str()?;
+    Some(text.strip_prefix("data:image/png;base64,")?.to_owned())
 }
 
 /// The handshake (next state: status) and the status request, each framed with its length.
@@ -230,6 +247,15 @@ mod tests {
         assert!(read_answer(&mut wrong_id.as_slice()).is_err());
         assert!(parse_players(r#"{"players":{"max":5}}"#).is_err());
         assert!(parse_players("not json").is_err());
+        assert_eq!(
+            parse_favicon(r#"{"favicon":"data:image/png;base64,iVBORw0KGgo="}"#).as_deref(),
+            Some("iVBORw0KGgo=")
+        );
+        assert_eq!(
+            parse_favicon(r#"{"favicon":"data:image/gif;base64,R0lG"}"#),
+            None
+        );
+        assert_eq!(parse_favicon(r#"{"players":{"online":3}}"#), None);
         assert_eq!(
             read_answer(&mut answer(r#"{"players":{"online":3}}"#).as_slice()).unwrap(),
             r#"{"players":{"online":3}}"#

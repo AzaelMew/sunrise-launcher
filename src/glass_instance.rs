@@ -806,7 +806,7 @@ impl Launcher {
 }
 
 /// The release a native build started from, read once per build: a new build has a new tag.
-fn native_base(tag: &str) -> Option<String> {
+pub(crate) fn native_base(tag: &str) -> Option<String> {
     thread_local! {
         static BASES: std::cell::RefCell<std::collections::HashMap<String, Option<String>>> =
             Default::default();

@@ -21,6 +21,8 @@ pub(crate) struct Collection {
     pub confirm_delete: bool,
     /// The switches (by name) whose "What's sent?" is open, on the question and in Settings.
     pub(crate) sent_open: Vec<&'static str>,
+    /// The switch whose "?" the pointer is over, in the new look's Settings.
+    pub(crate) sent_hover: Option<&'static str>,
 }
 
 impl Collection {
@@ -36,6 +38,7 @@ impl Collection {
             note: None,
             confirm_delete: false,
             sent_open: Vec::new(),
+            sent_hover: None,
         }
     }
 }

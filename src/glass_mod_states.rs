@@ -311,6 +311,7 @@ impl Launcher {
                     summary,
                     worlds,
                     blocked: false,
+                    off: Vec::new(),
                 });
                 self.mod_preview.state = Some(native_status::State::UpToDate);
             }
