@@ -831,7 +831,8 @@ impl Launcher {
                 .text_size(px(14.))
                 .cursor_pointer()
                 .when(on, |d| {
-                    d.bg(c(crate::frame::LINE)).font_weight(FontWeight::SEMIBOLD)
+                    d.bg(c(crate::frame::LINE))
+                        .font_weight(FontWeight::SEMIBOLD)
                 })
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
