@@ -43,8 +43,6 @@ pub(super) struct ProjectVersion {
 pub(super) struct Browse {
     pub(super) open: Option<Opened>,
     pub(super) filters: Filters,
-    /// The Sort by dropdown's list is open.
-    pub(super) sort_menu: bool,
     /// Images on disk, by URL and size; `None` while they load or when they failed.
     images: HashMap<(String, u32), Option<PathBuf>>,
     image_queue: Option<std::sync::mpsc::Sender<(String, u32)>>,

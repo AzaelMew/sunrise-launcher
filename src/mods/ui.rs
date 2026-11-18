@@ -1,4 +1,4 @@
-//! Small pieces the three Mods screens share. Colours are the alternative look's (`crate::frame`).
+//! Small pieces the three Mods screens share. Colours are the launcher's (`crate::frame`).
 use super::*;
 use crate::frame::{BG, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Hsla};

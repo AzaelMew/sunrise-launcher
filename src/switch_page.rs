@@ -10,6 +10,5 @@ impl Launcher {
             Ok(()) => self.accounts = accounts,
             Err(e) => self.sign_in_state = Some(SignInState::Done(Err(e))),
         }
-        self.account_menu = false;
     }
 }

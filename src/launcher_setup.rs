@@ -64,7 +64,6 @@ impl Launcher {
             settings_pane: gpui::ScrollHandle::new(),
             settings_query: line_edit::LineEdit::new(String::new(), 80, 40),
             settings_nav_open: false,
-            version_menu: false,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
             updates: Updates::default(),
@@ -108,9 +107,6 @@ impl Launcher {
             native_built_mods: Vec::new(),
             native_builds: Default::default(),
             native_log: Default::default(),
-            picker: glass_home::PickerState::default(),
-            language_menu: false,
-            account_menu: false,
             // The first draw takes the launcher theme from Settings.
             location_error: location_page::startup_error(),
             location_note: location_page::startup_note(),
@@ -177,7 +173,6 @@ impl Launcher {
             install_started: None,
             prepare_started: None,
             download_seen: None,
-            list_menu: None,
             instance_mods: Default::default(),
             play_pressed: None,
             bench: perf::Bench::from_env(),
@@ -333,25 +328,6 @@ impl Launcher {
                 self.mods.reset_lists();
             }
         }
-        self.close_menus();
-    }
-
-    /// Closes every dropdown and row menu, and says whether one was open: a page switch, the
-    /// palette and Escape each close them (Escape the menu first, then what is under it).
-    pub(crate) fn close_menus(&mut self) -> bool {
-        let open = self.picker.open
-            || self.language_menu
-            || self.mods.browse.sort_menu
-            || self.account_menu
-            || self.version_menu
-            || self.list_menu.is_some();
-        self.picker.open = false;
-        self.language_menu = false;
-        self.mods.browse.sort_menu = false;
-        self.account_menu = false;
-        self.version_menu = false;
-        self.list_menu = None;
-        open
     }
 
     pub(crate) fn check_updates(&mut self) {

@@ -27,7 +27,6 @@ mod developer_play;
 mod frame;
 mod game_tools;
 mod github_mods_page;
-mod glass_home;
 mod glass_instance;
 mod glass_instance_java;
 mod glass_sheet;
@@ -195,8 +194,6 @@ struct Launcher {
     settings_query: line_edit::LineEdit,
     /// Narrow Settings: the category list is dropped open from the switcher row; it starts folded and folds again on a pick.
     settings_nav_open: bool,
-    /// The Game version dropdown of the instance dialog and sheet is open.
-    version_menu: bool,
     /// The Mods page's project card, kept in view beside its list.
     mods_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
@@ -279,11 +276,6 @@ struct Launcher {
         std::cell::RefCell<std::collections::HashMap<String, Option<native_status::Build>>>,
     /// This attempt's build log (`native_log_page.rs`).
     native_log: native_log_page::NativeLog,
-    picker: glass_home::PickerState,
-    /// Settings > Language's dropdown (`language_page.rs`).
-    language_menu: bool,
-    /// The top bar's quick switch of who plays (`switch_page.rs`).
-    account_menu: bool,
     location_error: Option<String>,
     location_note: Option<String>,
     settings: Settings,
@@ -378,8 +370,6 @@ struct Launcher {
     prepare_started: Option<Instant>,
     /// The download under way as first seen (when, files done), for the time left.
     download_seen: Option<(Instant, usize)>,
-    /// A Home list row's ⋯ menu, while open, and whether its Delete… was clicked once.
-    list_menu: Option<(SharedString, bool)>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
     instance_mods: instance_mods::InstanceMods,
     play_pressed: Option<Instant>,

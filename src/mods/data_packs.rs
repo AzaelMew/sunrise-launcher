@@ -348,9 +348,8 @@ impl Launcher {
     pub(super) fn installed_data_packs(&mut self, cx: &mut Context<Self>) -> Div {
         self.data_list(cx);
         let query = self.ui.mods.have.text().trim().to_lowercase();
-        let editable = self.location_error.is_none()
-            && self.mods_locked().is_none()
-            && !self.mutating();
+        let editable =
+            self.location_error.is_none() && self.mods_locked().is_none() && !self.mutating();
         let d = &self.ui.mods.data;
         let mut worlds: Vec<(World, Vec<Listed>)> =
             d.list.as_ref().map_or_else(Vec::new, |l| l.worlds.clone());

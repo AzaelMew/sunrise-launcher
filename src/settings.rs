@@ -142,11 +142,7 @@ pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
 }
 
 impl Launcher {
-    pub(super) fn settings(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    pub(super) fn settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
         let section = self.ui.settings.section;

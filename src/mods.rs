@@ -1,4 +1,4 @@
-//! Mods in the alternative look: Discover, Installed and a mod's page (mocks 03, 04, 05, 05b).
+//! Mods: Discover, Installed and a mod's page.
 //!
 //! **Real:** the registry list, search, categories, fit, kind and sort (`browser::sunrise`'s index,
 //! read in a worker); a mod's page from the index (versions and their fit, size, licence,

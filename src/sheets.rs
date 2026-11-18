@@ -1,4 +1,4 @@
-//! The redesign's three sheets (`alt/06`, `07`, `08`): Resolve (a held update), Build consent and
+//! The three sheets: Resolve (a held update), Build consent and
 //! the game-build chooser. Everything here reads or acts through the existing workers:
 //!
 //! * **Resolve** reads [`native_mods::update_check`] (or the build's worlds stop, `native_worlds`)

@@ -60,9 +60,7 @@ impl Launcher {
 
     /// "Stage 2 of 3 · Build".
     fn build_stage(&self) -> String {
-        let stage = self
-            .build_progress()
-            .map_or(Stage::Prepare, |p| p.stage);
+        let stage = self.build_progress().map_or(Stage::Prepare, |p| p.stage);
         let n = Stage::ALL.iter().position(|s| *s == stage).unwrap_or(0) + 1;
         trf(
             "Stage {n} of 3 · {stage}",

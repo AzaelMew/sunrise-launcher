@@ -1,4 +1,4 @@
-//! The redesign's Home (`alt/README.md`, mocks 01, 10, 11a and 12b): the player's worlds as
+//! Home: the player's worlds as
 //! pictures, one box for servers (an address or a friend's invite code, Save, Join) with the
 //! saved list, and the registry's most downloaded mods.
 //!

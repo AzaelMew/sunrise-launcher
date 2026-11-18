@@ -110,7 +110,7 @@ impl Mods {
     }
 
     /// Points the folder installs and toggles go into at `home`, the selected instance's folder,
-    /// without reading or writing anything: the alternative Mods screens (`mods`) call it so
+    /// without reading or writing anything: the Mods screens (`mods`) call it so
     /// that a native-code consent answered later continues in the folder they show.
     pub(super) fn follow_home(&mut self, home: Option<PathBuf>) {
         if home.is_some() && self.home != home {
