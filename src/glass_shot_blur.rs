@@ -3,9 +3,9 @@
 //! `blur-2xl` would. GPUI has no image filter, so each picture is made once, small and blurred,
 //! in the background (`picture_cache`), and drawn stretched. For the session only, like the
 //! mockup's.
-use super::*;
-use crate::glass_ui::{self as ui, white};
-use crate::picture_cache::Look;
+
+use crate::glass_ui::{ white};
+
 use gpui::RenderImage;
 use std::path::Path;
 use std::sync::Arc;
@@ -24,50 +24,6 @@ pub(super) struct ShotBlur {
     pub(super) hidden: bool,
 }
 
-impl Launcher {
-    /// The eye button (`ICON_BUTTON`, 32 px): blurs the screenshots, or shows them again.
-    pub(super) fn shots_privacy(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let hidden = self.shot_blur.hidden;
-        ui::icon_button(
-            "shots-privacy",
-            if hidden { "view-off-slash" } else { "view" },
-            32.,
-            17.,
-            radius::CONTROL,
-            hidden,
-            &self.theme,
-        )
-        .tooltip(ui::tip(match hidden {
-            true => tr("Show the screenshots"),
-            false => tr("Blur the screenshots"),
-        }))
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.shot_blur.hidden = !this.shot_blur.hidden;
-            cx.notify();
-        }))
-    }
-
-    /// Screenshot `path` filling its tile, round at `radius::ROW`, made at the tile's size
-    /// (`picture_cache`): blurred while they are hidden; a plain fill until it is made.
-    pub(super) fn shot_picture(&mut self, path: &Path, cx: &mut Context<Self>) -> AnyElement {
-        let look = match self.shot_blur.hidden {
-            true => Look::Blurred,
-            false => Look::Fit(self.thumb_side()),
-        };
-        match self.picture(path, look, cx) {
-            Some(image) => gpui::img(image)
-                .size_full()
-                .rounded(px(crate::glass_ui::rad(radius::ROW)))
-                .object_fit(gpui::ObjectFit::Cover)
-                .into_any_element(),
-            None => div()
-                .size_full()
-                .rounded(px(crate::glass_ui::rad(radius::ROW)))
-                .bg(white(fill::HOVER))
-                .into_any_element(),
-        }
-    }
-}
 
 /// The picture at `path`, small, blurred and smoothed up, as GPUI draws it (BGRA, premultiplied).
 /// Read already shrunk (`pictures::load_fitted`): never the whole screenshot.

@@ -297,11 +297,6 @@ impl Bench {
         })
     }
 
-    /// The window scrolls its content on every frame now.
-    pub fn scrolling(&self) -> bool {
-        matches!(self.scroll, Some((_, _, None)))
-    }
-
     pub fn tick(&mut self, perf: &Perf) -> Step {
         let Some(first) = perf.first_frame else {
             return Step::Wait;

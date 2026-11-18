@@ -9,7 +9,7 @@ use sunrise_launcher::themes::{self, Accent};
 use sunrise_launcher_theme as tokens;
 
 pub use tokens::night::{self, Night};
-pub use tokens::{Step, CAPTION, DISPLAY, HEADING, LABEL, MICRO, TITLE, UI, WORDMARK};
+pub use tokens::{Step, CAPTION, DISPLAY, HEADING, MICRO, TITLE, UI};
 pub const FONT: &str = night::FONT;
 pub const DISPLAY_FONT: &str = night::DISPLAY_FONT;
 pub const MONO: &str = tokens::MONO;
@@ -19,24 +19,18 @@ pub const PIXEL: &str = night::FONT;
 
 pub use tokens::{BLOCK_BEVEL as BEVEL, BLOCK_LIP as LIP};
 /// Shapes and controls, shared with the game's menus and the website.
-pub use tokens::{CONTROL_LARGE, DISABLED, FIELD, PRESSED, RISE, ROW, SEGMENT};
+pub use tokens::{ DISABLED, FIELD, PRESSED, ROW, SEGMENT};
 
 /// Blocks have square corners: these stay for the places that ask for a radius.
 pub const RADIUS: f32 = 0.;
 pub const RADIUS_PLATE: f32 = 0.;
 /// Buttons are a little taller than the quiet look's, for their lip.
 pub const CONTROL: f32 = 34.;
-/// The top bar, and the sidebar of instances and servers.
-pub const TOPBAR: f32 = 56.;
 pub const SIDEBAR: f32 = 248.;
 pub const PAGE_GUTTER: f32 = 32.;
-/// The widest a page past Home grows; on a wider window it stands centred.
-pub const PAGE_MAX: f32 = 1200.;
 
 /// Motion: short and eased out, never bouncy.
 pub const MOVE: Duration = tokens::MOVE.duration();
-pub const ENTER: Duration = tokens::ENTER.duration();
-pub const STAGGER: Duration = tokens::STAGGER;
 
 #[derive(Clone, Copy)]
 pub struct Theme {

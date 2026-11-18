@@ -4,16 +4,13 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
-mod blocks_chrome;
-mod blocks_play;
 mod blocks_settings;
-mod blocks_versions;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
-mod widgets;
 pub(crate) use widgets::*;
+mod widgets;
 mod agents_page;
 mod alt;
 mod alt_build;
@@ -36,11 +33,8 @@ mod export_page;
 mod frame;
 mod game_tools;
 mod github_mods_page;
-mod glass_account;
 mod glass_home;
 mod glass_home_lists;
-mod glass_home_mods;
-mod glass_home_packs;
 mod glass_home_tabs;
 mod glass_instance;
 mod glass_instance_java;
@@ -77,11 +71,8 @@ mod motion;
 mod multiplayer_page;
 mod native_consent;
 mod native_log_page;
-mod native_registry_consent;
 mod nav_strip;
 mod new_instance;
-mod outline_frame;
-mod outline_home;
 mod owner_page;
 mod packs_page;
 mod perf;
@@ -95,17 +86,14 @@ mod servers_page;
 mod setup_page;
 mod shell;
 mod shortcut_page;
-mod specimen;
 mod sticky;
 mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
 mod wake;
-mod welcome;
 mod while_playing;
 mod window_root;
-mod worlds_page;
 
 use gpui::{
     actions, div, ease_out_quint, prelude::*, px, relative, size, Animation, AnimationExt,
@@ -174,12 +162,6 @@ impl Page {
         (Page::Settings, "Settings", "sliders"),
     ];
 
-    /// The pages the top bar shows: all but Settings.
-    fn in_top_bar() -> impl Iterator<Item = (Page, &'static str, &'static str)> {
-        Self::ALL
-            .into_iter()
-            .filter(|(page, ..)| *page != Page::Settings)
-    }
 }
 
 /// The launcher's own update, as the footer and Settings show it.
@@ -207,11 +189,6 @@ struct Crash {
     copied: bool,
 }
 
-/// The opening: the wordmark holds at least `OPENING_HOLD` (until the release
-/// list is in, at most `OPENING_MAX`), then the launcher appears over `OPENING_REVEAL`.
-const OPENING_HOLD: Duration = sunrise_launcher_theme::OPENING_HOLD;
-const OPENING_MAX: Duration = sunrise_launcher_theme::OPENING_MAX;
-const OPENING_REVEAL: Duration = sunrise_launcher_theme::OPENING_REVEAL;
 
 /// The phase of the opening at one moment: how far the reveal has gone, 0 to 1.
 struct Opening {
@@ -219,10 +196,6 @@ struct Opening {
     started: Option<Instant>,
     reveal: Option<Instant>,
     focus: FocusHandle,
-}
-
-fn ease_out_cubic(x: f32) -> f32 {
-    sunrise_launcher_theme::ease_out_cubic(x)
 }
 
 enum Load<T> {
@@ -617,16 +590,11 @@ fn menus() -> Vec<Menu> {
     ]
 }
 
+mod worlds_page;
 mod startup;
 
 fn main() {
     startup::run();
-}
-
-/// Whether the click `event` began with the mouse-down that closed a menu at `closed_at`.
-/// A keyboard click never did.
-fn closed_by_press(closed_at: Option<Point<Pixels>>, event: &ClickEvent) -> bool {
-    matches!(event, ClickEvent::Mouse(click) if closed_at == Some(click.down.position))
 }
 
 #[cfg(test)]
@@ -640,29 +608,6 @@ mod tests {
         ));
         assert!(matches!(page_after_startup(Page::Play, false), Page::Play));
         assert!(matches!(page_after_startup(Page::Mods, true), Page::Mods));
-    }
-
-    #[test]
-    fn a_menu_button_stays_closed_after_the_press_that_closed_its_menu() {
-        use super::closed_by_press;
-        use gpui::{point, px, ClickEvent, KeyboardClickEvent, MouseClickEvent, MouseDownEvent};
-        let click = |x: f32| {
-            ClickEvent::Mouse(MouseClickEvent {
-                down: MouseDownEvent {
-                    position: point(px(x), px(20.)),
-                    ..MouseDownEvent::default()
-                },
-                ..MouseClickEvent::default()
-            })
-        };
-        let closed_at = Some(point(px(10.), px(20.)));
-        // The press on the button that closed the open menu: it stays closed.
-        assert!(closed_by_press(closed_at, &click(10.)));
-        // A later press, or one with no menu closed, toggles as before.
-        assert!(!closed_by_press(closed_at, &click(11.)));
-        assert!(!closed_by_press(None, &click(10.)));
-        let keyboard = ClickEvent::Keyboard(KeyboardClickEvent::default());
-        assert!(!closed_by_press(closed_at, &keyboard));
     }
 
     #[cfg(target_os = "macos")]
@@ -720,28 +665,6 @@ mod tests {
     }
 
     #[test]
-    fn a_press_on_a_sidebar_row_opens_its_menu_or_closes_it() {
-        let open = |id: &str| Some((id.to_string(), false));
-        assert_eq!(
-            super::row_menu_after_press(None, "Sunrise"),
-            open("Sunrise")
-        );
-        assert_eq!(
-            super::row_menu_after_press(open("Other"), "Sunrise"),
-            open("Sunrise")
-        );
-        assert_eq!(
-            super::row_menu_after_press(open("Sunrise"), "Sunrise"),
-            None
-        );
-        // A Delete… already pressed on another row does not carry over.
-        assert_eq!(
-            super::row_menu_after_press(Some(("Other".into(), true)), "Sunrise"),
-            open("Sunrise")
-        );
-    }
-
-    #[test]
     fn the_selection_survives_a_removal_or_moves_to_the_newest_left() {
         let left = ["v0.2.49".to_string(), "v0.2.48".to_string()];
         let pick =
@@ -771,17 +694,6 @@ mod tests {
         assert_eq!(play_press(false, None, false), PlayPress::Nothing);
         assert_eq!(play_press(false, Some(true), true), PlayPress::Nothing);
         assert_eq!(play_press(true, Some(true), true), PlayPress::Nothing);
-    }
-
-    /// Home's one button never says Play over a click that prepares, or that cannot play.
-    #[test]
-    fn play_says_what_it_will_do() {
-        use super::{play_label, play_press};
-        let say = |prepared, owner| play_label(play_press(prepared, owner, false), owner);
-        assert_eq!(say(true, Some(true)), "Play");
-        assert_eq!(say(false, Some(true)), "Prepare & play");
-        assert_eq!(say(false, Some(false)), "Sign in to play");
-        assert_eq!(say(false, None), "Play");
     }
 
     /// A server's Join (and every other shortcut) waits like Play: not while the version's

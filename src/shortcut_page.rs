@@ -41,33 +41,4 @@ impl Launcher {
         self.shortcuts.note = Some((id, done));
     }
 
-    /// The row's button.
-    pub(super) fn shortcut_button(
-        &mut self,
-        instance: &instances::Instance,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        let t = self.theme;
-        let label = match self.has_shortcut(&instance.id) {
-            true => "Remove shortcut",
-            false => "Shortcut",
-        };
-        let (id, name) = (instance.id.clone(), instance.name.clone());
-        button("instance-shortcut", label, Kind::Ghost, &t).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
-                this.toggle_shortcut(id.clone(), name.clone());
-                cx.notify();
-            },
-        ))
-    }
-
-    /// What the last press did, under the row, while that instance is selected.
-    pub(super) fn shortcut_note(&self, id: &str) -> Option<Div> {
-        let t = self.theme;
-        let (_, said) = self.shortcuts.note.as_ref().filter(|(n, _)| n == id)?;
-        Some(match said {
-            Ok(said) => text(theme::CAPTION).text_color(t.muted).child(said.clone()),
-            Err(e) => text(theme::CAPTION).text_color(t.danger).child(e.clone()),
-        })
-    }
 }

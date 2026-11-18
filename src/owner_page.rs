@@ -5,16 +5,6 @@
 use super::*;
 
 impl Launcher {
-    /// Whether the screen covers the window: no owner, and either Play was refused or the player
-    /// hasn't read it yet. The data question comes first.
-    pub(crate) fn asking_owner(&self) -> bool {
-        // Opened on purpose (the top bar's Sign in), it shows whatever is known of the owner.
-        (!sunrise_launcher::developer_offline::selected() || sign_in_preview())
-            && (self.owner == Some(false) || self.owner_screen_open || sign_in_preview())
-            && (self.owner_screen_open || !self.settings.owner_notice_seen || sign_in_preview())
-            && !self.asking_consent()
-            && self.opening.is_none()
-    }
 
     /// Opens the screen and starts the sign-in on it; a sign-in already under way (its code on
     /// screen, or Microsoft still answering) is shown as it is, not started over.

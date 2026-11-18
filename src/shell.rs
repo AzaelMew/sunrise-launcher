@@ -25,16 +25,6 @@ pub fn text(step: Step, color: Hsla) -> Div {
         .text_color(color)
 }
 
-/// The sidebar's ground: `card` at its opacity from the top of the window to the bottom, with a
-/// 1 px stroke on its right edge. Square: it meets the window's edges.
-pub fn sidebar_plate(t: &Theme) -> Div {
-    let n = t.night;
-    div()
-        .bg(alpha(n.card, n.card_alpha))
-        .border_r_1()
-        .border_color(alpha(n.stroke, n.stroke_alpha))
-}
-
 /// A plate behind a selected row or tab: `card_hi`, its corners cut in `steps` pixel steps.
 fn selected(steps: usize, t: &Theme) -> Div {
     let n = t.night;
@@ -90,32 +80,6 @@ pub fn row(id: impl Into<SharedString>, selected_now: bool, t: &Theme) -> Statef
     keyboard(track_hover(d, id), t)
 }
 
-/// A row's two lines: the name, and its state after a small square in `state`'s colour when it
-/// has one ("Ready · 26.3" in green, "Needs preparing" in amber).
-pub fn row_text(name: impl Into<SharedString>, sub: String, state: Option<Hsla>, t: &Theme) -> Div {
-    let n = t.night;
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .min_w_0()
-        .child(
-            text(night::UI, c(n.ink))
-                .font_weight(FontWeight::SEMIBOLD)
-                .truncate()
-                .child(name.into()),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .min_w_0()
-                .children(state.map(|s| div().flex_none().size(px(6.)).bg(s)))
-                .child(text(night::CAPTION, c(n.muted)).truncate().child(sub)),
-        )
-}
-
 /// A heading over a group of rows ("Instances", a group's name, "Servers"), with room for a
 /// button on its right.
 pub fn heading(label: impl Into<SharedString>, t: &Theme) -> Div {
@@ -131,73 +95,6 @@ pub fn heading(label: impl Into<SharedString>, t: &Theme) -> Div {
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(label.into()),
         )
-}
-
-/// A page's tab in the top bar: its name, on a plate cut in one step while it is the page shown.
-pub fn tab(id: impl Into<SharedString>, label: &str, active: bool, t: &Theme) -> Stateful<Div> {
-    let id = id.into();
-    let n = t.night;
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .items_center()
-        .h(px(32.))
-        .px(px(14.))
-        .cursor_pointer();
-    let d = if active {
-        d.child(selected(1, t))
-    } else {
-        d.child(hovered(&id, 1, t))
-    };
-    keyboard(
-        track_hover(
-            d.child(
-                text(night::UI, c(if active { n.ink } else { n.ink_soft }))
-                    .relative()
-                    .child(label.to_string()),
-            ),
-            id,
-        ),
-        t,
-    )
-}
-
-/// A square button with one icon (Settings, the sidebar's `+`), cut in one step.
-pub fn icon_button(
-    id: impl Into<SharedString>,
-    icon: &'static str,
-    size: f32,
-    active: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let n = t.night;
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(size))
-        .cursor_pointer();
-    let d = if active {
-        d.child(selected(1, t))
-    } else {
-        d.child(hovered(&id, 1, t))
-    };
-    keyboard(
-        track_hover(
-            d.child(div().relative().child(crate::blocks::icon(
-                icon,
-                (size * 0.5).round(),
-                c(if active { n.ink } else { n.ink_soft }),
-            ))),
-            id,
-        ),
-        t,
-    )
 }
 
 /// The account chip's plate: `card` cut in one step with its stroke, for the picture and two

@@ -47,13 +47,6 @@ impl Sticky {
         at
     }
 
-    /// Whether the panel would now be drawn somewhere else than it was.
-    pub fn moved(&self, handle: &ScrollHandle) -> bool {
-        self.measured
-            .get()
-            .is_some_and(|m| offset(m, scrolled(handle)) != self.drawn.get())
-    }
-
     /// Forgets the row (the page left), so a new one starts unmoved.
     pub fn reset(&self) {
         self.measured.set(None);

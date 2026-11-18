@@ -3,9 +3,7 @@
 //! text and fills at a few opacities over [`glass`](crate::glass) plates; Geist throughout.
 use crate::{hover_fade, hover_is, keyboard, note_hover, theme::Theme, track_hover, Kind};
 use gpui::{
-    canvas, div, prelude::*, px, rgb, rgba, svg, AnimationExt, AnyElement, App, ClickEvent, Div,
-    ElementId, FontWeight, Hsla, Pixels, SharedString, Stateful, Svg, TextRun, Window,
-};
+    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, ClickEvent, Div, FontWeight, Hsla, SharedString, Stateful, Svg, TextRun, Window};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -45,24 +43,6 @@ pub fn light() -> bool {
     LIGHT.get()
 }
 
-/// A solid control's fill (`SOLID`'s white, the sliders' knob): white, or the ink in light.
-pub fn paper() -> Hsla {
-    if light() {
-        color(INK)
-    } else {
-        gpui::white()
-    }
-}
-
-/// Text on [`paper`].
-pub fn on_paper() -> Hsla {
-    if light() {
-        gpui::white()
-    } else {
-        color(INK)
-    }
-}
-
 /// The look's green (`--live`): darker in light, to read on white plates.
 pub fn live() -> Hsla {
     color(if light() {
@@ -90,132 +70,6 @@ pub fn danger() -> Hsla {
     })
 }
 
-/// Builds `f`'s rows as the mockup's `SettingRow`s, for a Settings card: `index_row` and
-/// `section_title` ask [`flat`].
-pub fn flat_rows<R>(f: impl FnOnce() -> R) -> R {
-    let was = FLAT.replace(true);
-    let built = f();
-    FLAT.set(was);
-    built
-}
-
-/// Whether rows are being built for a Settings card.
-pub fn flat() -> bool {
-    FLAT.get()
-}
-
-/// A Settings row (`SettingRow`): the name in 15 px semibold, its note in 13 px on 1.5 at 60 %,
-/// the control on the right, 40 px away; 16 px around, no fill. On a window too narrow for both,
-/// the control wraps under the name (12 px below it), which keeps at least 240 px.
-pub fn setting_row(
-    title: impl IntoElement,
-    note: Option<gpui::AnyElement>,
-    control: Option<gpui::AnyElement>,
-) -> Div {
-    div()
-        .flex()
-        .flex_wrap()
-        .items_center()
-        .gap_x(px(40.))
-        .gap_y(px(12.))
-        .px(px(14.))
-        .py(px(13.))
-        .rounded(px(rad(12.)))
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .relative()
-        .child(back_edge(12., 0.03, true))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(240.))
-                .gap(px(4.))
-                .child(
-                    text(14.5, FontWeight::SEMIBOLD, ink::FULL)
-                        .line_height(px(20.))
-                        .child(title),
-                )
-                .children(note.map(|n| {
-                    text(13., FontWeight::NORMAL, 0.6)
-                        .line_height(px(19.5))
-                        .max_w(px(560.))
-                        .child(n)
-                })),
-        )
-        .children(control.map(|c| div().flex().flex_none().items_center().gap(px(8.)).child(c)))
-}
-
-/// A stacked Settings row (`SettingRow stacked`): the name and note, the control under them at
-/// full width.
-pub fn setting_row_stacked(
-    title: impl IntoElement,
-    note: Option<gpui::AnyElement>,
-    control: gpui::AnyElement,
-) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(16.))
-        .px(px(14.))
-        .py(px(13.))
-        .rounded(px(rad(12.)))
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .relative()
-        .child(back_edge(12., 0.03, true))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(
-                    text(14.5, FontWeight::SEMIBOLD, ink::FULL)
-                        .line_height(px(20.))
-                        .child(title),
-                )
-                .children(note.map(|n| {
-                    text(13., FontWeight::NORMAL, 0.6)
-                        .line_height(px(19.5))
-                        .max_w(px(580.))
-                        .child(n)
-                })),
-        )
-        .child(div().w_full().child(control))
-}
-
-/// The mockup's `WIDE_FIELD` look on a field built for the old one: 44 px, up to 560 px wide,
-/// 12 px corners, white at 7 % (11 % while typed in), 14 px Geist.
-pub fn wide_field(field: Stateful<Div>, focused: bool) -> Stateful<Div> {
-    field
-        .w_full()
-        .max_w(px(560.))
-        .h(px(44.))
-        .px(px(16.))
-        .border_0()
-        .rounded(px(crate::glass_ui::rad(radius::ROW)))
-        .bg(white(if focused { 0.11 } else { 0.07 }))
-        .font_family(sunrise_launcher_theme::glass::FONT)
-        .text_size(px(14.))
-        .relative()
-        .when(focused, |d| d.child(focus_ring(radius::ROW)))
-}
-
-/// The focus ring: one solid 1 px line of the accent over a focused field, inside its edge with
-/// the field's corners (GPUI has no outline, and a field clips what lies outside it). Put it in a
-/// `relative` field round at `radius`.
-pub fn focus_ring(radius: f32) -> Div {
-    div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .rounded(px(crate::glass_ui::rad(radius)))
-        .border_1()
-        .border_color(color(look().accent))
-}
-
 /// Whether the pages being built draw the glass look: helpers with no theme at hand ask.
 pub fn on() -> bool {
     ON.get()
@@ -237,24 +91,9 @@ pub fn rad(r: f32) -> f32 {
     }
 }
 
-/// Set as each frame starts: the glass look's corner radius in px, the same for every corner
-/// (Settings > Appearance > Corners; a small element rounds no further than half its side).
-pub fn set_corners(radius: f32) {
-    CORNERS.set(radius);
-}
-
 /// The Outline look's 1 px edge.
 pub fn line() -> Hsla {
     white(0.12)
-}
-
-/// A label in the Outline look: Geist Mono, upper case, spaced out.
-pub fn mono(size: f32, a: f32) -> Div {
-    div()
-        .font_family(crate::theme::MONO)
-        .text_size(px(size))
-        .line_height(px(size * 1.4))
-        .text_color(white(a))
 }
 
 /// Set as each frame's pages start being built: the colours for the player's accent.
@@ -295,21 +134,6 @@ pub fn text(size: f32, weight: FontWeight, a: f32) -> Div {
 /// The widths text was laid out in, by key, as [`room`] recorded them on the last frame: what
 /// [`cut`] compares a text's own width against.
 pub type Rooms = Rc<RefCell<HashMap<SharedString, f32>>>;
-
-/// Fills its (relative) parent and records the parent's laid-out width in `rooms` under `key`.
-pub fn room(rooms: &Rooms, key: SharedString) -> impl IntoElement {
-    let rooms = rooms.clone();
-    gpui::canvas(
-        move |bounds, _, _| {
-            rooms.borrow_mut().insert(key, f32::from(bounds.size.width));
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
-}
 
 /// Whether `text` in `family` at `size` and `weight` is wider than the room recorded under `key`,
 /// so a truncating parent cuts it: decides a full-text hover label. False until a room is known.
@@ -359,19 +183,12 @@ fn layer(r: f32) -> impl Fn() -> Div {
     }
 }
 
-/// `id`'s fill eased between `from` (white at that opacity) and `to` while hovered, as the
-/// mockup's `transition-colors` does.
-fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement {
-    hover_edge(id, r, to - from, false)
-}
-
 /// The side of one texel in a [`pixel_fill`].
 pub(crate) const TEXEL: f32 = 4.;
 
 /// How far a texel's lightness strays from its fill: on a coloured button, and on a sidebar,
 /// where it stays well under the rows.
 pub const TEXTURE_BUTTON: f32 = 0.02;
-pub const TEXTURE_QUIET: f32 = 0.009;
 
 /// A fill of `c` as a block texture: square texels `step` of lightness off it either way, the
 /// same every frame, so it never shimmers. The steps are fixed, not a share of `c`'s lightness, so
@@ -433,112 +250,15 @@ pub fn pixel_fill(c: Hsla, step: f32) -> AnyElement {
     .into_any_element()
 }
 
-/// How many texels a side of the window grain's tile has: it repeats every 256 px, which at
-/// this faintness never shows.
-const GRAIN_TILE: usize = 64;
-
 thread_local! {
     /// The grain tile last baked, and what for (colour, step and scale, as bits).
     static GRAIN: RefCell<Option<([u32; 6], Arc<gpui::RenderImage>)>> = const { RefCell::new(None) };
-}
-
-/// A large area's grain (the sidebars, the top bar): `c` as the block texture of [`pixel_fill`],
-/// `width` by `height`. One tile is baked once (at the window's `scale`, its texels on whole device
-/// pixels) and repeated, so a full-height sidebar costs a few images rather than thousands of quads
-/// each frame. Put it first in a `relative` element.
-pub fn grain(c: Hsla, step: f32, width: f32, height: f32, scale: f32) -> Div {
-    let tile = grain_tile(c, step, scale);
-    let side = GRAIN_TILE as f32 * TEXEL;
-    let (cols, rows) = (
-        (width / side).ceil() as usize,
-        (height / side).ceil() as usize,
-    );
-    let mut layer = div()
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
-        .overflow_hidden()
-        .bg(c);
-    for y in 0..rows {
-        for x in 0..cols {
-            layer = layer.child(
-                gpui::img(tile.clone())
-                    .absolute()
-                    .left(px(x as f32 * side))
-                    .top(px(y as f32 * side))
-                    .size(px(side)),
-            );
-        }
-    }
-    layer
-}
-
-fn grain_tile(c: Hsla, step: f32, scale: f32) -> Arc<gpui::RenderImage> {
-    let key = [
-        c.h.to_bits(),
-        c.s.to_bits(),
-        c.l.to_bits(),
-        c.a.to_bits(),
-        step.to_bits(),
-        scale.to_bits(),
-    ];
-    if let Some(tile) = GRAIN.with_borrow(|g| {
-        g.as_ref()
-            .filter(|(k, _)| *k == key)
-            .map(|(_, t)| t.clone())
-    }) {
-        return tile;
-    }
-    let bytes = |h: Hsla| {
-        let rgba = gpui::Rgba::from(h);
-        [rgba.r, rgba.g, rgba.b, rgba.a].map(|v| (v.clamp(0., 1.) * 255.).round() as u8)
-    };
-    let shades = texel_shades(c, step).map(bytes);
-    let base = bytes(c);
-    let texels: Vec<[u8; 4]> = (0..GRAIN_TILE * GRAIN_TILE)
-        .map(|i| {
-            let (x, y) = ((i % GRAIN_TILE) as u32, (i / GRAIN_TILE) as u32);
-            shades
-                .get((texel_noise(x, y) % 9) as usize)
-                .copied()
-                .unwrap_or(base)
-        })
-        .collect();
-    let tile = crate::art::bake(&texels, GRAIN_TILE, GRAIN_TILE, TEXEL, scale);
-    GRAIN.set(Some((key, tile.clone())));
-    tile
 }
 
 thread_local! {
     /// Each fold chevron's last state (open or not) and how often it has changed, so it turns
     /// only when its menu opens or closes, never as a page is first drawn.
     static FOLDS: RefCell<HashMap<&'static str, (bool, usize)>> = RefCell::new(HashMap::new());
-}
-
-/// A menu's chevron: pointing down while it is closed, turning up on the spring while it opens,
-/// and back down as it closes. `id` names it among the others.
-pub fn fold_chevron(id: &'static str, open: bool, size: f32, ink: Hsla) -> AnyElement {
-    let turns = FOLDS.with_borrow_mut(|folds| {
-        let (was, turns) = folds.entry(id).or_insert((open, 0));
-        if *was != open {
-            *was = open;
-            *turns += 1;
-        }
-        *turns
-    });
-    let at = move |up: f32| gpui::Transformation::rotate(gpui::radians(std::f32::consts::PI * up));
-    let chevron = icon("arrow-down-01", size, ink);
-    if turns == 0 {
-        return chevron.with_transformation(at(0.)).into_any_element();
-    }
-    chevron
-        .with_animation(
-            ElementId::named_usize(id, turns),
-            crate::motion::eased(crate::motion::POP),
-            move |d, t| d.with_transformation(at(if open { t } else { 1. - t })),
-        )
-        .into_any_element()
 }
 
 /// The texture's three shades of `c`, `step` of lightness off it.
@@ -566,7 +286,6 @@ pub fn lit_accent(accent: u32) -> Hsla {
 pub mod edge {
     pub const REST: f32 = 0.10;
     pub const HOVER: f32 = 0.24;
-    pub const STRONG: f32 = 0.30;
 }
 
 /// `id`'s hover layer: a white fill at `fill`, eased in and out (no outline: a line flashing round
@@ -734,23 +453,6 @@ pub fn dot(tone: Tone) -> Div {
     div().flex_none().size(px(7.)).rounded_full().bg(c)
 }
 
-/// The progress bar (`Bar`): 4 px, white at 12 %, filled in the accent's soft shade.
-pub fn bar(value: f32, accent_soft: u32) -> Div {
-    div()
-        .h(px(4.))
-        .w_full()
-        .rounded(px(rad(2.)))
-        .overflow_hidden()
-        .bg(white(fill::ACTIVE))
-        .child(
-            div()
-                .h_full()
-                .rounded(px(rad(2.)))
-                .w(gpui::relative(value.clamp(0., 1.)))
-                .bg(color(accent_soft)),
-        )
-}
-
 /// A sidebar row (an instance, a server): `rounded-[12px] p-2`, white at 10 % when it is the one
 /// shown, 5 % under the pointer. Its icon and lines go in as children; `pr` leaves room for a
 /// button laid over its right end.
@@ -775,79 +477,6 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
     };
     let d = d.child(hover_nudge(&id, 12.));
     keyboard(track_hover(d, id), t)
-}
-
-/// A row's two lines: the name (14 px semibold) and its state after a dot (12.5 px, white at
-/// 65 %), both at the page's 1.5 line height.
-pub fn row_text(name: impl Into<SharedString>, state: (Tone, String)) -> Div {
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w_0()
-        .child(
-            text(14., FontWeight::SEMIBOLD, ink::FULL)
-                .line_height(px(21.))
-                .truncate()
-                .child(name.into()),
-        )
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .min_w_0()
-                .child(dot(state.0))
-                .child(
-                    text(12.5, FontWeight::NORMAL, ink::MUTED)
-                        .line_height(px(18.75))
-                        .truncate()
-                        .child(state.1),
-                ),
-        )
-}
-
-/// A square button with one icon (`ICON_BUTTON`): white at 65 %, white with a 8 % fill under
-/// the pointer, white with 12 % while `active`.
-pub fn icon_button(
-    id: impl Into<SharedString>,
-    name: &'static str,
-    size: f32,
-    icon_size: f32,
-    r: f32,
-    active: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let group = SharedString::from(format!("{id}-group"));
-    let d = div()
-        .id(id.clone())
-        .group(group.clone())
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(size))
-        .rounded(px(crate::glass_ui::rad(r)))
-        .cursor_pointer()
-        .active(|s| s.top(px(1.)));
-    let d = if active {
-        d.bg(white(fill::ACTIVE))
-            .border_1()
-            .border_color(white(edge::STRONG))
-    } else {
-        d.child(hover_fill(&id, r, 0., fill::BUTTON))
-    };
-    let glyph = icon(
-        name,
-        icon_size,
-        white(if active { ink::FULL } else { ink::MUTED }),
-    )
-    .relative()
-    .group_hover(group, |s| s.text_color(white(ink::FULL)));
-    keyboard(track_hover(d.child(glyph), id), t)
 }
 
 /// A top-bar page, as the site's nav: a naked tab — no plate, no pill — its label brightening and
@@ -1049,105 +678,6 @@ pub fn dialog_plate(radius: f32) -> Div {
         .child(layer(white(sunrise_launcher_theme::glass::TINT)))
 }
 
-/// Text on a white button (`SOLID`): `#100a1f`, medium.
-pub fn solid(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    h: f32,
-    size: f32,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    keyboard(
-        div()
-            .id(id)
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .gap(px(8.))
-            // `h` is the least height: a label that wraps in a narrow button (a long translation)
-            // grows it instead of spilling out of it.
-            .min_h(px(h))
-            .py(px(4.))
-            .px(px(16.))
-            .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
-            .text_center()
-            .bg(paper())
-            .border_1()
-            .border_color(white(edge::REST))
-            .cursor_pointer()
-            .hover(|s| {
-                s.opacity(0.94).shadow(vec![gpui::BoxShadow {
-                    color: gpui::black().opacity(0.25),
-                    offset: gpui::point(px(0.), px(4.)),
-                    blur_radius: px(14.),
-                    spread_radius: px(0.),
-                    inset: false,
-                }])
-            })
-            .active(|s| s.opacity(0.85))
-            .font_family(sunrise_launcher_theme::glass::FONT)
-            .text_size(px(size))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(on_paper())
-            .child(label.into()),
-        t,
-    )
-}
-
-/// A menu row with a note under its label (`MENU_ITEM`): 14 px medium over 12 px at 55 %, white
-/// at 7 % under the pointer; at 40 % when `locked`. A mark (a tick) can follow on the right.
-pub fn menu_item(
-    id: impl Into<SharedString>,
-    label: SharedString,
-    note: String,
-    locked: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(12.))
-        .w_full()
-        .px(px(12.))
-        .py(px(8.))
-        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
-        .when(!locked, |d| {
-            d.cursor_pointer()
-                .child(hover_fade(&id, layer(radius::CONTROL), |d, a| {
-                    d.bg(white(0.07 * a))
-                }))
-        })
-        .child(
-            div()
-                .relative()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    text(14., FontWeight::MEDIUM, ink::FULL)
-                        .line_height(px(21.))
-                        .child(label),
-                )
-                .child(
-                    text(12., FontWeight::NORMAL, ink::QUIET)
-                        .line_height(px(18.))
-                        .truncate()
-                        .child(note),
-                ),
-        );
-    if locked {
-        return d.opacity(0.4);
-    }
-    keyboard(track_hover(d, id), t)
-}
-
 /// A dropdown's choice: its name on one line, 36 tall, the accent's tick on the one `picked`.
 pub fn pick_row(
     id: impl Into<SharedString>,
@@ -1227,95 +757,6 @@ pub fn quiet_icon(
     })
 }
 
-/// A list row (`ROW`): `rounded-[12px] px-3 py-2.5`, white at 6 % under the pointer. `on_hover`
-/// hears the pointer come and go too, for rows that show their actions then. `held`: the row
-/// keeps its fill while the pointer is on one of its buttons or its menu is open, as CSS's
-/// `:hover` stays on a parent.
-pub fn list_row(
-    id: impl Into<SharedString>,
-    held: bool,
-    on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let key = id.clone();
-    let owner = crate::widgets::Owner::default();
-    let fill = if held && !hover_is(&id) {
-        layer(radius::ROW)()
-            .bg(white(fill::ROW_HOVER))
-            .border_1()
-            .border_color(white(edge::HOVER))
-            .into_any_element()
-    } else {
-        hover_fill(&id, radius::ROW, 0., fill::ROW_HOVER)
-    };
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .items_center()
-        .gap(px(12.))
-        .w_full()
-        .px(px(12.))
-        .py(px(10.))
-        .rounded(px(crate::glass_ui::rad(radius::ROW)))
-        .child(fill)
-        .child(owner.noting())
-        .on_hover(move |hovered, window, cx| {
-            note_hover(&key, *hovered, &owner, window, cx);
-            on_hover(hovered, window, cx);
-        });
-    keyboard(d, t)
-}
-
-/// A list row's two lines: the name (14 px medium) and a note (13 px, white at 55 %).
-pub fn list_text(name: impl Into<SharedString>, note: impl Into<SharedString>) -> Div {
-    div()
-        .relative()
-        .flex()
-        .flex_col()
-        .flex_1()
-        .min_w_0()
-        .child(
-            text(14., FontWeight::MEDIUM, ink::FULL)
-                .line_height(px(21.))
-                .truncate()
-                .child(name.into()),
-        )
-        .child(
-            text(13., FontWeight::NORMAL, ink::QUIET)
-                .line_height(px(19.5))
-                .truncate()
-                .child(note.into()),
-        )
-}
-
-/// A tab's line while it has nothing to list (`Empty`): 14 px, white at 60 %, `px-3 py-10`.
-pub fn empty() -> Div {
-    text(14., FontWeight::NORMAL, ink::NOTE)
-        .line_height(px(21.))
-        .px(px(12.))
-        .py(px(40.))
-}
-
-/// The line over a tab's list (`px-3 pb-2`): its note at 13 px, white at 60 %, then buttons.
-pub fn list_head(note: impl Into<SharedString>) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(12.))
-        .px(px(12.))
-        .pb(px(8.))
-        .child(
-            text(13., FontWeight::NORMAL, ink::NOTE)
-                .line_height(px(19.5))
-                .min_w_0()
-                .truncate()
-                .child(note.into()),
-        )
-}
-
 /// A link in a line of text (`font-medium text-white underline-offset-4 hover:underline`).
 pub fn link(id: impl Into<SharedString>, label: impl Into<SharedString>) -> Stateful<Div> {
     div()
@@ -1364,88 +805,6 @@ pub fn field(focused: bool, invalid: bool) -> Div {
 thread_local! {
     /// The slider being dragged, if one is.
     static SLIDING: RefCell<Option<SharedString>> = const { RefCell::new(None) };
-}
-
-/// A slider from `min` to `max` in whole `step`s, standing at `value`, `width` px long: a 4 px
-/// track filled in the accent up to a square knob. A press sets it where the pointer is, and it
-/// follows a drag anywhere in the window until the button comes up; `on_change` hears each value.
-pub fn slider(
-    id: impl Into<SharedString>,
-    value: f32,
-    (min, max, step): (f32, f32, f32),
-    width: f32,
-    on_change: impl Fn(f32, &mut Window, &mut App) + 'static,
-) -> Div {
-    let id = id.into();
-    let share = ((value - min) / (max - min)).clamp(0., 1.);
-    let on_change = Rc::new(on_change);
-    const KNOB: f32 = 14.;
-    // The window's own mouse events, read where the slider was painted: a drag keeps going past
-    // its ends, which an element's listeners (heard only under the pointer) would lose.
-    let listen = canvas(
-        |_, _, _| {},
-        move |bounds, (), window, _| {
-            let at = move |x: Pixels| {
-                let share = ((x - bounds.origin.x) / bounds.size.width).clamp(0., 1.);
-                ((min + share * (max - min)) / step).round() * step
-            };
-            let (down_id, change) = (id.clone(), on_change.clone());
-            window.on_mouse_event(move |e: &gpui::MouseDownEvent, phase, window, cx| {
-                if phase == gpui::DispatchPhase::Bubble
-                    && e.button == gpui::MouseButton::Left
-                    && bounds.contains(&e.position)
-                {
-                    SLIDING.set(Some(down_id.clone()));
-                    change(at(e.position.x), window, cx);
-                }
-            });
-            let (move_id, change) = (id.clone(), on_change.clone());
-            window.on_mouse_event(move |e: &gpui::MouseMoveEvent, phase, window, cx| {
-                let mine = SLIDING.with_borrow(|s| s.as_ref() == Some(&move_id));
-                if phase == gpui::DispatchPhase::Bubble && mine && e.dragging() {
-                    change(at(e.position.x), window, cx);
-                }
-            });
-            window.on_mouse_event(|_: &gpui::MouseUpEvent, _, _, _| SLIDING.set(None));
-        },
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full();
-    div()
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .w(px(width))
-        .h(px(24.))
-        .cursor_pointer()
-        .child(
-            div()
-                .relative()
-                .w_full()
-                .h(px(4.))
-                .rounded(px(rad(0.).min(2.)))
-                .overflow_hidden()
-                .bg(white(fill::ACTIVE))
-                .child(
-                    div()
-                        .h_full()
-                        .w(gpui::relative(share))
-                        .bg(color(look().accent)),
-                ),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(gpui::relative(share))
-                .ml(px(-KNOB / 2.))
-                .size(px(KNOB))
-                .rounded(px(rad(KNOB / 2.)))
-                .bg(white(ink::FULL)),
-        )
-        .child(listen)
 }
 
 /// A switch (`Toggle`): 40×24, round; the accent with an `on_accent` knob on the right while on,
@@ -1538,40 +897,6 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
     })
 }
 
-/// A tab in a row of tabs, `h` tall: the open one on a lit fill, the others with a faint fill
-/// under the pointer. One weight and a 1 px edge on every tab (clear when not open), so
-/// opening one moves nothing.
-pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Stateful<Div> {
-    let id = id.into();
-    keyboard(
-        track_hover(
-            div()
-                .id(id.clone())
-                .relative()
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(7.))
-                .h(px(h))
-                .px(px(12.))
-                .rounded(px(rad(radius::CONTROL)))
-                .cursor_pointer()
-                .font_family(sunrise_launcher_theme::glass::FONT)
-                .font_weight(FontWeight::MEDIUM)
-                .border_1()
-                .text_color(white(if on { ink::FULL } else { ink::BODY }))
-                .when(on, |d| d.bg(white(0.12)).border_color(white(edge::STRONG)))
-                .when(!on, |d| {
-                    d.border_color(gpui::transparent_black())
-                        .child(hover_edge(&id, radius::CONTROL, 0.05, false))
-                        .hover(|s| s.text_color(white(ink::FULL)))
-                }),
-            id,
-        ),
-        t,
-    )
-}
-
 /// A segmented control in the glass look (the site's): white at 4 % round at 12, 3 px around
 /// 32 px options round at 9; the chosen one in the accent's tint.
 pub fn segments<T: Copy + PartialEq + 'static>(
@@ -1627,96 +952,6 @@ pub fn segments<T: Copy + PartialEq + 'static>(
         seg = seg.child(keyboard(track_hover(d, option.clone()), t));
     }
     seg
-}
-
-/// A 2 px line along a panel's top (absolute) with a short accent segment sweeping across it:
-/// shown the moment a wait starts, so a click answers at once, and taking no room.
-pub fn loading_line() -> impl IntoElement {
-    div()
-        .absolute()
-        .top_0()
-        .left(px(rad(radius::PANEL)))
-        .right(px(rad(radius::PANEL)))
-        .h(px(2.))
-        .overflow_hidden()
-        .child({
-            let segment = div()
-                .absolute()
-                .top_0()
-                .h_full()
-                .w(gpui::relative(0.3))
-                .bg(color(look().accent));
-            // Reduced motion: the segment holds still in sight.
-            if crate::motion::still() {
-                segment.left(gpui::relative(0.35)).into_any_element()
-            } else {
-                segment
-                    .with_animation(
-                        "loading-line",
-                        gpui::Animation::new(std::time::Duration::from_millis(1100))
-                            .repeat()
-                            .with_easing(gpui::ease_in_out),
-                        |d, p| d.left(gpui::relative(-0.3 + 1.3 * p)),
-                    )
-                    .into_any_element()
-            }
-        })
-}
-
-/// `d` dimmed while a slow wait runs (search `n`): unchanged for its first 200 ms, then easing
-/// to half, so a quick answer swaps what is shown with nothing in between.
-pub fn waiting(d: Div, n: usize) -> AnyElement {
-    d.with_animation(
-        ElementId::named_usize("waiting", n),
-        gpui::Animation::new(std::time::Duration::from_millis(400)),
-        |d, p| d.opacity(1. - 0.5 * ((p - 0.5) * 2.).clamp(0., 1.)),
-    )
-    .into_any_element()
-}
-
-/// A page's head (`PageHead`): its title in Bricolage, 46 px at this width
-/// (`clamp(2.25rem, 3.6vw, 3rem)`), its note under it at 15 px on 1.55, white at 70 %, at most
-/// 62 characters wide; 40 px above, 28 below.
-pub fn page_head(title: impl Into<SharedString>, note: impl Into<SharedString>) -> Div {
-    let note: SharedString = note.into();
-    div()
-        .flex()
-        .flex_col()
-        .pt(px(28. - crate::glass::CONTENT_INSET))
-        .mb(px(20.))
-        .child(
-            // A compact title: the page's content, not its name, gets the height.
-            div()
-                .font_family(sunrise_launcher_theme::glass::DISPLAY_FONT)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_size(px(32.))
-                .line_height(px(36.))
-                .text_color(white(ink::FULL))
-                .child(title.into()),
-        )
-        .when(!note.is_empty(), |d| {
-            d.child(
-                text(14., FontWeight::NORMAL, ink::BODY)
-                    .mt(px(8.))
-                    .max_w(px(615.))
-                    .line_height(px(23.25))
-                    .child(note),
-            )
-        })
-}
-
-/// A small heading in a card (`h3`): 13 px, medium, white at 70 %.
-pub fn card_heading(label: impl Into<SharedString>) -> Div {
-    text(13., FontWeight::MEDIUM, ink::BODY)
-        .line_height(px(19.5))
-        .child(label.into())
-}
-
-/// A card's note: 13 px on 1.5, white at 55 %.
-pub fn card_note(label: impl Into<SharedString>) -> Div {
-    text(13., FontWeight::NORMAL, ink::QUIET)
-        .line_height(px(19.5))
-        .child(label.into())
 }
 
 /// A tooltip's view: one line on a solid float, for controls shown by their icon alone.

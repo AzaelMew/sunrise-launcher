@@ -98,53 +98,6 @@ impl Launcher {
         });
     }
 
-    /// Asks for a game program (or a zip holding one) and installs it as its own version on a
-    /// thread: a version is thousands of files. `Msg::Imported` ends it.
-    pub(crate) fn import_build(&mut self, cx: &mut Context<Self>) {
-        if !self.can_import_build() {
-            return;
-        }
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(tr("Import").into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(mut paths))) = paths.await else {
-                return;
-            };
-            let Some(path) = paths.pop() else {
-                return;
-            };
-            let _ = this.update(cx, |this, cx| {
-                // Another picker's import, or a removal, may have started meanwhile.
-                this.start_build_import(path, cx);
-            });
-        })
-        .detach();
-    }
-    /// Whether a build may be imported now. A removal still running could take
-    /// the folder of the same program imported again.
-    pub(crate) fn can_import_build(&self) -> bool {
-        !self.importing_build && self.removing.is_empty()
-    }
-    /// Starts importing the build at `path` on a thread, as the picker does.
-    /// Separate from [`Self::import_build`] so a file dropped on the window can
-    /// start the same import (`import_dropped`) without a picker. Does nothing
-    /// when one is already running. `Msg::Imported` ends it.
-    pub(crate) fn start_build_import(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        if !self.can_import_build() {
-            return;
-        }
-        self.importing_build = true;
-        self.import_error = None;
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(Msg::Imported(build_import::import(&path, None)));
-        });
-        cx.notify();
-    }
 
     /// Prepares the selected version, its Minecraft files from the player's install or, for an
     /// owner who asks, from Mojang.
@@ -273,22 +226,6 @@ impl Launcher {
     pub(crate) fn can_start(&self, tag: &str) -> bool {
         let running = self.client.is_some() || self.starting_client.is_some();
         starts_now(backend::is_prepared(tag), self.preparing, running)
-    }
-
-    /// Whether the selected instance's version can start now, from a shortcut (a server's Join,
-    /// a world's Play, a friend's code): Sunrise's only, never a Java instance.
-    pub(crate) fn can_start_selected(&self) -> bool {
-        self.selected_instance().is_none_or(|i| i.java.is_none())
-            && self.selected().is_some_and(|tag| self.can_start(tag))
-    }
-
-    /// Whether a server's Join starts the selected instance now: a Java instance too, as Play
-    /// would (no game running or starting).
-    pub(crate) fn can_join_selected(&self) -> bool {
-        match self.selected_instance() {
-            Some(i) if i.java.is_some() => self.client.is_none() && self.starting_client.is_none(),
-            _ => self.can_start_selected(),
-        }
     }
 
     /// Starts the game: the session first (a network round trip when the token needs

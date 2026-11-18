@@ -6,7 +6,7 @@
 //! launcher's drain (`wake.rs`), which draws it, then lets it go.
 
 use super::*;
-use crate::glass_ui::{self as ui, white};
+use crate::glass_ui::{ white};
 use std::path::Path;
 use std::sync::Mutex;
 use sunrise_launcher_theme::glass::ink;
@@ -40,21 +40,6 @@ fn say_parts(parts: Parts) {
     crate::wake::wake();
 }
 
-/// The pointer is on the toast (its time stops) or left it (its time goes on).
-fn hold(on: bool) {
-    let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(l) = line.as_mut() {
-        match (on, l.held) {
-            (true, None) => l.held = Some(Instant::now()),
-            (false, Some(from)) => {
-                l.since += from.elapsed();
-                l.held = None;
-            }
-            _ => {}
-        }
-    }
-}
-
 /// Says `text` now, in place of whatever was said before.
 pub(super) fn say(text: impl Into<String>) {
     say_parts(vec![(text.into(), false)]);
@@ -76,11 +61,6 @@ pub(super) fn say_with(en: &str, value: &str) {
         _ => vec![(said.to_string(), false)],
     };
     say_parts(parts);
-}
-
-/// Lets the line go now: a click on the toast.
-fn dismiss() {
-    *LINE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// The line still showing, and its number.
@@ -132,94 +112,4 @@ impl Launcher {
         changed
     }
 
-    /// The toast along the bottom, on a narrower window (`xl:hidden`).
-    pub(super) fn toast_float(&self) -> Option<Div> {
-        if ui::on() {
-            return self.outline_toast();
-        }
-        let (text, n) = current()?;
-        let line = ui::text(13., FontWeight::NORMAL, ink::FULL)
-            .relative()
-            .text_color(white(ink::FULL))
-            .child(text);
-        let card = crate::glass::float(20.).w_full().px(px(16.)).py(px(12.));
-        Some(
-            div()
-                .absolute()
-                .left(px(16.))
-                .right(px(16.))
-                .bottom(px(16.))
-                .flex()
-                .justify_center()
-                .child(card.child(line).with_animation(
-                    ElementId::named_usize("toast", n as usize),
-                    crate::motion::eased(crate::motion::POP),
-                    |d, p| d.opacity(p).top(px(crate::motion::POP_RISE * (1. - p))),
-                )),
-        )
-    }
-
-    /// The Outline look's toast: an opaque card in the bottom-right corner, edged like its
-    /// plates, a tick in the accent, then the line, its path or command in mono.
-    fn outline_toast(&self) -> Option<Div> {
-        let (parts, n) = current_parts()?;
-        let mut line = div()
-            .flex()
-            .flex_wrap()
-            .items_baseline()
-            .gap_x(px(6.))
-            .min_w_0();
-        for (part, mono) in parts {
-            line = line.child(if mono {
-                ui::mono(12., ink::SOFT).child(part.trim().to_string())
-            } else {
-                ui::text(13., FontWeight::MEDIUM, ink::FULL).child(part.trim().to_string())
-            });
-        }
-        Some(
-            div()
-                .absolute()
-                .right(px(16.))
-                .bottom(px(16.))
-                .left(px(16.))
-                .flex()
-                .justify_end()
-                .child(
-                    // Under the pointer it's edged brighter, takes the hover from the page under
-                    // it and stays; a click lets it go.
-                    div()
-                        .id("toast")
-                        .occlude()
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .max_w(px(560.))
-                        .px(px(14.))
-                        .py(px(10.))
-                        .rounded(px(ui::rad(0.)))
-                        .bg(ui::color(crate::glass::panel()))
-                        .border_1()
-                        .border_color(ui::line())
-                        .hover(|s| s.border_color(white(0.4)))
-                        .cursor_pointer()
-                        .shadow_lg()
-                        .on_hover(|on, window, _| {
-                            hold(*on);
-                            window.refresh();
-                        })
-                        .on_click(|_, window, _| {
-                            dismiss();
-                            window.refresh();
-                        })
-                        .child(ui::icon("tick-02", 16., ui::color(ui::look().accent)).flex_none())
-                        .child(line)
-                        .with_animation(
-                            ElementId::named_usize("toast", n as usize),
-                            crate::motion::eased(crate::motion::POP),
-                            |d, p| d.opacity(p).top(px(crate::motion::POP_RISE * (1. - p))),
-                        ),
-                ),
-        )
-    }
 }

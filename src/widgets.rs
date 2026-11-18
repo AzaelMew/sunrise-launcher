@@ -229,20 +229,6 @@ pub(crate) fn text(step: theme::Step) -> Div {
     }
 }
 
-/// A release's tag as a title: mono, so its digits read at a glance.
-pub(crate) fn version_tag(tag: &str) -> Div {
-    div()
-        .font_family(theme::MONO)
-        .text_size(px(22.))
-        .line_height(px(28.))
-        .font_weight(FontWeight::MEDIUM)
-        .child(
-            sunrise_launcher::nightly::label(tag)
-                .or_else(|| build_import::label(tag))
-                .unwrap_or_else(|| tag.trim_start_matches('v').to_string()),
-        )
-}
-
 /// Sunrise's mark (`docs/media/brand/icon.svg`), cell for cell on its 16 grid: the rays, the sun
 /// and the horizon on the dark tile.
 pub(crate) fn mark(size: f32) -> Div {
@@ -474,23 +460,6 @@ pub(crate) fn switch(id: impl Into<SharedString>, on: bool, t: &Theme) -> Statef
         )
 }
 
-/// A section's title inside a page: a pixel icon in the accent and the name in the pixel face.
-pub(crate) fn section_title(label: &'static str, icon: &'static str, t: &Theme) -> Div {
-    if glass_ui::flat() {
-        return glass_ui::card_heading(tr(label)).px(px(16.)).pt(px(12.));
-    }
-    div()
-        .flex()
-        .items_center()
-        .gap(px(10.))
-        .child(blocks::icon(icon, 20., t.accent))
-        .child(
-            blocks::pixel(18., FontWeight::SEMIBOLD)
-                .text_color(t.ink)
-                .child(tr(label)),
-        )
-}
-
 /// A segmented control: a sunk track, the chosen segment a raised block.
 pub(crate) fn segments<T: Copy + PartialEq + 'static>(
     id: &'static str,
@@ -552,39 +521,6 @@ pub(crate) enum PlayPress {
     Nothing,
 }
 
-/// Account state uses the same semantic colors as the launcher's other notices. Keep a
-/// distinct icon and the full label so color is never the only way to recognize a state.
-pub(crate) fn account_status_line(
-    status: Option<&account::session::Status>,
-    progress: Option<&str>,
-    t: &Theme,
-) -> Div {
-    use account::session::State;
-    let (icon, color, label) = if let Some(progress) = progress {
-        ("clock", t.muted, progress)
-    } else {
-        let (icon, color) = match status.map(|s| s.state) {
-            Some(State::Ready) => ("check", t.success),
-            Some(State::NeedsRefresh | State::Retry) => ("reload", t.warn),
-            Some(State::SignInRequired) => ("user", t.danger),
-            Some(State::OwnershipRequired) => ("info-box", t.danger),
-            None => ("info-box", t.muted),
-        };
-        (
-            icon,
-            color,
-            status.map_or("Sign-in not checked", |s| s.label()),
-        )
-    };
-    div()
-        .flex()
-        .items_center()
-        .gap(px(6.))
-        .text_color(color)
-        .child(blocks::icon(icon, 14., color))
-        .child(tr(label).to_owned())
-}
-
 /// Polling must handle each sign-in transition once. Replaying a completed sign-in
 /// restarts every account's status worker and leaves the UI perpetually checking.
 pub(crate) fn sign_in_change(
@@ -605,17 +541,6 @@ pub(crate) fn play_press(prepared: bool, owner: Option<bool>, busy: bool) -> Pla
         (true, _) => PlayPress::Play,
         (false, Some(true)) => PlayPress::PrepareThenPlay,
         (false, _) => PlayPress::Nothing,
-    }
-}
-
-/// What Play's button says for `press`, so its label is what a click does: "Prepare & play"
-/// when it prepares first, "Sign in to play" when no account here owns the game (it does
-/// nothing then), "Play" otherwise (dimmed while the keychain is still being read).
-pub(crate) fn play_label(press: PlayPress, owner: Option<bool>) -> &'static str {
-    match (press, owner) {
-        (PlayPress::PrepareThenPlay, _) => "Prepare & play",
-        (PlayPress::Nothing, Some(false)) => "Sign in to play",
-        _ => "Play",
     }
 }
 
@@ -653,42 +578,8 @@ pub(crate) fn selection_after_removal(
         .or_else(|| installed.first().cloned())
 }
 
-/// The row menu a press on a sidebar row leaves open: that row's, or none when it was already
-/// that row's (the ⋮ and a right click on the row toggle the same way).
-pub(crate) fn row_menu_after_press(
-    open: Option<(String, bool)>,
-    id: &str,
-) -> Option<(String, bool)> {
-    if open.as_ref().is_some_and(|(current, _)| current == id) {
-        return None;
-    }
-    Some((id.to_owned(), false))
-}
-
 pub(crate) fn disabled(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(theme::DISABLED).cursor_default().tab_stop(false)
-}
-
-/// A page's title in the pixel face and one line on what it is for.
-pub(crate) fn page_header(title: &str, description: &str, t: &Theme) -> Div {
-    if t.glass {
-        return glass_ui::page_head(tr(title), tr(description));
-    }
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(10.))
-        .child(
-            blocks::pixel(36., FontWeight::SEMIBOLD)
-                .text_color(t.ink)
-                .child(tr(title).to_string()),
-        )
-        .child(
-            text(theme::UI)
-                .max_w(px(520.))
-                .text_color(t.muted)
-                .child(tr(description).to_string()),
-        )
 }
 
 /// One row of a list, as its own panel: a name in the pixel face with an optional detail under
@@ -703,113 +594,9 @@ pub(crate) fn update_name(release: &Release) -> &str {
     }
 }
 
-pub(crate) fn index_row(
-    _n: usize,
-    name: impl IntoElement,
-    detail: Option<AnyElement>,
-    right: Option<AnyElement>,
-    t: &Theme,
-) -> Div {
-    if glass_ui::flat() {
-        return glass_ui::setting_row(name, detail, right);
-    }
-    slot_row(None, name, detail, right, t)
-}
-
-/// A row with an icon slot (`blocks::slot`) on its left: a project in the Mods page's lists.
-pub(crate) fn slot_row(
-    slot: Option<Div>,
-    name: impl IntoElement,
-    detail: Option<AnyElement>,
-    right: Option<AnyElement>,
-    t: &Theme,
-) -> Div {
-    if glass_ui::flat() {
-        return div()
-            .flex()
-            .items_center()
-            .gap(px(14.))
-            .px(px(16.))
-            .py(px(12.))
-            .children(slot.map(|s| s.rounded(px(crate::glass_ui::rad(8.))).overflow_hidden()))
-            .child(
-                glass_ui::setting_row(name, detail, right)
-                    .p_0()
-                    .border_0()
-                    .bg(gpui::transparent_black())
-                    .flex_1(),
-            );
-    }
-    blocks::panel(t)
-        .flex()
-        .items_center()
-        .gap(px(16.))
-        .min_h(px(theme::ROW))
-        .mb(px(8.))
-        .px(px(16.))
-        .py(px(12.))
-        .children(slot)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w_0()
-                .gap(px(2.))
-                .child(
-                    blocks::pixel(16., FontWeight::MEDIUM)
-                        .text_color(t.ink)
-                        .child(name),
-                )
-                .children(detail.map(|d| {
-                    text(theme::CAPTION)
-                        .text_color(t.muted)
-                        .child(d)
-                        .into_any_element()
-                })),
-        )
-        .children(right)
-}
-
-/// Microsoft account actions go below the profile in the fixed-width glass card.
-pub(crate) fn account_row(
-    slot: Option<Div>,
-    name: impl IntoElement,
-    detail: Option<AnyElement>,
-    actions: Div,
-    t: &Theme,
-) -> Div {
-    if glass_ui::flat() {
-        return div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .child(slot_row(slot, name, detail, None, t))
-            .child(actions.flex_wrap().px(px(16.)).pb(px(12.)));
-    }
-    slot_row(slot, name, detail, Some(actions.into_any_element()), t)
-}
-
 /// A plate that stands apart from the page: notices, the console, the agents note.
 pub(crate) fn plate(t: &Theme) -> Div {
     blocks::panel(t)
-}
-
-pub(crate) fn tab_action(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    t: &Theme,
-) -> Stateful<Div> {
-    let label: SharedString = label.into();
-    shell::action(id, shell::Action::Raised, t).child(shell::label(tr(&label).to_string()))
-}
-
-/// Floating text with no background
-pub(crate) fn quiet_note(text_: impl Into<SharedString>, t: &Theme) -> Div {
-    plate(t)
-        .px(px(12.))
-        .py(px(8.))
-        .child(text(theme::CAPTION).text_color(t.muted).child(text_.into()))
 }
 
 /// Something went wrong: a dot in the danger colour, then what happened. The glass look draws it
@@ -910,37 +697,11 @@ pub(crate) fn thousands(n: u64) -> String {
     out
 }
 
-/// A mono line in upper case: the status above a title, the footer's links.
-pub(crate) fn caps(s: impl AsRef<str>) -> Div {
-    // The glass look writes these as the mockup's small headings (`h3`): 13 px, medium.
-    if glass_ui::on() {
-        return glass_ui::text(
-            13.,
-            FontWeight::MEDIUM,
-            sunrise_launcher_theme::glass::ink::BODY,
-        )
-        .line_height(px(19.5))
-        .child(s.as_ref().to_string());
-    }
-    text(theme::MICRO).child(s.as_ref().to_uppercase())
-}
-
 pub(crate) fn short(path: &std::path::Path) -> String {
     let home = dirs::home_dir().unwrap_or_default();
     match path.strip_prefix(&home) {
         Ok(rest) if !home.as_os_str().is_empty() => format!("~/{}", rest.display()),
         _ => path.display().to_string(),
-    }
-}
-
-/// A download's error as a player reads it: a lost connection is said plainly, without the
-/// address and the system's error code; any other error stays as it is.
-pub(crate) fn download_error(error: &str) -> String {
-    if error.starts_with("No connection") {
-        tr("Sunrise couldn't reach the internet. Check your connection, then try again.")
-            .to_string()
-    } else {
-        error.to_string()
     }
 }
 

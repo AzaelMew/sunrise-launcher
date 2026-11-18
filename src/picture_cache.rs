@@ -15,8 +15,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sunrise_launcher::pictures::{self, Lru};
 
-/// A screenshot tile's widest (Overview's first), in points; made at this times the screen's scale.
-const THUMB_POINTS: f32 = 360.;
 /// What the made pictures may take together, unless more than that is on screen at once.
 const BUDGET: u64 = 384 << 20;
 /// A picture drawn this recently is on screen: it stays even over the budget.
@@ -74,20 +72,6 @@ impl Pictures {
 }
 
 impl Launcher {
-    /// The side to make a screenshot tile at, for this screen.
-    pub(super) fn thumb_side(&self) -> u32 {
-        pictures::drawn_side(THUMB_POINTS, self.scale_factor, pictures::gpu_limit())
-    }
-
-    /// The side to make a picture filling the window at (the viewer, the background): every
-    /// pixel the screen can show, even on an 8K one, within the GPU's limit.
-    pub(super) fn window_side(&self) -> u32 {
-        pictures::drawn_side(
-            self.window_long_side,
-            self.scale_factor,
-            pictures::gpu_limit(),
-        )
-    }
 
     /// The picture at `path` as `look`; None while it is being made, or when it can't be read
     /// (draw a plain fill then).

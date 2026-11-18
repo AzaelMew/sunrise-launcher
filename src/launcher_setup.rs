@@ -445,27 +445,6 @@ impl Launcher {
         });
     }
 
-    /// Recovery text shared by both sidebar styles and Settings.
-    pub(crate) fn launcher_update_help(&self, error: Option<&str>) -> String {
-        if let Some(error) = error {
-            return trf("the update failed: {error}", &[("error", error)]);
-        }
-        if backend::package_managed_launcher() {
-            return tr("Update this launcher with your package manager.").to_string();
-        }
-        let folder = dirs::download_dir()
-            .or_else(dirs::home_dir)
-            .unwrap_or_else(|| std::path::PathBuf::from(tr("Downloads")));
-        trf(
-            "Close this launcher, move it to {folder}, and open it there to enable updates.",
-            &[("folder", &folder.display().to_string())],
-        )
-    }
-
-    pub(crate) fn launcher_download_available(&self) -> bool {
-        !backend::package_managed_launcher()
-    }
-
     pub(crate) fn update_launcher(&mut self, release: Release) {
         if !backend::self_update_allowed()
             || matches!(
@@ -492,19 +471,6 @@ impl Launcher {
                 &release, progress,
             )));
         });
-    }
-
-    /// Update: the window closes, the installer puts the new launcher in place and starts it.
-    /// When another launcher already put it there, this one only restarts.
-    pub(crate) fn apply_launcher_update(&mut self, cx: &mut App) {
-        match sunrise_launcher::update_handoff::start_now() {
-            Ok(true) => {
-                servers_page::keep_running_through_update();
-                shut_down(cx)
-            }
-            Ok(false) => self.self_update = SelfUpdate::Failed(backend::restart()),
-            Err(e) => self.self_update = SelfUpdate::Failed(e),
-        }
     }
 
     /// Installs the Sunrise version the last check found, keeping the player's choice of
@@ -540,14 +506,6 @@ impl Launcher {
             .entry(version.to_owned())
             .or_insert_with(|| native_status::Build::read(version))
             .clone()
-    }
-
-    pub(crate) fn fetch_releases(&mut self) {
-        self.releases = Load::Loading;
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(Msg::Releases(backend::releases()));
-        });
     }
 
     pub(crate) fn fetch_startup_releases(&mut self) {

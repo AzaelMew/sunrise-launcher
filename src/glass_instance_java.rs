@@ -4,11 +4,10 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 use glass_instance::{
-    choice, choice_text, letter_tile, list_box, list_choice, loaders, section, tick, tile_image,
-};
+    choice, list_box, list_choice, loaders, section, tick};
 use new_instance::{NewKind, VersionList};
 use servers_page::Field;
-use sunrise_launcher::instances::{self, Instance, Plays, Unkept};
+use sunrise_launcher::instances::{ Instance, Plays};
 use sunrise_launcher::loaders::Loader;
 use sunrise_launcher::minecraft_versions::Kind as VersionKind;
 use sunrise_launcher_theme::glass::{fill, ink, radius};
@@ -159,56 +158,6 @@ impl Launcher {
         )
     }
 
-    /// The loaders, four across from 1280 px, else two; then what Create installs.
-    pub(super) fn loader_choice(&mut self, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let now = self.draft_loader();
-        let minecraft = self.draft_minecraft().unwrap_or_else(|| "…".into());
-        let mut grid = div()
-            .grid()
-            .grid_cols(if self.window_width >= 1280. { 4 } else { 2 })
-            .gap(px(10.));
-        for loader in loaders() {
-            let logo = match self.loader_logo(loader.id(), 40.) {
-                Some(image) => tile_image(image, 40.),
-                None => letter_tile(white(fill::BUTTON), loader.name(), 40.).into_any_element(),
-            };
-            let note = match loader.id() {
-                "fabric" => tr("Light and fast to update"),
-                "quilt" => tr("Fabric mods run here too"),
-                "neoforge" => tr("The big modpacks' home"),
-                "forge" => tr("For older packs"),
-                _ => "",
-            };
-            grid = grid.child(
-                choice(format!("loader-{}", loader.id()), loader == now, &t)
-                    .flex_col()
-                    .items_start()
-                    .gap(px(12.))
-                    .p(px(16.))
-                    .min_w_0()
-                    .child(logo)
-                    .child(choice_text(loader.name(), note))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.change(|j| j.loader = loader);
-                        cx.notify();
-                    })),
-            );
-        }
-        section(
-            tr("Loader").into(),
-            None,
-            div().flex().flex_col().child(grid).child(
-                ui::text(13., FontWeight::NORMAL, ink::FAINT)
-                    .mt(px(10.))
-                    .child(trf(
-                        "Installs the newest stable {loader} for Minecraft {version}.",
-                        &[("loader", now.name()), ("version", &minecraft)],
-                    )),
-            ),
-        )
-    }
-
     /// What the dialog has `editing` play: Sunrise, or a Java game with its loader. The loader
     /// keeps its version while its kind and Minecraft stay; a new one's (empty here) is the
     /// newest stable, asked of its service on Save.
@@ -233,67 +182,4 @@ impl Launcher {
         Some(Plays::Java { minecraft, loader })
     }
 
-    /// Before Save switches what `editing` plays: what can't keep working. Nothing in its folder
-    /// is deleted or changed.
-    pub(super) fn switch_notice(&self, editing: &Instance) -> Option<Div> {
-        let to = self.draft_plays(editing)?;
-        if to == Plays::of(editing) {
-            return None;
-        }
-        let sunrise = backend::game_version(&self.draft_sunrise().unwrap_or_default());
-        let lines: Vec<String> = instances::unkept(editing, &to, &sunrise)
-            .into_iter()
-            .map(|u| match u {
-                Unkept::Mods { made_for, .. } => trf(
-                    "Its mods made for {loader} stay in its folder but won't load.",
-                    &[("loader", &made_for)],
-                ),
-                Unkept::ModsVersion { from, to, .. } => trf(
-                    "Its mods made for Minecraft {from} stay in its folder; some may not load in {to}.",
-                    &[("from", &from), ("to", &to)],
-                ),
-                Unkept::Worlds { from, to, .. } => trf(
-                    "Its worlds were saved by Minecraft {from}: {to} upgrades them for good, and can't open them if it is older.",
-                    &[("from", &from), ("to", &to)],
-                ),
-            })
-            .collect();
-        if lines.is_empty() {
-            return None;
-        }
-        let warn = ui::color(sunrise_launcher_theme::glass::WARN);
-        Some(
-            div()
-                .flex()
-                .flex_none()
-                .gap(px(12.))
-                .p(px(16.))
-                .rounded(px(crate::glass_ui::rad(radius::POPOVER)))
-                .bg(warn.opacity(0.1))
-                .child(ui::icon("information-circle", 20., warn))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .min_w_0()
-                        .child(
-                            ui::text(15., FontWeight::SEMIBOLD, ink::FULL)
-                                .child(tr("What this change can't keep")),
-                        )
-                        .children(lines.into_iter().map(|l| {
-                            ui::text(13., FontWeight::NORMAL, ink::BODY)
-                                .line_height(px(19.))
-                                .child(l)
-                        }))
-                        .child(
-                            ui::text(13., FontWeight::NORMAL, ink::QUIET)
-                                .line_height(px(19.))
-                                .child(tr(
-                                    "Save changes switches it. Nothing in its folder is deleted.",
-                                )),
-                        ),
-                ),
-        )
-    }
 }

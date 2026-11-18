@@ -4,9 +4,9 @@
 //! artifact holding one) installed as its own version. The Packs section and the world rows take
 //! their own drops first.
 use super::*;
-use gpui::ExternalPaths;
+
 use std::path::PathBuf;
-use sunrise_launcher::import::{self, Dropped};
+use sunrise_launcher::import::{self};
 
 #[derive(Default)]
 pub(super) struct Importing {
@@ -16,71 +16,8 @@ pub(super) struct Importing {
     note: Option<Result<String, String>>,
 }
 
-impl Importing {
-    pub(super) fn location_busy(&self) -> bool {
-        self.busy > 0
-    }
-}
 
 impl Launcher {
-    pub(super) fn import_dropped(&mut self, files: Vec<PathBuf>, cx: &mut Context<Self>) {
-        for file in files {
-            let name = file
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            match import::what(&file) {
-                Err(e) => self.importing.note = Some(Err(e)),
-                Ok(Dropped::Instance) => self.import_instance(file, cx),
-                // The same import the Versions page's Import button starts. It
-                // reports through `Msg::Imported`, which the Versions page
-                // already shows, so the note here only says it began -- and
-                // says so only if it did, since one import runs at a time.
-                Ok(Dropped::Build) => {
-                    if !self.can_import_build() {
-                        self.importing.note = Some(Err(tr(
-                            "Wait for the current operation to finish.",
-                        )
-                        .to_owned()));
-                        continue;
-                    }
-                    self.start_build_import(file, cx);
-                    self.importing.note = Some(Ok(tr("Importing…").to_owned()));
-                }
-                Ok(Dropped::Modpack) => {
-                    self.show_modpack(None);
-                    self.pack_job(move |log| {
-                        use sunrise_launcher::modpacks;
-                        modpacks::import(&modpacks::Porter::for_version(None)?, &file, log)
-                    });
-                    self.importing.note = Some(Ok(trf(
-                        "{name} is a Java modpack: importing it on the Modpacks page.",
-                        &[("name", &name)],
-                    )));
-                }
-                Ok(Dropped::Pack(_)) => {
-                    let Some(i) = self.selected_instance().cloned() else {
-                        continue;
-                    };
-                    self.importing.note =
-                        Some(sunrise_launcher::packs::add(&i.home, &file).map(|p| {
-                            trf(
-                                "Added {title} to {instance}'s packs: switch it on under Packs.",
-                                &[("title", &p.title), ("instance", &i.name)],
-                            )
-                        }));
-                    self.game_packs.stale();
-                }
-                Ok(Dropped::DataPack) => {
-                    self.importing.note = Some(Err(trf(
-                        "{name} is a data pack: drop it on a world on Home, or install it into \
-                         one from there.",
-                        &[("name", &name)],
-                    )))
-                }
-            }
-        }
-    }
 
     fn import_instance(&mut self, file: PathBuf, cx: &mut Context<Self>) {
         self.importing.busy += 1;
@@ -107,57 +44,4 @@ impl Launcher {
         .detach();
     }
 
-    /// The root's drop target: every drop the sections don't take.
-    pub(super) fn import_drop_target(
-        &self,
-        root: Stateful<Div>,
-        cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
-        root.on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-            this.import_dropped(paths.paths().to_vec(), cx);
-            cx.notify();
-        }))
-    }
-
-    /// What the last drop did, in a corner over the page until closed.
-    pub(super) fn import_note(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let t = self.theme;
-        let line = match (&self.importing.note, self.importing.busy) {
-            (_, n) if n > 0 => text(theme::LABEL)
-                .text_color(t.ink_soft)
-                .child(tr("Making the instance from the shared file…")),
-            (Some(Ok(said)), _) => text(theme::LABEL)
-                .text_color(t.ink_soft)
-                .child(said.clone()),
-            (Some(Err(e)), _) => text(theme::LABEL).text_color(t.danger).child(e.clone()),
-            (None, _) => return None,
-        };
-        Some(
-            div()
-                .absolute()
-                .bottom(px(24.))
-                .right(px(24.))
-                .w(px(440.))
-                .child(
-                    plate(&t)
-                        .w_full()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .px(px(16.))
-                        .py(px(12.))
-                        .border_1()
-                        .border_color(t.rule)
-                        .bg(t.page)
-                        .child(blocks::icon("download", 18., t.accent))
-                        .child(div().flex_1().min_w_0().child(line))
-                        .child(button("import-close", "Close", Kind::Ghost, &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.importing.note = None;
-                                cx.notify();
-                            }),
-                        )),
-                ),
-        )
-    }
 }
