@@ -46,13 +46,56 @@ pub struct LeftOut {
 /// native code was left out, so the game is the plain one (`<home>/native-left-out.json`).
 const KEPT: &str = "native-left-out.json";
 
-/// Records that `base`, played as it is from `home`, leaves out `left`.
+/// The native mods turned on, as a record keeps them: what a record was made for.
+fn inputs(home: &std::path::Path) -> serde_json::Value {
+    let mut mods = crate::native_status::enabled(home);
+    mods.sort();
+    serde_json::json!(mods)
+}
+
+/// Records that `base`, played as it is from `home`, leaves out `left`, for the native mods
+/// turned on now (their ids, versions and file digests). The file is written whole: a temporary
+/// file in the same folder, then a rename.
 pub(super) fn keep(home: &std::path::Path, base: &str, left: &[LeftOut]) -> Result<(), String> {
     let record = serde_json::json!({
         "base": base,
+        "inputs": inputs(home),
         "left_out": left.iter().map(LeftOut::to_json).collect::<Vec<_>>(),
     });
-    std::fs::write(home.join(KEPT), record.to_string()).map_err(|e| format!("{KEPT}: {e}"))
+    let failed = |e: &dyn std::fmt::Display| format!("{KEPT}: {e}");
+    let mut temp = tempfile::Builder::new()
+        .prefix(".native-left-out-")
+        .tempfile_in(home)
+        .map_err(|e| failed(&e))?;
+    std::io::Write::write_all(&mut temp, record.to_string().as_bytes()).map_err(|e| failed(&e))?;
+    temp.persist(home.join(KEPT))
+        .map_err(|e| failed(&e.error))?;
+    Ok(())
+}
+
+/// Whether [`keep`]'s record is for `base` and for the native mods turned on now: the plain game
+/// is then what a build of them gives, and Play has nothing to build.
+pub fn kept_current(home: &std::path::Path, base: &str) -> bool {
+    let record: serde_json::Value = std::fs::read(home.join(KEPT))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    made_for(&record, base, &inputs(home))
+}
+
+/// Whether `record` was made for `base` and these native mods.
+fn made_for(record: &serde_json::Value, base: &str, inputs: &serde_json::Value) -> bool {
+    record["base"].as_str() == Some(base) && record["inputs"] == *inputs
+}
+
+/// What changes when [`keep`]'s record does, cheap to read on every frame.
+pub fn kept_stamp(home: &std::path::Path) -> String {
+    let meta = std::fs::metadata(home.join(KEPT)).ok();
+    format!(
+        "{:?}{:?}",
+        meta.as_ref().and_then(|m| m.modified().ok()),
+        meta.map(|m| m.len())
+    )
 }
 
 /// Forgets [`keep`]'s record: a build was made, and it has its own.
@@ -248,5 +291,35 @@ mod tests {
             left[0].label(),
             "lib was left out of this build: why. It comes back when its author makes a version for this game."
         );
+    }
+
+    #[test]
+    fn the_record_of_a_plain_game_holds_for_the_same_mods_only() {
+        let home = super::super::tests::dir("isolate-kept");
+        let left = [LeftOut {
+            id: "a".into(),
+            version: "1.0.0".into(),
+            why: Why::OtherVersion,
+            detail: None,
+        }];
+        keep(&home, "base-1", &left).unwrap();
+        assert!(kept_current(&home, "base-1"));
+        assert!(!kept_current(&home, "base-2"));
+        assert_eq!(kept(&home, "base-1"), left);
+        // Another mod turned on is another input: the record no longer holds.
+        let record: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(home.join(KEPT)).unwrap()).unwrap();
+        let other = serde_json::json!([["b", "1.0.0", "digest"]]);
+        assert!(made_for(&record, "base-1", &inputs(&home)));
+        assert!(!made_for(&record, "base-1", &other));
+        // Written again, it replaces the file whole and leaves no temporary file.
+        keep(&home, "base-3", &[]).unwrap();
+        assert!(kept_current(&home, "base-3") && kept(&home, "base-1").is_empty());
+        let names: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, [KEPT]);
     }
 }

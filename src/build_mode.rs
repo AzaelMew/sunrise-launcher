@@ -40,7 +40,7 @@ impl Launcher {
         let profile = Profile::Optimized;
         let key = format!(
             "{}{profile:?}",
-            native_status::fingerprint(&home, version.as_deref())
+            native_status::fingerprint(&home, version.as_deref()) + &native_mods::kept_stamp(&home)
         );
         let mut memo = self.mods.native_state.borrow_mut();
         match memo.as_ref() {
@@ -48,13 +48,25 @@ impl Launcher {
             _ => {
                 let built = version.as_deref().and_then(native_status::built);
                 let enabled = native_status::enabled(&home);
-                let state = native_status::in_mode(
-                    native_status::state(&enabled, built.as_deref()),
-                    version.as_deref().and_then(native_status::built_profile),
-                    profile,
-                );
+                // No build, because every mod with native code was left out of the game as it
+                // is: for these mods that plain game is what a build gives, so nothing waits.
+                let plain = built.is_none()
+                    && !enabled.is_empty()
+                    && version
+                        .as_deref()
+                        .is_some_and(|v| native_mods::kept_current(&home, v));
+                let state = if plain {
+                    native_status::State::UpToDate
+                } else {
+                    native_status::in_mode(
+                        native_status::state(&enabled, built.as_deref()),
+                        version.as_deref().and_then(native_status::built_profile),
+                        profile,
+                    )
+                };
                 // A build in another mode rebuilds every mod; otherwise only the changed ones.
                 let unbuilt = match state {
+                    _ if plain => Vec::new(),
                     native_status::State::NotBuilt => enabled.into_iter().map(|m| m.0).collect(),
                     _ => native_status::unbuilt(&enabled, built.as_deref()),
                 };

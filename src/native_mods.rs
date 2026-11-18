@@ -35,7 +35,7 @@ mod isolate;
 mod picker;
 pub mod sdk_cache;
 
-pub use isolate::{kept as kept_left_out, Detail, LeftOut, Why};
+pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::Consent;
 mod uses;
