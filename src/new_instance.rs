@@ -12,6 +12,8 @@ use sunrise_launcher::minecraft_versions::Versions;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NewKind {
     Sunrise,
+    /// Removed with the Java launcher.
+    #[allow(dead_code)]
     Vanilla,
     Modded,
 }
@@ -60,8 +62,12 @@ impl JavaChoice {
 pub(super) enum VersionList {
     #[default]
     NotAsked,
+    /// Removed with the Java launcher.
+    #[allow(dead_code)]
     Loading,
+    #[allow(dead_code)]
     Ready(Versions),
+    #[allow(dead_code)]
     Failed(String),
 }
 

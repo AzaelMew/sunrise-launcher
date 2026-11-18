@@ -3,7 +3,9 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
+use sunrise_launcher_scenery::{art, clock, glass};
+#[cfg(windows)]
+use sunrise_launcher_scenery::coast;
 mod blocks_settings;
 mod launcher_messages;
 mod launcher_play;
@@ -420,7 +422,6 @@ struct Launcher {
     aside: while_playing::Aside,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
-    backdrop: gpui::Entity<window_root::Backdrop>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }

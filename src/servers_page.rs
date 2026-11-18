@@ -139,9 +139,6 @@ pub(super) struct Create {
     new_world: bool,
     copy: Option<PathBuf>,
     worlds: Vec<(String, PathBuf)>,
-    /// The glass dialog's line under each world: its name and "Sunrise · mode · size", read
-    /// once when the dialog opens.
-    details: HashMap<PathBuf, (String, String)>,
     mode: &'static str,
     difficulty: &'static str,
     max_players: u32,
@@ -893,17 +890,6 @@ impl Launcher {
         } else {
             Vec::new()
         };
-        let details = if glass {
-            sunrise_launcher::worlds::list(&backend::game_home())
-                .into_iter()
-                .map(|w| {
-                    let line = format!("Sunrise · {} · {}", tr(w.mode), bytes(w.size));
-                    (w.path, (w.name, line))
-                })
-                .collect()
-        } else {
-            Default::default()
-        };
         // Nothing to run it with yet: said as the form opens, not after it is filled in.
         self.servers.problem = servers::create_blocked(self.selected().map(String::as_str));
         self.servers.create_scroll = Scrollbar::default();
@@ -919,7 +905,6 @@ impl Launcher {
             eula: false,
             eula_missing: false,
             friends,
-            details,
         });
     }
 

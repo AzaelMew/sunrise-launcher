@@ -11,6 +11,8 @@ pub(super) enum PendingConsent {
     Toggle(Entry),
     Install(SourceId, String, Option<Project>),
     Github(Resolved, Option<String>),
+    /// Only the tests make one; a Java mod's switch is removed with the Java launcher.
+    #[cfg_attr(not(test), allow(dead_code))]
     Local(String),
 }
 

@@ -6,7 +6,7 @@
 //! signed and what it may do), install it with its checksum checked, turn Sunrise mods on and
 //! off, and update or remove what was installed (`sunrise_launcher::browser`). Imported modpacks
 //! are listed on its Modpacks tab.
-use super::line_edit::LineEdit;
+
 use super::*;
 use java_instance::Target;
 use std::collections::HashMap;
@@ -43,40 +43,23 @@ pub(super) enum Checking {
 }
 
 pub(super) struct Mods {
-    pub(super) kind: PackKind,
-    pub(super) source: SourceId,
-    text: LineEdit,
     focus: FocusHandle,
     pub(super) focused: bool,
     everything: bool,
     /// The Minecraft version Sunrise plays, read again with each search ([`browser::game`]).
     pub(super) game: String,
-    /// Which search is the current one; answers for older ones are dropped.
-    search: u64,
-    searching: bool,
-    /// A new list is on its way to replace the rows shown, which dim meanwhile.
-    refreshing: bool,
-    searched: bool,
     results: Vec<Project>,
     results_list: cull::Cull,
     installed_list: cull::Cull,
     pub(super) report_list: cull::Cull,
-    more: bool,
     pub(super) installed: Vec<installed::Entry>,
     /// The registry native mods' versions the player picked on their Versions tab, by id
     /// (`sunrise::chosen`), read with `installed`.
     pub(super) chosen: std::collections::BTreeMap<String, String>,
-    /// The Sunrise the selected instance played when its updates were last looked for.
-    pub(super) checked_for: Option<String>,
-    /// The number of the latest look for updates: only its answer is taken ([`offer_updates`]).
-    updates_asked: u64,
     /// The build the page's Minecraft version was last worked out for (the selected instance's).
     game_for: Option<(Option<String>, Option<String>)>,
     /// Whether the start's auto-update ran: it waits for the release list.
     pub(super) auto_updated: bool,
-    loaded: bool,
-    /// Whether the page searched for the instance as it is (its version and loader).
-    asked: bool,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: Option<PathBuf>,
     /// The selected Java instance's version and loader: its mods and resource packs are the
@@ -89,37 +72,17 @@ pub(super) struct Mods {
     pub(super) busy: Option<(String, String, f32)>,
     pub(super) message: Option<Result<String, String>>,
     pub(super) updates: HashMap<(SourceId, String), String>,
-    confirm_remove: Option<String>,
-    /// The project the glass look's detail card shows; the first result when none is.
-    pub(super) picked: Option<String>,
-    /// A project was just picked where its card sits under the list (a narrow window): the page
-    /// scrolls to the card once it is laid out (`glass_mods::reveal`).
-    pub(super) reveal: std::rc::Rc<glass_mods::Reveal>,
-    /// The project the glass detail card showed last.
-    pub(super) shown: Option<Project>,
     /// An install awaiting explicit native-code consent, before any download.
     /// The selected instance's native build state, the mods it would build again
     /// (`native_status::unbuilt`), and the `native_status::fingerprint` they were read for: read
     /// again only when that changes.
     pub(super) native_state:
         std::cell::RefCell<Option<(String, native_status::State, Vec<String>)>>,
-    /// Native routes read by a worker for this instance's files, consent and game version.
-    pub(super) native_routes: std::cell::RefCell<Option<crate::build_mode::RouteMemo>>,
-    /// What updating the native mods to a newer installed game would do, read in the background.
-    pub(super) native_update: std::cell::RefCell<Option<crate::build_mode::UpdateMemo>>,
-    /// The update the player chose to stay off (its memo key): its summary isn't shown again.
-    pub(super) update_stayed: std::cell::RefCell<Option<String>>,
-    /// Installed wasm declarations, reread only when the instance's files or enable list change.
-    /// The mod whose route menu is open.
-    pub(super) route_open: Option<String>,
     /// The instance and the mods whose compile failed in the last stop: their chips say so until
     /// the next build attempt, whatever the player chose.
     pub(super) unbuilt: Option<(String, Vec<String>)>,
-    native_files: std::cell::RefCell<Option<(String, Vec<native_status::Installed>)>>,
     /// Java mods' checks, by source and project.
     pub(super) checks: HashMap<(SourceId, String), Checking>,
-    /// Sunrise registry projects' trust and capabilities, by id ([`sunrise::trust_and_capabilities`]).
-    pub(super) about: HashMap<String, Vec<String>>,
     /// The project page, filters and images.
     pub(super) browse: super::mods_project::Browse,
     pub(super) tx: Sender<Event>,
@@ -161,39 +124,19 @@ impl Mods {
 
     pub(super) fn new(cx: &mut App) -> Self {
         let (tx, rx) = crate::wake::channel();
-        let page = std::env::var("SUNRISE_LAUNCHER_PAGE");
-        let kind = match page.as_deref() {
-            Ok("modpacks") => PackKind::Modpack,
-            Ok("resourcepacks") => PackKind::ResourcePack,
-            Ok("shaders") => PackKind::Shader,
-            Ok("datapacks") => PackKind::DataPack,
-            _ => PackKind::Mod,
-        };
         Self {
-            kind,
-            source: source_for(kind),
-            text: LineEdit::new(String::new(), 100, 40),
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
             focused: false,
             everything: false,
             game: browser::game(),
-            search: 0,
-            searching: false,
-            refreshing: false,
-            searched: false,
             results: Vec::new(),
             results_list: cull::Cull::default(),
             installed_list: cull::Cull::default(),
             report_list: cull::Cull::default(),
-            more: false,
             installed: Vec::new(),
             chosen: Default::default(),
-            checked_for: None,
-            updates_asked: 0,
             game_for: None,
             auto_updated: false,
-            loaded: false,
-            asked: false,
             home: None,
             java: None,
             worlds: Vec::new(),
@@ -201,19 +144,9 @@ impl Mods {
             busy: None,
             message: None,
             native_state: Default::default(),
-            native_routes: Default::default(),
-            native_update: Default::default(),
-            update_stayed: Default::default(),
-            route_open: None,
             unbuilt: None,
-            native_files: Default::default(),
             updates: HashMap::new(),
-            confirm_remove: None,
-            picked: None,
-            reveal: Default::default(),
-            shown: None,
             checks: HashMap::new(),
-            about: HashMap::new(),
             browse: Default::default(),
             tx,
             rx,
@@ -653,14 +586,5 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
         }
     }
     lines
-}
-
-/// Where a kind's tab searches first: Sunrise's registry for mods and shader packs, Modrinth for
-/// the rest.
-fn source_for(kind: PackKind) -> SourceId {
-    match kind {
-        PackKind::Mod | PackKind::Shader => SourceId::Sunrise,
-        PackKind::ResourcePack | PackKind::Modpack | PackKind::DataPack => SourceId::Modrinth,
-    }
 }
 

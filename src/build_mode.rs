@@ -7,12 +7,6 @@ use super::*;
 use native_mods::Profile;
 use native_status::State;
 
-/// The running or finished native snapshot; serialize readers to avoid racing cache leases.
-pub(super) struct RouteMemo {}
-
-/// The update check for one instance and newer game, while it runs (`None`) and once it ended.
-pub(super) struct UpdateMemo {}
-
 impl Launcher {
     /// A build stopped for worlds at stake: the choice is shown, and the mods that failed to
     /// compile stay marked past it.
