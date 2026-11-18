@@ -188,6 +188,8 @@ pub(crate) fn snapshot(command: &mut Command) {
 
 /// Unix holder owns the wrapped program; Windows retains its existing launch path.
 pub(crate) fn spawn(command: &mut Command, piped: bool) -> std::io::Result<std::process::Child> {
+    // Older game versions still read this credential handoff; never let it reach them.
+    command.env_remove("SUNRISE_ACCOUNT_SESSIONS");
     spawn_inner(command, piped).map_err(|error| {
         match write_launch_failure(&crate::backend::data_dir().join("logs"), command, &error) {
             Ok(path) => std::io::Error::new(

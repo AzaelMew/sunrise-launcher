@@ -318,8 +318,8 @@ pub(super) fn refresh_account(
     result.unwrap_or_else(|e| Status::failed(&e))
 }
 
-/// Renew `who` for a game already running (a server refused its session, or a splitscreen
-/// player joins one) and hand it over as at launch: a fresh read-once file in `dir`. No file
+/// Renew `who` for a game already running when a server refused its session, and hand it
+/// over as at launch: a fresh read-once file in `dir`. No file
 /// unless the renewal left the account ready; the status then says why (sign in again, retry).
 pub fn renew_for_game(dir: &Path, who: &str) -> Result<PathBuf, Status> {
     let account = Accounts::load()
