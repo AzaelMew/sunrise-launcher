@@ -18,7 +18,7 @@ jobs:
     steps:
       # The checker comes from the base commit, never the pull request: a branch made before it existed still gets
       # checked, and a pull request can't change the check it is held to. Its commits are only read as git objects.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0

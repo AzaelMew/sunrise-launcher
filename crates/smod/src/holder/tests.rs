@@ -20,14 +20,13 @@ fn deadline() -> Instant {
     Instant::now() + Duration::from_secs(60)
 }
 pub(super) fn actor() -> PathBuf {
-    std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("examples")
-        .join(format!("holder_actor{}", std::env::consts::EXE_SUFFIX))
+    let name = format!("holder_actor{}", std::env::consts::EXE_SUFFIX);
+    // The profile folder's examples/: the test runs from deps/, or from build/<package>/<hash>/out/ in Cargo's newer layout.
+    let exe = std::env::current_exe().unwrap();
+    exe.ancestors()
+        .map(|folder| folder.join("examples").join(&name))
+        .find(|actor| actor.is_file())
+        .unwrap_or_else(|| panic!("no examples/{name} above {}: build it first", exe.display()))
 }
 impl Scene {
     fn new(native: bool) -> Self {

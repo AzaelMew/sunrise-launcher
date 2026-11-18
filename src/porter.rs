@@ -399,6 +399,6 @@ pub fn kept(work: &Path) -> Option<WorkStatus> {
     serde_json::from_str(&fs::read_to_string(work.join(STATUS_FILE)).ok()?).ok()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "porter_tests.rs"]
 mod tests;
