@@ -932,10 +932,14 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(title(if building {
-                trf("Build {name} on this computer?", &[("name", &name)])
-            } else {
-                trf("Allow {name} to run as native code?", &[("name", &name)])
+            .child(title(match pending {
+                Some(PendingConsent::Build(inputs)) if inputs.len() == 1 => {
+                    tr("Build this mod?").into()
+                }
+                Some(PendingConsent::Build(_)) => {
+                    trf("Build {name} on this computer?", &[("name", &name)])
+                }
+                _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
             }))
             .child(muted(tr(
                 "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.",
