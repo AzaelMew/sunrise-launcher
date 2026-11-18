@@ -176,6 +176,12 @@ jobs:
       - name: Doc tests
         if: runner.os == 'Linux'
         run: cargo test --locked --workspace --doc
+      - name: The release signing script and the release check agree
+        if: runner.os != 'Windows'
+        run: cargo test --locked --workspace --test sign_release
+      - name: Release tools
+        if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s tools/tests
 
   # The one check branch protection requires, on the commit it tested: a fork's pull request names it otherwise until a maintainer's dispatch posts `build`, and a dispatch's own run (on main) never names it.
   build:

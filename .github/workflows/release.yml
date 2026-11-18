@@ -1,0 +1,297 @@
+name: release
+# Builds the launcher on each platform it ships for and, only when LAUNCHER_RELEASES is on, publishes vX.Y.Z (Cargo.toml's version).
+# By hand only, a dry run unless told otherwise: gh workflow run release --ref main -f dry_run=false
+# Off until the core team creates LAUNCHER_SIGNING_KEY in the `release` environment and sets the repository variable LAUNCHER_RELEASES=on.
+# The first release is also published in sunrise-org/sunrise as launcher@X.Y.Z (its launcher-bridge.yml), so launchers installed from there update.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build everything and write the notes, but publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  # Test runs never reach the telemetry server: no live-count ping, no uploads.
+  SUNRISE_TELEMETRY_URL: "off"
+  LAUNCHER_PREFIX: sunrise-launcher
+  LAUNCHER_INSTALL_FOLDER: Sunrise Launcher
+  LAUNCHER_APP_BUNDLE: Sunrise Launcher.app
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      tag: ${{ steps.decide.outputs.tag }}
+      version: ${{ steps.decide.outputs.version }}
+      head: ${{ steps.decide.outputs.head }}
+      dry_run: ${{ steps.mode.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: matrix
+        run: echo "matrix=$(python3 tools/launcher_build_matrix.py)" >> "$GITHUB_OUTPUT"
+      - id: mode
+        # Off main every run is a dry run.
+        run: echo "dry_run=${{ github.ref != 'refs/heads/main' || inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+      - name: Releases are on, or this is a dry run
+        env:
+          DRY_RUN: ${{ steps.mode.outputs.dry_run }}
+          RELEASES: ${{ vars.LAUNCHER_RELEASES }}
+        run: |
+          if [[ "$DRY_RUN" != true && "$RELEASES" != on ]]; then
+            echo "::error::Launcher releases are off: they wait for the launcher's signing key (LAUNCHER_SIGNING_KEY) and LAUNCHER_RELEASES=on."
+            exit 1
+          fi
+      - id: decide
+        env:
+          DRY_RUN: ${{ steps.mode.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if ! python3 tools/release_notes.py decide --head "$GITHUB_SHA" > decision.json; then
+            # A dry run still builds when Cargo.toml's version is already out; a release never does.
+            [[ "$DRY_RUN" == true ]] || exit 1
+            echo "{\"version\": \"0.0.0-dry\", \"tag\": \"v0.0.0-dry\", \"head\": \"$GITHUB_SHA\"}" > decision.json
+          fi
+          for key in tag version head; do echo "$key=$(jq -r ".$key" decision.json)" >> "$GITHUB_OUTPUT"; done
+          echo "### $(jq -r .tag decision.json) at ${GITHUB_SHA:0:9} (dry run: $DRY_RUN)" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: decide
+    name: build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.decide.outputs.matrix) }}
+    runs-on: ${{ matrix.mac && 'macos-latest' || matrix.os }}
+    # Notarizing the app and then the .dmg can take a few minutes each.
+    timeout-minutes: ${{ matrix.mac && 60 || 40 }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+      BIN: ${{ matrix.target && format('target/{0}/release', matrix.target) || 'target/release' }}
+      # Sunrise's Azure app for Microsoft sign-in: a repository variable, not a secret; unset, sign-in says it isn't configured.
+      SUNRISE_MSA_CLIENT_ID: ${{ vars.SUNRISE_MSA_CLIENT_ID }}
+      # The mod browser's CurseForge source: a repository secret; unset, the launcher searches Modrinth only.
+      SUNRISE_CURSEFORGE_API_KEY: ${{ secrets.SUNRISE_CURSEFORGE_API_KEY }}
+      # The release's version and tag, built in (backend::VERSION and own_tag): no version-bump commits.
+      SUNRISE_LAUNCHER_VERSION: ${{ needs.decide.outputs.version }}
+      SUNRISE_LAUNCHER_TAG: ${{ needs.decide.outputs.tag }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.decide.outputs.head }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Linux libraries GPUI links to
+        if: runner.os == 'Linux'
+        run: >-
+          bash tools/ci/install_launcher_deps.sh libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
+          libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev patchelf
+      - name: Metal shaders compiled now, or at run time without the Metal toolchain
+        if: runner.os == 'macOS'
+        run: |
+          if ! xcrun metal --version > /dev/null 2>&1; then
+            echo "::notice::No Metal toolchain on this runner: GPUI compiles its shaders at run time"
+            echo "LAUNCHER_FEATURES=gpui_platform/runtime_shaders" >> "$GITHUB_ENV"
+          fi
+      - name: Keep the tests away from this runner's own folders
+        run: |
+          for name in SUNRISE_HOME SUNRISE_LAUNCHER_HOME XDG_DATA_HOME XDG_CONFIG_HOME SUNRISE_LAUNCHER_TRASH SUNRISE_LAUNCHER_CLIPBOARD SUNRISE_LAUNCHER_DESKTOP; do
+            path="${RUNNER_TEMP//\\//}/launcher-isolation/$name"
+            mkdir -p "$path"
+            echo "$name=$path" >> "$GITHUB_ENV"
+          done
+          echo "SUNRISE_LAUNCHER_NO_SELF_UPDATE=1" >> "$GITHUB_ENV"
+          echo "SUNRISE_NO_AUDIO=1" >> "$GITHUB_ENV"
+          # Lease fixtures refuse symlinked paths, and macOS's default TMPDIR goes through /var.
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            echo "TMPDIR=$(cd "$RUNNER_TEMP" && pwd -P)/" >> "$GITHUB_ENV"
+          fi
+      - run: cargo test --release --locked ${{ matrix.target && format('--target {0}', matrix.target) || '' }} ${LAUNCHER_FEATURES:+--features "$LAUNCHER_FEATURES"}
+      - run: cargo build --release --locked ${{ matrix.target && format('--target {0}', matrix.target) || '' }} ${LAUNCHER_FEATURES:+--features "$LAUNCHER_FEATURES"}
+      - name: Release binary retains the game-holder capability marker
+        run: |
+          python=python3; [[ "$RUNNER_OS" != Windows ]] || python=python
+          "$python" -c 'import pathlib, sys; assert b"sunrise-private-holder-v2;" in pathlib.Path(sys.argv[1]).read_bytes(), "capability marker missing from this binary (release optimisation?)"' "$BIN/${{ matrix.binary }}"
+      - name: Windows executable architecture
+        if: runner.os == 'Windows'
+        run: python tools/check_pe_arch.py "${{ matrix.pe_arch }}" "$BIN/${{ matrix.binary }}"
+      - name: Unrelated DLLs cannot intercept launcher or setup startup
+        if: runner.os == 'Windows'
+        run: python tools/test_launcher_dll_search.py "$BIN/${{ matrix.binary }}"
+      - name: The version is the release's
+        run: |
+          out=$("$BIN/${{ matrix.binary }}" --version)
+          echo "$out"
+          [[ "$out" == "$LAUNCHER_PREFIX $SUNRISE_LAUNCHER_VERSION" ]] || { echo "::error::expected $LAUNCHER_PREFIX $SUNRISE_LAUNCHER_VERSION"; exit 1; }
+      - name: Only system libraries
+        run: |
+          file="$BIN/${{ matrix.binary }}"
+          case "$RUNNER_OS" in
+            Windows) python tools/check_imports.py "$file" ;;
+            macOS) others=$(otool -L "$file" | tail -n +2 | awk '{print $1}' | grep -v -E '^(/usr/lib/|/System/Library/)' || true)
+                   [[ -z "$others" ]] || { echo "::error::links $others"; exit 1; } ;;
+          esac
+      - name: Smoke test
+        env:
+          SUNRISE_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export SUNRISE_LAUNCHER_HOME="${RUNNER_TEMP//\\//}/sunrise-launcher-smoke"
+          export SUNRISE_HOME="$SUNRISE_LAUNCHER_HOME/game"
+          rm -rf "$SUNRISE_LAUNCHER_HOME"
+          launcher="$PWD/$BIN/${{ matrix.binary }}"
+          # GitHub's API rate-limits shared runner addresses now and then: try a few times.
+          retry() { for i in 1 2 3 4; do "$@" && return 0; sleep $((i * 15)); done; return 1; }
+          retry "$launcher" versions
+          "$launcher" links --json
+          # The per-user Windows setup: the same binary under the setup's name installs into a scratch folder, and its copy uninstalls itself.
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            setup="$RUNNER_TEMP/setup-smoke"
+            cp "$launcher" "$RUNNER_TEMP/$LAUNCHER_PREFIX-setup.exe"
+            "$RUNNER_TEMP/$LAUNCHER_PREFIX-setup.exe" setup --quiet --dir "$setup"
+            installed="$setup/$LAUNCHER_INSTALL_FOLDER/$LAUNCHER_PREFIX.exe"
+            [[ -f "$installed" ]] || { echo "::error::the setup copied no launcher"; exit 1; }
+            "$installed" uninstall --quiet
+            [[ ! -f "$installed" ]] || { echo "::error::uninstall left the launcher"; exit 1; }
+            rm -rf "$setup"
+          fi
+          rm -rf "$SUNRISE_LAUNCHER_HOME"
+      - name: The signing keychain, unlocked
+        if: runner.os == 'macOS' && vars.MACOS_SIGN_IDENTITY != ''
+        env:
+          MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
+        run: packaging/macos/keychain.sh unlock
+      - name: Package
+        env:
+          MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
+        run: |
+          rm -rf dist out && mkdir -p out
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # The app, zipped (self-update) and in a .dmg (installer), signed ad hoc or with Developer ID: packaging/macos.
+            python3 -m venv "$RUNNER_TEMP/dmg" && "$RUNNER_TEMP/dmg/bin/pip" install --quiet dmgbuild==1.6.5
+            DMGBUILD="$RUNNER_TEMP/dmg/bin/dmgbuild" packaging/macos/package.sh "$BIN/${{ matrix.binary }}" "$SUNRISE_LAUNCHER_VERSION" out ${{ matrix.mac_arch }}
+            rm -rf "out/$LAUNCHER_APP_BUNDLE"
+          else
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              # The .tar.gz is what the launcher updates itself from; the AppImage replaces itself instead.
+              packaging/linux/appimage.sh "$BIN/${{ matrix.binary }}" "$SUNRISE_LAUNCHER_VERSION" out
+            fi
+            mkdir -p dist/LICENSES
+            cp "$BIN/${{ matrix.binary }}" LICENSE dist/
+            cp LICENSES/MIT-Horizon.txt dist/LICENSES/
+            if [[ "${{ matrix.asset }}" == *.tar.gz ]]; then
+              (cd dist && tar czf ../out/${{ matrix.asset }} ${{ matrix.binary }} LICENSE LICENSES)
+            else
+              (cd dist && 7z a ../out/${{ matrix.asset }} ${{ matrix.binary }} LICENSE LICENSES)
+            fi
+          fi
+          ls -l out
+      - name: Setup exe (Windows)
+        # The launcher's binary under the setup's name: started with no arguments it shows the per-user installer.
+        if: runner.os == 'Windows'
+        run: cp "$BIN/${{ matrix.binary }}" "out/${{ matrix.setup_asset }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: out/*
+          retention-days: 3
+      - name: The signing keychain, locked again
+        if: always() && runner.os == 'macOS' && vars.MACOS_SIGN_IDENTITY != ''
+        run: packaging/macos/keychain.sh lock
+
+  sign:
+    needs: [decide, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only job that holds the launcher's signing key, a secret of the `release` environment that only main's real releases enter; it runs nothing from the repository but sign_release.sh.
+    environment: ${{ needs.decide.outputs.dry_run != 'true' && 'release' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/ci/sign_release.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: ${{ env.LAUNCHER_PREFIX }}-*
+          merge-multiple: true
+      - name: Sign the checksums (SHA256SUMS, SHA256SUMS.sig)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.LAUNCHER_SIGNING_KEY }}
+          RELEASE_SIGNING_KEY_NEXT: ${{ secrets.LAUNCHER_SIGNING_KEY_NEXT }}
+          EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
+          TAG: ${{ needs.decide.outputs.tag }}
+        run: bash tools/ci/sign_release.sh "$TAG" dist/"$LAUNCHER_PREFIX"-*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signature
+          path: |
+            dist/SHA256SUMS*
+            dist/ephemeral.pub
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    needs: [decide, build, sign]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 tools/release_notes.py notes --tag "${{ needs.decide.outputs.tag }}" --head "${{ needs.decide.outputs.head }}" --out notes > /dev/null
+          { echo "## $(cat notes/title.txt)"; echo; cat notes/body.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: The signature, checked as launchers check it
+        env:
+          TAG: ${{ needs.decide.outputs.tag }}
+          EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
+        run: |
+          key=(); [[ -n "$EPHEMERAL" ]] && key=(--key "$(cat dist/ephemeral.pub)")
+          rm -f dist/ephemeral.pub
+          cargo run --locked --quiet -p sunrise-launcher-release-verify --bin verify-launcher-release -- --tag "$TAG" "${key[@]}" dist
+      - name: Publish ${{ needs.decide.outputs.tag }}
+        if: needs.decide.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.decide.outputs.tag }}
+        run: |
+          gh release create "$TAG" --target "${{ needs.decide.outputs.head }}" --title "$(cat notes/title.txt)" \
+            --notes-file notes/body.md --latest dist/"$LAUNCHER_PREFIX"-* dist/SHA256SUMS dist/SHA256SUMS.sig
+      - name: Dry run, the release that would be published
+        if: needs.decide.outputs.dry_run == 'true'
+        run: |
+          echo "Would publish ${{ needs.decide.outputs.tag }} at ${{ needs.decide.outputs.head }}: $(cat notes/title.txt)"
+          ls -l dist
