@@ -811,6 +811,9 @@ fn fit((h, s, l): (f32, f32, f32), good: impl Fn(u32) -> bool, step: f32) -> u32
     from_hsl(h, s, l.clamp(0., 1.))
 }
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::Dir;
+
 /// The pictures Home can show: what the decoders read.
 const PICTURES: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
 /// A picture above this is refused: a screen's worth is far less.
@@ -852,11 +855,89 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     if u64::from(w) * u64::from(h) > MAX_PIXELS {
         return Err(format!("{shown} is {w}×{h}: too large for a background."));
     }
-    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let hash = crate::sources::sha1_hex(&bytes);
     let name = format!("background-{}.{ext}", &hash[..12]);
-    std::fs::write(dir.join(&name), &bytes).map_err(|e| format!("{name}: {e}"))?;
+    publish(dir, &name, &bytes).map_err(|e| format!("{name}: {e}"))?;
     Ok(name)
+}
+
+/// Whether `name` in `dir` is already this picture: a regular file, itself and not a link,
+/// holding exactly `bytes`. `None` when nothing has that name.
+fn same_copy(dir: &Dir, name: &str, bytes: &[u8]) -> std::io::Result<Option<bool>> {
+    use std::io::Read as _;
+    match dir.symlink_metadata(name) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+        Ok(meta) if !meta.is_file() => return Ok(Some(false)),
+        Ok(_) => {}
+    }
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = dir.open_with(name, &options)?;
+    if !file.metadata()?.is_file() {
+        return Ok(Some(false));
+    }
+    let mut held = Vec::new();
+    file.take(bytes.len() as u64 + 1).read_to_end(&mut held)?;
+    Ok(Some(held == bytes))
+}
+
+/// Puts `bytes` in `dir` as `name` without ever writing through what is already there. The
+/// bytes go to a new file of the launcher's own, made exclusively, which then takes the name
+/// in one step only if the name is free. A copy already there is kept as it is when it is
+/// this picture, and anything else under the name (a link, a folder, other bytes) is refused
+/// and left alone.
+fn publish(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let taken = || {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "something else already has this name in the launcher's folder; it was left alone",
+        )
+    };
+    std::fs::create_dir_all(dir)?;
+    let dir = Dir::open_ambient_dir(dir, cap_std::ambient_authority())?;
+    match same_copy(&dir, name, bytes)? {
+        Some(true) => return Ok(()),
+        Some(false) => return Err(taken()),
+        None => {}
+    }
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.subsec_nanos());
+    let temp = format!(".background-{}-{nanos}.tmp", std::process::id());
+    let mut options = cap_std::fs::OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    let written = dir
+        .open_with(&temp, &options)
+        .and_then(|mut file| file.write_all(bytes).and_then(|()| file.sync_all()));
+    // A hard link takes the name only if it is free, and never follows what is there.
+    let published = written.and_then(|()| {
+        dir.hard_link(&temp, &dir, name).or_else(|e| {
+            // A disk with no hard links (FAT): the name is taken by a move, if it is free.
+            let free = matches!(dir.symlink_metadata(name), Err(e) if e.kind() == std::io::ErrorKind::NotFound);
+            if e.kind() != std::io::ErrorKind::AlreadyExists && free {
+                dir.rename(&temp, &dir, name)
+            } else {
+                Err(e)
+            }
+        })
+    });
+    let _ = dir.remove_file(&temp);
+    match published {
+        Ok(()) => Ok(()),
+        // Another launcher got there first: fine if it put the same picture.
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            match same_copy(&dir, name, bytes)? {
+                Some(true) => Ok(()),
+                _ => Err(taken()),
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Home's background, if the player keeps one and it is still there.

@@ -257,3 +257,46 @@ fn each_theme_brings_back_its_own_accent() {
     // The older themes keep their ids.
     assert!(theme(Some("first_light")).is_some() && theme(Some("nord")).is_some());
 }
+
+/// Choosing a picture never writes through what already has its name: a link there is refused
+/// and its target untouched, and the same picture chosen again keeps the copy as it is.
+#[cfg(unix)]
+#[test]
+fn a_kept_picture_is_never_written_through_a_link_or_over_the_copy_in_use() {
+    use std::os::unix::fs::MetadataExt as _;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("data");
+    let source = root.path().join("dusk.png");
+    image::RgbImage::new(160, 90).save(&source).unwrap();
+
+    let name = keep_background(&dir, &source).unwrap();
+    let kept = dir.join(&name);
+    let first = std::fs::metadata(&kept).unwrap();
+    // Chosen again: the copy in use is the same file, never emptied on the way.
+    assert_eq!(keep_background(&dir, &source).unwrap(), name);
+    let again = std::fs::metadata(&kept).unwrap();
+    assert_eq!((first.ino(), first.len()), (again.ino(), again.len()));
+    assert_eq!(
+        std::fs::read(&kept).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
+
+    // A link under the name leads to a file of the player's: refused, and that file is whole.
+    let theirs = root.path().join("diary.txt");
+    std::fs::write(&theirs, "mine").unwrap();
+    std::fs::remove_file(&kept).unwrap();
+    std::os::unix::fs::symlink(&theirs, &kept).unwrap();
+    assert!(keep_background(&dir, &source).is_err());
+    assert_eq!(std::fs::read_to_string(&theirs).unwrap(), "mine");
+    // So is a file with other bytes under the name.
+    std::fs::remove_file(&kept).unwrap();
+    std::fs::write(&kept, "not this picture").unwrap();
+    assert!(keep_background(&dir, &source).is_err());
+    assert_eq!(std::fs::read_to_string(&kept).unwrap(), "not this picture");
+    // Nothing of the launcher's is left half-made.
+    let left: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, [name]);
+}
