@@ -150,6 +150,12 @@ impl Launcher {
     }
 }
 
+/// For a box that scrolls inside the page: the wheel over it scrolls only the box. The box has
+/// scrolled by the time this runs (an element's own scrolling hears the wheel first).
+fn own_wheel(_: &gpui::ScrollEvent, _: &mut Window, cx: &mut App) {
+    cx.stop_propagation();
+}
+
 pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.4).cursor_default().tab_stop(false)
 }
@@ -1044,6 +1050,7 @@ impl Launcher {
                         .id("alt-data-json")
                         .max_h(px(220.))
                         .overflow_y_scroll()
+                        .on_scroll(own_wheel)
                         .p(px(12.))
                         .rounded(px(tokens::R_CONTROL))
                         .bg(rgb(palette().field))
@@ -1114,6 +1121,7 @@ impl Launcher {
             let options = choices("alt-languages", languages, cx)
                 .max_h(px(190.))
                 .overflow_y_scroll()
+                .on_scroll(own_wheel)
                 .gap(px(6.));
             language = div()
                 .flex()
