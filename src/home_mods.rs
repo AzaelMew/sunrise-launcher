@@ -600,6 +600,98 @@ mod tests {
         assert_eq!(kept.draw(b, later).0.unwrap().len(), 0);
     }
 
+    /// A profile's game folder with one resource pack and one registry mod, both on.
+    fn profile(name: &str) -> PathBuf {
+        use std::io::Write as _;
+        let home = std::env::temp_dir().join(format!(
+            "sunrise-launcher-home-mods-{name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("resourcepacks")).unwrap();
+        let file = std::fs::File::create(home.join("resourcepacks/Soft Edges.zip")).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("pack.mcmeta", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(br#"{"pack":{"pack_format":99,"description":"made for the test"}}"#)
+            .unwrap();
+        zip.finish().unwrap();
+        std::fs::write(
+            home.join("options.txt"),
+            "resourcePacks:[\"vanilla\",\"file/Soft Edges.zip\"]\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.join("sunrise-native-mods")).unwrap();
+        std::fs::write(
+            home.join("sunrise-native-mods/lanternlight.smod"),
+            b"placeholder",
+        )
+        .unwrap();
+        std::fs::write(home.join("sunrise-mods.txt"), "mod.lanternlight:true\n").unwrap();
+        std::fs::write(
+            home.join("mod-browser.json"),
+            serde_json::json!({"entries": [{
+                "source": "sunrise", "project": "lanternlight", "slug": "lanternlight",
+                "title": "Lanternlight", "kind": "mod", "version": "1.0.0", "number": "1.0.0",
+                "file": "sunrise-native-mods/lanternlight.smod",
+                "checksum": format!("SHA-256:{}", "0".repeat(64)), "page": "", "dependency": false,
+            }]})
+            .to_string(),
+        )
+        .unwrap();
+        home
+    }
+
+    fn on(items: &[Item]) -> Vec<(&str, bool)> {
+        items.iter().map(|i| (i.name.as_str(), i.on)).collect()
+    }
+
+    #[test]
+    fn a_change_made_from_the_command_line_reaches_the_open_profile() {
+        let home = profile("cli");
+        let mut kept = Inventory::default();
+        let now = Instant::now();
+        // Home opens: the first read.
+        let known = kept.draw(&home, now).1.unwrap();
+        kept.took(&home, read_changed(&home, &known));
+        let shown = kept.draw(&home, now).0.unwrap();
+        assert_eq!(
+            on(&shown),
+            [("Lanternlight", true), ("Soft Edges.zip", true)]
+        );
+        assert_eq!(column(shown.to_vec()).unwrap().off(), 0);
+        // Nothing moved: the watch sees the stamp it knows, and a check reads nothing.
+        assert_eq!(stamp(&home), kept.stamp);
+        assert!(read_changed(&home, &kept.stamp).is_none());
+
+        // `sunrise-launcher packs off` on the same profile (`cli::set_pack` calls these).
+        let pack = packs::find(&home, PackKind::Resource, "Soft Edges.zip").unwrap();
+        packs::set_enabled(&home, &pack, false).unwrap();
+        // The watch sees another stamp and says so; the next draw reads again.
+        assert_ne!(stamp(&home), kept.stamp);
+        kept.stale = true;
+        let known = kept.draw(&home, now).1.unwrap();
+        kept.took(&home, read_changed(&home, &known));
+        let shown = kept.draw(&home, now).0.unwrap();
+        assert_eq!(
+            on(&shown),
+            [("Lanternlight", true), ("Soft Edges.zip", false)]
+        );
+        let column = column(shown.to_vec()).unwrap();
+        assert_eq!((column.shown.len(), column.off()), (1, 1));
+
+        // `sunrise-launcher mods disable`, the same way.
+        mod_list::set_enabled(&home, "lanternlight", false).unwrap();
+        assert_ne!(stamp(&home), kept.stamp);
+        kept.took(&home, read_changed(&home, &kept.stamp));
+        let shown = kept.draw(&home, now).0.unwrap();
+        assert_eq!(
+            on(&shown),
+            [("Lanternlight", false), ("Soft Edges.zip", false)]
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
     #[test]
     fn every_kind_names_itself() {
         assert_eq!(
