@@ -1,5 +1,6 @@
 //! The launcher's core, shared by the GUI, the CLI and the MCP server.
 pub mod account;
+pub mod appearance;
 pub mod backend;
 pub mod browser;
 pub mod build_import;
@@ -57,6 +58,7 @@ pub mod signed;
 pub mod sources;
 pub mod tailscale;
 pub mod telemetry;
+pub mod theme_files;
 pub mod themes;
 pub mod uninstall_aside;
 pub mod update_handoff;

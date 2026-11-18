@@ -1,0 +1,560 @@
+//! Themes a player makes: `<data>/themes/<slug>/theme.toml`, with its one picture beside it.
+//!
+//! A file names up to six colours and nothing else: the page behind the scenery, the tint of
+//! the panels and of the sidebar and top bar, the two inks and the accent. What it leaves out
+//! is Dawn's. It can't set opacity, blur, type, sizes or the label on Play, which is white in
+//! every theme.
+//!
+//! The folder is read once when the launcher starts and again on Reload ([`loaded`],
+//! [`reload`]), never while a frame is drawn. Everything a file says is checked here, where it
+//! is read: what comes out is a [`Local`] whose colours read on each other, or a [`Reason`]
+//! the Appearance page shows beside the folder's name. A file that fails is never rewritten,
+//! and never stops another theme from loading.
+use crate::i18n::{tr, trf};
+use crate::themes::DAWN_DARK;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
+use sunrise_launcher_theme::contrast;
+use sunrise_launcher_theme::night::{over, Night};
+
+/// What a player theme's id starts with in `Settings::theme`: `local:<slug>`.
+pub const PREFIX: &str = "local:";
+pub const FILE: &str = "theme.toml";
+const MAX_TOML: u64 = 16 << 10;
+const MAX_PICTURE: u64 = 40 << 20;
+const MIN_SIDE: u32 = 64;
+const MAX_SIDE: u32 = 8192;
+const MAX_PIXELS: u64 = 16_000_000;
+/// The picture is drawn behind a window: one this wide on its longer side fills any screen.
+const SHOWN_SIDE: u32 = 2560;
+/// Text reads at this contrast.
+const TEXT: f32 = 4.5;
+/// The most a hovered, raised or selected surface moves away from the one it is on.
+const RAISE: f32 = 0.16;
+/// Names Windows keeps for devices, whatever follows the first dot.
+const DEVICES: [&str; 22] = [
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+const ROLES: [&str; 6] = ["background", "card", "chrome", "text", "muted", "accent"];
+
+/// The six colours of a theme file, each `0xRRGGBB`: the file's, else Dawn's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Roles {
+    pub background: u32,
+    pub card: u32,
+    pub chrome: u32,
+    pub text: u32,
+    pub muted: u32,
+    pub accent: u32,
+}
+
+impl Roles {
+    pub const DAWN: Roles = Roles {
+        background: DAWN_DARK.page,
+        card: DAWN_DARK.card,
+        chrome: DAWN_DARK.side,
+        text: DAWN_DARK.ink,
+        muted: DAWN_DARK.muted,
+        accent: DAWN_DARK.accent,
+    };
+
+    /// White or black: the end the inks are moved toward when they don't read as given.
+    fn ink_end(&self) -> u32 {
+        if contrast(0xffffff, self.card) >= contrast(0x000000, self.card) {
+            0xffffff
+        } else {
+            0x000000
+        }
+    }
+
+    /// The launcher fits each ink toward white or black until it reads, so a palette works
+    /// unless even that end fails on one of its surfaces, hovered or not: that pair is the
+    /// reason.
+    fn readable(&self) -> Result<(), Reason> {
+        let end = self.ink_end();
+        for (name, surface) in [
+            ("card", self.card),
+            ("background", self.background),
+            ("chrome", self.chrome),
+        ] {
+            let worst = contrast(end, surface).min(contrast(end, over(end, RAISE, surface)));
+            if worst < TEXT {
+                return Err(Reason::Unreadable {
+                    surface: name,
+                    ratio: worst,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The colours as the launcher's palettes are made from them: Dawn's glass, scenery and
+    /// status colours around the file's six.
+    pub fn night(&self) -> Night {
+        let end = self.ink_end();
+        Night {
+            page: self.background,
+            side: self.chrome,
+            card: self.card,
+            card_hi: over(end, 0.08, self.card),
+            stroke: self.text,
+            ink: self.text,
+            ink_soft: self.text,
+            muted: self.muted,
+            accent: self.accent,
+            accent_hi: self.accent,
+            on_accent: 0xffffff,
+            dark: end == 0xffffff,
+            ..DAWN_DARK
+        }
+    }
+}
+
+/// A theme file that passed every check.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Local {
+    /// Its folder's name.
+    pub slug: String,
+    /// Its own name, as the player reads it: plain text, one line.
+    pub name: String,
+    pub roles: Roles,
+    /// Its picture for Home, in its folder, checked when the folder was read.
+    pub picture: Option<PathBuf>,
+}
+
+impl Local {
+    /// Its name in `Settings::theme`.
+    pub fn id(&self) -> String {
+        format!("{PREFIX}{}", self.slug)
+    }
+}
+
+/// Why a theme folder is listed but can't be chosen.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Reason {
+    Slug,
+    /// The folder, the file or the picture is a link.
+    Linked(&'static str),
+    NoFile,
+    TooLong,
+    NotText,
+    /// What the TOML reader said.
+    Toml(String),
+    Unknown(String),
+    Missing(&'static str),
+    Version,
+    Name,
+    NotString(String),
+    Colour(String),
+    NoColours,
+    PictureName,
+    PictureMissing(String),
+    PictureKind(String),
+    PictureTooBig(String),
+    PictureSize(String, u32, u32),
+    Unreadable {
+        surface: &'static str,
+        ratio: f32,
+    },
+    Io(String),
+}
+
+impl Reason {
+    /// The reason in the launcher's language. Names from the file are filled in as data.
+    pub fn text(&self) -> String {
+        match self {
+            Reason::Slug => tr(
+                "The folder's name must be 1 to 48 lowercase letters, digits or hyphens, starting with a letter or digit.",
+            )
+            .into(),
+            Reason::Linked(what) => trf(
+                "The {what} is a link. A theme's files must be in its own folder.",
+                &[("what", tr(what))],
+            ),
+            Reason::NoFile => tr("There is no theme.toml in this folder.").into(),
+            Reason::TooLong => tr("theme.toml is over 16 KiB.").into(),
+            Reason::NotText => tr("theme.toml isn't UTF-8 text.").into(),
+            Reason::Toml(said) => trf("theme.toml can't be read: {error}", &[("error", said)]),
+            Reason::Unknown(key) => trf(
+                "theme.toml has a key this launcher doesn't know: {key}",
+                &[("key", key)],
+            ),
+            Reason::Missing(key) => trf("theme.toml is missing {key}.", &[("key", key)]),
+            Reason::Version => tr("theme.toml must say version = 1.").into(),
+            Reason::Name => tr(
+                "The name must be 1 to 64 characters of plain text on one line.",
+            )
+            .into(),
+            Reason::NotString(key) => trf("{key} must be text in quotes.", &[("key", key)]),
+            Reason::Colour(key) => trf(
+                "{key} must be a colour written as \"#RRGGBB\".",
+                &[("key", key)],
+            ),
+            Reason::NoColours => tr(
+                "[palette] must set at least one of background, card, chrome, text, muted and accent.",
+            )
+            .into(),
+            Reason::PictureName => tr(
+                "background must be the name of one picture in the theme's own folder.",
+            )
+            .into(),
+            Reason::PictureMissing(name) => trf(
+                "The picture {name} isn't in the theme's folder.",
+                &[("name", name)],
+            ),
+            Reason::PictureKind(name) => trf(
+                "{name} isn't a PNG, JPEG or WebP picture.",
+                &[("name", name)],
+            ),
+            Reason::PictureTooBig(name) => trf("{name} is over 40 MB.", &[("name", name)]),
+            Reason::PictureSize(name, w, h) => trf(
+                "{name} is {width}×{height}: a picture must be 64 to 8192 pixels a side and 16 megapixels at most.",
+                &[
+                    ("name", name),
+                    ("width", &w.to_string()),
+                    ("height", &h.to_string()),
+                ],
+            ),
+            Reason::Unreadable { surface, ratio } => trf(
+                "Text can't be read on {surface}: even black or white reaches only {ratio}:1 where 4.5:1 is needed. Make background, card and chrome all dark or all light.",
+                &[("surface", surface), ("ratio", &format!("{ratio:.1}"))],
+            ),
+            Reason::Io(said) => said.clone(),
+        }
+    }
+}
+
+/// A folder under `themes/`: a theme, or why it isn't one.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Entry {
+    Good(Local),
+    Bad { folder: String, reason: Reason },
+}
+
+/// Whether `name` is a theme folder's name: 1 to 48 of `a-z`, `0-9` and `-`, not starting with
+/// a hyphen, and not a device's name.
+pub fn slug_ok(name: &str) -> bool {
+    (1..=48).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !name.starts_with('-')
+        && !DEVICES.contains(&name)
+}
+
+/// A link, or on Windows any reparse point (a junction, a cloud placeholder).
+fn linked(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const REPARSE_POINT: u32 = 0x400;
+        if meta.file_attributes() & REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    meta.file_type().is_symlink()
+}
+
+/// At most `max` bytes of the regular file at `path`, which is not a link; `over` when it holds
+/// more.
+fn bounded(path: &Path, max: u64, what: &'static str, over: Reason) -> Result<Vec<u8>, Reason> {
+    use std::io::Read as _;
+    let meta = fs::symlink_metadata(path).map_err(|e| Reason::Io(e.to_string()))?;
+    if linked(&meta) || !meta.is_file() {
+        return Err(Reason::Linked(what));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|f| f.take(max + 1).read_to_end(&mut bytes))
+        .map_err(|e| Reason::Io(e.to_string()))?;
+    if bytes.len() as u64 > max {
+        return Err(over);
+    }
+    Ok(bytes)
+}
+
+/// `"#RRGGBB"`, in either case.
+fn colour(value: &toml::Value, key: &str) -> Result<u32, Reason> {
+    let bad = || Reason::Colour(key.to_string());
+    let text = value.as_str().ok_or_else(bad)?;
+    let hex = text.strip_prefix('#').ok_or_else(bad)?;
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(bad());
+    }
+    u32::from_str_radix(hex, 16).map_err(|_| bad())
+}
+
+/// One picture's name and nothing that leads anywhere else: no folder, drive, stream, address
+/// or device.
+fn picture_name_ok(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or_default();
+    !name.is_empty()
+        && name.len() <= 255
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\', ':'])
+        && !name.chars().any(char::is_control)
+        && !name.ends_with(['.', ' '])
+        && !DEVICES.contains(&stem.to_ascii_lowercase().as_str())
+}
+
+/// Characters that turn the text around them, which a name must not hide behind.
+fn turns_text(c: char) -> bool {
+    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}' | '\u{061c}')
+}
+
+/// What a theme file says, before its picture is looked at.
+#[derive(Debug, PartialEq)]
+pub struct Parsed {
+    pub name: String,
+    pub roles: Roles,
+    pub picture: Option<String>,
+}
+
+/// Reads a theme file's text. Every key is known, of its type and within its limits, or the
+/// file is refused with the first thing wrong.
+pub fn parse(text: &str) -> Result<Parsed, Reason> {
+    // A key written twice is the reader's error.
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| Reason::Toml(e.message().to_string()))?;
+    if let Some(key) = table
+        .keys()
+        .find(|k| !["version", "name", "background", "palette"].contains(&k.as_str()))
+    {
+        return Err(Reason::Unknown(key.clone()));
+    }
+    match table.get("version") {
+        None => return Err(Reason::Missing("version")),
+        Some(toml::Value::Integer(1)) => {}
+        Some(_) => return Err(Reason::Version),
+    }
+    let name = table
+        .get("name")
+        .ok_or(Reason::Missing("name"))?
+        .as_str()
+        .ok_or(Reason::Name)?
+        .trim();
+    if !(1..=64).contains(&name.chars().count())
+        || name.chars().any(|c| c.is_control() || turns_text(c))
+    {
+        return Err(Reason::Name);
+    }
+    let picture = match table.get("background") {
+        None => None,
+        Some(value) => {
+            let name = value
+                .as_str()
+                .ok_or_else(|| Reason::NotString("background".into()))?;
+            if !picture_name_ok(name) {
+                return Err(Reason::PictureName);
+            }
+            Some(name.to_string())
+        }
+    };
+    let palette = table
+        .get("palette")
+        .ok_or(Reason::Missing("[palette]"))?
+        .as_table()
+        .ok_or(Reason::Missing("[palette]"))?;
+    if let Some(key) = palette.keys().find(|k| !ROLES.contains(&k.as_str())) {
+        return Err(Reason::Unknown(format!("palette.{key}")));
+    }
+    if palette.is_empty() {
+        return Err(Reason::NoColours);
+    }
+    let role = |key: &str, dawn: u32| match palette.get(key) {
+        Some(value) => colour(value, &format!("palette.{key}")),
+        None => Ok(dawn),
+    };
+    let roles = Roles {
+        background: role("background", Roles::DAWN.background)?,
+        card: role("card", Roles::DAWN.card)?,
+        chrome: role("chrome", Roles::DAWN.chrome)?,
+        text: role("text", Roles::DAWN.text)?,
+        muted: role("muted", Roles::DAWN.muted)?,
+        accent: role("accent", Roles::DAWN.accent)?,
+    };
+    roles.readable()?;
+    Ok(Parsed {
+        name: name.to_string(),
+        roles,
+        picture,
+    })
+}
+
+/// The picture's bytes if it is one the launcher shows: PNG, JPEG or WebP by what it holds,
+/// 40 MB at most, 64 to 8192 pixels a side and 16 megapixels at most.
+fn picture_bytes(path: &Path) -> Result<Vec<u8>, Reason> {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if fs::symlink_metadata(path).is_err() {
+        return Err(Reason::PictureMissing(name));
+    }
+    let bytes = bounded(
+        path,
+        MAX_PICTURE,
+        "picture",
+        Reason::PictureTooBig(name.clone()),
+    )?;
+    let kind = image::guess_format(&bytes).ok().filter(|f| {
+        matches!(
+            f,
+            image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+        )
+    });
+    let Some(kind) = kind else {
+        return Err(Reason::PictureKind(name));
+    };
+    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), kind)
+        .into_dimensions()
+        .map_err(|_| Reason::PictureKind(name.clone()))?;
+    let sides = MIN_SIDE..=MAX_SIDE;
+    if !sides.contains(&w) || !sides.contains(&h) || u64::from(w) * u64::from(h) > MAX_PIXELS {
+        return Err(Reason::PictureSize(name, w, h));
+    }
+    Ok(bytes)
+}
+
+/// The theme's picture, decoded for Home: its first frame, never more memory than its checked
+/// size needs, scaled down to what a window shows. Slow: call it off the window's thread.
+pub fn picture(path: &Path) -> Result<image::RgbaImage, Reason> {
+    let bytes = picture_bytes(path)?;
+    let name = || {
+        Reason::PictureKind(
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        )
+    };
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|_| name())?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_PIXELS * 4 * 2);
+    reader.limits(limits);
+    let decoded = reader.decode().map_err(|_| name())?;
+    let long = decoded.width().max(decoded.height());
+    let shown = if long > SHOWN_SIDE {
+        decoded.thumbnail(SHOWN_SIDE, SHOWN_SIDE)
+    } else {
+        decoded
+    };
+    Ok(shown.to_rgba8())
+}
+
+/// Reads the theme in `folder`, a child of the themes folder.
+fn read(folder: &Path, slug: &str) -> Result<Local, Reason> {
+    if !slug_ok(slug) {
+        return Err(Reason::Slug);
+    }
+    let meta = fs::symlink_metadata(folder).map_err(|e| Reason::Io(e.to_string()))?;
+    if linked(&meta) {
+        return Err(Reason::Linked("folder"));
+    }
+    let file = folder.join(FILE);
+    if fs::symlink_metadata(&file).is_err() {
+        return Err(Reason::NoFile);
+    }
+    let bytes = bounded(&file, MAX_TOML, "theme.toml", Reason::TooLong)?;
+    let text = String::from_utf8(bytes).map_err(|_| Reason::NotText)?;
+    let parsed = parse(&text)?;
+    let picture = match parsed.picture {
+        Some(name) => {
+            let path = folder.join(name);
+            picture_bytes(&path)?;
+            Some(path)
+        }
+        None => None,
+    };
+    Ok(Local {
+        slug: slug.to_string(),
+        name: parsed.name,
+        roles: parsed.roles,
+        picture,
+    })
+}
+
+/// Every folder directly under `root`, by name: each a theme or the reason it isn't one. A
+/// themes folder that isn't there has no themes.
+pub fn scan(root: &Path) -> Vec<Entry> {
+    let mut folders: Vec<(String, PathBuf)> = fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir() || m.file_type().is_symlink())
+        })
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .collect();
+    folders.sort();
+    folders
+        .into_iter()
+        .map(|(name, path)| match read(&path, &name) {
+            Ok(local) => Entry::Good(local),
+            Err(reason) => Entry::Bad {
+                folder: name,
+                reason,
+            },
+        })
+        .collect()
+}
+
+/// Where the player's themes are: `themes/` in the launcher's data folder.
+pub fn dir() -> PathBuf {
+    crate::backend::data_dir().join("themes")
+}
+
+static LOADED: RwLock<Option<Arc<Vec<Entry>>>> = RwLock::new(None);
+
+#[cfg(test)]
+thread_local! {
+    /// A test's own themes: tests never read the data folder's, nor each other's.
+    static TEST_LOADED: std::cell::RefCell<Arc<Vec<Entry>>> = Default::default();
+}
+
+/// Makes `entries` the loaded themes of the test calling it.
+#[cfg(test)]
+pub(crate) fn set_loaded(entries: Vec<Entry>) {
+    TEST_LOADED.set(Arc::new(entries));
+}
+
+/// The player's themes as last read: the first call reads them.
+pub fn loaded() -> Arc<Vec<Entry>> {
+    #[cfg(test)]
+    return TEST_LOADED.with_borrow(Arc::clone);
+    #[cfg(not(test))]
+    if let Some(entries) = LOADED.read().ok().and_then(|l| l.clone()) {
+        return entries;
+    }
+    #[cfg(not(test))]
+    reload()
+}
+
+/// Reads the themes folder again.
+pub fn reload() -> Arc<Vec<Entry>> {
+    let entries = Arc::new(scan(&dir()));
+    if let Ok(mut loaded) = LOADED.write() {
+        *loaded = Some(entries.clone());
+    }
+    entries
+}
+
+/// The loaded theme with this id (`local:<slug>`), if it is there and good.
+pub fn find(id: &str) -> Option<Local> {
+    let slug = id.strip_prefix(PREFIX)?;
+    loaded().iter().find_map(|e| match e {
+        Entry::Good(local) if local.slug == slug => Some(local.clone()),
+        _ => None,
+    })
+}
+
+#[cfg(test)]
+#[path = "theme_files/tests.rs"]
+mod tests;

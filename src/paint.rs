@@ -91,7 +91,7 @@ impl Inputs {
             night: theme.night,
             accent: theme.accent_choice.rgb(),
             tint: settings.glass_tint(),
-            scenery: settings.scenery() && settings.background.is_none() && !settings.performance(),
+            scenery: settings.scenery() && !theme.photo && !settings.performance(),
         }
     }
 }
@@ -273,6 +273,18 @@ impl Inputs {
 }
 
 impl Palette {
+    /// The palette of `night` under `accent` with opaque plates: a theme's preview, whatever
+    /// theme is in use.
+    pub(crate) fn plain(night: Night, accent: u32, tint: f32) -> Palette {
+        Inputs {
+            night,
+            accent,
+            tint,
+            scenery: false,
+        }
+        .palette()
+    }
+
     /// The palette `begin` would set for these settings and this theme.
     #[cfg(test)]
     pub(crate) fn of(settings: &Settings, theme: &Theme) -> Palette {
@@ -496,6 +508,131 @@ mod tests {
         for (name, settings, theme) in looks(true) {
             check(&name, &settings, &theme);
         }
+    }
+
+    /// Dawn's Play is the site's brand orange as it is, under white; a lighter orange would
+    /// not hold the label.
+    #[test]
+    fn dawns_play_is_the_brand_orange_under_white() {
+        for id in [None, Some("dawn")] {
+            let own = themes::starting_accent(id, &Default::default());
+            let (settings, theme) = look(id, own, 6., true);
+            let p = Palette::of(&settings, &theme);
+            assert_eq!(
+                (p.accent, p.play_fill, p.accent_on),
+                (0xb4552f, 0xb4552f, 0xffffff)
+            );
+            assert!((contrast(0xffffff, p.play_fill) - 4.905).abs() < 0.01);
+        }
+        assert!(
+            contrast(0xffffff, 0xc4623a) < TEXT,
+            "the site's hover orange is too light"
+        );
+        // Every built-in theme, Sunrise's violet included, holds white on Play at its own accent.
+        let ids = [Some("sunrise")]
+            .into_iter()
+            .chain(themes::THEMES.iter().map(|t| Some(t.id)));
+        for id in ids {
+            let own = themes::starting_accent(id, &Default::default());
+            let (settings, theme) = look(id, own, 6., true);
+            let p = Palette::of(&settings, &theme);
+            assert!(contrast(p.accent_on, p.play_fill) >= TEXT, "{id:?}");
+            assert_eq!(
+                p.accent,
+                own.rgb(),
+                "{id:?}: the accent itself is never changed"
+            );
+        }
+    }
+
+    /// A player's theme holds the same contract as a built-in one, whatever six colours it
+    /// was let in with: dark, light, a pale accent, surfaces that differ.
+    #[test]
+    fn a_players_theme_holds_the_palette_contract() {
+        use sunrise_launcher::theme_files::parse;
+        let files = [
+            (
+                "tidepool",
+                r##"card = "#1A3135"
+chrome = "#11262B"
+text = "#F0F8F4"
+muted = "#C3D7D2"
+background = "#102328"
+accent = "#8EDBCB""##,
+            ),
+            (
+                "paper",
+                r##"card = "#ffffff"
+chrome = "#e8e4dc"
+text = "#1b1b1b"
+muted = "#555555"
+background = "#f4f1ea"
+accent = "#ffd84a""##,
+            ),
+            (
+                "faint inks",
+                r##"card = "#202020"
+text = "#3a3a3a"
+muted = "#303030""##,
+            ),
+            (
+                "apart",
+                r##"card = "#3a2a10"
+chrome = "#000000"
+background = "#101820"
+accent = "#101010""##,
+            ),
+            ("accent only", r##"accent = "#ff66cc""##),
+        ];
+        for (name, palette) in files {
+            let text = format!("version = 1\nname = \"{name}\"\n[palette]\n{palette}\n");
+            let roles = parse(&text)
+                .unwrap_or_else(|e| panic!("{name}: {e:?}"))
+                .roles;
+            let accent = Accent::from_rgb(roles.accent);
+            for scenery in [true, false] {
+                let settings = Settings {
+                    accent,
+                    scenery_on: Some(scenery),
+                    ..Settings::default()
+                };
+                let theme = Theme::for_appearance(Appearance::Dark, accent, WindowAppearance::Dark)
+                    .with_night(roles.night());
+                check(
+                    &format!("local {name}, scenery {scenery}"),
+                    &settings,
+                    &theme,
+                );
+                let p = Palette::of(&settings, &theme);
+                assert_eq!(p.accent, roles.accent, "{name}");
+                assert_eq!(p.accent_on, 0xffffff, "{name}");
+                assert_eq!(p.background, roles.background, "{name}");
+            }
+        }
+    }
+
+    /// A picture behind Home, the player's or their theme's, may be any colour: the plates
+    /// over it are opaque.
+    #[test]
+    fn plates_are_opaque_over_a_picture() {
+        let glassy = Settings::default();
+        let theme = from_settings(&glassy, WindowAppearance::Dark);
+        assert!(Palette::of(&glassy, &theme).alpha < 1.);
+        let pictured = Settings {
+            background: Some("background-0123456789ab.png".into()),
+            ..Settings::default()
+        };
+        let theme = from_settings(&pictured, WindowAppearance::Dark);
+        assert!(theme.photo);
+        assert_eq!(Palette::of(&pictured, &theme).alpha, 1.);
+        // With scenery off there is no picture to guard against, and no glass either.
+        let off = Settings {
+            scenery_on: Some(false),
+            ..pictured
+        };
+        let theme = from_settings(&off, WindowAppearance::Dark);
+        assert!(!theme.photo);
+        assert_eq!(Palette::of(&off, &theme).alpha, 1.);
     }
 
     #[test]

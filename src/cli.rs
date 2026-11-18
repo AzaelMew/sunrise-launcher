@@ -765,10 +765,13 @@ enum Cmd {
     /// newest to keep; "default" is 2), opening-animation on|off, proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
     /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
-    /// system follows the computer's; a wrong code lists them all), accent
+    /// system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG
+    /// (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id
+    /// lists them all), accent
     /// violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any
-    /// hue), background PATH (a picture behind Home; "default"
-    /// shows Sunrise's landscape), cache-limit-gib N (managed cache limit
+    /// hue; "theme" goes back to the theme's own), background PATH (your picture behind Home;
+    /// "default" goes back to the theme's), scenery on|off (whether anything is behind the
+    /// pages), cache-limit-gib N (managed cache limit
     /// in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup)
     Settings {
         #[arg(value_parser = SETTING_KEYS)]
@@ -914,7 +917,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 14] = [
+const SETTING_KEYS: [&str; 16] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -926,8 +929,10 @@ const SETTING_KEYS: [&str; 14] = [
     "proxy",
     "while-playing",
     "language",
+    "theme",
     "accent",
     "background",
+    "scenery",
     "cache-limit-gib",
 ];
 
@@ -975,25 +980,17 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
             s.while_playing = backend::WhilePlaying::parse(value)
                 .ok_or_else(|| format!("{value}: say stay, minimize or hide"))?
         }
-        "accent" => {
-            use sunrise_launcher::themes::Accent;
-            s.accent = Accent::parse(value).ok_or_else(|| {
-                let names: Vec<_> = Accent::ALL.iter().map(|a| a.name()).collect();
-                format!(
-                    "{value}: say {}, a colour like #2563eb or a hue in degrees (0 to 360)",
-                    names.join(", ")
-                )
-            })?
-        }
-        "background" => {
-            s.background = match value.trim() {
-                "default" | "" => None,
-                file => Some(sunrise_launcher::themes::keep_background(
-                    &backend::data_dir(),
-                    std::path::Path::new(file),
-                )?),
-            }
-        }
+        "theme" => sunrise_launcher::appearance::select_theme(s, value)?,
+        "accent" => sunrise_launcher::appearance::type_accent(s, value)?,
+        "background" => match value.trim() {
+            "default" | "" => s.background = None,
+            file => sunrise_launcher::appearance::set_background(
+                s,
+                &backend::data_dir(),
+                std::path::Path::new(file),
+            )?,
+        },
+        "scenery" => s.scenery_on = Some(on_off(value)?),
         "language" => {
             use sunrise_launcher::i18n::Language;
             s.language = match value.trim() {
@@ -1485,6 +1482,11 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 let value = value.ok_or("settings KEY VALUE: the value is missing")?;
                 set_setting(&mut settings, &key, &value)?;
                 settings.save()?;
+                // Saved: a kept picture that is no longer the choice can go.
+                sunrise_launcher::themes::retire_backgrounds(
+                    &backend::data_dir(),
+                    settings.background.as_deref(),
+                );
                 sunrise_launcher::proxy::announce(settings.proxy.clone());
             }
             let all = settings_json(&settings);
@@ -3127,6 +3129,42 @@ mod tests {
         }
         assert!(Cli::try_parse_from(["sunrise-launcher", "completions"]).is_err());
         assert!(Cli::try_parse_from(["sunrise-launcher", "completions", "unknown"]).is_err());
+    }
+
+    /// The command line makes the same choices of look as Settings › Appearance does.
+    #[test]
+    fn settings_choose_the_look_as_appearance_does() {
+        use sunrise_launcher::themes::{self, Accent};
+        let mut settings = backend::Settings::parse("{}");
+        set_setting(&mut settings, "theme", "nord").unwrap();
+        assert_eq!(settings.theme.as_deref(), Some("nord"));
+        assert_eq!(settings.accent, themes::NORD.accent.accent());
+        set_setting(&mut settings, "accent", "#C2366F").unwrap();
+        assert_eq!(settings.theme_accents["nord"].rgb(), 0xc2366f);
+        set_setting(&mut settings, "theme", "default").unwrap();
+        assert_eq!(settings.theme, None);
+        assert_eq!(settings.accent.rgb(), 0xb4552f, "no saved theme is Dawn");
+        set_setting(&mut settings, "theme", "nord").unwrap();
+        assert_eq!(settings.accent.rgb(), 0xc2366f, "its colour is back");
+        set_setting(&mut settings, "accent", "theme").unwrap();
+        assert_eq!(settings.accent, themes::NORD.accent.accent());
+        assert!(settings.theme_accents.is_empty());
+        // "default" is still the violet, as it was before themes kept their accents.
+        set_setting(&mut settings, "accent", "default").unwrap();
+        assert_eq!(settings.accent, Accent::VIOLET);
+        set_setting(&mut settings, "scenery", "off").unwrap();
+        assert!(!settings.scenery());
+        assert!(set_setting(&mut settings, "scenery", "maybe").is_err());
+        set_setting(&mut settings, "scenery", "on").unwrap();
+        assert!(settings.scenery());
+        // What is shown says the theme painted and the one saved.
+        let shown = settings_json(&settings);
+        assert_eq!(
+            (&shown["theme"], &shown["theme_choice"]),
+            (&"nord".into(), &"nord".into())
+        );
+        assert_eq!(shown["scenery"], true);
+        assert!(shown["themes_dir"].as_str().unwrap().ends_with("themes"));
     }
 
     #[test]

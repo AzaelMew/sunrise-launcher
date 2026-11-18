@@ -507,9 +507,23 @@ pub const THEMES: [Theme; 10] = [
 /// Sunrise's own theme's key in `Settings::theme_accents`.
 pub const SUNRISE: &str = "sunrise";
 
-/// A theme's key in `Settings::theme_accents`: its id, or [`SUNRISE`].
+/// A theme's key in `Settings::theme_accents`: its id (a player's theme keeps its own
+/// `local:<slug>`, there or not), or [`SUNRISE`]. No saved theme and `dawn` share Dawn's.
 pub fn accent_key(id: Option<&str>) -> &str {
-    theme(id).map_or(SUNRISE, |t| t.id)
+    match id {
+        Some(local) if local.starts_with(crate::theme_files::PREFIX) => local,
+        _ => theme(id).map_or(SUNRISE, |t| t.id),
+    }
+}
+
+/// The accent a theme brings, before any the player picked under it.
+pub fn own_accent(id: Option<&str>) -> Accent {
+    match resolve(id) {
+        Resolved::Sunrise => Accent::VIOLET,
+        Resolved::Builtin(t) => t.accent.accent(),
+        Resolved::Local(local) => Accent::from_rgb(local.roles.accent),
+        Resolved::Missing => DAWN_THEME.accent.accent(),
+    }
 }
 
 /// The accent a theme starts with: the one last picked under it, else its own (violet for
@@ -520,7 +534,31 @@ pub fn starting_accent(
 ) -> Accent {
     kept.get(accent_key(id))
         .copied()
-        .unwrap_or_else(|| theme(id).map_or(Accent::VIOLET, |t| t.accent.accent()))
+        .unwrap_or_else(|| own_accent(id))
+}
+
+/// What a saved theme id means right now.
+#[derive(Clone)]
+pub enum Resolved {
+    /// Sunrise's own violet look: `sunrise`, or an id from before this launcher knew ids.
+    Sunrise,
+    Builtin(&'static Theme),
+    /// A theme file of the player's (`theme_files`).
+    Local(crate::theme_files::Local),
+    /// A `local:` id whose file is gone or broken: Dawn is painted until it is back, and the
+    /// saved choice stays as it is.
+    Missing,
+}
+
+/// Resolves `id` (`Settings::theme`) against the built-in themes and the player's, as last
+/// read from disk.
+pub fn resolve(id: Option<&str>) -> Resolved {
+    match id {
+        Some(local) if local.starts_with(crate::theme_files::PREFIX) => {
+            crate::theme_files::find(local).map_or(Resolved::Missing, Resolved::Local)
+        }
+        _ => theme(id).map_or(Resolved::Sunrise, Resolved::Builtin),
+    }
 }
 
 /// The theme named `id` (`Settings::theme`): Dawn while none is saved, None for Sunrise's own sky
@@ -773,7 +811,8 @@ const MAX_BYTES: u64 = 40 << 20;
 
 /// Keeps `file` as Home's background in `dir` (`background-<hash>.<ext>`: a new picture gets a
 /// new name, so the window doesn't show the one it cached), after checking it is a picture, and
-/// returns the kept file's name. An older background goes.
+/// returns the kept file's name. An older background stays until the choice is saved
+/// ([`retire_backgrounds`]), so a save that fails loses nothing.
 pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     let shown = file.display();
     let ext = file
@@ -801,13 +840,18 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     let hash = crate::sources::sha1_hex(&bytes);
     let name = format!("background-{}.{ext}", &hash[..12]);
     std::fs::write(dir.join(&name), &bytes).map_err(|e| format!("{name}: {e}"))?;
+    Ok(name)
+}
+
+/// Removes the backgrounds the launcher kept in `dir` other than `keep`, once the settings that
+/// name `keep` are saved. Only its own copies: never a player's original or a theme's picture.
+pub fn retire_backgrounds(dir: &Path, keep: Option<&str>) {
     for old in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let other = old.file_name().to_string_lossy().into_owned();
-        if other.starts_with("background-") && other != name {
+        if other.starts_with("background-") && Some(other.as_str()) != keep {
             let _ = std::fs::remove_file(old.path());
         }
     }
-    Ok(name)
 }
 
 /// Home's background, if the player keeps one and it is still there.

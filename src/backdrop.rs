@@ -1,8 +1,9 @@
 //! The window's still backdrop. It never owns a timer. The cat and visible operations wake
 //! their own UI when they change; reduced motion does not need to stop a scenery animation.
+use crate::settings::HomePhoto;
 use crate::{backend, theme::Theme};
 use gpui::{div, img, prelude::*, Div, ObjectFit, RenderImage, Window};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use sunrise_launcher::themes;
 use sunrise_launcher_scenery::{coast, sky::Sky};
 
@@ -10,7 +11,6 @@ use sunrise_launcher_scenery::{coast, sky::Sky};
 pub(super) struct Backdrop {
     coast: Option<Arc<RenderImage>>,
     sky: Sky,
-    photo: Option<(String, Option<PathBuf>)>,
 }
 
 impl Backdrop {
@@ -18,6 +18,7 @@ impl Backdrop {
         &mut self,
         settings: &backend::Settings,
         theme: &Theme,
+        photo: Option<HomePhoto>,
         window: &mut Window,
     ) -> Div {
         let page: gpui::Hsla = gpui::rgb(crate::paint::palette().background).into();
@@ -26,24 +27,24 @@ impl Backdrop {
         if !settings.scenery() {
             return back;
         }
-        if let Some(name) = &settings.background {
-            if self.photo.as_ref().is_none_or(|(old, _)| old != name) {
-                self.photo = Some((
-                    name.clone(),
-                    themes::background(&backend::data_dir(), Some(name)),
-                ));
-            }
-            if let Some((_, Some(path))) = &self.photo {
-                // Unplated titles have to read even on a white photo. Panels use opaque roles.
-                return back
-                    .child(img(path.clone()).size_full().object_fit(ObjectFit::Cover))
-                    .child(div().absolute().inset_0().bg(page.opacity(0.78)));
-            }
-        } else {
-            self.photo = None;
+        if let Some(photo) = photo {
+            let picture = match photo {
+                HomePhoto::Personal(path) => img(path),
+                HomePhoto::Theme(decoded) => img(decoded),
+            };
+            // Unplated titles have to read even on a white photo. Panels use opaque roles.
+            return back
+                .child(picture.size_full().object_fit(ObjectFit::Cover))
+                .child(div().absolute().inset_0().bg(page.opacity(0.78)));
         }
-        match themes::theme(settings.theme.as_deref()) {
-            Some(t) if t.id == themes::DAWN_THEME.id => {
+        // A player's theme, there or missing, stands in Dawn's scenery.
+        let scene = match themes::resolve(settings.theme.as_deref()) {
+            themes::Resolved::Builtin(t) => Some(t.id),
+            themes::Resolved::Local(_) | themes::Resolved::Missing => Some(themes::DAWN_THEME.id),
+            themes::Resolved::Sunrise => None,
+        };
+        match scene {
+            Some(id) if id == themes::DAWN_THEME.id => {
                 back.child(img("dawn.webp").size_full().object_fit(ObjectFit::Cover))
             }
             None => back.child(
