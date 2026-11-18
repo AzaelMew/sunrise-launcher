@@ -876,6 +876,24 @@ impl Launcher {
             )),
             cx,
         );
+        // The game reads the same switch (`backend::no_ai`).
+        let no_ai_on = backend::no_ai();
+        let no_ai = line(
+            self,
+            "No AI",
+            "Hides and turns off every AI feature.",
+            "Every AI feature in the launcher and the game is hidden and turned off: agent control of the launcher and the game, sunrise-ctl and the MCP servers.",
+            switch("alt-no-ai", no_ai_on).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    // A failed save is a problem like any other: the play bar says it.
+                    if let Err(e) = backend::set_no_ai(!no_ai_on) {
+                        this.client_error = Some(e);
+                    }
+                    cx.notify();
+                },
+            )),
+            cx,
+        );
         let mut reports = Vec::new();
         for (n, &(kind, name, summary, what)) in telemetry::SWITCHES.iter().enumerate() {
             let on = !consent.needs_asking() && consent.choices.allows(kind);
@@ -992,6 +1010,7 @@ impl Launcher {
             .child(group(reports))
             .child(group(vec![yours]))
             .child(hint(tr(telemetry::NEVER)))
+            .child(group(vec![no_ai]))
     }
 
     fn alt_settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
