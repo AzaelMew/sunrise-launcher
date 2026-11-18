@@ -1888,6 +1888,7 @@ fn select_build_profile(
 /// the error starts with [`MISMATCH`] and names them; `cargo sunrise-mod update --sunrise
 /// <commit>` in each mod's folder pins it to the installed game, then build again.
 /// `profile` is an explicit override; None applies the instance's choice only when needed.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     base: &str,
     folder: &Path,
@@ -1896,6 +1897,7 @@ pub fn build(
     back_up: bool,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
+    catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
     require_consent()?;
     build_log::clear_cancel();
@@ -1943,7 +1945,7 @@ pub fn build(
                 &plain,
                 selected.as_deref(),
                 &installed,
-                || backend::releases().ok(),
+                catalogue,
                 check_cancelled,
             )?;
             instances::edit(&instance.id, |meta| {
@@ -2004,8 +2006,9 @@ fn follows_plain(
 }
 
 /// The version a plain fallback pins its instance to: None when clearing the pin plays `plain`
-/// ([`follows_plain`]). Stable asks `catalogue` for the release list. The lookup can take a
-/// while (it is a network request), so `cancelled` is asked once it is back, before anything is
+/// ([`follows_plain`]). Stable asks the newest installed Stable build of `catalogue`, the release
+/// list the caller already has (None when it has none: the pin stays, and nothing is fetched).
+/// The lookup can take a while on the command line, so `cancelled` is asked once it is back, before anything is
 /// saved.
 fn plain_pin(
     channel: instances::Channel,
@@ -2574,6 +2577,46 @@ mod tests {
             },
         );
         assert_eq!(pin, Err("Cancelled".to_owned()));
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || None,
+            || Ok(()),
+        );
+        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+    }
+
+    #[test]
+    fn a_plain_fallback_reads_the_catalogue_it_is_given_and_fetches_none() {
+        use instances::Channel::Stable;
+        let release = |tag: &str| backend::Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((String::new(), 1)),
+            prerelease: false,
+            nightly: None,
+        };
+        let installed = ["v1.0.0".to_owned()];
+        let mut asked = 0;
+        // The newest installed Stable build of the caller's list is v1.0.0: the pin clears.
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || {
+                asked += 1;
+                Some(vec![release("v1.0.0")])
+            },
+            || Ok(()),
+        );
+        assert_eq!((pin, asked), (Ok(None), 1));
+        // The window has no list yet: the pin stays, and the build asks nobody for one.
         let pin = plain_pin(
             Stable,
             "v1.0.0",
@@ -3620,6 +3663,7 @@ mod tests {
             false,
             |_| {},
             |_| false,
+            || None,
         )
         .unwrap_err();
         assert!(String::from(error).contains("is not prepared yet"));
@@ -3777,6 +3821,7 @@ mod tests {
                 false,
                 |_| {},
                 |_| false,
+                || None,
             ));
         }
         denied(sync_internals(&folder));

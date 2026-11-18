@@ -74,6 +74,11 @@ impl Launcher {
             .flatten();
         self.native_done = None;
         let tx = self.tx.clone();
+        // The release list the window already has: the build reads it and asks GitHub for none.
+        let catalogue = match &self.releases {
+            Load::Ready(releases) => Some(releases.clone()),
+            _ => None,
+        };
         std::thread::spawn(move || {
             let result = native_mods::build(
                 &base,
@@ -90,6 +95,7 @@ impl Launcher {
                         .is_ok()
                         && answer.recv().unwrap_or(false)
                 },
+                move || catalogue,
             );
             let _ = tx.send(Msg::Native(
                 result.map(native_mods::ClientBuild::into_version),
