@@ -1,5 +1,7 @@
 //! The website's cat, hiding behind Play: now and then it peeks out, or walks out into the empty
-//! part of the play bar and stays a while (click it to pet it), or climbs up and sleeps on Play.
+//! part of the play bar and stays a while, or climbs up and sleeps on Play. In the bar a click
+//! pets it, awake or dozing. On Play it can't be petted: it is a picture with no handler and no
+//! hitbox of its own, so a click there goes to whatever is under it, as if no cat were there.
 //!
 //! Its look and its ways are the Sunrise site's, ported from sunrise-org/sunny
 //! (`frontend/site/art/`: `cat.ts` for the poses and coats, `cat-actions.ts` for what it does and
@@ -1834,7 +1836,9 @@ impl Launcher {
         let tall = H as f32 * SIZE;
         if let Some(up) = view.perch {
             // A window above Play's top edge, as tall as the cat: it climbs into it from below,
-            // its feet on the edge, and nothing of it is ever drawn over the button.
+            // its feet on the edge, and nothing of it is ever drawn over the button. Keep it
+            // without an id, a listener or `occlude`: any of those would take a click from the
+            // page or the bar under it.
             let feet = (H as f32 - GY - 1.) * SIZE;
             let down = ((1. - up) * (tall - feet) / SIZE).round() * SIZE;
             let perch = div()
@@ -1984,6 +1988,10 @@ mod tests {
         }
         let view = outing.view(now).expect("it is on Play");
         assert_eq!(view.perch, Some(1.), "wholly up");
+        assert!(
+            !view.pettable,
+            "a picture only: clicks are Play's and the page's"
+        );
         assert_eq!(view.pose, rest(State::Sleep), "and curled up asleep");
         let wait = outing.next_change(now);
         assert!(wait >= Duration::from_secs(40), "no frames while it sleeps");
@@ -2029,7 +2037,8 @@ mod tests {
     }
 
     #[test]
-    fn a_sleeping_cat_hisses_when_petted_and_stays_asleep_after() {
+    fn a_cat_asleep_in_the_bar_hisses_when_petted_and_stays_asleep_after() {
+        // In the bar a visit can end in a nap (`fall asleep`); on Play the cat is never petted.
         let mut cat = Cat::new(&TABBY_WAYS, 5);
         cat.state = State::Sleep;
         cat.pet(0.);
