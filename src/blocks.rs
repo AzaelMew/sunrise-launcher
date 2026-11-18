@@ -76,18 +76,6 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
         .text_color(color)
 }
 
-/// Text in the pixel face: headings, navigation, buttons, badges.
-// Only the title bars the launcher draws itself use it, on Linux and Windows; macOS keeps its
-// native one, where this would be dead code.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
-pub fn pixel(size: f32, weight: gpui::FontWeight) -> gpui::Div {
-    div()
-        .font_family(theme::PIXEL)
-        .font_weight(weight)
-        .text_size(px(size))
-        .line_height(px((size * 1.2).round()))
-}
-
 /// The light edge along the top of a raised block and the darker lip along its bottom; the
 /// block must be `relative`.
 pub fn edges(top: Hsla, bottom: Hsla, lip: f32) -> [AnyElement; 2] {
