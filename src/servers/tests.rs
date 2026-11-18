@@ -92,6 +92,60 @@ fn programs_are_laid_out_as_install_sh_does() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn starting_a_copied_runtime_registers_the_direct_games_leases() {
+    use sunrise_launcher_smod::{
+        locks::LockMode,
+        runtime_leases::{open_directory, Registry},
+    };
+    const CHILD: &str = "SUNRISE_TEST_HOST_RUNTIME";
+    if std::env::var_os(CHILD).is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "servers::tests::starting_a_copied_runtime_registers_the_direct_games_leases"
+            ])
+            .env(CHILD, "1")
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("data"))
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let root = runtime_root();
+    let release = root.join("releases/nightly");
+    let resources = game_files(&root, "26.3");
+    let data = backend::data_dir();
+    let server = data.join("servers/friends");
+    for path in [&release, &resources, &server] {
+        fs::create_dir_all(path).unwrap();
+    }
+    point(&root.join("current"), &release).unwrap();
+    fs::write(release.join(PROGRAM), []).unwrap();
+    let marker = release.join(".installed");
+    command(&server, &["status"]).unwrap();
+    assert!(!marker.exists(), "browsing must not modify a runtime");
+    command(&server, &["start"]).unwrap();
+    assert_eq!(fs::read(&marker).unwrap(), b"");
+    let registry = Registry::existing(&data).unwrap();
+    for path in [&release, &resources, &server] {
+        for unit in path.ancestors().take_while(|p| *p != data) {
+            registry
+                .lock(&open_directory(unit).unwrap(), LockMode::Shared)
+                .unwrap();
+        }
+    }
+    let custom = data.parent().unwrap().join("custom");
+    fs::create_dir(&custom).unwrap();
+    fs::write(custom.join(PROGRAM), []).unwrap();
+    point(&root.join("current"), &custom).unwrap();
+    command(&server, &["start"]).unwrap();
+    assert!(!custom.join(".installed").exists());
+}
+
 #[test]
 fn problems_say_what_to_do() {
     let dir = scratch("problems");
