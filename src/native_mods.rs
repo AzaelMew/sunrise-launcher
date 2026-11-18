@@ -691,6 +691,14 @@ pub fn version_for(
             hash.update((bytes.len() as u64).to_le_bytes());
             hash.update(&bytes);
         }
+        // The uses table is no source file, but it decides whether a mod made for another build
+        // fits this one, and so which mods the build keeps: a changed table is another build.
+        let uses = sunrise_launcher_smod::manifest::USES_FILE;
+        if let Ok(table) = fs::read(b.dir.join(uses)) {
+            hash.update(uses.as_bytes());
+            hash.update((table.len() as u64).to_le_bytes());
+            hash.update(&table);
+        }
     }
     let key: String = hash.finalize()[..6]
         .iter()
@@ -2579,6 +2587,36 @@ mod tests {
             .collect();
         assert_eq!(ids, ["alpha", "beta"]);
         assert!(bundles(&many.join("notes")).is_err());
+    }
+
+    /// Which mods a build keeps turns on each one's uses table: a repack that only adds, drops or
+    /// changes the table is another build, so the installed one (and the mods it left out) is
+    /// never reused for it; the same table again is the same build.
+    #[test]
+    fn the_key_covers_a_bundles_uses_table() {
+        let d = dir("uses-key");
+        write_native(&d, "fits_elsewhere", A, B);
+        let table = d.join(sunrise_launcher_smod::manifest::USES_FILE);
+        let key = || {
+            version_for(
+                B,
+                B,
+                Profile::Optimized,
+                Target::Client,
+                None,
+                &bundles(&d).unwrap(),
+            )
+            .unwrap()
+        };
+        let without = key();
+        fs::write(&table, format!("{{\"made_for\":\"{A}\",\"entries\":[]}}")).unwrap();
+        let with = key();
+        assert_ne!(with, without, "a table that appears is another build");
+        assert_eq!(key(), with, "an unchanged table reuses the build");
+        fs::write(&table, format!("{{\"made_for\":\"{A}\",\"entries\":[1]}}")).unwrap();
+        assert_ne!(key(), with, "a changed table is another build");
+        fs::remove_file(&table).unwrap();
+        assert_eq!(key(), without, "a table that goes is another build again");
     }
 
     const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
