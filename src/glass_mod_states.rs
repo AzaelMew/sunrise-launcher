@@ -64,16 +64,6 @@ fn unfit(name: &str, verdict: Verdict) -> Route {
 
 fn row(name: &str, kind: ModKind, error: Option<&str>) -> ModRow {
     ModRow {
-        file: format!("mods/{name}.smod"),
-        name: name.into(),
-        version: "1.2.0".into(),
-        on: true,
-        entry: None,
-        icon: None,
-        error: error.map(str::to_owned),
-        native: None,
-        internals: Vec::new(),
-        kind: Some((kind, name.into())),
     }
 }
 

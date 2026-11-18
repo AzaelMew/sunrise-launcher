@@ -3,11 +3,11 @@
 //! text and fills at a few opacities over [`glass`](crate::glass) plates; Geist throughout.
 use crate::{hover_fade, hover_is, keyboard, theme::Theme, track_hover, Kind};
 use gpui::{
-    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, Div, FontWeight, Hsla, SharedString, Stateful, Svg, TextRun, Window};
+    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, Div, FontWeight, Hsla, SharedString, Stateful, Svg, Window};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+
 use std::sync::Arc;
 use sunrise_launcher_theme::glass::{fill, ink, radius, Glass};
 
@@ -42,15 +42,6 @@ pub fn set_light(light: bool) {
 /// Whether the light appearance is drawn.
 pub fn light() -> bool {
     LIGHT.get()
-}
-
-/// The look's red (`--danger`).
-pub fn danger() -> Hsla {
-    color(if light() {
-        0xdc2626
-    } else {
-        sunrise_launcher_theme::glass::DANGER
-    })
 }
 
 /// Whether the pages being built draw the glass look: helpers with no theme at hand ask.
@@ -111,10 +102,6 @@ pub fn text(size: f32, weight: FontWeight, a: f32) -> Div {
         .text_color(white(a))
 }
 
-/// The widths text was laid out in, by key, as [`room`] recorded them on the last frame: what
-/// [`cut`] compares a text's own width against.
-pub type Rooms = Rc<RefCell<HashMap<SharedString, f32>>>;
-
 /// One of the mockup's Hugeicons, stroked in `color`.
 pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
     svg()
@@ -122,18 +109,6 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
         .flex_none()
         .size(px(size))
         .text_color(color)
-}
-
-/// A layer filling its parent, round at `r`, for hover fills.
-fn layer(r: f32) -> impl Fn() -> Div {
-    move || {
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .rounded(px(crate::glass_ui::rad(r)))
-    }
 }
 
 /// The side of one texel in a [`pixel_fill`].
@@ -261,20 +236,6 @@ pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -
     )
 }
 
-/// How far a row's content slides along while the pointer is on it.
-const NUDGE: f32 = 3.;
-
-/// A row's content sliding [`NUDGE`] px along under the pointer, eased in and out: put it first
-/// in a row whose children are `gap` px apart (it takes no gap of its own). Nothing at rest.
-pub fn hover_nudge(id: &SharedString, gap: f32) -> AnyElement {
-    crate::hover_ease(
-        id,
-        || div().flex_none().h(px(1.)),
-        move |d, t| d.w(px(NUDGE * t)).mr(px(-gap)),
-        sunrise_launcher_theme::QUICK,
-    )
-}
-
 /// A hover layer that hears the pointer itself, for an element with no id, or with hoverable
 /// parts in it ([`track_hover`] lights one element at a time, so a row would go dark under its own
 /// button): `paint` draws it at 0 (rest) to 1 (hovered), eased in and out on QUICK, at once under
@@ -333,103 +294,6 @@ pub fn back_edge(r: f32, fill: f32, bordered: bool) -> AnyElement {
     })
 }
 
-const MENU_FONT_SIZE: f32 = 14.;
-const MENU_ICON_SIZE: f32 = 17.;
-const MENU_ROW_GAP: f32 = 12.;
-const MENU_ROW_PADDING: f32 = 12.;
-const POPOVER_PADDING: f32 = 6.;
-
-/// Width needed to fit the longest translated row, including the icon and both paddings.
-pub fn menu_content_width(window: &Window, labels: &[&str]) -> f32 {
-    let font = gpui::font(sunrise_launcher_theme::glass::FONT);
-    let widest = labels
-        .iter()
-        .map(|&label| {
-            let run = TextRun {
-                len: label.len(),
-                font: font.clone(),
-                color: gpui::black(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let line = window.text_system().shape_line(
-                SharedString::from(label.to_owned()),
-                px(MENU_FONT_SIZE),
-                &[run],
-                None,
-            );
-            f32::from(line.width)
-        })
-        .fold(0., f32::max);
-    widest.ceil() + MENU_ICON_SIZE + MENU_ROW_GAP + 2. * (MENU_ROW_PADDING + POPOVER_PADDING)
-}
-
-/// A popover's row (`MENU_ROW`): 40 px, 14 px text after a 17 px icon at 60 %, white at 7 %
-/// under the pointer. `danger` colours it as the mockup's Delete.
-pub fn menu_row(
-    id: impl Into<SharedString>,
-    name: &'static str,
-    label: impl Into<SharedString>,
-    danger: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let (fg, icon_color) = if danger {
-        let c = self::danger();
-        (c, c)
-    } else {
-        (white(ink::FULL), white(ink::NOTE))
-    };
-    let hover_color = if danger {
-        rgba(sunrise_launcher_theme::glass::DANGER_HOVER << 8 | 0x1f).into()
-    } else {
-        white(0.07)
-    };
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .items_center()
-        .gap(px(MENU_ROW_GAP))
-        .h(px(40.))
-        .w_full()
-        .px(px(MENU_ROW_PADDING))
-        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
-        .cursor_pointer()
-        .group(id.clone())
-        .child(hover_fade(&id, layer(radius::CONTROL), move |d, a| {
-            d.bg(hover_color.opacity(hover_color.a * a))
-        }))
-        .child(hover_nudge(&id, MENU_ROW_GAP))
-        .child(
-            icon(name, MENU_ICON_SIZE, icon_color)
-                .relative()
-                .when(!danger, |d| {
-                    d.group_hover(id.clone(), |s| s.text_color(white(ink::FULL)))
-                }),
-        )
-        .child(
-            text(MENU_FONT_SIZE, FontWeight::NORMAL, 1.)
-                .relative()
-                .min_w_0()
-                .truncate()
-                .text_color(fg)
-                .child(label.into()),
-        );
-    keyboard(track_hover(d, id), t)
-}
-
-/// A popover (`POPOVER`): a menu's near-opaque plate (the page's plates let the scene through),
-/// 6 px around its rows, a shadow setting it above the card under it.
-pub fn popover(width: f32) -> Div {
-    crate::glass::float(radius::POPOVER)
-        .shadow_lg()
-        .w(px(width))
-        .p(px(POPOVER_PADDING))
-        .flex()
-        .flex_col()
-}
 
 /// What a dialog or the palette lays over the launcher (`bg-[#07050f]/50 backdrop-blur-xl`):
 /// GPUI can't blur what it drew, so the scene's blurred copy (a menu's, `hzl-float`) covers the
@@ -462,39 +326,6 @@ pub fn dialog_plate(radius: f32) -> Div {
             color(sunrise_launcher_theme::glass::SCRIM).opacity(if light() { 0. } else { 0.5 }),
         ))
         .child(layer(white(sunrise_launcher_theme::glass::TINT)))
-}
-
-/// A dropdown's choice: its name on one line, 36 tall, the accent's tick on the one `picked`.
-pub fn pick_row(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    picked: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(12.))
-        .h(px(36.))
-        .w_full()
-        .px(px(12.))
-        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
-        .cursor_pointer()
-        .child(hover_fade(&id, layer(radius::CONTROL), |d, a| {
-            d.bg(white(0.07 * a))
-        }))
-        .child(
-            text(14., FontWeight::NORMAL, ink::FULL)
-                .relative()
-                .truncate()
-                .child(label.into()),
-        )
-        .children(picked.then(|| icon("tick-02", 17., color(look().accent_soft)).relative()));
-    keyboard(track_hover(d, id), t)
 }
 
 /// A quiet button (`QUIET`): white at 8 %, 14 % under the pointer, 14 px medium, `h` tall.

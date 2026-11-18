@@ -10,30 +10,13 @@
 //! (`pictures::drawn_side`, `pictures::gpu_limit`).
 use super::*;
 use gpui::RenderImage;
-use std::collections::HashSet;
-use std::path::{ PathBuf};
+
+
 use std::sync::Arc;
-use sunrise_launcher::pictures::{ Lru};
 
-/// What the made pictures may take together, unless more than that is on screen at once.
-const BUDGET: u64 = 384 << 20;
-/// A picture drawn this recently is on screen: it stays even over the budget.
-const GRACE: Duration = Duration::from_secs(2);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(super) enum Look {
-    /// Fitted inside this many pixels square.
-    Fit(u32),
-    /// Small and blurred (`glass_shot_blur`).
-    Blurred,
-}
-
-type Key = (PathBuf, Look);
 
 pub(super) struct Pictures {
-    /// None: the file couldn't be read as a picture.
-    made: Lru<Key, Option<Arc<RenderImage>>>,
-    making: HashSet<Key>,
     /// Gone from `made`; freed from the window's sprite atlas on the next frame.
     retired: Vec<Arc<RenderImage>>,
 }
@@ -41,8 +24,6 @@ pub(super) struct Pictures {
 impl Default for Pictures {
     fn default() -> Self {
         Pictures {
-            made: Lru::new(BUDGET, GRACE),
-            making: HashSet::new(),
             retired: Vec::new(),
         }
     }

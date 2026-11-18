@@ -12,7 +12,7 @@
 use super::mods_page::{ Event};
 use super::*;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::path::PathBuf;
 
 use std::sync::Arc;
@@ -21,24 +21,13 @@ use sunrise_launcher::browser::{
     details::{ Details, Filters, Tags},
     images, java, Kind as PackKind, Project, SourceId, Version};
 
-/// A project page's tabs.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Tab {
-    Description,
-    Gallery,
-    Versions,
-}
-
 /// The open project page.
 pub(super) struct Opened {
     pub(super) project: Project,
-    tab: Tab,
     details: Option<Result<Arc<Details>, String>>,
     versions: Option<Result<Arc<[ProjectVersion]>, String>>,
     version_list: cull::Cull,
     checked_versions: HashMap<String, sunrise_launcher::porter::Verdict>,
-    /// The gallery image shown large.
-    shot: usize,
 }
 
 /// Cached verdicts are read with the version request, never while drawing a frame.
@@ -53,11 +42,9 @@ pub(super) struct ProjectVersion {
 pub(super) struct Browse {
     pub(super) open: Option<Opened>,
     pub(super) filters: Filters,
-    pub(super) show_filters: bool,
     /// The Sort by dropdown's list is open.
     pub(super) sort_menu: bool,
     tags: HashMap<(SourceId, PackKind), Tags>,
-    tags_asked: HashSet<(SourceId, PackKind)>,
     /// Images on disk, by URL and size; `None` while they load or when they failed.
     images: HashMap<(String, u32), Option<PathBuf>>,
     image_queue: Option<std::sync::mpsc::Sender<(String, u32)>>,
@@ -149,12 +136,10 @@ impl Launcher {
         });
         self.mods.browse.open = Some(Opened {
             project,
-            tab: Tab::Description,
             details: None,
             versions: None,
             version_list: cull::Cull::default(),
             checked_versions: HashMap::new(),
-            shot: 0,
         });
     }
 

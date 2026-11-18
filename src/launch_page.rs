@@ -2,7 +2,7 @@
 //! (`sunrise_launcher::launch`): a command before it, a wrapper, and environment variables.
 use super::servers_page::Field;
 use super::*;
-use gpui::{ Bounds, Pixels};
+
 use sunrise_launcher::launch;
 
 pub(super) struct LaunchPanel {
@@ -10,8 +10,6 @@ pub(super) struct LaunchPanel {
     instance: String,
     /// What Save did: Ok with the summary of what runs (None when nothing runs), or Err with reason.
     saved: Option<Result<Option<String>, String>>,
-    /// What this computer has for the Linux switches, looked at when the panel opens.
-    found: launch::Found,
     /// The Linux switches (GameMode, MangoHud, dedicated card) as flipped, kept with Save like
     /// the commands: None until one is flipped.
     switches: Option<[bool; 3]>,
@@ -29,11 +27,6 @@ pub(super) enum MemorySaved {
 /// The memory row on Home. What it shows comes from the selected instance, except during a drag.
 #[derive(Default)]
 pub(super) struct MemorySlider {
-    /// The computer's memory in MiB, read once: the slider's top.
-    total: Option<u32>,
-    area: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
-    /// The Java heap size being dragged to.
-    dragging: Option<u32>,
     /// What the last change did, or why not.
     saved: Option<MemorySaved>,
     /// The instance whose value is being typed: saved to it when the box loses the keyboard, even

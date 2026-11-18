@@ -25,12 +25,8 @@ pub(super) struct InstanceDialog {
     pub(super) pin: Option<String>,
     /// The builds "latest" follows (`Instance::channel`); a new instance starts on Stable.
     pub(super) channel: instances::Channel,
-    /// The loader logo `picture` was made from, when it was one.
-    pub(super) logo: Option<&'static str>,
     /// The sheet was closed with edits not saved: asking whether to drop them.
     pub(super) discarding: bool,
-    /// Duplicate is copying this instance.
-    pub(super) copying: bool,
     /// A Java instance's maximum memory as set in the sheet, kept with Save: None until changed.
     pub(super) memory: Option<u32>,
 }
@@ -40,9 +36,6 @@ pub(super) struct InstanceDialog {
 pub(super) struct Instances {
     pub(super) list: Vec<Instance>,
     pub(super) dialog: Option<InstanceDialog>,
-    /// The instance whose Delete is waiting for its confirmation, and why the last one failed.
-    confirm_delete: Option<String>,
-    delete_error: Option<String>,
     /// Textures, pictures and marks as images, by name and size in device pixels.
     pub(super) icons: HashMap<(String, u32), Option<Arc<RenderImage>>>,
     /// Mojang's versions, for a new Java instance.
@@ -106,17 +99,6 @@ impl Launcher {
         self.save_settings();
     }
 
-    /// Opens the dialog for a new instance, or for changing `editing`.
-    /// The instance sheet for `instance`, open on `tab`. It picks the instance, since Launch and
-    /// Storage act on the one picked.
-    pub(super) fn open_instance_sheet(&mut self, instance: Instance, tab: glass_sheet::SheetTab) {
-        if matches!(instance.kind, InstanceKind::Default | InstanceKind::Own) {
-            self.select_instance(&instance);
-        }
-        self.sheet_tab = tab;
-        self.open_instance_dialog(Some(instance));
-    }
-
     pub(super) fn open_instance_dialog(&mut self, editing: Option<Instance>) {
         self.version_menu = false;
         // The hook fields start again from the saved instance, not from what was left typed, and
@@ -164,9 +146,7 @@ impl Launcher {
             channel: editing
                 .as_ref()
                 .map_or(instances::Channel::Stable, |i| i.channel),
-            logo: None,
             discarding: false,
-            copying: false,
             memory: None,
             picture: None,
             editing: editing.map(|i| i.id),
@@ -179,20 +159,6 @@ impl Launcher {
         // A new one starts with the name it would get ("My Sunrise"), until the player types one.
         if !editing_one {
             self.change(|_| {});
-        }
-    }
-
-    /// Opens the dialog for a copy of the selected instance, named after it.
-    pub(super) fn start_copy(&mut self) {
-        let Some(name) = self.selected_instance().map(|i| i.name.clone()) else {
-            return;
-        };
-        self.open_instance_dialog(None);
-        self.servers
-            .text(Field::InstanceName)
-            .set(format!("{name} copy"));
-        if let Some(d) = &mut self.instances.dialog {
-            d.copy = true;
         }
     }
 
@@ -432,38 +398,6 @@ impl Launcher {
 
 }
 
-impl Launcher {
-
-    pub(super) fn delete_instance(&mut self, id: &str) {
-        if self.client.is_some() || self.starting_client.is_some() {
-            return;
-        }
-        let name = self
-            .instances
-            .list
-            .iter()
-            .find(|i| i.id == id)
-            .map(|i| i.name.clone());
-        match instances::delete_with_selection(id) {
-            Ok((_, saved)) => {
-                if let Some(name) = name {
-                    crate::glass_toast::say(trf("Deleted {name}", &[("name", &name)]));
-                }
-                self.instances.confirm_delete = None;
-                self.instances.delete_error = None;
-                // Play starts Sunrise again; the window's copy of the settings says so too.
-                if self.settings.instance.as_deref() == Some(id) {
-                    self.settings.instance = None;
-                    self.save_settings();
-                } else if let Err(error) = saved {
-                    self.settings_save_error = Some(error);
-                }
-                self.reload_instances();
-            }
-            Err(e) => self.instances.delete_error = Some(e),
-        }
-    }
-}
 
 /// Validate the two fields together, without treating an invalid edit as an empty size.
 fn validate_window(width: &str, height: &str) -> Result<Option<(u32, u32)>, ()> {

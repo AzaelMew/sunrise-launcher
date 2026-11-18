@@ -27,13 +27,6 @@
 /// a click on a row would otherwise seem to do nothing, its card twenty rows further down.
 #[derive(Default)]
 pub(crate) struct Reveal {
-    /// A project was just picked: the next layouts scroll the page to its card, this many more
-    /// times at most. The list above it builds only its nearby rows and guesses the others'
-    /// heights, so scrolling there measures some and moves the card: the next frame corrects.
-    pub wanted: std::cell::Cell<u8>,
-    /// Where the page's top was laid out, measured as the card is: the page scrolls in its own
-    /// layer, so only the distance between the two means the same in every frame.
-    top: std::cell::Cell<Option<gpui::Pixels>>,
 }
 
 

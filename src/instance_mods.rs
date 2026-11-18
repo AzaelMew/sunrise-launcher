@@ -10,55 +10,27 @@
 use super::*;
 
 
-use build_mode::ModKind;
 
-use std::collections::{HashMap, HashSet};
-use std::path::{ PathBuf};
-use std::sync::Arc;
-use sunrise_launcher::browser::{ installed};
+
+
+
+
+
 
 
 /// A mod as the tab lists it.
 #[derive(Clone)]
 pub(super) struct ModRow {
-    /// Its file in the instance, as it is when on (`mods/lumen-0.6.2.jar`).
-    pub(super) file: String,
-    pub(super) name: String,
-    pub(super) version: String,
-    pub(super) on: bool,
-    /// What the browser knows of it; None: a file put in by hand.
-    pub(super) entry: Option<installed::Entry>,
-    /// Its validated package icon or jar icon, kept between draws.
-    pub(super) icon: Option<Arc<gpui::Image>>,
-    pub(super) error: Option<String>,
-    pub(super) native: Option<native_status::Installed>,
-    pub(super) internals: Vec<String>,
-    /// What the package is and its mod id, for a Sunrise mod; None for a Java jar.
-    pub(super) kind: Option<(ModKind, String)>,
-}
-
-/// Modrinth projects' icon URLs by project id, kept on disk beside the image cache so the icons
-/// show offline too; each id is asked for once a session.
-#[derive(Default)]
-pub(super) struct ProjectIcons {
-    urls: HashMap<String, String>,
-    loaded: bool,
-    asked: HashSet<String>,
 }
 
 #[derive(Default)]
 pub(super) struct InstanceMods {
-    home: Option<PathBuf>,
     pub(super) fresh: bool,
-    reading: bool,
     pub(super) list: Vec<ModRow>,
-    /// The browser was installing at the last draw: its end changes the list.
-    was_busy: bool,
     /// Only the rows near the view are built (a modpack has hundreds), measured again when the
     /// shown list changes (its length and the filter).
     pub(super) cull: cull::Cull,
     pub(super) shown: (usize, String),
-    fingerprint: String,
 }
 
 impl InstanceMods {

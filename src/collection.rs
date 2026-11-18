@@ -7,13 +7,6 @@ use sunrise_launcher_telemetry::{Choices, Consent};
 /// What the window keeps about data collection.
 pub(crate) struct Collection {
     pub consent: Consent,
-    body_scroll: Scrollbar,
-    json_scroll: Scrollbar,
-    /// The welcome's list, and whether its ping row shows what is sent.
-    pub welcome_scroll: Scrollbar,
-    pub welcome_detail: bool,
-    /// The question's switches, until the player answers.
-    pub draft: Choices,
     /// "View what would be sent": a line on what it is, and the JSON.
     pub view: Option<(String, String)>,
     /// What "Delete my data" did, or why it could not.
@@ -29,11 +22,6 @@ impl Collection {
     pub fn load() -> Self {
         Self {
             consent: telemetry::consent(),
-            body_scroll: Scrollbar::default(),
-            json_scroll: Scrollbar::default(),
-            welcome_scroll: Scrollbar::default(),
-            welcome_detail: false,
-            draft: Choices::NONE,
             view: None,
             note: None,
             confirm_delete: false,

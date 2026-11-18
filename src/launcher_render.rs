@@ -7,17 +7,3 @@ impl Render for Launcher {
     }
 }
 
-/// What the launcher last handed the views behind it: the backdrop, and the scene that shows.
-#[derive(Clone, PartialEq)]
-pub(crate) struct Pushed {
-    back: window_root::Back,
-    coast: Option<(sunrise_launcher_scenery::coast::Palette, (f32, f32), f32)>,
-    sky: Option<(
-        sunrise_launcher_theme::night::Night,
-        (f32, f32),
-        f32,
-        rain::Keep,
-    )>,
-    rain: Option<(bool, u32, rain::Keep)>,
-}
-

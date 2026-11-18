@@ -9,14 +9,10 @@ use native_status::State;
 
 /// The running or finished native snapshot; serialize readers to avoid racing cache leases.
 pub(super) struct RouteMemo {
-    key: String,
-    result: Option<Result<native_mods::Routes, String>>,
 }
 
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
 pub(super) struct UpdateMemo {
-    key: String,
-    result: Option<Result<native_mods::UpdateCheck, String>>,
 }
 
 /// What a mod in the list is.

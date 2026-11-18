@@ -15,11 +15,6 @@ pub(super) struct Worlds {
     pub(super) cull: cull::Cull,
     fresh: bool,
     reading: bool,
-    /// The world being backed up, copied or deleted now.
-    pub(super) busy: Option<String>,
-    pub(super) confirm_delete: Option<String>,
-    /// What the last action did (a backup's zip), or why it failed.
-    pub(super) done: Option<Result<(String, Option<PathBuf>), String>>,
 }
 
 impl Worlds {

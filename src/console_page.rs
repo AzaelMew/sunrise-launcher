@@ -5,71 +5,7 @@
 use super::*;
 
 
-use sunrise_launcher::game_log::{ Shared};
 
-pub(super) struct Console {
-    follow: bool,
-    /// Which lines show: every one, warnings and errors, or errors only.
-    level: Level,
-    /// The last run's `latest.log`, shown while this run has no lines.
-    file: Option<FileLog>,
-    /// A read of `file` is running off the UI thread.
-    reading: bool,
-    /// When `file` was last checked for a change.
-    checked: Option<std::time::Instant>,
-    scroll: Scrollbar,
-    /// Revision, lines shown and search at the last draw: a change means scroll down when
-    /// following.
-    seen: (u64, usize, String),
-    confirm_share: bool,
-    sharing: bool,
-    shared: Option<Result<Shared, String>>,
-}
-
-impl Default for Console {
-    fn default() -> Self {
-        Console {
-            follow: true,
-            level: Level::All,
-            file: None,
-            reading: false,
-            checked: None,
-            scroll: Scrollbar::default(),
-            seen: (0, 0, String::new()),
-            confirm_share: false,
-            sharing: false,
-            shared: None,
-        }
-    }
-}
-
-/// A file's length and modification time: a change in either means it is read again.
-type Stamp = (u64, Option<std::time::SystemTime>);
-
-/// What the last run's log file holds, as far as it is known.
-#[derive(Debug, PartialEq)]
-enum Tail {
-    Loading,
-    /// No file, or an empty one: the game has not logged yet.
-    Absent,
-    /// The file is there and could not be read, with the reason in plain words.
-    Failed(String),
-    Lines(Vec<String>),
-}
-
-struct FileLog {
-    path: std::path::PathBuf,
-    stamp: Option<Stamp>,
-    tail: Tail,
-}
-
-/// The log's level filter (the mockup's All, Warnings, Errors).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Level {
-    All,
-    Warnings,
-    Errors,
-}
 
 /// Keeps a received line, dropping the oldest past `LOG_LINES`, and counts it in `revision`.
 pub(super) fn keep_line(log: &mut VecDeque<String>, revision: &mut u64, line: String) {

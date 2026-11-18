@@ -13,7 +13,6 @@ pub(super) struct WorldPacks {
     open: Option<PathBuf>,
     list: Vec<DataPack>,
     confirm_remove: Option<String>,
-    note: Option<Result<String, String>>,
 }
 
 impl WorldPacks {

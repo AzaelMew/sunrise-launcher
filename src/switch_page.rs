@@ -14,13 +14,4 @@ impl Launcher {
         self.account_menu = false;
     }
 
-    /// Everyone the player can play as (each account's UUID and name), with how each signs in.
-    pub(super) fn players(&self) -> Vec<(String, String, &'static str)> {
-        self.accounts
-            .accounts
-            .iter()
-            .map(|a| (a.uuid.clone(), a.name.clone(), tr("Microsoft")))
-            .collect()
-    }
-
 }

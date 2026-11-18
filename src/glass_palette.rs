@@ -6,7 +6,7 @@
 //! instance, Open the game folder, and from two letters on, Install or Remove the registry's
 //! mods that match, in the selected instance.
 
-use super::line_edit::{ LineEdit};
+
 use super::*;
 
 
@@ -15,10 +15,7 @@ use sunrise_launcher::browser::Project;
 
 
 pub(super) struct Palette {
-    query: LineEdit,
     focus: FocusHandle,
-    /// The highlighted command.
-    index: usize,
     /// The registry's mods for the query [`asked`](Self::asked) last.
     pub(super) mods: Vec<Project>,
     asked: String,

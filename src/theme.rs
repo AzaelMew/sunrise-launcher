@@ -51,13 +51,9 @@ pub struct Theme {
     pub ink_soft: Hsla,
     pub muted: Hsla,
     pub accent: Hsla,
-    pub on_accent: Hsla,
     pub danger: Hsla,
-    pub success: Hsla,
-    pub warn: Hsla,
     /// The blocky parts (`sunrise_launcher_theme::Blocks`).
     pub side: Hsla,
-    pub panel: Hsla,
     pub raised: Hsla,
     pub button: Hsla,
     pub button_bevel: Hsla,
@@ -178,7 +174,7 @@ impl Theme {
     /// pages not rebuilt for it yet draw with these tokens comes out as the mockup's parts do,
     /// white text and fills at a few opacities, no borders, no bevels.
     fn glass(self, accent: Accent) -> Self {
-        use sunrise_launcher_theme::glass::{fill, ink, Glass, BLUR, DANGER, LIVE, TINT, WARN};
+        use sunrise_launcher_theme::glass::{fill, ink, Glass, BLUR, DANGER, TINT};
         let dark = self.dark;
         // Light: the ink where dark has white, as `glass_ui::white` does.
         let white = |a: f32| {
@@ -199,12 +195,8 @@ impl Theme {
             ink_soft: white(ink::SOFT),
             muted: white(ink::QUIET),
             accent: c(look.accent_soft),
-            on_accent: c(look.on_accent),
             // Light: `glass_ui::danger`, `live` and `warn`'s darker shades.
             danger: c(if dark { DANGER } else { 0xdc2626 }),
-            success: c(if dark { LIVE } else { 0x15803d }),
-            warn: c(if dark { WARN } else { 0xb45309 }),
-            panel: white(0.04),
             raised: white(fill::ROW_HOVER),
             button: white(fill::BUTTON),
             button_bevel: none,
@@ -235,12 +227,8 @@ impl Theme {
             ink_soft: c(p.ink_soft),
             muted: c(p.muted),
             accent: c(p.accent),
-            on_accent: c(p.on_face),
             danger: c(p.danger),
-            success: c(p.success),
-            warn: c(p.warn),
             side: c(p.side),
-            panel: c(p.panel),
             raised: c(p.raised),
             button: c(p.button),
             button_bevel: c(p.button_bevel),

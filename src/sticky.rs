@@ -22,8 +22,6 @@ struct Measured {
 #[derive(Clone, Default)]
 pub struct Sticky {
     measured: Rc<Cell<Option<Measured>>>,
-    /// The panel's height, as it last painted.
-    panel: Rc<Cell<f32>>,
     /// The offset the panel was last drawn at.
     drawn: Rc<Cell<f32>>,
 }

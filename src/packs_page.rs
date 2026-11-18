@@ -15,8 +15,6 @@ pub(super) struct Packs {
     fresh: bool,
     /// The pack waiting for its removal to be confirmed: its kind and file.
     pub(super) confirm_remove: Option<(PackKind, String)>,
-    /// What the last action did, or why it failed.
-    pub(super) note: Option<Result<String, String>>,
 }
 
 impl Packs {
