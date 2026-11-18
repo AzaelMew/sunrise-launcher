@@ -81,7 +81,7 @@ pub(crate) enum Open {
     Project(String),
     /// A mod the registry doesn't know: Mods › Installed, at the mod with this ID.
     Installed(String),
-    /// A pack: its shelf, showing it by its name.
+    /// A pack: its shelf, at the pack that is this file.
     Pack(PackKind, String),
 }
 
@@ -163,7 +163,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     let pack = |pack: packs::Pack| Item {
         kind: Kind::of(pack.kind),
         picture: Picture::Image(pack.icon.map(image)),
-        open: Open::Pack(pack.kind, pack.title.clone()),
+        open: Open::Pack(pack.kind, pack.file.clone()),
         on: pack.enabled,
         id: pack.file,
         name: pack.title,
@@ -309,9 +309,7 @@ impl Launcher {
         match open {
             Open::Project(id) => self.mods_show_project(id),
             Open::Installed(id) => self.open_installed(crate::mods::Installed::Mod(id)),
-            Open::Pack(kind, name) => {
-                self.open_installed(crate::mods::Installed::PackNamed(kind, name))
-            }
+            Open::Pack(kind, file) => self.open_installed(crate::mods::Installed::Pack(kind, file)),
         }
     }
 

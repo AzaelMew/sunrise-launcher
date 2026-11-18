@@ -36,7 +36,10 @@ impl Launcher {
     /// rows, a question waiting for its answer, filters) is not carried in: the player sees
     /// what they asked for, and nothing they can't see is acted on.
     pub(crate) fn open_installed(&mut self, to: Installed) {
-        self.leave_section(matches!(to, Installed::Shelf(_) | Installed::PackNamed(..)));
+        self.leave_section(!matches!(
+            to,
+            Installed::ModsOff | Installed::Mod(_) | Installed::ModNamed(_)
+        ));
         self.ui.page = self.ui.mods.enter(&to);
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
@@ -55,6 +58,9 @@ pub(crate) enum Installed {
     ModNamed(String),
     /// Packs › Installed, the shelf of this kind with all its packs.
     Shelf(Kind),
+    /// Packs › Installed on the shelf of this kind with all its packs, at the pack that is
+    /// this file: two packs may share a name, never a file.
+    Pack(Kind, String),
     /// Packs › Installed on the shelf of this kind, the packs a search for this name finds.
     PackNamed(Kind, String),
 }
@@ -63,6 +69,14 @@ pub(crate) enum Installed {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Reveal {
     Mod(String),
+    /// A pack, by its kind and file.
+    Pack(Kind, String),
+}
+
+impl Reveal {
+    pub(super) fn is_pack(&self, pack: &sunrise_launcher::packs::Pack) -> bool {
+        matches!(self, Reveal::Pack(kind, file) if *kind == pack.kind && *file == pack.file)
+    }
 }
 
 impl ModsState {
@@ -82,12 +96,15 @@ impl ModsState {
             Installed::ModsOff => self.row_filter.show = model::Show::Off,
             Installed::Mod(id) => self.reveal = Some(Reveal::Mod(id.clone())),
             Installed::Shelf(_) => {}
+            Installed::Pack(kind, file) => self.reveal = Some(Reveal::Pack(*kind, file.clone())),
             Installed::ModNamed(title) | Installed::PackNamed(_, title) => {
                 self.have.set(title.clone());
                 self.row_filter.text = title.clone();
             }
         }
-        let (Installed::Shelf(kind) | Installed::PackNamed(kind, _)) = to else {
+        let (Installed::Shelf(kind) | Installed::Pack(kind, _) | Installed::PackNamed(kind, _)) =
+            to
+        else {
             self.last_mods = Some(Page::Installed);
             return Page::Installed;
         };
@@ -238,5 +255,38 @@ mod tests {
             assert!(m.last_packs == Some(Page::Packs));
             nothing_carried_in(&m);
         }
+    }
+
+    #[test]
+    fn a_pack_is_opened_by_its_file_not_by_a_name_two_may_share() {
+        let pack = |file: &str| sunrise_launcher::packs::Pack {
+            kind: Kind::Shader,
+            file: file.into(),
+            path: file.into(),
+            title: "Evening Glow".into(),
+            description: String::new(),
+            icon: None,
+            enabled: file == "evening-glow-2.sshader",
+        };
+        let shelf = [
+            pack("evening-glow-1.sshader"),
+            pack("evening-glow-2.sshader"),
+        ];
+        let mut m = left_behind();
+        m.shelf = Shelf::Data;
+        let to = Installed::Pack(Kind::Shader, "evening-glow-2.sshader".into());
+        assert!(m.enter(&to) == Page::Packs);
+        nothing_carried_in(&m);
+        assert_eq!(m.shelf, Shelf::Shader);
+        // Both stay listed, as no name is searched for, and only the one asked for stands out.
+        assert_eq!(m.have.text(), "");
+        let reveal = m.reveal.clone().unwrap();
+        assert_eq!(shelf.each_ref().map(|p| reveal.is_pack(p)), [false, true]);
+        // The same file name on the other shelf is another pack.
+        let resource = sunrise_launcher::packs::Pack {
+            kind: Kind::Resource,
+            ..shelf[1].clone()
+        };
+        assert!(!reveal.is_pack(&resource));
     }
 }
