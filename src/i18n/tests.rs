@@ -121,15 +121,23 @@ fn holes(s: &str) -> BTreeSet<&str> {
 }
 
 /// A profile has one name wherever a player reads it. "Setup" is only the Windows installer,
-/// whose window is not translated through `tr`.
+/// whose window is not translated through `tr`; "instance" is only the command's name, which
+/// a sentence may quote (`sunrise-launcher instance select`, `--instance`).
 #[test]
-fn a_profile_is_never_called_a_setup() {
+fn a_profile_is_never_called_a_setup_or_an_instance() {
     let (asked, _) = strings();
-    let setups: Vec<_> = asked
+    let others: Vec<_> = asked
         .iter()
-        .filter(|said| said.to_lowercase().contains("setup"))
+        .filter(|said| {
+            let said = said
+                .to_lowercase()
+                .replace("sunrise-launcher instance", "")
+                .replace("--instance", "")
+                .replace("{instance}", "");
+            said.contains("setup") || said.contains("instance")
+        })
         .collect();
-    assert!(setups.is_empty(), "{setups:#?}");
+    assert!(others.is_empty(), "{others:#?}");
 }
 
 #[test]

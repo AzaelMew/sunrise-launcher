@@ -322,7 +322,7 @@ fn a_zip_bomb_stops_at_the_limit_and_leaves_nothing() {
     assert!(fs::metadata(&bomb).unwrap().len() < 4 << 10);
     let refused = import_any(&bomb, NONE, &maker(&made), 16 << 10).unwrap_err();
     assert!(refused.contains("more than 16 KiB"), "{refused}");
-    assert!(!made.join("bomb").exists(), "the half-made instance goes");
+    assert!(!made.join("bomb").exists(), "the half-made profile goes");
     // Under the limit, all of it comes in; the limit counts every file together.
     let two = dir.join("two.zip");
     zip_file(

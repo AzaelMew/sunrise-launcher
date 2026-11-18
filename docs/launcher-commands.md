@@ -96,8 +96,8 @@ Start the client (needs a signed-in Microsoft account that owns Minecraft: Java 
     sunrise-launcher play
 
 - `--allow-jar-downloads`: Allow missing original Java asset/data jars to be downloaded from Modrinth
-- `--version`: Installed version to play (default: instance version)
-- `--instance`: The instance to play (its name or id; default: the selected one)
+- `--version`: Installed version to play (default: profile version)
+- `--instance`: The profile to play (its name or id; default: the selected one)
 - `--world`: Open or create this world (a folder under saves) at once
 - `--creative`: Creative mode for a new world
 - `--join`: Join a friend's world with its invite code
@@ -143,22 +143,22 @@ MCP: `native_lock`.
 
 ## `sunrise-launcher native-build`
 
-Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the instance's exact Sunrise source revision with the launcher's own Rust, as the version the instance then plays. Not sandboxed: the mods' code runs with your rights. With no native mod found (content and wasm mods need no build), it says there is nothing to build and exits successfully; a server export still fails, as no engine is made.
+Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the profile's exact Sunrise source revision with the launcher's own Rust, as the version the profile then plays. Not sandboxed: the mods' code runs with your rights. With no native mod found (content and wasm mods need no build), it says there is nothing to build and exits successfully; a server export still fails, as no engine is made.
 
     sunrise-launcher native-build [FOLDER]
 
 - `--sync-internals`: Discover internal uses through compiler diagnostics. Prints resolved declarations as JSON for cargo sunrise-mod internals sync; never installs or selects a game
 - `--catalog`
 - `--catalog-output`: Copy discovery catalogs into this caller-owned empty directory
-- `FOLDER`: A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them (default: the native mods installed and turned on in the instance). Server exports also read wasm internals declarations from .smod packages directly in this folder
-- `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of an instance's build. Needs a mod FOLDER; no instance is read or changed, and no launcher config is written
+- `FOLDER`: A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them (default: the native mods installed and turned on in the profile). Server exports also read wasm internals declarations from .smod packages directly in this folder
+- `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of a profile's build. Needs a mod FOLDER; no profile is read or changed, and no launcher config is written
 - `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
-- `--instance`: The instance whose installed native mods to build, and which then plays the build (default: the selected one)
-- `--version`: The installed version whose game files the build reuses, and whose commit it builds on when no mod pins one (default: the one the instance plays, so a rebuild stays on its Sunrise)
-- `--update`: Move to the newest installed release or Nightly instead of the Sunrise the instance plays (rebuilds the mods for that pinned SDK)
+- `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
+- `--version`: The installed version whose game files the build reuses, and whose commit it builds on when no mod pins one (default: the one the profile plays, so a rebuild stays on its Sunrise)
+- `--update`: Move to the newest installed release or Nightly instead of the Sunrise the profile plays (rebuilds the mods for that pinned SDK)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
 - `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
-- `--back-up-worlds`: When a mod this build can't use was saved into the instance's worlds, back those worlds up (into the game folder's backups/) and build without it. Without this the build stops and names the worlds, leaving the instance as it is
+- `--back-up-worlds`: When a mod this build can't use was saved into the profile's worlds, back those worlds up (into the game folder's backups/) and build without it. Without this the build stops and names the worlds, leaving the profile as it is
 
 MCP: none: the player's switch.
 
@@ -240,7 +240,7 @@ MCP: `account_select`.
 
 ## `sunrise-launcher settings`
 
-Show the launcher's settings, or set one (the Settings page): selected-version TAG, game-architecture auto|x64|arm64, minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions on|off, prune-old-versions on|off (delete old versions after an install, keeping the selected one, the ones instances use and the newest few), keep-versions N (how many of the newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has; system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id lists them all), accent violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any hue; "theme" goes back to the theme's own), background PATH (your picture behind Home; "default" goes back to the theme's), scenery on|off (whether anything is behind the pages), cache-limit-gib N (managed cache limit in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup).
+Show the launcher's settings, or set one (the Settings page): selected-version TAG, game-architecture auto|x64|arm64, minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions on|off, prune-old-versions on|off (delete old versions after an install, keeping the selected one, the ones profiles use and the newest few), keep-versions N (how many of the newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has; system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id lists them all), accent violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any hue; "theme" goes back to the theme's own), background PATH (your picture behind Home; "default" goes back to the theme's), scenery on|off (whether anything is behind the pages), cache-limit-gib N (managed cache limit in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup).
 
     sunrise-launcher settings [KEY] [VALUE]
 
@@ -261,11 +261,11 @@ MCP: `game_args`.
 
 ## `sunrise-launcher share-log`
 
-Upload an instance's latest.log to mclo.gs (a paste service for Minecraft logs) and print its link, for a bug report: only when the player asks. The home folder, the user name and the account names are taken out first; the link expires after 90 days unread.
+Upload a profile's latest.log to mclo.gs (a paste service for Minecraft logs) and print its link, for a bug report: only when the player asks. The home folder, the user name and the account names are taken out first; the link expires after 90 days unread.
 
     sunrise-launcher share-log
 
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `share_log`, only when the player asks.
 
@@ -398,7 +398,7 @@ MCP: `data_benchmark`, only when the player asks.
 
 ## `sunrise-launcher instance list`
 
-The instances, each with its game folder (* = the one Play starts).
+The profiles, each with its game folder (* = the one Play starts).
 
     sunrise-launcher instance list
 
@@ -406,18 +406,18 @@ MCP: `instance_list`.
 
 ## `sunrise-launcher instance create`
 
-Make an instance: empty but for your options and name, or a copy of another one's worlds, options and packs.
+Make a profile: empty but for your options and name, or a copy of another one's worlds, options and packs.
 
     sunrise-launcher instance create <NAME>
 
 - `NAME`
-- `--copy`: The instance to copy (its name or id)
+- `--copy`: The profile to copy (its name or id)
 
 MCP: `instance_create`.
 
 ## `sunrise-launcher instance rename`
 
-Rename an instance (its folder stays).
+Rename a profile (its folder stays).
 
     sunrise-launcher instance rename <INSTANCE> <NAME>
 
@@ -428,7 +428,7 @@ MCP: `instance_rename`.
 
 ## `sunrise-launcher instance delete`
 
-Delete an instance: its folder (worlds, options, packs) goes to the Trash, where you can get it back. Sunrise's own instance stays.
+Delete a profile: its folder (worlds, options, packs) goes to the Trash, where you can get it back. Sunrise's own profile stays.
 
     sunrise-launcher instance delete <INSTANCE>
 
@@ -438,7 +438,7 @@ MCP: `instance_delete`.
 
 ## `sunrise-launcher instance icon`
 
-Set an instance's icon: a block or item name from your prepared files (grass_block), a colour (#3fa7d6), or none.
+Set a profile's icon: a block or item name from your prepared files (grass_block), a colour (#3fa7d6), or none.
 
     sunrise-launcher instance icon <INSTANCE> <ICON>
 
@@ -449,7 +449,7 @@ MCP: `instance_icon`.
 
 ## `sunrise-launcher instance group`
 
-Put an instance in a sidebar group, or take it out with no group.
+Put a profile in a sidebar group, or take it out with no group.
 
     sunrise-launcher instance group <INSTANCE> [GROUP]
 
@@ -460,7 +460,7 @@ MCP: `instance_group`.
 
 ## `sunrise-launcher instance select`
 
-Make Play start this instance.
+Make Play start this profile.
 
     sunrise-launcher instance select <INSTANCE>
 
@@ -470,7 +470,7 @@ MCP: `instance_select`.
 
 ## `sunrise-launcher instance version`
 
-Keep an instance on one installed Sunrise version, or "latest" to follow updates again.
+Keep a profile on one installed Sunrise version, or "latest" to follow updates again.
 
     sunrise-launcher instance version <INSTANCE> <VERSION>
 
@@ -481,11 +481,11 @@ MCP: `instance_version`.
 
 ## `sunrise-launcher instance export`
 
-Export an instance to share as a zip: its settings, packs, Sunrise mods and the worlds named. Never logs, screenshots or account data; worlds go without their per-player files.
+Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds named. Never logs, screenshots or account data; worlds go without their per-player files.
 
     sunrise-launcher instance export [INSTANCE]
 
-- `INSTANCE`: The instance (default: the selected one)
+- `INSTANCE`: The profile (default: the selected one)
 - `--world`: A world to put in it (its name or folder); repeat for more
 - `--out`: Where to write it (default: "<name>.zip" in the current folder)
 
@@ -493,7 +493,7 @@ MCP: `instance_export`.
 
 ## `sunrise-launcher instance launch`
 
-Show or set what runs around an instance's game: a shell command before it (the game starts only if it succeeds), a wrapper it runs through (`nice -n 5`), environment variables ("NAME=value NAME2=value") and a shell command after it exits. An empty value clears one. The game and the commands also get INST_NAME, INST_ID, INST_DIR, INST_MC_DIR. On Linux, also GameMode, MangoHud and the dedicated graphics card, when the computer has them.
+Show or set what runs around a profile's game: a shell command before it (the game starts only if it succeeds), a wrapper it runs through (`nice -n 5`), environment variables ("NAME=value NAME2=value") and a shell command after it exits. An empty value clears one. The game and the commands also get INST_NAME, INST_ID, INST_DIR, INST_MC_DIR. On Linux, also GameMode, MangoHud and the dedicated graphics card, when the computer has them.
 
     sunrise-launcher instance launch <INSTANCE>
 
@@ -510,23 +510,23 @@ MCP: `instance_launch`, needs `confirm: true`.
 
 ## `sunrise-launcher instance shortcut`
 
-Put a shortcut on the desktop that plays an instance (`play --instance`): a .desktop file (also in the applications menu) on Linux, an app on macOS, a .lnk on Windows.
+Put a shortcut on the desktop that plays a profile (`play --instance`): a .desktop file (also in the applications menu) on Linux, an app on macOS, a .lnk on Windows.
 
     sunrise-launcher instance shortcut [INSTANCE]
 
-- `INSTANCE`: The instance (default: the selected one)
-- `--remove`: Move the instance's shortcuts to the trash instead
+- `INSTANCE`: The profile (default: the selected one)
+- `--remove`: Move the profile's shortcuts to the trash instead
 
 MCP: `instance_shortcut`.
 
 ## `sunrise-launcher instance import`
 
-Import what a file is: a shared instance (a game folder zip, such as `instance export` writes) becomes a new instance; a resource or shader pack goes into the instance (default: the selected one).
+Import what a file is: a shared profile (a game folder zip, such as `instance export` writes) becomes a new profile; a resource or shader pack goes into the profile (default: the selected one).
 
     sunrise-launcher instance import <FILE>
 
 - `FILE`
-- `--instance`: The instance a pack goes into
+- `--instance`: The profile a pack goes into
 
 MCP: `instance_import`.
 
@@ -536,13 +536,13 @@ The worlds: name, mode, version, last played and size (the default).
 
     sunrise-launcher worlds list
 
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `worlds_list`.
 
 ## `sunrise-launcher worlds backup`
 
-Zip a world into the instance's backups/ folder, as the game's Make Backup does.
+Zip a world into the profile's backups/ folder, as the game's Make Backup does.
 
     sunrise-launcher worlds backup <WORLD>
 
@@ -615,7 +615,7 @@ The resource and shader packs, and which are on (the default).
     sunrise-launcher packs list
 
 - `--kind` (resource, shader): Only this kind
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `packs_list`.
 
@@ -690,7 +690,7 @@ The screenshots, the newest first, with their files (the default).
 
     sunrise-launcher screenshots list
 
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `screenshots_list`.
 
@@ -711,7 +711,7 @@ The servers of the game's Multiplayer screen (the default).
 
     sunrise-launcher multiplayer list
 
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `multiplayer_list`.
 
@@ -770,11 +770,11 @@ MCP: `modpack_remove`, needs `confirm: true`.
 
 ## `sunrise-launcher mods list`
 
-What the browser installed in an instance (the default).
+What the browser installed in a profile (the default).
 
     sunrise-launcher mods list
 
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `mods_list`.
 
@@ -788,19 +788,19 @@ Search for packs Sunrise loads, or the registry's mods and modpacks.
 - `--kind` (mod, resource, modpack, shader, datapack)
 - `--everything`: Also what was made for other versions or runs only partly, each marked
 - `--source` (modrinth, sunrise)
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `mods_search`.
 
 ## `sunrise-launcher mods install`
 
-Install a pack or a Sunrise mod and what it needs into an instance, by its id or slug (checksums checked); a Sunrise modpack is installed as an instance of its own; a data pack goes into the world `--world` names.
+Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug (checksums checked); a Sunrise modpack is installed as a profile of its own; a data pack goes into the world `--world` names.
 
     sunrise-launcher mods install <PROJECT>
 
 - `PROJECT`
-- `--world`: Install the project's data pack into this world of the instance (its name or folder)
-- `--instance`: The instance (default: the selected one)
+- `--world`: Install the project's data pack into this world of the profile (its name or folder)
+- `--instance`: The profile (default: the selected one)
 - `--everything`: Allow a version made for another Minecraft version
 - `--source` (modrinth, sunrise)
 
@@ -814,7 +814,7 @@ Update what the browser installed (or one pack).
 
 - `PROJECT`
 - `--check`: Only say what is newer
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `mods_update`.
 
@@ -827,7 +827,7 @@ Install a native mod from a GitHub link (docs/modding/src/how-to/native-mods.md,
 - `URL`
 - `--mod`: The mod to install when the link holds several
 - `--all`: Install every mod the link holds
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
 
 MCP: none: the player's switch.
@@ -840,7 +840,7 @@ Look for newer versions of the native mods installed from GitHub (the latest rel
 
 - `ID`: One mod (default: all of them)
 - `--check`: Only say what is newer
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
 
 MCP: none: the player's switch.
@@ -852,7 +852,7 @@ Remove a pack the browser installed.
     sunrise-launcher mods remove <PROJECT>
 
 - `PROJECT`
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `mods_remove`, needs `confirm: true`.
 
@@ -863,7 +863,7 @@ Turn on a mod the browser installed (sunrise-mods.txt; the game's Mods screen ha
     sunrise-launcher mods enable <PROJECT>
 
 - `PROJECT`
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `mods_enable`.
 
@@ -874,7 +874,7 @@ Turn off a mod the browser installed; it stays installed.
     sunrise-launcher mods disable <PROJECT>
 
 - `PROJECT`
-- `--instance`: The instance (default: the selected one)
+- `--instance`: The profile (default: the selected one)
 
 MCP: `mods_disable`.
 

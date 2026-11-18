@@ -39,7 +39,7 @@ fn every_message_names_the_mod_the_builds_and_the_worlds() {
     let build = "nightly-2026-11-13 (afe471c)";
     assert_eq!(
         refusal("Greeter", &misfit, build),
-        "Greeter doesn't fit this game.\nIt was made for another Sunrise version and this instance runs \
+        "Greeter doesn't fit this game.\nIt was made for another Sunrise version and this profile runs \
          nightly-2026-11-13 (afe471c). Since then the game changed 2 things that Greeter uses: the hook \
          player_logged_in (changed); the method ServerHost::give_item (removed).\nThe game will be \
          built without Greeter, which stays installed. Ask its author for an update made for this game."

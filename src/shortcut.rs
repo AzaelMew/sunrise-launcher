@@ -349,7 +349,7 @@ pub fn make_in(
     }
     if path.exists() && !plays(&path, id) {
         return Err(format!(
-            "{} is already on the desktop, and isn't this instance's shortcut.",
+            "{} is already on the desktop, and isn't this profile's shortcut.",
             path.file_name().unwrap().to_string_lossy()
         ));
     }

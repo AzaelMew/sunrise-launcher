@@ -996,7 +996,7 @@ impl std::fmt::Display for ClientBuild {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&match self {
             Self::Native(version) => trf(
-                "{build} built and selected for its instance.",
+                "{build} built and selected for its profile.",
                 &[("build", version)],
             ),
             Self::Plain(version) => trf(
@@ -3651,7 +3651,7 @@ mod tests {
             "{err}"
         );
         assert!(!managed.exists());
-        assert_eq!(instances::list(), instances_before, "no instance is edited");
+        assert_eq!(instances::list(), instances_before, "no profile is edited");
         assert_eq!(
             backend::Settings::load().selected,
             selected_before,
