@@ -678,7 +678,6 @@ impl Source for Registry {
                     header: "categories".into(),
                 })
                 .collect(),
-            ..Default::default()
         })
     }
 

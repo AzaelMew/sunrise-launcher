@@ -91,7 +91,7 @@ impl Launcher {
             let source = browser::source(p.source);
             let d = source.details(&p).map(Arc::new);
             let _ = tx.send(Event::Loaded(Loaded::Details(key.clone(), d)));
-            let v = source.versions(&p).map(Vec::from);
+            let v = source.versions(&p);
             let _ = tx.send(Event::Loaded(Loaded::Versions(key, v)));
         });
         self.mods.browse.open = Some(Opened {
