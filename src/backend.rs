@@ -4334,8 +4334,11 @@ impl Settings {
                 v.clamp(0., 16.) / 100.
             })
     }
-    /// The plates' blur in px (0 to 48).
+    /// The plates' effective blur in px (0 to 48), never applied under Reduced graphics.
     pub fn glass_blur(&self) -> f32 {
+        if self.reduced_graphics() {
+            return 0.;
+        }
         self.blur
             .filter(|v| v.is_finite())
             .map_or(sunrise_launcher_theme::glass::BLUR, |v| v.clamp(0., 48.))
@@ -5546,6 +5549,17 @@ pub fn {f}("
             ),
             (0.06, 24., "--x")
         );
+    }
+
+    #[test]
+    fn reduced_graphics_turns_off_blur_without_forgetting_its_value() {
+        let mut s = Settings::parse(r#"{"blur":8.5,"performance":true}"#);
+        assert_eq!(s.glass_blur(), 0.);
+        let saved = serde_json::to_string(&s).unwrap();
+        s = Settings::parse(&saved);
+        assert_eq!(s.glass_blur(), 0.);
+        s.reduced_graphics = Some(false);
+        assert_eq!(s.glass_blur(), 8.5);
     }
 
     #[test]

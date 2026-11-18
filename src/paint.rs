@@ -798,6 +798,22 @@ accent = "#101010""##,
         }
     }
 
+    #[test]
+    fn reduced_graphics_makes_glass_opaque_without_hiding_the_scenery() {
+        let mut settings = Settings::parse(r#"{"scenery":true,"blur":8.5}"#);
+        let theme = from_settings(&settings, WindowAppearance::Dark);
+        assert!(Palette::of(&settings, &theme).alpha < 1.);
+        assert_eq!(theme.look.blur, 8.5);
+
+        settings.reduced_graphics = Some(true);
+        let theme = from_settings(&settings, WindowAppearance::Dark);
+        let p = Palette::of(&settings, &theme);
+        assert_eq!(p.card().a, 1.);
+        assert_eq!(p.chrome_plate().a, 1.);
+        assert_eq!(theme.look.blur, 0.);
+        assert!(settings.scenery());
+    }
+
     /// A picture behind Home, the player's or their theme's, may be any colour: the plates
     /// over it are opaque.
     #[test]
