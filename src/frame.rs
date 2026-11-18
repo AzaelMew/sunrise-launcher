@@ -600,7 +600,7 @@ impl Launcher {
             .flatten();
         let sheet = self.live_sheet(cx);
         let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
-        let profile = self.profile_dialog(cx);
+        let profile = self.profile_dialog(window, cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]
             .into_iter()
             .flatten()

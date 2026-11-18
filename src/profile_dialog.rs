@@ -26,6 +26,7 @@ impl Launcher {
             copy: false,
             icon: None,
             picture: None,
+            picture_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             error: None,
             busy: false,
             pin: None,
@@ -35,7 +36,11 @@ impl Launcher {
         cx.notify();
     }
 
-    pub(super) fn profile_dialog(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn profile_dialog(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         let d = self.instances.dialog.as_ref()?;
         let (busy, copy, icon, channel, pin, error) = (
             d.busy,
@@ -45,6 +50,8 @@ impl Launcher {
             d.pin.clone(),
             d.error.clone(),
         );
+        let picture_focus = d.picture_focus.clone();
+        let picture_focused = picture_focus.is_focused(window);
         let picture = d
             .picture
             .as_ref()
@@ -74,6 +81,7 @@ impl Launcher {
                 .into()
             });
         let preview = div()
+            .id("new-picture-preview")
             .flex()
             .flex_col()
             .items_center()
@@ -83,7 +91,20 @@ impl Launcher {
             .p(px(14.))
             .gap(px(12.))
             .rounded(px(tokens::R_CARD))
+            .border_1()
+            .border_color(gpui::transparent_black())
             .bg(p.card())
+            .when(!busy, |d| {
+                d.group("new-picture-preview")
+                    .track_focus(&picture_focus)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(p.hover)).border_color(rgb(p.line)))
+                    .focus_visible(|s| s.border_color(rgb(p.focus)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.choose_profile_picture(cx);
+                        cx.notify();
+                    }))
+            })
             .child(if let Some(image) = picture {
                 div()
                     .size(px(64.))
@@ -126,6 +147,14 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(p.muted))
                     .child(current),
+            )
+            .child(
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(p.accent_ink))
+                    .opacity(if picture_focused && !busy { 1. } else { 0. })
+                    .group_hover("new-picture-preview", |s| s.opacity(1.))
+                    .child(tr("Change picture")),
             );
         let row = || div().flex().items_center().gap(px(8.));
         let mut form = div()
