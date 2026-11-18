@@ -3,12 +3,9 @@
 use super::model::{self, Group, Make, Need, Row, Show};
 use super::ui::*;
 use super::*;
-use crate::frame::{BG, GOLD, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use std::rc::Rc;
 use sunrise_launcher::browser::images;
-
-const BLUE: u32 = 0x7fb0ff;
-const DANGER: u32 = 0xf08a7a;
 
 impl Launcher {
     pub(super) fn installed(
@@ -24,7 +21,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(header)
             .children(self.strip(cx));
 
@@ -90,13 +87,7 @@ impl Launcher {
         })
         .collect();
         chips = chips.child(choices("alt-show", shown, cx).gap(px(8.)));
-        chips = chips.child(
-            div()
-                .flex_none()
-                .w(px(1.))
-                .h(px(20.))
-                .bg(c(crate::frame::LINE)),
-        );
+        chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
         for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
             let n = count(&|r| r.make == Some(make));
             chips = chips.child(
@@ -132,7 +123,11 @@ impl Launcher {
         let with_update = selected.iter().filter(|r| r.update.is_some()).count();
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::frame::button(id, label);
-            let b = if danger { b.text_color(c(DANGER)) } else { b };
+            let b = if danger {
+                b.text_color(c(palette().danger))
+            } else {
+                b
+            };
             if enabled && !busy {
                 b
             } else {
@@ -143,9 +138,9 @@ impl Launcher {
             let ids = shown_ids.clone();
             let select_all = checkbox("alt-select-all", all_on)
                 .when(selected_here > 0 && !all_on, |d| {
-                    d.bg(c(TEXT))
-                        .border_color(c(TEXT))
-                        .child(div().w(px(10.)).h(px(2.)).bg(c(BG)))
+                    d.bg(c(palette().text))
+                        .border_color(c(palette().text))
+                        .child(div().w(px(10.)).h(px(2.)).bg(c(palette().background)))
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.ui.mods;
@@ -163,7 +158,7 @@ impl Launcher {
                 .px(px(14.))
                 .h(px(48.))
                 .border_b_1()
-                .border_color(c(SOFT))
+                .border_color(c(palette().divider))
                 .child(select_all);
             if n_sel == 0 {
                 bar = bar.child(muted(trf(
@@ -256,7 +251,7 @@ impl Launcher {
 
         // ---- the confirmation, when one is open: names, counts, nothing started yet
         let confirm = self.ui.mods.confirm.as_ref().map(|confirm| {
-            let panel = card().m(px(12.)).p(px(16.)).flex().flex_col().gap(px(10.)).border_color(c(GOLD));
+            let panel = card().m(px(12.)).p(px(16.)).flex().flex_col().gap(px(10.)).border_color(c(palette().warning));
             match confirm {
                 Confirm::Remove(chosen) => {
                     let ids: HashSet<String> = chosen.iter().map(|(id, ..)| id.clone()).collect();
@@ -272,7 +267,7 @@ impl Launcher {
                             n => trf("{names} and {more} more", &[("names", &names), ("more", &n.to_string())]),
                         }))
                         .children(dependents.into_iter().map(|(who, needed)| {
-                            div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(trf(
+                            div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(trf(
                                 "{who} needs {needed}: it may stop working.",
                                 &[("who", &who), ("needed", &needed.join(", "))],
                             ))
@@ -288,7 +283,7 @@ impl Launcher {
                                 })))
                                 .child(
                                     crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
-                                        .text_color(c(DANGER))
+                                        .text_color(c(palette().danger))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                             this.run(actions::Action::Remove(items.clone()), false);
                                             cx.notify();
@@ -307,7 +302,7 @@ impl Launcher {
                         .children(worlds.iter().map(|(world, mods)| {
                             div().text_size(px(tokens::LABEL)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
                         }))
-                        .child(div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(trf(
+                        .child(div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(trf(
                             "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
                             &[("what", action.consequence())],
                         )))
@@ -345,12 +340,12 @@ impl Launcher {
                         .children((included.len() > 14).then(|| muted(trf("and {count} more", &[("count", &(included.len() - 14).to_string())]))))
                         .children((!plan.skipped.is_empty()).then(|| {
                             div().flex().flex_col().gap(px(2.)).child(muted(tr("Left out:"))).children(plan.skipped.iter().map(|(t, why)| {
-                                div().text_size(px(tokens::SMALL)).text_color(c(GOLD)).child(trf("{title}: {why}", &[("title", t), ("why", why)]))
+                                div().text_size(px(tokens::SMALL)).text_color(c(palette().warning)).child(trf("{title}: {why}", &[("title", t), ("why", why)]))
                             }))
                         }))
                         .child(muted(tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off.")))
                         .children((natives > 0).then(|| {
-                            div().text_size(px(tokens::SMALL)).text_color(c(GOLD)).child(trf(
+                            div().text_size(px(tokens::SMALL)).text_color(c(palette().warning)).child(trf(
                                 "{count} of these run native code. A new build is made only when you Play or choose Build…, after the usual checks.",
                                 &[("count", &natives.to_string())],
                             ))
@@ -401,11 +396,11 @@ impl Launcher {
                     .justify_between()
                     .px(px(14.))
                     .h(px(tokens::FIELD))
-                    .bg(c(BG))
+                    .bg(c(palette().background))
                     .child(
                         div()
                             .text_size(px(tokens::CAPTION))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(trf(
                                 "{title} · {count}",
                                 &[("title", title), ("count", &count.to_string())],
@@ -460,7 +455,7 @@ impl Launcher {
             .children(confirm)
             .child(div().id("alt-installed-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&crate::frame::scrolls("installed")).child(list))
             .children((hidden > 0).then(|| {
-                div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(SOFT)).child(muted(trf(
+                div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(palette().divider)).child(muted(trf(
                     "{count} other files the launcher installed (packs, or from other sources) aren't listed here.",
                     &[("count", &hidden.to_string())],
                 )))
@@ -539,18 +534,21 @@ impl Launcher {
                     true => tr("From GitHub, not the registry: read-only here").to_string(),
                     false => tr("A local file, not from the registry: read-only here").to_string(),
                 },
-                0x9a948a,
+                palette().muted,
             ));
         }
         if let Some(why) = error {
-            notes.push(say(why, GOLD));
+            notes.push(say(why, palette().warning));
         }
         if let Some(why) = &r.left_out {
-            notes.push(say(why.clone(), GOLD));
+            notes.push(say(why.clone(), palette().warning));
         }
         match &r.need {
             Some(Need::TakenDown(why)) => {
-                notes.push(say(trf("Taken down: {reason}", &[("reason", why)]), GOLD));
+                notes.push(say(
+                    trf("Taken down: {reason}", &[("reason", why)]),
+                    palette().warning,
+                ));
             }
             Some(Need::Build) => {
                 let building = self.native_step.is_some();
@@ -559,7 +557,10 @@ impl Launcher {
                     if building { "Building…" } else { "Build…" },
                     true,
                 );
-                notes.push(say(tr("Not built for this computer yet").to_string(), GOLD));
+                notes.push(say(
+                    tr("Not built for this computer yet").to_string(),
+                    palette().warning,
+                ));
                 verdict = verdict.child(if !busy && !building {
                     b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.build();
@@ -573,7 +574,7 @@ impl Launcher {
                 let b = act("alt-row-allow", "Allow…", true);
                 notes.push(say(
                     tr("Needs your permission to run native code").to_string(),
-                    GOLD,
+                    palette().warning,
                 ));
                 verdict = verdict.child(if !busy {
                     b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -589,7 +590,7 @@ impl Launcher {
         if let Some(to) = &r.update {
             let b = act("alt-row-update", "Update", true);
             let row = r.clone();
-            notes.push(say(trf("→ {to}", &[("to", to)]), BLUE));
+            notes.push(say(trf("→ {to}", &[("to", to)]), palette().info));
             verdict = verdict.child(if !busy {
                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.update_one(&row);
@@ -631,7 +632,7 @@ impl Launcher {
                         .flex_1()
                         .min_w_0()
                         .text_size(px(tokens::SMALL))
-                        .text_color(c(MUTED))
+                        .text_color(c(palette().muted))
                         .truncate()
                         .child(r.authors.clone()),
                 );
@@ -655,8 +656,8 @@ impl Launcher {
             .px(px(14.))
             .min_h(px(52.))
             .border_t_1()
-            .border_color(c(SOFT))
-            .when(selected, |d| d.bg(c(0x2a2724)))
+            .border_color(c(palette().divider))
+            .when(selected, |d| d.bg(c(palette().selected)))
             .child(match r.local {
                 Some(_) => div().flex_none().w(px(18.)),
                 None => div().flex_none().child(check),
@@ -669,7 +670,7 @@ impl Launcher {
                         .w(px(64.))
                         .flex_none()
                         .text_size(px(tokens::LABEL))
-                        .text_color(c(MUTED))
+                        .text_color(c(palette().muted))
                         .child(kind),
                 )
                 .child(
@@ -725,7 +726,7 @@ impl Launcher {
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
     fn unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
-        use crate::frame::{button, CARD, LINE, TEXT};
+        use crate::frame::button;
         let open = self.ui.mods.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
         let help = div()
@@ -736,15 +737,19 @@ impl Launcher {
             .size(px(16.))
             .rounded_full()
             .border_1()
-            .border_color(c(if open { TEXT } else { LINE }))
+            .border_color(c(if open { palette().text } else { palette().line }))
             .flex()
             .items_center()
             .justify_center()
             .text_size(px(tokens::CAPTION))
             .font_weight(FontWeight::SEMIBOLD)
-            .text_color(c(if open { TEXT } else { MUTED }))
+            .text_color(c(if open {
+                palette().text
+            } else {
+                palette().muted
+            }))
             .cursor_pointer()
-            .focus_visible(|s| s.border_color(c(GOLD)))
+            .focus_visible(|s| s.border_color(c(palette().focus)))
             .child("?")
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 let m = &mut this.ui.mods;
@@ -789,12 +794,12 @@ impl Launcher {
                             .items_center()
                             .gap(px(6.))
                             .text_size(px(tokens::SMALL))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .cursor_pointer()
                             .child(blocks::icon(
                                 if details { "chevron-down" } else { "chevron-right" },
                                 12.,
-                                c(MUTED),
+                                c(palette().muted),
                             ))
                             .child(tr("Technical details"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -811,7 +816,7 @@ impl Launcher {
                             .children(unfit.changes.iter().map(|change| {
                                 div()
                                     .text_size(px(tokens::SMALL))
-                                    .text_color(c(MUTED))
+                                    .text_color(c(palette().muted))
                                     .child(format!("• {change}"))
                             }))
                     }))
@@ -857,8 +862,8 @@ impl Launcher {
                     .gap(px(10.))
                     .rounded(px(tokens::R_CONTROL))
                     .border_1()
-                    .border_color(c(LINE))
-                    .bg(c(CARD))
+                    .border_color(c(palette().line))
+                    .bg(c(palette().raised))
                     .shadow_lg()
                     .occlude()
                     .child(div().text_size(px(tokens::LABEL)).child(sentence))

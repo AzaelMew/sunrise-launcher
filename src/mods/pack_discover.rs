@@ -15,7 +15,8 @@
 //! through the shared busy flag (`mutating`).
 use super::ui::{added_mark, browse_card, c, card, columns, dim, muted, tag};
 use super::*;
-use crate::frame::{button, TEXT};
+use crate::frame::button;
+use crate::paint::palette;
 use std::path::Path;
 use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query};
 use sunrise_launcher::worlds;
@@ -283,7 +284,6 @@ impl Launcher {
     /// Where data packs come from and how much of one Sunrise runs, said once for every card:
     /// the short of it, and the whole list behind a "?".
     fn data_pack_line(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::frame::{CARD, GOLD, LINE, MUTED};
         let (over, pinned) = self.ui.mods.packs.help;
         let help = div()
             .id("alt-data-help")
@@ -293,15 +293,23 @@ impl Launcher {
             .size(px(16.))
             .rounded_full()
             .border_1()
-            .border_color(c(if pinned { TEXT } else { LINE }))
+            .border_color(c(if pinned {
+                palette().text
+            } else {
+                palette().line
+            }))
             .flex()
             .items_center()
             .justify_center()
             .text_size(px(tokens::CAPTION))
             .font_weight(FontWeight::SEMIBOLD)
-            .text_color(c(if pinned { TEXT } else { MUTED }))
+            .text_color(c(if pinned {
+                palette().text
+            } else {
+                palette().muted
+            }))
             .cursor_pointer()
-            .focus_visible(|s| s.border_color(c(GOLD)))
+            .focus_visible(|s| s.border_color(c(palette().focus)))
             .child("?")
             .on_hover(cx.listener(|this, over: &bool, _, cx| {
                 this.ui.mods.packs.help.0 = *over;
@@ -324,8 +332,8 @@ impl Launcher {
                     .p(px(12.))
                     .rounded(px(tokens::R_CONTROL))
                     .border_1()
-                    .border_color(c(LINE))
-                    .bg(c(CARD))
+                    .border_color(c(palette().line))
+                    .bg(c(palette().raised))
                     .shadow_lg()
                     .occlude()
                     .child(muted(browser::datapack_support())),
@@ -382,7 +390,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(header)
             .children(self.strip(cx))
             .child(kinds)
@@ -514,7 +522,7 @@ impl Launcher {
                 .track_scroll(&self.ui.mods.packs.scroll)
                 .child(body),
         )
-        .bg(c(crate::frame::BG))
+        .bg(c(palette().background))
         .into_any_element()
     }
 }

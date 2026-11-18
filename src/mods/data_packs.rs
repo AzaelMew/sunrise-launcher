@@ -13,7 +13,8 @@
 use super::pack_discover::check_world;
 use super::ui::{added_mark, c, card, checkbox, dim, muted, primary, tile};
 use super::*;
-use crate::frame::{button, CARD, LINE, SOFT, TEXT};
+use crate::frame::button;
+use crate::paint::palette;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use sunrise_launcher::browser::{self, Project};
@@ -467,7 +468,7 @@ impl Launcher {
                         .px(px(16.))
                         .py(px(10.))
                         .border_t_1()
-                        .border_color(c(SOFT))
+                        .border_color(c(palette().divider))
                         .child(
                             div()
                                 .flex_1()
@@ -563,7 +564,7 @@ impl Launcher {
             .flex_col()
             .rounded(px(tokens::R_CARD))
             .border_1()
-            .border_color(c(LINE))
+            .border_color(c(palette().line))
             .overflow_hidden();
         let mut free = 0;
         for (n, (world, packs)) in worlds.iter().enumerate() {
@@ -577,7 +578,7 @@ impl Launcher {
                 .gap(px(12.))
                 .px(px(14.))
                 .py(px(10.))
-                .when(n > 0, |d| d.border_t_1().border_color(c(SOFT)))
+                .when(n > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                 .child(match has {
                     // Its place is kept so the names line up.
                     true => div().flex_none().size(px(18.)).into_any_element(),
@@ -608,7 +609,7 @@ impl Launcher {
                 let path = world.path.clone();
                 row.reach()
                     .cursor_pointer()
-                    .hover(|s| s.bg(c(CARD).opacity(0.6)))
+                    .hover(|s| s.bg(c(palette().hover)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         if let Some(pick) = &mut this.ui.mods.data.pick {
                             if !pick.ticked.remove(&path) {
@@ -651,7 +652,7 @@ impl Launcher {
                     .child(close(tr("Cancel")))
                     .children((free > 0).then_some(add)),
             );
-        Some(crate::sheets::frame("alt-pick", 520., body, cx).text_color(c(TEXT)))
+        Some(crate::sheets::frame("alt-pick", 520., body, cx).text_color(c(palette().text)))
     }
 }
 

@@ -2,7 +2,8 @@
 //! friends type, inviting one of them to this computer, and keeping shared friends to the
 //! server's port. Every action is `internet.rs`'s own; only the drawing is new.
 use super::*;
-use crate::frame::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::button;
+use crate::paint::palette;
 use crate::settings::{danger, hint, off, warning};
 use gpui::rgb;
 
@@ -61,10 +62,14 @@ impl Launcher {
             .px(px(12.))
             .rounded(px(8.))
             .border_1()
-            .border_color(rgb(if focused { GOLD } else { LINE }))
-            .bg(rgb(BG))
+            .border_color(rgb(if focused {
+                palette().focus
+            } else {
+                palette().line
+            }))
+            .bg(rgb(palette().field))
             .text_size(px(13.))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
     }
 
     pub(crate) fn hosting_share(&mut self, port: u16, cx: &mut Context<Self>) -> Div {
@@ -75,13 +80,13 @@ impl Launcher {
             .p(px(16.))
             .rounded(px(12.))
             .border_1()
-            .border_color(rgb(SOFT))
-            .bg(rgb(CARD))
+            .border_color(rgb(palette().divider))
+            .bg(palette().card())
             .child(
                 div()
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(palette().muted))
                     .child(tr("Friends over the internet · Tailscale").to_uppercase()),
             );
         let check = self.share_button("share-check", tr("Check again"), true, cx, |this, _| {
@@ -184,7 +189,7 @@ impl Launcher {
             } else {
                 typed.to_string()
             }))
-            .child(div().h(px(1.)).bg(rgb(SOFT)))
+            .child(div().h(px(1.)).bg(rgb(palette().divider)))
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
@@ -335,7 +340,7 @@ impl Launcher {
                             .gap(px(12.))
                             .pt(px(8.))
                             .border_t_1()
-                            .border_color(rgb(SOFT))
+                            .border_color(rgb(palette().divider))
                             .child(
                                 div()
                                     .flex_1()
@@ -431,7 +436,7 @@ impl Launcher {
                                     .flex_none()
                                     .size(px(8.))
                                     .rounded(px(4.))
-                                    .bg(rgb(0x7fd6a0)),
+                                    .bg(rgb(palette().success)),
                             )
                             .child(div().flex_1().min_w_0().child(trf(
                                 "Friends you share with reach only the Minecraft server (port {port}).",
@@ -464,12 +469,12 @@ impl Launcher {
                             div()
                                 .p(px(12.))
                                 .rounded(px(8.))
-                                .bg(rgb(BG))
+                                .bg(rgb(palette().field))
                                 .border_1()
-                                .border_color(rgb(SOFT))
+                                .border_color(rgb(palette().divider))
                                 .font_family(theme::MONO)
                                 .text_size(px(12.))
-                                .text_color(rgb(MUTED))
+                                .text_color(rgb(palette().muted))
                                 .child(snippet.clone()),
                         )
                         .child(

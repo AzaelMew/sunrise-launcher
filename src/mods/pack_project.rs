@@ -5,7 +5,7 @@
 use super::project::{about_link, about_row, back, gallery, prose};
 use super::ui::*;
 use super::*;
-use crate::frame::{MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use sunrise_launcher::browser::details::Details;
 use sunrise_launcher::browser::{self, images, Kind, Project, Version};
 
@@ -109,7 +109,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(
                 back(tr("Discover")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.ui.page = Page::PackFind;
@@ -246,7 +246,7 @@ impl Launcher {
                     .child(
                         div()
                             .text_size(px(tokens::CAPTION))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )
@@ -303,7 +303,7 @@ impl Launcher {
                     .gap(px(16.))
                     .px(px(14.))
                     .py(px(10.))
-                    .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
+                    .when(i > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                     .text_size(px(tokens::LABEL))
                     .child(
                         div()
@@ -317,7 +317,7 @@ impl Launcher {
                         div()
                             .w(px(90.))
                             .flex_none()
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(day(&v.published)),
                     )
                     .child(
@@ -325,7 +325,7 @@ impl Launcher {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(games(&v.game_versions)),
                     )
             }))
