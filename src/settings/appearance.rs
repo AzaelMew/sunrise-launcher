@@ -631,6 +631,7 @@ impl Launcher {
                     ))),
             ),
         );
+        rows.push(self.corners_row(cx));
         let cat = self.settings.show_cat();
         rows.push(row(
             tr("Show the cat"),

@@ -23,7 +23,6 @@ pub(super) enum Section {
     Mods,
     Storage,
     Privacy,
-    Appearance,
     Launcher,
 }
 
@@ -41,7 +40,6 @@ impl Section {
         Section::Mods,
         Section::Storage,
         Section::Privacy,
-        Section::Appearance,
         Section::Launcher,
     ];
 
@@ -53,7 +51,6 @@ impl Section {
             Section::Mods => "Mods",
             Section::Storage => "Storage",
             Section::Privacy => "Privacy",
-            Section::Appearance => "Appearance",
             Section::Launcher => "Launcher",
         }
     }
@@ -66,7 +63,6 @@ impl Section {
             Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
-            Section::Appearance => "How the launcher looks.",
             Section::Launcher => "Language, network and this version.",
         }
     }
@@ -230,7 +226,6 @@ impl Launcher {
             Section::Mods => self.settings_mods(cx),
             Section::Storage => self.settings_storage(cx),
             Section::Privacy => self.settings_privacy(cx),
-            Section::Appearance => self.settings_appearance(cx),
             Section::Launcher => self.settings_launcher(cx),
         };
         let pane = div()
@@ -1118,17 +1113,9 @@ impl Launcher {
             .child(group(vec![no_ai]))
     }
 
-    fn settings_appearance(&mut self, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(14.))
-            .child(group(vec![self.corners_row(cx)]))
-    }
-
     /// How round every corner is: a button's corner radius in px, by slider or typed; cards
     /// and panels keep their proportion to it.
-    fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
         let max = f32::from(backend::MAX_CORNER_RADIUS);
         let now = self.settings.corner_radius();
         let change: crate::slider::Change = Rc::new(move |this, v, done, cx| {
