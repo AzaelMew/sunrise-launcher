@@ -39,7 +39,7 @@ impl Launcher {
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
                     // Once the list is in (or failed), each instance resolves to the build it plays.
-                    if !self.mods.auto_updated {
+                    if !cfg!(feature = "redesign-preview") && !self.mods.auto_updated {
                         self.mods.auto_updated = true;
                         self.mods_auto_update();
                     }
@@ -238,11 +238,13 @@ impl Launcher {
                 Msg::Updates(Ok(updates)) => {
                     self.update_error = None;
                     self.updates = *updates;
-                    if self.settings.auto_install() {
+                    if !cfg!(feature = "redesign-preview") && self.settings.auto_install() {
                         self.install_update();
                     }
-                    if let Some(release) = self.updates.launcher.clone() {
-                        self.update_launcher(release);
+                    if !cfg!(feature = "redesign-preview") {
+                        if let Some(release) = self.updates.launcher.clone() {
+                            self.update_launcher(release);
+                        }
                     }
                 }
                 Msg::Updates(Err(e)) => self.update_error = Some(e),
@@ -393,9 +395,11 @@ impl Launcher {
                                 }
                                 if let Some(i) = instances::list().into_iter().find(|i| i.id == id)
                                 {
-                                    sunrise_launcher::launch::run_after_exit(
-                                        &i.launch, &i.home, &vars,
-                                    );
+                                    if !cfg!(feature = "redesign-preview") {
+                                        sunrise_launcher::launch::run_after_exit(
+                                            &i.launch, &i.home, &vars,
+                                        );
+                                    }
                                 }
                                 self.reload_instances();
                             }
@@ -445,7 +449,9 @@ impl Launcher {
                 }
             }
         }
-        changed |= self.servers_tick();
+        if !cfg!(feature = "redesign-preview") {
+            changed |= self.servers_tick();
+        }
         changed |= self.mods_tick();
         changed |= self.github_tick();
         changed |= self.native_log_read(cx);

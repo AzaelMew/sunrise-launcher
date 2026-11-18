@@ -351,7 +351,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     own.sort();
     // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
     // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
+    if !cfg!(feature = "redesign-preview") && game_home.join(OWN).is_dir() {
         let before = store.instances.len();
         store
             .instances
@@ -603,6 +603,9 @@ fn create_in(
     }
     crate::run_leases::publish(&dir).map_err(crate::native_mods::cache_error)?;
     let mut store = Store::load(data);
+    // A folder removed outside the launcher may still have metadata. A new folder
+    // never inherits its launch settings. Do not rewrite the old entry just by listing it.
+    store.instances.remove(&slug);
     let meta = store.instances.entry(slug.clone()).or_default();
     meta.name = (name != slug).then(|| name.to_string());
     meta.icon = from.and_then(|f| f.icon.clone());

@@ -402,7 +402,10 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     edit_in(&home, &data, "Skyblock", |m| m.group = Some("Old".into())).unwrap();
     fs::remove_dir_all(home.join(OWN).join("skyblock")).unwrap();
     assert!(find_in(&list_in(&home, &data), "Skyblock").is_err());
-    assert!(!Store::load(&data).instances.contains_key("skyblock"));
+    assert_eq!(
+        Store::load(&data).instances.contains_key("skyblock"),
+        cfg!(feature = "redesign-preview")
+    );
     let again = create_in(&home, &data, "Skyblock", None, None).unwrap();
     assert_eq!(again.group, None);
     fs::remove_dir_all(&root).unwrap();
