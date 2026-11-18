@@ -27,6 +27,8 @@ pub(super) enum Page {
 pub(super) struct State {
     pub page: Page,
     pub sidebar_motion: Option<crate::motion::Tween>,
+    painted_page: Option<Page>,
+    page_motion: Option<crate::motion::Tween>,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
     pub mods: crate::mods::ModsState,
@@ -483,10 +485,26 @@ impl Launcher {
             .unwrap_or_else(|| u8::from(self.settings.sidebar_expanded).into());
         let rail = self.sidebar(expansion, cx);
         let header = self.header(expansion, cx);
+        if self
+            .ui
+            .painted_page
+            .replace(page)
+            .is_some_and(|last| last != page)
+        {
+            self.ui.page_motion = Some(crate::motion::Tween::new(
+                motion.now,
+                0.,
+                1.,
+                crate::motion::STANDARD,
+            ));
+        }
+        let page_alpha = motion
+            .sample(&mut self.ui.page_motion, window)
+            .map(crate::motion::arrival_opacity);
         let content = match page {
             Page::Settings => self.settings(window, cx),
             Page::Versions => self.versions_page(cx).into_any_element(),
-            Page::Home => self.home(window, cx),
+            Page::Home => self.home(page_alpha, &motion, window, cx),
             Page::Join | Page::Hosting => {
                 let body = if page == Page::Hosting {
                     self.hosting(cx)
@@ -517,6 +535,19 @@ impl Launcher {
                     .into_any_element()
             }
             _ => self.mods(window, cx),
+        };
+        let content = if page == Page::Home {
+            content
+        } else {
+            div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .when_some(page_alpha, |d, alpha| d.opacity(alpha))
+                .child(content)
+                .into_any_element()
         };
         let status = self.status_strip(cx);
         let pane = div()

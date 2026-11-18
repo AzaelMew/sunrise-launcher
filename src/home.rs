@@ -47,6 +47,8 @@ pub(crate) struct HomeState {
     /// are built.
     worlds_at: Near,
     pub(crate) mods_at: Near,
+    shown: bool,
+    arrival: Option<crate::motion::Tween>,
 }
 
 /// A row of Home's lists, and the room to the next.
@@ -215,7 +217,13 @@ pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
 }
 
 impl Launcher {
-    pub(crate) fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn home(
+        &mut self,
+        page_alpha: Option<f32>,
+        clock: &crate::motion::Frame,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         self.refresh_home_inventory(cx);
         let Some(instance) = self.selected_instance().cloned() else {
             return div()
@@ -224,6 +232,23 @@ impl Launcher {
                 .child(tr("Getting ready…"))
                 .into_any_element();
         };
+        let home = &mut self.ui.home;
+        if page_alpha.is_some() {
+            home.arrival = None;
+        } else if !home.shown {
+            home.arrival = Some(crate::motion::Tween::new(
+                clock.now,
+                0.,
+                1.,
+                crate::motion::FAST,
+            ));
+        }
+        home.shown = true;
+        let alpha = page_alpha.or_else(|| {
+            clock
+                .sample(&mut home.arrival, window)
+                .map(crate::motion::arrival_opacity)
+        });
         self.load_worlds(instance.home.clone(), cx);
         let header = self.profile_header(&instance, window, cx);
         let body = self.continue_playing(&instance, window, cx);
@@ -267,6 +292,7 @@ impl Launcher {
                     .bg(palette().chrome_plate())
                     .border_1()
                     .border_color(rgb(palette().divider))
+                    .when_some(alpha, |d, alpha| d.opacity(alpha))
                     .child(body),
             )
             .into_any_element()
