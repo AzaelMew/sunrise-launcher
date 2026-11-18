@@ -467,7 +467,17 @@ impl Launcher {
                     };
                     m.checks.insert(key, state);
                 }
-                Event::Checked(..) => {}
+                // Its worker is done: the project is checked again, for the page's version, without two workers on one jar.
+                Event::Checked(key, ..) => {
+                    m.checks.remove(&key);
+                    if let Some(p) = m
+                        .results
+                        .iter()
+                        .find(|p| (p.source, &p.id) == (key.0, &key.1))
+                    {
+                        to_check.push(p.clone());
+                    }
+                }
                 Event::Loaded(l) => loaded.push(l),
                 Event::About(about) => {
                     // Rows grow by a line: measure them again (`cull`).
@@ -532,7 +542,11 @@ impl Launcher {
         // registry, where it can't be seen or turned off, it would list what the note says is
         // hidden.
         let glass = self.theme.glass;
-        let game = self.mods_game();
+        // A registry modpack becomes an instance of its own, on the launcher's build, as its import does.
+        let game = match (self.mods.kind, self.mods.source) {
+            (PackKind::Modpack, SourceId::Sunrise) => browser::game(),
+            _ => self.mods_game(),
+        };
         let m = &mut self.mods;
         let everything = m.everything && !(glass && m.source == SourceId::Sunrise);
         m.search += 1;
@@ -564,9 +578,11 @@ impl Launcher {
                 }
             }
         };
-        // Checks are of the jar picked for one Minecraft version: another version checks again.
+        // Another Minecraft version: verdicts, an open project and the last card were for the old one; running checks finish first.
         if m.game != query.game {
-            m.checks.clear();
+            m.checks.retain(|_, c| matches!(c, Checking::Running));
+            m.browse.open = None;
+            m.shown = None;
         }
         m.game = query.game.clone();
         // A Java instance's files are Modrinth's; Sunrise's registry is for Sunrise.
@@ -1126,8 +1142,8 @@ impl Launcher {
         // that fit change, so look for updates again.
         let plays = self
             .selected_instance()
-            .and_then(|i| i.version.clone())
-            .or_else(|| self.installed.first().cloned());
+            .and_then(|i| self.version_of(i))
+            .cloned();
         if self.mods.loaded && self.mods.java.is_none() && plays != self.mods.checked_for {
             self.mods.checked_for = plays.clone();
             self.mods.updates.clear();

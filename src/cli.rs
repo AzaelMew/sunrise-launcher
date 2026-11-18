@@ -2370,12 +2370,18 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
                 return Ok(());
             }
+            let source = source.get()?;
+            // A registry modpack becomes a profile of its own, on the launcher's build, as its import does.
+            let game = match (kind, source.id()) {
+                (Kind::Modpack, SourceId::Sunrise) => sunrise_launcher::browser::game(),
+                _ => game.clone(),
+            };
             let query = Query {
                 everything,
-                game: game.clone(),
+                game,
                 ..Query::new(&text.join(" "), kind)
             };
-            let found = source.get()?.search(&query)?;
+            let found = source.search(&query)?;
             let datapack = kind == Kind::DataPack;
             if as_json {
                 json(found.iter().map(|p| {
