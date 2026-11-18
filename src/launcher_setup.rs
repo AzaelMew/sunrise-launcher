@@ -60,6 +60,7 @@ impl Launcher {
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
         titlebar::apply_appearance(window, settings.appearance);
+        let (location_error, location_unavailable) = location_page::startup_location();
         let mut this = Self {
             ui: Default::default(),
             theme: crate::theme::from_settings(&settings, window.appearance()),
@@ -115,7 +116,8 @@ impl Launcher {
             native_builds: Default::default(),
             native_log: Default::default(),
             // The first draw takes the launcher theme from Settings.
-            location_error: location_page::startup_error(),
+            location_error,
+            location_unavailable,
             location_note: location_page::startup_note(),
             location_target: None,
             args_input: line_edit::LineEdit::new(settings.game_args.clone(), 1024, 38),

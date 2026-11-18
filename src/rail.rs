@@ -14,12 +14,12 @@ impl Launcher {
     }
 
     fn profile_locked(&self) -> bool {
-        self.launch_busy()
+        let busy = self.launch_busy()
             || self.client.is_some()
             || self.pending_consent.is_some()
             || self.ui.after_sign_in.is_some()
-            || self.ui.after_install.is_some()
-            || self.location_error.is_some()
+            || self.ui.after_install.is_some();
+        !crate::launch_state::location_allows_action(!self.location_unavailable, busy)
     }
 
     pub(super) fn switch_profile(&mut self, instance: &Instance, cx: &mut Context<Self>) {
