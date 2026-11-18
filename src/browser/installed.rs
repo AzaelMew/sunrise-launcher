@@ -316,6 +316,18 @@ pub(super) fn put(
     Ok(done)
 }
 
+/// Whether `file` is a folder directly in `sunrise-mods/`, which is itself a real folder of
+/// `home` (a link in the way is not followed): where an earlier launcher put a ported mod.
+fn legacy_mod_folder(home: &Path, file: &str) -> bool {
+    let mut parts = Path::new(file).components();
+    let (Some(Component::Normal(top)), Some(Component::Normal(_)), None) =
+        (parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    top == "sunrise-mods" && fs::symlink_metadata(home.join(top)).is_ok_and(|m| m.is_dir())
+}
+
 /// Removes what the browser installed for `name` (a project id or slug): its file and its entry.
 pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
@@ -324,13 +336,25 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
         .lookup(name)
         .cloned()
         .ok_or_else(|| format!("{name} wasn't installed by the browser."))?;
-    // A mod an earlier launcher ported from Modrinth is a folder in `sunrise-mods/`; a pack is a
-    // file.
-    let path = entry.path(home);
-    let removed = match &path {
-        Some(p) if p.is_dir() => fs::remove_dir_all(p),
-        Some(p) => fs::remove_file(p),
+    // A mod an earlier launcher ported from Modrinth is a folder in `sunrise-mods/`, and only
+    // that is removed recursively; a pack is a file, and a folder where a pack's file was is the
+    // player's own and stays.
+    let removed = match entry.path(home) {
         None => Ok(()),
+        Some(p) => match fs::symlink_metadata(&p) {
+            Ok(m) if m.is_dir() => {
+                if legacy_mod_folder(home, &entry.file) {
+                    fs::remove_dir_all(&p)
+                } else {
+                    return Err(crate::i18n::trf(
+                        "{file} is a folder, not a file the browser installed. Nothing was removed: move it away yourself.",
+                        &[("file", &entry.file)],
+                    ));
+                }
+            }
+            Ok(_) => fs::remove_file(&p),
+            Err(e) => Err(e),
+        },
     };
     match removed {
         Ok(()) => {}

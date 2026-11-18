@@ -520,6 +520,47 @@ pub fn selected() -> Instance {
         .unwrap_or_else(|| all[0].clone())
 }
 
+/// The saved selection when it names an instance that isn't listed any more: a pack an earlier
+/// launcher ported, or a setup it made for another game. Its folder is still there, untouched,
+/// but nothing here can use it.
+fn retired_in(all: &[Instance], saved: Option<&str>) -> Option<String> {
+    let id = saved?;
+    (!all.iter().any(|i| i.id == id)).then(|| id.to_string())
+}
+
+fn retired_message(id: &str) -> String {
+    let name = id.split_once(':').map_or(id, |(_, rest)| rest);
+    crate::i18n::trf(
+        "The selected setup {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
+        &[("name", name)],
+    )
+}
+
+/// The saved selection when it is no longer an instance of this launcher.
+pub fn retired_selection() -> Option<String> {
+    retired_in(&list(), backend::Settings::load().instance.as_deref())
+}
+
+/// The message for a retired selection ([`retired_selection`]).
+pub fn retired_selection_message(id: &str) -> String {
+    retired_message(id)
+}
+
+/// The instance a command without `--instance` acts on: [`selected`], except that a retired
+/// selection is an error naming it, so nothing is written to Sunrise's setup in its place.
+pub fn selection() -> Result<Instance, String> {
+    selection_in(&list(), backend::Settings::load().instance.as_deref())
+}
+
+fn selection_in(all: &[Instance], saved: Option<&str>) -> Result<Instance, String> {
+    if let Some(id) = retired_in(all, saved) {
+        return Err(retired_message(&id));
+    }
+    Ok(saved
+        .and_then(|id| all.iter().find(|i| i.id == id).cloned())
+        .unwrap_or_else(|| all[0].clone()))
+}
+
 pub fn select(query: &str) -> Result<Instance, String> {
     let instance = find(query)?;
     let mut settings = backend::Settings::load();

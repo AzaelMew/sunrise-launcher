@@ -566,3 +566,38 @@ fn an_instance_without_a_channel_is_nightly_and_an_unknown_one_too() {
     let meta: Meta = serde_json::from_str(r#"{"channel":"beta","group":"g"}"#).unwrap();
     assert_eq!((meta.channel, meta.group.as_deref()), (None, Some("g")));
 }
+
+/// A saved selection that names a ported pack (listed by an earlier launcher, its folder still in
+/// `ports/`) is retired: a command with no `--instance` refuses and names it instead of acting
+/// on Sunrise's setup, and the window clears it. Listed and unset selections are untouched.
+#[test]
+fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
+    let root = scratch("retired");
+    let (home, data) = (root.join("sunrise"), root.join("launcher"));
+    put(&home.join("ports/old-pack/saves/World/level.dat"), "world");
+    let ported = files(&home.join("ports"));
+    let all = list_in(&home, &data);
+    assert!(all.iter().all(|i| !i.id.contains("old-pack")));
+
+    let refused = selection_in(&all, Some("port:old-pack")).unwrap_err();
+    assert!(refused.contains("old-pack"), "{refused}");
+    assert!(refused.contains("instance select"), "{refused}");
+    assert_eq!(
+        retired_in(&all, Some("port:old-pack")).as_deref(),
+        Some("port:old-pack")
+    );
+
+    let made = create_in(&home, &data, "Survival", None, None).unwrap();
+    let all = list_in(&home, &data);
+    assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
+    assert_eq!(selection_in(&all, Some(DEFAULT)).unwrap().id, DEFAULT);
+    assert_eq!(selection_in(&all, Some(&made.id)).unwrap().id, made.id);
+    assert_eq!(retired_in(&all, Some(&made.id)), None);
+    assert_eq!(retired_in(&all, None), None);
+    assert_eq!(
+        files(&home.join("ports")),
+        ported,
+        "its files are untouched"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

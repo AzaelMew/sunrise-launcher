@@ -1310,5 +1310,7 @@
   "TPS of 20": "TPS of 20",
   "Tick time": "Tick time",
   "Memory": "Memory",
-  "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.": "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth."
+  "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.": "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.",
+  "The selected setup {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>": "The selected setup {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
+  "{file} is a folder, not a file the browser installed. Nothing was removed: move it away yourself.": "{file} is a folder, not a file the browser installed. Nothing was removed: move it away yourself."
 }

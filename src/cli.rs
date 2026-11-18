@@ -1341,7 +1341,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             }
             let target = match &instance {
                 Some(name) => instances::find(name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let target = match profile {
                 Some(profile) => {
@@ -1435,7 +1435,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
         } => {
             let instance = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             if instance.java.is_some() {
                 if version.is_some()
@@ -1630,7 +1630,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             use sunrise_launcher::game_log;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let path = i.home.join("logs/latest.log");
             let text =
@@ -2183,7 +2183,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         | ModsCmd::Enable { instance, .. }
         | ModsCmd::Disable { instance, .. } => match instance {
             Some(name) => instances::find(name)?,
-            None => instances::selected(),
+            None => instances::selection()?,
         },
     };
     let home = match &action {
@@ -2867,7 +2867,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             use sunrise_launcher::shortcut;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let paths = match remove {
                 false => shortcut::make(&backend::update_target(), &i.id, &i.name)?,
@@ -2971,7 +2971,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 Dropped::Pack(_) => {
                     let i = match instance {
                         Some(name) => instances::find(&name)?,
-                        None => instances::selected(),
+                        None => instances::selection()?,
                     };
                     let p = sunrise_launcher::packs::add(&i.home, &file)?;
                     println!(
@@ -2996,7 +2996,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             use sunrise_launcher::export;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
-                None => instances::selected(),
+                None => instances::selection()?,
             };
             let worlds = world
                 .iter()
@@ -3037,7 +3037,7 @@ fn game_packs(action: PacksCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     let value = |p: &packs::Pack| {
@@ -3121,7 +3121,7 @@ fn screenshots(action: ScreenshotsCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     match action {
@@ -3164,7 +3164,7 @@ fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     match action {
@@ -3214,7 +3214,7 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
     let home = |instance: Option<String>| -> Result<PathBuf, String> {
         Ok(match instance {
             Some(name) => instances::find(&name)?.home,
-            None => instances::selected().home,
+            None => instances::selection()?.home,
         })
     };
     let value = |w: &World| {

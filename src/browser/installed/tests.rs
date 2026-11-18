@@ -246,6 +246,58 @@ fn nothing_is_installed_when_a_check_fails() {
     fs::remove_dir_all(&home).unwrap();
 }
 
+fn entry_json(project: &str, kind: &str, file: &str) -> serde_json::Value {
+    serde_json::json!({
+        "source": "modrinth", "project": project, "slug": project, "title": project,
+        "kind": kind, "version": "1", "number": "1", "file": file, "checksum": "SHA-512:00",
+        "page": ""
+    })
+}
+
+/// Only a ported mod's folder in `sunrise-mods/` is removed recursively: a folder the player put
+/// where a pack's file was, or one reached through a link, is refused and the entry kept.
+#[test]
+fn only_a_ported_mods_own_folder_is_removed_recursively() {
+    let home = home("remove-folders");
+    fs::create_dir_all(home.join("resourcepacks/mine")).unwrap();
+    fs::write(home.join("resourcepacks/mine/pack.mcmeta"), "{}").unwrap();
+    let outside = home.join("elsewhere/ruby");
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(outside.join("keep.txt"), "mine").unwrap();
+    fs::write(
+        home.join("mod-browser.json"),
+        serde_json::json!({ "entries": [
+            entry_json("pack", "resource-pack", "resourcepacks/mine"),
+            entry_json("ruby", "mod", "sunrise-mods/ruby"),
+            entry_json("deep", "mod", "sunrise-mods/ruby/deeper"),
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let refused = remove(&home, "pack").unwrap_err();
+    assert!(refused.contains("is a folder"), "{refused}");
+    assert!(home.join("resourcepacks/mine/pack.mcmeta").exists());
+    assert_eq!(Installed::load(&home).entries.len(), 3);
+
+    // `sunrise-mods` is a link out of the game folder: nothing behind it is removed.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(home.join("elsewhere"), home.join("sunrise-mods")).unwrap();
+        assert!(remove(&home, "ruby").unwrap_err().contains("is a folder"));
+        assert!(outside.join("keep.txt").exists());
+        fs::remove_file(home.join("sunrise-mods")).unwrap();
+    }
+    // A folder deeper than the mod's own is not one an earlier launcher made.
+    fs::create_dir_all(home.join("sunrise-mods/ruby/deeper")).unwrap();
+    assert!(remove(&home, "deep").is_err());
+    assert!(home.join("sunrise-mods/ruby/deeper").exists());
+    fs::remove_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::create_dir_all(home.join("sunrise-mods/ruby")).unwrap();
+    assert!(remove(&home, "ruby").is_ok());
+    assert!(!home.join("sunrise-mods/ruby").exists());
+    fs::remove_dir_all(&home).unwrap();
+}
+
 #[test]
 fn a_java_mod_an_earlier_launcher_ported_can_still_be_removed() {
     let home = home("legacy-java-mod");
