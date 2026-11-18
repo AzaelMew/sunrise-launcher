@@ -42,7 +42,6 @@ pub(super) struct Instances {
     pub(super) versions: new_instance::VersionList,
 }
 
-
 impl Launcher {
     pub(super) fn reload_instances(&mut self) {
         self.instances.list = instances::list();
@@ -395,9 +394,7 @@ impl Launcher {
         })
         .detach();
     }
-
 }
-
 
 /// Validate the two fields together, without treating an invalid edit as an empty size.
 fn validate_window(width: &str, height: &str) -> Result<Option<(u32, u32)>, ()> {

@@ -7,9 +7,8 @@
 //! build starts or ends.
 use super::*;
 
-use gpui::{ ScrollHandle, SharedString};
+use gpui::{ScrollHandle, SharedString};
 use sunrise_launcher::native_mods;
-
 
 /// How much of the log the panel shows: its last lines. Copy log still copies all of it.
 const SHOWN: usize = LOG_LINES;
@@ -163,7 +162,6 @@ impl Launcher {
         .detach();
         true
     }
-
 }
 
 #[cfg(test)]

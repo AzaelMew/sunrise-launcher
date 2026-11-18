@@ -3,18 +3,15 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-
 #[derive(Clone, Default)]
 pub struct Cull(Rc<RefCell<Drawn>>);
 
 #[derive(Default)]
-struct Drawn {
-}
+struct Drawn {}
 
 impl Cull {
     /// Invalidate measurements when filtering, ordering or collection identity changes.
     pub fn reset(&self) {
         *self.0.borrow_mut() = Drawn::default();
     }
-
 }

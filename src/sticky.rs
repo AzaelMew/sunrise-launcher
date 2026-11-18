@@ -27,12 +27,9 @@ pub struct Sticky {
 }
 
 impl Sticky {
-
     /// Forgets the row (the page left), so a new one starts unmoved.
     pub fn reset(&self) {
         self.measured.set(None);
         self.drawn.set(0.);
     }
-
 }
-

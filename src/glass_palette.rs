@@ -6,13 +6,9 @@
 //! instance, Open the game folder, and from two letters on, Install or Remove the registry's
 //! mods that match, in the selected instance.
 
-
 use super::*;
 
-
 use sunrise_launcher::browser::Project;
-
-
 
 pub(super) struct Palette {
     focus: FocusHandle,
@@ -22,4 +18,3 @@ pub(super) struct Palette {
     /// The registry search's number: an answer to an older one is dropped.
     pub(super) search: u64,
 }
-

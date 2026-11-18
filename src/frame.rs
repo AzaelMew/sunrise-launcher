@@ -3,18 +3,8 @@
 //! pages in a glass tab strip, the player, Microsoft sign-in and Settings; and the menus they open.
 //! Dark appearance only for now (`docs/design-system.md`, "Glass").
 
-
-
-
-
-
-
-
-
-
 /// The ⋮ menu of a sidebar row while open: whose, and whether Delete… was pressed once.
 #[derive(Clone, Default)]
 pub struct RowMenu {
     pub open: Option<(String, bool)>,
 }
-

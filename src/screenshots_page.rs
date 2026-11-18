@@ -3,12 +3,6 @@
 //! Show in folder and Delete (to the trash, after a confirmation). Pictures are made at their
 //! shown size (`picture_cache`), never decoded whole.
 
-
-
-
-
-
-
 #[derive(Default)]
 pub(super) struct Screenshots {
     fresh: bool,
@@ -20,4 +14,3 @@ impl Screenshots {
         self.fresh = false;
     }
 }
-

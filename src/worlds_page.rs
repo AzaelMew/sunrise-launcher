@@ -2,7 +2,7 @@
 //! mode, version, when it was last played and its size, and Back up, Copy, Delete (to the
 //! trash, after a confirmation) and Open folder. Reading sizes and copying run in the background.
 use super::*;
-use std::path::{ PathBuf};
+use std::path::PathBuf;
 use sunrise_launcher::worlds::{self, World};
 
 #[derive(Default)]
@@ -18,7 +18,6 @@ pub(super) struct Worlds {
 }
 
 impl Worlds {
-
     /// Read again on the next frame: the game may have saved, or an action changed the list.
     pub(super) fn stale(&mut self) {
         self.fresh = false;
@@ -70,5 +69,4 @@ impl Launcher {
         })
         .detach();
     }
-
 }

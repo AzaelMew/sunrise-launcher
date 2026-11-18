@@ -9,9 +9,9 @@ use sunrise_launcher::themes::{self, Accent};
 use sunrise_launcher_theme as tokens;
 
 pub use tokens::night::{self, Night};
-pub use tokens::{Step, UI};
 #[cfg_attr(not(windows), allow(unused_imports))] // the Windows setup window
 pub use tokens::MICRO;
+pub use tokens::{Step, UI};
 pub const FONT: &str = night::FONT;
 pub const DISPLAY_FONT: &str = night::DISPLAY_FONT;
 pub const MONO: &str = tokens::MONO;
@@ -21,7 +21,7 @@ pub const PIXEL: &str = night::FONT;
 
 pub use tokens::{BLOCK_BEVEL as BEVEL, BLOCK_LIP as LIP};
 /// Shapes and controls, shared with the game's menus and the website.
-pub use tokens::{ DISABLED, FIELD, PRESSED};
+pub use tokens::{DISABLED, FIELD, PRESSED};
 
 /// Blocks have square corners: these stay for the places that ask for a radius.
 pub const RADIUS: f32 = 0.;

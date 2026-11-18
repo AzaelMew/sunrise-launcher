@@ -32,7 +32,6 @@ impl Collection {
 }
 
 impl Launcher {
-
     pub(crate) fn answer_consent(&mut self, choices: Choices) {
         match telemetry::answer(choices) {
             Ok(consent) => self.collection.consent = consent,
@@ -55,5 +54,4 @@ impl Launcher {
             None => Some(telemetry::preview()),
         };
     }
-
 }

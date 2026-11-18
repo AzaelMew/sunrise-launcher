@@ -2,13 +2,9 @@
 //! port what this computer can and play it as its own profile (`sunrise_launcher::modpacks`).
 use super::*;
 
-
-use sunrise_launcher::modpacks::{ Imported};
-
-
+use sunrise_launcher::modpacks::Imported;
 
 impl Launcher {
-
     /// A finished step: the pack's new state, opened.
     pub(super) fn pack_done(&mut self, result: Result<Box<Imported>, String>) {
         self.pack_busy = false;
@@ -23,6 +19,4 @@ impl Launcher {
             Err(e) => self.pack_error = Some(e),
         }
     }
-
 }
-

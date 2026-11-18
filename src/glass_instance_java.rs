@@ -3,16 +3,12 @@
 //! loaders, each with its logo, as many as `loaders::Kind` knows.
 use super::*;
 
+use new_instance::NewKind;
 
-use new_instance::{NewKind};
-
-use sunrise_launcher::instances::{ Instance, Plays};
+use sunrise_launcher::instances::{Instance, Plays};
 use sunrise_launcher::loaders::Loader;
 
-
-
 impl Launcher {
-
     /// What the dialog has `editing` play: Sunrise, or a Java game with its loader. The loader
     /// keeps its version while its kind and Minecraft stay; a new one's (empty here) is the
     /// newest stable, asked of its service on Save.
@@ -36,5 +32,4 @@ impl Launcher {
         });
         Some(Plays::Java { minecraft, loader })
     }
-
 }

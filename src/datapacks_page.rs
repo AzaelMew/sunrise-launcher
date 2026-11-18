@@ -2,10 +2,8 @@
 //! in `datapacks/`, Add (a file picker) or a zip dropped on the world, and Remove (to the trash,
 //! after a confirmation).
 
-
 use std::path::PathBuf;
 use sunrise_launcher::datapacks::{self, DataPack};
-
 
 #[derive(Default)]
 pub(super) struct WorldPacks {
@@ -23,4 +21,3 @@ impl WorldPacks {
         }
     }
 }
-

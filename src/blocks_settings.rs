@@ -2,7 +2,6 @@
 use super::*;
 
 impl Launcher {
-
     pub(crate) fn request_native_build_consent(&mut self) {
         self.native_consent_build = None;
         self.pending_consent = Some(PendingConsent::Build(
@@ -38,5 +37,4 @@ impl Launcher {
         self.save_settings();
         sunrise_launcher::proxy::announce(self.settings.proxy.clone());
     }
-
 }

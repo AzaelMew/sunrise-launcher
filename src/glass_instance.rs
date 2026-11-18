@@ -13,9 +13,9 @@ use sunrise_launcher::loaders::Kind as Loader;
 use sunrise_launcher_theme::glass::{fill, ink, radius};
 
 
+use sunrise_launcher::instances::Channel;
 
 impl Launcher {
-
     /// The Minecraft version a Java instance plays (or will), once Mojang's list says.
     pub(super) fn draft_minecraft(&self) -> Option<String> {
         let versions = match &self.instances.versions {
@@ -78,7 +78,6 @@ impl Launcher {
             .flatten()
             .cloned()
     }
-
 }
 
 /// Every Nightly published with a build for this platform, newest first, then the installed
@@ -97,7 +96,6 @@ pub(super) fn sunrise_choices(releases: &[Release], installed: &[String]) -> Vec
     }
     out
 }
-
 
 impl Launcher {
     /// A version as a player reads it: the Versions page's name for a build of the game ("Nov 13
@@ -139,7 +137,6 @@ pub(crate) fn native_base(tag: &str) -> Option<String> {
             .clone()
     })
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -9,17 +9,18 @@
 //!   source lists for the kind.
 //! - Icons and gallery images come from the source's image servers at run time, cached on disk;
 //!   a placeholder stands in until one arrives.
-use super::mods_page::{ Event};
+use super::mods_page::Event;
 use super::*;
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use std::sync::Arc;
 use sunrise_launcher::browser::{
     self,
-    details::{ Details, Filters, Tags},
-    images, java, Kind as PackKind, Project, SourceId, Version};
+    details::{Details, Filters, Tags},
+    images, java, Kind as PackKind, Project, SourceId, Version,
+};
 
 /// The open project page.
 pub(super) struct Opened {
@@ -209,9 +210,7 @@ impl Launcher {
             .and_then(|url| self.mods_image(&url, images::ICON));
         blocks::slot(path.map(gpui::ImageSource::from), &p.title, side, &t).into_any_element()
     }
-
 }
-
 
 impl Opened {
     /// A check can finish before or after the version request; retain either event order.

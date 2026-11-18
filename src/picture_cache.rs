@@ -11,10 +11,7 @@
 use super::*;
 use gpui::RenderImage;
 
-
 use std::sync::Arc;
-
-
 
 pub(super) struct Pictures {
     /// Gone from `made`; freed from the window's sprite atlas on the next frame.
@@ -30,7 +27,6 @@ impl Default for Pictures {
 }
 
 impl Pictures {
-
     /// Frees the pictures dropped since the last frame where GPUI keeps them too.
     pub(super) fn free_retired(&mut self, window: &mut Window) {
         for image in self.retired.drain(..) {
@@ -38,5 +34,3 @@ impl Pictures {
         }
     }
 }
-
-

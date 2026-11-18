@@ -3,7 +3,9 @@
 //! text and fills at a few opacities over [`glass`](crate::glass) plates; Geist throughout.
 use crate::{hover_fade, hover_is, keyboard, theme::Theme, track_hover, Kind};
 use gpui::{
-    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, Div, FontWeight, Hsla, SharedString, Stateful, Svg, Window};
+    canvas, div, prelude::*, px, rgb, rgba, svg, AnyElement, App, Div, FontWeight, Hsla,
+    SharedString, Stateful, Svg, Window,
+};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -293,7 +295,6 @@ pub fn back_edge(r: f32, fill: f32, bordered: bool) -> AnyElement {
             .border_color(white(edge::HOVER * t))
     })
 }
-
 
 /// What a dialog or the palette lays over the launcher (`bg-[#07050f]/50 backdrop-blur-xl`):
 /// GPUI can't blur what it drew, so the scene's blurred copy (a menu's, `hzl-float`) covers the

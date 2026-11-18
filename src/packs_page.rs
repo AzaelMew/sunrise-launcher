@@ -2,7 +2,7 @@
 //! each turned on or off with one click, Remove (to the trash, after a confirmation), and
 //! Add (a file picker) or a .zip or .sshader dropped anywhere on the section.
 use super::*;
-use gpui::{ Image, ImageFormat};
+use gpui::{Image, ImageFormat};
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::packs::{self, Kind as PackKind, Pack};
@@ -60,5 +60,4 @@ impl Launcher {
         self.game_packs.shader = packs::list(&home, PackKind::Shader);
         self.game_packs.fresh = true;
     }
-
 }

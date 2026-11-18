@@ -7,10 +7,7 @@ use gpui::RenderImage;
 use std::sync::Arc;
 use sunrise_launcher::browser::images;
 
-
-
 impl Launcher {
-
     /// The image under `key` at `size` points, made from `bytes` the first time. A missing one is
     /// remembered only when `remember_missing` (a file that may never exist); else it is asked
     /// again next frame (a logo still downloading).
@@ -51,4 +48,3 @@ pub(super) struct Chosen {
     pub(super) png: Vec<u8>,
     pub(super) preview: Arc<RenderImage>,
 }
-

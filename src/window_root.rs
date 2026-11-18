@@ -54,7 +54,6 @@ impl Backdrop {
             rain,
         }
     }
-
 }
 
 impl Render for Backdrop {

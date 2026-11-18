@@ -72,7 +72,6 @@ impl Launcher {
         });
     }
 
-
     /// Prepares the selected version, its Minecraft files from the player's install or, for an
     /// owner who asks, from Mojang.
     pub(crate) fn prepare(&mut self, from: backend::MinecraftFrom) {

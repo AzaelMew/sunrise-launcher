@@ -5,18 +5,12 @@
 //! checked; the EULA, Cancel and Create at the foot. Dark appearance only.
 use super::*;
 
-
-
-
-
-
 /// A player name Minecraft accepts: 3 to 16 letters, digits or underscores.
 fn valid_name(name: &str) -> bool {
     (3..=16).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 impl Launcher {
-
     /// The name typed in the friend field joins the list, if Minecraft would take it.
     pub(super) fn add_create_friend(&mut self) {
         let typed = self.servers.value(Field::Players).trim().to_string();
@@ -28,7 +22,6 @@ impl Launcher {
             self.servers.text(Field::Players).set(String::new());
         }
     }
-
 }
 
 #[cfg(test)]

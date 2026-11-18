@@ -42,11 +42,9 @@ impl MemorySlider {
         self.typing = None;
         self.shown = None;
     }
-
 }
 
 impl Launcher {
-
     /// What the hook fields hold now, when the panel is open for `id`: the commands before and
     /// after the game, the wrapper and the variables, as typed.
     pub(super) fn hooks_typed(&self, id: &str) -> Option<[String; 4]> {
@@ -186,9 +184,7 @@ impl Launcher {
             self.save_typed_memory(&id);
         }
     }
-
 }
-
 
 fn parse_commands(
     mut launch: launch::Launch,

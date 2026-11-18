@@ -5,7 +5,6 @@
 use super::*;
 
 impl Launcher {
-
     /// Opens the screen and starts the sign-in on it; a sign-in already under way (its code on
     /// screen, or Microsoft still answering) is shown as it is, not started over.
     pub(crate) fn sign_in_to_play(&mut self) {

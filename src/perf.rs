@@ -47,7 +47,6 @@ struct Machine {
     load_average: Option<f64>,
 }
 
-
 impl Perf {
     pub fn new(scenario: &str) -> Perf {
         let hardware = Hardware {
@@ -514,5 +513,4 @@ mod tests {
         assert_eq!(report.metrics["launcher.start_ms"].mean, 125.);
         assert!(perf.hardware.is_none());
     }
-
 }

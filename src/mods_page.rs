@@ -6,13 +6,14 @@
 //! signed and what it may do), install it with its checksum checked, turn Sunrise mods on and
 //! off, and update or remove what was installed (`sunrise_launcher::browser`). Imported modpacks
 //! are listed on its Modpacks tab.
-use super::line_edit::{ LineEdit};
+use super::line_edit::LineEdit;
 use super::*;
 use java_instance::Target;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use sunrise_launcher::browser::{
-    self, installed, java, java_instance, sunrise, Kind as PackKind, Project, SourceId};
+    self, installed, java, java_instance, sunrise, Kind as PackKind, Project, SourceId,
+};
 use sunrise_launcher::modpacks;
 use sunrise_launcher::native_status;
 use sunrise_launcher::porter::Check;
@@ -246,11 +247,9 @@ impl Mods {
     pub(super) fn java_for(&self, kind: PackKind) -> Option<&Target> {
         self.java.as_ref().filter(|t| t.takes(kind))
     }
-
 }
 
 impl Launcher {
-
     /// Called with the launcher's other work: what the background sent.
     pub(super) fn mods_tick(&mut self) -> bool {
         let mut changed = false;
@@ -696,7 +695,6 @@ impl Launcher {
             let _ = tx.send(Event::Done(result, modpack));
         });
     }
-
 }
 
 /// An instance whose registry projects may update.
@@ -748,7 +746,6 @@ fn source_for(kind: PackKind) -> SourceId {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -764,5 +761,4 @@ mod tests {
         offer_updates(&mut offers, 2, 1, offer("old-mod", "9"));
         assert_eq!(offers, offer("new-mod", "3"));
     }
-
 }

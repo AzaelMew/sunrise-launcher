@@ -47,7 +47,6 @@ pub(super) struct Internet {
 }
 
 impl Internet {
-
     pub(super) fn new() -> Self {
         let (tx, rx) = crate::wake::channel();
         Self {
@@ -250,5 +249,4 @@ impl Launcher {
             Ok(said.to_string())
         });
     }
-
 }

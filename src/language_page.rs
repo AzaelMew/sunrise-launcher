@@ -15,7 +15,6 @@ fn choice_name(choice: Option<Language>) -> &'static str {
     }
 }
 
-
 /// How many languages' own names [`warm_language_name`] has shaped.
 static WARMED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 

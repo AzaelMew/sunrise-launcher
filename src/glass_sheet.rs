@@ -5,11 +5,9 @@
 //! instance's folder along the foot. The page behind is frosted and dimmed, as under Settings.
 use super::*;
 
-
 use new_instance::NewKind;
 use servers_page::Field;
 use sunrise_launcher::instances::{Channel, Icon, Instance, Plays};
-
 
 /// The sheet's sections.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -70,7 +68,6 @@ impl SheetTab {
             .find(|t| t.about().0.eq_ignore_ascii_case(&name))
     }
 }
-
 
 /// What the dialog would keep, as typed or picked.
 struct Draft {
@@ -185,7 +182,6 @@ impl Launcher {
         };
         draft.changed(saved)
     }
-
 }
 
 #[cfg(test)]

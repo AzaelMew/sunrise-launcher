@@ -4,9 +4,6 @@
 
 use super::*;
 
-
-
-
 /// Keeps a received line, dropping the oldest past `LOG_LINES`, and counts it in `revision`.
 pub(super) fn keep_line(log: &mut VecDeque<String>, revision: &mut u64, line: String) {
     log.push_back(line);
@@ -15,8 +12,6 @@ pub(super) fn keep_line(log: &mut VecDeque<String>, revision: &mut u64, line: St
         log.pop_front();
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -35,5 +30,4 @@ mod tests {
         }
         assert_eq!(log.len(), LOG_LINES);
     }
-
 }

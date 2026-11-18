@@ -9,19 +9,9 @@
 //! cache at the row's size), else the package's icon or the one its jar names, else a generic glyph.
 use super::*;
 
-
-
-
-
-
-
-
-
-
 /// A mod as the tab lists it.
 #[derive(Clone)]
-pub(super) struct ModRow {
-}
+pub(super) struct ModRow {}
 
 #[derive(Default)]
 pub(super) struct InstanceMods {
@@ -37,7 +27,6 @@ impl InstanceMods {
     fn invalidate(&mut self) {
         self.fresh = false;
     }
-
 }
 
 impl Launcher {
@@ -45,6 +34,4 @@ impl Launcher {
         self.instance_mods.invalidate();
         self.instance_mods.cull.reset();
     }
-
 }
-

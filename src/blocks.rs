@@ -3,8 +3,9 @@
 //! inventory tabs, and the slots that hold icons downloaded at run time.
 use crate::theme::{self, Theme};
 use gpui::{
-    div, img, prelude::*, px, svg, AnyElement, Div, FontWeight, Hsla, ImageSource,
-    ObjectFit, SharedString, Svg};
+    div, img, prelude::*, px, svg, AnyElement, Div, FontWeight, Hsla, ImageSource, ObjectFit,
+    SharedString, Svg,
+};
 use std::borrow::Cow;
 
 /// The icons, served to `svg()` as `icons/<name>.svg`.

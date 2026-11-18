@@ -6,4 +6,3 @@ impl Render for Launcher {
         self.alt_frame(window, cx)
     }
 }
-

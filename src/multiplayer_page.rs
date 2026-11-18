@@ -142,5 +142,4 @@ impl Launcher {
             self.multiplayer.adding = false;
         }
     }
-
 }

@@ -10,7 +10,6 @@ use super::*;
 use std::path::Path;
 use std::sync::Mutex;
 
-
 /// How long a line stays (`setTimeout(…, 4200)`).
 const SHOWN: Duration = Duration::from_millis(4200);
 
@@ -111,5 +110,4 @@ impl Launcher {
         self.toast_seen = now;
         changed
     }
-
 }

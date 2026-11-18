@@ -10,7 +10,6 @@ mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
 pub(crate) use widgets::*;
-mod widgets;
 mod alt;
 mod alt_build;
 mod alt_cat;
@@ -34,14 +33,12 @@ mod github_mods_page;
 mod glass_home;
 mod glass_instance;
 mod glass_instance_java;
-mod glass_mod_states;
 mod glass_palette;
 mod glass_sheet;
 mod glass_storage;
 mod glass_toast;
 mod glass_ui;
 mod glass_versions;
-mod home;
 mod home_tabs;
 mod instance_icons;
 mod instance_mods;
@@ -83,13 +80,15 @@ mod themes_page;
 mod titlebar;
 mod wake;
 mod while_playing;
+mod widgets;
 mod window_root;
 
 use gpui::{
     actions, div, ease_out_quint, prelude::*, px, relative, size, Animation, AnimationExt,
     AnyElement, App, Bounds, ClickEvent, Context, Div, ElementId, FocusHandle, FontWeight, Hsla,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, PathPromptOptions,
-    SharedString, Stateful, Subscription, Window, WindowBounds, WindowOptions};
+    KeyBinding, KeyDownEvent, Menu, MenuItem, PathPromptOptions, SharedString, Stateful,
+    Subscription, Window, WindowBounds, WindowOptions,
+};
 use native_consent::PendingConsent;
 use scrollbar::Scrollbar;
 use std::borrow::Cow;
@@ -150,7 +149,6 @@ impl Page {
         (Page::Versions, "Versions", "archive"),
         (Page::Settings, "Settings", "sliders"),
     ];
-
 }
 
 /// The launcher's own update, as the footer and Settings show it.
@@ -174,7 +172,6 @@ struct Crash {
     /// One line on what went wrong: the report's error, else how the process ended.
     summary: String,
 }
-
 
 enum Load<T> {
     Loading,
@@ -397,8 +394,6 @@ struct Launcher {
     list_menu: Option<(SharedString, bool)>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
     instance_mods: instance_mods::InstanceMods,
-    /// Debug-build previews of the native mod states (`glass_mod_states.rs`).
-    mod_preview: glass_mod_states::Preview,
     play_pressed: Option<Instant>,
     /// `sunrise-launcher benchmark` started this window to measure it.
     bench: Option<perf::Bench>,
@@ -492,8 +487,8 @@ fn menus() -> Vec<Menu> {
     ]
 }
 
-mod worlds_page;
 mod startup;
+mod worlds_page;
 
 fn main() {
     startup::run();
@@ -501,6 +496,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prepare_steps_run_in_their_order() {
+        use sunrise_launcher::backend::PrepareStep::*;
+        assert_eq!(
+            sunrise_launcher::backend::PrepareStep::ALL,
+            [Files, Java, Sounds, Prepare]
+        );
+        for s in sunrise_launcher::backend::PrepareStep::ALL {
+            assert_eq!(sunrise_launcher::backend::PrepareStep::ALL[s as usize], s);
+        }
+    }
+
     #[test]
     fn an_unopenable_data_folder_starts_on_settings_instead_of_exiting() {
         use super::{page_after_startup, Page};
@@ -611,7 +618,6 @@ mod tests {
             gpui::MenuItem::Action { name, .. } if name == sunrise_launcher::identity::QUIT_LABEL
         ));
     }
-
 }
 
 mod native_build;

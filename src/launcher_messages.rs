@@ -449,9 +449,7 @@ impl Launcher {
                                         })
                                     })
                                     .unwrap_or_default();
-                                self.crash = Some(Crash {
-                                    summary,
-                                });
+                                self.crash = Some(Crash { summary });
                             }
                         }
                         Job::Server => {}

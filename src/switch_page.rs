@@ -3,7 +3,6 @@
 use super::*;
 
 impl Launcher {
-
     pub(super) fn play_as(&mut self, uuid: &str) {
         let mut accounts = Accounts::load();
         let done = accounts.play_as(uuid).and_then(|()| accounts.save());
@@ -13,5 +12,4 @@ impl Launcher {
         }
         self.account_menu = false;
     }
-
 }

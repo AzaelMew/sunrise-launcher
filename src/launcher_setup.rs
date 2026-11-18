@@ -190,7 +190,6 @@ impl Launcher {
             home_menu: Default::default(),
             list_menu: None,
             instance_mods: Default::default(),
-            mod_preview: Default::default(),
             play_pressed: None,
             bench: perf::Bench::from_env(),
             packs: Vec::new(),
@@ -244,31 +243,6 @@ impl Launcher {
         this.load_auth_statuses(true);
         this.fetch_startup_releases();
         this.fetch_links();
-        if home::getting_ready_preview() {
-            this.preparing = true;
-            this.play_when_prepared = this
-                .selected()
-                .cloned()
-                .zip(this.selected_instance().map(|i| i.id.clone()));
-        }
-        // `SUNRISE_LAUNCHER_PAGE=new-instance`: the dialog open on Modded, for screenshots
-        // (`new-instance-sunrise`, `new-instance-vanilla`: on those).
-        let kind = match std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() {
-            Ok("new-instance") => Some(new_instance::NewKind::Modded),
-            Ok("new-instance-sunrise") => Some(new_instance::NewKind::Sunrise),
-            Ok("new-instance-vanilla") => Some(new_instance::NewKind::Vanilla),
-            _ => None,
-        };
-        if let Some(kind) = kind {
-            this.open_instance_dialog(None);
-            this.pick_kind(kind, cx);
-        }
-        if std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() == Ok("edit-instance") {
-            this.sheet_tab = glass_sheet::SheetTab::from_env().unwrap_or_default();
-            this.open_instance_dialog(this.selected_instance().cloned());
-        }
-        // What the game and the launcher kept, if the player allows it and there is a server.
-        this.mod_preview_from_env();
         telemetry::send_in_background();
         telemetry::watch_playing(this.tx.clone());
         this

@@ -53,5 +53,4 @@ impl Launcher {
             let _ = window.update(cx, |_, window, _| window.activate_window());
         });
     }
-
 }

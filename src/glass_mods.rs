@@ -18,15 +18,7 @@
 //! from GitHub, the instance's installed list and its native build, imported modpacks and the
 //! install's progress (cards under the two).
 
-
-
-
-
-
 /// Bringing a picked project's card into view where it sits under the list (a narrow window):
 /// a click on a row would otherwise seem to do nothing, its card twenty rows further down.
 #[derive(Default)]
-pub(crate) struct Reveal {
-}
-
-
+pub(crate) struct Reveal {}

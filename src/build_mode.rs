@@ -4,16 +4,14 @@
 //! and the actions.
 use super::*;
 
-use native_mods::{Profile};
+use native_mods::Profile;
 use native_status::State;
 
 /// The running or finished native snapshot; serialize readers to avoid racing cache leases.
-pub(super) struct RouteMemo {
-}
+pub(super) struct RouteMemo {}
 
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
-pub(super) struct UpdateMemo {
-}
+pub(super) struct UpdateMemo {}
 
 /// What a mod in the list is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,11 +24,7 @@ pub(super) enum ModKind {
     Content,
 }
 
-
-
-
 impl Launcher {
-
     /// A build stopped for worlds at stake: the choice is shown, and the mods that failed to
     /// compile stay marked past it.
     pub(super) fn keep_stop(&mut self, stake: &native_mods::AtStake) {
@@ -43,9 +37,6 @@ impl Launcher {
 
     /// The mods the selected instance's native build left out, as the build recorded them.
     pub(super) fn native_left_out(&self) -> Vec<native_mods::LeftOut> {
-        if self.mod_preview.active {
-            return self.mod_preview.left_out.clone();
-        }
         let Some(instance) = self.selected_instance() else {
             return Vec::new();
         };
@@ -61,9 +52,6 @@ impl Launcher {
 
     /// Where the instance's native mods stand, read again only when what it depends on changes.
     pub(super) fn native_state_of(&self, instance: &instances::Instance) -> State {
-        if let Some(state) = self.mod_preview.state.filter(|_| self.mod_preview.active) {
-            return state;
-        }
         let version = self.version_of(instance).cloned();
         let home = instance.home.clone();
         let profile = Profile::Optimized;
@@ -104,6 +92,4 @@ impl Launcher {
             .as_ref()
             .is_some_and(|(_, _, unbuilt)| unbuilt.iter().any(|u| u == id))
     }
-
 }
-

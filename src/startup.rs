@@ -161,5 +161,3 @@ fn run_launcher() {
             cx.activate(true);
         });
 }
-
-

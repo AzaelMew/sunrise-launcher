@@ -29,4 +29,3 @@ pub(super) fn startup_note() -> Option<String> {
         )
     })
 }
-

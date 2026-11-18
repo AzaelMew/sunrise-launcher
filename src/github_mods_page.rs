@@ -2,7 +2,7 @@
 //! resolved to an exact release file or commit (`sunrise_launcher::github_mods`), shown with the
 //! plain warning and a link to the exact source, and installed only after the player says they
 //! trust it. Mods installed that way list where they came from, with "Check for updates".
-use super::line_edit::{ LineEdit};
+use super::line_edit::LineEdit;
 use super::*;
 use std::path::{Path, PathBuf};
 use sunrise_launcher::github_mods::{self, Packed, Resolved};
@@ -149,5 +149,4 @@ impl Launcher {
             let _ = tx.send(result);
         });
     }
-
 }

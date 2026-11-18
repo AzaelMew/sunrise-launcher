@@ -4,12 +4,10 @@
 //! needs it; the game itself comes with the first Play, for an account that owns it.
 use super::*;
 
-
 use servers_page::Field;
 use std::sync::Arc;
 use sunrise_launcher::loaders::{self, Kind as Loader};
-use sunrise_launcher::minecraft_versions::{ Versions};
-
+use sunrise_launcher::minecraft_versions::Versions;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NewKind {
@@ -42,7 +40,6 @@ pub(super) enum LoaderVersions {
     Ready(Loader, String, Arc<Vec<loaders::Listed>>),
     Failed(Loader, String, String),
 }
-
 
 impl Default for JavaChoice {
     fn default() -> Self {
@@ -185,9 +182,7 @@ impl Launcher {
         })
         .detach();
     }
-
 }
-
 
 /// Makes a Java instance: `name`, playing `minecraft`, with the loader version chosen for Modded
 /// (none: its newest stable one), asked of its service now, so a version it doesn't support

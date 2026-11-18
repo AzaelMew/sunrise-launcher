@@ -25,7 +25,6 @@ const SLIDE: tokens::Motion = tokens::Motion {
     curve: tokens::QUICK.curve,
 };
 
-
 /// Whether the player's system asks for reduced motion (or `SUNRISE_LAUNCHER_MOTION=off`).
 pub fn still() -> bool {
     crate::clock::motion() == crate::clock::Motion::Still
@@ -174,7 +173,6 @@ pub fn knob(id: &str, on: bool, knob: Div, left: f32, travel: f32) -> AnyElement
         None => knob.left(px(at(1.))).into_any_element(),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

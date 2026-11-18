@@ -2,7 +2,6 @@
 //! 5): Overview (what Play needs), then its worlds, servers, packs, screenshots and, once the game
 //! has said something, its console. One at a time, instead of one long page under the hero.
 
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum HomeTab {
     #[default]
@@ -34,5 +33,3 @@ impl HomeTab {
         }
     }
 }
-
-

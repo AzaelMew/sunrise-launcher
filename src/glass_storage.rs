@@ -106,7 +106,6 @@ impl Launcher {
         .detach();
         cx.notify();
     }
-
 }
 
 pub(crate) fn category_label(category: Category) -> &'static str {
@@ -135,4 +134,3 @@ pub(crate) fn category_about(category: Category) -> &'static str {
         Category::OtherCaches => "Other downloads kept to make the launcher faster.",
     }
 }
-
