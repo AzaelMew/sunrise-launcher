@@ -519,15 +519,18 @@ impl Launcher {
         // too; the action and the switch keep theirs.
         let wide = self.content_width() >= 860.;
         use super::build_run::State;
-        let building = self
-            .build_here()
-            .and_then(|run| run.state_of(&r.id))
-            .and_then(|state| match state {
+        let building = self.build_here().and_then(|run| {
+            if run.failed(&r.id, &r.version) {
+                return Some(model::InBuild::Failed);
+            }
+            match run.state_of(&r.id)? {
                 State::Waiting => Some(model::InBuild::Waiting),
                 State::Building => Some(model::InBuild::Building),
                 State::Built => Some(model::InBuild::Built),
                 _ => None,
-            });
+            }
+        });
+        let failed = building == Some(model::InBuild::Failed) && r.need == Some(Need::Build);
         let cells = model::cells(&r, error.as_deref(), building);
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
@@ -540,6 +543,21 @@ impl Launcher {
             (Some(_), Some(unfit)) if cells.popover => {
                 self.unfit(n, &r, unfit, cx).into_any_element()
             }
+            // A mod the last build could not build: its status opens that build's window
+            // again, where Details and the build log are.
+            (Some(said), _) if failed => status(said.icon, said.label.clone(), tone(said.tone))
+                .id(("alt-row-failed", n))
+                .reach()
+                .min_w_0()
+                .cursor_pointer()
+                .hover(|s| s.text_color(c(palette().text)))
+                .tooltip(crate::glass_ui::tip(said.tip.clone()))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.open_sheet(crate::sheets::Sheet::ModBuild);
+                    cx.stop_propagation();
+                    cx.notify();
+                }))
+                .into_any_element(),
             (Some(said), _) => status(said.icon, said.label.clone(), tone(said.tone))
                 .id(("alt-row-status", n))
                 .min_w_0()

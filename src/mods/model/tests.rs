@@ -591,6 +591,8 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         (InBuild::Waiting, "Waiting", Tone::Muted),
         (InBuild::Building, "Building", Tone::Accent),
         (InBuild::Built, "Built", Tone::Success),
+        // The build ended without it: the card says so, not "Needs a build" again.
+        (InBuild::Failed, "Didn't build", Tone::Warning),
     ] {
         let status = cells(addon, None, Some(at)).status.unwrap();
         assert_eq!((status.label.as_str(), status.tone), (label, tone));

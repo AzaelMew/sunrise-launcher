@@ -266,6 +266,16 @@ impl Run {
             .filter(|_| self.running())
     }
 
+    /// Whether the build ended with mod `id` at `version` not built: its row on Mods keeps
+    /// saying so once the window is closed, until that mod changes or another build runs.
+    pub(crate) fn failed(&self, id: &str, version: &str) -> bool {
+        !self.running()
+            && self
+                .lines
+                .iter()
+                .any(|l| l.id == id && l.version == version && matches!(l.state, State::Failed(_)))
+    }
+
     /// Which mod of those the build compiles it is at, and of how many: "2 of 3". The mods it
     /// left out are not counted.
     pub(crate) fn at(&self) -> Option<(usize, usize)> {
@@ -556,6 +566,11 @@ mod tests {
         assert_eq!(states(&run), ["waiting", "waiting", "waiting", "failed"]);
         assert_eq!(run.counts().failed, 1);
         assert_eq!(run.headline(), "The build stopped");
+        // Its row on Mods says so after the window is closed, for the version that failed.
+        assert!(run.failed("zoom", "1.0.0"));
+        assert!(!run.failed("zoom", "1.0.1"), "an updated mod starts over");
+        assert!(!run.failed("minimap", "1.0.0"));
+        assert_eq!(run.state_of("zoom"), None, "nothing is live any more");
     }
 
     #[test]

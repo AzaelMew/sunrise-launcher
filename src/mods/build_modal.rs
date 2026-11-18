@@ -155,7 +155,9 @@ impl Launcher {
                 )
                 .children(match &run.end {
                     Some(End::Stopped(said)) => {
-                        Some(div().text_size(px(tokens::LABEL)).child(said.clone()))
+                        // The tool's own words can run long: the first lines here, all of it
+                        // in the build log.
+                        Some(div().text_size(px(tokens::LABEL)).line_clamp(4).child(said.clone()))
                     }
                     Some(End::Cancelled) => Some(
                         div()
@@ -217,7 +219,9 @@ impl Launcher {
                     cx.notify();
                 }))
         });
-        let log = (!running && run.details).then(|| {
+        // A build that stopped always offers its log: one that names no mod has no Details.
+        let stopped = matches!(run.end, Some(End::Stopped(_)));
+        let log = (!running && (run.details || stopped)).then(|| {
             button("build-log", tr("Open the build log")).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     let _ = this;

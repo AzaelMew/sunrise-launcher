@@ -508,6 +508,8 @@ pub(super) enum InBuild {
     Waiting,
     Building,
     Built,
+    /// The build ended and this mod's own code did not compile.
+    Failed,
 }
 
 /// `row`'s cells. `error` is why its last update failed, `building` where it stands in its
@@ -561,6 +563,12 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
             tr("Waiting").into(),
             Tone::Muted,
             tr("Its build is running").into(),
+        ),
+        Some(Need::Build) if building == Some(InBuild::Failed) => say(
+            "cancel-01",
+            tr("Didn't build").into(),
+            Tone::Warning,
+            tr("Didn't build. The problem is in the mod, not in your game.").into(),
         ),
         Some(Need::Build) => say(
             "clock",
