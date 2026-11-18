@@ -24,7 +24,7 @@ use sunrise_launcher_theme::night::{over, Night};
 pub const PREFIX: &str = "local:";
 pub const FILE: &str = "theme.toml";
 const MAX_TOML: u64 = 16 << 10;
-const MAX_PICTURE: u64 = 40 << 20;
+pub const MAX_PICTURE: u64 = 40 << 20;
 const MIN_SIDE: u32 = 64;
 const MAX_SIDE: u32 = 8192;
 const MAX_PIXELS: u64 = 16_000_000;
@@ -455,23 +455,63 @@ fn picture_bytes(folder: &Dir, name: &str) -> Result<Vec<u8>, Reason> {
         "picture",
         Reason::PictureTooBig(name.clone()),
     )?;
-    let kind = image::guess_format(&bytes).ok().filter(|f| {
+    kind(&bytes, &name)?;
+    Ok(bytes)
+}
+
+/// What kind of picture `bytes` are, by what they hold and never by a file's name: PNG, JPEG
+/// or WebP, 64 to 8192 pixels a side and 16 megapixels at most. `name` is for the reason.
+pub fn kind(bytes: &[u8], name: &str) -> Result<image::ImageFormat, Reason> {
+    let kind = image::guess_format(bytes).ok().filter(|f| {
         matches!(
             f,
             image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
         )
     });
     let Some(kind) = kind else {
-        return Err(Reason::PictureKind(name));
+        return Err(Reason::PictureKind(name.to_string()));
     };
-    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(&bytes), kind)
+    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(bytes), kind)
         .into_dimensions()
-        .map_err(|_| Reason::PictureKind(name.clone()))?;
+        .map_err(|_| Reason::PictureKind(name.to_string()))?;
     let sides = MIN_SIDE..=MAX_SIDE;
     if !sides.contains(&w) || !sides.contains(&h) || u64::from(w) * u64::from(h) > MAX_PIXELS {
-        return Err(Reason::PictureSize(name, w, h));
+        return Err(Reason::PictureSize(name.to_string(), w, h));
     }
-    Ok(bytes)
+    Ok(kind)
+}
+
+/// One still picture from `bytes`, for Home: the first frame only, whatever else the file
+/// holds, never more memory than the checked size needs, scaled down to what a window shows.
+/// Slow: call it off the window's thread.
+pub fn still(bytes: &[u8], name: &str) -> Result<image::RgbaImage, Reason> {
+    let unreadable = || Reason::PictureKind(name.to_string());
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), kind(bytes, name)?);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_SIDE);
+    limits.max_image_height = Some(MAX_SIDE);
+    limits.max_alloc = Some(MAX_PIXELS * 4 * 2);
+    reader.limits(limits);
+    let decoded = reader.decode().map_err(|_| unreadable())?;
+    let long = decoded.width().max(decoded.height());
+    let shown = if long > SHOWN_SIDE {
+        decoded.thumbnail(SHOWN_SIDE, SHOWN_SIDE)
+    } else {
+        decoded
+    };
+    Ok(shown.to_rgba8())
+}
+
+/// `picture` no longer than `side` on its longer side: the window is never given a picture
+/// larger than the GPU holds ([`crate::pictures::gpu_limit`]).
+pub fn fitted(picture: image::RgbaImage, side: u32) -> image::RgbaImage {
+    if picture.width().max(picture.height()) <= side {
+        return picture;
+    }
+    image::DynamicImage::ImageRgba8(picture)
+        .thumbnail(side.max(1), side.max(1))
+        .to_rgba8()
 }
 
 /// The theme's picture, decoded for Home: its first frame, never more memory than its checked
@@ -497,23 +537,7 @@ pub fn picture_in(root: &Path, path: &Path) -> Result<image::RgbaImage, Reason> 
     };
     let folder = open_folder(&open_root(root)?.ok_or_else(missing)?, slug)?;
     let bytes = picture_bytes(&folder, file)?;
-    let name = || Reason::PictureKind(shown.clone());
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .map_err(|_| name())?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(MAX_SIDE);
-    limits.max_image_height = Some(MAX_SIDE);
-    limits.max_alloc = Some(MAX_PIXELS * 4 * 2);
-    reader.limits(limits);
-    let decoded = reader.decode().map_err(|_| name())?;
-    let long = decoded.width().max(decoded.height());
-    let shown = if long > SHOWN_SIDE {
-        decoded.thumbnail(SHOWN_SIDE, SHOWN_SIDE)
-    } else {
-        decoded
-    };
-    Ok(shown.to_rgba8())
+    still(&bytes, &shown)
 }
 
 /// Reads the theme in the folder `slug` of the open themes folder, which is at `root`.

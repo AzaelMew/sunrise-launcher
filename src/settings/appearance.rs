@@ -25,14 +25,10 @@ struct Choice {
     palette: Palette,
 }
 
-/// What stands behind Home, as the frame's backdrop draws it.
-#[derive(Clone)]
-pub(crate) enum HomePhoto {
-    /// The player's own picture, kept and checked by the launcher.
-    Personal(PathBuf),
-    /// The picture of the player's theme, decoded.
-    Theme(Arc<RenderImage>),
-}
+/// What stands behind Home, as the frame's backdrop draws it: the player's own picture or
+/// their theme's, decoded to one still picture off the window's thread. The window is never
+/// handed a file to decode itself.
+pub(crate) type HomePhoto = Arc<RenderImage>;
 
 /// The settings what is behind Home depends on: the theme, the player's picture, scenery.
 type BehindKey = (Option<String>, Option<String>, bool);
@@ -48,10 +44,13 @@ pub(crate) struct State {
     note: Option<String>,
     /// What is behind Home for the settings it was worked out from (theme, picture, scenery).
     behind: Option<(BehindKey, Behind)>,
-    /// The theme's picture: its file, and the picture once it is decoded (None: it could not
-    /// be).
+    /// The picture behind Home: its file, and the picture once it is decoded (None: it could
+    /// not be).
     photo: Option<(PathBuf, Option<Arc<RenderImage>>)>,
     decoding: bool,
+    /// The kept copy of the player's own picture that could not be decoded: Home shows what
+    /// comes after it, and Appearance says so.
+    unshown: Option<PathBuf>,
     /// Pictures no longer shown, for the window to let go of.
     retired: Vec<Arc<RenderImage>>,
 }
@@ -67,6 +66,7 @@ impl Default for State {
             behind: None,
             photo: None,
             decoding: false,
+            unshown: None,
             retired: Vec::new(),
         }
     }
@@ -260,55 +260,75 @@ impl Launcher {
             let _ = window.drop_image(old);
         }
         if state.behind.as_ref().is_none_or(|(old, _)| *old != key) {
-            let behind = appearance::behind_home(&self.settings, &backend::data_dir());
+            let behind = match appearance::behind_home(&self.settings, &backend::data_dir()) {
+                Behind::Personal(path) if state.unshown.as_ref() == Some(&path) => {
+                    appearance::behind_without_own(&self.settings)
+                }
+                behind => behind,
+            };
             state.behind = Some((key, behind));
         }
-        match state.behind.as_ref().map(|(_, behind)| behind.clone())? {
-            Behind::Plain | Behind::Scene => None,
-            Behind::Personal(path) => Some(HomePhoto::Personal(path)),
-            Behind::Theme(path) => {
-                if let Some((_, picture)) = state.photo.as_ref().filter(|(of, _)| *of == path) {
-                    return picture.clone().map(HomePhoto::Theme);
-                }
-                if state.decoding {
-                    return None;
-                }
-                state.decoding = true;
-                let read = path.clone();
-                let task = cx
-                    .background_executor()
-                    .spawn(async move { theme_files::picture(&read) });
-                cx.spawn(async move |this, cx| {
-                    let decoded = task.await;
-                    let _ = this.update(cx, |this, cx| {
-                        let state = &mut this.ui.settings.appearance;
-                        state.decoding = false;
-                        let picture = match decoded {
-                            Ok(mut rgba) => {
-                                // The window draws BGRA, its alpha premultiplied.
-                                for px in rgba.pixels_mut() {
-                                    let a = u16::from(px.0[3]);
-                                    let [r, g, b] =
-                                        [0, 1, 2].map(|i| (u16::from(px.0[i]) * a / 255) as u8);
-                                    px.0 = [b, g, r, a as u8];
-                                }
-                                Some(Arc::new(RenderImage::new([image::Frame::new(rgba)])))
-                            }
-                            Err(reason) => {
-                                state.error = Some(reason.text());
-                                None
-                            }
-                        };
-                        if let Some((_, Some(old))) = state.photo.replace((path, picture)) {
-                            state.retired.push(old);
-                        }
-                        cx.notify();
-                    });
-                })
-                .detach();
-                None
-            }
+        let (path, own) = match state.behind.as_ref().map(|(_, behind)| behind.clone())? {
+            Behind::Plain | Behind::Scene => return None,
+            Behind::Personal(path) => (path, true),
+            Behind::Theme(path) => (path, false),
+        };
+        if let Some((_, picture)) = state.photo.as_ref().filter(|(of, _)| *of == path) {
+            return picture.clone();
         }
+        if state.decoding {
+            return None;
+        }
+        state.decoding = true;
+        let read = path.clone();
+        let task = cx.background_executor().spawn(async move {
+            if own {
+                let name = read
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or_default();
+                themes::background_picture(&backend::data_dir(), name)
+            } else {
+                theme_files::picture(&read).map_err(|reason| reason.text())
+            }
+            .map(|still| theme_files::fitted(still, sunrise_launcher::pictures::gpu_limit()))
+        });
+        cx.spawn(async move |this, cx| {
+            let decoded = task.await;
+            let _ = this.update(cx, |this, cx| {
+                let state = &mut this.ui.settings.appearance;
+                state.decoding = false;
+                let picture = match decoded {
+                    Ok(mut rgba) => {
+                        // The window draws BGRA, its alpha premultiplied.
+                        for px in rgba.pixels_mut() {
+                            let a = u16::from(px.0[3]);
+                            let [r, g, b] = [0, 1, 2].map(|i| (u16::from(px.0[i]) * a / 255) as u8);
+                            px.0 = [b, g, r, a as u8];
+                        }
+                        Some(Arc::new(RenderImage::new([image::Frame::new(rgba)])))
+                    }
+                    Err(said) => {
+                        state.error = Some(said);
+                        if own {
+                            // A kept copy that can't be decoded is never claimed as shown:
+                            // Home goes on to the theme's picture, or the scene.
+                            state.unshown = Some(path.clone());
+                            if let Some((_, behind)) = &mut state.behind {
+                                *behind = appearance::behind_without_own(&this.settings);
+                            }
+                        }
+                        None
+                    }
+                };
+                if let Some((_, Some(old))) = state.photo.replace((path, picture)) {
+                    state.retired.push(old);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        None
     }
 
     /// The themes to choose from: Dawn first, Sunrise's own violet, the other built-in ones,
@@ -662,7 +682,21 @@ impl Launcher {
     /// to the theme's, and the switch for all of it.
     fn background_row(&mut self, cx: &mut Context<Self>) -> Div {
         let data = backend::data_dir();
-        let behind = appearance::behind_home(&self.settings, &data);
+        // A kept copy Home could not decode is not what is behind Home.
+        let unshown = self
+            .ui
+            .settings
+            .appearance
+            .unshown
+            .as_ref()
+            .is_some_and(|path| {
+                appearance::behind_home(&self.settings, &data) == Behind::Personal(path.clone())
+            });
+        let behind = if unshown {
+            appearance::behind_without_own(&self.settings)
+        } else {
+            appearance::behind_home(&self.settings, &data)
+        };
         let lost = appearance::background_lost(&self.settings, &data);
         let source = match &behind {
             Behind::Plain => tr("Off: the theme's plain background."),
@@ -670,7 +704,13 @@ impl Launcher {
             Behind::Theme(_) => tr("The theme's picture, on Home."),
             Behind::Scene => tr("The theme's scene."),
         };
-        let about = if lost {
+        let about = if unshown {
+            format!(
+                "{} {}",
+                source,
+                tr("The picture you chose can't be shown; choose it again or use the theme's.")
+            )
+        } else if lost {
             format!(
                 "{} {}",
                 source,
@@ -696,11 +736,18 @@ impl Launcher {
                     let Some(file) = paths.pop() else {
                         return;
                     };
+                    // Read, checked and decoded off the window's thread, then kept.
+                    let kept = cx
+                        .background_executor()
+                        .spawn(async move { themes::keep_background(&backend::data_dir(), &file) })
+                        .await;
                     let _ = window.update(cx, |_, window, cx| {
                         let _ = this.update(cx, |this, cx| {
-                            let data = backend::data_dir();
                             this.appearance_change(
-                                |s| appearance::set_background(s, &data, &file),
+                                |s| {
+                                    s.background = Some(kept?);
+                                    Ok(())
+                                },
                                 window,
                             );
                             cx.notify();

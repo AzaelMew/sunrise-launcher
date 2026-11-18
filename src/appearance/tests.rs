@@ -306,3 +306,18 @@ fn no_change_of_look_deletes_a_file_in_the_data_folder() {
         "the two files written here and the two kept copies"
     );
 }
+
+/// When the player's own picture can't be shown, Home goes on to the theme's picture, then
+/// the scene; with scenery off it is plain either way.
+#[test]
+fn past_the_players_own_picture_is_the_themes_then_the_scene() {
+    let shore = PathBuf::from("/themes/tidepool/shore.png");
+    crate::theme_files::set_loaded(vec![tidepool(0x2f6f8f, Some(shore.clone()))]);
+    let mut settings =
+        Settings::parse(r#"{"theme": "local:tidepool", "background": "background-old.png"}"#);
+    assert_eq!(behind_without_own(&settings), Behind::Theme(shore));
+    select_theme(&mut settings, "nord").unwrap();
+    assert_eq!(behind_without_own(&settings), Behind::Scene);
+    settings.scenery_on = Some(false);
+    assert_eq!(behind_without_own(&settings), Behind::Plain);
+}

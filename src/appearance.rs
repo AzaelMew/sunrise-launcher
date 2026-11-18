@@ -170,6 +170,15 @@ pub fn behind_home(settings: &Settings, data: &Path) -> Behind {
     if let Some(path) = themes::background(data, settings.background.as_deref()) {
         return Behind::Personal(path);
     }
+    behind_without_own(settings)
+}
+
+/// What is behind Home when the player's own picture can't be shown (gone, or a kept copy
+/// that isn't a picture Home can decode): the theme's picture, then the scene.
+pub fn behind_without_own(settings: &Settings) -> Behind {
+    if !settings.scenery() {
+        return Behind::Plain;
+    }
     match themes::resolve(settings.theme.as_deref()) {
         Resolved::Local(local) => local.picture.map_or(Behind::Scene, Behind::Theme),
         _ => Behind::Scene,

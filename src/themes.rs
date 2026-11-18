@@ -811,50 +811,33 @@ fn fit((h, s, l): (f32, f32, f32), good: impl Fn(u32) -> bool, step: f32) -> u32
     from_hsl(h, s, l.clamp(0., 1.))
 }
 
+use crate::theme_files;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::Dir;
 
-/// The pictures Home can show: what the decoders read.
-const PICTURES: [&str; 4] = ["png", "jpg", "jpeg", "webp"];
-/// A picture above this is refused: a screen's worth is far less.
-const MAX_BYTES: u64 = 40 << 20;
-
-/// A picture of more pixels than this is refused: decoded, it is a quarter of a gigabyte, many
-/// times any screen.
-const MAX_PIXELS: u64 = crate::pictures::WHOLE_DECODE_MAX / 4;
-/// The longest side the background is drawn from: a 4K screen's width.
-pub const BACKGROUND_SIDE: u32 = 3840;
-
 /// Keeps `file` as Home's background in `dir` (`background-<hash>.<ext>`: a new picture gets a
-/// new name, so the window doesn't show the one it cached), after checking it is a picture, and
-/// returns the kept file's name. An older background stays: nothing in the data folder is
-/// deleted because a setting changed, since a name alone doesn't say whose a file is.
+/// new name, so the window doesn't show the one it cached), and returns the kept file's name.
+/// Nothing is kept unless it is a picture Home can show: at most 40 MB are read, what kind it
+/// is comes from what it holds and never from its name, its size is within the limits, and it
+/// decodes to one still picture. Slow: call it off the window's thread. An older background
+/// stays: nothing in the data folder is deleted because a setting changed, since a name alone
+/// doesn't say whose a file is.
 pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
-    let shown = file.display();
-    let ext = file
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .filter(|e| PICTURES.contains(&e.as_str()))
-        .ok_or_else(|| format!("{shown}: a PNG, JPEG or WebP picture, please."))?;
-    let size = std::fs::metadata(file)
-        .map_err(|e| format!("{shown}: {e}"))?
-        .len();
-    if size > MAX_BYTES {
-        return Err(format!("{shown} is over 40 MB."));
+    use std::io::Read as _;
+    let shown = file.display().to_string();
+    let mut bytes = Vec::new();
+    std::fs::File::open(file)
+        .and_then(|f| f.take(theme_files::MAX_PICTURE + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("{shown}: {e}"))?;
+    if bytes.len() as u64 > theme_files::MAX_PICTURE {
+        return Err(theme_files::Reason::PictureTooBig(shown).text());
     }
-    let bytes = std::fs::read(file).map_err(|e| format!("{shown}: {e}"))?;
-    let (w, h) = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok())
-        .ok_or_else(|| format!("{shown} isn't a picture the launcher can read."))?;
-    if w < 64 || h < 64 {
-        return Err(format!("{shown} is {w}×{h}: too small to fill Home."));
-    }
-    if u64::from(w) * u64::from(h) > MAX_PIXELS {
-        return Err(format!("{shown} is {w}×{h}: too large for a background."));
-    }
+    let ext = match theme_files::kind(&bytes, &shown).map_err(|r| r.text())? {
+        image::ImageFormat::Png => "png",
+        image::ImageFormat::Jpeg => "jpg",
+        _ => "webp",
+    };
+    theme_files::still(&bytes, &shown).map_err(|r| r.text())?;
     let hash = crate::sources::sha1_hex(&bytes);
     let name = format!("background-{}.{ext}", &hash[..12]);
     publish(dir, &name, &bytes).map_err(|e| format!("{name}: {e}"))?;
@@ -940,19 +923,35 @@ fn publish(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<()> {
     }
 }
 
+/// The kept background `name`, decoded for Home: the copy in `dir` itself, never through a
+/// link, read with the same bounds a new picture is held to and decoded to one still picture.
+/// A copy kept by an older launcher that isn't such a picture is an error, never shown. Slow:
+/// call it off the window's thread.
+pub fn background_picture(dir: &Path, name: &str) -> Result<image::RgbaImage, String> {
+    use std::io::Read as _;
+    let said = |e: std::io::Error| format!("{name}: {e}");
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = Dir::open_ambient_dir(dir, cap_std::ambient_authority())
+        .and_then(|dir| dir.open_with(name, &options))
+        .map_err(said)?;
+    if !file.metadata().map_err(said)?.is_file() {
+        return Err(theme_files::Reason::Linked("picture").text());
+    }
+    let mut bytes = Vec::new();
+    file.take(theme_files::MAX_PICTURE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(said)?;
+    if bytes.len() as u64 > theme_files::MAX_PICTURE {
+        return Err(theme_files::Reason::PictureTooBig(name.to_string()).text());
+    }
+    theme_files::still(&bytes, name).map_err(|r| r.text())
+}
+
 /// Home's background, if the player keeps one and it is still there.
 pub fn background(dir: &Path, name: Option<&str>) -> Option<PathBuf> {
     let name = name.filter(|n| n.starts_with("background-") && !n.contains(['/', '\\']))?;
     Some(dir.join(name)).filter(|p| p.is_file())
-}
-
-/// The kept background at `path` as the window draws it: fitted inside [`BACKGROUND_SIDE`] and
-/// `limit`, the largest picture the GPU holds ([`crate::pictures::gpu_limit`]), whatever size the
-/// file is (one kept by an earlier launcher was never measured). For a worker: it reads and
-/// decodes the file. An error is a picture too large to decode or no picture at all; Home then
-/// shows its own scenery.
-pub fn load_background(path: &Path, limit: u32) -> Result<image::RgbaImage, String> {
-    crate::pictures::load_fitted(path, BACKGROUND_SIDE.min(limit))
 }
 
 #[cfg(test)]

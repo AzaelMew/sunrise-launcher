@@ -31,10 +31,7 @@ impl Backdrop {
             return back;
         }
         if let Some(photo) = photo {
-            let picture = match photo {
-                HomePhoto::Personal(path) => img(path),
-                HomePhoto::Theme(decoded) => img(decoded),
-            };
+            let picture = img(photo);
             // A picture someone chose is there to be seen: only a thin wash of the page ties it
             // to the theme. Nothing is written on it. Home sets its header on a plate when a
             // picture is behind it, and the plates over a picture are opaque.
