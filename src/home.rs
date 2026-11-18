@@ -93,7 +93,7 @@ pub(crate) fn heading(label: &str) -> Div {
         .text_size(px(tokens::HEADING))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(palette().text))
-        .child(label.to_string())
+        .child(crate::selectable::selectable(label.to_string()))
 }
 
 pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
@@ -471,9 +471,9 @@ impl Launcher {
                         .text_center()
                         .text_size(px(tokens::LABEL))
                         .text_color(rgb(palette().muted))
-                        .child(tr(
+                        .child(crate::selectable::selectable(tr(
                             "Press Play and make a world in the game. It shows up here, ready to continue.",
-                        )),
+                        ))),
                 )
                 .child(
                     button("alt-worlds-folder", tr("Open folder"))
@@ -658,17 +658,17 @@ impl Launcher {
                 div()
                     .text_size(px(tokens::BODY))
                     .text_color(rgb(palette().text))
-                    .child(tr(
+                    .child(crate::selectable::selectable(tr(
                         "Sign in with the Microsoft account that owns Minecraft: Java Edition. Sunrise then installs itself and you can play.",
-                    )),
+                    ))),
             )
             .child(
                 div()
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(palette().muted))
-                    .child(tr(
+                    .child(crate::selectable::selectable(tr(
                         "While you play, Sunrise counts you as playing once a minute. Nothing else is sent.",
-                    )),
+                    ))),
             )
             .child(
                 div().flex().child(
