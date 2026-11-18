@@ -430,14 +430,12 @@ impl Launcher {
             .child(lane.ml(px(12.)).mb(px(-GAP)))
     }
 
-    /// The build the profile plays and how it follows new ones: a press opens the chooser.
+    /// The build the profile plays. Press to see how it follows new ones.
     fn build_picker(
         &mut self,
         instance: &instances::Instance,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let signed_in =
-            self.accounts.selected().is_some() || sunrise_launcher::developer_offline::selected();
         let version = self.version_of(instance);
         // A game built with mods reads as the build it was made from, like any other.
         let made_from = version
@@ -451,17 +449,6 @@ impl Launcher {
             ),
             Some(t) => self.version_label(t),
             None => tr("Sunrise").into(),
-        };
-        let follows = if version.is_none() && !signed_in {
-            tr("Installs after you sign in")
-        } else if version.is_none() {
-            tr("Not installed yet")
-        } else if instance.version.is_some() {
-            tr("Stays on this build")
-        } else if instance.channel == instances::Channel::Stable {
-            tr("Stable")
-        } else {
-            tr("Nightly")
         };
         let at = self.ui.home.picker.clone();
         div()
@@ -482,22 +469,10 @@ impl Launcher {
             .pr(px(14.))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().text))
-                            .child(build),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(palette().muted))
-                            .child(follows),
-                    ),
+                    .text_size(px(tokens::BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(palette().text))
+                    .child(build),
             )
             .child(blocks::icon(
                 "chevron-down",

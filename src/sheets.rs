@@ -1174,6 +1174,19 @@ impl Launcher {
         };
         let pinned = instance.version.clone();
         let plays = self.version_of(instance).cloned();
+        let status = if pinned.is_some() {
+            Some(tr("Stays on this build"))
+        } else if plays.is_none() {
+            let signed_in = self.accounts.selected().is_some()
+                || sunrise_launcher::developer_offline::selected();
+            Some(if signed_in {
+                tr("Not installed yet")
+            } else {
+                tr("Installs after you sign in")
+            })
+        } else {
+            None
+        };
         let stable = self.stable_builds().iter().any(|b| b.week.is_none());
         // A different build under native mods is never activated from here: those mods have to be
         // checked against it first (the check button), and the build that follows protects worlds.
@@ -1333,6 +1346,7 @@ impl Launcher {
                     .text_color(rgb(palette().muted))
                     .child(tr("GAME BUILD")),
             )
+            .children(status.map(muted))
             .child(list)
             .children(native)
             .child(div().h(px(1.)).bg(rgb(palette().line)))
