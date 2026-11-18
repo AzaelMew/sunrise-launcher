@@ -81,6 +81,16 @@ pub(crate) fn plays_after_sign_in(asked: Option<String>, selected: Option<&str>)
     asked.is_some_and(|id| selected == Some(id.as_str()))
 }
 
+/// The sign-in screen's title. With accounts already here, a sign-in that no Play asked for and
+/// that renews none of them adds one.
+pub(crate) fn sign_in_title(for_play: bool, again: bool, signed_in: usize) -> &'static str {
+    if signed_in > 0 && !for_play && !again {
+        "Add a Microsoft account"
+    } else {
+        "Sign in to play"
+    }
+}
+
 /// Where the menu goes: its top, and how far its right edge is from the window's. Under the
 /// chip, flush with its right edge.
 fn place(chip: Option<Bounds<Pixels>>, window_width: f32) -> (f32, f32) {
@@ -434,6 +444,15 @@ mod tests {
         assert!(plays_after_sign_in(Some("sunrise".into()), Some("sunrise")));
         assert!(!plays_after_sign_in(Some("pack".into()), Some("sunrise")));
         assert!(!plays_after_sign_in(Some("pack".into()), None));
+    }
+
+    #[test]
+    fn the_sign_in_opened_to_add_an_account_is_titled_so() {
+        assert_eq!(sign_in_title(false, false, 3), "Add a Microsoft account");
+        // Nobody signed in yet, a Play that needs it, or one account signing in again.
+        assert_eq!(sign_in_title(false, false, 0), "Sign in to play");
+        assert_eq!(sign_in_title(true, false, 3), "Sign in to play");
+        assert_eq!(sign_in_title(false, true, 3), "Sign in to play");
     }
 
     #[test]

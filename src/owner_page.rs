@@ -29,6 +29,16 @@ impl Launcher {
         }
     }
 
+    /// What the screen is called: adding an account beside the ones here is not signing in to
+    /// play.
+    fn sign_in_title(&self) -> &'static str {
+        crate::account_chip::sign_in_title(
+            self.ui.after_sign_in.is_some(),
+            self.sign_in_target.is_some(),
+            self.accounts.accounts.len(),
+        )
+    }
+
     pub(crate) fn owner_screen(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let configured = account::client_id().is_some();
         let state = match &self.sign_in_state {
@@ -79,7 +89,7 @@ impl Launcher {
                         said(tr("Microsoft account").into(), tokens::SMALL, palette().muted)
                             .font_weight(FontWeight::SEMIBOLD),
                     )
-                    .child(crate::sheets::title(tr("Sign in to play").into())),
+                    .child(crate::sheets::title(tr(self.sign_in_title()).into())),
             )
             .child(
                 div()
@@ -284,7 +294,7 @@ impl Launcher {
                     .text_size(px(28.))
                     .line_height(px(35.))
                     .text_color(white(ink::FULL))
-                    .child(tr("Sign in to play")),
+                    .child(tr(self.sign_in_title())),
             )
             .child(
                 div()
