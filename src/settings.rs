@@ -11,11 +11,15 @@ use storage::Category;
 use sunrise_launcher::telemetry;
 use sunrise_launcher_telemetry::Choices;
 
+mod appearance;
+pub(crate) use appearance::HomePhoto;
+
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Section {
     #[default]
     Account,
     Game,
+    Appearance,
     Mods,
     Storage,
     Privacy,
@@ -29,9 +33,10 @@ pub(super) fn startup_section(location_error: bool, location_note: bool) -> Opti
 }
 
 impl Section {
-    pub(super) const ALL: [Section; 6] = [
+    pub(super) const ALL: [Section; 7] = [
         Section::Account,
         Section::Game,
+        Section::Appearance,
         Section::Mods,
         Section::Storage,
         Section::Privacy,
@@ -42,6 +47,7 @@ impl Section {
         match self {
             Section::Account => "Account",
             Section::Game => "Game",
+            Section::Appearance => "Appearance",
             Section::Mods => "Mods",
             Section::Storage => "Storage",
             Section::Privacy => "Privacy",
@@ -53,6 +59,7 @@ impl Section {
         match self {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
+            Section::Appearance => "The theme, its accent and what is behind Home.",
             Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
@@ -67,6 +74,7 @@ pub(super) struct SettingsView {
     languages: bool,
     setup: bool,
     note: Option<String>,
+    pub(crate) appearance: appearance::State,
 }
 
 /// A card of rows with a rule between them.
@@ -197,6 +205,7 @@ impl Launcher {
         let body = match section {
             Section::Account => self.settings_account(cx),
             Section::Game => self.settings_game(cx),
+            Section::Appearance => self.settings_appearance(window, cx),
             Section::Mods => self.settings_mods(cx),
             Section::Storage => self.settings_storage(cx),
             Section::Privacy => self.settings_privacy(cx),

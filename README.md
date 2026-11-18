@@ -188,15 +188,15 @@ The opening, then Play ([clip](docs/opening.webm)):
   that Sunrise plays only with a Microsoft account that owns Minecraft: Java Edition. The
   Console's Share log takes the account names out of the log. `sunrise-launcher account select
   <name>`.
-- **Accent and Home background**: on top of Dark, Light or System, Settings > Launcher picks an
-  accent (Sunrise's violet, blue, teal, green, amber, red or pink, any hue, or any colour typed as
-  hex in the dark look) and a picture of the player's own behind Home (PNG, JPEG or WebP, cropped
-  to fill; **Landscape** brings Sunrise's back). The dark look wears the colour as is, as the
-  mockup does; in the light look an accent turns the violet tokens to its hue, then darkens or
-  lightens them just enough to keep white on the Play button at 4.5:1 and the accent at 3:1 on
-  every background (a test holds every accent in both looks to it). The picture is copied into the
-  data folder. `sunrise-launcher settings accent NAME|#rrggbb|DEGREES`,
-  `settings background PATH|default`.
+- **Themes, accent and Home background**: Settings > Appearance picks a theme (Dawn, the warm
+  orange one, unless another is chosen; ten more are built in, and any you make yourself are read
+  from the `themes` folder), an accent under it (a name, any hue, or any colour typed as hex) and
+  what is behind Home (a picture of your own, your theme's, or the theme's scene). Every colour
+  on screen comes from the theme. Play is a solid fill with a white label in every one: under a
+  pale accent only Play's fill is darkened, until white reads on it at 4.5:1 (a test holds every
+  theme and accent to it). `sunrise-launcher settings theme default|ID|local:SLUG`,
+  `settings accent NAME|#rrggbb|DEGREES|theme`, `settings background PATH|default`,
+  `settings scenery on|off`. Making your own theme: [docs/themes.md](docs/themes.md).
 - **Language**: English, French, Russian, German, Simplified Chinese, Spanish, Ukrainian and Polish.
   The window follows the system's language unless the player picks one in Settings > Launcher
   (each named in itself); a string a table lacks shows in English. The tables are

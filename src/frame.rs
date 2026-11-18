@@ -612,7 +612,14 @@ impl Launcher {
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
         self.pictures.free_retired(window);
-        let scenery = self.ui.backdrop.render(&self.settings, &self.theme, window);
+        // A picture, the player's or their theme's, stands behind Home only.
+        let photo = (page == Page::Home)
+            .then(|| self.home_photo(window, cx))
+            .flatten();
+        let scenery = self
+            .ui
+            .backdrop
+            .render(&self.settings, &self.theme, photo, window);
         div()
             .relative()
             .size_full()
