@@ -576,24 +576,13 @@ impl Launcher {
             |this| &mut this.ui.settings.appearance.accent;
         let field_theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
-        let field = div()
+        let field = crate::frame::input(focused)
             .id("alt-accent")
             .track_focus(&focus)
             .seen()
             .w(px(150.))
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .flex()
-            .items_center()
-            .overflow_hidden()
-            .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(palette().field))
-            .border_1()
-            .border_color(rgb(if focused {
-                palette().focus
-            } else {
-                palette().line
-            }))
             .font_family(theme::MONO)
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().text))
