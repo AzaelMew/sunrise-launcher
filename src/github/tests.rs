@@ -40,7 +40,7 @@ fn no_mirror(_: &str) -> Answer {
 }
 
 #[test]
-fn mirror_serves_only_sunrises_repository() {
+fn mirror_serves_only_sunrises_repositories() {
     let base = "https://mcp.example/github/public";
     assert_eq!(
         mirror_url_with(RELEASES, base).as_deref(),
@@ -53,6 +53,11 @@ fn mirror_serves_only_sunrises_repository() {
         )
         .as_deref(),
         Some("https://mcp.example/github/public/repos/sunrise-org/sunrise/releases/tags/launcher@0.2.33")
+    );
+    // The launcher's own repository is served too: its releases are what it updates itself from.
+    assert_eq!(
+        mirror_url_with("https://api.github.com/repos/sunrise-org/sunrise-launcher/releases?per_page=100", base).as_deref(),
+        Some("https://mcp.example/github/public/repos/sunrise-org/sunrise-launcher/releases?per_page=100")
     );
     assert_eq!(
         mirror_url_with("https://api.github.com/repos/someone/mod/commits/abc", base),

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Repository-selected launcher build matrix; upstream entries retain their metadata."""
+"""The launcher's release build matrix: one entry per platform it ships for, as JSON for GitHub Actions."""
 import json
-import os
 
 PLATFORMS = [
     dict(name='linux', os='ubuntu-22.04', asset='sunrise-launcher-linux-x86_64.tar.gz', binary='sunrise-launcher'),
@@ -11,17 +10,11 @@ PLATFORMS = [
     dict(name='windows-arm64', os='windows-11-vs2026-arm', target='aarch64-pc-windows-msvc', asset='sunrise-launcher-windows-arm64.zip', binary='sunrise-launcher.exe', pe_arch='arm64', setup_asset='sunrise-launcher-setup-arm64.exe', rustflags='-C target-feature=+crt-static'),
 ]
 
-def matrix(repository):
-    if repository not in ('sunrise-org/sunrise', 'horizon-rust/horizon'):
-        raise ValueError(f'Unsupported launcher repository: {repository}')
-    entries = [dict(entry) for entry in PLATFORMS]
-    if repository == 'sunrise-org/sunrise':
-        entries = [entry for entry in entries if entry['name'] in ('linux', 'macos', 'windows')]
-        for entry in entries:
-            for key in ('asset', 'binary', 'setup_asset'):
-                if key in entry:
-                    entry[key] = entry[key].replace('sunrise-launcher', 'sunrise-launcher')
-    return {'include': entries}
+# The platforms Sunrise ships the launcher for; macos-x64 and windows-arm64 build when they join.
+SHIPPED = ('linux', 'macos', 'windows')
+
+def matrix():
+    return {'include': [dict(entry) for entry in PLATFORMS if entry['name'] in SHIPPED]}
 
 if __name__ == '__main__':
-    print(json.dumps(matrix(os.environ.get('GITHUB_REPOSITORY', 'sunrise-org/sunrise')), separators=(',', ':')))
+    print(json.dumps(matrix(), separators=(',', ':')))

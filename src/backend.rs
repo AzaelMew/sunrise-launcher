@@ -9,25 +9,23 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-/// Authority for game, launcher and native SDK release reads on this fork.
-pub const REPO: &str = "sunrise-org/sunrise";
+/// Where the game's releases, Nightlies, snapshots and mod SDKs are published, and its bugs reported.
+pub const GAME_REPO: &str = "sunrise-org/sunrise";
+/// This launcher's own repository: its releases (what it updates itself from) and links.json.
+pub const LAUNCHER_REPO: &str = "sunrise-org/sunrise-launcher";
 
 /// Where a crash is reported.
 pub fn issues_url() -> String {
-    format!("https://github.com/{REPO}/issues")
+    format!("https://github.com/{GAME_REPO}/issues")
 }
-pub const README_URL: &str = "https://github.com/sunrise-org/sunrise/blob/main/launcher/README.md";
+pub const README_URL: &str = "https://github.com/sunrise-org/sunrise-launcher/blob/main/README.md";
 /// The players' page on connecting an AI agent (the website's docs/agents.md).
 pub const AGENT_DOCS_URL: &str = sunrise_launcher_addresses::AGENT_DOCS;
 /// This launcher's version: the release workflow sets `SUNRISE_LAUNCHER_VERSION` from the
 /// tag it builds (no version-bump commits); other builds say Cargo.toml's.
 pub const VERSION: &str = version_or(option_env!("SUNRISE_LAUNCHER_VERSION"));
-/// Launcher releases are tagged `launcher@X.Y.Z` from 0.2 on (docs/versioning.md), and Sunrise's
-/// own `vX.Y.Z`. Before 0.2 they were `launcher-vX.Y.Z` and `vYYYY.MM.DD[.N]`: every 0.2 tag is
-/// newer than every one of those ([`release_order`]).
-pub const LAUNCHER_TAG_PREFIX: &str = "launcher@";
-/// The launcher tags from before 0.2 (`launcher-v0.16.0`).
-pub const OLD_LAUNCHER_TAG_PREFIX: &str = "launcher-v";
+/// Launcher releases are tagged `vX.Y.Z` in [`LAUNCHER_REPO`]; before the launcher had its own repository they were `launcher@X.Y.Z` in the game's.
+pub const LAUNCHER_TAG_PREFIX: &str = "v";
 
 const fn version_or(injected: Option<&'static str>) -> &'static str {
     match injected {
@@ -448,11 +446,7 @@ const fn game_fallback_for(os: &str, arch: &str) -> Option<&'static str> {
 /// one file. A launcher running from one updates by replacing that file ([`appimage_path`]), so it
 /// needs this archive rather than the platform's `.tar.gz`.
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = Some(if cfg!(sunrise_fork_launcher) {
-    "sunrise-launcher-linux-x86_64.AppImage"
-} else {
-    "horizon-launcher-linux-x86_64.AppImage"
-});
+pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = Some("sunrise-launcher-linux-x86_64.AppImage");
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
 pub const LAUNCHER_APPIMAGE_ASSET: Option<&str> = None;
 
@@ -530,16 +524,13 @@ pub fn is_game_tag(tag: &str) -> bool {
         .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
-/// The launcher version in a `launcher@X.Y.Z` (or `launcher-vX.Y.Z`) tag, or None for any other tag.
+/// The launcher version in a `vX.Y.Z` tag of [`LAUNCHER_REPO`], or None for any other tag.
 pub fn launcher_version(tag: &str) -> Option<&str> {
     tag.strip_prefix(LAUNCHER_TAG_PREFIX)
-        .or_else(|| tag.strip_prefix(OLD_LAUNCHER_TAG_PREFIX))
         .filter(|v| v.starts_with(|c: char| c.is_ascii_digit()))
 }
 
-/// The tag this launcher was released as. launcher.yml gives it (`SUNRISE_LAUNCHER_TAG`); a release
-/// built before it did gave only the version, of a `launcher-v` tag; a build from source is
-/// Cargo.toml's version on the 0.2 line.
+/// The tag this launcher was released as: release.yml gives it (`SUNRISE_LAUNCHER_TAG`); any other build is `v` and its version.
 pub fn own_tag() -> String {
     own_tag_of(
         option_env!("SUNRISE_LAUNCHER_TAG"),
@@ -553,7 +544,7 @@ fn own_tag_of(tag: Option<&str>, injected: Option<&str>) -> String {
         injected.filter(|v| !v.is_empty()),
     ) {
         (Some(tag), _) => tag.to_string(),
-        (None, Some(version)) => format!("{OLD_LAUNCHER_TAG_PREFIX}{version}"),
+        (None, Some(version)) => format!("{LAUNCHER_TAG_PREFIX}{version}"),
         (None, None) => format!("{LAUNCHER_TAG_PREFIX}{}", env!("CARGO_PKG_VERSION")),
     }
 }
@@ -590,14 +581,15 @@ pub fn release_order(tag: &str) -> ReleaseOrder {
     if let Some(date) = crate::nightly::date_of(tag) {
         return ReleaseOrder::Nightly(date.to_owned());
     }
+    // The game repository's launcher tags (`launcher@X.Y.Z`, before that `launcher-vX.Y.Z`) still order among the rest.
     let semver = tag
-        .strip_prefix(LAUNCHER_TAG_PREFIX)
-        .or_else(|| tag.strip_prefix('v'))
+        .strip_prefix("launcher@")
+        .or_else(|| tag.strip_prefix(LAUNCHER_TAG_PREFIX))
         .and_then(semver_order);
     semver.unwrap_or_else(|| {
         let v = tag
-            .strip_prefix(OLD_LAUNCHER_TAG_PREFIX)
-            .or_else(|| tag.strip_prefix(LAUNCHER_TAG_PREFIX))
+            .strip_prefix("launcher-v")
+            .or_else(|| tag.strip_prefix("launcher@"))
             .unwrap_or(tag);
         let v = v.strip_prefix('v').unwrap_or(v);
         let mut parts: Vec<u64> = v
@@ -656,16 +648,38 @@ pub fn compare_versions(a: &str, b: &str) -> std::cmp::Ordering {
 /// ETag, and read through a configured mirror past GitHub's rate limit: [`crate::github`]).
 fn release_list() -> Result<serde_json::Value, String> {
     Ok(crate::github::json_optional(&format!(
-        "https://api.github.com/repos/{REPO}/releases?per_page=100"
+        "https://api.github.com/repos/{GAME_REPO}/releases?per_page=100"
     ))?
     .unwrap_or_else(|| serde_json::json!([])))
 }
 
-/// The releases in `list` whose tag passes `keep`, newest first, with the asset named `asset`.
+/// The game's releases in `list` whose tag passes `keep`, newest first, with the asset named `asset`, downloaded from [`GAME_REPO`].
 pub(crate) fn parse_releases(
     list: &serde_json::Value,
     asset: Option<&str>,
     keep: fn(&str) -> bool,
+) -> Vec<Release> {
+    parse_releases_from(list, asset, keep, crate::signed::asset_url)
+}
+
+/// This launcher's releases in `list` (from [`LAUNCHER_REPO`]), newest first, with the asset named `asset`, downloaded from there.
+pub(crate) fn parse_launcher_releases(
+    list: &serde_json::Value,
+    asset: Option<&str>,
+) -> Vec<Release> {
+    parse_releases_from(
+        list,
+        asset,
+        is_launcher_tag,
+        crate::signed::launcher_asset_url,
+    )
+}
+
+fn parse_releases_from(
+    list: &serde_json::Value,
+    asset: Option<&str>,
+    keep: fn(&str) -> bool,
+    url: fn(&str, &str) -> String,
 ) -> Vec<Release> {
     let mut out = Vec::new();
     for r in list.as_array().into_iter().flatten() {
@@ -675,8 +689,7 @@ pub(crate) fn parse_releases(
         }
         let found = r["assets"].as_array().into_iter().flatten().find_map(|a| {
             let name = a["name"].as_str()?;
-            (Some(name) == asset)
-                .then(|| Some((crate::signed::asset_url(tag, name), a["size"].as_u64()?)))?
+            (Some(name) == asset).then(|| Some((url(tag, name), a["size"].as_u64()?)))?
         });
         out.push(Release {
             tag: tag.into(),
@@ -759,39 +772,36 @@ fn game_releases_with(
     out
 }
 
-/// The launcher releases in `list` (the newest 100 releases). Game releases come out several times
-/// a day, so the newest launcher release can be older than all of those: then the newest
-/// `launcher@` and `launcher-v` tags are looked up one by one (a draft's tag is skipped: it has no
-/// public release).
-fn launcher_releases_in(list: &serde_json::Value) -> Vec<Release> {
-    launcher_releases_in_with(list, |url| crate::github::json_optional(&url))
+/// This launcher's releases, from [`LAUNCHER_REPO`] (read through the configured mirror like the game's).
+fn launcher_releases() -> Vec<Release> {
+    let list = crate::github::json_optional(&format!(
+        "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
+    ))
+    .ok()
+    .flatten()
+    .unwrap_or_else(|| serde_json::json!([]));
+    launcher_releases_in_with(&list, |url| crate::github::json_optional(&url))
 }
 
+/// The launcher releases in `list`; when none has this platform's archive, the newest `v` tags are looked up one by one (a draft's tag has no release and is skipped).
 fn launcher_releases_in_with(
     list: &serde_json::Value,
     json: impl Fn(String) -> Result<Option<serde_json::Value>, String>,
 ) -> Vec<Release> {
-    let found = parse_releases(list, launcher_asset(), is_launcher_tag);
+    let found = parse_launcher_releases(list, launcher_asset());
     if found.iter().any(|r| r.asset.is_some()) {
         return found;
     }
-    let api = format!("https://api.github.com/repos/{REPO}");
+    let api = format!("https://api.github.com/repos/{LAUNCHER_REPO}");
     let mut tags = Vec::new();
-    for prefix in [LAUNCHER_TAG_PREFIX, OLD_LAUNCHER_TAG_PREFIX] {
-        // Every `launcher@` tag is newer than every `launcher-v` one: those only when there is none.
-        if tags.is_empty() {
-            if let Ok(Some(refs)) = json(format!("{api}/git/matching-refs/tags/{prefix}")) {
-                tags = newest_launcher_tags(&refs);
-            }
-        }
+    if let Ok(Some(refs)) = json(format!(
+        "{api}/git/matching-refs/tags/{LAUNCHER_TAG_PREFIX}"
+    )) {
+        tags = newest_launcher_tags(&refs);
     }
     for tag in tags.into_iter().take(3) {
         if let Ok(Some(release)) = json(format!("{api}/releases/tags/{tag}")) {
-            let one = parse_releases(
-                &serde_json::json!([release]),
-                launcher_asset(),
-                is_launcher_tag,
-            );
+            let one = parse_launcher_releases(&serde_json::json!([release]), launcher_asset());
             if one.iter().any(|r| r.asset.is_some()) {
                 return one;
             }
@@ -871,7 +881,7 @@ impl Links {
 
 /// The links from main, or the built-in ones when offline.
 pub fn links() -> Links {
-    let url = format!("https://raw.githubusercontent.com/{REPO}/main/launcher/links.json");
+    let url = format!("https://raw.githubusercontent.com/{LAUNCHER_REPO}/main/links.json");
     get(&url)
         .ok()
         .and_then(|r| r.into_string().ok())
@@ -1040,7 +1050,7 @@ fn signed_digest(tag: &str, asset: &str) -> Result<String, String> {
     crate::signed::digest(
         tag,
         asset,
-        &sunrise_launcher_release_verify::trusted_keys_for(REPO),
+        &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
         fetch_small,
     )
 }
@@ -1165,7 +1175,7 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
                 github_tag,
                 &version,
                 asset,
-                &sunrise_launcher_release_verify::trusted_keys_for(REPO),
+                &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
                 fetch_small,
             )?
         }
@@ -1198,7 +1208,7 @@ fn release_file_digest(release: &Release, source: &str) -> Result<String, String
             source,
             &release.tag,
             RELEASE_FILE,
-            &sunrise_launcher_release_verify::trusted_keys_for(REPO),
+            &sunrise_launcher_release_verify::trusted_keys_for(GAME_REPO),
             fetch_small,
         ),
         None => signed_digest(source, RELEASE_FILE),
@@ -3176,8 +3186,7 @@ pub fn sunrise_update(releases: &[Release], installed: &[String]) -> Option<Rele
     newer.then(|| newest.clone())
 }
 
-/// The newest launcher release with an archive for this platform, if newer than this launcher
-/// ([`own_tag`]: a launcher from before 0.2 takes any `launcher@` release).
+/// The newest launcher release with an archive for this platform, if newer than this launcher ([`own_tag`]).
 pub fn launcher_update(releases: &[Release]) -> Option<Release> {
     launcher_update_from(releases, &own_tag())
 }
@@ -3196,7 +3205,12 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
 pub fn releases_and_updates(
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
 ) -> Result<Updates, String> {
-    releases_and_updates_with(release_list, installed, launcher_releases_in, on_releases)
+    releases_and_updates_with(
+        release_list,
+        installed,
+        |_| launcher_releases(),
+        on_releases,
+    )
 }
 
 fn releases_and_updates_with(
@@ -3778,7 +3792,12 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     {
         return Ok(None);
     }
-    let sha256 = signed_digest(&release.tag, launcher_asset().unwrap_or_default())?;
+    let sha256 = crate::signed::launcher_digest(
+        &release.tag,
+        launcher_asset().unwrap_or_default(),
+        &sunrise_launcher_release_verify::trusted_keys_for(LAUNCHER_REPO),
+        fetch_small,
+    )?;
     let work = update_work_dir();
     remove_abandoned_stages(&work, std::time::SystemTime::now(), process_alive);
     let stage = new_stage_folder(&work)?;
@@ -4901,44 +4920,25 @@ pub fn {f}("
             platform_assets("macos", "aarch64"),
             Some((
                 "sunrise-macos-arm64.zip",
-                if cfg!(sunrise_fork_launcher) {
-                    "sunrise-launcher-macos-arm64.zip"
-                } else {
-                    "horizon-launcher-macos-arm64.zip"
-                }
+                "sunrise-launcher-macos-arm64.zip"
             ))
         );
         assert_eq!(
             platform_assets("macos", "x86_64"),
-            Some((
-                "sunrise-macos-x64.zip",
-                if cfg!(sunrise_fork_launcher) {
-                    "sunrise-launcher-macos-x64.zip"
-                } else {
-                    "horizon-launcher-macos-x64.zip"
-                }
-            ))
+            Some(("sunrise-macos-x64.zip", "sunrise-launcher-macos-x64.zip"))
         );
         assert_eq!(
             platform_assets("windows", "x86_64"),
             Some((
                 "sunrise-windows-x64.zip",
-                if cfg!(sunrise_fork_launcher) {
-                    "sunrise-launcher-windows-x64.zip"
-                } else {
-                    "horizon-launcher-windows-x64.zip"
-                }
+                "sunrise-launcher-windows-x64.zip"
             ))
         );
         assert_eq!(
             platform_assets("windows", "aarch64"),
             Some((
                 "sunrise-windows-arm64.zip",
-                if cfg!(sunrise_fork_launcher) {
-                    "sunrise-launcher-windows-arm64.zip"
-                } else {
-                    "horizon-launcher-windows-arm64.zip"
-                }
+                "sunrise-launcher-windows-arm64.zip"
             ))
         );
         assert_eq!(platform_assets("linux", "aarch64"), None);
@@ -5260,26 +5260,18 @@ pub fn {f}("
     #[test]
     fn an_arm64_launcher_skips_a_release_without_its_zip() {
         let (arm, x64) = (
-            if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher-windows-arm64.zip"
-            } else {
-                "horizon-launcher-windows-arm64.zip"
-            },
-            if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher-windows-x64.zip"
-            } else {
-                "horizon-launcher-windows-x64.zip"
-            },
+            "sunrise-launcher-windows-arm64.zip",
+            "sunrise-launcher-windows-x64.zip",
         );
         let asset = |name: &str| serde_json::json!({"name": name, "browser_download_url": format!("https://example.test/{name}"), "size": 1});
         let list = serde_json::json!([
-            {"tag_name": "launcher@0.30.0", "assets": [asset(x64)]},
-            {"tag_name": "launcher@0.29.0", "assets": [asset(x64), asset(arm)]},
+            {"tag_name": "v1.3.0", "assets": [asset(x64)]},
+            {"tag_name": "v1.2.0", "assets": [asset(x64), asset(arm)]},
         ]);
-        let releases = parse_releases(&list, Some(arm), is_launcher_tag);
-        assert!(launcher_update_from(&releases, "launcher@0.29.0").is_none());
-        let update = launcher_update_from(&releases, "launcher@0.28.0").unwrap();
-        assert_eq!(update.tag, "launcher@0.29.0");
+        let releases = parse_launcher_releases(&list, Some(arm));
+        assert!(launcher_update_from(&releases, "v1.2.0").is_none());
+        let update = launcher_update_from(&releases, "v1.1.0").unwrap();
+        assert_eq!(update.tag, "v1.2.0");
         assert!(update.asset.unwrap().0.ends_with(arm));
     }
 
@@ -5412,31 +5404,33 @@ pub fn {f}("
     #[test]
     fn tags_never_mix() {
         assert!(is_game_tag("v2026.10.13"));
-        assert!(!is_game_tag("launcher-v0.2.0"));
-        assert!(!is_game_tag("vnext"));
-        assert_eq!(launcher_version("launcher-v0.2.0"), Some("0.2.0"));
-        assert_eq!(launcher_version("launcher@0.2.0"), Some("0.2.0"));
-        assert!(!is_game_tag("launcher@0.2.0"));
         assert!(is_game_tag("v0.2.0"));
-        assert!(is_launcher_tag("launcher@0.2.0"));
-        assert_eq!(launcher_version("v2026.10.13"), None);
-        assert_eq!(launcher_version("launcher-vx"), None);
-        let list = serde_json::json!([
-            {"tag_name": "v2026.10.12", "assets": [{"name": "sunrise-linux-x86_64.tar.gz", "browser_download_url": "u", "size": 1}]},
-            {"tag_name": "launcher-v9.0.0", "assets": [{"name": if cfg!(sunrise_fork_launcher) { "sunrise-launcher-linux-x86_64.tar.gz" } else { "horizon-launcher-linux-x86_64.tar.gz" }, "browser_download_url": "u", "size": 1}]},
+        assert!(!is_game_tag("launcher@1.0.0"));
+        assert!(!is_game_tag("vnext"));
+        assert_eq!(launcher_version("v1.2.0"), Some("1.2.0"));
+        assert_eq!(launcher_version("vnext"), None);
+        assert_eq!(launcher_version("launcher@1.0.0"), None);
+        // Each list comes from its own repository: the game's still carries `launcher@1.0.0`, never a game release.
+        let file = |name: &str| serde_json::json!([{"name": name, "browser_download_url": "u", "size": 1}]);
+        let game_list = serde_json::json!([
+            {"tag_name": "v2026.10.12", "assets": file("sunrise-linux-x86_64.tar.gz")},
+            {"tag_name": "launcher@1.0.0", "assets": file("sunrise-launcher-linux-x86_64.tar.gz")},
             {"tag_name": "v2026.10.13", "assets": []},
-            {"tag_name": "launcher-v0.0.1", "draft": true, "assets": []},
         ]);
-        let game: Vec<_> = parse_releases(&list, ASSET, is_game_tag)
+        let game: Vec<_> = parse_releases(&game_list, ASSET, is_game_tag)
             .into_iter()
             .map(|r| r.tag)
             .collect();
         assert_eq!(game, ["v2026.10.13", "v2026.10.12"]);
-        let launcher: Vec<_> = parse_releases(&list, LAUNCHER_ASSET, is_launcher_tag)
+        let launcher_list = serde_json::json!([
+            {"tag_name": "v1.1.0", "assets": file("sunrise-launcher-linux-x86_64.tar.gz")},
+            {"tag_name": "v1.0.9", "draft": true, "assets": []},
+        ]);
+        let launcher: Vec<_> = parse_launcher_releases(&launcher_list, LAUNCHER_ASSET)
             .into_iter()
             .map(|r| r.tag)
             .collect();
-        assert_eq!(launcher, ["launcher-v9.0.0"]);
+        assert_eq!(launcher, ["v1.1.0"]);
     }
 
     /// Rolling a release back (`gh release edit <tag> --draft`, docs/release-flow.md) makes the
@@ -5728,28 +5722,18 @@ pub fn {f}("
 
     #[test]
     fn a_launcher_knows_which_line_it_was_released_on() {
-        // launcher.yml gives the tag; before it did, a release had only its `launcher-v` version.
-        assert_eq!(
-            own_tag_of(Some("launcher@0.2.3"), Some("0.2.3")),
-            "launcher@0.2.3"
-        );
-        assert_eq!(
-            own_tag_of(Some("launcher-v0.17.0"), Some("0.17.0")),
-            "launcher-v0.17.0"
-        );
-        assert_eq!(own_tag_of(None, Some("0.16.0")), "launcher-v0.16.0");
-        assert_eq!(own_tag_of(Some(""), Some("0.16.0")), "launcher-v0.16.0");
-        // A build from source is on the 0.2 line.
+        // release.yml gives the tag; a build without one is its version as a tag of this repository.
+        assert_eq!(own_tag_of(Some("v1.1.0"), Some("1.1.0")), "v1.1.0");
+        assert_eq!(own_tag_of(None, Some("1.1.0")), "v1.1.0");
+        assert_eq!(own_tag_of(Some(""), Some("1.1.0")), "v1.1.0");
         assert_eq!(
             own_tag_of(None, None),
-            format!("launcher@{}", env!("CARGO_PKG_VERSION"))
+            format!("v{}", env!("CARGO_PKG_VERSION"))
         );
     }
 
-    /// The update path to 0.2 (docs/versioning.md): launchers from before it take the last
-    /// `launcher-v` release, which takes every `launcher@` one.
     #[test]
-    fn launchers_from_before_0_2_update_to_it() {
+    fn a_launcher_from_the_game_repository_updates_to_this_repositorys_releases() {
         let r = |tag: &str| Release {
             tag: tag.into(),
             name: String::new(),
@@ -5760,39 +5744,20 @@ pub fn {f}("
             prerelease: false,
             nightly: None,
         };
-        let mut list = vec![
-            r("launcher-v0.16.0"),
-            r("launcher@0.2.0"),
-            r("launcher-v0.17.0"),
-            r("launcher@0.2.1"),
-        ];
+        let mut list = vec![r("v1.1.0"), r("v1.0.1"), r("v1.2.0")];
         list.sort_by(|a, b| compare_versions(&b.tag, &a.tag));
         let tags: Vec<_> = list.iter().map(|r| r.tag.as_str()).collect();
-        assert_eq!(
-            tags,
-            [
-                "launcher@0.2.1",
-                "launcher@0.2.0",
-                "launcher-v0.17.0",
-                "launcher-v0.16.0"
-            ]
-        );
+        assert_eq!(tags, ["v1.2.0", "v1.1.0", "v1.0.1"]);
         let offered = |own: &str| launcher_update_from(&list, own).map(|r| r.tag);
-        assert_eq!(offered("launcher-v0.16.0"), Some("launcher@0.2.1".into()));
-        assert_eq!(offered("launcher-v0.17.0"), Some("launcher@0.2.1".into()));
-        assert_eq!(offered("launcher@0.2.0"), Some("launcher@0.2.1".into()));
-        assert_eq!(offered("launcher@0.2.1"), None);
-        assert_eq!(offered("launcher@0.3.0-rc.1"), None);
-        // The old launchers' own check only sees `launcher-v` tags: 0.17.0 is their way over.
-        let old_scheme: Vec<_> = list
-            .iter()
-            .filter(|r| r.tag.starts_with(OLD_LAUNCHER_TAG_PREFIX))
-            .cloned()
-            .collect();
-        assert_eq!(
-            launcher_update_from(&old_scheme, "launcher-v0.16.0").map(|r| r.tag),
-            Some("launcher-v0.17.0".into())
-        );
+        // 1.0.0 was released from the game repository as launcher@1.0.0.
+        assert_eq!(offered("launcher@1.0.0"), Some("v1.2.0".into()));
+        assert_eq!(offered("v1.1.0"), Some("v1.2.0".into()));
+        assert_eq!(offered("v1.2.0"), None);
+        assert_eq!(offered("v1.3.0-rc.1"), None);
+        // Only this repository's own tags are launcher releases here.
+        assert_eq!(launcher_version("v1.2.0"), Some("1.2.0"));
+        assert_eq!(launcher_version("launcher@1.0.0"), None);
+        assert_eq!(launcher_version("nightly"), None);
     }
 
     /// A launcher in an AppImage updates with the AppImage's own file: the `.tar.gz` binary would
@@ -5804,11 +5769,7 @@ pub fn {f}("
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
         assert_eq!(
             launcher_asset_running_from(true),
-            Some(if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher-linux-x86_64.AppImage"
-            } else {
-                "horizon-launcher-linux-x86_64.AppImage"
-            })
+            Some("sunrise-launcher-linux-x86_64.AppImage")
         );
     }
 
@@ -6081,51 +6042,33 @@ pub fn {f}("
     }
 
     #[test]
-    fn the_fallback_looks_for_0_2_launchers_first() {
+    fn the_fallback_asks_for_this_repositorys_tags() {
         // The asset the launcher reading this list installs with (the AppImage's own when it runs
         // from one), as launcher_releases_in_with looks for it.
         let asset = launcher_asset().unwrap_or("unsupported");
-        let release = |tag: &str| serde_json::json!({"tag_name": tag, "assets": [{"name": asset, "browser_download_url": "u", "size": 1}]});
         let asked = std::cell::RefCell::new(Vec::new());
-        let lookup = |with_new: bool| {
-            asked.borrow_mut().clear();
-            launcher_releases_in_with(&serde_json::json!([]), |url| {
-                asked
-                    .borrow_mut()
-                    .push(url.rsplit('/').next().unwrap_or("").to_string());
-                if url.ends_with("matching-refs/tags/launcher@") {
-                    Ok(Some(serde_json::json!(if with_new {
-                        vec![serde_json::json!({"ref": "refs/tags/launcher@0.2.0"})]
-                    } else {
-                        Vec::new()
-                    })))
-                } else if url.ends_with("matching-refs/tags/launcher-v") {
-                    Ok(Some(
-                        serde_json::json!([{"ref": "refs/tags/launcher-v0.17.0"}]),
-                    ))
-                } else {
-                    Ok(Some(release(url.rsplit('/').next().unwrap_or(""))))
-                }
-            })
-            .into_iter()
-            .map(|r| r.tag)
-            .collect::<Vec<_>>()
-        };
-        assert_eq!(lookup(true), ["launcher@0.2.0"]);
-        assert_eq!(*asked.borrow(), ["launcher@", "launcher@0.2.0"]);
-        // Before the first `launcher@` release, the `launcher-v` ones.
-        assert_eq!(lookup(false), ["launcher-v0.17.0"]);
-        assert_eq!(
-            *asked.borrow(),
-            ["launcher@", "launcher-v", "launcher-v0.17.0"]
-        );
+        let found = launcher_releases_in_with(&serde_json::json!([]), |url| {
+            assert!(url.starts_with("https://api.github.com/repos/sunrise-org/sunrise-launcher/"));
+            let last = url.rsplit('/').next().unwrap_or("").to_string();
+            asked.borrow_mut().push(last.clone());
+            if url.ends_with("matching-refs/tags/v") {
+                Ok(Some(serde_json::json!([{"ref": "refs/tags/v1.1.0"}])))
+            } else {
+                Ok(Some(serde_json::json!({"tag_name": last, "assets": [
+                    {"name": asset, "browser_download_url": "u", "size": 1}
+                ]})))
+            }
+        })
+        .into_iter()
+        .map(|r| r.tag)
+        .collect::<Vec<_>>();
+        assert_eq!(found, ["v1.1.0"]);
+        assert_eq!(*asked.borrow(), ["v", "v1.1.0"]);
     }
 
     #[test]
     fn tags_without_a_release_never_hide_the_newest_launcher() {
-        // Sunrise's repository carries Sunrise's `launcher@0.2.x` tags without releases, and a
-        // draft's tag has none either: the 1.0 line sorts above them, and a tag that has no
-        // release is skipped, never an error.
+        // A draft's tag has no release: it is skipped, never an error.
         let asset = launcher_asset().unwrap_or("unsupported");
         let asked = std::cell::RefCell::new(Vec::new());
         let lookup = |refs: serde_json::Value| {
@@ -6133,11 +6076,9 @@ pub fn {f}("
             launcher_releases_in_with(&serde_json::json!([]), |url| {
                 let last = url.rsplit('/').next().unwrap_or("").to_string();
                 asked.borrow_mut().push(last.clone());
-                if url.ends_with("matching-refs/tags/launcher@") {
+                if url.ends_with("matching-refs/tags/v") {
                     Ok(Some(refs.clone()))
-                } else if url.ends_with("matching-refs/tags/launcher-v") {
-                    Ok(Some(serde_json::json!([])))
-                } else if last == "launcher@1.0.0" {
+                } else if last == "v1.1.0" {
                     Ok(Some(serde_json::json!({"tag_name": last, "assets": [
                         {"name": asset, "browser_download_url": "u", "size": 1}
                     ]})))
@@ -6150,41 +6091,23 @@ pub fn {f}("
             .collect::<Vec<_>>()
         };
         let tag = |name: &str| serde_json::json!({"ref": format!("refs/tags/{name}")});
-        let mut refs: Vec<_> = (0..=25)
-            .map(|n| tag(&format!("launcher@0.2.{n}")))
-            .collect();
-        refs.push(tag("launcher@1.0.0"));
-        refs.push(tag("launcher@1.0.1"));
-        assert_eq!(lookup(serde_json::json!(refs)), ["launcher@1.0.0"]);
-        assert_eq!(
-            *asked.borrow(),
-            ["launcher@", "launcher@1.0.1", "launcher@1.0.0"]
-        );
-        // Only the inherited tags, before Sunrise's first release: no update, and no error.
-        refs.truncate(26);
-        assert!(lookup(serde_json::json!(refs)).is_empty());
+        let refs = vec![tag("v1.0.9"), tag("v1.1.0"), tag("v1.1.1")];
+        assert_eq!(lookup(serde_json::json!(refs)), ["v1.1.0"]);
+        assert_eq!(*asked.borrow(), ["v", "v1.1.1", "v1.1.0"]);
+        // Before this repository's first release: no update, and no error.
+        assert!(lookup(serde_json::json!([])).is_empty());
         assert!(launcher_update_from(&[], "launcher@1.0.0").is_none());
     }
 
     #[test]
     fn launcher_tags_from_matching_refs_newest_first() {
         let refs = serde_json::json!([
-            {"ref": "refs/tags/launcher-v0.1.9"},
-            {"ref": "refs/tags/launcher-v0.1.10"},
-            {"ref": "refs/tags/launcher-vnext"},
-            {"ref": "refs/tags/v2026.10.15"},
-            {"ref": "refs/tags/launcher-v0.2.0"},
-            {"ref": "refs/tags/launcher@0.2.0"},
+            {"ref": "refs/tags/v1.0.9"},
+            {"ref": "refs/tags/v1.0.10"},
+            {"ref": "refs/tags/vnext"},
+            {"ref": "refs/tags/v1.1.0"},
         ]);
-        assert_eq!(
-            newest_launcher_tags(&refs),
-            [
-                "launcher@0.2.0",
-                "launcher-v0.2.0",
-                "launcher-v0.1.10",
-                "launcher-v0.1.9"
-            ]
-        );
+        assert_eq!(newest_launcher_tags(&refs), ["v1.1.0", "v1.0.10", "v1.0.9"]);
     }
 
     #[test]
@@ -6992,11 +6915,7 @@ esac"#
     #[test]
     fn launcher_versions_read_from_the_binary() {
         assert_eq!(
-            parse_version_output(if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher 0.1.5\n"
-            } else {
-                "horizon-launcher 0.1.5\n"
-            }),
+            parse_version_output("sunrise-launcher 0.1.5\n"),
             Some("0.1.5")
         );
         assert_eq!(parse_version_output("something else"), None);

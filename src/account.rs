@@ -1189,11 +1189,7 @@ impl SecretStore for SystemStore {
             let attributes = vec![("service", SERVICE), ("account", key)];
             keyring
                 .create_item(
-                    if cfg!(sunrise_fork_launcher) {
-                        "Sunrise Launcher: Minecraft account"
-                    } else {
-                        "Horizon launcher: Minecraft account"
-                    },
+                    "Sunrise Launcher: Minecraft account",
                     &attributes,
                     secret.as_bytes(),
                     true,
