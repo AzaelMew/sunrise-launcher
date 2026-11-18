@@ -522,7 +522,6 @@ impl Launcher {
                 .track_scroll(&self.ui.mods.packs.scroll)
                 .child(body),
         )
-        .bg(c(palette().background))
         .into_any_element()
     }
 }

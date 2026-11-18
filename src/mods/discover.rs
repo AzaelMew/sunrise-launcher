@@ -354,7 +354,6 @@ impl Launcher {
                 }
             }),
         )
-        .bg(c(palette().background))
         .into_any_element()
     }
 }

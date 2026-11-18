@@ -516,9 +516,11 @@ impl Launcher {
             .flex()
             .flex_col()
             .rounded(px(tokens::R_PANEL))
-            .bg(palette().chrome_plate())
-            .border_1()
-            .border_color(rgb(palette().divider))
+            .when(page != Page::Home, |d| {
+                d.bg(palette().chrome_plate())
+                    .border_1()
+                    .border_color(rgb(palette().divider))
+            })
             .overflow_hidden()
             .child(content);
         let mut frame = div()

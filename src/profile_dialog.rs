@@ -14,6 +14,7 @@ impl Launcher {
     pub(super) fn new_profile(&mut self, cx: &mut Context<Self>) {
         self.servers.text(Field::InstanceName).set(String::new());
         self.servers.text(Field::InstanceGroup).set(String::new());
+        self.focus_handle(Field::InstanceName, cx);
         self.servers.focus_soon = Some(Field::InstanceName);
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
@@ -39,6 +40,11 @@ impl Launcher {
             d.pin.clone(),
             d.error.clone(),
         );
+        let picture = d
+            .picture
+            .as_ref()
+            .and_then(Option::as_ref)
+            .map(|c| c.preview.clone());
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
         let ready = !name.is_empty() && !busy;
@@ -63,18 +69,30 @@ impl Launcher {
             .gap(px(12.))
             .rounded(px(tokens::R_CARD))
             .bg(p.card())
-            .child(match icon.as_ref() {
-                Some(Icon::Colour(c)) => div()
+            .child(if let Some(image) = picture {
+                div()
                     .size(px(64.))
                     .rounded(px(14.))
-                    .bg(rgb(
-                        u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap_or(p.accent)
-                    ))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(blocks::icon("package", 34., rgb(p.accent_on).into())),
-                _ => crate::mark(64.),
+                    .overflow_hidden()
+                    .child(
+                        gpui::img(image)
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    )
+            } else {
+                match icon.as_ref() {
+                    Some(Icon::Colour(c)) => div()
+                        .size(px(64.))
+                        .rounded(px(14.))
+                        .bg(rgb(
+                            u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap_or(p.accent)
+                        ))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(blocks::icon("package", 34., rgb(p.accent_on).into())),
+                    _ => crate::mark(64.),
+                }
             })
             .child(
                 div()
@@ -193,6 +211,7 @@ impl Launcher {
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                         d.icon = None;
+                        d.picture = None;
                     }
                     cx.notify();
                 })),
@@ -213,11 +232,18 @@ impl Launcher {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                             d.icon = Some(choice.clone());
+                            d.picture = None;
                         }
                         cx.notify();
                     })),
             );
         }
+        icons = icons.child(button("new-picture", tr("Picture…")).on_click(cx.listener(
+            |this, _, _, cx| {
+                this.choose_profile_picture(cx);
+                cx.notify();
+            },
+        )));
         let body = div()
             .flex()
             .flex_col()
