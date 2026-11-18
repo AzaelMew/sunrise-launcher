@@ -20,7 +20,7 @@ use crate::launch_state::Main;
 use crate::paint::palette;
 use crate::sheets::Sheet;
 use crate::worlds_page;
-use gpui::{rgb, rgba};
+use gpui::rgb;
 use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
@@ -483,7 +483,7 @@ impl Launcher {
     }
 
     /// A world's picture: its own `icon.png`, drawn big and sharp; else `dirt.png` of the
-    /// player's own game files, darkened; else plain charcoal.
+    /// player's own game files, under the theme's scrim; else plain charcoal.
     fn world_art(&mut self, world: &World) -> Div {
         let scale = self.scale;
         let band = div()
@@ -539,7 +539,7 @@ impl Launcher {
                     tiles = tiles.child(gpui::img(image.clone()).flex_none().w(px(w)).h(px(h)));
                 }
                 band.child(tiles)
-                    .child(div().absolute().inset_0().bg(rgba(0x0000_0073)))
+                    .child(div().absolute().inset_0().bg(palette().scrim()))
             }
             // No dirt: plain charcoal a step above the card, no letter.
             None => band.bg(rgb(palette().selected)),
