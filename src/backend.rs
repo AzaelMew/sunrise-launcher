@@ -524,10 +524,9 @@ pub fn is_game_tag(tag: &str) -> bool {
         .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
 }
 
-/// The launcher version in a `vX.Y.Z` tag of [`LAUNCHER_REPO`], or None for any other tag.
+/// The launcher version in a `vX.Y.Z` tag of [`LAUNCHER_REPO`], or None for any other tag: the verifier's own grammar, so discovery never takes a tag it would refuse.
 pub fn launcher_version(tag: &str) -> Option<&str> {
-    tag.strip_prefix(LAUNCHER_TAG_PREFIX)
-        .filter(|v| v.starts_with(|c: char| c.is_ascii_digit()))
+    sunrise_launcher_release_verify::launcher_version(tag)
 }
 
 /// The tag this launcher was released as: release.yml gives it (`SUNRISE_LAUNCHER_TAG`); any other build is `v` and its version.
@@ -772,56 +771,15 @@ fn game_releases_with(
     out
 }
 
-/// This launcher's releases, from [`LAUNCHER_REPO`] (read through the configured mirror like the game's).
-fn launcher_releases() -> Vec<Release> {
+/// This launcher's releases, from [`LAUNCHER_REPO`] on GitHub only, or why they couldn't be read.
+fn launcher_releases() -> Result<Vec<Release>, String> {
     let list = crate::github::json_optional(&format!(
         "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
-    ))
-    .ok()
-    .flatten()
-    .unwrap_or_else(|| serde_json::json!([]));
-    launcher_releases_in_with(&list, |url| crate::github::json_optional(&url))
-}
-
-/// The launcher releases in `list`; when none has this platform's archive, the newest `v` tags are looked up one by one (a draft's tag has no release and is skipped).
-fn launcher_releases_in_with(
-    list: &serde_json::Value,
-    json: impl Fn(String) -> Result<Option<serde_json::Value>, String>,
-) -> Vec<Release> {
-    let found = parse_launcher_releases(list, launcher_asset());
-    if found.iter().any(|r| r.asset.is_some()) {
-        return found;
-    }
-    let api = format!("https://api.github.com/repos/{LAUNCHER_REPO}");
-    let mut tags = Vec::new();
-    if let Ok(Some(refs)) = json(format!(
-        "{api}/git/matching-refs/tags/{LAUNCHER_TAG_PREFIX}"
-    )) {
-        tags = newest_launcher_tags(&refs);
-    }
-    for tag in tags.into_iter().take(3) {
-        if let Ok(Some(release)) = json(format!("{api}/releases/tags/{tag}")) {
-            let one = parse_launcher_releases(&serde_json::json!([release]), launcher_asset());
-            if one.iter().any(|r| r.asset.is_some()) {
-                return one;
-            }
-        }
-    }
-    found
-}
-
-/// The launcher tags in GitHub's matching-refs answer, newest first.
-fn newest_launcher_tags(refs: &serde_json::Value) -> Vec<String> {
-    let mut tags: Vec<String> = refs
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|r| r["ref"].as_str()?.strip_prefix("refs/tags/"))
-        .filter(|t| is_launcher_tag(t))
-        .map(String::from)
-        .collect();
-    tags.sort_by(|a, b| compare_versions(b, a));
-    tags
+    ))?;
+    // A repository with no release yet answers an empty list; a missing one, 404: no update either way.
+    Ok(list.map_or_else(Vec::new, |list| {
+        parse_launcher_releases(&list, launcher_asset())
+    }))
 }
 
 /// The newest Sunrise release that has a build for this platform.
@@ -879,11 +837,24 @@ impl Links {
     }
 }
 
-/// The links from main, or the built-in ones when offline.
+/// The links from main, or the built-in ones when offline or answered with anything but the file itself.
 pub fn links() -> Links {
     let url = format!("https://raw.githubusercontent.com/{LAUNCHER_REPO}/main/links.json");
-    get(&url)
+    // No redirect is followed: links.json comes from this host over HTTPS or not at all.
+    let agent = crate::proxy::agent(
+        ureq::AgentBuilder::new()
+            .user_agent(&format!("sunrise-launcher/{VERSION}"))
+            .timeout_connect(std::time::Duration::from_secs(15))
+            .timeout_read(std::time::Duration::from_secs(60))
+            .redirects(0),
+        &url,
+    )
+    .build();
+    agent
+        .get(&url)
+        .call()
         .ok()
+        .filter(|r| r.status() == 200)
         .and_then(|r| r.into_string().ok())
         .map_or_else(Links::default, |text| Links::parse(&text))
 }
@@ -3166,11 +3137,14 @@ impl Logged {
 
 // ----- Updates -----------------------------------------------------------------------------------
 
-/// What a check found: a Sunrise build newer than every installed one, and a newer launcher.
+/// What a check found: a Sunrise build newer than every installed one, and a newer launcher. Each feed is checked on
+/// its own, and a feed that couldn't be read says why instead of passing for "up to date".
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Updates {
     pub sunrise: Option<Release>,
     pub launcher: Option<Release>,
+    pub sunrise_error: Option<String>,
+    pub launcher_error: Option<String>,
 }
 
 /// The newest Sunrise build with a build here (the current Nightly), if it isn't installed and
@@ -3198,42 +3172,37 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Load the game's release list and both update kinds from the same GitHub response.
-/// Publish the game releases before any fallback lookups for older launcher tags, so those
-/// lookups cannot hold up the release pages or opening animation. A list error reaches both.
-pub fn releases_and_updates(
-    on_releases: impl FnOnce(Result<Vec<Release>, String>),
-) -> Result<Updates, String> {
-    releases_and_updates_with(
-        release_list,
-        installed,
-        |_| launcher_releases(),
-        on_releases,
-    )
+/// Load the game's release list and the launcher's, and both update kinds. The game releases are published first,
+/// so the launcher's lookup can't hold up the release pages; neither feed's failure stops the other's check.
+pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String>)) -> Updates {
+    releases_and_updates_with(release_list, installed, launcher_releases, on_releases)
 }
 
 fn releases_and_updates_with(
     load: impl FnOnce() -> Result<serde_json::Value, String>,
     installed: impl FnOnce() -> Vec<String>,
-    launchers: impl FnOnce(&serde_json::Value) -> Vec<Release>,
+    launchers: impl FnOnce() -> Result<Vec<Release>, String>,
     on_releases: impl FnOnce(Result<Vec<Release>, String>),
-) -> Result<Updates, String> {
-    let list = match load() {
-        Ok(list) => list,
+) -> Updates {
+    let mut updates = Updates::default();
+    match load() {
+        Ok(list) => {
+            let releases = game_releases(&list);
+            let installed_versions = installed();
+            updates.sunrise = sunrise_update(&installable_updates(&releases), &installed_versions)
+                .or_else(|| architecture_update(&releases, &installed_versions));
+            on_releases(Ok(releases));
+        }
         Err(e) => {
             on_releases(Err(e.clone()));
-            return Err(e);
+            updates.sunrise_error = Some(e);
         }
-    };
-    let releases = game_releases(&list);
-    let installed_versions = installed();
-    let sunrise = sunrise_update(&installable_updates(&releases), &installed_versions)
-        .or_else(|| architecture_update(&releases, &installed_versions));
-    on_releases(Ok(releases));
-    Ok(Updates {
-        sunrise,
-        launcher: launcher_update(&launchers(&list)),
-    })
+    }
+    match launchers() {
+        Ok(launchers) => updates.launcher = launcher_update(&launchers),
+        Err(e) => updates.launcher_error = Some(e),
+    }
+    updates
 }
 
 /// If the selected installed game has the wrong architecture, offer the same release again so
@@ -3255,7 +3224,7 @@ fn architecture_update(releases: &[Release], installed: &[String]) -> Option<Rel
 }
 
 /// A fresh release-list request for both kinds of update (plus older-launcher fallback if needed).
-pub fn check_updates() -> Result<Updates, String> {
+pub fn check_updates() -> Updates {
     releases_and_updates(|_| {})
 }
 
@@ -3794,7 +3763,7 @@ pub fn stage_update(release: &Release, progress: impl Fn(f32)) -> Result<Option<
     let sha256 = crate::signed::launcher_digest(
         &release.tag,
         launcher_asset().unwrap_or_default(),
-        &sunrise_launcher_release_verify::trusted_keys_for(LAUNCHER_REPO),
+        &sunrise_launcher_release_verify::trusted_launcher_keys(),
         fetch_small,
     )?;
     let work = update_work_dir();
@@ -6041,72 +6010,32 @@ pub fn {f}("
     }
 
     #[test]
-    fn the_fallback_asks_for_this_repositorys_tags() {
-        // The asset the launcher reading this list installs with (the AppImage's own when it runs
-        // from one), as launcher_releases_in_with looks for it.
-        let asset = launcher_asset().unwrap_or("unsupported");
-        let asked = std::cell::RefCell::new(Vec::new());
-        let found = launcher_releases_in_with(&serde_json::json!([]), |url| {
-            assert!(url.starts_with("https://api.github.com/repos/sunrise-org/sunrise-launcher/"));
-            let last = url.rsplit('/').next().unwrap_or("").to_string();
-            asked.borrow_mut().push(last.clone());
-            if url.ends_with("matching-refs/tags/v") {
-                Ok(Some(serde_json::json!([{"ref": "refs/tags/v1.1.0"}])))
-            } else {
-                Ok(Some(serde_json::json!({"tag_name": last, "assets": [
-                    {"name": asset, "browser_download_url": "u", "size": 1}
-                ]})))
-            }
-        })
-        .into_iter()
-        .map(|r| r.tag)
-        .collect::<Vec<_>>();
-        assert_eq!(found, ["v1.1.0"]);
-        assert_eq!(*asked.borrow(), ["v", "v1.1.0"]);
+    fn before_the_first_launcher_release_there_is_no_update() {
+        assert!(parse_launcher_releases(&serde_json::json!([]), launcher_asset()).is_empty());
+        assert!(launcher_update_from(&[], "v1.0.0").is_none());
     }
 
     #[test]
-    fn tags_without_a_release_never_hide_the_newest_launcher() {
-        // A draft's tag has no release: it is skipped, never an error.
+    fn launcher_discovery_keeps_only_exact_vxyz_tags() {
         let asset = launcher_asset().unwrap_or("unsupported");
-        let asked = std::cell::RefCell::new(Vec::new());
-        let lookup = |refs: serde_json::Value| {
-            asked.borrow_mut().clear();
-            launcher_releases_in_with(&serde_json::json!([]), |url| {
-                let last = url.rsplit('/').next().unwrap_or("").to_string();
-                asked.borrow_mut().push(last.clone());
-                if url.ends_with("matching-refs/tags/v") {
-                    Ok(Some(refs.clone()))
-                } else if last == "v1.1.0" {
-                    Ok(Some(serde_json::json!({"tag_name": last, "assets": [
-                        {"name": asset, "browser_download_url": "u", "size": 1}
-                    ]})))
-                } else {
-                    Ok(None)
-                }
-            })
+        let release = |tag: &str| {
+            serde_json::json!({"tag_name": tag, "assets": [
+                {"name": asset, "browser_download_url": "u", "size": 1}
+            ]})
+        };
+        let list = serde_json::json!([
+            "v1.1.0",
+            "v1.2.0-rc1",
+            "v1.2",
+            "v1.3.0/../x",
+            "launcher@1.4.0"
+        ]
+        .map(release));
+        let tags: Vec<_> = parse_launcher_releases(&list, launcher_asset())
             .into_iter()
             .map(|r| r.tag)
-            .collect::<Vec<_>>()
-        };
-        let tag = |name: &str| serde_json::json!({"ref": format!("refs/tags/{name}")});
-        let refs = vec![tag("v1.0.9"), tag("v1.1.0"), tag("v1.1.1")];
-        assert_eq!(lookup(serde_json::json!(refs)), ["v1.1.0"]);
-        assert_eq!(*asked.borrow(), ["v", "v1.1.1", "v1.1.0"]);
-        // Before this repository's first release: no update, and no error.
-        assert!(lookup(serde_json::json!([])).is_empty());
-        assert!(launcher_update_from(&[], "launcher@1.0.0").is_none());
-    }
-
-    #[test]
-    fn launcher_tags_from_matching_refs_newest_first() {
-        let refs = serde_json::json!([
-            {"ref": "refs/tags/v1.0.9"},
-            {"ref": "refs/tags/v1.0.10"},
-            {"ref": "refs/tags/vnext"},
-            {"ref": "refs/tags/v1.1.0"},
-        ]);
-        assert_eq!(newest_launcher_tags(&refs), ["v1.1.0", "v1.0.10", "v1.0.9"]);
+            .collect();
+        assert_eq!(tags, ["v1.1.0"]);
     }
 
     #[test]

@@ -102,9 +102,14 @@ impl Launcher {
                         )]
                     )
                 ),
-                None if self.checked.is_some() && self.update_error.is_none() => {
-                    format!("{}  ·  {}", backend::VERSION, tr("up to date"))
-                }
+                None if self.checked.is_some() => match &self.updates.launcher_error {
+                    Some(e) => format!(
+                        "{}  ·  {}",
+                        backend::VERSION,
+                        trf("Not checked: {error}", &[("error", e)])
+                    ),
+                    None => format!("{}  ·  {}", backend::VERSION, tr("up to date")),
+                },
                 None => backend::VERSION.to_string(),
             },
         };

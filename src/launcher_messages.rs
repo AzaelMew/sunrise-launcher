@@ -243,8 +243,8 @@ impl Launcher {
                         self.installed = backend::installed();
                     }
                 }
-                Msg::Updates(Ok(updates)) => {
-                    self.update_error = None;
+                Msg::Updates(updates) => {
+                    self.update_error = updates.sunrise_error.clone();
                     self.updates = *updates;
                     if !cfg!(feature = "redesign-preview") && self.settings.auto_install() {
                         self.install_update();
@@ -255,7 +255,6 @@ impl Launcher {
                         }
                     }
                 }
-                Msg::Updates(Err(e)) => self.update_error = Some(e),
                 Msg::NativeRegistryConsent(inventory, reply) => {
                     if cfg!(feature = "redesign-preview") {
                         self.alt_registry_consent(inventory, reply);

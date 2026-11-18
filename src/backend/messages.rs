@@ -16,7 +16,7 @@ pub enum Msg {
     Line(Job, String),
     Exit(Job, Result<(), String>),
     /// Boxed: two releases, the largest message by far.
-    Updates(Result<Box<Updates>, String>),
+    Updates(Box<Updates>),
     LauncherProgress(f32),
     LauncherUpdated(Result<Option<Staged>, String>),
     /// `reuse_prepared_everywhere` prepared these versions.
