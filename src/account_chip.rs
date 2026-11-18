@@ -107,7 +107,7 @@ impl Launcher {
     fn face(&self, uuid: &str) -> Div {
         div()
             .flex_none()
-            .rounded(px(tokens::R_SMALL))
+            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
             .overflow_hidden()
             .child(
                 self.profile_heads
@@ -158,7 +158,7 @@ impl Launcher {
             .h(px(tokens::ACTION))
             .pl(px(8.))
             .pr(px(10.))
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(palette().input_edge())
             .bg(palette().input_fill())
@@ -310,7 +310,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .p(px(8.))
-            .rounded(px(tokens::R_CARD))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
             .border_color(rgb(palette().line))
             .bg(rgb(palette().raised))

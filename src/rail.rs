@@ -110,7 +110,7 @@ impl Launcher {
                 .h(px(40.))
                 .flex_none()
                 .w_full()
-                .rounded(px(tokens::R_CONTROL))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .border_1()
                 .border_color(if on {
                     rgb(p.accent_ink).into()
@@ -151,7 +151,7 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(tokens::R_SMALL))
+                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                     .cursor_pointer()
                     .hover(|d| d.bg(rgb(p.chrome_raised)))
                     .tooltip(crate::glass_ui::tip(if wide {
@@ -220,7 +220,7 @@ impl Launcher {
             .flex_none()
             .gap(px(4.))
             .p(px(5.))
-            .rounded(px(tokens::R_PANEL))
+            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .bg(p.chrome_plate())
             .border_1()
             .border_color(rgb(p.divider))

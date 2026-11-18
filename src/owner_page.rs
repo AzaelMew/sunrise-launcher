@@ -58,7 +58,7 @@ impl Launcher {
         let panel = || {
             div()
                 .p(px(16.))
-                .rounded(px(tokens::R_CARD))
+                .rounded(crate::tokens::r(crate::tokens::R_CARD))
                 .border_1()
                 .border_color(rgb(palette().divider))
                 .bg(rgb(palette().background))
@@ -75,7 +75,7 @@ impl Launcher {
             .max_h_full()
             .overflow_y_scroll().track_scroll(&crate::frame::scrolls("sign-in"))
             .p(px(28.))
-            .rounded(px(tokens::R_PANEL))
+            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .border_1()
             .border_color(rgb(palette().line))
             .bg(palette().card())

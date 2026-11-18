@@ -65,13 +65,13 @@ impl Launcher {
                     .flex_none()
                     .w(px(120.))
                     .h(px(4.))
-                    .rounded(px(tokens::R_BAR))
+                    .rounded(crate::tokens::r(crate::tokens::R_BAR))
                     .bg(rgb(palette().line))
                     .overflow_hidden()
                     .child(
                         div()
                             .h(px(4.))
-                            .rounded(px(tokens::R_BAR))
+                            .rounded(crate::tokens::r(crate::tokens::R_BAR))
                             .bg(rgb(palette().accent))
                             .w(relative(progress.clamp(0.03, 1.))),
                     ),
@@ -107,7 +107,7 @@ fn strip() -> Div {
         .min_h(px(tokens::ACTION))
         .px(px(14.))
         .py(px(6.))
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .bg(palette().card())
         .border_1()
         .border_color(rgb(palette().divider))

@@ -33,7 +33,7 @@ fn card() -> Div {
     div()
         .flex()
         .flex_col()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(rgb(palette().divider))
         .bg(palette().card())
@@ -50,7 +50,7 @@ fn dot(color: u32) -> Div {
     div()
         .flex_none()
         .size(px(8.))
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .bg(rgb(color))
 }
 
@@ -110,7 +110,7 @@ impl Launcher {
         self.field(f, placeholder, width, cx)
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(rgb(if invalid {
                 palette().danger
@@ -1544,13 +1544,13 @@ impl Launcher {
                         .gap(px(10.))
                         .h(px(tokens::CONTROL))
                         .px(px(10.))
-                        .rounded(px(tokens::R_CONTROL))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .cursor_pointer()
                         .when(chosen, |d| d.bg(rgb(palette().selected)))
                         .child(
                             div()
                                 .size(px(12.))
-                                .rounded(px(tokens::R_SMALL))
+                                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                                 .border_1()
                                 .border_color(rgb(if chosen {
                                     palette().text
@@ -1618,7 +1618,7 @@ impl Launcher {
                         .gap(px(8.))
                         .h(px(tokens::CONTROL))
                         .px(px(12.))
-                        .rounded(px(tokens::R_PANEL))
+                        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_1()
                         .border_color(rgb(palette().line))
                         .text_size(px(tokens::LABEL))
@@ -1672,7 +1672,7 @@ impl Launcher {
                     .tab_index(0)
                     .seen()
                     .px(px(4.))
-                    .rounded(px(tokens::R_SMALL))
+                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                     .border_1()
                     .border_color(gpui::transparent_black())
                     .focus_visible(|s| s.border_color(rgb(palette().focus)))
@@ -1805,7 +1805,7 @@ impl Launcher {
                         .w(px(620.))
                         .max_w_full()
                         .max_h_full()
-                        .rounded(px(tokens::R_PANEL))
+                        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_color(rgb(palette().line))
                         .overflow_hidden()
                         .child(body)

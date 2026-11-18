@@ -399,7 +399,7 @@ mod windows {
                         .left_0()
                         .right_0()
                         .bottom_0()
-                        .rounded(px(RADIUS))
+                        .rounded(crate::tokens::r(RADIUS))
                 },
                 |d, t| {
                     d.bg(color(0xe5484d).opacity(0.85 * t))
@@ -420,7 +420,7 @@ mod windows {
             .justify_center()
             .w(px(BUTTON_WIDTH))
             .h(px(BUTTON_HEIGHT))
-            .rounded(px(RADIUS))
+            .rounded(crate::tokens::r(RADIUS))
             // Pressed: darker. Native hit tests may not report the press.
             .active(|s| s.bg(gpui::black().opacity(0.25)))
             // GPUI maps these to native non-client hit tests, retaining Snap Layouts,

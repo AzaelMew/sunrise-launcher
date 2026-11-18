@@ -304,7 +304,7 @@ impl Launcher {
                                 .flex()
                                 .items_center()
                                 .gap(px(12.))
-                                .rounded(px(tokens::R_CONTROL))
+                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                                 .when(on, |d| d.bg(rgb(palette().selected)))
                                 .child(
                                     div()
@@ -452,7 +452,7 @@ impl Launcher {
             .children(native)
             .child(
                 div()
-                    .rounded(px(tokens::R_CARD))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
                     .border_color(rgb(palette().line))
                     .p(px(4.))

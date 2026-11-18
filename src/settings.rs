@@ -23,6 +23,7 @@ pub(super) enum Section {
     Mods,
     Storage,
     Privacy,
+    Appearance,
     Launcher,
 }
 
@@ -40,6 +41,7 @@ impl Section {
         Section::Mods,
         Section::Storage,
         Section::Privacy,
+        Section::Appearance,
         Section::Launcher,
     ];
 
@@ -51,6 +53,7 @@ impl Section {
             Section::Mods => "Mods",
             Section::Storage => "Storage",
             Section::Privacy => "Privacy",
+            Section::Appearance => "Appearance",
             Section::Launcher => "Launcher",
         }
     }
@@ -63,6 +66,7 @@ impl Section {
             Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
+            Section::Appearance => "How the launcher looks.",
             Section::Launcher => "Language, network and this version.",
         }
     }
@@ -82,7 +86,7 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
     let mut card = div()
         .flex()
         .flex_col()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(rgb(palette().divider))
         .bg(palette().card());
@@ -185,6 +189,7 @@ impl Launcher {
     pub(super) fn settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
+        self.corners_focused = self.corners_focus.is_focused(window);
         let section = self.ui.settings.section;
         let scroll = crate::frame::scrolls("settings");
         let mut nav = div()
@@ -205,7 +210,7 @@ impl Launcher {
                     .px(px(12.))
                     .flex()
                     .items_center()
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(if on { palette().text } else { palette().muted }))
@@ -225,6 +230,7 @@ impl Launcher {
             Section::Mods => self.settings_mods(cx),
             Section::Storage => self.settings_storage(cx),
             Section::Privacy => self.settings_privacy(cx),
+            Section::Appearance => self.settings_appearance(cx),
             Section::Launcher => self.settings_launcher(cx),
         };
         let pane = div()
@@ -384,7 +390,7 @@ impl Launcher {
                     .child(
                         div()
                             .flex_none()
-                            .rounded(px(tokens::R_CONTROL))
+                            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                             .overflow_hidden()
                             .child(
                                 self.profile_heads
@@ -924,7 +930,7 @@ impl Launcher {
                             div()
                                 .w(px(340.))
                                 .p(px(12.))
-                                .rounded(px(tokens::R_CONTROL))
+                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                                 .border_1()
                                 .border_color(rgb(palette().line))
                                 .bg(rgb(palette().raised))
@@ -1082,7 +1088,7 @@ impl Launcher {
                         .max_h(px(220.))
                         .overflow_y_scroll()
                         .p(px(12.))
-                        .rounded(px(tokens::R_CONTROL))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .bg(rgb(palette().field))
                         .border_1()
                         .border_color(rgb(palette().divider))
@@ -1110,6 +1116,72 @@ impl Launcher {
             .child(group(vec![yours]))
             .child(hint(tr(telemetry::NEVER)))
             .child(group(vec![no_ai]))
+    }
+
+    fn settings_appearance(&mut self, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(group(vec![self.corners_row(cx)]))
+    }
+
+    /// How round every corner is: a button's corner radius in px, by slider or typed; cards
+    /// and panels keep their proportion to it.
+    fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let max = f32::from(backend::MAX_CORNER_RADIUS);
+        let now = self.settings.corner_radius();
+        let change: crate::slider::Change = Rc::new(move |this, v, done, cx| {
+            let radius = (v * max).round() as u8;
+            this.settings.corner_radius_px = Some(radius);
+            this.corners_input.set(radius.to_string());
+            if done {
+                this.save_settings();
+            }
+            cx.notify();
+        });
+        let field = self
+            .settings_field(
+                "alt-corners-px",
+                self.corners_focus.clone(),
+                self.corners_focused,
+                &self.corners_input,
+                "",
+                |this| &mut this.corners_input,
+                |this| this.save_corners(),
+                cx,
+            )
+            .w(px(52.));
+        row(
+            tr("Corner rounding"),
+            "",
+            div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .child(crate::slider::slider(
+                    "alt-corners",
+                    f32::from(now) / max,
+                    1. / max,
+                    change,
+                    cx,
+                ))
+                .child(field)
+                .child(
+                    div()
+                        .text_size(px(tokens::LABEL))
+                        .text_color(rgb(palette().muted))
+                        .child(tr("px")),
+                ),
+        )
+    }
+
+    /// The corner radius as typed: a number up to the most it goes; anything else waits.
+    fn save_corners(&mut self) {
+        if let Ok(radius) = self.corners_input.text().trim().parse::<u8>() {
+            self.settings.corner_radius_px = Some(radius.min(backend::MAX_CORNER_RADIUS));
+            self.save_settings();
+        }
     }
 
     fn settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {

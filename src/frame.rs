@@ -70,7 +70,7 @@ pub(crate) trait Reach {
 impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
     fn reach(self) -> Self {
         self.tab_index(0)
-            .rounded(px(tokens::R_SMALL))
+            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
             .focus_visible(|s| {
                 s.shadow(vec![gpui::BoxShadow {
                     inset: true,
@@ -230,7 +230,7 @@ pub(super) fn button_base(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .border_1()
         .border_color(rgb(palette().line))
         .px(px(12.))
@@ -251,7 +251,7 @@ pub(crate) fn input(focused: bool) -> Div {
         .flex()
         .items_center()
         .overflow_hidden()
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .bg(palette().input_fill())
         .border_1()
         .border_color(if focused {
@@ -443,7 +443,7 @@ impl Launcher {
             .justify_between()
             .px(px(10.))
             .h(px(tokens::HEADER))
-            .rounded(px(tokens::R_PANEL))
+            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .border_1()
             .border_color(rgb(p.divider))
             .bg(p.chrome_plate())
@@ -468,6 +468,7 @@ impl Launcher {
         crate::paint::begin(&self.settings, &self.theme);
         scrolls_begin();
         crate::selectable::begin();
+        crate::tokens::set_roundness(self.settings.roundness());
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);
@@ -521,7 +522,7 @@ impl Launcher {
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded(px(tokens::R_PANEL))
+            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .when(page != Page::Home, |d| {
                 d.bg(palette().chrome_plate())
                     .border_1()

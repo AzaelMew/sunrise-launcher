@@ -330,7 +330,7 @@ impl Launcher {
                     .w(px(360.))
                     .max_w(px(self.content_width()))
                     .p(px(12.))
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(palette().line))
                     .bg(c(palette().raised))

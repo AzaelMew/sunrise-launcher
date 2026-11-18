@@ -562,7 +562,7 @@ impl Launcher {
         let mut list = div()
             .flex()
             .flex_col()
-            .rounded(px(tokens::R_CARD))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
             .border_color(c(palette().line))
             .overflow_hidden();

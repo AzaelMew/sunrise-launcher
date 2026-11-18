@@ -151,7 +151,7 @@ fn server_picture(
         (Some(image), _) => gpui::img(image)
             .flex_none()
             .size(px(36.))
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .into_any_element(),
         (None, Some(Badge::Horizon)) => horizon_mark(36.).into_any_element(),
         (None, Some(Badge::Sunrise)) => crate::mark(36.).into_any_element(),
@@ -172,7 +172,7 @@ fn tile(label: &str, side: f32) -> Div {
         .items_center()
         .justify_center()
         .size(px(side))
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .bg(gpui::hsla(hue, 0.28, 0.24, 1.))
         .text_size(px(side * 0.45))
         .font_weight(FontWeight::SEMIBOLD)

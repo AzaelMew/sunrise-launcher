@@ -67,12 +67,12 @@ impl Launcher {
             .flex_none()
             .p(px(14.))
             .gap(px(12.))
-            .rounded(px(tokens::R_CARD))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .bg(p.card())
             .child(if let Some(image) = picture {
                 div()
                     .size(px(64.))
-                    .rounded(px(14.))
+                    .rounded(crate::tokens::r(14.))
                     .overflow_hidden()
                     .child(
                         gpui::img(image)
@@ -83,7 +83,7 @@ impl Launcher {
                 match icon.as_ref() {
                     Some(Icon::Colour(c)) => div()
                         .size(px(64.))
-                        .rounded(px(14.))
+                        .rounded(crate::tokens::r(14.))
                         .bg(rgb(
                             u32::from_str_radix(c.trim_start_matches('#'), 16).unwrap_or(p.accent)
                         ))
