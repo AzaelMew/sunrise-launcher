@@ -4,15 +4,13 @@ pub const DESKTOP_ENTRY: &str = "net.playsunrise.launcher.desktop";
 pub const WINDOW_TITLE: &str = "Sunrise Launcher";
 pub const QUIT_LABEL: &str = "Quit Sunrise Launcher";
 pub const DISPLAY_NAME: &str = "Sunrise Launcher";
-// The installed copy's folder, shortcuts and Add/Remove entry carry Sunrise's own name, so it
-// never takes a Horizon install's place.
+// The installed copy's folder, shortcuts and Add/Remove entry carry Sunrise's own name, never a Horizon install's.
 pub const INSTALL_NAME: &str = "Sunrise Launcher";
 pub const EXECUTABLE: &str = "sunrise-launcher";
 pub const WINDOWS_EXECUTABLE: &str = "sunrise-launcher.exe";
 pub const WINDOWS_EXECUTABLE_PREFIX: &str = "sunrise-launcher.exe.";
 pub const APP_ID: &str = "net.playsunrise.launcher";
-// Sunrise's own data, game and location folders, all under `sunrise/`, and saved accounts.
-// On its first start they are copied from the launchers before it (`carry_over`).
+// Sunrise's own data, game and location folders, all under `sunrise/`, and saved accounts, copied on first start from the launchers before it (`carry_over`).
 pub const KEYCHAIN_SERVICE: &str = "net.playsunrise.launcher";
 pub const LOCATION_FOLDER: &str = "sunrise/location";
 pub const LAUNCHER_FOLDER: &str = "sunrise/launcher";

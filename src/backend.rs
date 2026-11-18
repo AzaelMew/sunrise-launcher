@@ -3137,8 +3137,7 @@ impl Logged {
 
 // ----- Updates -----------------------------------------------------------------------------------
 
-/// What a check found: a Sunrise build newer than every installed one, and a newer launcher. Each feed is checked on
-/// its own, and a feed that couldn't be read says why instead of passing for "up to date".
+/// What a check found: a newer Sunrise build and a newer launcher, each feed checked on its own, with why one couldn't be read.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct Updates {
     pub sunrise: Option<Release>,
@@ -3172,8 +3171,7 @@ fn launcher_update_from(releases: &[Release], own: &str) -> Option<Release> {
         .cloned()
 }
 
-/// Load the game's release list and the launcher's, and both update kinds. The game releases are published first,
-/// so the launcher's lookup can't hold up the release pages; neither feed's failure stops the other's check.
+/// Both release lists and both update kinds: the game's releases published first, and neither feed's failure stopping the other's check.
 pub fn releases_and_updates(on_releases: impl FnOnce(Result<Vec<Release>, String>)) -> Updates {
     releases_and_updates_with(release_list, installed, launcher_releases, on_releases)
 }
