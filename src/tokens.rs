@@ -5,13 +5,6 @@
 //! Spacing (gaps and padding) and a single screen's own layout (a column's width, a picture's
 //! height) are not tokens: they say how one screen is laid out, not what the look is.
 
-pub(crate) const LINE: u32 = 0x453d3d;
-pub(crate) const TEXT: u32 = 0xf3ede6;
-pub(crate) const MUTED: u32 = 0xb2a69d;
-pub(crate) const GOLD: u32 = 0xffb545;
-/// The window around the page: the rail and the play bar.
-pub(crate) const CHROME: u32 = 0x100e0f;
-
 // ---- type scale
 
 /// Tags, counts and the rail's labels.

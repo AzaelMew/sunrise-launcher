@@ -5,8 +5,6 @@ use crate::paint::palette;
 use crate::sheets::Sheet;
 use gpui::rgb;
 
-pub(super) use crate::tokens::{CHROME, GOLD, LINE, MUTED, TEXT};
-
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Page {
     #[default]
@@ -20,6 +18,8 @@ pub(super) enum Page {
     PackProject,
     Project,
     Hosting,
+    /// The servers of the selected profile: an address or an invite code, and the saved list.
+    Join,
     Settings,
 }
 
@@ -36,16 +36,6 @@ pub(super) struct State {
     pub after_install: Option<(String, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
     pub after_sign_in: Option<String>,
-}
-
-/// The first sentence of `text`, or its first line when that is shorter: what the play bar
-/// has room to say.
-fn first_sentence(text: &str) -> &str {
-    let line = text.trim().lines().next().unwrap_or_default();
-    match line.find(". ") {
-        Some(end) => &line[..=end],
-        None => line,
-    }
 }
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
@@ -333,371 +323,12 @@ impl Launcher {
         }
     }
 
-    /// The selected setup's channel, when its last build failed because the build it stays on
-    /// has no mod tools any more and another build is the way on (`sdk_cache::way_on`).
-    fn build_gone(&self) -> Option<instances::Channel> {
-        let error = self.native_error.as_ref()?;
-        let instance = self.selected_instance()?;
-        let mine = self.native_for.as_deref() == Some(instance.id.as_str());
-        (mine
-            && instance.version.is_some()
-            && native_mods::sdk_cache::way_on(error)
-                == Some(native_mods::sdk_cache::WayOn::OtherBuild))
-        .then_some(instance.channel)
-    }
-
     pub(super) fn launch_busy(&self) -> bool {
         self.mutating()
             || self.installing.is_some()
             || self.preparing
             || self.native_step.is_some()
             || self.starting_client.is_some()
-    }
-
-    fn dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let active = self.selected_instance().cloned();
-        let name = self.accounts.selected().map(|a| a.name.clone());
-        let signed_name = name.is_some();
-        // The player's own face, hat layer and all, once it is read; their letter until then.
-        let head = self
-            .accounts
-            .selected()
-            .filter(|a| self.profile_heads.has(&a.uuid))
-            .map(|a| {
-                self.profile_heads
-                    .draw(Some(&a.uuid), 32., self.scale, &self.theme)
-            });
-        let signed_in = signed_name || sunrise_launcher::developer_offline::selected();
-        let version = active.as_ref().and_then(|i| self.version_of(i));
-        // A game built with mods reads as the build it was made from, like any other.
-        let made_from = version
-            .filter(|t| native_mods::is_native(t))
-            .and_then(|t| crate::glass_instance::native_base(t));
-        let nightly = |t: &str| sunrise_launcher::nightly::date_of(t).is_some();
-        let build = match version {
-            Some(t) if nightly(made_from.as_deref().unwrap_or(t)) => trf(
-                "Sunrise · {build}",
-                &[("build", &crate::sheets::build_name(t))],
-            ),
-            Some(t) => self.version_label(t),
-            None => tr("Sunrise").into(),
-        };
-        let follows = match &active {
-            _ if version.is_none() && !signed_in => tr("Installs after you sign in"),
-            _ if version.is_none() => tr("Not installed yet"),
-            Some(i) if i.version.is_some() => tr("Stays on this build"),
-            Some(i) if i.channel == instances::Channel::Stable => tr("Stable"),
-            _ => tr("Nightly"),
-        };
-        let multiple = self.instances.list.len() > 1;
-        // A held update says so itself and its sheet carries the build's words: only then is
-        // the build's error left to it.
-        let held = self.held_update().is_some();
-        let status = self
-            .client_error
-            .clone()
-            .or_else(|| self.prepare_error.clone())
-            .or_else(|| self.native_error.clone().filter(|_| !held))
-            .or_else(|| self.install_error.as_ref().map(|(_, e)| e.clone()))
-            .or_else(|| self.crash.as_ref().map(|c| c.summary.clone()));
-        // The bar says a problem in one sentence; the rest opens as a sheet.
-        let brief = status.as_deref().map(first_sentence);
-        let more = status
-            .clone()
-            .filter(|all| brief.is_some_and(|b| b.len() < all.trim().len()));
-        let busy = self.launch_busy();
-        let label = if let Some((_, progress)) = &self.installing {
-            trf(
-                "Installing · {percent}%",
-                &[("percent", &format!("{:.0}", 100. * progress))],
-            )
-        } else if self.preparing {
-            tr("Preparing…").into()
-        } else if let Some(step) = &self.native_step {
-            let _ = step;
-            tr("Building mods…").into()
-        } else if self.starting_client.is_some() {
-            tr("Starting…").into()
-        } else if self.mutating() {
-            tr("Changing mods…").into()
-        } else if self.client.is_some() {
-            tr("Stop game").into()
-        } else if !signed_in {
-            tr("Sign in with Microsoft").into()
-        } else if version.is_none() {
-            tr("Install and play").into()
-        } else {
-            tr("Play Sunrise").into()
-        };
-        let hold = self
-            .held_update()
-            .map(|h| trf("The update to {build} is on hold", &[("build", &h.to)]));
-        let update = self.updates.sunrise.clone().filter(|_| {
-            active
-                .as_ref()
-                .is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly)
-                && version.is_some()
-                && !busy
-                && self.client.is_none()
-        });
-        let said = brief
-            .map(str::to_owned)
-            .filter(|_| self.native_step.is_none())
-            .or(hold.clone())
-            .or_else(|| {
-                update.as_ref().map(|r| {
-                    trf(
-                        "{build} is available",
-                        &[("build", &crate::sheets::build_name(&r.tag))],
-                    )
-                })
-            });
-        // Mods the game was made without are no problem to raise: one quiet line, at most.
-        self.mods_read_once();
-        let waiting = (said.is_none() && self.native_step.is_none())
-            .then(|| self.mods_not_on_build())
-            .filter(|count| *count > 0);
-        let quiet = said.is_none() && waiting.is_none() && self.build_line().is_none();
-        let bar = div()
-            .flex()
-            .items_center()
-            .gap(px(14.))
-            .h(px(tokens::BAR))
-            .flex_none()
-            .px(px(16.))
-            .bg(rgb(CHROME))
-            // Signed out, the Play slot is the sign-in: no empty account beside it.
-            .children(name.map(|name| {
-                div()
-                    .id("alt-who")
-                    .reach()
-                    .flex()
-                    .items_center()
-                    .gap(px(9.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .cursor_pointer()
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(32.))
-                            .rounded(px(tokens::R_CONTROL))
-                            .overflow_hidden()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(rgb(0x45503c))
-                            .children(head.is_none().then(|| {
-                                name.chars()
-                                    .next()
-                                    .map(|c| c.to_uppercase().to_string())
-                                    .unwrap_or_default()
-                            }))
-                            .children(head),
-                    )
-                    .child(name)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ui.page = Page::Settings;
-                        cx.notify();
-                    }))
-            }))
-            .when(multiple, |d| {
-                d.child(
-                    button(
-                        "alt-setup",
-                        active
-                            .as_ref()
-                            .map_or(tr("Setup").to_string(), |i| i.name.clone()),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ui.picker = !this.ui.picker;
-                        cx.notify();
-                    })),
-                )
-            })
-            .when(signed_name || multiple, |d| {
-                d.child(div().h(px(30.)).w(px(1.)).bg(rgb(LINE)))
-            })
-            .child(
-                div()
-                    .id("alt-build")
-                    .tab_index(0)
-                    .rounded(px(tokens::R_CONTROL))
-                    .border_1()
-                    .border_color(gpui::transparent_black())
-                    .focus_visible(|s| s.border_color(rgb(GOLD)))
-                    .cursor_pointer()
-                    .flex()
-                    .items_center()
-                    .gap(px(9.))
-                    .px(px(8.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(build))
-                            .child(
-                                div()
-                                    .text_size(px(tokens::CAPTION))
-                                    .text_color(rgb(MUTED))
-                                    .child(follows),
-                            ),
-                    )
-                    .child(blocks::icon("chevron-down", 13., rgb(MUTED).into()))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if !this.launch_busy() && this.client.is_none() {
-                            this.open_sheet(Sheet::Build);
-                        }
-                        cx.notify();
-                    })),
-            )
-            .child(
-                div()
-                    // As wide as what it says: the rest of the bar is the cat's.
-                    .min_w_0()
-                    .text_size(px(tokens::LABEL))
-                    .text_color(rgb(MUTED))
-                    // Two lines fit the bar; a longer message is cut, never drawn outside it.
-                    .line_clamp(2)
-                    .text_ellipsis()
-                    .children(self.build_line())
-                    .children(said)
-                    // Nothing to act on here: the row under Mods says why and what to do.
-                    .children(waiting.map(|count| {
-                        div()
-                            .id("alt-not-on-build")
-                            .reach()
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(rgb(TEXT)))
-                            .child(match count {
-                                1 => tr("1 mod not on this build").to_string(),
-                                n => trf(
-                                    "{count} mods not on this build",
-                                    &[("count", &n.to_string())],
-                                ),
-                            })
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_installed_mods();
-                                cx.notify();
-                            }))
-                    })),
-            );
-        // One action at most, and one name for it: "Fix…" opens the place where the problem
-        // can be dealt with, "Details…" a problem with nothing to do but read it.
-        let way_out = if status.is_none() {
-            None
-        } else if self.prepare_error.is_some() {
-            Some(crate::sheets::WayOut::MinecraftFolder)
-        } else {
-            self.build_gone()
-                .filter(|_| !busy)
-                .map(crate::sheets::WayOut::Newest)
-        };
-        let action = if self.native_step.is_some() {
-            Some(
-                button("alt-build-stop", tr("Stop")).on_click(cx.listener(|_, _, _, cx| {
-                    native_mods::cancel();
-                    cx.notify();
-                })),
-            )
-        } else if let Some(all) = status
-            .clone()
-            .filter(|_| way_out.is_some() || more.is_some())
-        {
-            let label = if way_out.is_some() {
-                tr("Fix…")
-            } else {
-                tr("Details…")
-            };
-            Some(
-                button("alt-fix", label).on_click(cx.listener(move |this, _, _, cx| {
-                    this.open_notice(all.clone(), way_out);
-                    cx.notify();
-                })),
-            )
-        } else if hold.is_some() && !busy {
-            Some(
-                button("alt-fix", tr("Fix…")).on_click(cx.listener(|this, _, _, cx| {
-                    this.open_sheet(Sheet::Resolve);
-                    cx.notify();
-                })),
-            )
-        } else {
-            update.map(|release| {
-                button("alt-update", tr("Update game")).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.install_update_if_safe(&release);
-                        cx.notify();
-                    },
-                ))
-            })
-        };
-        let enabled = !busy && self.location_error.is_none();
-        let ink = rgb(0x221203);
-        // The cat may sleep on Play only while Play is idle and the bar has nothing to say.
-        let free = quiet && !busy && self.client.is_none() && self.location_error.is_none();
-        let (lane, on_play) = self.cat(action.is_none(), free, window, cx);
-        let play = div()
-            .id("alt-play")
-            .tab_index(0)
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(8.))
-            .rounded(px(tokens::R_CARD))
-            .h(px(tokens::PLAY))
-            .min_w(px(160.))
-            .px(px(20.))
-            .font_weight(FontWeight::BOLD)
-            .text_size(px(tokens::LEAD))
-            .text_color(ink)
-            .bg(if signed_in { rgb(GOLD) } else { rgb(TEXT) })
-            .when(signed_in && !busy && self.client.is_none(), |d| {
-                d.child(blocks::icon("play", 17., ink.into()))
-            })
-            .child(label)
-            .focus_visible(move |s| s.shadow(focus_ring(if signed_in { TEXT } else { GOLD })))
-            .when(!enabled, |d| d.opacity(0.6))
-            .when(enabled, |d| {
-                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
-                    if let Some(client) = &this.client {
-                        client.kill();
-                    } else {
-                        this.quick_play = None;
-                        this.joining = None;
-                        this.play_game();
-                    }
-                    cx.notify();
-                }))
-            });
-        bar.child(lane).children(action).child(
-            div()
-                .relative()
-                .flex_none()
-                // A press on Play sends a cat asleep on it off; the press itself is Play's.
-                .on_mouse_down(
-                    gpui::MouseButton::Left,
-                    cx.listener(|this, _, _, cx| {
-                        this.cat_off_play();
-                        cx.notify();
-                    }),
-                )
-                .child(play)
-                .children(on_play),
-        )
-    }
-
-    fn install_update_if_safe(&mut self, release: &Release) {
-        let Some(instance) = self.selected_instance() else {
-            return;
-        };
-        if self.native_state_of(instance) != native_status::State::NoMods {
-            // Never overwrite a working native build while staging its candidate.
-            self.instance_install = Some(release.tag.clone());
-            self.install(release);
-        } else {
-            self.install_update();
-        }
     }
 
     pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -803,6 +434,17 @@ impl Launcher {
                 tr("Host"),
                 "server",
             ))
+            .child(rail_link(Page::Join, "alt-nav-join", tr("Join"), "globe"))
+            .child(
+                button("alt-setup", "")
+                    .size(px(40.))
+                    .px_0()
+                    .child(blocks::icon("user", 17., rgb(palette().chrome_text).into()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ui.picker = !this.ui.picker;
+                        cx.notify();
+                    })),
+            )
             .child(div().flex_1())
             .child(rail_link(
                 Page::Settings,
@@ -814,8 +456,12 @@ impl Launcher {
             Page::Settings => self.settings(window, cx),
             Page::Hosting => self.hosting(cx),
             Page::Home => self.home(window, cx),
+            Page::Join => self.join(cx),
             _ => self.mods(window, cx),
         };
+        let strip = self
+            .status_strip(cx)
+            .map(|strip| div().flex_none().p(px(10.)).pb_0().child(strip));
         let page_body = div()
             .relative()
             .flex_1()
@@ -828,7 +474,15 @@ impl Launcher {
             .border_1()
             .border_color(rgb(palette().divider))
             .overflow_hidden()
-            .child(content);
+            .children(strip)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    // Home fills its box edge to edge; the frame gives it its margins.
+                    .when(page == Page::Home, |d| d.px(px(20.)).pb(px(14.)))
+                    .child(content),
+            );
         let mut frame = div()
             .id("alt-root")
             .track_focus(&self.root_focus)
@@ -866,13 +520,12 @@ impl Launcher {
             }))
             .children(titlebar::render(&self.theme, window))
             .children(self.settings_save_notice(cx))
-            .child(div().flex().flex_1().min_h_0().child(rail).child(page_body))
-            .child(self.dock(window, cx));
+            .child(div().flex().flex_1().min_h_0().child(rail).child(page_body));
         if self.ui.picker {
             let mut choices = div()
                 .absolute()
-                .bottom(px(68.))
-                .left(px(12.))
+                .top(px(120.))
+                .left(px(76.))
                 .rounded(px(tokens::R_CARD))
                 .p(px(8.))
                 .flex()
@@ -885,12 +538,8 @@ impl Launcher {
                 choices = choices.child(
                     button(ElementId::named_usize("alt-pick", n), item.name.clone()).on_click(
                         cx.listener(move |this, _, _, cx| {
-                            if !this.launch_busy() && this.client.is_none() {
-                                this.select_instance(&item);
-                                this.ui.picker = false;
-                                this.client_error = None;
-                            }
-                            cx.notify();
+                            this.switch_profile(&item, cx);
+                            this.ui.picker = false;
                         }),
                     ),
                 );

@@ -78,6 +78,7 @@ impl Heads {
     }
 
     /// Whether `uuid`'s face is in memory: a caller with its own placeholder asks first.
+    #[allow(dead_code)] // scaffold: the frame's owner draws with it
     pub fn has(&self, uuid: &str) -> bool {
         self.0.get(uuid).is_some_and(|head| head.face.is_some())
     }

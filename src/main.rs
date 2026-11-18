@@ -21,6 +21,7 @@ mod cli_tools;
 mod collection;
 mod console;
 mod console_page;
+mod contract_shim;
 mod cull;
 mod datapacks_page;
 mod developer_play;
