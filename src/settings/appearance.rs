@@ -28,7 +28,47 @@ struct Choice {
 /// What stands behind Home, as the frame's backdrop draws it: the player's own picture or
 /// their theme's, decoded to one still picture off the window's thread. The window is never
 /// handed a file to decode itself.
-pub(crate) type HomePhoto = Arc<RenderImage>;
+#[derive(Clone)]
+pub(crate) struct HomePhoto {
+    pub image: Arc<RenderImage>,
+    /// Representative colour of the visible pixels, computed once with the decode.
+    pub tone: Option<u32>,
+}
+
+/// Sample the centres of a grid bounded to 32 × 32, independent of image size. Weight sRGB
+/// channels by coverage, so transparent pixels (which may carry arbitrary RGB) do not tint us.
+fn photo_tone(image: &image::RgbaImage) -> Option<u32> {
+    let (w, h) = image.dimensions();
+    let (cols, rows) = (w.min(32), h.min(32));
+    let mut sum = [0_u32; 3];
+    let mut weight = 0;
+    let mut strongest = (0, 0);
+    for y in 0..rows {
+        for x in 0..cols {
+            let [r, g, b, a] =
+                image[((2 * x + 1) * w / (2 * cols), (2 * y + 1) * h / (2 * rows))].0;
+            let a = u32::from(a);
+            weight += a;
+            let chroma = a * u32::from(r.max(g).max(b) - r.min(g).min(b));
+            if chroma > strongest.0 {
+                strongest = (chroma, u32::from_be_bytes([0, r, g, b]));
+            }
+            for (total, channel) in sum.iter_mut().zip([r, g, b]) {
+                *total += u32::from(channel) * a;
+            }
+        }
+    }
+    (weight > 0).then(|| {
+        let [r, g, b] = sum.map(|c| (c + weight / 2) / weight);
+        // A colourful picture can average to gray if its hues cancel. In that case use
+        // the most visibly chromatic sample instead of losing its colour altogether.
+        if r == g && g == b && strongest.0 > 0 {
+            strongest.1
+        } else {
+            r << 16 | g << 8 | b
+        }
+    })
+}
 
 /// The settings what is behind Home depends on: the theme, the player's picture, scenery.
 type BehindKey = (Option<String>, Option<String>, bool);
@@ -50,7 +90,7 @@ pub(crate) struct State {
     behind: Option<(BehindKey, Behind)>,
     /// The picture behind Home: its file, and the picture once it is decoded (None: it could
     /// not be).
-    photo: Option<(PathBuf, Option<Arc<RenderImage>>)>,
+    photo: Option<(PathBuf, Option<HomePhoto>)>,
     decoding: bool,
     /// The kept copy of the player's own picture that could not be decoded: Home shows what
     /// comes after it, and Appearance says so.
@@ -236,7 +276,7 @@ impl Launcher {
         let state = &mut self.ui.settings.appearance;
         // The same file may hold another picture now.
         if let Some((_, Some(old))) = state.photo.take() {
-            state.retired.push(old);
+            state.retired.push(old.image);
         }
         let bad = entries
             .iter()
@@ -306,7 +346,11 @@ impl Launcher {
             } else {
                 theme_files::picture(&read).map_err(|reason| reason.text())
             }
-            .map(|still| theme_files::fitted(still, sunrise_launcher::pictures::gpu_limit()))
+            .map(|still| {
+                let rgba = theme_files::fitted(still, sunrise_launcher::pictures::gpu_limit());
+                let tone = photo_tone(&rgba);
+                (rgba, tone)
+            })
         });
         cx.spawn(async move |this, cx| {
             let decoded = task.await;
@@ -314,14 +358,17 @@ impl Launcher {
                 let state = &mut this.ui.settings.appearance;
                 state.decoding = false;
                 let picture = match decoded {
-                    Ok(mut rgba) => {
+                    Ok((mut rgba, tone)) => {
                         // The window draws BGRA, its alpha premultiplied.
                         for px in rgba.pixels_mut() {
                             let a = u16::from(px.0[3]);
                             let [r, g, b] = [0, 1, 2].map(|i| (u16::from(px.0[i]) * a / 255) as u8);
                             px.0 = [b, g, r, a as u8];
                         }
-                        Some(Arc::new(RenderImage::new([image::Frame::new(rgba)])))
+                        Some(HomePhoto {
+                            image: Arc::new(RenderImage::new([image::Frame::new(rgba)])),
+                            tone,
+                        })
                     }
                     Err(said) => {
                         state.error = Some(said);
@@ -337,7 +384,7 @@ impl Launcher {
                     }
                 };
                 if let Some((_, Some(old))) = state.photo.replace((path, picture)) {
-                    state.retired.push(old);
+                    state.retired.push(old.image);
                 }
                 cx.notify();
             });
@@ -354,7 +401,7 @@ impl Launcher {
         }
         let tint = self.settings.glass_tint();
         let in_use = appearance::effective_id(&self.settings);
-        let choice = |id: String, name: SharedString, about: SharedString, night| {
+        let choice = |id: String, name: SharedString, about: SharedString, night, tone| {
             // Each preview wears its theme's own accent; the one in use, the accent in use.
             let accent = if id == in_use {
                 appearance::accent(&self.settings).rgb()
@@ -362,7 +409,7 @@ impl Launcher {
                 themes::own_accent(Some(&id)).rgb()
             };
             Choice {
-                palette: Palette::plain(night, accent, tint),
+                palette: Palette::plain(night, accent, tint, tone),
                 id,
                 name,
                 about,
@@ -373,7 +420,8 @@ impl Launcher {
                 t.id.into(),
                 tr(t.name).into(),
                 tr(t.description).into(),
-                *t.palette.unwrap_or(&theme::night::NIGHT),
+                t.palette.copied().unwrap_or(theme::night::NIGHT),
+                Some(theme::sky_tone(t.sky)),
             )
         };
         let mut all = vec![
@@ -383,6 +431,7 @@ impl Launcher {
                 tr(themes::TWILIGHT_NAME).into(),
                 tr(themes::TWILIGHT_DESCRIPTION).into(),
                 theme::night::NIGHT,
+                Some(theme::twilight_tone()),
             ),
         ];
         all.extend(
@@ -398,6 +447,7 @@ impl Launcher {
                     local.name.clone().into(),
                     trf("Your theme · {folder}", &[("folder", &local.slug)]).into(),
                     local.roles.night(),
+                    None,
                 ));
             }
         }
@@ -859,5 +909,27 @@ impl Launcher {
                 .child(hint(tr("Show background")))
                 .child(show),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::photo_tone;
+    use image::{Rgba, RgbaImage};
+
+    #[test]
+    fn picture_tone_is_weighted_by_visible_coverage() {
+        let mut image = RgbaImage::from_pixel(3, 1, Rgba([255, 0, 0, 0]));
+        assert_eq!(photo_tone(&image), None);
+        image.put_pixel(1, 0, Rgba([90, 150, 210, 60]));
+        image.put_pixel(2, 0, Rgba([30, 90, 150, 120]));
+        assert_eq!(photo_tone(&image), Some(0x326eaa));
+    }
+
+    #[test]
+    fn complementary_colours_do_not_cancel_a_pictures_tint() {
+        let mut image = RgbaImage::from_pixel(2, 1, Rgba([255, 0, 0, 255]));
+        image.put_pixel(1, 0, Rgba([0, 255, 255, 255]));
+        assert_eq!(photo_tone(&image), Some(0xff0000));
     }
 }

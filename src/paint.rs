@@ -10,15 +10,14 @@
 //!
 //! Every `u32` is an opaque `0xRRGGBB`, so a field, a menu, a selection or a tooltip reads on
 //! its own, whatever is behind it. Only the plates are see-through: [`Palette::card`] and
-//! [`Palette::chrome_plate`] take the theme's tint at an opacity ([`Palette::alpha`]) that never
-//! falls below what text on them needs over the theme's brightest sky, and is 1 when the scenery
-//! is off.
-use crate::theme::Theme;
+//! [`Palette::chrome_plate`] take the scene or photo's tint. Their opacity ([`Palette::alpha`])
+//! is solid over photos or without scenery, and otherwise guards text over the theme's sky.
+use crate::{settings::HomePhoto, theme::Theme};
 use gpui::{rgb, Hsla};
 use std::cell::Cell;
 use sunrise_launcher::backend::Settings;
 use sunrise_launcher_theme::contrast;
-use sunrise_launcher_theme::glass::{fill, mix_oklab, SCRIM};
+use sunrise_launcher_theme::glass::{fill, from_oklab, mix_oklab, oklab, SCRIM};
 use sunrise_launcher_theme::night::{over, Night};
 
 /// What a dialog's scrim may dim a bright page by: the opacity is the one in this range that
@@ -120,9 +119,10 @@ fn hue_colour(turn: f32) -> u32 {
 }
 
 impl Inputs {
-    fn of(settings: &Settings, theme: &Theme) -> Inputs {
+    fn of(settings: &Settings, theme: &Theme, photo: Option<&HomePhoto>) -> Inputs {
         Inputs {
             night: theme.night,
+            tone: photo.and_then(|p| p.tone).or(theme.scene_tone),
             accent: theme.accent_choice.rgb(),
             tint: settings.glass_tint(),
             scenery: settings.scenery() && !theme.photo && !settings.performance(),
@@ -134,7 +134,7 @@ thread_local! {
     static CURRENT: Cell<(Inputs, Palette)> = Cell::new({
         let settings = Settings::default();
         let theme = crate::theme::from_settings(&settings, gpui::WindowAppearance::Dark);
-        let inputs = Inputs::of(&settings, &theme);
+        let inputs = Inputs::of(&settings, &theme, None);
         (inputs, inputs.palette())
     });
 }
@@ -145,8 +145,8 @@ pub(crate) fn palette() -> Palette {
 }
 
 /// Starts a frame: the palette its screens draw with, computed again only for new inputs.
-pub(crate) fn begin(settings: &Settings, theme: &Theme) {
-    let inputs = Inputs::of(settings, theme);
+pub(crate) fn begin(settings: &Settings, theme: &Theme, photo: Option<&HomePhoto>) {
+    let inputs = Inputs::of(settings, theme, photo);
     if CURRENT.get().0 != inputs {
         CURRENT.set((inputs, inputs.palette()));
     }
@@ -184,6 +184,8 @@ fn fit_toward(c: u32, end: u32, reads: impl Fn(u32) -> bool) -> u32 {
 #[derive(Clone, Copy, PartialEq)]
 struct Inputs {
     night: Night,
+    /// The photo or built-in scene. None keeps the theme file's authored plates.
+    tone: Option<u32>,
     accent: u32,
     tint: f32,
     scenery: bool,
@@ -195,6 +197,7 @@ impl Inputs {
     fn palette(&self) -> Palette {
         let Inputs {
             night: n,
+            tone,
             accent: raw,
             tint,
             scenery,
@@ -210,9 +213,34 @@ impl Inputs {
                 plate,
             )
         };
+        let [chrome_base, card_base, raised_base] = if let Some(tone) = tone {
+            let [l, a, b] = oklab(tone);
+            let chroma = a.hypot(b);
+            let levels = if n.dark {
+                [0.30, 0.35, 0.42]
+            } else {
+                [0.86, 0.90, 0.94]
+            };
+            // Keep the source's hue. Scale chroma with lightness, with a minimum to keep a
+            // pale sky recognisably tinted, and a maximum so vivid sources aren't loud.
+            // Exact neutral RGB has no hue; don't amplify the matrix's rounding noise.
+            let neutral = tone == (tone & 255) * 0x01_01_01;
+            [0, 1, 2].map(|i| {
+                let level = levels[i];
+                let gain = if neutral {
+                    0.
+                } else {
+                    let floor = if i == 0 { 0.046 } else { 0.055 };
+                    (chroma * level / l.max(0.25)).clamp(floor, 0.10) / chroma
+                };
+                from_oklab([level, a * gain, b * gain])
+            })
+        } else {
+            [n.side, n.card, n.card_hi]
+        };
         let background = n.page;
-        let card_color = veil(n.card);
-        let raised = veil(n.card_hi);
+        let card_color = veil(card_base);
+        let raised = veil(raised_base);
         let field = over(n.ink, fill::FIELD, card_color);
         let hover = over(n.ink, fill::ACTIVE, card_color);
         // The selection is the accent washed into the plate, as strong as the text on it allows.
@@ -230,7 +258,7 @@ impl Inputs {
         );
         let divider = over(n.stroke, n.rule_alpha, card_color);
 
-        let chrome = veil(n.side);
+        let chrome = veil(chrome_base);
         let chrome_raised = over(n.ink, fill::ACTIVE, chrome);
         let on_chrome = [chrome, chrome_raised];
         let chrome_text = fit(n.ink, lighter, reads(&on_chrome, TEXT));
@@ -321,9 +349,10 @@ impl Inputs {
 impl Palette {
     /// The palette of `night` under `accent` with opaque plates: a theme's preview, whatever
     /// theme is in use.
-    pub(crate) fn plain(night: Night, accent: u32, tint: f32) -> Palette {
+    pub(crate) fn plain(night: Night, accent: u32, tint: f32, tone: Option<u32>) -> Palette {
         Inputs {
             night,
+            tone,
             accent,
             tint,
             scenery: false,
@@ -334,7 +363,7 @@ impl Palette {
     /// The palette `begin` would set for these settings and this theme.
     #[cfg(test)]
     pub(crate) fn of(settings: &Settings, theme: &Theme) -> Palette {
-        Inputs::of(settings, theme).palette()
+        Inputs::of(settings, theme, None).palette()
     }
 
     /// What stands in for the picture of a mod or pack that has none: a quiet colour of its own
@@ -358,7 +387,10 @@ impl Palette {
             false if down < 0. => up,
             _ => down,
         };
-        let washed = over(hue, TILE_HUE, card);
+        // Keep the card's lightness, but not its hue: a contrasting tile hue can otherwise
+        // cancel the scene tint out and turn the stand-in gray.
+        let neutral = from_oklab([oklab(card)[0], 0., 0.]);
+        let washed = over(hue, TILE_HUE, neutral);
         let brighten = luminance(washed) < level;
         let fill = fit(washed, brighten, |c| (luminance(c) >= level) == brighten);
         let reads = |c: u32| contrast(c, fill) >= TEXT;
@@ -413,7 +445,7 @@ impl Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::from_settings;
+    use crate::theme::{self, from_settings};
     use gpui::WindowAppearance;
     use sunrise_launcher::backend::Appearance;
     use sunrise_launcher::themes::{self, Accent};
@@ -798,35 +830,94 @@ accent = "#101010""##,
         }
     }
 
-    /// A picture behind Home, the player's or their theme's, may be any colour: the plates
-    /// over it are opaque.
     #[test]
-    fn plates_are_opaque_over_a_picture() {
-        let glassy = Settings::default();
-        let theme = from_settings(&glassy, WindowAppearance::Dark);
-        assert!(Palette::of(&glassy, &theme).alpha < 1.);
-        let pictured = Settings {
+    fn plates_use_the_displayed_photo_only_and_stay_opaque_over_it() {
+        let settings = Settings {
             background: Some("background-0123456789ab.png".into()),
             ..Settings::default()
         };
-        let theme = from_settings(&pictured, WindowAppearance::Dark);
-        assert!(theme.photo);
-        let p = Palette::of(&pictured, &theme);
-        assert_eq!(p.alpha, 1.);
-        // Home's header stands on a card over a picture: nothing of the picture comes through
-        // it, so what the header says reads as it does on any card.
-        assert_eq!(p.card().a, 1.);
-        for ink in [p.text, p.muted, p.warning, p.accent_ink] {
-            assert!(contrast(ink, p.card_color) >= TEXT, "{ink:06x}");
+        let theme = from_settings(&settings, WindowAppearance::Dark);
+        // On Settings, or while the Home image is loading, the scene still supplies the tint.
+        // Keep the existing automatic opacity independently of which tint is used.
+        let scene = Palette::of(&settings, &theme);
+        assert_eq!(scene.alpha, 1.);
+        let mut photo = HomePhoto {
+            image: std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(
+                image::RgbaImage::new(1, 1),
+            )])),
+            tone: None,
+        };
+        let transparent = Inputs::of(&settings, &theme, Some(&photo)).palette();
+        assert_eq!(transparent.card_color, scene.card_color);
+        assert_eq!(transparent.chrome, scene.chrome);
+        photo.tone = Some(0xe0ebf8);
+        let shown = Inputs::of(&settings, &theme, Some(&photo)).palette();
+        assert_ne!(shown.card_color, scene.card_color);
+        assert_ne!(shown.chrome, scene.chrome);
+        assert_eq!(shown.play_stops, scene.play_stops);
+        assert_eq!(shown.card().a, 1.);
+        for ink in [shown.text, shown.muted, shown.warning, shown.accent_ink] {
+            assert!(contrast(ink, shown.card_color) >= TEXT, "{ink:06x}");
         }
-        // With scenery off there is no picture to guard against, and no glass either.
         let off = Settings {
             scenery_on: Some(false),
-            ..pictured
+            ..settings
         };
         let theme = from_settings(&off, WindowAppearance::Dark);
         assert!(!theme.photo);
         assert_eq!(Palette::of(&off, &theme).alpha, 1.);
+    }
+
+    #[test]
+    fn even_a_pale_blue_source_makes_slate_blue_plates() {
+        let pale_blue = 0xe5e9ef;
+        let tint = Palette::plain(
+            theme::night::NIGHT,
+            glass::ACCENT,
+            glass::TINT,
+            Some(pale_blue),
+        );
+        for plate in [tint.chrome, tint.card_color, tint.raised] {
+            let [_, a, b] = oklab(plate);
+            assert!(b < 0., "{plate:06x} should be blue");
+            assert!(a.hypot(b) >= 0.044, "{plate:06x} should not read as gray");
+            assert!((hue(plate) - hue(pale_blue)).abs() < 0.1, "{plate:06x}");
+        }
+        let gray = Palette::plain(
+            theme::night::NIGHT,
+            glass::ACCENT,
+            glass::TINT,
+            Some(0xe9e9e9),
+        );
+        for plate in [gray.chrome, gray.card_color, gray.raised] {
+            assert_eq!(spread(plate), 0);
+        }
+    }
+
+    #[test]
+    fn built_in_palettes_take_their_hue_from_their_scene() {
+        use std::collections::HashSet;
+        let mut cards = HashSet::new();
+        for id in [themes::TWILIGHT]
+            .into_iter()
+            .chain(themes::THEMES.iter().map(|t| t.id))
+        {
+            let settings = Settings {
+                theme: Some(id.into()),
+                ..Settings::default()
+            };
+            let theme = from_settings(&settings, WindowAppearance::Dark);
+            let tone = theme.scene_tone.expect("built-in scene supplies a tone");
+            let p = Palette::of(&settings, &theme);
+            assert!(cards.insert(p.card_color), "{id}: distinct palette");
+            assert!(spread(p.card_color) > 16, "{id}: chromatic palette");
+            let drift = (hue(p.card_color) - hue(tone)).abs();
+            assert!(
+                drift.min(std::f32::consts::TAU - drift) < 0.16,
+                "{id}: hue drift {drift}"
+            );
+        }
+        assert_eq!(cards.len(), 11);
     }
 
     #[test]
@@ -862,12 +953,12 @@ accent = "#101010""##,
             pb.play_stops[0], pb.accent,
             "pale frost cannot hold white text"
         );
-        begin(&nord, &b);
+        begin(&nord, &b, None);
         assert_eq!(palette(), pb);
         let kept = CURRENT.get().1;
-        begin(&nord, &b);
+        begin(&nord, &b, None);
         assert_eq!(CURRENT.get().1, kept);
-        begin(&violet, &a);
+        begin(&violet, &a, None);
         assert_eq!(palette(), pa);
         assert_eq!(pa.accent, glass::ACCENT);
     }
