@@ -65,6 +65,8 @@ impl Group {
 pub(crate) enum Target {
     Page(Page),
     Section(Section),
+    /// Settings › Appearance, at the "Worlds on Home" choice.
+    WorldsOnHome,
     /// A profile, by its id.
     Profile(String),
     /// A world of the selected profile: Home, where it is played from.
@@ -166,7 +168,10 @@ pub(crate) fn destinations() -> Vec<Entry> {
         group: Group::Settings,
         label: tr(title).to_string(),
         hint: under("Settings", section.label()),
-        target: Target::Section(section),
+        target: match title {
+            "Worlds on Home" => Target::WorldsOnHome,
+            _ => Target::Section(section),
+        },
         art: Art::Glyph("sliders"),
         quiet: true,
     }));
@@ -430,6 +435,11 @@ impl Launcher {
             Target::Page(page) => self.navigate(page),
             Target::Section(section) => {
                 self.settings_open(section);
+                self.navigate(Page::Settings);
+            }
+            Target::WorldsOnHome => {
+                self.settings_open(Section::Appearance);
+                self.ui.settings.appearance.ask_for_worlds();
                 self.navigate(Page::Settings);
             }
             Target::Profile(id) => {

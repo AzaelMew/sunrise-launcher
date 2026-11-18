@@ -562,7 +562,7 @@ impl Launcher {
                 let (built, place) = near.list(list.len(), 1, ROW, ROW_GAP);
                 let mut rows = div().flex().flex_col().gap(px(ROW_GAP));
                 for world in &list[built] {
-                    rows = rows.child(self.world_row(world, cx));
+                    rows = rows.child(self.world_row(world, window, cx));
                 }
                 place(rows)
             }
@@ -670,35 +670,44 @@ impl Launcher {
     }
 
     /// One world as a compact row: its picture, what it is, and its two small buttons, each
-    /// named by its tooltip.
-    fn world_row(&mut self, world: &World, cx: &mut Context<Self>) -> Div {
+    /// named by its tooltip. A name too long for the row is cut: it shows whole in a tooltip,
+    /// and in the row itself while the keyboard is on Play.
+    fn world_row(
+        &mut self,
+        world: &World,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let (folder, path) = (world.folder.clone(), world.path.clone());
-        let small = |id: String, glyph: &'static str, says: &'static str| {
+        let focus = self
+            .worlds
+            .tile_focus
+            .entry(world.folder.clone())
+            .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let on_play = focus.is_focused(window);
+        // The row's own id scopes these two: no world's button is another's.
+        let small = |id: &'static str, glyph: &'static str, says: &'static str| {
             button(id, "")
                 .size(px(30.))
                 .px_0()
                 .child(blocks::icon(glyph, 14., rgb(palette().text).into()))
                 .tooltip(crate::glass_ui::tip(tr(says)))
         };
-        let packs = small(
-            format!("alt-world-packs-{}", world.folder),
-            "archive",
-            "Data packs",
-        )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.show_world_packs(path.clone());
-            cx.notify();
-        }));
-        let play = small(
-            format!("alt-world-{}", world.folder),
-            "play",
-            "Play this world",
-        )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.play_to("--world", folder.clone());
-            cx.notify();
-        }));
+        let packs = small("alt-world-packs", "archive", "Data packs").on_click(cx.listener(
+            move |this, _: &ClickEvent, _, cx| {
+                this.show_world_packs(path.clone());
+                cx.notify();
+            },
+        ));
+        let play = small("alt-world-play", "play", "Play this world")
+            .track_focus(&focus)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.play_to("--world", folder.clone());
+                cx.notify();
+            }));
         card()
+            .id(SharedString::from(format!("alt-world:{}", world.folder)))
             .flex_none()
             .min_h(px(ROW))
             .flex()
@@ -715,11 +724,13 @@ impl Launcher {
                     .flex_col()
                     .child(
                         div()
+                            .id("alt-world-name")
                             .text_size(px(tokens::LABEL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(palette().text))
-                            .truncate()
-                            .child(world.name.clone()),
+                            .when(!on_play, |d| d.truncate())
+                            .child(world.name.clone())
+                            .tooltip(crate::glass_ui::tip(world.name.clone())),
                     )
                     .child(muted(Self::world_facts(world))),
             )
@@ -736,7 +747,12 @@ impl Launcher {
     /// One world as a tile: its picture, which plays it, with what it is under it. Its data
     /// packs button sits on the picture, faint until the pointer is over the tile or the
     /// keyboard is on the picture or on the button.
-    fn world_tile(&mut self, world: &World, window: &Window, cx: &mut Context<Self>) -> Div {
+    fn world_tile(
+        &mut self,
+        world: &World,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let (folder, path) = (world.folder.clone(), world.path.clone());
         let focus = self
             .worlds
@@ -746,7 +762,7 @@ impl Launcher {
             .clone();
         let group = SharedString::from(format!("alt-world-tile-{}", world.folder));
         let picture = div()
-            .id(format!("alt-world-{}", world.folder))
+            .id("alt-world-play")
             .track_focus(&focus)
             .relative()
             .cursor_pointer()
@@ -776,7 +792,7 @@ impl Launcher {
                 this.play_to("--world", folder.clone());
                 cx.notify();
             }));
-        let packs = crate::frame::button_base(format!("alt-world-packs-{}", world.folder), "")
+        let packs = crate::frame::button_base("alt-world-packs", "")
             .absolute()
             .left(px(8.))
             .bottom(px(8.))
@@ -794,6 +810,8 @@ impl Launcher {
                 cx.notify();
             }));
         div()
+            // The tile's own id scopes what is in it: no world's control is another's.
+            .id(SharedString::from(format!("alt-world:{}", world.folder)))
             .flex_none()
             .w(px(WORLD_TILE))
             .h(px(TILE_TALL))
@@ -809,7 +827,7 @@ impl Launcher {
                     .child(
                         // A long name is cut at the picture's width: the tooltip has all of it.
                         div()
-                            .id(format!("alt-world-name-{}", world.folder))
+                            .id("alt-world-name")
                             .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(palette().text))

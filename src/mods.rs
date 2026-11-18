@@ -41,7 +41,7 @@ mod search;
 mod ui;
 pub(crate) use search::Installed;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
+pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};
 
 use crate::paint::palette;
 use model::{Card, Row};
@@ -282,6 +282,12 @@ impl Launcher {
         self.leave_section(false);
         self.mods_refresh();
         self.choose_view(Page::Installed);
+    }
+
+    /// Mods › Discover itself, whatever Mods last showed.
+    pub(crate) fn show_discover(&mut self) {
+        self.leave_section(false);
+        self.choose_view(Page::Discover);
     }
 
     /// The rail's Mods: where the player last was this session, else Installed when this setup

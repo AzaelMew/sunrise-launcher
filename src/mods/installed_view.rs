@@ -665,6 +665,7 @@ impl Launcher {
                     d.bg(c(palette().hover)).child(super::ui::reveal(
                         crate::frame::scrolls("installed"),
                         self.ui.mods.revealed.clone(),
+                        None,
                     ))
                 },
             )

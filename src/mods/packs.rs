@@ -278,6 +278,7 @@ impl Launcher {
                         d.bg(c(palette().hover)).child(super::ui::reveal(
                             crate::frame::scrolls("packs"),
                             self.ui.mods.revealed.clone(),
+                            None,
                         ))
                     },
                 );

@@ -268,25 +268,44 @@ pub(crate) fn side_by_side(window_width: f32) -> bool {
 
 const PICTURE: f32 = 40.;
 
-/// A mod's or a pack's picture, `side` square. It takes what the launcher's shared tile for
-/// these takes (the picture, the item's id and name, the side), so that one replaces this call
-/// for call; until then an item without a picture gets the package glyph.
-fn tile(picture: Option<impl Into<ImageSource>>, _id: &str, _name: &str, side: f32) -> Div {
+/// A mod's or a pack's picture, `side` square: it fills the square edge to edge, cropped
+/// rather than boxed. Without one (it has none, it has not arrived, or it is not a picture)
+/// the first letter of `name` stands on a quiet colour of the theme that `id` always gets. It
+/// takes what the launcher's shared tile for these takes, so that one replaces this call for
+/// call.
+fn tile(picture: Option<impl Into<ImageSource>>, id: &str, name: &str, side: f32) -> Div {
+    let p = palette();
+    let fills = [p.selected, p.hover, p.line, p.chrome_raised];
+    let fill = fills[id
+        .bytes()
+        .fold(0usize, |sum, b| sum.wrapping_mul(31) + b as usize)
+        % 4];
+    let initial = crate::join::initial(name);
+    let letter = move || {
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgb(fill))
+            .text_size(px(side * 0.45))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(rgb(palette().muted))
+            .child(initial.clone())
+    };
     let square = div()
         .flex_none()
         .size(px(side))
         .rounded(px(tokens::R_CONTROL))
-        .overflow_hidden()
-        .flex()
-        .items_center()
-        .justify_center();
+        .overflow_hidden();
     match picture {
-        Some(picture) => square.child(gpui::img(picture).size(px(side))),
-        None => square.bg(rgb(palette().selected)).child(blocks::icon(
-            "package",
-            side * 0.45,
-            rgb(palette().muted).into(),
-        )),
+        Some(picture) => square.child(
+            gpui::img(picture)
+                .size_full()
+                .object_fit(gpui::ObjectFit::Cover)
+                .with_fallback(move || letter().into_any_element()),
+        ),
+        None => square.child(letter()),
     }
 }
 
@@ -397,13 +416,13 @@ impl Launcher {
                 .gap(px(8.))
                 .py(px(8.))
                 .child(muted(tr("No mods yet")))
-                .child(muted("·"))
                 .child(
                     link("alt-home-browse-mods", tr("Browse mods").to_string())
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(rgb(palette().text))
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.navigate(Page::Discover);
+                            // Discover itself, wherever Mods was last left.
+                            this.show_discover();
                             cx.notify();
                         })),
                 ),
@@ -415,13 +434,7 @@ impl Launcher {
                     crate::home::ROW_GAP,
                 );
                 let mut rows = div().flex().flex_col().gap(px(crate::home::ROW_GAP));
-                for (n, item) in column
-                    .shown
-                    .iter()
-                    .enumerate()
-                    .take(built.end)
-                    .skip(built.start)
-                {
+                for item in column.shown.iter().take(built.end).skip(built.start) {
                     let picture = match &item.picture {
                         Picture::Project(project) => tile(
                             index
@@ -439,7 +452,14 @@ impl Launcher {
                     let open = item.open.clone();
                     rows = rows.child(
                         card()
-                            .id(("alt-home-mod", n))
+                            // By what it is, not where it stands: when the list changes
+                            // under the keyboard, the focus does not pass to a neighbour.
+                            .id(SharedString::from(format!(
+                                "alt-home-mod:{}:{:?}:{}",
+                                home.display(),
+                                item.kind,
+                                item.id
+                            )))
                             .flex_none()
                             .min_h(px(crate::home::ROW))
                             .flex()
