@@ -95,21 +95,20 @@ impl Launcher {
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient { run, prepared } => {
-                    self.starting_client = None;
-                    match *prepared {
-                        Ok(cmd) => {
-                            self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
-                            match backend::spawn(Job::Client, cmd, self.tx.clone()) {
-                                Ok(r) => {
-                                    self.client = Some(r);
-                                    self.client_run = run.map(|id| (id, Instant::now()));
-                                    self.step_aside(cx);
-                                }
-                                Err(e) => {
-                                    self.client_error = Some(e);
-                                    account::discard_unread_sessions();
-                                }
-                            }
+                    let Some(tag) = self.starting_client.take() else {
+                        account::discard_unread_sessions();
+                        continue;
+                    };
+                    let started = prepared.and_then(|cmd| {
+                        native_status::check_spawn_permission(&tag)?;
+                        self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
+                        backend::spawn(Job::Client, cmd, self.tx.clone())
+                    });
+                    match started {
+                        Ok(r) => {
+                            self.client = Some(r);
+                            self.client_run = run.map(|id| (id, Instant::now()));
+                            self.step_aside(cx);
                         }
                         // A start that does not happen leaves no session file behind.
                         Err(e) => {

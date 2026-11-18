@@ -67,7 +67,7 @@ pub enum Refused {
     NotThisProfiles,
 }
 
-/// The last check before the game starts, whatever led there (a pinned version, a picker, a
+/// The check when Play is accepted, whatever led there (a pinned version, a picker, a
 /// build kept on disk from before the permission went): a build compiled with mods' native code
 /// (`native`; `built` is what it says it holds) starts only while native mods are `allowed` and
 /// every mod in it is one of the profile's `enabled` ones. A game as released always may.
@@ -87,6 +87,36 @@ pub fn launch_refusal(
     match built {
         Some(built) if built.iter().all(on) => None,
         _ => Some(Refused::NotThisProfiles),
+    }
+}
+
+/// Check consent again after session and jar preparation, just before handing off the game
+/// command. An allowed Play is not permission cached for the duration of preparation.
+pub fn check_spawn_permission(version: &str) -> Result<(), String> {
+    check_spawn_permission_in(version, &backend::data_dir())
+}
+
+fn check_spawn_permission_in(version: &str, data: &Path) -> Result<(), String> {
+    if native_mods::is_native(version)
+        && backend::Settings::load_from(data)
+            .native_mods_allowed_at
+            .is_none()
+    {
+        return Err(Refused::NoPermission.message().into());
+    }
+    Ok(())
+}
+
+impl Refused {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::NoPermission => crate::i18n::tr(
+                "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
+            ),
+            Self::NotThisProfiles => crate::i18n::tr(
+                "This profile plays a build made with mods it doesn't have turned on. Choose another game build for it in Versions.",
+            ),
+        }
     }
 }
 
@@ -551,6 +581,24 @@ mod tests {
         );
         // A game as released needs neither.
         assert_eq!(launch_refusal(false, false, &[], None), None);
+    }
+
+    #[test]
+    fn permission_taken_back_while_preparing_blocks_native_spawn() {
+        let data = tempfile::tempdir().unwrap();
+        let settings = data.path().join("settings.json");
+        fs::write(&settings, r#"{"native_mods_allowed_at":123}"#).unwrap();
+        assert_eq!(
+            check_spawn_permission_in("native-test", data.path()),
+            Ok(())
+        );
+
+        fs::write(&settings, "{}").unwrap();
+        assert_eq!(
+            check_spawn_permission_in("native-test", data.path()),
+            Err(Refused::NoPermission.message().into())
+        );
+        assert_eq!(check_spawn_permission_in("v1.2.3", data.path()), Ok(()));
     }
 
     #[test]

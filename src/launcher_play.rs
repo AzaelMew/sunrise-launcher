@@ -184,17 +184,7 @@ impl Launcher {
             native_status::built(&tag).as_deref(),
         );
         if let Some(refused) = refused {
-            self.client_error = Some(
-                match refused {
-                    native_status::Refused::NoPermission => tr(
-                        "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-                    ),
-                    native_status::Refused::NotThisProfiles => tr(
-                        "This profile plays a build made with mods it doesn't have turned on. Choose another game build for it in Versions.",
-                    ),
-                }
-                .into(),
-            );
+            self.client_error = Some(refused.message().into());
             self.starting_pack = None;
             self.joining = None;
             self.quick_play = None;
