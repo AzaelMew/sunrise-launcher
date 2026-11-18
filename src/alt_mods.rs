@@ -562,6 +562,7 @@ impl Launcher {
         };
         let placeholder = match (installed, self.alt.mods.packs.scope) {
             (false, pack_discover::Scope::Resource) => tr("Search Modrinth resource packs").into(),
+            (false, pack_discover::Scope::Shader) => tr("Search shader packs").into(),
             (false, pack_discover::Scope::Data) => tr("Search Modrinth data packs").into(),
             _ => placeholder,
         };

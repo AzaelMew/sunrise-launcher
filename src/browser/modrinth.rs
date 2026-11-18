@@ -18,13 +18,13 @@ fn project_type(kind: Kind) -> &'static str {
     }
 }
 
-/// The kind of a Modrinth project; its shader packs (the shaders/ format) are not offered. A
-/// data pack says it is a `mod` (most also ship a mod build): the search for data packs marks
+/// The kind of a Modrinth project; its shader packs are Iris-format ones ([`Project::support`]
+/// says which run). A data pack says it is a `mod` (most also ship a mod build): the search for data packs marks
 /// its hits, and an install into a world asks for its data pack files.
 fn kind_of(project_type: &str) -> Option<Kind> {
     Kind::ALL
         .into_iter()
-        .filter(|k| !matches!(k, Kind::Shader | Kind::DataPack))
+        .filter(|k| !matches!(k, Kind::DataPack))
         .find(|k| self::project_type(*k) == project_type)
 }
 
@@ -35,13 +35,18 @@ pub(super) fn facets(query: &Query) -> String {
     match &f.game_version {
         Some(v) => all.push(vec![format!("versions:{v}")]),
         None if !query.everything
-            && matches!(query.kind, Kind::ResourcePack | Kind::Mod | Kind::DataPack) =>
+            && matches!(
+                query.kind,
+                Kind::ResourcePack | Kind::Mod | Kind::DataPack | Kind::Shader
+            ) =>
         {
             all.push(vec![format!("versions:{}", query.game)])
         }
         None => {}
     }
     let loaders: Vec<String> = match &f.loader {
+        // Shader packs: only the Iris format (`iris`), whatever else a pack also lists.
+        _ if query.kind == Kind::Shader => vec!["categories:iris".into()],
         // Quilt loads Fabric mods: what runs on Quilt.
         Some(l) if l == "quilt" => vec!["categories:quilt".into(), "categories:fabric".into()],
         Some(l) => vec![format!("categories:{l}")],
@@ -204,9 +209,6 @@ impl Source for Modrinth {
     }
 
     fn search(&self, query: &Query) -> Result<Vec<Project>, String> {
-        if query.kind == Kind::Shader {
-            return Err(super::SHADERS_ON_SUNRISE.into());
-        }
         let found = get(&search_url(query))?;
         Ok(found["hits"]
             .as_array()

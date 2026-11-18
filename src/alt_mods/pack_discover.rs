@@ -32,16 +32,19 @@ pub(super) enum Scope {
     Mods,
     Resource,
     Data,
+    /// Iris-format zips from Modrinth and Sunrise's own `.sshader` packs from its registry.
+    Shader,
 }
 
 impl Scope {
-    pub(super) const ALL: [Scope; 3] = [Scope::Mods, Scope::Resource, Scope::Data];
+    pub(super) const ALL: [Scope; 4] = [Scope::Mods, Scope::Resource, Scope::Data, Scope::Shader];
 
     pub(super) fn label(self) -> &'static str {
         match self {
             Scope::Mods => tr("Mods"),
             Scope::Resource => tr("Resource packs"),
             Scope::Data => tr("Data packs"),
+            Scope::Shader => tr("Shader packs"),
         }
     }
 
@@ -51,6 +54,7 @@ impl Scope {
             Scope::Mods => None,
             Scope::Resource => Some(Kind::ResourcePack),
             Scope::Data => Some(Kind::DataPack),
+            Scope::Shader => Some(Kind::Shader),
         }
     }
 }
@@ -104,15 +108,20 @@ pub(super) fn query(scope: Scope, text: &str, game: &str) -> Option<Query> {
     Some(q)
 }
 
-/// The hits a scope shows: Modrinth's, of the scope's kind only (a mod, modpack or shader pack
-/// that a source answered anyway is dropped), each project once.
+/// The hits a scope shows: Modrinth's, of the scope's kind only (a mod, modpack or other kind
+/// that a source answered anyway is dropped), each project once. Shader packs also come from
+/// Sunrise's registry (its own `.sshader` packs), and from there only.
 pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
     let Some(kind) = scope.kind() else {
         return Vec::new();
     };
     let mut seen = std::collections::HashSet::new();
     hits.into_iter()
-        .filter(|p| p.source == SourceId::Modrinth && p.kind == kind)
+        .filter(|p| p.kind == kind)
+        .filter(|p| {
+            p.source == SourceId::Modrinth
+                || (p.source == SourceId::Sunrise && kind == Kind::Shader)
+        })
         .filter(|p| seen.insert(p.id.clone()))
         .collect()
 }
@@ -228,10 +237,21 @@ impl Launcher {
         p.status = Status::Searching;
         let (seq, scope, tx) = (p.seq, p.scope, self.alt.mods.tx.clone());
         std::thread::spawn(move || {
-            let result = browser::source(SourceId::Modrinth)
-                .ok_or_else(|| tr("Modrinth isn't set up.").to_string())
-                .and_then(|s| s.search(&q))
-                .map(|hits| keep(scope, hits));
+            let ask = |id| {
+                browser::source(id)
+                    .ok_or_else(|| tr("Modrinth isn't set up.").to_string())
+                    .and_then(|s| s.search(&q))
+            };
+            let modrinth = ask(SourceId::Modrinth);
+            // Sunrise's own shader packs lead; the registry failing leaves Modrinth's.
+            let mut hits = match scope {
+                Scope::Shader => ask(SourceId::Sunrise).unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            let result = modrinth.map(|found| {
+                hits.extend(found);
+                keep(scope, hits)
+            });
             let _ = tx.send(Event::Packs(seq, result));
         });
     }
@@ -348,6 +368,7 @@ impl Launcher {
             .filter(|t| setup.as_ref().is_some_and(|(i, h)| target_belongs(t, i, h)));
         let mut page = page.child(muted(match scope {
             Scope::Data => tr("From Modrinth. A data pack goes into one world, chosen under that world's Data packs on Home."),
+            Scope::Shader => tr("From Sunrise's registry and Modrinth, into the selected setup's shader packs."),
             _ => tr("From Modrinth, into the selected setup's resource packs."),
         }));
         if scope == Scope::Data {
@@ -356,7 +377,7 @@ impl Launcher {
                 None => tr("No world chosen: open a world's Data packs, then Add.").to_string(),
             }));
         }
-        let added: HashSet<String> = self
+        let added: HashSet<(SourceId, String)> = self
             .alt
             .mods
             .snapshot
@@ -364,8 +385,7 @@ impl Launcher {
             .map(|s| {
                 s.entries
                     .iter()
-                    .filter(|e| e.source == SourceId::Modrinth)
-                    .map(|e| e.project.clone())
+                    .map(|e| (e.source, e.project.clone()))
                     .collect()
             })
             .unwrap_or_default();
@@ -406,7 +426,9 @@ impl Launcher {
                         .clone()
                         .and_then(|url| self.mods_image(&url, images::ICON));
                     let support = p.support(&game);
-                    let action: AnyElement = if added.contains(&p.id) && p.kind != Kind::DataPack {
+                    let action: AnyElement = if added.contains(&(p.source, p.id.clone()))
+                        && p.kind != Kind::DataPack
+                    {
                         muted(tr("Added")).into_any_element()
                     } else if let Some(why) = support.reason().filter(|_| !support.installable()) {
                         muted(why.to_owned()).into_any_element()
@@ -427,8 +449,17 @@ impl Launcher {
                     };
                     let kind_label = match p.kind {
                         Kind::DataPack => tr("Data pack"),
+                        Kind::Shader => tr("Shader pack"),
                         _ => tr("Resource pack"),
                     };
+                    let source_label = match p.source {
+                        SourceId::Sunrise => tr("Sunrise registry"),
+                        other => other.label(),
+                    };
+                    // An Iris-format pack says how well it runs, in words.
+                    let iris = (p.source == SourceId::Modrinth && p.kind == Kind::Shader)
+                        .then(|| support.reason().map(str::to_owned))
+                        .flatten();
                     let page_url = p.page.clone();
                     list = list.child(
                         div()
@@ -474,6 +505,7 @@ impl Launcher {
                                             .truncate()
                                             .child(p.summary.clone()),
                                     )
+                                    .children(iris.map(muted))
                                     .child(
                                         div()
                                             .flex()
@@ -485,7 +517,7 @@ impl Launcher {
                                                     .flex()
                                                     .items_center()
                                                     .gap(px(8.))
-                                                    .child(tag(p.source.label()))
+                                                    .child(tag(source_label))
                                                     .child(tag(kind_label))
                                                     .child(tag(support.label()))
                                                     .child(muted(model::downloads(p.downloads))),
@@ -525,8 +557,8 @@ fn install(
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<String, String> {
-    let source = browser::source(SourceId::Modrinth)
-        .ok_or_else(|| tr("Modrinth isn't set up.").to_string())?;
+    let source = browser::source(project.source)
+        .ok_or_else(|| tr("This source isn't set up.").to_string())?;
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
         tr("This setup is busy. Try again when the operation finishes.").to_string()
     })?;
@@ -549,18 +581,22 @@ fn install(
             ))
         }
         (Kind::DataPack, None) => Err(tr("Choose a world first.").to_string()),
-        (Kind::ResourcePack, _) => {
+        (Kind::ResourcePack | Kind::Shader, _) => {
             let done = installed::install(&*source, project, false, home, game, progress)?;
             let names: Vec<String> = done
                 .iter()
                 .map(|e| format!("{} {}", e.title, e.number))
                 .collect();
+            let on = match project.kind {
+                Kind::Shader => tr("Options > Shader Packs"),
+                _ => tr("Options > Resource Packs"),
+            };
             Ok(trf(
-                "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.",
-                &[("mods", &names.join(", "))],
+                "Installed {mods}, checksums checked. Turn it on in the game: {where}.",
+                &[("mods", &names.join(", ")), ("where", on)],
             ))
         }
-        _ => Err(tr("Only resource packs and data packs install from here.").to_string()),
+        _ => Err(tr("Only resource, data and shader packs install from here.").to_string()),
     }
 }
 

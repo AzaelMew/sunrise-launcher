@@ -286,6 +286,11 @@ pub trait Source: Send + Sync {
     }
 }
 
+/// The Modrinth loader that marks a shader pack in the Iris format.
+pub const IRIS: &str = "iris";
+/// What an Iris-format shader pack is labelled with.
+pub const IRIS_LABEL: &str = "Iris-format pack: most work, some effects may not";
+
 /// What the launcher says wherever CurseForge would be.
 pub const CURSEFORGE_SOON: &str = "CurseForge support is coming soon.";
 /// What another source answers for shader packs: Sunrise's own are on its registry only.
@@ -330,6 +335,11 @@ pub fn support(kind: Kind, game_versions: &[String], loaders: &[String], game: &
         }
         Kind::Modpack => {
             Support::Partial("Sunrise runs the mods it can port, from your own downloads.".into())
+        }
+        // Iris-format packs from Modrinth: a shaders/-folder zip, which most of Sunrise's
+        // shader pipeline reads; the registry's own `.sshader` packs took the first branch.
+        Kind::Shader if loaders.iter().any(|l| l == IRIS) => {
+            Support::Partial(crate::i18n::tr(IRIS_LABEL).into())
         }
         Kind::Shader => Support::No("Not one of Sunrise's own shader packs.".into()),
         Kind::DataPack => {
@@ -432,6 +442,19 @@ pub fn pick<'a>(
             .filter(java)
             .find(made_for)
             .or_else(|| usable.filter(java).find(|v| everything && ported(v)));
+    }
+    if kind == Kind::Shader {
+        // An Iris-format zip: never a jar or another loader's file.
+        let mut packs = usable.filter(|v| {
+            v.loaders.iter().any(|l| l == IRIS)
+                && v.file()
+                    .is_some_and(|f| f.name.to_ascii_lowercase().ends_with(".zip"))
+        });
+        let made_for = |v: &&Version| v.game_versions.iter().any(|g| g == game);
+        return packs
+            .clone()
+            .find(made_for)
+            .or_else(|| packs.find(|_| everything));
     }
     if kind == Kind::DataPack {
         // Most data packs on Modrinth ship a mod build too: only the data pack files.
