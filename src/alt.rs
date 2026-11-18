@@ -40,6 +40,13 @@ pub(super) struct State {
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button_base(id, label).hover(|s| s.bg(rgb(0x393233)))
+}
+
+pub(super) fn button_base(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+) -> Stateful<Div> {
     div()
         .id(id)
         .tab_index(0)
@@ -56,7 +63,6 @@ pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -
         .text_size(px(13.))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .hover(|s| s.bg(rgb(0x393233)))
         .focus_visible(|s| s.border_color(rgb(GOLD)))
         .child(label.into())
 }

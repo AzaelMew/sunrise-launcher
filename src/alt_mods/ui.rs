@@ -30,7 +30,7 @@ pub(super) fn muted(text: impl Into<SharedString>) -> Div {
 
 /// The main action on a screen, in cream: gold is Play's alone.
 pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
-    crate::alt::button(id, label)
+    crate::alt::button_base(id, label)
         .bg(c(TEXT))
         .border_color(c(TEXT))
         .text_color(c(BG))
