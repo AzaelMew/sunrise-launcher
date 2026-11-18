@@ -6,6 +6,7 @@ repo=$1
 dest=$2
 mkdir -p "$dest"
 while read -r name source; do
+  source=${source%$'\r'}
   case $name in '' | '#'*) continue ;; esac
   cp "$repo/$source" "$dest/$name"
 done < "$repo/packaging/notices.txt"
