@@ -446,6 +446,10 @@ impl Launcher {
                 "Recent worlds in {profile}",
                 &[("profile", &instance.name)],
             )));
+        // MOCK ONLY (two columns, sample mods and packs): never handed over.
+        if let Ok(mock) = std::env::var("SUNRISE_HOME_MOCK") {
+            return self.two_column_mock(&list, mock == "two-column-empty", window, cx);
+        }
         let body = if !list.is_empty() {
             if tiles {
                 let mut grid = div().flex().flex_wrap().gap(px(16.));
@@ -691,6 +695,168 @@ impl Launcher {
                     )
                     .child(muted(Self::world_facts(world))),
             )
+    }
+
+    /// MOCK ONLY: Home's lower panel as two columns, compact worlds beside the profile's mods
+    /// and packs. The mods and packs are samples, not read from the profile.
+    fn two_column_mock(
+        &mut self,
+        list: &[World],
+        empty: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let stacked = window.viewport_size().width < px(1000.);
+        let title = |label: &str| heading(label).text_size(px(tokens::HEADING));
+        let mut worlds = div().flex().flex_col().gap(px(4.));
+        for world in list {
+            let folder = world.folder.clone();
+            let play = button(format!("alt-world-{}", world.folder), "")
+                .size(px(30.))
+                .px_0()
+                .child(blocks::icon("play", 14., rgb(palette().text).into()))
+                .tooltip(crate::glass_ui::tip(tr("Play this world")))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.play_to("--world", folder.clone());
+                    cx.notify();
+                }));
+            worlds = worlds.child(
+                card()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .p(px(5.))
+                    .pr(px(8.))
+                    .child(self.world_icon(world, 40.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(tokens::LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(palette().text))
+                                    .truncate()
+                                    .child(world.name.clone()),
+                            )
+                            .child(muted(Self::world_facts(world))),
+                    )
+                    .child(play),
+            );
+        }
+        let samples: [(&str, &str, &str, bool); 7] = [
+            ("Lanternlight", "Mod", "package", true),
+            ("Quiet Rain", "Mod", "package", true),
+            ("Trailmarks", "Mod", "package", false),
+            ("Better Signs", "Mod", "package", true),
+            ("Soft Edges 16x", "Resource pack", "folder", true),
+            ("Old Paper Maps", "Resource pack", "folder", false),
+            ("Evening Glow", "Shader pack", "globe", true),
+        ];
+        let mut items = div().flex().flex_col().gap(px(4.));
+        for (n, (name, kind, glyph, on)) in samples.into_iter().enumerate() {
+            items = items.child(
+                card()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .p(px(5.))
+                    .pr(px(10.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(40.))
+                            .rounded(px(tokens::R_CONTROL))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(rgb(palette().selected))
+                            .child(blocks::icon(glyph, 18., rgb(palette().muted).into())),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .text_size(px(tokens::LABEL))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(if on {
+                                        palette().text
+                                    } else {
+                                        palette().muted
+                                    }))
+                                    .truncate()
+                                    .child(name),
+                            )
+                            .child(muted(if on {
+                                kind.to_string()
+                            } else {
+                                format!("{kind} · Off")
+                            })),
+                    )
+                    .child(crate::mods::switch(("mock-item", n), on)),
+            );
+        }
+        let manage = button("mock-manage-mods", "Manage mods");
+        let right = if empty {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(8.))
+                .py(px(28.))
+                .child(blocks::icon("package", 28., rgb(palette().muted).into()))
+                .child(heading("No mods or packs in this profile yet"))
+                .child(muted(
+                    "Mods, resource packs and shader packs you add show here.",
+                ))
+                .child(button("mock-browse-mods", "Browse mods").mt(px(6.)))
+        } else {
+            items
+        };
+        let column = |head: Div, body: Div| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(head)
+                .child(body)
+        };
+        let left = column(
+            div()
+                .h(px(tokens::CONTROL))
+                .flex()
+                .items_center()
+                .child(title(tr("Continue playing"))),
+            worlds,
+        );
+        let right = column(
+            div()
+                .h(px(tokens::CONTROL))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(title("Mods and packs"))
+                .when(!empty, |d| d.child(manage)),
+            right,
+        );
+        let both = div().flex().gap(px(22.)).child(left).child(right);
+        if stacked {
+            both.flex_col()
+        } else {
+            both
+        }
     }
 
     /// Every destination goes through `play_game`, which runs the sign-in, install, prepare,
