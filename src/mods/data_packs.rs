@@ -190,7 +190,7 @@ fn world_facts(world: &World) -> String {
 }
 
 /// "A", "A and B", "A, B and C".
-fn names(list: &[String]) -> String {
+pub(crate) fn names(list: &[String]) -> String {
     match list {
         [] => String::new(),
         [one] => one.clone(),

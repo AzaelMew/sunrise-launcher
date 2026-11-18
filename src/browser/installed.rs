@@ -19,7 +19,7 @@ const FOLDERS: [&str; 5] = [
     crate::native_mods::INSTALLED,
 ];
 /// How deep required dependencies are followed.
-const MAX_DEPTH: usize = 4;
+pub(super) const MAX_DEPTH: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Entry {

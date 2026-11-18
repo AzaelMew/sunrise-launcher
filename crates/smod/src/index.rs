@@ -742,6 +742,16 @@ pub fn check_file(
     version: &Version,
     path: &Path,
 ) -> Result<Trust, String> {
+    check_file_with_facts(index, project, version, path).map(|(trust, _)| trust)
+}
+
+/// The same checks as [`check_file`], returning the checked manifest facts for install planning.
+pub fn check_file_with_facts(
+    index: &Index,
+    project: &Project,
+    version: &Version,
+    path: &Path,
+) -> Result<(Trust, Facts), String> {
     let size = std::fs::metadata(path)
         .map_err(|e| format!("{}: {e}", path.display()))?
         .len();
@@ -772,8 +782,9 @@ pub fn check_file(
             project.kind.name()
         ));
     }
-    inspect(&project.kind, path)?.matches(project, version)?;
-    Ok(trust)
+    let facts = inspect(&project.kind, path)?;
+    facts.matches(project, version)?;
+    Ok((trust, facts))
 }
 
 /// What a file says about itself, read by its kind's own check
@@ -792,6 +803,8 @@ pub struct Facts {
     /// The Minecraft version, when the file names one (a modpack does).
     pub game: Option<String>,
     pub requires: Vec<Requirement>,
+    /// A mod's dependencies, from its checked manifest rather than a modpack's index pins.
+    pub dependencies: std::collections::BTreeMap<String, crate::manifest::Dependency>,
 }
 
 impl Facts {
@@ -856,6 +869,7 @@ pub fn inspect(kind: &Kind, path: &Path) -> Result<Facts, String> {
                 version: Some(m.version),
                 api: m.api,
                 side: Some(m.side),
+                dependencies: m.dependencies,
                 ..Facts::default()
             })
         }

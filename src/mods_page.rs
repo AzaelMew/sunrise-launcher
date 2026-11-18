@@ -350,6 +350,13 @@ impl Launcher {
                     ));
                 }
                 let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
+                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
+                    let names = done.into_iter().map(|e| e.title).collect::<Vec<_>>();
+                    return Ok(trf(
+                        "Installed {mods}.",
+                        &[("mods", &crate::mods::names(&names))],
+                    ));
+                }
                 let names: Vec<String> = done
                     .iter()
                     .map(|e| format!("{} {}", e.title, e.number))
@@ -359,13 +366,6 @@ impl Launcher {
                     return Ok(trf(
                         "Installed {mods} into {instance}. Build to play with it.",
                         &[("mods", &mods), ("instance", &instance)],
-                    ));
-                }
-                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
-                    return Ok(trf(
-                        "Installed {mods} into sunrise-mods and turned it on, checksum \
-                             checked (Options > Mods in the game).",
-                        &[("mods", &mods)],
                     ));
                 }
                 Ok(trf(
