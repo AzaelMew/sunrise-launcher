@@ -1,7 +1,7 @@
 //! Whether an instance plays its native mods (docs/modding/src/how-to/native-mods.md): the mods turned on in its
 //! folder against the ones its version was built with (`native-mods.json`, written by
 //! `native_mods::build`). The Mods page shows the answer beside its Build button.
-use crate::{backend, browser::java, native_mods};
+use crate::{backend, browser::mod_list, native_mods};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -149,7 +149,7 @@ pub fn wasm_points(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bun
             let package = sunrise_launcher_smod::Package::read_zip(&mut zip).ok()?;
             if package.manifest.wasm.is_none()
                 || package.manifest.inject.is_empty()
-                || !java::is_enabled(home, &package.manifest.id)
+                || !mod_list::is_enabled(home, &package.manifest.id)
             {
                 return None;
             }
@@ -180,7 +180,7 @@ pub fn enabled(home: &Path) -> Vec<Mod> {
     for path in hmods(home) {
         match sunrise_launcher_smod::index::native::Bundle::read(&path) {
             Ok(b) => {
-                if java::is_enabled(home, &b.manifest.id) {
+                if mod_list::is_enabled(home, &b.manifest.id) {
                     let digest =
                         archive_digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
                     out.push((b.manifest.id, b.manifest.version, Some(digest)));
@@ -210,7 +210,7 @@ pub fn bundles_on(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bund
     hmods(home)
         .into_iter()
         .filter_map(|path| sunrise_launcher_smod::index::native::Bundle::read(&path).ok())
-        .filter(|b| java::is_enabled(home, &b.manifest.id))
+        .filter(|b| mod_list::is_enabled(home, &b.manifest.id))
         .collect()
 }
 
@@ -326,7 +326,7 @@ fn parse_built(about: &serde_json::Value) -> Vec<Mod> {
 /// list and each `.smod`'s size and time. The Mods page reads the mods again when it changes.
 pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     let mut out = format!("{}\n{version:?}\n", home.display());
-    // The on/off list (`browser::java::is_enabled`).
+    // The on/off list (`browser::mod_list::is_enabled`).
     out += &fs::read_to_string(home.join("sunrise-mods.txt")).unwrap_or_default();
     for path in hmods(home)
         .into_iter()
@@ -496,7 +496,7 @@ mod tests {
                 sunrise_launcher_smod::Package::write_files(&manifest, &[("mod.wasm", &module)])
                     .unwrap();
             fs::write(folder.join("test.smod"), bytes).unwrap();
-            java::set_enabled(home.path(), "wasm_test", true).unwrap();
+            mod_list::set_enabled(home.path(), "wasm_test", true).unwrap();
             assert_eq!(enabled(home.path()).len(), usize::from(inject));
             if inject {
                 let staged = native_mods::stage_installed(home.path(), home.path().join("staged"))
@@ -506,7 +506,7 @@ mod tests {
                 assert_eq!(bundles.len(), 1);
                 assert!(bundles[0].manifest.native.is_none());
             }
-            java::set_enabled(home.path(), "wasm_test", false).unwrap();
+            mod_list::set_enabled(home.path(), "wasm_test", false).unwrap();
             assert!(enabled(home.path()).is_empty());
         }
     }
@@ -574,8 +574,6 @@ mod tests {
                 page: String::new(),
                 dependency: false,
                 verdict: None,
-                skipped: vec![],
-                namespaces: vec![],
             }],
         }
         .save(&home)
@@ -588,7 +586,7 @@ mod tests {
         assert_eq!(seen, [("github", "1.2", true), ("local", "1.2", false)]);
         assert!(files.iter().all(|m| matches!(&m.icon, Ok(None))));
         for id in ["registry", "github", "local"] {
-            java::set_enabled(&home, id, true).unwrap();
+            mod_list::set_enabled(&home, id, true).unwrap();
         }
         assert_eq!(state(&enabled(&home), None), State::NotBuilt);
         let mut pins = pinning(&home, &"a".repeat(40));
@@ -600,7 +598,7 @@ mod tests {
         );
         assert!(pinning(&home, &"b".repeat(40)).is_empty());
         for id in ["registry", "github", "local"] {
-            java::set_enabled(&home, id, false).unwrap();
+            mod_list::set_enabled(&home, id, false).unwrap();
         }
         assert_eq!(state(&enabled(&home), None), State::NoMods);
         assert!(

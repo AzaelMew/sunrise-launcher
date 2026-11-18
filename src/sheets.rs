@@ -900,7 +900,7 @@ impl Launcher {
                     }
                     PendingConsent::Github(found, only) => self.github_install(found, only),
                     PendingConsent::Local(id) => {
-                        self.mods.message = sunrise_launcher::browser::java::set_enabled(
+                        self.mods.message = sunrise_launcher::browser::mod_list::set_enabled(
                             &self.mods.home(),
                             &id,
                             true,

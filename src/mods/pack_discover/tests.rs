@@ -52,7 +52,6 @@ fn a_scope_keeps_only_modrinth_hits_of_its_own_kind() {
             project("d", SourceId::Modrinth, Kind::Modpack),
             project("e", SourceId::Modrinth, Kind::Shader),
             project("f", SourceId::Sunrise, Kind::ResourcePack),
-            project("g", SourceId::CurseForge, Kind::DataPack),
             project("a", SourceId::Modrinth, Kind::ResourcePack),
         ]
     };
@@ -163,7 +162,6 @@ fn shader_packs_come_from_modrinth_and_sunrises_registry_only() {
         project("m", SourceId::Modrinth, Kind::Shader),
         project("s", SourceId::Sunrise, Kind::Shader),
         project("r", SourceId::Sunrise, Kind::ResourcePack),
-        project("c", SourceId::CurseForge, Kind::Shader),
         project("x", SourceId::Modrinth, Kind::Mod),
     ];
     let ids: Vec<_> = keep(Scope::Shader, hits.clone())

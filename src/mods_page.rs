@@ -1,45 +1,22 @@
-//! The Mods page: its tabs are the kinds (mods, modpacks, resource packs, shader packs, data
-//! packs). Search Sunrise's own registry for what was made for Sunrise, or Modrinth (CurseForge:
-//! coming soon) for Java mods, modpacks, resource packs and data packs (a Java instance's files
-//! always come from Modrinth, for its version), see where each comes
-//! from and how well it runs (a Java mod's jar is checked first; a Sunrise mod says whether it is
-//! signed and what it may do), install it with its checksum checked, turn Sunrise mods on and
-//! off, and update or remove what was installed (`sunrise_launcher::browser`). Imported modpacks
-//! are listed on its Modpacks tab.
+//! The Mods page's state and work: Sunrise's registry mods, modpacks and shader packs, and
+//! resource and data packs from Modrinth, installed with their checksum checked, Sunrise mods
+//! turned on and off, and what was installed updated or removed (`sunrise_launcher::browser`).
 
 use super::*;
-use java_instance::Target;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use sunrise_launcher::browser::{
-    self, installed, java, java_instance, sunrise, Kind as PackKind, Project, SourceId,
+    self, installed, mod_list, sunrise, Kind as PackKind, Project, SourceId,
 };
-use sunrise_launcher::modpacks;
 use sunrise_launcher::native_status;
-use sunrise_launcher::porter::Check;
-
-/// Java mods checked at once.
-const CHECKING: usize = 2;
-
-#[path = "glass_mods.rs"]
-mod glass_mods;
 
 pub(super) enum Event {
     Progress(String, f32),
     Done(Result<String, String>, bool),
-    /// A Java mod's check (its jar read, or why it couldn't be), for the Minecraft version it picked the jar for.
-    Checked((SourceId, String), String, Result<Box<Check>, String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(Vec<String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
-}
-
-/// Where a Java mod's check is.
-pub(super) enum Checking {
-    Running,
-    Done,
-    Failed,
 }
 
 pub(super) struct Mods {
@@ -62,9 +39,6 @@ pub(super) struct Mods {
     pub(super) auto_updated: bool,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: Option<PathBuf>,
-    /// The selected Java instance's version and loader: its mods and resource packs are the
-    /// source's own files for them, put in as they are.
-    pub(super) java: Option<Target>,
     /// Its worlds (folder, name), the last played first, and the one data packs go into.
     worlds: Vec<(PathBuf, String)>,
     world: Option<PathBuf>,
@@ -81,8 +55,6 @@ pub(super) struct Mods {
     /// The instance and the mods whose compile failed in the last stop: their chips say so until
     /// the next build attempt, whatever the player chose.
     pub(super) unbuilt: Option<(String, Vec<String>)>,
-    /// Java mods' checks, by source and project.
-    pub(super) checks: HashMap<(SourceId, String), Checking>,
     /// The project page, filters and images.
     pub(super) browse: super::mods_project::Browse,
     pub(super) tx: Sender<Event>,
@@ -138,7 +110,6 @@ impl Mods {
             game_for: None,
             auto_updated: false,
             home: None,
-            java: None,
             worlds: Vec::new(),
             world: None,
             busy: None,
@@ -146,7 +117,6 @@ impl Mods {
             native_state: Default::default(),
             unbuilt: None,
             updates: HashMap::new(),
-            checks: HashMap::new(),
             browse: Default::default(),
             tx,
             rx,
@@ -162,7 +132,6 @@ impl Launcher {
     /// Called with the launcher's other work: what the background sent.
     pub(super) fn mods_tick(&mut self) -> bool {
         let mut changed = false;
-        let mut to_check = Vec::new();
         let mut loaded = Vec::new();
         let mut done = false;
         while let Ok(event) = self.mods.rx.try_recv() {
@@ -189,25 +158,6 @@ impl Launcher {
                         self.packs_loaded = None;
                     }
                 }
-                // A check for another Minecraft version than the page's (the instance moved) is dropped.
-                Event::Checked(key, game, result) if game == m.game => {
-                    let state = match result {
-                        Ok(_) => Checking::Done,
-                        Err(_) => Checking::Failed,
-                    };
-                    m.checks.insert(key, state);
-                }
-                // Its worker is done: the project is checked again, for the page's version, without two workers on one jar.
-                Event::Checked(key, ..) => {
-                    m.checks.remove(&key);
-                    if let Some(p) = m
-                        .results
-                        .iter()
-                        .find(|p| (p.source, &p.id) == (key.0, &key.1))
-                    {
-                        to_check.push(p.clone());
-                    }
-                }
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(lines) => {
                     if !lines.is_empty() {
@@ -218,7 +168,6 @@ impl Launcher {
                 }
             }
         }
-        self.mods_check(to_check);
         if done {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
@@ -251,8 +200,7 @@ impl Launcher {
         });
     }
 
-    /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does;
-    /// in a Java instance, renames its file.
+    /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
     pub(super) fn mods_switch(&mut self, e: &installed::Entry) {
         let home = self.mods.home();
         // An update holds the folder: the window doesn't wait for it.
@@ -260,21 +208,10 @@ impl Launcher {
             self.mods.message = Some(Err(tr("Wait for the current operation to finish.").into()));
             return;
         };
-        if self.mods.java.is_some() {
-            let on = !java_instance::is_on(&home, e);
-            self.mods.message = Some(java_instance::set_on(&home, e, on).map(|()| {
-                format!(
-                    "{} is {}. The game reads this when it starts.",
-                    e.title,
-                    if on { "on" } else { "off" }
-                )
-            }));
-            return;
-        }
         let Some(id) = sunrise::mod_id(e) else {
             return;
         };
-        let on = !java::is_enabled(&home, id);
+        let on = !mod_list::is_enabled(&home, id);
         if on
             && native_status::is_native_file(&e.file)
             && self.settings.native_mods_allowed_at.is_none()
@@ -288,81 +225,13 @@ impl Launcher {
         });
         self.mods.message = Some(match revoked.filter(|_| on) {
             Some(reason) => Err(format!("{} was taken down: {reason}", e.title)),
-            None => java::set_enabled(&home, id, on).map(|()| {
+            None => mod_list::set_enabled(&home, id, on).map(|()| {
                 format!(
                     "{} is {}. The game reads this when it starts.",
                     e.title,
                     if on { "on" } else { "off" }
                 )
             }),
-        });
-    }
-
-    /// Checks the Java mods among `found` that aren't checked yet, a few at a time, on threads:
-    /// a cached check answers at once, else the jar is downloaded and read.
-    fn mods_check(&mut self, found: Vec<Project>) {
-        let m = &mut self.mods;
-        if m.java.is_some() {
-            return;
-        }
-        // Each project is claimed as it is taken, so one listed twice (a result and a re-queued check) gets one worker.
-        let mut todo = Vec::new();
-        for p in found {
-            let key = (p.source, p.id.clone());
-            if p.kind == PackKind::Mod
-                && p.source != SourceId::Sunrise
-                && p.support(&m.game).installable()
-                && !m.checks.contains_key(&key)
-            {
-                m.checks.insert(key, Checking::Running);
-                todo.push(p);
-            }
-        }
-        if todo.is_empty() {
-            return;
-        }
-        // A version other than 26.3 asked for: check the newest file for 1.21 and later.
-        let everything = m.everything || m.browse.filters.other_version(&m.game);
-        let game = m.game.clone();
-        let tx = m.tx.clone();
-        let queue = std::sync::Mutex::new(todo.into_iter());
-        std::thread::spawn(move || {
-            // Checks are kept in the default game folder, shared by every instance.
-            let home = backend::game_home();
-            std::thread::scope(|s| {
-                for _ in 0..CHECKING {
-                    s.spawn(|| {
-                        while let Some(p) = queue.lock().ok().and_then(|mut q| q.next()) {
-                            let result = browser::source(p.source)
-                                .ok_or_else(|| {
-                                    trf("{source} isn't set up.", &[("source", p.source.label())])
-                                })
-                                .and_then(|source| {
-                                    java::check_project(
-                                        &home,
-                                        &*source,
-                                        &p,
-                                        everything,
-                                        &game,
-                                        &|_| {},
-                                    )
-                                });
-                            // The project's page, if open, shows the verdict beside its version.
-                            if let Ok((version, check)) = &result {
-                                let key = (p.source, p.id.clone());
-                                let _ =
-                                    tx.send(Event::Loaded(super::mods_project::Loaded::Checked(
-                                        key,
-                                        version.id.clone(),
-                                        check.verdict,
-                                    )));
-                            }
-                            let result = result.map(|(_, check)| Box::new(check));
-                            let _ = tx.send(Event::Checked((p.source, p.id), game.clone(), result));
-                        }
-                    });
-                }
-            });
         });
     }
 
@@ -388,12 +257,9 @@ impl Launcher {
         self.mods.updates.remove(&(source, id.clone()));
         let everything =
             self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);
-        // A modpack is ported for the selected version as soon as it is imported.
-        let tag = self.selected().map(|tag| tag.to_string());
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
         let game = self.mods_game();
-        let java = self.mods.java.clone();
         let instance = self
             .selected_instance()
             .map_or_else(|| "Sunrise".to_string(), |i| i.name.clone());
@@ -410,128 +276,79 @@ impl Launcher {
                 }
             };
             let mut modpack = false;
-            let result = browser::source(source)
-                .ok_or_else(|| trf("{source} isn't set up.", &[("source", source.label())]))
-                .and_then(|source| {
-                    let p = match known {
-                        Some(p) => p,
-                        None => source.project(&id)?,
-                    };
-                    if let Some(target) = java.as_ref().filter(|t| t.takes(p.kind)) {
-                        let done = java_instance::install(&*source, target, &p, &home, &progress)?;
-                        let names: Vec<String> = done
-                            .iter()
-                            .map(|e| format!("{} {}", e.title, e.number))
-                            .collect();
-                        return Ok(trf(
-                            "Installed {mods}, checksums checked.",
-                            &[("mods", &names.join(", "))],
-                        ));
-                    }
-                    if p.kind == PackKind::DataPack {
-                        let (world, name) = world.ok_or_else(|| {
-                            tr("Pick the world the data pack goes into first.").to_string()
-                        })?;
-                        let done = installed::install_datapack(
-                            &*source,
-                            &p,
-                            everything,
-                            &world,
-                            &game,
-                            &|f| progress(&p.title, f),
-                        )?;
-                        return Ok(trf(
-                            "Put {pack} {version} in {world}'s data packs, checksum checked: the \
+            let result = (|| -> Result<String, String> {
+                let source = browser::source(source);
+                let p = match known {
+                    Some(p) => p,
+                    None => source.project(&id)?,
+                };
+                if p.kind == PackKind::DataPack {
+                    let (world, name) = world.ok_or_else(|| {
+                        tr("Pick the world the data pack goes into first.").to_string()
+                    })?;
+                    let done = installed::install_datapack(
+                        &*source,
+                        &p,
+                        everything,
+                        &world,
+                        &game,
+                        &|f| progress(&p.title, f),
+                    )?;
+                    return Ok(trf(
+                        "Put {pack} {version} in {world}'s data packs, checksum checked: the \
                              game turns it on when the world opens. {coverage}",
-                            &[
-                                ("pack", &p.title),
-                                ("version", &done.number),
-                                ("world", &name),
-                                ("coverage", &done.coverage.summary()),
-                            ],
-                        ));
-                    }
-                    modpack = p.kind == PackKind::Modpack;
-                    if modpack && p.source == SourceId::Sunrise {
-                        let pack = sunrise::pack::install(&p.id, &progress)?;
-                        if let Some(url) = &p.icon {
-                            sunrise_launcher::instances::adopt_icon(
-                                &sunrise::pack::home(&pack.work),
-                                url,
-                            );
-                        }
-                        return Ok(trf(
-                            "Installed {pack} {version} as its own profile with {mods}, each \
-                             checked. Play it from the list above.",
-                            &[
-                                ("pack", &pack.name),
-                                ("version", &pack.version),
-                                ("mods", &pack.mods.join(", ")),
-                            ],
-                        ));
-                    }
-                    if modpack {
-                        let folder = modpacks::ports_dir().join("downloads");
-                        let file = installed::fetch_modpack(&*source, &p, &folder, &game, &|f| {
-                            progress(&p.title, f)
-                        })?;
-                        let log = |line: String| progress(&line, 1.);
-                        let porter = modpacks::Porter::for_version(tag.as_deref())?;
-                        let pack = modpacks::import_and_port(&porter, &file, &log)?;
-                        if let Some(url) = &p.icon {
-                            sunrise_launcher::instances::adopt_icon(
-                                &modpacks::profile_home(&pack.work),
-                                url,
-                            );
-                        }
-                        return Ok(format!(
-                            "{} {}",
-                            modpacks::outcome(&pack),
-                            tr("Play it from the list above.")
-                        ));
-                    }
-                    let done =
-                        installed::install(&*source, &p, everything, &home, &game, &progress)?;
-                    let names: Vec<String> = done
-                        .iter()
-                        .map(|e| format!("{} {}", e.title, e.number))
-                        .collect();
-                    let mods = names.join(", ");
-                    if done.iter().any(|e| native_status::is_native_file(&e.file)) {
-                        return Ok(trf(
-                            "Installed {mods} into {instance}. Build to play with it.",
-                            &[("mods", &mods), ("instance", &instance)],
-                        ));
-                    }
-                    if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
-                        return Ok(trf(
-                            "Installed {mods} into sunrise-mods and turned it on, checksum \
-                             checked (Options > Mods in the game).",
-                            &[("mods", &mods)],
-                        ));
-                    }
-                    if p.kind == PackKind::Mod {
-                        let skipped = done.last().map_or(0, |e| e.skipped.len());
-                        let ported = trf(
-                            "Ported {mods} into sunrise-mods and turned on (Options > Mods in \
-                             the game).",
-                            &[("mods", &mods)],
+                        &[
+                            ("pack", &p.title),
+                            ("version", &done.number),
+                            ("world", &name),
+                            ("coverage", &done.coverage.summary()),
+                        ],
+                    ));
+                }
+                modpack = p.kind == PackKind::Modpack;
+                if modpack && p.source == SourceId::Sunrise {
+                    let pack = sunrise::pack::install(&p.id, &progress)?;
+                    if let Some(url) = &p.icon {
+                        sunrise_launcher::instances::adopt_icon(
+                            &sunrise::pack::home(&pack.work),
+                            url,
                         );
-                        return Ok(if skipped > 0 {
-                            format!(
-                                "{ported} {}",
-                                tr("What didn't port is listed under Installed.")
-                            )
-                        } else {
-                            ported
-                        });
                     }
-                    Ok(trf(
-                        "Installed {mods}, checksums checked. Turn it on in the game: Options \
-                         > Resource Packs.",
+                    return Ok(trf(
+                        "Installed {pack} {version} as its own profile with {mods}, each \
+                             checked. Play it from the list above.",
+                        &[
+                            ("pack", &pack.name),
+                            ("version", &pack.version),
+                            ("mods", &pack.mods.join(", ")),
+                        ],
+                    ));
+                }
+                let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
+                let names: Vec<String> = done
+                    .iter()
+                    .map(|e| format!("{} {}", e.title, e.number))
+                    .collect();
+                let mods = names.join(", ");
+                if done.iter().any(|e| native_status::is_native_file(&e.file)) {
+                    return Ok(trf(
+                        "Installed {mods} into {instance}. Build to play with it.",
+                        &[("mods", &mods), ("instance", &instance)],
+                    ));
+                }
+                if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
+                    return Ok(trf(
+                        "Installed {mods} into sunrise-mods and turned it on, checksum \
+                             checked (Options > Mods in the game).",
                         &[("mods", &mods)],
-                    ))
-                });
+                    ));
+                }
+                Ok(trf(
+                    "Installed {mods}, checksums checked. Turn it on in the game: Options \
+                         > Resource Packs.",
+                    &[("mods", &mods)],
+                ))
+            })();
             let _ = tx.send(Event::Done(result, modpack));
         });
     }

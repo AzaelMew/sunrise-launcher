@@ -175,7 +175,7 @@ impl Launcher {
         };
         let ids: Vec<&str> = go.iter().map(|r| r.id.as_str()).collect();
         let count = ids.len().to_string();
-        m.notice = Some(match java::set_all_enabled(&home, &ids, true) {
+        m.notice = Some(match mod_list::set_all_enabled(&home, &ids, true) {
             Ok(()) if held.is_empty() => Ok(trf(
                 "Turned on {count} mods. The game reads this when it starts.",
                 &[("count", &count)],
@@ -385,7 +385,7 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
     match action {
         Action::TurnOff(items) => {
             let ids: Vec<&str> = items.iter().map(|(id, _)| id.as_str()).collect();
-            match java::set_all_enabled(home, &ids, false) {
+            match mod_list::set_all_enabled(home, &ids, false) {
                 Ok(()) => done(
                     trf(
                         "Turned off {count} mods. The game reads this when it starts.",
@@ -435,7 +435,7 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
                     ));
                 };
                 // Read again now: it may have been switched off since the plan was made.
-                if !java::is_enabled(home, &item.id) {
+                if !mod_list::is_enabled(home, &item.id) {
                     failed.push((item.id.clone(), tr("turned off: left as it is").to_string()));
                     continue;
                 }
@@ -503,8 +503,8 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("level.dat"), bytes).unwrap();
         std::fs::write(dir.join("region/r.0.0.mca"), [7u8; 64]).unwrap();
-        java::set_enabled(&home, mod_id, true).unwrap();
-        java::set_enabled(&home, "unrelated", true).unwrap();
+        mod_list::set_enabled(&home, mod_id, true).unwrap();
+        mod_list::set_enabled(&home, "unrelated", true).unwrap();
         home
     }
 
@@ -528,7 +528,7 @@ mod tests {
             _ => panic!("expected the worlds at stake"),
         }
         assert!(
-            java::is_enabled(&home, "bricks"),
+            mod_list::is_enabled(&home, "bricks"),
             "nothing was switched off"
         );
         assert!(
@@ -555,9 +555,9 @@ mod tests {
         assert_eq!(zips.len(), 1);
         let world = worlds::list(&home).remove(0);
         worlds::verify_backup(&zips[0].path(), &world).unwrap();
-        assert!(!java::is_enabled(&home, "bricks"));
+        assert!(!mod_list::is_enabled(&home, "bricks"));
         assert!(
-            java::is_enabled(&home, "unrelated"),
+            mod_list::is_enabled(&home, "unrelated"),
             "only the chosen mod changed"
         );
         std::fs::remove_dir_all(home).ok();
@@ -580,7 +580,7 @@ mod tests {
         assert!(
             matches!(events.last(), Some(Event::Refused(why)) if why.contains("nothing was changed"))
         );
-        assert!(java::is_enabled(&home, "bricks"));
+        assert!(mod_list::is_enabled(&home, "bricks"));
         std::fs::remove_dir_all(home).ok();
     }
 
@@ -590,7 +590,7 @@ mod tests {
         let (tx, rx) = channel();
         run(off(&["unrelated"]), false, &home, "26.3", &tx);
         assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
-        assert!(!java::is_enabled(&home, "unrelated"));
+        assert!(!mod_list::is_enabled(&home, "unrelated"));
         std::fs::remove_dir_all(home).ok();
     }
 
@@ -610,7 +610,7 @@ mod tests {
             }
             _ => panic!("expected the unreadable world at stake"),
         }
-        assert!(java::is_enabled(&home, "unrelated"));
+        assert!(mod_list::is_enabled(&home, "unrelated"));
         std::fs::remove_dir_all(home).ok();
     }
 
@@ -633,7 +633,7 @@ mod tests {
         assert!(
             matches!(rx.try_iter().last(), Some(Event::Refused(why)) if why.contains("Nothing was changed"))
         );
-        assert!(java::is_enabled(&home2, "unrelated"));
+        assert!(mod_list::is_enabled(&home2, "unrelated"));
         std::fs::remove_dir_all(home).ok();
         std::fs::remove_dir_all(home2).ok();
     }

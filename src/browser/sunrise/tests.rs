@@ -474,7 +474,6 @@ fn installs_checked_turns_on_and_removes() {
     assert!(other.contains("no version for 26.9"), "{other}");
     let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
-    assert!(done[0].skipped.is_empty());
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
         done[0].checksum,

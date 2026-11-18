@@ -351,7 +351,7 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
     for path in paths {
         let bundle = sunrise_launcher_smod::index::native::Bundle::read(&path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        if !crate::browser::java::is_enabled(home, &bundle.manifest.id) {
+        if !crate::browser::mod_list::is_enabled(home, &bundle.manifest.id) {
             continue;
         }
         let dir = out.join(&bundle.manifest.id);
@@ -3114,7 +3114,7 @@ mod tests {
         };
         pack("veinminer.smod", None);
         assert!(installed_mods(&home).is_err(), "off until turned on");
-        crate::browser::java::set_enabled(&home, "veinminer", true).unwrap();
+        crate::browser::mod_list::set_enabled(&home, "veinminer", true).unwrap();
         let out = installed_mods(&home).unwrap();
         let found = bundles(&out).unwrap();
         assert_eq!(

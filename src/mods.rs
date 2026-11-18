@@ -25,7 +25,7 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use sunrise_launcher::browser::{
     installed::{self, Entry},
-    java, sunrise, Source, SourceId,
+    mod_list, sunrise, Source, SourceId,
 };
 
 mod actions;
@@ -463,13 +463,13 @@ impl Launcher {
             let mut enabled: HashSet<String> = entries
                 .iter()
                 .filter_map(|e| sunrise::mod_id(e))
-                .filter(|id| java::is_enabled(&home, id))
+                .filter(|id| mod_list::is_enabled(&home, id))
                 .map(str::to_owned)
                 .collect();
             enabled.extend(
                 local
                     .iter()
-                    .filter(|l| java::is_enabled(&home, &l.id))
+                    .filter(|l| mod_list::is_enabled(&home, &l.id))
                     .map(|l| l.id.clone()),
             );
             let chosen = sunrise::chosen(&home);

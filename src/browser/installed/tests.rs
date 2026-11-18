@@ -1,6 +1,5 @@
 use super::*;
 use crate::browser::{download, FileRef, Query};
-use crate::porter::Check;
 use sha2::Digest;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -236,168 +235,44 @@ fn nothing_is_installed_when_a_check_fails() {
     assert!(remove(&home, "good").is_err());
     assert!(home.join("resourcepacks/good-1.zip").exists());
 
-    let pack = project("pack", Kind::Modpack);
-    assert!(plan(&fake, &pack, false, GAME)
+    let jar = project("jar", Kind::Mod);
+    assert!(plan(&fake, &jar, false, GAME)
         .unwrap_err()
-        .contains("imported, not installed"));
+        .contains("isn't a pack Sunrise installs"));
     fs::remove_dir_all(&home).unwrap();
 }
 
 #[test]
-fn modpacks_download_checked() {
-    let home = home("kinds");
-    let mut fake = Fake::default();
-    fake.add(project("atm", Kind::Modpack));
-    fake.release("atm", "1", &[], b"mrpack", false);
-    let downloads = home.join("downloads");
-    let path = fetch_modpack(
-        &fake,
-        &fake.project("atm").unwrap(),
-        &downloads,
-        GAME,
-        &|_| {},
-    )
-    .unwrap();
-    assert_eq!(fs::read(path).unwrap(), b"mrpack");
-    fake.release("atm", "2", &[], b"mrpack 2", true);
-    assert!(fetch_modpack(
-        &fake,
-        &fake.project("atm").unwrap(),
-        &downloads,
-        GAME,
-        &|_| {}
-    )
-    .is_err());
-    assert!(!downloads.join("atm-2.zip").exists());
-    fs::remove_dir_all(&home).unwrap();
-}
-
-/// A NeoForge jar with `files` beside its `neoforge.mods.toml` for mod `id`.
-fn mod_jar(id: &str, files: &[(&str, &str)]) -> Vec<u8> {
-    use std::io::Write;
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let toml = format!(
-        "modLoader = \"javafml\"\nlicense = \"MIT\"\n[[mods]]\nmodId = \"{id}\"\nversion = \"1.0\"\ndisplayName = \"{id}\"\n"
-    );
-    for (name, text) in [("META-INF/neoforge.mods.toml", toml.as_str())]
-        .into_iter()
-        .chain(files.iter().copied())
-    {
-        zip.start_file(name, zip::write::SimpleFileOptions::default())
-            .unwrap();
-        zip.write_all(text.as_bytes()).unwrap();
-    }
-    zip.finish().unwrap().into_inner()
-}
-
-/// A porter's check of a test jar: a mod with files carries over and works, one without doesn't run.
-fn fake_check(jar: &Path, out: &Path) -> Result<Check, String> {
-    let (id, _) = crate::browser::java::jar_title(jar).ok_or("no metadata")?;
-    let files = zip::ZipArchive::new(fs::File::open(jar).unwrap())
-        .unwrap()
-        .len();
-    let works = files > 1;
-    let check: Check = serde_json::from_value(serde_json::json!({
-        "mod_id": id, "name": id, "version": "1.0", "loader": "neoforge", "license": "MIT",
-        "verdict": if works { "works" } else { "no" }, "summary": "",
-        "namespaces": [id], "ports": [], "skipped": [], "depends": []
-    }))
-    .unwrap();
-    if works {
-        fs::create_dir_all(out.join("carry")).unwrap();
-        fs::write(
-            out.join("carry/sunrise-mod.toml"),
-            format!("id = \"{id}\"\n"),
-        )
-        .unwrap();
-    }
-    fs::create_dir_all(out).unwrap();
+fn a_java_mod_an_earlier_launcher_ported_can_still_be_removed() {
+    let home = home("legacy-java-mod");
+    fs::create_dir_all(home.join("sunrise-mods/ruby")).unwrap();
     fs::write(
-        out.join("check.json"),
-        serde_json::to_string(&check).unwrap(),
+        home.join("sunrise-mods/ruby/sunrise-mod.toml"),
+        "id = \"ruby\"\n",
     )
     .unwrap();
-    Ok(check)
-}
-
-#[test]
-fn java_mods_are_ported_turned_on_refused_on_clashes_and_removed() {
-    crate::browser::java::FAKE_CHECK.with(|fake| fake.set(Some(fake_check)));
-    let home = home("java");
-    let mut fake = Fake::default();
-    for id in ["ruby", "lib", "gem"] {
-        let mut p = project(id, Kind::Mod);
-        p.loaders = vec!["neoforge".into()];
-        fake.add(p);
-    }
-    let block = r#"{"variants": {"": {"model": "ruby:block/ruby_block"}}}"#;
-    let recipe = r#"{"type": "minecraft:crafting_shapeless", "ingredients": ["minecraft:red_dye"], "result": {"id": "ruby:ruby_block"}}"#;
-    let ruby = mod_jar(
-        "ruby",
-        &[
-            ("assets/ruby/blockstates/ruby_block.json", block),
-            ("data/ruby/recipe/ruby_block.json", recipe),
-        ],
-    );
-    // A library: nothing to port.
-    let lib = mod_jar("lib", &[]);
-    // Another project with the same mod id.
-    let gem = mod_jar("ruby", &[("assets/ruby/blockstates/gem.json", block)]);
-    fake.release("ruby", "1", &["lib"], &ruby, false);
-    fake.release("lib", "1", &[], &lib, false);
-    fake.release("gem", "1", &[], &gem, false);
-
-    let done = install(
-        &fake,
-        &fake.project("ruby").unwrap(),
-        false,
-        &home,
-        GAME,
-        NONE,
+    fs::write(
+        home.join("sunrise-mods.txt"),
+        "mod.ruby:true\nmod.other:true\n",
     )
     .unwrap();
-    assert_eq!(done.len(), 1, "the library isn't installed");
-    let entry = &done[0];
-    assert_eq!(entry.file, "sunrise-mods/ruby");
-    assert_eq!(entry.verdict.as_deref(), Some("Works"));
-    assert!(
-        entry
-            .skipped
-            .iter()
-            .any(|s| s.starts_with("needs Pack lib")),
-        "{:?}",
-        entry.skipped
-    );
-    assert!(entry.namespaces.contains(&"ruby".to_owned()));
-    assert!(home.join("sunrise-mods/ruby/sunrise-mod.toml").is_file());
-    assert_eq!(
-        fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
-        "mod.ruby:true\n"
-    );
-    // The jar isn't kept, its check is.
-    assert!(!home
-        .join("mod-browser/checks-1/.downloads/ruby-1.zip")
-        .exists());
-
-    let clash = install(
-        &fake,
-        &fake.project("gem").unwrap(),
-        false,
-        &home,
-        GAME,
-        NONE,
-    )
-    .unwrap_err();
-    assert!(clash.contains("shares its id or namespace"), "{clash}");
-    assert!(!home.join("sunrise-mods/gem").exists());
+    // What the earlier launcher listed: its own fields beyond the ones this one keeps.
+    let manifest = serde_json::json!({ "entries": [{
+        "source": "modrinth", "project": "ruby", "slug": "ruby", "title": "Ruby", "kind": "mod",
+        "version": "1", "number": "1", "file": "sunrise-mods/ruby", "checksum": "SHA-512:00",
+        "page": "", "verdict": "Works", "skipped": ["needs Pack lib"], "namespaces": ["ruby"]
+    }]});
+    fs::write(home.join("mod-browser.json"), manifest.to_string()).unwrap();
+    assert_eq!(Installed::load(&home).entries.len(), 1);
 
     let removed = remove(&home, "ruby").unwrap();
     assert_eq!(removed.kind, Kind::Mod);
     assert!(!home.join("sunrise-mods/ruby").exists());
     assert_eq!(
         fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
-        ""
+        "mod.other:true\n"
     );
+    assert!(Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(&home).unwrap();
 }
 

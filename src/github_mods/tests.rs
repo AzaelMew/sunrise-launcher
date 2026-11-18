@@ -338,7 +338,7 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
     assert_eq!(origin.sha256, sha256(&bytes));
     assert_eq!(self::origin(&home, "zoom"), Some(origin.clone()));
     assert_eq!(origins(&home), vec![origin.clone()]);
-    assert!(java::is_enabled(&home, "zoom"));
+    assert!(mod_list::is_enabled(&home, "zoom"));
     // A commit's mod follows the default branch's head.
     assert_eq!(origin.follows().target, Target::Head);
     let newer = Resolved {
@@ -379,7 +379,7 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
     assert!(remove(&home, "zoom").unwrap());
     assert!(!remove(&home, "zoom").unwrap());
     assert!(!home.join(INSTALLED).join("zoom.smod").exists());
-    assert!(!java::is_enabled(&home, "zoom"));
+    assert!(!mod_list::is_enabled(&home, "zoom"));
     let _ = fs::remove_dir_all(home);
     let _ = fs::remove_dir_all(source);
 }

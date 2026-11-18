@@ -678,8 +678,7 @@ fn add_to_worlds(
         let put = check_world(home, &world.path).and_then(|_| match (&file, what) {
             (Some(file), _) => datapacks::add(&world.path, file),
             (None, What::Project(project)) => {
-                let source = browser::source(project.source)
-                    .ok_or_else(|| tr("This source isn't set up.").to_string())?;
+                let source = browser::source(project.source);
                 let done = browser::installed::install_datapack(
                     &*source,
                     project,

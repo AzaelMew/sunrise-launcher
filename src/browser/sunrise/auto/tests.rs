@@ -82,8 +82,6 @@ fn entry(version: &str) -> installed::Entry {
         page: String::new(),
         dependency: false,
         verdict: None,
-        skipped: Vec::new(),
-        namespaces: Vec::new(),
     }
 }
 
@@ -439,7 +437,7 @@ fn the_report_says_what_changed_and_nothing_otherwise() {
 /// the file without undoing it (#10071). A new install and the player's own install turn it on.
 #[test]
 fn an_automatic_update_keeps_a_disabled_mod_off() {
-    use crate::browser::java;
+    use crate::browser::mod_list;
     use crate::browser::sunrise::install_version;
     let dir = scratch("auto-disabled");
     let home = dir.join("home");
@@ -449,33 +447,39 @@ fn an_automatic_update_keeps_a_disabled_mod_off() {
     let first = index_of(&[("1.0.0", GAME, &v1)]);
     let p = first.project("ruby").unwrap();
     install_version(&first, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert!(java::is_enabled(&home, "ruby"), "a new install is on");
+    assert!(mod_list::is_enabled(&home, "ruby"), "a new install is on");
 
     // The player turns it off; the automatic update replaces its file and leaves it off.
-    java::set_enabled(&home, "ruby", false).unwrap();
+    mod_list::set_enabled(&home, "ruby", false).unwrap();
     let index = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
     let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
     assert_eq!(report.updated, ["Ruby 1.1.0"], "{report:?}");
-    assert!(!java::is_enabled(&home, "ruby"), "the update kept it off");
+    assert!(
+        !mod_list::is_enabled(&home, "ruby"),
+        "the update kept it off"
+    );
     assert_eq!(
         installed_ruby(&home),
         ("1.1.0".into(), fs::read(&v2).unwrap())
     );
 
     // Turned back on, the next automatic update leaves it on.
-    java::set_enabled(&home, "ruby", true).unwrap();
+    mod_list::set_enabled(&home, "ruby", true).unwrap();
     let index = index_of(&[("1.2.0", GAME, &v3), ("1.1.0", GAME, &v2)]);
     let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
     assert_eq!(report.updated, ["Ruby 1.2.0"], "{report:?}");
-    assert!(java::is_enabled(&home, "ruby"));
+    assert!(mod_list::is_enabled(&home, "ruby"));
 
     // The player's own install of the installed, disabled mod turns it on again.
-    java::set_enabled(&home, "ruby", false).unwrap();
+    mod_list::set_enabled(&home, "ruby", false).unwrap();
     let v4 = ruby(&dir, "1.3.0", &["lamp"], &[]);
     let index = index_of(&[("1.3.0", GAME, &v4), ("1.2.0", GAME, &v3)]);
     let p = index.project("ruby").unwrap();
     install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
-    assert!(java::is_enabled(&home, "ruby"), "an explicit install is on");
+    assert!(
+        mod_list::is_enabled(&home, "ruby"),
+        "an explicit install is on"
+    );
     assert_eq!(
         installed_ruby(&home),
         ("1.3.0".into(), fs::read(&v4).unwrap())
