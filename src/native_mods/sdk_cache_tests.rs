@@ -425,6 +425,14 @@ fn a_game_release_names_its_build_through_its_signed_index() {
         &[],
     );
     assert!(matches!(read(replaced), Err(Refusal::Superseded { .. })));
+    // An index that still names that build but isn't the one its signed sums list is no
+    // replacement: it's a safety refusal.
+    fs::write(
+        base.join("nightly-2026-11-17").join(INDEX),
+        format!("{index} "),
+    )
+    .unwrap();
+    assert!(matches!(read(replaced), Err(Refusal::Unsigned { .. })));
     // Only the signature decides: an index naming a later build of that day, signed for
     // anything else, is still a safety refusal.
     let unproven = "nightly-2026-11-18-abcdef0";
