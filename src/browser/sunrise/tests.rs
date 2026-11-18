@@ -482,7 +482,7 @@ fn installs_combined_native_content_as_one_smod() {
     let as_registry = [crate::native_status::BuildInput {
         id: "coords_hud".into(),
         file: "coords_hud.smod".into(),
-        registry: Some(index.projects[0].name.clone()),
+        registry: crate::native_status::Registry::Listed(index.projects[0].name.clone()),
     }];
     assert_eq!(named(&index), as_registry);
     let mut later = index.clone();
@@ -491,6 +491,38 @@ fn installs_combined_native_content_as_one_smod() {
     newer.file.sha256 = "0".repeat(64);
     later.projects[0].versions.insert(0, newer);
     assert_eq!(named(&later), as_registry);
+    // The copy of the index kept in the game folder is not the registry's word. A copy that
+    // lists a file put there by hand would name it as the registry's mod; it is never asked.
+    let own = home.join("sunrise-native-mods/coords_hud.smod");
+    let mut bytes = fs::read(&own).unwrap();
+    bytes.extend_from_slice(b"\0");
+    fs::write(&own, &bytes).unwrap();
+    let mut forged = index.clone();
+    forged.projects[0].versions[0].file.sha256 = index::sha256(&bytes);
+    forged.projects[0].versions[0].file.size = bytes.len() as u64;
+    let cache = home.join(CACHE);
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, serde_json::to_string(&forged).unwrap()).unwrap();
+    let kept = load(Err("offline".into()), &cache, true).unwrap();
+    assert_eq!(
+        named(&kept.index),
+        as_registry,
+        "the forgery, were it asked"
+    );
+    assert!(kept.fetched().is_none());
+    let unchecked = crate::native_status::build_inputs(&home, kept.fetched().as_deref());
+    assert_eq!(
+        unchecked[0].registry,
+        crate::native_status::Registry::Unchecked
+    );
+    // The registry's own answer is asked, and does not list that file.
+    let text = serde_json::to_string(&index).unwrap();
+    let answered = load(Ok((index.clone(), text)), &cache, true).unwrap();
+    let checked = crate::native_status::build_inputs(&home, answered.fetched().as_deref());
+    assert_eq!(
+        checked[0].registry,
+        crate::native_status::Registry::NotListed
+    );
     installed::remove(&home, "coords_hud").unwrap();
     assert!(!home.join(entry.file).exists());
     fs::remove_dir_all(home).unwrap();

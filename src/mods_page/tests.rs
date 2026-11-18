@@ -53,7 +53,7 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
         let mut pending = Some(home.build_consent(selected.clone(), None));
         assert_eq!(
             pending.as_ref().unwrap().name(),
-            "selected_mod (selected_mod.smod, not from the registry)"
+            "selected_mod (selected_mod.smod, not checked against the registry)"
         );
         assert_eq!(home.current(), selected);
         let action =

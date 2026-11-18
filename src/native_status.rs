@@ -255,13 +255,25 @@ pub struct BuildInput {
     pub id: String,
     /// The package's file name in the game folder.
     pub file: String,
-    /// The registry's name for it, only when this very file is one the registry lists for `id`.
-    pub registry: Option<String>,
+    pub registry: Registry,
+}
+
+/// What the registry says about a package's file.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Registry {
+    /// This very file is one the registry lists for the package's id, under this name.
+    Listed(String),
+    /// The registry lists no such file for that id.
+    NotListed,
+    /// The registry hasn't answered in this run, so nothing says whose file it is.
+    Unchecked,
 }
 
 /// What a build of game folder `home` takes in ([`enabled`]'s packages), each named from its own
 /// file: a package gets the registry's name only when its bytes are a file `index` lists for its
 /// id. A package someone put there under a registry mod's id stays an id and a file name.
+/// `index` is the registry's own answer (`sunrise::fetched_index`), never the copy kept in the
+/// game folder, which a package there could have written to list itself.
 pub fn build_inputs(
     home: &Path,
     index: Option<&sunrise_launcher_smod::index::Index>,
@@ -269,13 +281,18 @@ pub fn build_inputs(
     enabled_files(home)
         .into_iter()
         .map(|(path, (id, _, _))| {
-            let registry = index.and_then(|i| i.project(&id)).and_then(|p| {
+            let listed = |index: &sunrise_launcher_smod::index::Index| {
+                let p = index.project(&id)?;
                 let hash = sunrise_launcher_smod::index::sha256_file(&path).ok()?;
                 p.versions
                     .iter()
                     .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
                     .then(|| p.name.clone())
-            });
+            };
+            let registry = match index {
+                None => Registry::Unchecked,
+                Some(index) => listed(index).map_or(Registry::NotListed, Registry::Listed),
+            };
             let file = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -857,13 +874,15 @@ mod tests {
         }
         zip.finish().unwrap();
         mod_list::set_enabled(home.path(), "coords_hud", true).unwrap();
-        let input = |registry: Option<&str>| BuildInput {
+        let input = |registry: Registry| BuildInput {
             id: "coords_hud".into(),
             file: "coords_hud-0.1.0.smod".into(),
-            registry: registry.map(Into::into),
+            registry,
         };
-        assert_eq!(build_inputs(home.path(), Some(&index)), [input(None)]);
-        assert_eq!(build_inputs(home.path(), None), [input(None)]);
+        let not_listed = [input(Registry::NotListed)];
+        let unchecked = [input(Registry::Unchecked)];
+        assert_eq!(build_inputs(home.path(), Some(&index)), not_listed);
+        assert_eq!(build_inputs(home.path(), None), unchecked);
         // The same bytes as a file the registry lists for that id: the registry's name.
         let listed = &mut index
             .projects
@@ -873,9 +892,9 @@ mod tests {
         listed.versions[0].file.sha256 = sunrise_launcher_smod::index::sha256_file(&local).unwrap();
         assert_eq!(
             build_inputs(home.path(), Some(&index)),
-            [input(Some("Coordinates HUD"))]
+            [input(Registry::Listed("Coordinates HUD".into()))]
         );
-        assert_eq!(build_inputs(home.path(), None), [input(None)]);
+        assert_eq!(build_inputs(home.path(), None), unchecked);
         // Listed under another project's id only: still not the registry's.
         let hash = index.project("coords_hud").unwrap().versions[0]
             .file
@@ -885,7 +904,7 @@ mod tests {
             let own = p.id == "coords_hud";
             p.versions[0].file.sha256 = if own { "0".repeat(64) } else { hash.clone() };
         }
-        assert_eq!(build_inputs(home.path(), Some(&index)), [input(None)]);
+        assert_eq!(build_inputs(home.path(), Some(&index)), not_listed);
     }
 
     #[test]

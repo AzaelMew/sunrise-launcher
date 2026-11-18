@@ -4,7 +4,7 @@ use sunrise_launcher::{
     backend::Settings,
     browser::{installed::Entry, mod_list, Project, SourceId},
     github_mods::Resolved,
-    native_status::BuildInput,
+    native_status::{BuildInput, Registry},
 };
 
 pub(super) enum PendingConsent {
@@ -51,15 +51,18 @@ impl PendingConsent {
 /// lists (`native_status::build_inputs`), else its id and file, so a package put in the folder
 /// under a registry mod's id never reads as that mod.
 fn build_label(input: &BuildInput) -> String {
+    let own = [("id", input.id.as_str()), ("file", input.file.as_str())];
     match &input.registry {
-        Some(name) if !name.is_empty() => crate::i18n::trf(
+        Registry::Listed(name) if !name.is_empty() => crate::i18n::trf(
             "{name} ({id}, from the Sunrise registry)",
             &[("name", name), ("id", &input.id)],
         ),
-        _ => crate::i18n::trf(
-            "{id} ({file}, not from the registry)",
-            &[("id", &input.id), ("file", &input.file)],
-        ),
+        Registry::Listed(_) | Registry::NotListed => {
+            crate::i18n::trf("{id} ({file}, not from the registry)", &own)
+        }
+        Registry::Unchecked => {
+            crate::i18n::trf("{id} ({file}, not checked against the registry)", &own)
+        }
     }
 }
 
@@ -136,20 +139,36 @@ mod tests {
 
     #[test]
     fn a_build_names_a_package_as_the_registry_mod_only_when_its_file_is_the_registrys() {
-        let input = |registry: Option<&str>| BuildInput {
+        let input = |registry: Registry| BuildInput {
             id: "jei".into(),
             file: "jei.smod".into(),
-            registry: registry.map(Into::into),
+            registry,
         };
         let build = |i| PendingConsent::Build(vec![i]).name();
         assert_eq!(
-            build(input(Some("JEI"))),
+            build(input(Registry::Listed("JEI".into()))),
             "JEI (jei, from the Sunrise registry)"
         );
-        assert_eq!(build(input(None)), "jei (jei.smod, not from the registry)");
         assert_eq!(
-            build(input(Some(""))),
+            build(input(Registry::NotListed)),
             "jei (jei.smod, not from the registry)"
+        );
+        assert_eq!(
+            build(input(Registry::Listed(String::new()))),
+            "jei (jei.smod, not from the registry)"
+        );
+    }
+
+    #[test]
+    fn a_package_is_not_called_the_registrys_when_the_registry_has_not_answered() {
+        let build = PendingConsent::Build(vec![BuildInput {
+            id: "jei".into(),
+            file: "jei.smod".into(),
+            registry: Registry::Unchecked,
+        }]);
+        assert_eq!(
+            build.name(),
+            "jei (jei.smod, not checked against the registry)"
         );
     }
 
@@ -158,7 +177,7 @@ mod tests {
         let input = |id: &str, registry: Option<&str>| BuildInput {
             id: id.into(),
             file: format!("{id}.smod"),
-            registry: registry.map(Into::into),
+            registry: registry.map_or(Registry::NotListed, |name| Registry::Listed(name.into())),
         };
         // A name with a comma, the same name twice, and a package the registry doesn't list.
         let build = PendingConsent::Build(vec![
@@ -187,7 +206,7 @@ mod tests {
         let input = |id: &str| BuildInput {
             id: id.into(),
             file: format!("{id}.smod"),
-            registry: None,
+            registry: Registry::Unchecked,
         };
         if std::env::var_os("SUNRISE_CONSENT_TEST_CHILD").is_none() {
             let home = tempfile::tempdir().unwrap();
