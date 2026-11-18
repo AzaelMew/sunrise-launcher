@@ -45,7 +45,9 @@ pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
 use crate::paint::palette;
 use model::{Card, Row};
 
+#[derive(Clone, Copy, PartialEq)]
 enum Menu {
+    Category,
     Make,
     Sort,
 }
