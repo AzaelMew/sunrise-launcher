@@ -184,22 +184,9 @@ enum DataCmd {
 
 #[derive(Subcommand)]
 enum ModpackCmd {
-    /// The imported packs and their coverage (the default)
+    /// The installed Sunrise modpacks (the default)
     List,
-    /// Import a .mrpack, a CurseForge zip or an instance folder, and write its coverage report
-    Import { path: PathBuf },
-    /// Get the jars of what this computer can port and carry them over
-    Port {
-        /// The pack's folder name, as list shows it
-        pack: String,
-        /// A folder with your own jars (an installed instance, a downloads folder)
-        #[arg(long)]
-        from: Option<PathBuf>,
-        /// The installed version the ports are for (default: the selected one)
-        #[arg(long)]
-        version: Option<String>,
-    },
-    /// Play a ported pack as its own profile
+    /// Play a Sunrise modpack as its own profile
     Play {
         pack: String,
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
@@ -208,7 +195,7 @@ enum ModpackCmd {
         #[arg(long)]
         version: Option<String>,
     },
-    /// Remove an imported pack: its jars, ports and the profile's saves
+    /// Remove a Sunrise modpack and the profile's saves
     Remove { pack: String },
 }
 
@@ -290,18 +277,15 @@ enum InstanceCmd {
     Select { instance: String },
     /// Keep an instance on one installed Sunrise version, or "latest" to follow updates again
     Version { instance: String, version: String },
-    /// Export an instance (or a port) to share: its settings, packs, Sunrise mods and the worlds
-    /// named, as a .mrpack (resource packs from Modrinth listed by download) or a zip. Never
-    /// logs, screenshots or account data; worlds go without their per-player files
+    /// Export an instance to share as a zip: its settings, packs, Sunrise mods and the worlds
+    /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
         /// The instance (default: the selected one)
         instance: Option<String>,
-        #[arg(long, value_enum, default_value_t = ExportFormat::Mrpack)]
-        format: ExportFormat,
         /// A world to put in it (its name or folder); repeat for more
         #[arg(long)]
         world: Vec<String>,
-        /// Where to write it (default: "<name>.mrpack" in the current folder)
+        /// Where to write it (default: "<name>.zip" in the current folder)
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -340,19 +324,14 @@ enum InstanceCmd {
         #[arg(long)]
         remove: bool,
     },
-    /// Import what a file is, as dropping it on the window does: a shared instance (a .mrpack
-    /// without mod loaders, such as `instance export` writes, or a game folder zip) becomes a
-    /// new instance; a Java modpack goes to the Modpacks import; a resource or shader pack into
-    /// the instance (default: the selected one)
+    /// Import what a file is: a shared instance (a game folder zip, such as `instance export`
+    /// writes) becomes a new instance; a resource or shader pack goes into the instance
+    /// (default: the selected one)
     Import {
         file: PathBuf,
         /// The instance a pack goes into
         #[arg(long)]
         instance: Option<String>,
-        /// A .mrpack becomes a Minecraft: Java Edition instance with its Minecraft version, mod
-        /// loader, mods and overrides, instead of a Sunrise instance or a Modpacks import
-        #[arg(long)]
-        java: bool,
     },
     /// List the instances other launchers keep (Prism Launcher, MultiMC, the official
     /// launcher, the CurseForge app, the Modrinth App), read without changing anything there
@@ -379,14 +358,6 @@ enum InstanceCmd {
         #[arg(long)]
         minecraft: Option<String>,
     },
-}
-
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum ExportFormat {
-    /// Modrinth's modpack format
-    Mrpack,
-    /// The game folder's layout, zipped
-    Zip,
 }
 
 #[derive(Subcommand)]
@@ -969,8 +940,7 @@ enum Cmd {
         #[command(subcommand)]
         action: Option<MultiplayerCmd>,
     },
-    /// Modpacks: import a Java pack, see its coverage report, port what this computer can and
-    /// play it as its own profile (docs/modpacks.md)
+    /// Sunrise modpacks from the registry: list them, play one as its own profile, or remove it
     Modpack {
         #[command(subcommand)]
         action: Option<ModpackCmd>,
@@ -2971,25 +2941,8 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             }
             changed(made);
         }
-        InstanceCmd::Import {
-            file, java: true, ..
-        } => {
-            let i =
-                sunrise_launcher::instances_mrpack::import(&file, &|line, _| eprintln!("{line}"))?;
-            if as_json {
-                json(value(&i, false));
-            } else {
-                println!(
-                    "Made the Java instance {} in {}: sunrise-launcher play --instance \"{}\"",
-                    i.name,
-                    i.home.display(),
-                    i.name
-                );
-            }
-        }
-        InstanceCmd::Import { file, instance, .. } => {
+        InstanceCmd::Import { file, instance } => {
             use sunrise_launcher::import::{self, Dropped};
-            use sunrise_launcher::modpacks;
             match import::what(&file)? {
                 Dropped::Instance => {
                     let i = import::import_instance(&file, &|line, _| eprintln!("{line}"))?;
@@ -3003,18 +2956,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                             i.name
                         );
                     }
-                }
-                Dropped::Modpack => {
-                    let pack = modpacks::import(
-                        &modpacks::Porter::for_version(None)?,
-                        &file,
-                        &|line: String| eprintln!("{line}"),
-                    )?;
-                    println!("{} ({})", modpacks::outcome(&pack), pack.summary());
-                    println!(
-                        "Port and play it: sunrise-launcher modpack port {}",
-                        pack.slug
-                    );
                 }
                 // A game build is its own command: it installs a version
                 // rather than touching an instance, and takes a `--version` to
@@ -3049,48 +2990,37 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
         }
         InstanceCmd::Export {
             instance,
-            format,
             world,
             out,
         } => {
-            use sunrise_launcher::export::{self, Format};
+            use sunrise_launcher::export;
             let i = match instance {
                 Some(name) => instances::find(&name)?,
                 None => instances::selected(),
-            };
-            let format = match format {
-                ExportFormat::Mrpack => Format::Mrpack,
-                ExportFormat::Zip => Format::Zip,
             };
             let worlds = world
                 .iter()
                 .map(|w| sunrise_launcher::worlds::find(&i.home, w).map(|w| w.folder))
                 .collect::<Result<Vec<_>, _>>()?;
-            let linked = match format {
-                Format::Mrpack => export::linkable(&i.home, &export::from_modrinth),
-                Format::Zip => Vec::new(),
-            };
             let out = match out {
                 Some(out) => out,
                 None => export::free_path(
                     &std::env::current_dir().map_err(|e| e.to_string())?,
                     &i.name,
-                    format,
                 ),
             };
-            let done = export::export(&i.home, &i.name, format, &worlds, &linked, &out)?;
+            let done = export::export(&i.home, &i.name, &worlds, &out)?;
             if as_json {
                 json(serde_json::json!({
-                    "path": done.path, "copied": done.copied, "linked": done.linked,
+                    "path": done.path, "copied": done.copied,
                     "worlds": done.worlds,
                 }));
             } else {
                 println!(
-                    "Exported {} to {}: {} files, {} listed by their Modrinth download{}.",
+                    "Exported {} to {}: {} files{}.",
                     i.name,
                     done.path.display(),
                     done.copied,
-                    done.linked,
                     match done.worlds.is_empty() {
                         true => String::new(),
                         false => format!(", worlds: {}", done.worlds.join(", ")),
@@ -3383,57 +3313,20 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
 
 fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
     use sunrise_launcher::browser::sunrise;
-    use sunrise_launcher::modpacks::Status;
-    use sunrise_launcher::modpacks::{self, Imported};
-    let log = &|line: String| eprintln!("{line}");
     let work = |pack: &str| {
-        let registry = sunrise::pack::packs_dir().join(pack);
-        if sunrise::pack::is_pack(&registry) {
-            return Ok(registry);
-        }
-        let work = modpacks::ports_dir().join(pack);
-        modpacks::load(&work).map(|_| work)
-    };
-    let show = |p: &Imported| {
-        let counts: Vec<String> = Status::ALL
-            .iter()
-            .map(|s| format!("{} {}", p.count(*s), s.label()))
-            .collect();
-        if as_json {
-            json(serde_json::json!({
-                "pack": p.slug, "name": p.title(), "summary": p.summary(),
-                "counts": Status::ALL.iter().map(|s| (s.label(), p.count(*s))).collect::<std::collections::BTreeMap<_, _>>(),
-                "portable": p.portable, "ported_mods": p.mods.len(), "jars": p.jars(),
-                "report": p.work.join("coverage.md"),
-            }));
+        let work = sunrise::pack::packs_dir().join(pack);
+        if sunrise::pack::is_pack(&work) {
+            Ok(work)
         } else {
-            println!(
-                "{}  ({})\n  {}\n  {}",
-                p.title(),
-                p.slug,
-                p.summary(),
-                counts.join(", ")
-            );
-            println!(
-                "  {} portable, {} carried over, {} data packs for new worlds",
-                p.portable,
-                p.mods.len(),
-                p.datapacks
-            );
-            if let Some(jars) = p.jars() {
-                println!("  {jars}");
-            }
-            println!("  {}", p.work.join("coverage.md").display());
+            Err(format!("{pack} isn't an installed modpack."))
         }
     };
     match action {
         ModpackCmd::List => {
-            let packs = modpacks::list();
             let registry = sunrise::pack::list();
-            if packs.is_empty() && registry.is_empty() && !as_json {
-                println!("No modpack imported yet: sunrise-launcher modpack import <pack>");
+            if registry.is_empty() && !as_json {
+                println!("No modpack installed yet: sunrise-launcher mods install <modpack> --source sunrise");
             }
-            packs.iter().for_each(show);
             for p in &registry {
                 if as_json {
                     json(
@@ -3441,7 +3334,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                     );
                 } else {
                     println!(
-                        "{} {}  ({}, from Sunrise's registry)\n  {}",
+                        "{} {}  ({})\n  {}",
                         p.name,
                         p.version,
                         p.id,
@@ -3450,28 +3343,13 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 }
             }
         }
-        ModpackCmd::Import { path } => show(&modpacks::import(
-            &modpacks::Porter::for_version(None)?,
-            &path,
-            log,
-        )?),
-        ModpackCmd::Port {
-            pack,
-            from,
-            version,
-        } => show(&modpacks::port(
-            &modpacks::Porter::for_version(version.as_deref())?,
-            &work(&pack)?,
-            from.as_deref(),
-            log,
-        )?),
         ModpackCmd::Play {
             pack,
             version,
             allow_jar_downloads,
         } => {
             let mut cmd = backend::client(&backend::resolve_version(version.as_deref())?)?;
-            modpacks::apply_profile(&mut cmd, &work(&pack)?)?;
+            sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
             sunrise_launcher::jars::prepare_launch(
                 &mut cmd,
                 &Default::default(),
@@ -3480,7 +3358,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
             .map_err(|error| error.to_string())?;
             return attached(cmd);
         }
-        ModpackCmd::Remove { pack } => modpacks::remove(&work(&pack)?)?,
+        ModpackCmd::Remove { pack } => sunrise::pack::remove(&work(&pack)?)?,
     }
     Ok(0)
 }

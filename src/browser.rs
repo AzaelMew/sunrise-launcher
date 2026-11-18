@@ -1,11 +1,11 @@
-//! The mod browser's sources: search Modrinth (CurseForge support is coming soon) for what
-//! Sunrise loads, say how well each result runs, and download a file only after its checksum
-//! matches (docs/mod-browser.md).
+//! The mod browser's sources: Sunrise's own registry (mods, modpacks, resource and shader packs)
+//! and Modrinth, searched only for resource packs, data packs and Iris-format shader packs. Each
+//! result says how well it runs, and a file is downloaded only after its checksum matches
+//! (docs/mod-browser.md).
 //!
-//! Offered: Java mods (Fabric, NeoForge, Forge), whose content Sunrise ports and whose jar is
-//! checked before install ([`java`]), modpacks (imported and ported), resource packs
-//! (`resourcepacks/`) and data packs (into a world, [`installed::install_datapack`]). Java code
-//! itself doesn't run in Sunrise (docs/modding/src/how-to/content-mods.md).
+//! Java mods and modpacks are not offered from Modrinth: Sunrise doesn't run Java code
+//! (docs/modding/src/how-to/content-mods.md). Packs go to `resourcepacks/` and `shaderpacks/`,
+//! data packs into a world ([`installed::install_datapack`]).
 pub mod details;
 pub mod download;
 pub mod images;

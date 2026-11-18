@@ -327,17 +327,6 @@ impl Launcher {
                         Err(e) => SelfUpdate::Failed(e),
                     };
                 }
-                Msg::PackLine(line) => {
-                    self.pack_log.push_back(line);
-                    if self.pack_log.len() > LOG_LINES {
-                        self.pack_log.pop_front();
-                    }
-                }
-                Msg::PackDone(result) => self.pack_done(result),
-                Msg::FoundPacks(found) => {
-                    self.found_scanning = false;
-                    self.found_packs = found;
-                }
                 // Old versions log their session; it never reaches the window.
                 Msg::Line(_, line) if line.contains("Session ID is") => {}
                 Msg::Line(job, line) => {

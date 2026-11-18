@@ -1,5 +1,5 @@
 use super::*;
-use crate::export::{export, Format};
+use crate::export::export;
 use std::io::Write;
 use std::time::Duration;
 
@@ -32,13 +32,13 @@ fn put(path: &Path, bytes: &[u8]) {
 /// Makes instances as folders of `root`, refusing a name already taken, as the launcher does.
 fn maker(root: &Path) -> impl Fn(&str) -> Result<Instance, String> + '_ {
     move |name: &str| {
-        let home = root.join(crate::modpacks::slug(name));
+        let home = root.join(name.to_lowercase().replace(' ', "-"));
         if home.exists() {
             return Err(instances::name_taken(name));
         }
         fs::create_dir_all(&home).unwrap();
         Ok(Instance {
-            id: crate::modpacks::slug(name),
+            id: name.to_lowercase().replace(' ', "-"),
             name: name.into(),
             kind: instances::Kind::Own,
             work: home.clone(),
@@ -84,16 +84,14 @@ fn says_what_a_dropped_file_is() {
         path
     };
     let cases: Vec<(PathBuf, Result<Dropped, ()>)> = vec![
-        (
-            mrpack("shared.mrpack", r#"{"minecraft":"26.3"}"#),
-            Ok(Dropped::Instance),
-        ),
+        // Modrinth modpacks and Java modpacks are not imported.
+        (mrpack("shared.mrpack", r#"{"minecraft":"26.3"}"#), Err(())),
         (
             mrpack(
                 "java.mrpack",
                 r#"{"minecraft":"1.21.1","fabric-loader":"0.16"}"#,
             ),
-            Ok(Dropped::Modpack),
+            Err(()),
         ),
         {
             let p = dir.join("cf.zip");
@@ -101,7 +99,7 @@ fn says_what_a_dropped_file_is() {
                 &p,
                 &[("manifest.json", b"{}"), ("overrides/config/a.toml", b"")],
             );
-            (p, Ok(Dropped::Modpack))
+            (p, Err(()))
         },
         {
             let p = dir.join("prism.zip");
@@ -112,7 +110,7 @@ fn says_what_a_dropped_file_is() {
                     ("Example/.minecraft/mods/example.jar", b""),
                 ],
             );
-            (p, Ok(Dropped::Modpack))
+            (p, Err(()))
         },
         {
             let p = dir.join("rp.zip");
@@ -240,9 +238,9 @@ fn an_export_comes_back_as_an_instance_and_nothing_escapes_its_folder() {
     put(&home.join("saves/Base/region/r.0.0.mca"), b"region");
     put(&home.join("saves/Base/level.dat"), b"not nbt");
     let made = dir.join("instances");
-    for format in [Format::Mrpack, Format::Zip] {
-        let out = dir.join(format!("Shared.{}", format.extension()));
-        export(&home, "Shared", format, &["Base".into()], &[], &out).unwrap();
+    {
+        let out = dir.join("Shared.zip");
+        export(&home, "Shared", &["Base".into()], &out).unwrap();
         let i = import_into(&out, NONE, &maker(&made)).unwrap();
         for f in [
             "options.txt",
@@ -257,8 +255,7 @@ fn an_export_comes_back_as_an_instance_and_nothing_escapes_its_folder() {
             );
         }
     }
-    // The .mrpack took the pack's name; the zip came second and got "(2)".
-    assert!(made.join("shared").is_dir() && made.join("shared-2").is_dir());
+    assert!(made.join("shared").is_dir());
 
     // A zip that reaches out of its folder, or carries what an instance doesn't keep.
     let evil = dir.join("evil.zip");
@@ -277,55 +274,36 @@ fn an_export_comes_back_as_an_instance_and_nothing_escapes_its_folder() {
     assert!(!dir.join("outside.txt").exists() && !made.join("up.txt").exists());
     assert!(!i.home.join("logs").exists() && !i.home.join("session.json").exists());
 
-    // A file to download from anywhere but Modrinth is refused, and the half-made folder goes.
-    let index = r#"{"formatVersion":1,"name":"Far","dependencies":{"minecraft":"26.3"},
-        "files":[{"path":"resourcepacks/x.zip","hashes":{"sha1":"00","sha512":"00"},
-        "downloads":["https://example.com/x.zip"],"fileSize":1}]}"#;
+    // A Modrinth modpack is not imported, and nothing is made for it.
     let far = dir.join("far.mrpack");
-    zip_file(&far, &[("modrinth.index.json", index.as_bytes())]);
-    let refused = import_into(&far, NONE, &maker(&made)).unwrap_err();
-    assert!(refused.contains("resourcepacks/x.zip"), "{refused}");
+    zip_file(&far, &[("modrinth.index.json", b"{}")]);
+    assert!(import_into(&far, NONE, &maker(&made)).is_err());
     assert!(!made.join("far").exists());
-
-    let java = dir.join("java.mrpack");
-    zip_file(
-        &java,
-        &[(
-            "modrinth.index.json",
-            br#"{"name":"J","files":[],"dependencies":{"neoforge":"21"}}"#,
-        )],
-    );
-    assert!(import_into(&java, NONE, &maker(&made)).is_err());
     fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
-fn a_java_pack_cannot_plant_the_browsers_list() {
+fn a_zip_cannot_plant_the_browsers_list() {
     let dir = scratch("planted-list");
     let made = dir.join("instances");
-    let pack = dir.join("planted.mrpack");
+    let pack = dir.join("planted.zip");
     let list = br#"{"entries":[{"source":"modrinth","project":"p","slug":"p","title":"p",
-        "kind":"mod","version":"1","number":"1","file":"mods/a.jar",
+        "kind":"resource-pack","version":"1","number":"1","file":"resourcepacks/a.zip",
         "checksum":"SHA-512:00","page":""}]}"#;
     zip_file(
         &pack,
         &[
-            (
-                "modrinth.index.json",
-                br#"{"name":"Planted","files":[],"dependencies":{"fabric-loader":"0.16"}}"#,
-            ),
-            ("overrides/mod-browser.json", list),
-            ("client-overrides/Mod-Browser.json", list),
-            ("overrides/mods/a.jar", b"jar"),
+            ("options.txt", b"ok"),
+            ("mod-browser.json", list),
+            ("Mod-Browser.json", list),
         ],
     );
-    let i = import_mrpack_into(&pack, NONE, &maker(&made)).unwrap();
-    assert!(i.home.join("mods/a.jar").is_file());
+    let i = import_into(&pack, NONE, &maker(&made)).unwrap();
     let names: Vec<_> = fs::read_dir(&i.home)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
-    assert_eq!(names, ["mods"]);
+    assert_eq!(names, ["options.txt"]);
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -343,7 +321,7 @@ fn a_zip_bomb_stops_at_the_limit_and_leaves_nothing() {
         ],
     );
     assert!(fs::metadata(&bomb).unwrap().len() < 4 << 10);
-    let refused = import_any(&bomb, NONE, &maker(&made), false, 16 << 10).unwrap_err();
+    let refused = import_any(&bomb, NONE, &maker(&made), 16 << 10).unwrap_err();
     assert!(refused.contains("more than 16 KiB"), "{refused}");
     assert!(!made.join("bomb").exists(), "the half-made instance goes");
     // Under the limit, all of it comes in; the limit counts every file together.
@@ -355,7 +333,7 @@ fn a_zip_bomb_stops_at_the_limit_and_leaves_nothing() {
             ("servers.dat", &[2u8; 8 << 10]),
         ],
     );
-    let i = import_any(&two, NONE, &maker(&made), false, 16 << 10).unwrap();
+    let i = import_any(&two, NONE, &maker(&made), 16 << 10).unwrap();
     assert_eq!(fs::read(i.home.join("servers.dat")).unwrap().len(), 8 << 10);
     let three = dir.join("three.zip");
     zip_file(
@@ -365,28 +343,6 @@ fn a_zip_bomb_stops_at_the_limit_and_leaves_nothing() {
             ("servers.dat", &[2u8; 8 << 10 | 1]),
         ],
     );
-    assert!(import_any(&three, NONE, &maker(&made), false, 16 << 10).is_err());
-    fs::remove_dir_all(&dir).unwrap();
-}
-
-#[test]
-fn a_mrpack_bomb_stops_at_the_limit_too() {
-    // import_mrpack_into takes every path a pack carries (a Java instance): the same cap applies.
-    let dir = scratch("mrpack-bomb");
-    let made = dir.join("instances");
-    let pack = dir.join("bomb.mrpack");
-    zip_file(
-        &pack,
-        &[
-            (
-                "modrinth.index.json",
-                br#"{"name":"Bomb","files":[],"dependencies":{"fabric-loader":"0.16"}}"#,
-            ),
-            ("overrides/kubejs/data.bin", &[0u8; 64 << 10]),
-        ],
-    );
-    let refused = import_any(&pack, NONE, &maker(&made), true, 16 << 10).unwrap_err();
-    assert!(refused.contains("more than 16 KiB"), "{refused}");
-    assert!(!made.join("bomb").exists(), "the half-made instance goes");
+    assert!(import_any(&three, NONE, &maker(&made), 16 << 10).is_err());
     fs::remove_dir_all(&dir).unwrap();
 }

@@ -52,7 +52,7 @@ impl Launcher {
                         .into_iter()
                         .find(|i| i.work == work)
                         .map(|i| i.id);
-                    let applied = sunrise_launcher::modpacks::apply_profile(&mut cmd, &work);
+                    let applied = sunrise_launcher::browser::sunrise::pack::apply(&mut cmd, &work);
                     (applied, id)
                 }
                 None => {

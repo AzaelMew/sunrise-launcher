@@ -131,18 +131,17 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     // A launcher with instances, on a player's existing folders: no instances.json yet.
     let all = list_in(&home, &data);
     let ids: Vec<&str> = all.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(ids, [DEFAULT, "pack:cozy", "port:small-pack"]);
+    // A pack an earlier launcher ported (`ports/`) is not listed: its folder is left as it is.
+    assert_eq!(ids, [DEFAULT, "pack:cozy"]);
     assert_eq!(all[0].name, "Sunrise");
     assert_eq!(all[0].home, home);
     assert_eq!(all[1].home, home.join("sunrise-packs/cozy/home"));
-    assert_eq!(all[2].name, "Small Pack");
-    assert_eq!(all[2].home, home.join("ports/small-pack/home"));
 
     // Everything the player can do with instances, then not one byte of theirs has moved.
     let empty = create_in(&home, &data, "Survival", None, None).unwrap();
     let copy = create_in(&home, &data, "My copy", Some(&all[0]), None).unwrap();
     edit_in(&home, &data, DEFAULT, |m| m.name = Some("Main".into())).unwrap();
-    edit_in(&home, &data, "Small Pack", |m| {
+    edit_in(&home, &data, "Cozy", |m| {
         m.icon = Some(Icon::Texture("diamond".into()));
         m.group = Some("Modded".into());
     })
@@ -176,9 +175,8 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
 
     let all = list_in(&home, &data);
     assert_eq!(all[0].name, "Main");
-    let port = find_in(&all, "port:small-pack").unwrap();
-    assert_eq!(port.group.as_deref(), Some("Modded"));
-    assert_eq!(port.home, home.join("ports/small-pack/home"));
+    let cozy = find_in(&all, "pack:cozy").unwrap();
+    assert_eq!(cozy.group.as_deref(), Some("Modded"));
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -204,7 +202,7 @@ fn names_stay_unique_and_packs_are_not_copied() {
     assert!(edit_in(&home, &data, "survival-2", |m| m.name =
         Some("SURVIVAL".into()))
     .is_err());
-    let port = find_in(&list_in(&home, &data), "small-pack").unwrap();
+    let port = find_in(&list_in(&home, &data), "pack:cozy").unwrap();
     assert!(create_in(&home, &data, "Pack copy", Some(&port), None).is_err());
     assert!(!home.join("instances/pack-copy").exists());
     // An empty group is no group.
@@ -388,15 +386,11 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     );
     assert!(find_in(&list_in(&home, &data), "Survival").is_err());
     assert!(!Store::load(&data).instances.contains_key("survival"));
-    // The game's home stays; an imported pack goes like an instance.
+    // The game's home stays.
     assert!(delete_in(&home, &data, DEFAULT, &to_trash)
         .unwrap_err()
         .contains("can't be deleted"));
     assert!(home.join("saves/World/level.dat").is_file());
-    delete_in(&home, &data, "small-pack", &to_trash).unwrap();
-    assert!(trash
-        .join("small-pack/home/saves/Modded/level.dat")
-        .is_file());
     // A folder removed by hand: its choices are dropped, a new one of that name starts clean.
     create_in(&home, &data, "Skyblock", None, None).unwrap();
     edit_in(&home, &data, "Skyblock", |m| m.group = Some("Old".into())).unwrap();

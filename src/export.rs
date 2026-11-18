@@ -1,18 +1,10 @@
-//! Sharing an instance (or a port): its settings, packs and Sunrise mods, and the worlds the
-//! player picks, as a `.mrpack` (Modrinth's modpack format, from its published spec) or a plain
-//! `.zip` of the game folder's layout.
+//! Sharing an instance: its settings, packs and Sunrise mods, and the worlds the player picks,
+//! as a plain `.zip` of the game folder's layout.
 //!
 //! Only what makes the instance goes in, from a fixed list ([`FILES`], [`FOLDERS`]): never logs,
 //! screenshots, backups, caches, or anything tied to the player's account. A world goes without
 //! its per-player files (`playerdata/`, `stats/`, `advancements/`) and its level.dat without the
 //! player's UUID.
-//!
-//! In a `.mrpack`, a resource pack the browser installed from Modrinth, still the same file, is
-//! listed by its download (`files`, with its SHA-1 and SHA-512) instead of being copied; the
-//! rest goes under `overrides/`, which a launcher copies into the game folder.
-use crate::browser::installed::{Entry, Installed};
-use crate::browser::{FileRef, Kind, SourceId};
-use sha2::Digest;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -31,53 +23,20 @@ pub const FILES: [&str; 6] = [
 pub const FOLDERS: [&str; 4] = ["resourcepacks", "shaderpacks", "sunrise-mods", "config"];
 /// What a world keeps per player: left out.
 const PER_PLAYER: [&str; 4] = ["playerdata", "stats", "advancements", "session.lock"];
-const INDEX: &str = "modrinth.index.json";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Format {
-    Mrpack,
-    Zip,
-}
-
-impl Format {
-    pub fn extension(self) -> &'static str {
-        match self {
-            Format::Mrpack => "mrpack",
-            Format::Zip => "zip",
-        }
-    }
-}
-
-/// A file of the instance that its source serves, listed in a `.mrpack` rather than copied.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Linked {
-    /// Relative to the game folder: `resourcepacks/<name>`.
-    pub path: String,
-    pub file: FileRef,
-}
 
 /// What an export wrote.
 #[derive(Debug, PartialEq)]
 pub struct Exported {
     pub path: PathBuf,
-    /// Files copied in (overrides, for a `.mrpack`).
+    /// Files copied in.
     pub copied: usize,
-    /// Files listed by their download.
-    pub linked: usize,
     /// The worlds in it, by folder.
     pub worlds: Vec<String>,
 }
 
 /// Writes the instance whose game folder is `home` to `out`. `worlds` are folders of its
-/// `saves/`; `linked` comes from [`linkable`] (empty for a zip).
-pub fn export(
-    home: &Path,
-    name: &str,
-    format: Format,
-    worlds: &[String],
-    linked: &[Linked],
-    out: &Path,
-) -> Result<Exported, String> {
+/// `saves/`.
+pub fn export(home: &Path, name: &str, worlds: &[String], out: &Path) -> Result<Exported, String> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for f in FILES {
         if home.join(f).is_file() {
@@ -94,12 +53,7 @@ pub fn export(
         }
         walk(home, &dir, &PER_PLAYER, &mut files);
     }
-    let linked: Vec<&Linked> = match format {
-        Format::Mrpack => linked.iter().collect(),
-        Format::Zip => Vec::new(),
-    };
-    files.retain(|(rel, _)| !linked.iter().any(|l| l.path == *rel));
-    if files.is_empty() && linked.is_empty() {
+    if files.is_empty() {
         return Err(format!(
             "{name} has nothing to share yet: no settings, packs, mods or worlds."
         ));
@@ -108,7 +62,7 @@ pub fn export(
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let part = out.with_extension("part");
-    let written = write(&part, name, format, &files, &linked);
+    let written = write(&part, &files);
     let done = written.and_then(|()| fs::rename(&part, out).map_err(|e| e.to_string()));
     if let Err(e) = done {
         let _ = fs::remove_file(&part);
@@ -117,65 +71,23 @@ pub fn export(
     Ok(Exported {
         path: out.to_path_buf(),
         copied: files.len(),
-        linked: linked.len(),
         worlds: worlds.to_vec(),
     })
 }
 
-fn write(
-    path: &Path,
-    name: &str,
-    format: Format,
-    files: &[(String, PathBuf)],
-    linked: &[&Linked],
-) -> Result<(), String> {
+fn write(path: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
     let mut zip = zip::ZipWriter::new(fs::File::create(path).map_err(|e| e.to_string())?);
     let options = zip::write::SimpleFileOptions::default();
-    let prefix = match format {
-        Format::Mrpack => {
-            zip.start_file(INDEX, options).map_err(|e| e.to_string())?;
-            let index = serde_json::to_vec_pretty(&index(name, linked)).unwrap();
-            zip.write_all(&index).map_err(|e| e.to_string())?;
-            "overrides/"
-        }
-        Format::Zip => "",
-    };
     for (rel, file) in files {
         let bytes = match rel.ends_with("/level.dat") {
             true => shareable_level(file)?,
             false => fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?,
         };
-        zip.start_file(format!("{prefix}{rel}"), options)
-            .map_err(|e| e.to_string())?;
+        zip.start_file(rel, options).map_err(|e| e.to_string())?;
         zip.write_all(&bytes).map_err(|e| e.to_string())?;
     }
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
-}
-
-/// `modrinth.index.json`: format 1, the files by their downloads, and the Minecraft version.
-fn index(name: &str, linked: &[&Linked]) -> serde_json::Value {
-    let files: Vec<serde_json::Value> = linked
-        .iter()
-        .map(|l| {
-            serde_json::json!({
-                "path": l.path,
-                "hashes": { "sha1": l.file.sha1, "sha512": l.file.sha512 },
-                "env": { "client": "required", "server": "unsupported" },
-                "downloads": [l.file.url],
-                "fileSize": l.file.size,
-            })
-        })
-        .collect();
-    serde_json::json!({
-        "formatVersion": 1,
-        "game": "minecraft",
-        "versionId": "1",
-        "name": name,
-        "summary": format!("{name}, exported from Sunrise."),
-        "files": files,
-        "dependencies": { "minecraft": crate::browser::game() },
-    })
 }
 
 /// Every file under `dir`, relative to `home` with `/`, leaving out the names in `skip` at
@@ -225,46 +137,8 @@ fn shareable_level(file: &Path) -> Result<Vec<u8>, String> {
     gz.finish().map_err(|e| e.to_string())
 }
 
-/// The resource packs the browser installed from Modrinth that are still the file it checked:
-/// with `lookup` (the source's file for an entry), what a `.mrpack` can list by download.
-pub fn linkable(home: &Path, lookup: &dyn Fn(&Entry) -> Option<FileRef>) -> Vec<Linked> {
-    Installed::load(home)
-        .entries
-        .iter()
-        .filter(|e| e.source == SourceId::Modrinth && e.kind == Kind::ResourcePack)
-        .filter(|e| {
-            let Ok(bytes) = fs::read(home.join(&e.file)) else {
-                return false;
-            };
-            let sum: String = sha2::Sha512::digest(&bytes)
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            e.checksum.strip_prefix("SHA-512:") == Some(sum.as_str())
-        })
-        .filter_map(|e| {
-            let file = lookup(e)?;
-            let same = file.sha512.as_deref() == e.checksum.strip_prefix("SHA-512:");
-            (same && file.sha1.is_some()).then(|| Linked {
-                path: e.file.clone(),
-                file,
-            })
-        })
-        .collect()
-}
-
-/// An entry's file as Modrinth serves it (asks Modrinth: for [`linkable`]).
-pub fn from_modrinth(e: &Entry) -> Option<FileRef> {
-    let sum = e.checksum.strip_prefix("SHA-512:")?;
-    crate::browser::modrinth::version_files(&e.version)
-        .ok()?
-        .into_iter()
-        .find(|f| f.sha512.as_deref() == Some(sum))
-}
-
-/// A free path for `name.<extension>` in `dir`: "Name (2).mrpack" when taken.
-pub fn free_path(dir: &Path, name: &str, format: Format) -> PathBuf {
-    let ext = format.extension();
+/// A free path for `name.zip` in `dir`: "Name (2).zip" when taken.
+pub fn free_path(dir: &Path, name: &str) -> PathBuf {
     let clean: String = name
         .chars()
         .map(|c| match c {
@@ -274,8 +148,8 @@ pub fn free_path(dir: &Path, name: &str, format: Format) -> PathBuf {
         .collect();
     (1..)
         .map(|n| match n {
-            1 => dir.join(format!("{clean}.{ext}")),
-            n => dir.join(format!("{clean} ({n}).{ext}")),
+            1 => dir.join(format!("{clean}.zip")),
+            n => dir.join(format!("{clean} ({n}).zip")),
         })
         .find(|p| !p.exists())
         .unwrap()

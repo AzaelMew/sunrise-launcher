@@ -12,7 +12,7 @@ use sunrise_launcher::native_status;
 
 pub(super) enum Event {
     Progress(String, f32),
-    Done(Result<String, String>, bool),
+    Done(Result<String, String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(Vec<String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
@@ -144,7 +144,7 @@ impl Launcher {
                         busy.2 = f;
                     }
                 }
-                Event::Done(result, modpack) => {
+                Event::Done(result) => {
                     done = true;
                     m.busy = None;
                     if let Ok(said) = &result {
@@ -153,10 +153,6 @@ impl Launcher {
                     m.message = Some(result);
                     m.reload_installed();
                     m.installed_list.reset();
-                    if modpack {
-                        // The Modpacks page reads its list again.
-                        self.packs_loaded = None;
-                    }
                 }
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(lines) => {
@@ -275,7 +271,6 @@ impl Launcher {
                     let _ = tx.send(Event::Progress(line.to_string(), f));
                 }
             };
-            let mut modpack = false;
             let result = (|| -> Result<String, String> {
                 let source = browser::source(source);
                 let p = match known {
@@ -305,8 +300,7 @@ impl Launcher {
                         ],
                     ));
                 }
-                modpack = p.kind == PackKind::Modpack;
-                if modpack && p.source == SourceId::Sunrise {
+                if p.kind == PackKind::Modpack && p.source == SourceId::Sunrise {
                     let pack = sunrise::pack::install(&p.id, &progress)?;
                     if let Some(url) = &p.icon {
                         sunrise_launcher::instances::adopt_icon(
@@ -349,7 +343,7 @@ impl Launcher {
                     &[("mods", &mods)],
                 ))
             })();
-            let _ = tx.send(Event::Done(result, modpack));
+            let _ = tx.send(Event::Done(result));
         });
     }
 }

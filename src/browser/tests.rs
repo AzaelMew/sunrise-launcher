@@ -390,7 +390,7 @@ fn downloads_refused_before_any_byte() {
     assert!(download::refuse(&file).unwrap().contains("no checksum"));
     let mut file = file_for(body, false);
     file.url = "https://edge.forgecdn.net/files/1/2/pack.zip".into();
-    assert_eq!(download::refuse(&file), None);
+    assert!(download::refuse(&file).unwrap().contains("file servers"));
 }
 
 /// Against the real Modrinth: `cargo test --lib browser::tests::live -- --ignored`.
