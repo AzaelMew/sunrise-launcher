@@ -37,7 +37,7 @@ struct Memo {
 }
 
 #[derive(Default)]
-pub(crate) struct AltSheetsState {
+pub(crate) struct SheetsState {
     /// The explicit compatibility check's state; only a click on the Build sheet starts one.
     update: RefCell<Option<Memo>>,
     /// Keyboard focus of the sheet on screen, so keys never reach the page under it.
@@ -183,7 +183,7 @@ pub(crate) fn frame(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                this.close_alt_sheet();
+                this.close_sheet();
                 cx.notify();
             }),
         )
@@ -216,61 +216,61 @@ pub(crate) fn title(text: String) -> Div {
 
 impl Launcher {
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
-    pub(crate) fn open_alt_sheet(&mut self, sheet: Sheet) {
-        self.alt.sheets.error = None;
-        self.alt.sheets.details = false;
-        self.alt.sheet = Some(sheet);
+    pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
+        self.ui.sheets.error = None;
+        self.ui.sheets.details = false;
+        self.ui.sheet = Some(sheet);
     }
 
     /// Opens a problem's whole text as a sheet.
-    pub(crate) fn open_alt_notice(&mut self, text: String) {
-        self.open_alt_sheet(Sheet::Notice);
-        self.alt.sheets.notice = text;
+    pub(crate) fn open_notice(&mut self, text: String) {
+        self.open_sheet(Sheet::Notice);
+        self.ui.sheets.notice = text;
     }
 
     /// The worker asks before dependency build programs run. The sheet answers `reply`; losing the
     /// sheet answers no.
-    pub(crate) fn alt_registry_consent(&mut self, inventory: Consent, reply: Sender<bool>) {
-        if let Some((_, old)) = self.alt.sheets.registry.replace((inventory, reply)) {
+    pub(crate) fn registry_consent(&mut self, inventory: Consent, reply: Sender<bool>) {
+        if let Some((_, old)) = self.ui.sheets.registry.replace((inventory, reply)) {
             let _ = old.send(false);
         }
-        self.alt.sheets.ticked.1 = false;
+        self.ui.sheets.ticked.1 = false;
     }
 
     /// Closes the sheet on screen the way Escape or a press outside does. Nothing is allowed,
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
-    pub(crate) fn close_alt_sheet(&mut self) {
-        if let Some((_, reply)) = self.alt.sheets.registry.take() {
+    pub(crate) fn close_sheet(&mut self) {
+        if let Some((_, reply)) = self.ui.sheets.registry.take() {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
         }
-        self.alt.sheet = None;
-        self.alt.sheets.ticked = (false, false);
-        self.alt.sheets.error = None;
+        self.ui.sheet = None;
+        self.ui.sheets.ticked = (false, false);
+        self.ui.sheets.error = None;
     }
 
     /// Escape: true when a sheet was open and is closed now.
-    pub(crate) fn alt_sheet_escape(&mut self) -> bool {
-        let open = self.alt.sheets.registry.is_some()
+    pub(crate) fn sheet_escape(&mut self) -> bool {
+        let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
-            || self.alt.sheet.is_some();
+            || self.ui.sheet.is_some();
         if open {
-            self.close_alt_sheet();
+            self.close_sheet();
         }
         open
     }
 
     /// The update the bar should call held, if there is one. It only *reads*: a build that stopped
     /// for worlds (`native_worlds`), or the result of the check the player started from the Build
-    /// sheet ([`Self::alt_check_native`]). It never runs a check itself, because a check stages
+    /// sheet ([`Self::check_native`]). It never runs a check itself, because a check stages
     /// files into the real build folder.
-    pub(crate) fn alt_held_update(&self) -> Option<Held> {
-        self.alt_held_real()
+    pub(crate) fn held_update(&self) -> Option<Held> {
+        self.held_real()
     }
 
-    fn alt_held_real(&self) -> Option<Held> {
+    fn held_real(&self) -> Option<Held> {
         let instance = self.selected_instance()?;
         let plays = self.version_of(instance)?.clone();
         if let Some(stake) = self
@@ -289,14 +289,14 @@ impl Launcher {
                 stopped: true,
             });
         }
-        match self.alt_check_state() {
+        match self.check_state() {
             CheckState::Done(check) => Held::of_check(check, &plays),
             _ => None,
         }
     }
 
     /// Where the selected setup's native-mod check against the newer installed build stands.
-    pub(crate) fn alt_check_state(&self) -> CheckState {
+    pub(crate) fn check_state(&self) -> CheckState {
         let Some(instance) = self.selected_instance() else {
             return CheckState::None;
         };
@@ -314,7 +314,7 @@ impl Launcher {
         }
         let key = check_key(&instance.home, &to);
         match self
-            .alt
+            .ui
             .sheets
             .update
             .borrow()
@@ -336,18 +336,18 @@ impl Launcher {
 
     /// The button's action: check the selected setup's native mods against the newer installed
     /// build, once, on a worker, in the setup's own game folder. Nothing else calls it.
-    fn alt_check_native(&mut self, cx: &mut Context<Self>) {
+    fn check_native(&mut self, cx: &mut Context<Self>) {
         if self.native_step.is_some() {
             return;
         }
-        let (CheckState::Idle(to) | CheckState::Failed(to, _)) = self.alt_check_state() else {
+        let (CheckState::Idle(to) | CheckState::Failed(to, _)) = self.check_state() else {
             return;
         };
         let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
             return;
         };
         let key = check_key(&home, &to);
-        *self.alt.sheets.update.borrow_mut() = Some(Memo {
+        *self.ui.sheets.update.borrow_mut() = Some(Memo {
             key: key.clone(),
             result: None,
         });
@@ -357,7 +357,7 @@ impl Launcher {
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                let mut memo = this.alt.sheets.update.borrow_mut();
+                let mut memo = this.ui.sheets.update.borrow_mut();
                 // A result for a state the game folder has left is dropped.
                 if memo.as_ref().is_some_and(|m| m.key == key) {
                     *memo = Some(Memo {
@@ -374,19 +374,19 @@ impl Launcher {
 
     /// The sheet on screen, if any: a pending library question, a pending permission, then the
     /// sheet asked for.
-    pub(crate) fn alt_sheet(
+    pub(crate) fn sheet(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.alt_versions_focus(window);
+        self.versions_focus(window);
         let sheet = self.live_sheet(cx)?;
         // The sheet takes the keyboard: keys never reach the page under it.
-        let focus = match self.alt.sheets.focus.clone() {
+        let focus = match self.ui.sheets.focus.clone() {
             Some(focus) => focus,
             None => {
                 let focus = cx.focus_handle();
-                self.alt.sheets.focus = Some(focus.clone());
+                self.ui.sheets.focus = Some(focus.clone());
                 focus
             }
         };
@@ -398,7 +398,7 @@ impl Launcher {
                 .track_focus(&focus)
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                     if ev.keystroke.key == "escape" {
-                        this.close_alt_sheet();
+                        this.close_sheet();
                         cx.notify();
                     }
                     cx.stop_propagation();
@@ -408,28 +408,28 @@ impl Launcher {
     }
 
     fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if self.alt.sheets.registry.is_some() {
+        if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));
         }
-        match self.alt.sheet {
+        match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::Worlds) => {
-                let sheet = self.alt_world_pick_sheet(cx);
+                let sheet = self.world_pick_sheet(cx);
                 if sheet.is_none() {
-                    self.alt.sheet = None;
+                    self.ui.sheet = None;
                 }
                 sheet
             }
-            Some(Sheet::Resolve) => match self.alt_held_update() {
+            Some(Sheet::Resolve) => match self.held_update() {
                 Some(held) => Some(self.resolve_sheet(held, cx)),
                 None => {
                     // Nothing is held any more (it was resolved elsewhere): close quietly.
-                    self.alt.sheet = None;
+                    self.ui.sheet = None;
                     None
                 }
             },
@@ -452,7 +452,7 @@ impl Launcher {
             base,
             ..
         } = held;
-        let known = self.alt_mods_named(&mods);
+        let known = self.mods_named(&mods);
         let names: Vec<String> = known.iter().map(|(name, _)| name.clone()).collect();
         let them = match names.as_slice() {
             [one] => one.clone(),
@@ -512,8 +512,8 @@ impl Launcher {
                 .border_color(rgb(TEXT))
                 .text_color(rgb(BG))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.close_alt_sheet();
-                    this.alt_update_mod(&id);
+                    this.close_sheet();
+                    this.update_mod(&id);
                     cx.notify();
                 }))
             });
@@ -566,7 +566,7 @@ impl Launcher {
         })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             // Staying is what already happens: nothing is written.
-            this.close_alt_sheet();
+            this.close_sheet();
             cx.notify();
         }));
         let go = (!blocked).then(|| {
@@ -576,7 +576,7 @@ impl Launcher {
                 trf("Update without {them}", &[("them", &them)]),
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.close_alt_sheet();
+                this.close_sheet();
                 // With worlds at stake the worker backs each up and checks the backup before
                 // anything is turned off; a backup that fails stops with nothing changed.
                 this.build_native_on(Some(base.clone()), back_up);
@@ -584,7 +584,7 @@ impl Launcher {
             }))
         });
 
-        let open = self.alt.sheets.details;
+        let open = self.ui.sheets.details;
         let more = div()
             .flex()
             .flex_col()
@@ -610,7 +610,7 @@ impl Launcher {
                     ))
                     .child(tr("Details"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.sheets.details = !this.alt.sheets.details;
+                        this.ui.sheets.details = !this.ui.sheets.details;
                         cx.notify();
                     })),
             )
@@ -651,7 +651,7 @@ impl Launcher {
     /// What went wrong, in full: each paragraph on its own, with one way out.
     fn notice_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let paragraphs: Vec<Div> = self
-            .alt
+            .ui
             .sheets
             .notice
             .split('\n')
@@ -666,7 +666,7 @@ impl Launcher {
             .child(div().flex().justify_end().child(
                 button("alt-notice-close", tr("Close")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
-                        this.close_alt_sheet();
+                        this.close_sheet();
                         cx.notify();
                     },
                 )),
@@ -695,7 +695,7 @@ impl Launcher {
                 &[("size", &storage::format_bytes(host.download_bytes()))],
             ),
         };
-        let ticked = self.alt.sheets.ticked.0;
+        let ticked = self.ui.sheets.ticked.0;
         let can = host.is_some() && ticked;
         let allow = button(
             "alt-consent-allow",
@@ -746,7 +746,7 @@ impl Launcher {
                     trf("Let {name} run as native code in my game", &[("name", &name)]),
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.alt.sheets.ticked.0 ^= true;
+                    this.ui.sheets.ticked.0 ^= true;
                     cx.notify();
                 })),
             )
@@ -759,7 +759,7 @@ impl Launcher {
                 tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows in the bar below."),
                 button("alt-consent-cancel", tr("Not now")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
-                        this.close_alt_sheet();
+                        this.close_sheet();
                         cx.notify();
                     },
                 )),
@@ -783,7 +783,7 @@ impl Launcher {
             Ok(Some(action)) => {
                 self.consent_error = None;
                 self.storage_revoke_error = None;
-                self.alt.sheets.ticked = (false, false);
+                self.ui.sheets.ticked = (false, false);
                 match action {
                     PendingConsent::Build(_) => {
                         let (base, back_up) = self.native_consent_build.take().unwrap_or_default();
@@ -813,7 +813,7 @@ impl Launcher {
 
     fn libraries_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let (inventory, _) = self
-            .alt
+            .ui
             .sheets
             .registry
             .as_ref()
@@ -838,14 +838,14 @@ impl Launcher {
                 list_or_none(&inventory.proc_macros),
                 true,
             ));
-        let ticked = self.alt.sheets.ticked.1;
+        let ticked = self.ui.sheets.ticked.1;
         let go = button("alt-libraries-allow", tr("Allow and continue"));
         let go = if ticked {
             go.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                if let Some((_, reply)) = this.alt.sheets.registry.take() {
+                if let Some((_, reply)) = this.ui.sheets.registry.take() {
                     let _ = reply.send(true);
                 }
-                this.alt.sheets.ticked.1 = false;
+                this.ui.sheets.ticked.1 = false;
                 cx.notify();
             }))
         } else {
@@ -869,7 +869,7 @@ impl Launcher {
                     ),
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.alt.sheets.ticked.1 ^= true;
+                    this.ui.sheets.ticked.1 ^= true;
                     cx.notify();
                 })),
             )
@@ -877,7 +877,7 @@ impl Launcher {
                 tr("Not now stops the build. Nothing has run."),
                 button("alt-libraries-cancel", tr("Not now")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
-                        this.close_alt_sheet();
+                        this.close_sheet();
                         cx.notify();
                     },
                 )),
@@ -890,7 +890,7 @@ impl Launcher {
 
     /// The Build sheet's native-mod compatibility section: the explicit check and where it stands.
     fn native_check_block(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let state = self.alt_check_state();
+        let state = self.check_state();
         let block = |lines: Vec<Div>| {
             div()
                 .flex()
@@ -903,7 +903,7 @@ impl Launcher {
         };
         let check = |id: &'static str, label: &str, cx: &mut Context<Self>| {
             button(id, tr(label)).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.alt_check_native(cx);
+                this.check_native(cx);
                 cx.notify();
             }))
         };
@@ -948,7 +948,7 @@ impl Launcher {
                     div().child(
                         button("alt-check-resolve", tr("Resolve…")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
-                                this.open_alt_sheet(Sheet::Resolve);
+                                this.open_sheet(Sheet::Resolve);
                                 cx.notify();
                             },
                         )),
@@ -964,7 +964,7 @@ impl Launcher {
                                 trf("Build on {to}", &[("to", &build_name(&done.to))]),
                             )
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.close_alt_sheet();
+                                this.close_sheet();
                                 this.build_native_on(Some(base.clone()), false);
                                 cx.notify();
                             })),
@@ -975,7 +975,7 @@ impl Launcher {
         })
     }
 
-    pub(crate) fn pin_alt_build(&mut self, version: Option<String>, channel: instances::Channel) {
+    pub(crate) fn pin_build(&mut self, version: Option<String>, channel: instances::Channel) {
         let Some(instance) = self.selected_instance() else {
             return;
         };
@@ -983,7 +983,7 @@ impl Launcher {
         // Backstop for the sheet's own gate: never pin another build under native mods.
         if let (Some(to), Some(plays)) = (&version, self.version_of(instance)) {
             if to != plays && !native_status::enabled(&instance.home).is_empty() {
-                self.alt.sheets.error =
+                self.ui.sheets.error =
                     Some(tr("Check your native mods against that build first.").into());
                 return;
             }
@@ -993,10 +993,10 @@ impl Launcher {
             m.channel = Some(channel);
         }) {
             Ok(_) => {
-                self.alt.sheets.error = None;
+                self.ui.sheets.error = None;
                 self.reload_instances();
             }
-            Err(e) => self.alt.sheets.error = Some(e),
+            Err(e) => self.ui.sheets.error = Some(e),
         }
     }
 
@@ -1064,7 +1064,7 @@ impl Launcher {
             .when(nightly_gated, |d| d.opacity(0.5).cursor_default())
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_alt_build(None, instances::Channel::Nightly);
+                    this.pin_build(None, instances::Channel::Nightly);
                     cx.notify();
                 }))
             }),
@@ -1084,7 +1084,7 @@ impl Launcher {
             .when(stable_off, |d| d.opacity(0.5).cursor_default())
             .when(!stable_off, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_alt_build(None, instances::Channel::Stable);
+                    this.pin_build(None, instances::Channel::Stable);
                     cx.notify();
                 }))
             }),
@@ -1102,7 +1102,7 @@ impl Launcher {
                 },
             )
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.open_alt_versions();
+                this.open_versions();
                 cx.notify();
             })),
         );
@@ -1161,7 +1161,7 @@ impl Launcher {
             .child(div().h(px(1.)).bg(rgb(LINE)))
             .child(extras)
             .children(
-                self.alt
+                self.ui
                     .sheets
                     .error
                     .clone()
@@ -1183,7 +1183,7 @@ impl Launcher {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                    this.close_alt_sheet();
+                    this.close_sheet();
                     cx.notify();
                 }),
             )

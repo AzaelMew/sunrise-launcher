@@ -38,14 +38,14 @@ impl Action {
 
 impl Launcher {
     /// Opens a confirmation, remembering which folder it was reviewed for.
-    fn alt_confirm(&mut self, confirm: Confirm) {
-        let home = self.alt.mods.snapshot.as_ref().map(|s| s.home.clone());
-        self.alt.mods.reviewed_home = home;
-        self.alt.mods.confirm = Some(confirm);
+    fn confirm(&mut self, confirm: Confirm) {
+        let home = self.ui.mods.snapshot.as_ref().map(|s| s.home.clone());
+        self.ui.mods.reviewed_home = home;
+        self.ui.mods.confirm = Some(confirm);
     }
 
     /// Why nothing may change now: the game, a launch step or a build is under way.
-    pub(crate) fn alt_mods_locked(&self) -> Option<&'static str> {
+    pub(crate) fn mods_locked(&self) -> Option<&'static str> {
         if self.client.is_some()
             || self.starting_client.is_some()
             || self.starting_instance.is_some()
@@ -71,16 +71,16 @@ impl Launcher {
     }
 
     /// The gate every change passes: not locked, nothing else running.
-    pub(super) fn alt_guard(&mut self) -> bool {
-        let refusal = if let Some(why) = self.alt_mods_locked() {
+    pub(super) fn guard(&mut self) -> bool {
+        let refusal = if let Some(why) = self.mods_locked() {
             Some(why.to_string())
-        } else if self.alt_mutating() {
+        } else if self.mutating() {
             Some(tr("Wait for the current operation to finish.").to_string())
         } else {
             None
         };
         if let Some(why) = refusal {
-            self.alt.mods.notice = Some(Err(why));
+            self.ui.mods.notice = Some(Err(why));
             return false;
         }
         true
@@ -89,8 +89,8 @@ impl Launcher {
     /// Add `id` to the game: the existing install path, which asks first for native code, checks
     /// the file against the index and its signature, and refuses what was taken down. Only a mod
     /// the registry says fits this build.
-    pub(crate) fn alt_mods_install(&mut self, id: String) -> Result<(), String> {
-        let fit = match &self.alt.mods.catalog {
+    pub(crate) fn install_registry_mod(&mut self, id: String) -> Result<(), String> {
+        let fit = match &self.ui.mods.catalog {
             Catalog::Ready(cards, _) => cards.iter().find(|c| c.id == id).map(|c| c.fit.clone()),
             _ => None,
         };
@@ -100,36 +100,36 @@ impl Launcher {
         if let Some(why) = fit.reason() {
             return Err(why);
         }
-        if !self.alt_guard() {
-            return Err(match &self.alt.mods.notice {
+        if !self.guard() {
+            return Err(match &self.ui.mods.notice {
                 Some(Err(why)) => why.clone(),
                 _ => tr("Can't change mods right now.").to_string(),
             });
         }
-        self.alt.mods.notice = None;
+        self.ui.mods.notice = None;
         self.mods.message = None;
         self.mods_install(SourceId::Sunrise, id, None);
         Ok(())
     }
 
-    pub(crate) fn alt_add(&mut self, id: String) {
-        if let Err(why) = self.alt_mods_install(id) {
-            self.alt.mods.notice = Some(Err(why));
+    pub(crate) fn add(&mut self, id: String) {
+        if let Err(why) = self.install_registry_mod(id) {
+            self.ui.mods.notice = Some(Err(why));
         }
     }
 
     /// One mod on or off. On: the existing switch, with its native-permission and taken-down
     /// checks. Off: like any change that could take content out of a world, after the worlds
     /// check.
-    pub(super) fn alt_toggle(&mut self, row: &Row) {
-        if row.local.is_some() || !self.alt_guard() {
+    pub(super) fn toggle(&mut self, row: &Row) {
+        if row.local.is_some() || !self.guard() {
             return;
         }
         let Some(entry) = row.entry.clone() else {
             return;
         };
         if row.on {
-            self.alt_run(
+            self.run(
                 Action::TurnOff(vec![(row.id.clone(), row.title.clone())]),
                 false,
             );
@@ -138,24 +138,24 @@ impl Launcher {
         self.mods.message = None;
         self.mods_switch(&entry);
         if let Some(Err(e)) = self.mods.message.take() {
-            self.alt.mods.notice = Some(Err(e));
+            self.ui.mods.notice = Some(Err(e));
         }
     }
 
     /// Turn the chosen mods on in one rewrite of the list. A mod that can't be turned on (taken
     /// down, or native code with no permission) stays as it is and its row says why.
-    pub(super) fn alt_bulk_on(&mut self) {
-        if !self.alt_guard() {
+    pub(super) fn bulk_on(&mut self) {
+        if !self.guard() {
             return;
         }
-        let rows = self.alt_rows();
+        let rows = self.rows();
         let chosen: Vec<&Row> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
             .collect();
         let (go, held) =
             model::turn_on_plan(&chosen, self.settings.native_mods_allowed_at.is_some());
-        let m = &mut self.alt.mods;
+        let m = &mut self.ui.mods;
         m.errors = held
             .iter()
             .map(|(r, why)| (r.id.clone(), why.clone()))
@@ -188,28 +188,28 @@ impl Launcher {
         });
     }
 
-    pub(super) fn alt_bulk_off(&mut self) {
-        let rows = self.alt_rows();
+    pub(super) fn bulk_off(&mut self) {
+        let rows = self.rows();
         let chosen: Vec<(String, String)> = rows
             .iter()
-            .filter(|r| r.local.is_none() && r.on && self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && r.on && self.ui.mods.selection.contains(&r.id))
             .map(|r| (r.id.clone(), r.title.clone()))
             .collect();
         if chosen.is_empty() {
-            self.alt.mods.notice = Some(Err(
+            self.ui.mods.notice = Some(Err(
                 tr("None of the selected mods is turned on.").to_string()
             ));
             return;
         }
-        self.alt_run(Action::TurnOff(chosen), false);
+        self.run(Action::TurnOff(chosen), false);
     }
 
     /// Asks for confirmation before removing the chosen mods.
-    pub(super) fn alt_ask_remove(&mut self) {
-        let rows = self.alt_rows();
+    pub(super) fn ask_remove(&mut self) {
+        let rows = self.rows();
         let chosen: Vec<(String, String, String)> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
             .filter_map(|r| {
                 Some((
                     r.id.clone(),
@@ -219,23 +219,23 @@ impl Launcher {
             })
             .collect();
         if !chosen.is_empty() {
-            self.alt_confirm(Confirm::Remove(chosen));
+            self.confirm(Confirm::Remove(chosen));
         }
     }
 
     /// Plans "Update N mods" for the whole pack, or for the selected rows only.
-    pub(super) fn alt_ask_update(&mut self, only_selected: bool) {
+    pub(super) fn ask_update(&mut self, only_selected: bool) {
         let rows: Vec<Row> = self
-            .alt_rows()
+            .rows()
             .into_iter()
-            .filter(|r| !only_selected || self.alt.mods.selection.contains(&r.id))
+            .filter(|r| !only_selected || self.ui.mods.selection.contains(&r.id))
             .collect();
         let plan = model::plan_updates(&rows, self.settings.native_mods_allowed_at.is_some());
-        self.alt_confirm(Confirm::Update(plan));
+        self.confirm(Confirm::Update(plan));
     }
 
     /// One mod's update: the same reviewed path as the batch, for one mod.
-    pub(super) fn alt_update_one(&mut self, row: &Row) {
+    pub(super) fn update_one(&mut self, row: &Row) {
         let Some(to) = row.update.clone().filter(|_| row.local.is_none()) else {
             return;
         };
@@ -251,10 +251,10 @@ impl Launcher {
             None
         };
         if let Some(why) = refusal {
-            self.alt.mods.notice = Some(Err(why.to_string()));
+            self.ui.mods.notice = Some(Err(why.to_string()));
             return;
         }
-        self.alt_run(
+        self.run(
             Action::Update(vec![Included {
                 id: row.id.clone(),
                 title: row.title.clone(),
@@ -268,12 +268,12 @@ impl Launcher {
 
     /// Starts `action` on a worker. `backed_up` is the player's yes to backing up the worlds it
     /// would touch; without it the worker only checks and, if worlds are at stake, stops.
-    pub(super) fn alt_run(&mut self, action: Action, backed_up: bool) {
-        if !self.alt_guard() {
+    pub(super) fn run(&mut self, action: Action, backed_up: bool) {
+        if !self.guard() {
             return;
         }
         let game = self.mods_game();
-        let m = &mut self.alt.mods;
+        let m = &mut self.ui.mods;
         let current = m
             .snapshot
             .as_ref()

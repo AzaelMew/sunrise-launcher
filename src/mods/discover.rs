@@ -14,13 +14,13 @@ const PAGE: usize = 48;
 type MenuOption = (&'static str, bool, Box<dyn Fn(&mut Launcher)>);
 
 impl Launcher {
-    pub(super) fn alt_discover(
+    pub(super) fn discover(
         &mut self,
         window: &mut Window,
         focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let header = self.alt_mods_header(false, focus, window, cx);
+        let header = self.mods_header(false, focus, window, cx);
         let mut page = div()
             .size_full()
             .flex()
@@ -29,8 +29,8 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(TEXT))
             .child(header)
-            .children(self.alt_strip(cx));
-        let (cards, categories): (Vec<Card>, Vec<String>) = match &self.alt.mods.catalog {
+            .children(self.strip(cx));
+        let (cards, categories): (Vec<Card>, Vec<String>) = match &self.ui.mods.catalog {
             Catalog::Ready(cards, cats) => (cards.clone(), cats.clone()),
             Catalog::Failed(e) => {
                 let e = e.clone();
@@ -50,7 +50,7 @@ impl Launcher {
                             .child(
                                 crate::frame::button("alt-mods-retry", tr("Try again")).on_click(
                                     cx.listener(|this, _: &ClickEvent, _, cx| {
-                                        this.alt.mods.catalog = Catalog::Idle;
+                                        this.ui.mods.catalog = Catalog::Idle;
                                         cx.notify();
                                     }),
                                 ),
@@ -65,12 +65,12 @@ impl Launcher {
             }
         };
 
-        let f = self.alt.mods.filters.clone();
+        let f = self.ui.mods.filters.clone();
         let shown = model::discover(&cards, &f);
         let total = shown.len();
-        let limit = self.alt.mods.limit.max(PAGE);
+        let limit = self.ui.mods.limit.max(PAGE);
         let added: HashSet<String> = self
-            .alt
+            .ui
             .mods
             .snapshot
             .as_ref()
@@ -84,7 +84,7 @@ impl Launcher {
         chips = chips.child(
             chip("alt-cat-all", tr("All"), f.category.is_none()).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
-                    this.alt.mods.filters.category = None;
+                    this.ui.mods.filters.category = None;
                     cx.notify();
                 },
             )),
@@ -98,7 +98,7 @@ impl Launcher {
                     f.category.as_ref() == Some(k),
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let filters = &mut this.alt.mods.filters;
+                    let filters = &mut this.ui.mods.filters;
                     filters.category =
                         (filters.category.as_ref() != Some(&key)).then(|| key.clone());
                     cx.notify();
@@ -115,13 +115,13 @@ impl Launcher {
             .child(ui::switch("alt-fits-switch", f.fits_only))
             .child(tr("Fits my game"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                let f = &mut this.alt.mods.filters;
+                let f = &mut this.ui.mods.filters;
                 f.fits_only = !f.fits_only;
                 cx.notify();
             }));
         let open_menu = |which: Menu, this: &Launcher| {
             matches!(
-                (&this.alt.mods.menu, &which),
+                (&this.ui.mods.menu, &which),
                 (Some(Menu::Make), Menu::Make) | (Some(Menu::Sort), Menu::Sort)
             )
         };
@@ -161,7 +161,7 @@ impl Launcher {
                                     .child(label)
                                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                         pick(this);
-                                        this.alt.mods.menu = None;
+                                        this.ui.mods.menu = None;
                                         cx.notify();
                                     }))
                             }),
@@ -182,10 +182,10 @@ impl Launcher {
                 .child(blocks::icon("chevron-down", 13., c(MUTED)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let same = matches!(
-                        (&this.alt.mods.menu, &which),
+                        (&this.ui.mods.menu, &which),
                         (Some(Menu::Make), Menu::Make) | (Some(Menu::Sort), Menu::Sort)
                     );
-                    this.alt.mods.menu = (!same).then_some(match which {
+                    this.ui.mods.menu = (!same).then_some(match which {
                         Menu::Make => Menu::Make,
                         Menu::Sort => Menu::Sort,
                     });
@@ -195,14 +195,14 @@ impl Launcher {
         let make_options: Vec<MenuOption> = std::iter::once((
             tr("Any kind"),
             f.make.is_none(),
-            Box::new(|this: &mut Launcher| this.alt.mods.filters.make = None)
+            Box::new(|this: &mut Launcher| this.ui.mods.filters.make = None)
                 as Box<dyn Fn(&mut Launcher)>,
         ))
         .chain(Make::ALL.into_iter().map(|m| {
             (
                 m.label(),
                 f.make == Some(m),
-                Box::new(move |this: &mut Launcher| this.alt.mods.filters.make = Some(m))
+                Box::new(move |this: &mut Launcher| this.ui.mods.filters.make = Some(m))
                     as Box<dyn Fn(&mut Launcher)>,
             )
         }))
@@ -213,7 +213,7 @@ impl Launcher {
                 (
                     s.label(),
                     f.sort == s,
-                    Box::new(move |this: &mut Launcher| this.alt.mods.filters.sort = s)
+                    Box::new(move |this: &mut Launcher| this.ui.mods.filters.sort = s)
                         as Box<dyn Fn(&mut Launcher)>,
                 )
             })
@@ -247,7 +247,7 @@ impl Launcher {
         // The cards.
         let mut grid = div()
             .grid()
-            .grid_cols(columns(self.alt_content_width()))
+            .grid_cols(columns(self.content_width()))
             .gap(px(12.));
         for (n, &i) in shown.iter().take(limit).enumerate() {
             let card_data = &cards[i];
@@ -280,7 +280,7 @@ impl Launcher {
                         let id = id.clone();
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             cx.stop_propagation();
-                            this.alt_add(id.clone());
+                            this.add(id.clone());
                             cx.notify();
                         }))
                         .into_any_element()
@@ -307,7 +307,7 @@ impl Launcher {
                     note,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt_mods_show_project(open.clone());
+                    this.mods_show_project(open.clone());
                     cx.notify();
                 })),
             );
@@ -333,7 +333,7 @@ impl Launcher {
                         ),
                     )
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.mods.limit = this.alt.mods.limit.max(PAGE) + PAGE;
+                        this.ui.mods.limit = this.ui.mods.limit.max(PAGE) + PAGE;
                         cx.notify();
                     }))
                 }))
@@ -349,7 +349,7 @@ impl Launcher {
         .on_mouse_down(
             gpui::MouseButton::Left,
             cx.listener(|this, _, _, cx| {
-                if this.alt.mods.menu.take().is_some() {
+                if this.ui.mods.menu.take().is_some() {
                     cx.notify();
                 }
             }),

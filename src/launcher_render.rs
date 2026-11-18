@@ -3,6 +3,6 @@ use super::*;
 
 impl Render for Launcher {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.alt_frame(window, cx)
+        self.frame(window, cx)
     }
 }

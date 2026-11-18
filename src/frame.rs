@@ -34,10 +34,10 @@ pub(super) enum Page {
 #[derive(Default)]
 pub(super) struct State {
     pub page: Page,
-    pub home: crate::home::AltHomeState,
-    pub mods: crate::mods::AltModsState,
+    pub home: crate::home::HomeState,
+    pub mods: crate::mods::ModsState,
     pub sheet: Option<Sheet>,
-    pub sheets: crate::sheets::AltSheetsState,
+    pub sheets: crate::sheets::SheetsState,
     pub settings: crate::settings::SettingsView,
     pub cat: crate::cat::CatState,
     pub picker: bool,
@@ -87,8 +87,8 @@ pub(super) fn button_base(
 impl Launcher {
     /// Also called for world and server destinations. Never send a destination through the
     /// legacy shortcuts, which skip some of the checks on the main Play action.
-    pub(super) fn alt_play(&mut self) {
-        if self.client.is_some() || self.alt_launch_busy() {
+    pub(super) fn play_game(&mut self) {
+        if self.client.is_some() || self.launch_busy() {
             return;
         }
         self.prepare_error = None;
@@ -109,7 +109,7 @@ impl Launcher {
             self.sign_in_to_play();
             self.quick_play = destination;
             self.joining = invite;
-            self.alt.after_sign_in = Some(instance.id);
+            self.ui.after_sign_in = Some(instance.id);
             return;
         }
         let expected = instance.version.as_ref();
@@ -134,7 +134,7 @@ impl Launcher {
                 _ => None,
             };
             if let Some(release) = release {
-                self.alt.after_install = Some((instance.id, release.tag.clone()));
+                self.ui.after_install = Some((instance.id, release.tag.clone()));
                 self.install(&release);
             } else {
                 self.client_error = Some(match &self.releases {
@@ -171,7 +171,7 @@ impl Launcher {
 
     /// The selected setup's channel, when its last build failed because the build it stays on
     /// has no mod tools any more and another build is the way on (`sdk_cache::way_on`).
-    fn alt_build_gone(&self) -> Option<instances::Channel> {
+    fn build_gone(&self) -> Option<instances::Channel> {
         let error = self.native_error.as_ref()?;
         let instance = self.selected_instance()?;
         let mine = self.native_for.as_deref() == Some(instance.id.as_str());
@@ -182,15 +182,15 @@ impl Launcher {
         .then_some(instance.channel)
     }
 
-    pub(super) fn alt_launch_busy(&self) -> bool {
-        self.alt_mutating()
+    pub(super) fn launch_busy(&self) -> bool {
+        self.mutating()
             || self.installing.is_some()
             || self.preparing
             || self.native_step.is_some()
             || self.starting_client.is_some()
     }
 
-    fn alt_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let active = self.selected_instance().cloned();
         let name = self.accounts.selected().map(|a| a.name.clone());
         let signed_name = name.is_some();
@@ -235,7 +235,7 @@ impl Launcher {
             || active.as_ref().is_some_and(|i| i.java.is_some());
         // A held update says so itself and its sheet carries the build's words: only then is
         // the build's error left to it.
-        let held = self.alt_held_update().is_some();
+        let held = self.held_update().is_some();
         let status = self
             .client_error
             .clone()
@@ -248,7 +248,7 @@ impl Launcher {
         let more = status
             .clone()
             .filter(|all| brief.is_some_and(|b| b.len() < all.trim().len()));
-        let busy = self.alt_launch_busy();
+        let busy = self.launch_busy();
         let label = if let Some((_, progress)) = &self.installing {
             trf(
                 "Installing · {percent}%",
@@ -261,7 +261,7 @@ impl Launcher {
             tr("Building mods…").into()
         } else if self.starting_client.is_some() {
             tr("Starting…").into()
-        } else if self.alt_mutating() {
+        } else if self.mutating() {
             tr("Changing mods…").into()
         } else if self.client.is_some() {
             tr("Stop game").into()
@@ -273,7 +273,7 @@ impl Launcher {
             tr("Play Sunrise").into()
         };
         let hold = self
-            .alt_held_update()
+            .held_update()
             .map(|h| trf("The update to {build} is on hold", &[("build", &h.to)]));
         let update = self.updates.sunrise.clone().filter(|_| {
             active.as_ref().is_some_and(|i| {
@@ -295,11 +295,11 @@ impl Launcher {
                 })
             });
         // Mods the game was made without are no problem to raise: one quiet line, at most.
-        self.alt_mods_read_once();
+        self.mods_read_once();
         let waiting = (said.is_none() && self.native_step.is_none())
-            .then(|| self.alt_mods_not_on_build())
+            .then(|| self.mods_not_on_build())
             .filter(|count| *count > 0);
-        let quiet = said.is_none() && waiting.is_none() && self.alt_build_line().is_none();
+        let quiet = said.is_none() && waiting.is_none() && self.build_line().is_none();
         let bar = div()
             .flex()
             .items_center()
@@ -337,7 +337,7 @@ impl Launcher {
                     )
                     .child(name)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.alt.page = Page::Settings;
+                        this.ui.page = Page::Settings;
                         cx.notify();
                     }))
             }))
@@ -350,7 +350,7 @@ impl Launcher {
                             .map_or(tr("Setup").to_string(), |i| i.name.clone()),
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.alt.picker = !this.alt.picker;
+                        this.ui.picker = !this.ui.picker;
                         cx.notify();
                     })),
                 )
@@ -381,8 +381,8 @@ impl Launcher {
                     )
                     .child(blocks::icon("chevron-down", 13., rgb(MUTED).into()))
                     .on_click(cx.listener(|this, _, _, cx| {
-                        if !this.alt_launch_busy() && this.client.is_none() {
-                            this.open_alt_sheet(Sheet::Build);
+                        if !this.launch_busy() && this.client.is_none() {
+                            this.open_sheet(Sheet::Build);
                         }
                         cx.notify();
                     })),
@@ -396,7 +396,7 @@ impl Launcher {
                     // Two lines fit the bar; a longer message is cut, never drawn outside it.
                     .line_clamp(2)
                     .text_ellipsis()
-                    .children(self.alt_build_line())
+                    .children(self.build_line())
                     .children(said)
                     // Nothing to act on here: the row under Mods says why and what to do.
                     .children(waiting.map(|count| {
@@ -412,7 +412,7 @@ impl Launcher {
                                 ),
                             })
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.alt_show_installed_mods();
+                                this.show_installed_mods();
                                 cx.notify();
                             }))
                     })),
@@ -423,7 +423,7 @@ impl Launcher {
                 button("alt-problem-details", tr("Details…"))
                     .flex_none()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_alt_notice(all.clone());
+                        this.open_notice(all.clone());
                         cx.notify();
                     })),
             ));
@@ -433,7 +433,7 @@ impl Launcher {
                 button("alt-choose-source", tr("Choose Minecraft folder"))
                     .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
             ));
-        } else if let Some(channel) = self.alt_build_gone().filter(|_| !busy) {
+        } else if let Some(channel) = self.build_gone().filter(|_| !busy) {
             // The build this setup stays on can't be built for any more: one press follows its
             // channel again, and the build sheet opens on what that chose.
             let label = match channel {
@@ -445,15 +445,15 @@ impl Launcher {
                     .flex_none()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.native_error = None;
-                        this.pin_alt_build(None, channel);
-                        this.open_alt_sheet(Sheet::Build);
+                        this.pin_build(None, channel);
+                        this.open_sheet(Sheet::Build);
                         cx.notify();
                     })),
             ));
         } else if hold.is_some() && !busy {
             actions.push(gpui::IntoElement::into_any_element(
                 button("alt-resolve", tr("Choose…")).on_click(cx.listener(|this, _, _, cx| {
-                    this.open_alt_sheet(Sheet::Resolve);
+                    this.open_sheet(Sheet::Resolve);
                     cx.notify();
                 })),
             ));
@@ -471,7 +471,7 @@ impl Launcher {
         let ink = rgb(0x221203);
         // The cat may sleep on Play only while Play is idle and the bar has nothing to say.
         let free = quiet && !busy && self.client.is_none() && self.location_error.is_none();
-        let (lane, on_play) = self.alt_cat(actions.is_empty(), free, window, cx);
+        let (lane, on_play) = self.cat(actions.is_empty(), free, window, cx);
         let play = div()
             .id("alt-play")
             .tab_index(0)
@@ -500,7 +500,7 @@ impl Launcher {
                     } else {
                         this.quick_play = None;
                         this.joining = None;
-                        this.alt_play();
+                        this.play_game();
                     }
                     cx.notify();
                 }))
@@ -513,7 +513,7 @@ impl Launcher {
                 .on_mouse_down(
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, cx| {
-                        this.alt_cat_off_play();
+                        this.cat_off_play();
                         cx.notify();
                     }),
                 )
@@ -535,7 +535,7 @@ impl Launcher {
         }
     }
 
-    pub(super) fn alt_frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_height = f32::from(size.height);
@@ -548,7 +548,7 @@ impl Launcher {
         if window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }
-        let page = self.alt.page;
+        let page = self.ui.page;
         let rail_link = |p: Page, id: &'static str, label: &'static str, icon: &'static str| {
             let on = page == p
                 || (p == Page::Discover && matches!(page, Page::Installed | Page::Project))
@@ -587,11 +587,11 @@ impl Launcher {
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     match p {
-                        Page::Discover => this.alt_open_mods(),
-                        Page::Packs => this.alt_open_packs(),
-                        _ => this.alt.page = p,
+                        Page::Discover => this.open_mods(),
+                        Page::Packs => this.open_packs(),
+                        _ => this.ui.page = p,
                     }
-                    this.alt.picker = false;
+                    this.ui.picker = false;
                     cx.notify();
                 }))
         };
@@ -621,16 +621,16 @@ impl Launcher {
                 "sliders",
             ));
         let content = match page {
-            Page::Settings => self.alt_settings(window, cx),
-            Page::Hosting => self.alt_hosting(cx),
+            Page::Settings => self.settings(window, cx),
+            Page::Hosting => self.hosting(cx),
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
                 .p(px(24.))
                 .child(tr(
                     "Choose a Sunrise setup in the play bar. Your other setups haven't changed.",
                 ))
                 .into_any_element(),
-            Page::Home => self.alt_home(window, cx),
-            _ => self.alt_mods(window, cx),
+            Page::Home => self.home(window, cx),
+            _ => self.mods(window, cx),
         };
         let page_body = div()
             .relative()
@@ -669,11 +669,11 @@ impl Launcher {
                         this.cancel_sign_in();
                         this.owner_screen_open = false;
                     }
-                    "escape" if this.alt_sheet_escape() => {}
-                    "escape" if this.alt.page == Page::Hosting && this.alt_hosting_escape() => {}
+                    "escape" if this.sheet_escape() => {}
+                    "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
                     "escape" => {
-                        this.alt.sheet = None;
-                        this.alt.picker = false;
+                        this.ui.sheet = None;
+                        this.ui.picker = false;
                     }
                     _ => return,
                 }
@@ -683,8 +683,8 @@ impl Launcher {
             .children(titlebar::render(&self.theme, window))
             .children(self.settings_save_notice(cx))
             .child(div().flex().flex_1().min_h_0().child(rail).child(page_body))
-            .child(self.alt_dock(window, cx));
-        if self.alt.picker {
+            .child(self.dock(window, cx));
+        if self.ui.picker {
             let mut choices = div()
                 .absolute()
                 .bottom(px(68.))
@@ -708,9 +708,9 @@ impl Launcher {
                 choices = choices.child(
                     button(ElementId::named_usize("alt-pick", n), item.name.clone()).on_click(
                         cx.listener(move |this, _, _, cx| {
-                            if !this.alt_launch_busy() && this.client.is_none() {
+                            if !this.launch_busy() && this.client.is_none() {
                                 this.select_instance(&item);
-                                this.alt.picker = false;
+                                this.ui.picker = false;
                                 this.client_error = None;
                             }
                             cx.notify();
@@ -721,10 +721,10 @@ impl Launcher {
             frame = frame.child(choices);
         }
         if page == Page::Hosting {
-            let create = self.alt_hosting_create(cx);
+            let create = self.hosting_create(cx);
             frame = frame.children(create);
         }
-        let sheet = self.alt_sheet(window, cx);
+        let sheet = self.sheet(window, cx);
         frame = frame.children(sheet);
         if self.owner_screen_open {
             frame = frame.child(self.owner_screen(cx));

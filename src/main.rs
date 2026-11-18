@@ -181,7 +181,7 @@ enum Load<T> {
 const LOG_LINES: usize = 2000;
 
 struct Launcher {
-    alt: frame::State,
+    ui: frame::State,
     theme: Theme,
     page: Page,
     /// The page under the glass Settings dialog: the last one shown before it opened.

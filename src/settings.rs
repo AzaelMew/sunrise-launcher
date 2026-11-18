@@ -142,14 +142,14 @@ pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
 }
 
 impl Launcher {
-    pub(super) fn alt_settings(
+    pub(super) fn settings(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
-        let section = self.alt.settings.section;
+        let section = self.ui.settings.section;
         let mut nav = div().flex().flex_col().gap(px(2.)).w(px(180.)).flex_none();
         for (n, s) in Section::ALL.into_iter().enumerate() {
             let on = s == section;
@@ -169,18 +169,18 @@ impl Launcher {
                     .hover(|d| d.text_color(rgb(TEXT)))
                     .child(tr(s.label()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_settings_open(s);
+                        this.settings_open(s);
                         cx.notify();
                     })),
             );
         }
         let body = match section {
-            Section::Account => self.alt_settings_account(cx),
-            Section::Game => self.alt_settings_game(cx),
-            Section::Mods => self.alt_settings_mods(cx),
-            Section::Storage => self.alt_settings_storage(cx),
-            Section::Privacy => self.alt_settings_privacy(cx),
-            Section::Launcher => self.alt_settings_launcher(cx),
+            Section::Account => self.settings_account(cx),
+            Section::Game => self.settings_game(cx),
+            Section::Mods => self.settings_mods(cx),
+            Section::Storage => self.settings_storage(cx),
+            Section::Privacy => self.settings_privacy(cx),
+            Section::Launcher => self.settings_launcher(cx),
         };
         let pane = div()
             .flex_1()
@@ -232,8 +232,8 @@ impl Launcher {
     }
 
     /// Opens a section, leaving no question from another one standing.
-    pub(super) fn alt_settings_open(&mut self, section: Section) {
-        let view = &mut self.alt.settings;
+    pub(super) fn settings_open(&mut self, section: Section) {
+        let view = &mut self.ui.settings;
         view.section = section;
         view.languages = false;
         view.setup = false;
@@ -246,7 +246,7 @@ impl Launcher {
         }
     }
 
-    fn alt_settings_account(&mut self, cx: &mut Context<Self>) -> Div {
+    fn settings_account(&mut self, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
         let selected = self.accounts.selected.clone();
         let mut rows = Vec::new();
@@ -367,7 +367,7 @@ impl Launcher {
         group(rows)
     }
 
-    fn alt_settings_game(&mut self, cx: &mut Context<Self>) -> Div {
+    fn settings_game(&mut self, cx: &mut Context<Self>) -> Div {
         use backend::WhilePlaying;
         let current = self.settings.while_playing.here();
         let mut ways = vec![
@@ -420,7 +420,7 @@ impl Launcher {
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_folder(cx))),
             ),
         );
-        let args = self.alt_settings_field(
+        let args = self.settings_field(
             "alt-game-args",
             self.args_focus.clone(),
             self.args_focused,
@@ -451,15 +451,15 @@ impl Launcher {
                 )),
             ),
         );
-        let asking = self.alt.settings.setup;
+        let asking = self.ui.settings.setup;
         let mut setup = row(
             tr("A second set of mods"),
             tr("A setup keeps its own mods, worlds and servers. Switch between setups in the bar below."),
             div().child(
                 button("alt-create", tr(if asking { "Cancel" } else { "New setup…" })).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.settings.setup = !this.alt.settings.setup;
-                        this.alt.settings.note = None;
+                        this.ui.settings.setup = !this.ui.settings.setup;
+                        this.ui.settings.note = None;
                         cx.notify();
                     }),
                 ),
@@ -475,15 +475,15 @@ impl Launcher {
                             match instances::create(name, None) {
                                 Ok(_) => {
                                     this.reload_instances();
-                                    this.alt.settings.setup = false;
+                                    this.ui.settings.setup = false;
                                     this.servers
                                         .text(servers_page::Field::InstanceName)
                                         .set(String::new());
-                                    this.alt.settings.note = Some(
+                                    this.ui.settings.note = Some(
                                         tr("Setup created. Select it in the bar below.").into(),
                                     );
                                 }
-                                Err(e) => this.alt.settings.note = Some(e),
+                                Err(e) => this.ui.settings.note = Some(e),
                             };
                             cx.notify();
                         },
@@ -491,7 +491,7 @@ impl Launcher {
                 ),
             );
         }
-        if let Some(note) = self.alt.settings.note.clone() {
+        if let Some(note) = self.ui.settings.note.clone() {
             setup = div()
                 .flex()
                 .flex_col()
@@ -508,7 +508,7 @@ impl Launcher {
             .child(group(vec![setup]))
     }
 
-    fn alt_settings_mods(&mut self, cx: &mut Context<Self>) -> Div {
+    fn settings_mods(&mut self, cx: &mut Context<Self>) -> Div {
         let allowed = self.settings.native_mods_allowed_at.is_some();
         let (about, actions) = match (allowed, self.storage_revoke) {
             (false, _) => (
@@ -562,7 +562,7 @@ impl Launcher {
         group(vec![native])
     }
 
-    fn alt_settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
+    fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
         let game = backend::game_home();
         let backups = self
             .selected_instance()
@@ -794,7 +794,7 @@ impl Launcher {
             .children(notes.into_iter().flatten())
     }
 
-    fn alt_settings_privacy(&mut self, cx: &mut Context<Self>) -> Div {
+    fn settings_privacy(&mut self, cx: &mut Context<Self>) -> Div {
         let consent = self.collection.consent.clone();
         // A row: its name with a "?" that says exactly what is sent, a line on why, the switch.
         let line = |this: &Self,
@@ -1036,8 +1036,8 @@ impl Launcher {
             .child(group(vec![no_ai]))
     }
 
-    fn alt_settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
-        let picking = self.alt.settings.languages;
+    fn settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
+        let picking = self.ui.settings.languages;
         let mut language = row(
             tr("Language"),
             "",
@@ -1049,7 +1049,7 @@ impl Launcher {
                         .map_or(tr("Same as the system"), |l| l.name()),
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.alt.settings.languages = !this.alt.settings.languages;
+                    this.ui.settings.languages = !this.ui.settings.languages;
                     cx.notify();
                 })),
             ),
@@ -1077,7 +1077,7 @@ impl Launcher {
                             this.settings.language = choice;
                             i18n::set(this.settings.language());
                             this.save_settings();
-                            this.alt.settings.languages = false;
+                            this.ui.settings.languages = false;
                             cx.notify();
                         },
                     )),
@@ -1093,7 +1093,7 @@ impl Launcher {
         let refused = (!self.proxy_focused)
             .then(|| sunrise_launcher::proxy::refuse(self.proxy_input.text()))
             .flatten();
-        let field = self.alt_settings_field(
+        let field = self.settings_field(
             "alt-proxy",
             self.proxy_focus.clone(),
             self.proxy_focused,
@@ -1130,7 +1130,7 @@ impl Launcher {
 
     /// One line of text in this look, saved as it is typed.
     #[allow(clippy::too_many_arguments)]
-    fn alt_settings_field(
+    fn settings_field(
         &self,
         id: &'static str,
         focus: FocusHandle,

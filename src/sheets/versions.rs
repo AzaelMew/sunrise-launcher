@@ -3,7 +3,7 @@
 //! One list, drawn only where it is on screen: what is installed first (the build kept or played
 //! leading), then every build that can be downloaded, by channel and month, newest first. The
 //! field narrows it by date, name or commit. A row is only chosen; "Keep this build" is what
-//! changes the setup (`pin_alt_build`), and Play installs a build that isn't here yet.
+//! changes the setup (`pin_build`), and Play installs a build that isn't here yet.
 use super::*;
 use crate::line_edit::{self, LineEdit};
 use std::rc::Rc;
@@ -148,17 +148,17 @@ fn lines(
 
 impl Launcher {
     /// Opens the sheet on the build the setup keeps now.
-    pub(super) fn open_alt_versions(&mut self) {
-        self.open_alt_sheet(Sheet::Versions);
+    pub(super) fn open_versions(&mut self) {
+        self.open_sheet(Sheet::Versions);
         let pinned = self.selected_instance().and_then(|i| i.version.clone());
-        let v = &mut self.alt.sheets.versions;
+        let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
         v.pick = pinned;
     }
 
     /// Reads whether the field has the keyboard, before the sheet is drawn.
-    pub(super) fn alt_versions_focus(&mut self, window: &Window) {
-        let v = &mut self.alt.sheets.versions;
+    pub(super) fn versions_focus(&mut self, window: &Window) {
+        let v = &mut self.ui.sheets.versions;
         v.focused = v.focus.as_ref().is_some_and(|f| f.is_focused(window));
     }
 
@@ -175,18 +175,18 @@ impl Launcher {
             _ => &[],
         };
         let current = pinned.as_deref().or(plays.as_deref());
-        let query = self.alt.sheets.versions.find.text().to_owned();
+        let query = self.ui.sheets.versions.find.text().to_owned();
         let list = Rc::new(lines(releases, &self.installed, current, &query));
-        let pick = self.alt.sheets.versions.pick.clone();
+        let pick = self.ui.sheets.versions.pick.clone();
 
         let focus = self
-            .alt
+            .ui
             .sheets
             .versions
             .focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
-        let focused = self.alt.sheets.versions.focused;
+        let focused = self.ui.sheets.versions.focused;
         let field = div()
             .id("alt-versions-find")
             .track_focus(&focus)
@@ -202,7 +202,7 @@ impl Launcher {
             .text_size(px(14.))
             .cursor_text()
             .child(line_edit::content(
-                &self.alt.sheets.versions.find,
+                &self.ui.sheets.versions.find,
                 &self.theme,
                 focused,
                 false,
@@ -214,7 +214,7 @@ impl Launcher {
                 cx.notify();
             }))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match line_edit::handle(&mut this.alt.sheets.versions.find, ev, cx) {
+                match line_edit::handle(&mut this.ui.sheets.versions.find, ev, cx) {
                     // Escape leaves the field first; the sheet closes on the next one.
                     line_edit::Key::Escape => window.blur(cx),
                     line_edit::Key::Pass => return,
@@ -223,7 +223,7 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        let field = line_edit::mouse(field, cx, |this| &mut this.alt.sheets.versions.find);
+        let field = line_edit::mouse(field, cx, |this| &mut this.ui.sheets.versions.find);
 
         let shown = Rc::clone(&list);
         let (now, chosen) = (plays.clone(), pick.clone());
@@ -287,7 +287,7 @@ impl Launcher {
                                 .when(!blocked, |d| {
                                     d.cursor_pointer().hover(|s| s.bg(rgb(BG))).on_click(
                                         cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.alt.sheets.versions.pick = Some(tag.clone());
+                                            this.ui.sheets.versions.pick = Some(tag.clone());
                                             cx.notify();
                                         }),
                                     )
@@ -312,7 +312,7 @@ impl Launcher {
 
         let cancel = button("alt-versions-cancel", tr("Cancel")).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
-                this.close_alt_sheet();
+                this.close_sheet();
                 cx.notify();
             },
         ));
@@ -323,9 +323,9 @@ impl Launcher {
             .hover(|s| s.bg(rgb(0xffffff)));
         let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
             Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.pin_alt_build(Some(tag.clone()), channel);
-                if this.alt.sheets.error.is_none() {
-                    this.close_alt_sheet();
+                this.pin_build(Some(tag.clone()), channel);
+                if this.ui.sheets.error.is_none() {
+                    this.close_sheet();
                 }
                 cx.notify();
             })),
@@ -358,7 +358,7 @@ impl Launcher {
                     .children(nothing),
             )
             .children(
-                self.alt
+                self.ui
                     .sheets
                     .error
                     .clone()

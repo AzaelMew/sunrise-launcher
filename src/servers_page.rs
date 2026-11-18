@@ -466,7 +466,7 @@ impl Launcher {
     /// Called with the launcher's other work: what the background sent, and the next status poll.
     pub(super) fn servers_tick(&mut self) -> bool {
         // The Hosting page shows how friends reach the server beside it, whatever the tab.
-        let showing = self.alt.page == crate::frame::Page::Hosting;
+        let showing = self.ui.page == crate::frame::Page::Hosting;
         let overview = showing && self.servers.open.is_some() && self.servers.tab == Tab::Overview;
         let mut changed = self.internet_tick(overview);
         while let Ok(event) = self.servers.rx.try_recv() {

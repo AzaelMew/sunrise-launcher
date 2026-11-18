@@ -8,24 +8,24 @@ use native_mods::Stage;
 
 impl Launcher {
     /// Whether the build that runs, or last ran, is the selected setup's.
-    fn alt_build_mine(&self) -> bool {
+    fn build_mine(&self) -> bool {
         self.selected_instance()
             .is_some_and(|i| self.native_for.as_deref() == Some(i.id.as_str()))
     }
 
     /// The step a running build is at, in words.
-    fn alt_build_step(&self) -> Option<String> {
+    fn build_step(&self) -> Option<String> {
         self.native_step.clone()
     }
 
-    fn alt_build_progress(&self) -> Option<native_mods::Progress> {
+    fn build_progress(&self) -> Option<native_mods::Progress> {
         self.native_progress
     }
 
     /// The three stages as one bar: done ones full, the current one as far as it reports, or
     /// breathing when it reports nothing.
-    pub(crate) fn alt_build_bar(&self) -> Div {
-        let now = self.alt_build_progress();
+    pub(crate) fn build_bar(&self) -> Div {
+        let now = self.build_progress();
         let mut bar = div().flex().gap(px(4.)).h(px(4.));
         for (i, stage) in Stage::ALL.into_iter().enumerate() {
             let track = div()
@@ -59,9 +59,9 @@ impl Launcher {
     }
 
     /// "Stage 2 of 3 · Build".
-    fn alt_build_stage(&self) -> String {
+    fn build_stage(&self) -> String {
         let stage = self
-            .alt_build_progress()
+            .build_progress()
             .map_or(Stage::Prepare, |p| p.stage);
         let n = Stage::ALL.iter().position(|s| *s == stage).unwrap_or(0) + 1;
         trf(
@@ -71,8 +71,8 @@ impl Launcher {
     }
 
     /// The play bar's line while a build runs: what it is doing, over the bar.
-    pub(crate) fn alt_build_line(&self) -> Option<Div> {
-        let step = self.alt_build_step()?;
+    pub(crate) fn build_line(&self) -> Option<Div> {
+        let step = self.build_step()?;
         Some(
             div()
                 .flex()
@@ -82,15 +82,15 @@ impl Launcher {
                 .child(
                     div()
                         .truncate()
-                        .child(format!("{} · {step}", self.alt_build_stage())),
+                        .child(format!("{} · {step}", self.build_stage())),
                 )
-                .child(self.alt_build_bar()),
+                .child(self.build_bar()),
         )
     }
 
     /// Above the Mods lists: the selected setup's build while it runs, then how it ended.
-    pub(crate) fn alt_build_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
-        if !self.alt_build_mine() {
+    pub(crate) fn build_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
+        if !self.build_mine() {
             return None;
         }
         let said = |text: String, cx: &mut Context<Self>| {
@@ -113,7 +113,7 @@ impl Launcher {
                         })),
                 )
         };
-        let Some(step) = self.alt_build_step() else {
+        let Some(step) = self.build_step() else {
             // How it went. A failure is the play bar's to say, in one place.
             return self
                 .native_done
@@ -152,7 +152,7 @@ impl Launcher {
                                     div()
                                         .text_size(px(13.))
                                         .text_color(rgb(MUTED))
-                                        .child(format!("{} · {step}", self.alt_build_stage())),
+                                        .child(format!("{} · {step}", self.build_stage())),
                                 ),
                         )
                         .child(
@@ -164,7 +164,7 @@ impl Launcher {
                             ),
                         ),
                 )
-                .child(self.alt_build_bar())
+                .child(self.build_bar())
                 .children(self.first_build.map(|bytes| {
                     div()
                         .text_size(px(12.))

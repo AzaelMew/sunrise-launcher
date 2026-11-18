@@ -336,7 +336,7 @@ impl Launcher {
     }
 
     pub(crate) fn cancel_sign_in(&mut self) {
-        if self.alt.after_sign_in.take().is_some() {
+        if self.ui.after_sign_in.take().is_some() {
             self.quick_play = None;
             self.joining = None;
         }

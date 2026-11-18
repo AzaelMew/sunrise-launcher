@@ -55,7 +55,7 @@ impl Launcher {
         // `window.appearance()`, so both draw the same look.
         titlebar::apply_appearance(window, settings.appearance);
         let mut this = Self {
-            alt: Default::default(),
+            ui: Default::default(),
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
             behind: Page::Play,

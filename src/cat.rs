@@ -1717,14 +1717,14 @@ impl Launcher {
     /// The second element is the cat asleep on Play, for Play's own box: it is drawn only above
     /// the button's top edge and takes no clicks. `free` says Play is idle and the bar has
     /// nothing to say; the cat climbs up only then, and drops off the moment that ends.
-    pub(super) fn alt_cat(
+    pub(super) fn cat(
         &mut self,
         beside: bool,
         free: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Div, Option<Div>) {
-        let measured = self.alt.cat.lane.clone();
+        let measured = self.ui.cat.lane.clone();
         let lane = div()
             .flex_1()
             .min_w_0()
@@ -1743,7 +1743,7 @@ impl Launcher {
             );
         let roomy = beside && self.window_width >= ROOM.0 && self.window_height >= ROOM.1;
         let room = if roomy {
-            self.alt.cat.lane.get() - UNDER - 6.
+            self.ui.cat.lane.get() - UNDER - 6.
         } else {
             0.
         };
@@ -1751,13 +1751,13 @@ impl Launcher {
         // A window in the background keeps its cat still: nothing is scheduled until it is back.
         let awake = window.is_window_active();
         if awake {
-            if let Some(seen) = self.alt.cat.seen {
-                self.alt.cat.clock += seen.elapsed().as_secs_f32() * 1000.;
+            if let Some(seen) = self.ui.cat.seen {
+                self.ui.cat.clock += seen.elapsed().as_secs_f32() * 1000.;
             }
         }
-        self.alt.cat.seen = awake.then(Instant::now);
-        let now = self.alt.cat.clock;
-        let outing = self.alt.cat.cat.get_or_insert_with(|| {
+        self.ui.cat.seen = awake.then(Instant::now);
+        let now = self.ui.cat.clock;
+        let outing = self.ui.cat.cat.get_or_insert_with(|| {
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(4, |d| d.as_millis() as u64);
@@ -1790,13 +1790,13 @@ impl Launcher {
             .view(now)
             .filter(|view| room > 0. || view.perch.is_some());
         if awake {
-            self.alt_cat_wake(after, cx);
+            self.cat_wake(after, cx);
         }
         let Some(view) = view else {
             return (lane, None);
         };
         let scale = (SIZE * self.scale).round().max(1.) as usize;
-        let image = match &self.alt.cat.shown {
+        let image = match &self.ui.cat.shown {
             Some((drawn, at, left, image))
                 if *drawn == view.pose && *at == scale && *left == view.left =>
             {
@@ -1821,7 +1821,7 @@ impl Launcher {
                     .expect("the buffer is the picture's size");
                 let image = Arc::new(RenderImage::new([image::Frame::new(frame)]));
                 if let Some((_, _, _, old)) =
-                    self.alt
+                    self.ui
                         .cat
                         .shown
                         .replace((view.pose, scale, view.left, image.clone()))
@@ -1865,8 +1865,8 @@ impl Launcher {
         let lane = lane.child(if view.pettable {
             cat.cursor_pointer()
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    let now = this.alt.cat.clock;
-                    if let Some(outing) = &mut this.alt.cat.cat {
+                    let now = this.ui.cat.clock;
+                    if let Some(outing) = &mut this.ui.cat.cat {
                         outing.cat.pet(now);
                     }
                     cx.notify();
@@ -1878,30 +1878,30 @@ impl Launcher {
     }
 
     /// Play was pressed: a cat asleep on it hops off.
-    pub(super) fn alt_cat_off_play(&mut self) {
-        let now = self.alt.cat.clock;
-        if let Some(outing) = &mut self.alt.cat.cat {
+    pub(super) fn cat_off_play(&mut self) {
+        let now = self.ui.cat.clock;
+        if let Some(outing) = &mut self.ui.cat.cat {
             outing.leave_play(now);
         }
     }
 
     /// Draws the launcher again `after` this, unless a wake is already due by then.
-    fn alt_cat_wake(&mut self, after: Duration, cx: &mut Context<Self>) {
+    fn cat_wake(&mut self, after: Duration, cx: &mut Context<Self>) {
         let at = Instant::now() + after;
         if self
-            .alt
+            .ui
             .cat
             .wake
             .is_some_and(|due| due <= at + Duration::from_millis(5))
         {
             return;
         }
-        self.alt.cat.wake = Some(at);
+        self.ui.cat.wake = Some(at);
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             let _ = this.update(cx, |this, cx| {
-                if this.alt.cat.wake == Some(at) {
-                    this.alt.cat.wake = None;
+                if this.ui.cat.wake == Some(at) {
+                    this.ui.cat.wake = None;
                 }
                 cx.notify();
             });

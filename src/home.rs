@@ -4,7 +4,7 @@
 //!
 //! Everything shown is read from the player's real launcher data, and nothing is written until
 //! the player acts (Save, Remove, Add, Play, Join). Play and Join set `quick_play` or `joining`
-//! and call `alt_play`, which owns the sign-in, install, prepare, build and trust gates:
+//! and call `play_game`, which owns the sign-in, install, prepare, build and trust gates:
 //! - worlds: `worlds::list` of the selected setup's `saves/` (`level.dat` and `icon.png`, read
 //!   only), Play starts the game straight into one (`quick_play`);
 //! - a world without `icon.png` is drawn from `dirt.png` of the player's own prepared game
@@ -17,7 +17,7 @@
 //!   the Mods page's own install (`mods_install`, with its consent), a row opens the project.
 //!   Home never calls `mods_load`, which looks for updates and turns off taken-down mods: it
 //!   reads the installed list itself and points installs at the selected setup (`follow_home`);
-//!   a row opens the project page of the Mods screens (`alt_mods_show_project`).
+//!   a row opens the project page of the Mods screens (`mods_show_project`).
 //! - signed out with no worlds, the top is the welcome banner (mock 10) in place of worlds.
 use super::*;
 use crate::frame::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
@@ -49,7 +49,7 @@ pub(crate) enum Popular {
 }
 
 #[derive(Default)]
-pub(crate) struct AltHomeState {
+pub(crate) struct HomeState {
     popular: Popular,
     /// The saved server whose Remove button is showing, and whether it was asked once.
     menu: Option<(usize, bool)>,
@@ -277,7 +277,7 @@ fn tile(label: &str, side: f32) -> Div {
 }
 
 impl Launcher {
-    pub(crate) fn alt_home(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn home(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
             return div()
                 .p(px(32.))
@@ -289,17 +289,17 @@ impl Launcher {
         self.load_servers(home.clone());
         self.ping_servers(cx);
         self.mods.follow_home(Some(home.clone()));
-        self.alt_refresh_installed(&home);
-        self.alt_ping_featured(cx);
-        self.alt_popular_load(cx);
+        self.refresh_installed(&home);
+        self.ping_featured(cx);
+        self.popular_load(cx);
         let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
         let worlds = if first_start {
-            self.alt_welcome(cx)
+            self.welcome(cx)
         } else {
-            self.alt_worlds(cx)
+            self.worlds(cx)
         };
-        let servers = self.alt_servers(cx);
-        let popular = self.alt_popular(cx);
+        let servers = self.servers(cx);
+        let popular = self.popular(cx);
         div()
             .id("alt-home")
             .size_full()
@@ -324,12 +324,12 @@ impl Launcher {
             .into_any_element()
     }
 
-    fn alt_worlds(&mut self, cx: &mut Context<Self>) -> Div {
+    fn worlds(&mut self, cx: &mut Context<Self>) -> Div {
         let list: Vec<World> = self.worlds.list.iter().take(WORLDS).cloned().collect();
         let mut row = div().flex().gap(px(16.));
         for world in list.iter() {
-            let art = self.alt_world_art(world);
-            row = row.child(self.alt_world_card(world, art, cx));
+            let art = self.world_art(world);
+            row = row.child(self.world_card(world, art, cx));
         }
         let body = if list.is_empty() {
             let saves = self.worlds.home.clone().map(|h| h.join("saves"));
@@ -360,7 +360,7 @@ impl Launcher {
 
     /// A world's picture: its own `icon.png`, drawn big and sharp; else `dirt.png` of the
     /// player's own game files, darkened; else plain charcoal.
-    fn alt_world_art(&mut self, world: &World) -> Div {
+    fn world_art(&mut self, world: &World) -> Div {
         let scale = self.scale;
         let band = div()
             .relative()
@@ -422,7 +422,7 @@ impl Launcher {
         }
     }
 
-    fn alt_world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
+    fn world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
         let folder = world.folder.clone();
         let packs = {
             let path = world.path.clone();
@@ -433,7 +433,7 @@ impl Launcher {
                     .child(blocks::icon("archive", 17., rgb(TEXT).into()))
                     .tooltip(crate::glass_ui::tip(tr("Data packs")))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_show_world_packs(path.clone());
+                        this.show_world_packs(path.clone());
                         cx.notify();
                     })),
             )
@@ -448,7 +448,7 @@ impl Launcher {
             .child(blocks::icon("play", 17., rgb(BG).into()))
             .tooltip(crate::glass_ui::tip(tr("Play this world")))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.alt_go("--world", folder.clone());
+                this.play_to("--world", folder.clone());
                 cx.notify();
             }));
         let facts = format!(
@@ -497,7 +497,7 @@ impl Launcher {
             )
     }
 
-    fn alt_servers(&mut self, cx: &mut Context<Self>) -> Div {
+    fn servers(&mut self, cx: &mut Context<Self>) -> Div {
         let typed = entry(self.friend_code.text());
         let focused = self.friend_focused;
         let field = div()
@@ -532,7 +532,7 @@ impl Launcher {
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 match line_edit::handle(&mut this.friend_code, ev, cx) {
                     line_edit::Key::Pass => return,
-                    line_edit::Key::Enter => this.alt_join_typed(),
+                    line_edit::Key::Enter => this.join_typed(),
                     line_edit::Key::Escape => window.blur(cx),
                     _ => {}
                 }
@@ -544,7 +544,7 @@ impl Launcher {
         let save = button("alt-server-save", tr("Save"));
         let save = if address {
             save.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.alt_save_typed();
+                this.save_typed();
                 cx.notify();
             }))
         } else {
@@ -554,7 +554,7 @@ impl Launcher {
         let join = button("alt-server-join", tr("Join"));
         let join = if joinable {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.alt_join_typed();
+                this.join_typed();
                 cx.notify();
             }))
         } else {
@@ -591,11 +591,11 @@ impl Launcher {
             {
                 continue;
             }
-            list = list.child(self.alt_featured_row(shown, server, cx));
+            list = list.child(self.featured_row(shown, server, cx));
             shown += 1;
         }
         for (i, (server, icon)) in saved.into_iter().enumerate() {
-            list = list.child(self.alt_server_row(i, server, icon, cx));
+            list = list.child(self.server_row(i, server, icon, cx));
             shown += 1;
         }
         if shown == 0 {
@@ -627,7 +627,7 @@ impl Launcher {
             )
     }
 
-    fn alt_featured_row(&mut self, i: usize, server: Featured, cx: &mut Context<Self>) -> Div {
+    fn featured_row(&mut self, i: usize, server: Featured, cx: &mut Context<Self>) -> Div {
         use multiplayer_page::Reach;
         let (end, line) = match server.address {
             Some(address) => {
@@ -640,7 +640,7 @@ impl Launcher {
                 };
                 let join = button(format!("alt-featured-{i}"), tr("Join")).on_click(cx.listener(
                     move |this, _: &ClickEvent, _, cx| {
-                        this.alt_go("--server", address.to_string());
+                        this.play_to("--server", address.to_string());
                         cx.notify();
                     },
                 ));
@@ -684,7 +684,7 @@ impl Launcher {
     }
 
     /// Asks the featured servers that can be joined for their players, once each.
-    fn alt_ping_featured(&mut self, cx: &mut Context<Self>) {
+    fn ping_featured(&mut self, cx: &mut Context<Self>) {
         for address in featured().into_iter().filter_map(|f| f.address) {
             if self.multiplayer.reach.contains_key(address) {
                 continue;
@@ -706,7 +706,7 @@ impl Launcher {
         }
     }
 
-    fn alt_server_row(
+    fn server_row(
         &mut self,
         i: usize,
         server: sunrise_launcher::server_list::Server,
@@ -739,11 +739,11 @@ impl Launcher {
                 )))
         } else {
             join.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.alt_go("--server", ip.clone());
+                this.play_to("--server", ip.clone());
                 cx.notify();
             }))
         };
-        let open = self.alt.home.menu.filter(|(row, _)| *row == i);
+        let open = self.ui.home.menu.filter(|(row, _)| *row == i);
         let more = match open {
             Some((_, asked)) => button(
                 format!("alt-server-{i}-remove"),
@@ -755,16 +755,16 @@ impl Launcher {
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 if asked {
-                    this.alt.home.menu = None;
+                    this.ui.home.menu = None;
                     this.edit_servers(|list| list.remove(i).map(|_| ()));
                 } else {
-                    this.alt.home.menu = Some((i, true));
+                    this.ui.home.menu = Some((i, true));
                 }
                 cx.notify();
             })),
             None => button(format!("alt-server-{i}-more"), "…").on_click(cx.listener(
                 move |this, _: &ClickEvent, _, cx| {
-                    this.alt.home.menu = Some((i, false));
+                    this.ui.home.menu = Some((i, false));
                     cx.notify();
                 },
             )),
@@ -804,27 +804,27 @@ impl Launcher {
             .child(more)
     }
 
-    /// Every destination goes through `alt_play`, which runs the sign-in, install, prepare,
+    /// Every destination goes through `play_game`, which runs the sign-in, install, prepare,
     /// build and trust gates before the game starts.
-    fn alt_go(&mut self, flag: &'static str, value: String) {
+    fn play_to(&mut self, flag: &'static str, value: String) {
         self.quick_play = Some((flag, value));
-        self.alt_play();
+        self.play_game();
     }
 
     /// Join with what is typed: an invite code joins the friend, an address the server.
-    fn alt_join_typed(&mut self) {
+    fn join_typed(&mut self) {
         match entry(self.friend_code.text()) {
             Entry::Invite => {
                 self.joining = Some(self.friend_code.text().to_string());
-                self.alt_play();
+                self.play_game();
             }
-            Entry::Address(address) => self.alt_go("--server", address),
+            Entry::Address(address) => self.play_to("--server", address),
             Entry::Empty | Entry::Unusable => {}
         }
     }
 
     /// Save with what is typed: the address goes into the game's own server list.
-    fn alt_save_typed(&mut self) {
+    fn save_typed(&mut self) {
         let Entry::Address(address) = entry(self.friend_code.text()) else {
             return;
         };
@@ -836,9 +836,9 @@ impl Launcher {
 
     /// Reads what the registry installed in this setup (a file read, nothing else), when the
     /// setup changes or an install just ended.
-    fn alt_refresh_installed(&mut self, home: &std::path::Path) {
+    fn refresh_installed(&mut self, home: &std::path::Path) {
         let busy = self.mods.busy.is_some();
-        let state = &mut self.alt.home;
+        let state = &mut self.ui.home;
         let ended = state.was_busy && !busy;
         state.was_busy = busy;
         if state.installed_home.as_deref() == Some(home) && !ended {
@@ -855,7 +855,7 @@ impl Launcher {
 
     /// The first start: signed out, nothing to play yet (mock 10). Nothing is read from outside
     /// the launcher's own data.
-    fn alt_welcome(&mut self, cx: &mut Context<Self>) -> Div {
+    fn welcome(&mut self, cx: &mut Context<Self>) -> Div {
         card()
             .flex()
             .flex_col()
@@ -885,22 +885,22 @@ impl Launcher {
                             .text_color(rgb(GOLD))
                             .child(tr("Privacy choices"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.alt_settings_open(crate::settings::Section::Privacy);
-                                this.alt.page = crate::frame::Page::Settings;
+                                this.settings_open(crate::settings::Section::Privacy);
+                                this.ui.page = crate::frame::Page::Settings;
                                 cx.notify();
                             })),
                     )
     }
 
     /// Asks the registry for the most downloaded mods once per game version.
-    fn alt_popular_load(&mut self, cx: &mut Context<Self>) {
+    fn popular_load(&mut self, cx: &mut Context<Self>) {
         let game = self.mods_game();
-        match &self.alt.home.popular {
+        match &self.ui.home.popular {
             Popular::Asking | Popular::Failed(_) => return,
             Popular::Ready(known, _) if *known == game => return,
             _ => {}
         }
-        self.alt.home.popular = Popular::Asking;
+        self.ui.home.popular = Popular::Asking;
         let query = Query {
             game: game.clone(),
             // A few more than listed: some may be installed already.
@@ -915,7 +915,7 @@ impl Launcher {
         cx.spawn(async move |this, cx| {
             let found = task.await;
             let _ = this.update(cx, |this, cx| {
-                this.alt.home.popular = match found {
+                this.ui.home.popular = match found {
                     Ok(found) => Popular::Ready(game, found),
                     Err(e) => Popular::Failed(e),
                 };
@@ -925,7 +925,7 @@ impl Launcher {
         .detach();
     }
 
-    fn alt_popular(&mut self, cx: &mut Context<Self>) -> Div {
+    fn popular(&mut self, cx: &mut Context<Self>) -> Div {
         let head = div()
             .flex()
             .items_center()
@@ -939,17 +939,17 @@ impl Launcher {
                     .text_color(rgb(GOLD))
                     .child(tr("Browse all mods"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.page = crate::frame::Page::Discover;
+                        this.ui.page = crate::frame::Page::Discover;
                         cx.notify();
                     })),
             );
         let game = self.mods_game();
-        let body = match &self.alt.home.popular {
+        let body = match &self.ui.home.popular {
             Popular::Ready(_, found) => {
                 let rows = popular_rows(
                     found,
                     &game,
-                    |p| self.alt.home.installed.contains(&p.id),
+                    |p| self.ui.home.installed.contains(&p.id),
                     POPULAR,
                 );
                 if rows.is_empty() {
@@ -959,7 +959,7 @@ impl Launcher {
                 } else {
                     let mut list = card();
                     for (i, project) in rows.into_iter().enumerate() {
-                        list = list.child(self.alt_popular_row(i, project, cx));
+                        list = list.child(self.popular_row(i, project, cx));
                     }
                     list
                 }
@@ -976,7 +976,7 @@ impl Launcher {
                 .child(
                     button("alt-popular-retry", tr("Try again")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
-                            this.alt.home.popular = Popular::Unasked;
+                            this.ui.home.popular = Popular::Unasked;
                             cx.notify();
                         },
                     )),
@@ -998,7 +998,7 @@ impl Launcher {
             .children(note)
     }
 
-    fn alt_popular_row(&mut self, i: usize, project: Project, cx: &mut Context<Self>) -> Div {
+    fn popular_row(&mut self, i: usize, project: Project, cx: &mut Context<Self>) -> Div {
         let busy = self
             .mods
             .busy
@@ -1010,10 +1010,10 @@ impl Launcher {
             format!("alt-popular-{i}-add"),
             tr(if this_busy { "Adding…" } else { "Add" }),
         );
-        let add = if !self.alt_launch_busy() && self.alt_mods_locked().is_none() {
+        let add = if !self.launch_busy() && self.mods_locked().is_none() {
             let p = project.clone();
             add.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if !this.alt_launch_busy() && this.alt_mods_locked().is_none() {
+                if !this.launch_busy() && this.mods_locked().is_none() {
                     this.mods_install(p.source, p.id.clone(), Some(p.clone()));
                 }
                 cx.notify();
@@ -1051,7 +1051,7 @@ impl Launcher {
                         None => project.summary.clone(),
                     }))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_mods_show_project(open.clone());
+                        this.mods_show_project(open.clone());
                         cx.notify();
                     })),
             )

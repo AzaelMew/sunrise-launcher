@@ -68,9 +68,9 @@ fn games(versions: &[String]) -> String {
 
 impl Launcher {
     /// Opens the page of a pack among Discover's results; its details are read in a worker.
-    pub(super) fn alt_pack_show(&mut self, source: SourceId, id: &str) {
+    pub(super) fn pack_show(&mut self, source: SourceId, id: &str) {
         let Some(project) = self
-            .alt
+            .ui
             .mods
             .packs
             .results
@@ -80,13 +80,13 @@ impl Launcher {
         else {
             return;
         };
-        self.alt.mods.menu = None;
-        self.alt.mods.packs.open = Some(PackOpen {
+        self.ui.mods.menu = None;
+        self.ui.mods.packs.open = Some(PackOpen {
             project: project.clone(),
             page: None,
         });
-        self.alt.page = Page::PackProject;
-        let tx = self.alt.mods.tx.clone();
+        self.ui.page = Page::PackProject;
+        let tx = self.ui.mods.tx.clone();
         std::thread::spawn(move || {
             let result = browser::source(project.source)
                 .ok_or_else(|| tr("This source isn't set up.").to_string())
@@ -95,15 +95,15 @@ impl Launcher {
         });
     }
 
-    pub(super) fn alt_pack_page_answer(&mut self, key: (SourceId, String), page: PackPage) {
-        if let Some(open) = &mut self.alt.mods.packs.open {
+    pub(super) fn pack_page_answer(&mut self, key: (SourceId, String), page: PackPage) {
+        if let Some(open) = &mut self.ui.mods.packs.open {
             if (open.project.source, &open.project.id) == (key.0, &key.1) {
                 open.page = Some(page);
             }
         }
     }
 
-    pub(super) fn alt_pack_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn pack_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let mut page = div()
             .size_full()
             .flex()
@@ -113,19 +113,19 @@ impl Launcher {
             .text_color(c(TEXT))
             .child(
                 back(tr("Discover")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.alt.page = Page::PackFind;
+                    this.ui.page = Page::PackFind;
                     cx.notify();
                 })),
             )
-            .children(self.alt_strip(cx));
-        let Some(open) = &self.alt.mods.packs.open else {
+            .children(self.strip(cx));
+        let Some(open) = &self.ui.mods.packs.open else {
             return page.child(muted(tr("No pack is open."))).into_any_element();
         };
         let p = open.project.clone();
         let loaded = open.page.clone();
         let data = p.kind == Kind::DataPack;
         if data {
-            self.alt_data_list(cx);
+            self.data_list(cx);
         }
         let support = p.support(&self.mods_game());
         let picture = p
@@ -182,7 +182,7 @@ impl Launcher {
 
         // The action, as on the card.
         let added = !data
-            && self.alt.mods.snapshot.as_ref().is_some_and(|s| {
+            && self.ui.mods.snapshot.as_ref().is_some_and(|s| {
                 s.entries
                     .iter()
                     .any(|e| e.source == p.source && e.project == p.id)
@@ -202,18 +202,18 @@ impl Launcher {
                 tr("Add to my game")
             };
             let b = primary("alt-pack-page-add", label).w_full().h(px(44.));
-            if !support.installable() || self.alt.mods.busy.is_some() {
+            if !support.installable() || self.ui.mods.busy.is_some() {
                 dim(b).into_any_element()
             } else {
                 let (source, id) = (p.source, p.id.clone());
                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt_pack_install(source, &id);
+                    this.pack_install(source, &id);
                     cx.notify();
                 }))
                 .into_any_element()
             }
         };
-        let within = match self.alt.mods.data.worlds_with(p.source, &p.id) {
+        let within = match self.ui.mods.data.worlds_with(p.source, &p.id) {
             _ if !data => None,
             0 => None,
             1 => Some(tr("In 1 world of this setup.").to_string()),
@@ -265,7 +265,7 @@ impl Launcher {
                             _ => tr("Modrinth page"),
                         };
                         about_link("alt-pack-page-link", label).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::alt_open_url(&link, cx),
+                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&link, cx),
                         ))
                     })),
             );
@@ -338,7 +338,7 @@ impl Launcher {
             .gap(px(14.))
             .child(head);
         // A narrow window has one column: the action stays near the top.
-        let (above, beside) = match self.alt_content_width() < 860. {
+        let (above, beside) = match self.content_width() < 860. {
             true => (Some(side), None),
             false => (None, Some(side.w(px(360.)).flex_none())),
         };

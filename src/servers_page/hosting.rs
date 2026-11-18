@@ -192,7 +192,7 @@ impl Launcher {
     }
 
     /// Escape closes the Create dialog, or takes back a delete that was being confirmed.
-    pub(crate) fn alt_hosting_escape(&mut self) -> bool {
+    pub(crate) fn hosting_escape(&mut self) -> bool {
         if self.servers.confirm_delete {
             self.servers.confirm_delete = false;
             return true;
@@ -207,7 +207,7 @@ impl Launcher {
 
     // ----- The page -------------------------------------------------------------------------
 
-    pub(crate) fn alt_hosting(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn hosting(&mut self, cx: &mut Context<Self>) -> AnyElement {
         if !self.servers.loaded {
             self.servers.list = servers::list();
             self.servers.modes.clear();
@@ -273,8 +273,8 @@ impl Launcher {
             Fix::Prepare if !self.selected().is_some_and(|tag| backend::is_prepared(tag)) => {
                 self.servers.problem = None;
                 self.servers.create = None;
-                self.alt.page = crate::frame::Page::Home;
-                self.alt_play();
+                self.ui.page = crate::frame::Page::Home;
+                self.play_game();
             }
             fix => self.fix(fix, cx),
         }
@@ -695,7 +695,7 @@ impl Launcher {
             );
         }
         right = right.child(self.host_console(on, cx));
-        let sharing = self.alt_hosting_share(port as u16, cx);
+        let sharing = self.hosting_share(port as u16, cx);
         div()
             .flex()
             .items_start()
@@ -1478,7 +1478,7 @@ impl Launcher {
     // ----- Creating -------------------------------------------------------------------------
 
     /// The one dialog a server is created in, over the page.
-    pub(crate) fn alt_hosting_create(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(crate) fn hosting_create(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let c = self.servers.create.as_ref()?;
         let (new_world, copy, worlds) = (c.new_world, c.copy.clone(), c.worlds.clone());
         let (mode, difficulty, max_players) = (c.mode, c.difficulty, c.max_players);

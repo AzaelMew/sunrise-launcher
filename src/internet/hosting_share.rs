@@ -67,7 +67,7 @@ impl Launcher {
             .text_color(rgb(TEXT))
     }
 
-    pub(crate) fn alt_hosting_share(&mut self, port: u16, cx: &mut Context<Self>) -> Div {
+    pub(crate) fn hosting_share(&mut self, port: u16, cx: &mut Context<Self>) -> Div {
         let mut panel = div()
             .flex()
             .flex_col()

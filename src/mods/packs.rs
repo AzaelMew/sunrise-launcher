@@ -9,27 +9,27 @@ use sunrise_launcher::packs::{self, Kind};
 
 impl Launcher {
     pub(crate) fn reset_pack_view(&mut self) {
-        let m = &mut self.alt.mods;
+        let m = &mut self.ui.mods;
         m.have.set(String::new());
         m.row_filter.text.clear();
         m.selection.clear();
         m.anchor = None;
         m.confirm = None;
-        self.alt_dismiss_notice();
+        self.dismiss_notice();
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
     }
 
     pub(super) fn pack_page(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let focus = self
-            .alt
+            .ui
             .mods
             .have_focus
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
-        let header = self.alt_mods_header(true, &focus, window, cx);
-        let kind = self.alt.mods.shelf.kind();
-        let home = self.alt_mods_home();
+        let header = self.mods_header(true, &focus, window, cx);
+        let kind = self.ui.mods.shelf.kind();
+        let home = self.mods_home();
         let list = match kind {
             Some(kind) => self.installed_packs(kind, cx),
             None => self.installed_data_packs(cx),
@@ -44,7 +44,7 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(TEXT))
             .child(header)
-            .children(self.alt_strip(cx))
+            .children(self.strip(cx))
             .child(self.collection_tabs(cx))
             .child(list)
             // A file dropped on the page joins the collection shown; a data pack needs a world.
@@ -68,7 +68,7 @@ impl Launcher {
         .into_iter()
         .enumerate()
         {
-            let chosen = self.alt.mods.shelf == kind;
+            let chosen = self.ui.mods.shelf == kind;
             tabs = tabs.child(
                 chip(
                     ElementId::named_usize("alt-collection", index),
@@ -76,11 +76,11 @@ impl Launcher {
                     chosen,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.alt.mods.shelf != kind {
-                        this.alt.mods.shelf = kind;
+                    if this.ui.mods.shelf != kind {
+                        this.ui.mods.shelf = kind;
                         this.reset_pack_view();
                         this.worlds.stale();
-                        this.alt.mods.data.reread();
+                        this.ui.mods.data.reread();
                     }
                     cx.notify();
                 })),
@@ -91,10 +91,10 @@ impl Launcher {
 
     fn can_edit_packs(&self, home: &Path, kind: Kind) -> bool {
         self.location_error.is_none()
-            && self.alt_mods_locked().is_none()
-            && !self.alt_mutating()
-            && self.alt.page == Page::Packs
-            && self.alt.mods.shelf.kind() == Some(kind)
+            && self.mods_locked().is_none()
+            && !self.mutating()
+            && self.ui.page == Page::Packs
+            && self.ui.mods.shelf.kind() == Some(kind)
             && self
                 .selected_instance()
                 .is_some_and(|i| i.java.is_none() && i.home == home)
@@ -129,8 +129,8 @@ impl Launcher {
         if paths.is_empty() || !self.can_edit_packs(&home, kind) {
             return;
         }
-        self.alt_dismiss_notice();
-        self.alt.mods.busy = Some((tr("Importing packs…").into(), 0.));
+        self.dismiss_notice();
+        self.ui.mods.busy = Some((tr("Importing packs…").into(), 0.));
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -162,8 +162,8 @@ impl Launcher {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.alt.mods.busy = None;
-                this.alt.mods.notice = Some(result);
+                this.ui.mods.busy = None;
+                this.ui.mods.notice = Some(result);
                 this.game_packs.stale();
                 cx.notify();
             });
@@ -184,7 +184,7 @@ impl Launcher {
             Some(_guard) => change(),
             None => Err(tr("This setup is busy. Try again when the operation finishes.").into()),
         };
-        self.alt.mods.notice = result.err().map(Err);
+        self.ui.mods.notice = result.err().map(Err);
         self.game_packs.confirm_remove = None;
         self.game_packs.stale();
     }
@@ -196,7 +196,7 @@ impl Launcher {
         let home = instance.home.clone();
         self.load_packs_list(home.clone());
         let editable = self.can_edit_packs(&home, kind);
-        let query = self.alt.mods.have.text().trim().to_lowercase();
+        let query = self.ui.mods.have.text().trim().to_lowercase();
         let (detail, empty) = match kind {
             Kind::Resource => (
                 tr("Higher packs take priority. A pack you turn on goes to the top."),
@@ -222,7 +222,7 @@ impl Launcher {
             open.on_click(cx.listener(move |this, _, _, cx| {
                 match std::fs::create_dir_all(&folder) {
                     Ok(()) => crate::glass_toast::open(cx, &folder),
-                    Err(e) => this.alt.mods.notice = Some(Err(e.to_string())),
+                    Err(e) => this.ui.mods.notice = Some(Err(e.to_string())),
                 }
                 cx.notify();
             }))
@@ -414,7 +414,7 @@ impl Launcher {
                     .child(muted(empty))
                     .child(primary("alt-packs-browse", find).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
-                            this.alt_choose_view(Page::PackFind);
+                            this.choose_view(Page::PackFind);
                             cx.notify();
                         },
                     ))),
@@ -429,7 +429,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(header)
-            .children(self.alt_mods_locked().map(muted))
+            .children(self.mods_locked().map(muted))
             .child(list)
     }
 }

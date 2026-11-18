@@ -161,7 +161,7 @@ impl Launcher {
                         };
                         self.perf.record_since(name, started);
                     }
-                    let resume = self.alt.after_install.take().filter(|(id, wanted)| {
+                    let resume = self.ui.after_install.take().filter(|(id, wanted)| {
                         result.is_ok()
                             && *wanted == tag
                             && self.selected_instance().is_some_and(|i| i.id == *id)
@@ -208,7 +208,7 @@ impl Launcher {
                         Err(e) => self.install_error = Some((tag, e)),
                     }
                     if resume.is_some_and(|(_, wanted)| self.selected() == Some(&wanted)) {
-                        self.alt_play();
+                        self.play_game();
                     }
                     if let Some(next) = self.install_next.take() {
                         self.install_for_instance(next);
@@ -254,7 +254,7 @@ impl Launcher {
                     }
                 }
                 Msg::NativeRegistryConsent(inventory, reply) => {
-                    self.alt_registry_consent(inventory, reply);
+                    self.registry_consent(inventory, reply);
                 }
                 Msg::NativeProgress(step, progress) => {
                     self.native_step = Some(step);
@@ -371,7 +371,7 @@ impl Launcher {
                                     if self.selected_instance().is_some_and(|i| i.id == instance)
                                         && self.selected() == Some(&tag)
                                     {
-                                        self.alt_play();
+                                        self.play_game();
                                     }
                                 }
                             }
@@ -457,7 +457,7 @@ impl Launcher {
         }
         changed |= self.servers_tick();
         changed |= self.mods_tick();
-        changed |= self.alt_mods_drain();
+        changed |= self.mods_drain();
         changed |= self.github_tick();
         changed |= self.toast_tick();
         if let Some(sign_in) = &self.sign_in {
@@ -477,12 +477,12 @@ impl Launcher {
                         self.save_settings();
                     }
                     if self
-                        .alt
+                        .ui
                         .after_sign_in
                         .take()
                         .is_some_and(|id| self.selected_instance().is_some_and(|i| i.id == id))
                     {
-                        self.alt_play();
+                        self.play_game();
                     }
                 }
                 changed = true;

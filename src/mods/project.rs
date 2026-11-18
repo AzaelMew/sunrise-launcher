@@ -94,9 +94,9 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
 }
 
 impl Launcher {
-    pub(super) fn alt_project(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn project(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let back_to = self
-            .alt
+            .ui
             .mods
             .open
             .as_ref()
@@ -114,12 +114,12 @@ impl Launcher {
             .text_color(c(TEXT))
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt.page = back_to;
+                    this.ui.page = back_to;
                     cx.notify();
                 })),
             )
-            .children(self.alt_strip(cx));
-        let loaded = self.alt.mods.open.as_ref().map(|o| o.page.clone());
+            .children(self.strip(cx));
+        let loaded = self.ui.mods.open.as_ref().map(|o| o.page.clone());
         let p = match loaded {
             None => return page.child(muted(tr("No mod is open."))).into_any_element(),
             Some(None) => return page.child(muted(tr("Loading…"))).into_any_element(),
@@ -137,7 +137,7 @@ impl Launcher {
         };
 
         let installed_here = self
-            .alt
+            .ui
             .mods
             .snapshot
             .as_ref()
@@ -250,7 +250,7 @@ impl Launcher {
 
         // The right column: the action and what it changes, then the facts.
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
-        let busy = self.alt_mods_busy();
+        let busy = self.mods_busy();
         let native = p.make == Make::Native;
         let action: AnyElement = match (&installed_here, &p.fit, &p.will_install) {
             (Some(n), ..) => div()
@@ -273,7 +273,7 @@ impl Launcher {
                     let id = p.id.clone();
                     let _ = will;
                     b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_add(id.clone());
+                        this.add(id.clone());
                         cx.notify();
                     }))
                     .into_any_element()
@@ -384,7 +384,7 @@ impl Launcher {
                     .child(row(tr("Licence"), p.license.clone()))
                     .children((source.starts_with("https://")).then(|| {
                         about_link("alt-project-source", tr("Source code")).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::alt_open_url(&source, cx),
+                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&source, cx),
                         ))
                     }))
             });

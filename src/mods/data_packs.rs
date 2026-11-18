@@ -203,14 +203,14 @@ fn names(list: &[String]) -> String {
 impl Launcher {
     /// Reads the selected setup's worlds and their data packs when they aren't in memory, the
     /// setup changed, a world came or went, or something was added or removed.
-    pub(super) fn alt_data_list(&mut self, cx: &mut Context<Self>) {
-        let home = self.alt_mods_home();
+    pub(super) fn data_list(&mut self, cx: &mut Context<Self>) {
+        let home = self.mods_home();
         self.load_worlds(home.clone(), cx);
         let worlds: Vec<World> = match self.worlds.home.as_ref() == Some(&home) {
             true => self.worlds.list.clone(),
             false => Vec::new(),
         };
-        let d = &mut self.alt.mods.data;
+        let d = &mut self.ui.mods.data;
         let current = d.list.as_ref().is_some_and(|l| {
             l.home == home
                 && l.worlds.len() == worlds.len()
@@ -244,24 +244,24 @@ impl Launcher {
     }
 
     /// Home's Data packs on a world card: Packs › Installed › Data packs, that world first.
-    pub(crate) fn alt_show_world_packs(&mut self, world: PathBuf) {
-        self.alt_leave_section(true);
+    pub(crate) fn show_world_packs(&mut self, world: PathBuf) {
+        self.leave_section(true);
         self.worlds.stale();
-        let m = &mut self.alt.mods;
+        let m = &mut self.ui.mods;
         m.shelf = Shelf::Data;
         m.data.first = Some(world);
         m.data.reread();
         m.last_packs = Some(Page::Packs);
-        self.alt.page = Page::Packs;
+        self.ui.page = Page::Packs;
     }
 
     /// Opens the world picker for `what`, with `hint` ticked when it can take it.
-    pub(super) fn alt_pick_worlds(&mut self, what: What, hint: Option<PathBuf>) {
-        if !self.alt_guard() {
+    pub(super) fn pick_worlds(&mut self, what: What, hint: Option<PathBuf>) {
+        if !self.guard() {
             return;
         }
         let ticked = self
-            .alt
+            .ui
             .mods
             .data
             .list
@@ -270,17 +270,17 @@ impl Launcher {
             .filter(|(w, packs)| Some(&w.path) == hint.as_ref() && !what.in_world(w, packs))
             .map(|(w, _)| w.path.clone())
             .collect();
-        self.alt.mods.data.pick = Some(Pick { what, ticked });
-        self.open_alt_sheet(crate::sheets::Sheet::Worlds);
+        self.ui.mods.data.pick = Some(Pick { what, ticked });
+        self.open_sheet(crate::sheets::Sheet::Worlds);
     }
 
     /// The picker's Add: everything is checked again, then done in a worker.
-    fn alt_pick_confirm(&mut self) {
-        let Some(pick) = self.alt.mods.data.pick.take() else {
+    fn pick_confirm(&mut self) {
+        let Some(pick) = self.ui.mods.data.pick.take() else {
             return;
         };
-        self.close_alt_sheet();
-        if !self.alt_guard() {
+        self.close_sheet();
+        if !self.guard() {
             return;
         }
         let Some(home) = self
@@ -288,12 +288,12 @@ impl Launcher {
             .filter(|i| i.java.is_none() && self.location_error.is_none())
             .map(|i| i.home.clone())
         else {
-            self.alt.mods.notice = Some(Err(tr("Select a Sunrise setup first.").to_string()));
+            self.ui.mods.notice = Some(Err(tr("Select a Sunrise setup first.").to_string()));
             return;
         };
         // Only worlds of the setup on screen, in the order they are listed.
         let worlds: Vec<World> = self
-            .alt
+            .ui
             .mods
             .data
             .list
@@ -306,9 +306,9 @@ impl Launcher {
         if worlds.is_empty() {
             return;
         }
-        self.alt_dismiss_notice();
-        self.alt.mods.busy = Some((tr("Adding the data pack…").into(), 0.));
-        let (tx, game) = (self.alt.mods.tx.clone(), self.mods_game());
+        self.dismiss_notice();
+        self.ui.mods.busy = Some((tr("Adding the data pack…").into(), 0.));
+        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
         std::thread::spawn(move || {
             let result = add_to_worlds(&pick.what, &home, &worlds, &game, &|f| {
                 let _ = tx.send(Event::Progress(pick.what.title().to_owned(), f));
@@ -318,17 +318,17 @@ impl Launcher {
     }
 
     /// Remove on a row: the second press moves the pack to the trash.
-    fn alt_data_remove(&mut self, world: PathBuf, file: String) {
+    fn data_remove(&mut self, world: PathBuf, file: String) {
         let key = (world, file);
-        if self.alt.mods.data.confirm.as_ref() != Some(&key) {
-            self.alt.mods.data.confirm = Some(key);
+        if self.ui.mods.data.confirm.as_ref() != Some(&key) {
+            self.ui.mods.data.confirm = Some(key);
             return;
         }
-        self.alt.mods.data.reread();
-        if !self.alt_guard() {
+        self.ui.mods.data.reread();
+        if !self.guard() {
             return;
         }
-        let home = self.alt_mods_home();
+        let home = self.mods_home();
         let (world, file) = key;
         let result = match browser::try_lock_home(&home) {
             None => Err(tr("This setup is busy. Try again when the operation finishes.").into()),
@@ -340,18 +340,18 @@ impl Launcher {
                 datapacks::remove(&world, &pack)
             }),
         };
-        self.alt.mods.notice = result.err().map(Err);
+        self.ui.mods.notice = result.err().map(Err);
         self.world_packs.reread();
     }
 
     /// Packs › Installed › Data packs: each world with what is in it.
     pub(super) fn installed_data_packs(&mut self, cx: &mut Context<Self>) -> Div {
-        self.alt_data_list(cx);
-        let query = self.alt.mods.have.text().trim().to_lowercase();
+        self.data_list(cx);
+        let query = self.ui.mods.have.text().trim().to_lowercase();
         let editable = self.location_error.is_none()
-            && self.alt_mods_locked().is_none()
-            && !self.alt_mutating();
-        let d = &self.alt.mods.data;
+            && self.mods_locked().is_none()
+            && !self.mutating();
+        let d = &self.ui.mods.data;
         let mut worlds: Vec<(World, Vec<Listed>)> =
             d.list.as_ref().map_or_else(Vec::new, |l| l.worlds.clone());
         // The world Home asked for leads; the rest keep the order Home has them in.
@@ -413,7 +413,7 @@ impl Launcher {
                     )
                     .on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
-                            this.alt_find_data_packs(Some(path.clone()));
+                            this.find_data_packs(Some(path.clone()));
                             cx.notify();
                         },
                     )),
@@ -433,7 +433,7 @@ impl Launcher {
                 );
                 let remove = if editable {
                     remove.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_data_remove(key.0.clone(), key.1.clone());
+                        this.data_remove(key.0.clone(), key.1.clone());
                         cx.notify();
                     }))
                 } else {
@@ -455,7 +455,7 @@ impl Launcher {
                         origin: listed.origin.clone(),
                     };
                     b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_pick_worlds(what.clone(), None);
+                        this.pick_worlds(what.clone(), None);
                         cx.notify();
                     }))
                 });
@@ -527,19 +527,19 @@ impl Launcher {
             .child(muted(tr(
                 "The game turns a world's data packs on when the world opens, or on /reload.",
             )))
-            .children(self.alt_mods_locked().map(muted))
+            .children(self.mods_locked().map(muted))
             .child(groups)
     }
 
     /// The world picker: every world of the setup with a box, and one Add for all ticked.
-    pub(crate) fn alt_world_pick_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        self.alt_data_list(cx);
-        let d = &self.alt.mods.data;
+    pub(crate) fn world_pick_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        self.data_list(cx);
+        let d = &self.ui.mods.data;
         let pick = d.pick.as_ref()?;
         let worlds: &[(World, Vec<Listed>)] = d.list.as_ref().map_or(&[], |l| &l.worlds);
         let close = |label: &'static str| {
             button("alt-pick-cancel", label).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.close_alt_sheet();
+                this.close_sheet();
                 cx.notify();
             }))
         };
@@ -606,7 +606,7 @@ impl Launcher {
                 row.cursor_pointer()
                     .hover(|s| s.bg(c(CARD).opacity(0.6)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(pick) = &mut this.alt.mods.data.pick {
+                        if let Some(pick) = &mut this.ui.mods.data.pick {
                             if !pick.ticked.remove(&path) {
                                 pick.ticked.insert(path.clone());
                             }
@@ -625,7 +625,7 @@ impl Launcher {
         let add = match chosen {
             0 => dim(add),
             _ => add.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.alt_pick_confirm();
+                this.pick_confirm();
                 cx.notify();
             })),
         };

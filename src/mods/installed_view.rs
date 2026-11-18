@@ -11,13 +11,13 @@ const BLUE: u32 = 0x7fb0ff;
 const DANGER: u32 = 0xf08a7a;
 
 impl Launcher {
-    pub(super) fn alt_installed(
+    pub(super) fn installed(
         &mut self,
         window: &mut Window,
         focus: &FocusHandle,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let header = self.alt_mods_header(true, focus, window, cx);
+        let header = self.mods_header(true, focus, window, cx);
         let mut page = div()
             .size_full()
             .flex()
@@ -26,9 +26,9 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(TEXT))
             .child(header)
-            .children(self.alt_strip(cx));
+            .children(self.strip(cx));
 
-        let rows = self.alt_rows();
+        let rows = self.rows();
         if rows.is_empty() {
             return page
                 .child(
@@ -42,7 +42,7 @@ impl Launcher {
                         .child(muted(tr("Mods you add from Discover show up here, with their updates and a switch for each.")))
                         .child(primary("alt-installed-browse", tr("Find mods in Discover")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
-                                this.alt_choose_view(Page::Discover);
+                                this.choose_view(Page::Discover);
                                 cx.notify();
                             },
                         ))),
@@ -50,7 +50,7 @@ impl Launcher {
                 .into_any_element();
         }
 
-        let filter = self.alt.mods.row_filter.clone();
+        let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
@@ -61,7 +61,7 @@ impl Launcher {
         );
         let selected: Vec<&Row> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
             .collect();
 
         // ---- what to show: the same row of chips Discover filters with
@@ -79,7 +79,7 @@ impl Launcher {
             chips = chips.child(
                 chip(("alt-show", i), counted(label, n), filter.show == which).on_click(
                     cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        let m = &mut this.alt.mods;
+                        let m = &mut this.ui.mods;
                         m.row_filter.show = which;
                         m.selection.clear();
                         m.anchor = None;
@@ -104,7 +104,7 @@ impl Launcher {
                     filter.makes.contains(&make),
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let m = &mut this.alt.mods;
+                    let m = &mut this.ui.mods;
                     if !m.row_filter.makes.remove(&make) {
                         m.row_filter.makes.insert(make);
                     }
@@ -119,11 +119,11 @@ impl Launcher {
         // ---- toolbar: select-all and the bulk actions, naming their scope
         let selected_here = shown_ids
             .iter()
-            .filter(|id| self.alt.mods.selection.contains(*id))
+            .filter(|id| self.ui.mods.selection.contains(*id))
             .count();
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
-        let busy = self.alt_mods_busy();
+        let busy = self.mods_busy();
         let with_update = selected.iter().filter(|r| r.update.is_some()).count();
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::frame::button(id, label);
@@ -143,7 +143,7 @@ impl Launcher {
                         .child(div().w(px(10.)).h(px(2.)).bg(c(BG)))
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let m = &mut this.alt.mods;
+                    let m = &mut this.ui.mods;
                     match ids.iter().all(|id| m.selection.contains(id)) {
                         true => m.selection.clear(),
                         false => m.selection.extend(ids.iter().cloned()),
@@ -203,7 +203,7 @@ impl Launcher {
                     )))
                     .child(if !busy {
                         on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_bulk_on();
+                            this.bulk_on();
                             cx.notify();
                         }))
                     } else {
@@ -211,7 +211,7 @@ impl Launcher {
                     })
                     .child(if !busy {
                         off.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_bulk_off();
+                            this.bulk_off();
                             cx.notify();
                         }))
                     } else {
@@ -219,7 +219,7 @@ impl Launcher {
                     })
                     .child(if !busy && with_update > 0 {
                         upd.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_ask_update(true);
+                            this.ask_update(true);
                             cx.notify();
                         }))
                     } else {
@@ -227,7 +227,7 @@ impl Launcher {
                     })
                     .child(if !busy {
                         rm.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_ask_remove();
+                            this.ask_remove();
                             cx.notify();
                         }))
                     } else {
@@ -239,8 +239,8 @@ impl Launcher {
                             .id("alt-selection-clear")
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.alt.mods.selection.clear();
-                                this.alt.mods.anchor = None;
+                                this.ui.mods.selection.clear();
+                                this.ui.mods.anchor = None;
                                 cx.notify();
                             })),
                     );
@@ -249,7 +249,7 @@ impl Launcher {
         };
 
         // ---- the confirmation, when one is open: names, counts, nothing started yet
-        let confirm = self.alt.mods.confirm.as_ref().map(|confirm| {
+        let confirm = self.ui.mods.confirm.as_ref().map(|confirm| {
             let panel = card().m(px(12.)).p(px(16.)).flex().flex_col().gap(px(10.)).border_color(c(GOLD));
             match confirm {
                 Confirm::Remove(chosen) => {
@@ -277,14 +277,14 @@ impl Launcher {
                                 .flex()
                                 .gap(px(10.))
                                 .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.alt.mods.confirm = None;
+                                    this.ui.mods.confirm = None;
                                     cx.notify();
                                 })))
                                 .child(
                                     crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
                                         .text_color(c(DANGER))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.alt_run(actions::Action::Remove(items.clone()), false);
+                                            this.run(actions::Action::Remove(items.clone()), false);
                                             cx.notify();
                                         })),
                                 ),
@@ -311,11 +311,11 @@ impl Launcher {
                                 .flex()
                                 .gap(px(10.))
                                 .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.alt.mods.confirm = None;
+                                    this.ui.mods.confirm = None;
                                     cx.notify();
                                 })))
                                 .child(primary("alt-confirm-backup", trf("Back up {count} worlds and continue", &[("count", &n.to_string())])).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.alt_run(action.clone(), true);
+                                    this.run(action.clone(), true);
                                     cx.notify();
                                 }))),
                         )
@@ -352,7 +352,7 @@ impl Launcher {
                                 .flex()
                                 .gap(px(10.))
                                 .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.alt.mods.confirm = None;
+                                    this.ui.mods.confirm = None;
                                     cx.notify();
                                 })))
                                 .child({
@@ -361,7 +361,7 @@ impl Launcher {
                                         dim(b)
                                     } else {
                                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.alt_run(actions::Action::Update(included.clone()), false);
+                                            this.run(actions::Action::Update(included.clone()), false);
                                             cx.notify();
                                         }))
                                     }
@@ -410,7 +410,7 @@ impl Launcher {
                     );
                     head = head.child(if !busy {
                         b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_ask_update(false);
+                            this.ask_update(false);
                             cx.notify();
                         }))
                     } else {
@@ -423,7 +423,7 @@ impl Launcher {
             if r.local.is_none() {
                 position += 1;
             }
-            list = list.child(self.alt_row(n, pos, r, shown_ids.clone(), busy, cx));
+            list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
         }
         if visible.is_empty() {
             list = list.child(
@@ -433,7 +433,7 @@ impl Launcher {
             );
         }
         let hidden = self
-            .alt
+            .ui
             .mods
             .snapshot
             .as_ref()
@@ -459,7 +459,7 @@ impl Launcher {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn alt_row(
+    fn row(
         &mut self,
         n: usize,
         pos: usize,
@@ -468,12 +468,12 @@ impl Launcher {
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let selected = self.alt.mods.selection.contains(&r.id);
+        let selected = self.ui.mods.selection.contains(&r.id);
         let picture = r
             .icon
             .clone()
             .and_then(|u| self.mods_image(&u, images::ROW));
-        let error = self.alt.mods.errors.get(&r.id).cloned();
+        let error = self.ui.mods.errors.get(&r.id).cloned();
         let project = r.entry.as_ref().map(|e| e.project.clone());
 
         let check = {
@@ -481,7 +481,7 @@ impl Launcher {
             checkbox(("alt-row-check", n), selected).on_click(cx.listener(
                 move |this, ev: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    let m = &mut this.alt.mods;
+                    let m = &mut this.ui.mods;
                     match (ev.modifiers().shift, m.anchor) {
                         (true, Some(a)) => {
                             let (lo, hi) = (a.min(pos), a.max(pos));
@@ -503,7 +503,7 @@ impl Launcher {
         // What the row says on the right: one verdict, with its one action.
         // Roomy, the row is one line of columns; narrow, what it says moves under the name and
         // wraps there, so nothing is pushed out of the row.
-        let wide = self.alt_content_width() >= 860.;
+        let wide = self.content_width() >= 860.;
         let say = move |text: String, color: u32| {
             div()
                 .min_w_0()
@@ -548,7 +548,7 @@ impl Launcher {
                 notes.push(say(tr("Not built for this computer yet").to_string(), GOLD));
                 verdict = verdict.child(if !busy && !building {
                     b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt_build();
+                        this.build();
                         cx.notify();
                     }))
                 } else {
@@ -563,7 +563,7 @@ impl Launcher {
                 ));
                 verdict = verdict.child(if !busy {
                     b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt_allow();
+                        this.allow();
                         cx.notify();
                     }))
                 } else {
@@ -578,7 +578,7 @@ impl Launcher {
             notes.push(say(format!("→ {to}"), BLUE));
             verdict = verdict.child(if !busy {
                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt_update_one(&row);
+                    this.update_one(&row);
                     cx.notify();
                 }))
             } else {
@@ -590,7 +590,7 @@ impl Launcher {
             if r.local.is_none() && !matches!(r.need, Some(Need::TakenDown(_))) {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt_toggle(&row);
+                    this.toggle(&row);
                     cx.notify();
                 }))
             } else {
@@ -624,7 +624,7 @@ impl Launcher {
                 Some(id) => {
                     d.cursor_pointer()
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.alt_mods_show_project(id.clone());
+                            this.mods_show_project(id.clone());
                             cx.notify();
                         }))
                 }
@@ -699,16 +699,16 @@ impl Launcher {
             )
         };
         match r.unfit.clone() {
-            Some(unfit) => row.child(verdict).child(self.alt_unfit(n, &r, unfit, cx)),
+            Some(unfit) => row.child(verdict).child(self.unfit(n, &r, unfit, cx)),
             None => row.child(verdict).child(sw),
         }
     }
 
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
-    fn alt_unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
+    fn unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
         use crate::frame::{button, CARD, LINE, TEXT};
-        let open = self.alt.mods.unfit_open.as_deref() == Some(r.id.as_str());
+        let open = self.ui.mods.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
         let help = div()
             .id(("alt-unfit-help", n))
@@ -728,7 +728,7 @@ impl Launcher {
             .focus_visible(|s| s.border_color(c(GOLD)))
             .child("?")
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let m = &mut this.alt.mods;
+                let m = &mut this.ui.mods;
                 m.unfit_open = match m.unfit_open.as_ref() == Some(&id) {
                     true => None,
                     false => Some(id.clone()),
@@ -756,7 +756,7 @@ impl Launcher {
                 )
                 .to_string(),
             };
-            let details = self.alt.mods.unfit_details;
+            let details = self.ui.mods.unfit_details;
             let technical = (!unfit.changes.is_empty()).then(|| {
                 div()
                     .flex()
@@ -778,7 +778,7 @@ impl Launcher {
                             ))
                             .child(tr("Technical details"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.alt.mods.unfit_details = !this.alt.mods.unfit_details;
+                                this.ui.mods.unfit_details = !this.ui.mods.unfit_details;
                                 cx.stop_propagation();
                                 cx.notify();
                             })),
@@ -806,8 +806,8 @@ impl Launcher {
                     );
                     let row = r.clone();
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt.mods.unfit_open = None;
-                        this.alt_update_one(&row);
+                        this.ui.mods.unfit_open = None;
+                        this.update_one(&row);
                         cx.stop_propagation();
                         cx.notify();
                     })))
@@ -819,8 +819,8 @@ impl Launcher {
                     );
                     let tag = tag.clone();
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt.mods.unfit_open = None;
-                        this.alt_stay_on(tag.clone());
+                        this.ui.mods.unfit_open = None;
+                        this.stay_on(tag.clone());
                         cx.stop_propagation();
                         cx.notify();
                     })))
@@ -830,7 +830,7 @@ impl Launcher {
             // Opens under the "?", or over it when the row is low in the window.
             let popup = div()
                     .w(px(360.))
-                    .max_w(px(self.alt_content_width() - 28.))
+                    .max_w(px(self.content_width() - 28.))
                     .p(px(14.))
                     .flex()
                     .flex_col()
@@ -865,16 +865,16 @@ impl Launcher {
 
     /// "Stay on Nov 16" for a mod made for it: the setup stays on that build, where the mod
     /// runs. The next Play builds there as usual.
-    fn alt_stay_on(&mut self, tag: String) {
+    fn stay_on(&mut self, tag: String) {
         let Some(id) = self.selected_instance().map(|i| i.id.clone()) else {
             return;
         };
-        if !self.alt_guard() {
+        if !self.guard() {
             return;
         }
         match instances::edit(&id, |meta| meta.version = Some(tag)) {
             Ok(_) => self.reload_instances(),
-            Err(e) => self.alt.mods.notice = Some(Err(e)),
+            Err(e) => self.ui.mods.notice = Some(Err(e)),
         }
     }
 }
