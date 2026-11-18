@@ -133,7 +133,7 @@ fn a_taken_down_version_is_refused_with_the_registrys_reason() {
     );
     let c = &cards(&idx, GAME)[0];
     assert_eq!(c.fit, Fit::Refused("Taken down: it crashed worlds".into()));
-    let page = page(&idx, "zoom", GAME, vec![]).unwrap();
+    let page = page(&idx, "zoom", GAME, vec![], false).unwrap();
     assert!(page.will_install.is_none(), "nothing to Add");
     assert!(!page.versions[0].fit.fits());
 }
@@ -149,14 +149,14 @@ fn the_page_names_the_version_add_installs() {
         )],
         vec![],
     );
-    let p = page(&idx, "zoom", GAME, vec!["Made by Someone".into()]).unwrap();
+    let p = page(&idx, "zoom", GAME, vec!["Made by Someone".into()], false).unwrap();
     assert_eq!(
         p.will_install.as_ref().map(|v| v.number.as_str()),
         Some("2.0.0")
     );
     assert_eq!(p.versions[1].fit, Fit::OtherBuild("25.1".into()));
     assert_eq!(p.side, "Not needed on servers");
-    assert!(page(&idx, "missing", GAME, vec![]).is_none());
+    assert!(page(&idx, "missing", GAME, vec![], false).is_none());
 }
 
 #[test]
@@ -529,4 +529,103 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     );
     assert!(row("old").left_out.is_none());
     assert!(row("fine").unfit.is_none() && row("fine").left_out.is_none());
+}
+
+#[test]
+fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
+    use native_mods::{Detail, LeftOut, Why};
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["lib", "addon", "old", "fine"].map(String::from).into();
+    let unbuilt: HashSet<String> = ["addon".to_string()].into();
+    let local = ["lib", "addon", "old", "fine"].map(|id| Local {
+        id: id.into(),
+        name: id.into(),
+        version: "1.0".into(),
+        github: id == "lib",
+        native: true,
+    });
+    let w = World {
+        local: &local,
+        native_allowed: true,
+        ..world(&idx, &on, &unbuilt, false)
+    };
+    let mut r = rows(&entries, &w);
+    mark_left_out(
+        &mut r,
+        &[LeftOut {
+            id: "old".into(),
+            version: "1.0".into(),
+            why: Why::Unfit("made for Nov 16".into()),
+            detail: Some(Detail {
+                made_for: None,
+                changes: vec!["src/lib.rs:3 builds it".into()],
+            }),
+        }],
+        "Nov 17",
+        |tag| tag.to_owned(),
+    );
+    let row = |id: &str| r.iter().find(|r| r.id == id && r.local.is_some()).unwrap();
+    // Every row has a kind and a version for the same two columns.
+    for row in &r {
+        let cells = cells(row, None, None);
+        assert_eq!(cells.version, row.version);
+        assert_eq!(cells.kind, row.make.map_or("", Make::label));
+    }
+    // A mod that needs an update keeps the switch's place, and its status opens the popover:
+    // no file or type name in the label or the tooltip.
+    let old = cells(row("old"), None, None);
+    let status = old.status.unwrap();
+    assert_eq!(status.label, "Needs an update");
+    assert_eq!(status.tone, Tone::Warning);
+    assert!(old.popover);
+    assert!(!status.tip.contains("src/lib.rs"), "{}", status.tip);
+    assert_eq!(old.action, None);
+    // A mod that waits for a build says so, and says Building while its setup's build runs.
+    let addon = row("addon");
+    assert_eq!(addon.need, Some(Need::Build));
+    assert_eq!(
+        cells(addon, None, None).status.unwrap().label,
+        "Needs a build"
+    );
+    for (at, label, tone) in [
+        (InBuild::Waiting, "Waiting", Tone::Muted),
+        (InBuild::Building, "Building", Tone::Accent),
+        (InBuild::Built, "Built", Tone::Success),
+    ] {
+        let status = cells(addon, None, Some(at)).status.unwrap();
+        assert_eq!((status.label.as_str(), status.tone), (label, tone));
+    }
+    // A row with nothing pressing says where it is from, quietly; its cells are still there.
+    let fine = cells(row("fine"), None, None);
+    assert_eq!(fine.status.as_ref().unwrap().tone, Tone::Muted);
+    assert_eq!(fine.action, None);
+    assert!(
+        !fine.switch,
+        "a local file's switch is drawn dim, in its place"
+    );
+    // A registry row with nothing to say: empty status and action cells, a live switch.
+    let plain = r
+        .iter()
+        .find(|r| r.local.is_none() && r.need.is_none() && r.update.is_none());
+    if let Some(plain) = plain {
+        let cells = cells(plain, None, None);
+        assert_eq!(
+            (cells.status, cells.action, cells.switch),
+            (None, None, true)
+        );
+    }
+    // The most pressing thing is the status; the rest is in its tooltip. The one button is
+    // Update whenever a newer version is out.
+    let mut both = row("addon").clone();
+    both.update = Some("1.1".into());
+    let cells_both = cells(&both, Some("the download stopped"), None);
+    let status = cells_both.status.unwrap();
+    assert_eq!(status.label, "Update failed");
+    assert!(status.tip.contains("the download stopped"));
+    assert!(status.tip.contains("Not built for this computer yet"));
+    assert!(status.tip.contains("Version 1.1 is out"));
+    assert_eq!(cells_both.action, Some(RowAction::Update));
+    // Permission comes before a newer version: its button is Allow.
+    both.need = Some(Need::Permission);
+    assert_eq!(cells(&both, None, None).action, Some(RowAction::Allow));
 }

@@ -38,6 +38,8 @@ pub(crate) enum Sheet {
     AccountMenu,
     Picture,
     Search,
+    /// The build window (`mods::build_modal`): closing it leaves the build running.
+    ModBuild,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -552,6 +554,13 @@ impl Launcher {
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Picture) => self.gallery_picture(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
+            Some(Sheet::ModBuild) => {
+                let sheet = self.build_modal(cx);
+                if sheet.is_none() {
+                    self.ui.sheet = None;
+                }
+                sheet
+            }
             Some(Sheet::Worlds) => {
                 let sheet = self.world_pick_sheet(cx);
                 if sheet.is_none() {

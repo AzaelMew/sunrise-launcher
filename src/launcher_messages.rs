@@ -231,13 +231,15 @@ impl Launcher {
                 Msg::NativeRegistryConsent(inventory, reply) => {
                     self.registry_consent(inventory, reply);
                 }
-                Msg::NativeProgress(step, progress) => {
-                    self.native_step = Some(step);
-                    self.native_progress = Some(progress);
+                Msg::NativeProgress(step) => {
+                    self.native_step = Some(step.shown());
+                    self.native_progress = Some(step.progress());
+                    if let Some(run) = &mut self.ui.mods.build {
+                        run.step(&step);
+                    }
                 }
                 Msg::Native(result) => {
-                    // The last step of a build that worked says how it went.
-                    let last = self.native_step.take();
+                    self.native_step = None;
                     self.native_progress = None;
                     self.first_build = None;
                     // Build and play: the game starts once the build worked, and only for the
@@ -246,11 +248,6 @@ impl Launcher {
                     let wanted = self.play_after_build.take();
                     let built = result.as_ref().ok().cloned();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
-                    self.native_done = match (&result, cancelled) {
-                        (Ok(_), _) => last,
-                        (Err(_), true) => Some(tr(native_mods::CANCELLED).into()),
-                        (Err(_), false) => None,
-                    };
                     self.installed = backend::installed();
                     self.reload_instances();
                     // No permission: the question is the answer, not the refusal's words.
@@ -270,17 +267,44 @@ impl Launcher {
                         let built = std::mem::take(&mut self.native_built_mods);
                         self.native_failed(String::from(e), &built);
                     }
-                    let play_now = wanted.is_some()
-                        && built.is_some()
-                        && self
-                            .selected_instance()
-                            // The build the instance plays now: its own, or its channel's when
-                            // every mod was left out and it follows one.
-                            .is_some_and(|i| {
-                                Some(&i.id) == wanted.as_ref()
-                                    && self.version_of(i) == built.as_ref()
+                    // The build window's build ends as the build did. With its window closed,
+                    // the strip says how it went for a moment.
+                    let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
+                    if no_consent {
+                        self.ui.mods.build = None;
+                    } else if let Some(run) = &mut self.ui.mods.build {
+                        match (&built, cancelled, &self.native_error) {
+                            (Some(_), ..) => run.done(),
+                            (None, true, _) => run.cancelled(),
+                            (None, false, error) => run.stopped(
+                                error.clone().unwrap_or_default(),
+                                &self.native_failed_mods,
+                            ),
+                        }
+                        if !shown {
+                            run.said_at = Some(Instant::now());
+                            std::thread::spawn(|| {
+                                std::thread::sleep(crate::mods::build_run::SAID_FOR);
+                                crate::wake::wake();
                             });
-                    if play_now {
+                        }
+                    }
+                    // The build the instance plays now: its own, or its channel's when every mod
+                    // was left out and it follows one.
+                    let plays = self
+                        .selected_instance()
+                        .map(|i| (i.id.clone(), self.version_of(i).cloned()));
+                    if crate::mods::build_run::plays_after(
+                        wanted.as_deref(),
+                        built.as_deref(),
+                        plays
+                            .as_ref()
+                            .map(|(id, version)| (id.as_str(), version.as_deref())),
+                    ) {
+                        // The game is what the player asked for: its window gets out of the way.
+                        if shown {
+                            self.close_sheet();
+                        }
                         self.play();
                     }
                 }

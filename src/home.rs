@@ -389,7 +389,8 @@ impl Launcher {
             // Two lines fit beside Play; a longer message is cut, never drawn outside the row.
             .line_clamp(2)
             .text_ellipsis()
-            .children(self.build_line())
+            .children(self.build_line(true, cx))
+            .children(self.build_said())
             .children(view.said.clone())
             // Nothing to act on here: the row under Mods says why and what to do.
             .children(view.mods_off.map(|count| {

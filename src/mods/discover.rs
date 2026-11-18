@@ -268,9 +268,9 @@ impl Launcher {
                     working,
                     needs_ok || card_data.builds_locally && card_data.make == Make::Native,
                 ) {
-                    (true, _) => tr("Adding…"),
-                    (_, true) => tr("Add…"),
-                    _ => tr("Add"),
+                    (true, _) => tr("Installing…"),
+                    (_, true) => tr("Install…"),
+                    _ => tr("Install"),
                 };
                 let b = crate::frame::button(("alt-add", n), label);
                 Some(match working {

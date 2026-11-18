@@ -72,7 +72,21 @@ impl Launcher {
             .is_none()
             .then(|| sunrise_launcher::rust_toolchain::host().map(|h| h.download_bytes()))
             .flatten();
-        self.native_done = None;
+        // The build window's build: a line per mod the build is given. Play's own build opens
+        // the window; Build opens it itself.
+        let for_play = self.play_after_build.as_deref() == Some(instance.id.as_str());
+        let mut run = crate::mods::build_run::Run::start(
+            instance.id.clone(),
+            instance.name.clone(),
+            crate::sheets::build_name(&base),
+            self.mods_lines(),
+            for_play,
+        );
+        run.first_build = self.first_build;
+        self.ui.mods.build = Some(run);
+        if for_play || std::mem::take(&mut self.ui.mods.build_wanted) {
+            self.open_sheet(crate::sheets::Sheet::ModBuild);
+        }
         let tx = self.tx.clone();
         // The release list the window already has: the build reads it and asks GitHub for none.
         let catalogue = match &self.releases {
@@ -87,7 +101,7 @@ impl Launcher {
                 None,
                 back_up,
                 |step| {
-                    let _ = tx.send(Msg::NativeProgress(step.shown(), step.progress()));
+                    let _ = tx.send(Msg::NativeProgress(step));
                 },
                 |inventory| {
                     let (reply, answer) = std::sync::mpsc::channel();

@@ -29,6 +29,8 @@ use sunrise_launcher::browser::{
 };
 
 mod actions;
+mod build_modal;
+pub(crate) mod build_run;
 mod data_packs;
 mod discover;
 mod installed_view;
@@ -101,6 +103,8 @@ enum Event {
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
     Done(String, Vec<(String, String)>),
+    /// "Check for update" asked the registry again: the mod's name, and the newer version found.
+    Checked(String, Result<Option<String>, String>),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -159,6 +163,12 @@ pub(crate) struct ModsState {
     /// technical details show.
     unfit_open: Option<String>,
     unfit_details: bool,
+    /// The build the build window shows: running, or ended and not yet closed.
+    pub(crate) build: Option<build_run::Run>,
+    /// Build was pressed and the build has not started yet (it asks for permission first).
+    pub(crate) build_wanted: bool,
+    /// Whether a mod page's Details (who made it, how it is checked) is open.
+    facts_open: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
     last_mods: Option<Page>,
     last_packs: Option<Page>,
@@ -196,6 +206,9 @@ impl Default for ModsState {
             limit: 0,
             unfit_open: None,
             unfit_details: false,
+            build: None,
+            build_wanted: false,
+            facts_open: false,
             last_mods: None,
             last_packs: None,
             reveal: None,
@@ -254,6 +267,20 @@ impl Launcher {
             .map(|id| match rows.iter().find(|r| &r.id == id) {
                 Some(row) => (row.title.clone(), row.update.clone()),
                 None => (id.clone(), None),
+            })
+            .collect()
+    }
+
+    /// The native mods turned on for the selected setup, as a build's lines name them: id,
+    /// title, version and picture.
+    pub(crate) fn mods_lines(&mut self) -> Vec<(String, String, String, Option<String>)> {
+        self.mods_refresh();
+        let rows = self.rows();
+        native_status::enabled(&self.mods_home())
+            .into_iter()
+            .map(|(id, version, _)| match rows.iter().find(|r| r.id == id) {
+                Some(row) => (id, row.title.clone(), version, row.icon.clone()),
+                None => (id.clone(), id, version, None),
             })
             .collect()
     }
@@ -397,6 +424,7 @@ impl Launcher {
                         m.confirm = Some(Confirm::Stake(action, worlds));
                     }
                 }
+                Event::Checked(title, found) => self.checked(title, found),
                 Event::Refused(why) => {
                     m.busy = None;
                     m.notice = Some(Err(why));
@@ -542,7 +570,8 @@ impl Launcher {
         std::thread::spawn(move || {
             let result = sunrise::index().and_then(|index| {
                 let trust = sunrise::trust_and_capabilities(&id, Some(&instance), &game);
-                model::page(&index, &id, &game, trust)
+                let another = sunrise::made_for_another_build(&id, &instance, &game);
+                model::page(&index, &id, &game, trust, another)
                     .map(Box::new)
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
             });
@@ -654,14 +683,6 @@ impl Launcher {
                 .map(|(_, line, f)| (line.clone(), *f))
         });
         // A build is of mods: its strip is Mods' own. The play bar shows it on every page.
-        if !matches!(
-            self.ui.page,
-            Page::Packs | Page::PackFind | Page::PackProject
-        ) {
-            if let Some(build) = self.build_strip(cx) {
-                return Some(build);
-            }
-        }
         if let Some((line, f)) = busy {
             return Some(
                 div()

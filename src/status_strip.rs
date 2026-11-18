@@ -20,7 +20,21 @@ impl Launcher {
             self.refresh_home_inventory(cx);
         }
         let view = self.launch_facts().view();
-        let (says, act) = view.strip()?;
+        let Some((says, act)) = view.strip() else {
+            // Nothing runs or failed. A build that just ended in the background is said here
+            // for a moment, with nothing to press.
+            return self.build_said().map(|said| {
+                strip()
+                    .child(
+                        div()
+                            .flex_none()
+                            .size(px(8.))
+                            .rounded_full()
+                            .bg(rgb(palette().success)),
+                    )
+                    .child(div().flex_1().min_w_0().truncate().child(said))
+            });
+        };
         let id = match act {
             StripAct::Act(Act::StopBuild) => "alt-strip-stop-build",
             StripAct::StopGame => "alt-strip-stop",
@@ -28,9 +42,14 @@ impl Launcher {
             StripAct::Home => "alt-strip-home",
         };
         // A build draws its own line: the stage it is at over the three stages' bar.
-        let line = match self.build_line().filter(|_| view.main == Main::Building) {
-            Some(build) => build,
-            None => div().truncate().child(says),
+        // Mods › Installed shows the bar in its Build button: the line is drawn without one.
+        let bar_here = self.ui.page != crate::frame::Page::Installed;
+        let line = match self
+            .build_line(bar_here, cx)
+            .filter(|_| view.main == Main::Building)
+        {
+            Some(build) => build.into_any_element(),
+            None => div().truncate().child(says).into_any_element(),
         };
         let mark = if view.failed {
             palette().warning
@@ -58,20 +77,7 @@ impl Launcher {
             _ => None,
         };
         Some(
-            div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .gap(px(12.))
-                .min_h(px(tokens::ACTION))
-                .px(px(14.))
-                .py(px(6.))
-                .rounded(px(tokens::R_CARD))
-                .bg(palette().card())
-                .border_1()
-                .border_color(rgb(palette().divider))
-                .text_size(px(tokens::LABEL))
-                .text_color(rgb(palette().text))
+            strip()
                 .child(div().flex_none().size(px(8.)).rounded_full().bg(rgb(mark)))
                 .child(div().flex_1().min_w_0().child(line))
                 .children(bar)
@@ -87,4 +93,22 @@ impl Launcher {
                 ),
         )
     }
+}
+
+/// The strip's own plate: one row, as wide as it is given.
+fn strip() -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .min_h(px(tokens::ACTION))
+        .px(px(14.))
+        .py(px(6.))
+        .rounded(px(tokens::R_CARD))
+        .bg(palette().card())
+        .border_1()
+        .border_color(rgb(palette().divider))
+        .text_size(px(tokens::LABEL))
+        .text_color(rgb(palette().text))
 }
