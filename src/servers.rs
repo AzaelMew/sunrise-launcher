@@ -394,7 +394,14 @@ fn publish_host_runtime(dir: &Path, resources: Option<&Path>) -> Result<(), Stri
     let resources = match resources {
         Some(path) => path,
         None => {
-            let Some((_, path)) = engine_command(dir).map_err(|problem| problem.message)? else {
+            let probed = match engine_command(dir) {
+                Ok(probed) => probed,
+                // A supervisor that already runs answers the verb itself; the probe only
+                // serves a start that publishes leases first, and no start is made here.
+                Err(_) if status(dir).running() => return Ok(()),
+                Err(problem) => return Err(problem.message),
+            };
+            let Some((_, path)) = probed else {
                 // Before engine-command the CLI forwarded these verbs directly. There is
                 // no authoritative resource path to publish for those supervisors.
                 return Ok(());
