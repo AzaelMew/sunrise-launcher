@@ -96,7 +96,10 @@ fn run_launcher() {
         .run(move |cx: &mut App| {
             cx.text_system()
                 .add_fonts(vec![
-                    Cow::Borrowed(include_bytes!("../assets/fonts/Figtree.ttf")),
+                    Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Regular.ttf")),
+                    Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Medium.ttf")),
+                    Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-SemiBold.ttf")),
+                    Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Bold.ttf")),
                     Cow::Borrowed(sunrise_launcher_theme::fonts::GEIST_MONO),
                     Cow::Borrowed(sunrise_launcher_theme::fonts::BRICOLAGE_REGULAR),
                     Cow::Borrowed(sunrise_launcher_theme::fonts::BRICOLAGE_MEDIUM),
