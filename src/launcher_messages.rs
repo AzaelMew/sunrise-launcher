@@ -228,6 +228,11 @@ impl Launcher {
                         self.update_launcher(release);
                     }
                 }
+                Msg::NativeConsentRead(read, inputs) => {
+                    if let Some(pending) = &mut self.pending_consent {
+                        pending.finish_read(&read, inputs);
+                    }
+                }
                 Msg::NativeRegistryConsent(inventory, reply) => {
                     self.registry_consent(inventory, reply);
                 }

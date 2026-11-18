@@ -5,6 +5,7 @@
 use super::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use sunrise_launcher::browser::{
     self, installed, mod_list, sunrise, Kind as PackKind, Project, SourceId,
 };
@@ -76,13 +77,9 @@ impl ModsHome {
         self.0.clone().unwrap_or_else(backend::game_home)
     }
 
-    fn build_consent(
-        &mut self,
-        selected: PathBuf,
-        index: Option<&sunrise_launcher_smod::index::Index>,
-    ) -> PendingConsent {
+    fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
         self.follow_home(Some(selected));
-        PendingConsent::Build(native_status::build_inputs(&self.current(), index))
+        Arc::new(self.current())
     }
 }
 
@@ -117,12 +114,8 @@ impl Mods {
         self.home.current()
     }
 
-    pub(super) fn build_consent(
-        &mut self,
-        selected: PathBuf,
-        index: Option<&sunrise_launcher_smod::index::Index>,
-    ) -> PendingConsent {
-        self.home.build_consent(selected, index)
+    pub(super) fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
+        self.home.begin_build_consent(selected)
     }
 
     pub(super) fn new(cx: &mut App) -> Self {

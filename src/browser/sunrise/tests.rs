@@ -482,7 +482,10 @@ fn installs_combined_native_content_as_one_smod() {
     let as_registry = [crate::native_status::BuildInput {
         id: "coords_hud".into(),
         file: "coords_hud.smod".into(),
-        registry: crate::native_status::Registry::Listed(index.projects[0].name.clone()),
+        registry: crate::native_status::Registry::Listed {
+            name: index.projects[0].name.clone(),
+            icon: index.projects[0].icon.clone(),
+        },
     }];
     assert_eq!(named(&index), as_registry);
     let mut later = index.clone();

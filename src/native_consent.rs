@@ -1,5 +1,6 @@
 //! One deferred native-code action. Declining never invokes its installer or builder.
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
     browser::{installed::Entry, mod_list, Project, SourceId},
@@ -8,6 +9,9 @@ use sunrise_launcher::{
 };
 
 pub(super) enum PendingConsent {
+    /// A build's package files are being read. The Arc also identifies this request, not just
+    /// its folder: two questions opened on the same profile are different requests.
+    ReadingBuild(Arc<PathBuf>),
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
     Toggle(Entry),
@@ -18,13 +22,21 @@ pub(super) enum PendingConsent {
 }
 
 impl PendingConsent {
-    /// What the question is about, for its heading: one mod's name, or how many a build takes.
+    pub(super) fn finish_read(&mut self, read: &Arc<PathBuf>, inputs: Vec<BuildInput>) {
+        if matches!(self, Self::ReadingBuild(active) if Arc::ptr_eq(active, read)) {
+            *self = Self::Build(inputs);
+        }
+    }
+
+    /// Who the question is about: a mod being installed, or the packages a build takes.
+    /// Build package names and provenance stay in the individual rows.
     pub(super) fn name(&self) -> String {
         match self {
-            Self::Build(inputs) => match inputs.as_slice() {
-                [] => String::new(),
-                [one] => build_label(one),
-                many => crate::i18n::trf("{count} mods", &[("count", &many.len().to_string())]),
+            Self::ReadingBuild(_) => String::new(),
+            Self::Build(inputs) => match inputs.len() {
+                0 => String::new(),
+                1 => crate::i18n::tr("this mod").into(),
+                count => crate::i18n::trf("{count} mods", &[("count", &count.to_string())]),
             },
             Self::Toggle(entry) => entry.title.clone(),
             // The mod as the page that asked names it ("JEI"), not its id ("jei").
@@ -39,30 +51,46 @@ impl PendingConsent {
 
     /// The question's Mods rows: one per package, so two packages never read as one name or one
     /// as two. A build's rows carry each package's id and where its file is from.
-    pub(super) fn rows(&self) -> Vec<String> {
+    pub(super) fn rows(&self) -> Vec<BuildRow> {
         match self {
-            Self::Build(inputs) => inputs.iter().map(build_label).collect(),
-            _ => vec![self.name()],
+            Self::Build(inputs) => inputs.iter().map(build_row).collect(),
+            _ => Vec::new(),
         }
     }
 }
 
-/// A build's package as the question names it: the registry's name only for a file the registry
-/// lists (`native_status::build_inputs`), else its id and file, so a package put in the folder
-/// under a registry mod's id never reads as that mod.
-fn build_label(input: &BuildInput) -> String {
+pub(super) struct BuildRow {
+    pub(super) id: String,
+    pub(super) name: String,
+    pub(super) label: String,
+    pub(super) icon: Option<String>,
+}
+
+/// A build's package as the question names it: only a file the registry lists gets its name
+/// and artwork. A package put in the folder under that mod's id never reads as that mod.
+fn build_row(input: &BuildInput) -> BuildRow {
     let own = [("id", input.id.as_str()), ("file", input.file.as_str())];
-    match &input.registry {
-        Registry::Listed(name) if !name.is_empty() => crate::i18n::trf(
-            "{name} ({id}, from the Sunrise registry)",
-            &[("name", name), ("id", &input.id)],
+    let on_disk = |label| (input.id.as_str(), None, crate::i18n::trf(label, &own));
+    let (name, icon, label) = match &input.registry {
+        Registry::Listed { name, icon } if !name.is_empty() => (
+            name.as_str(),
+            icon.clone(),
+            crate::i18n::trf(
+                "{name} ({id}, from the Sunrise registry)",
+                &[("name", name), ("id", &input.id)],
+            ),
         ),
-        Registry::Listed(_) | Registry::NotListed => {
-            crate::i18n::trf("{id} ({file}, not from the registry)", &own)
+        Registry::Listed { .. } | Registry::NotListed => {
+            on_disk("{id} ({file}, not from the registry)")
         }
-        Registry::Unchecked => {
-            crate::i18n::trf("{id} ({file}, not checked against the registry)", &own)
-        }
+        Registry::Revoked => on_disk("{id} ({file}, taken down)"),
+        Registry::Unchecked => on_disk("{id} ({file}, not checked against the registry)"),
+    };
+    BuildRow {
+        id: input.id.clone(),
+        name: name.to_owned(),
+        label,
+        icon,
     }
 }
 
@@ -79,6 +107,9 @@ pub(super) fn resolve(
         return Ok(None);
     }
     if allow {
+        if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
+            return Ok(None);
+        }
         if !supported {
             return Err(crate::i18n::tr("Unavailable on this platform").into());
         }
@@ -97,7 +128,9 @@ pub(super) fn resolve(
                     mod_list::set_enabled(home, id, false)?;
                 }
             }
-            PendingConsent::Install(..) | PendingConsent::Github(..) => {}
+            PendingConsent::ReadingBuild(_)
+            | PendingConsent::Install(..)
+            | PendingConsent::Github(..) => {}
         }
     }
     Ok(None)
@@ -144,19 +177,30 @@ mod tests {
             file: "jei.smod".into(),
             registry,
         };
-        let build = |i| PendingConsent::Build(vec![i]).name();
+        let row = |i| PendingConsent::Build(vec![i]).rows().pop().unwrap();
+        let listed = row(input(Registry::Listed {
+            name: "JEI".into(),
+            icon: Some("https://example.com/jei.png".into()),
+        }));
+        assert_eq!(listed.name, "JEI");
+        assert_eq!(listed.icon.as_deref(), Some("https://example.com/jei.png"));
+        assert_eq!(listed.label, "JEI (jei, from the Sunrise registry)");
         assert_eq!(
-            build(input(Registry::Listed("JEI".into()))),
-            "JEI (jei, from the Sunrise registry)"
-        );
-        assert_eq!(
-            build(input(Registry::NotListed)),
+            row(input(Registry::NotListed)).label,
             "jei (jei.smod, not from the registry)"
         );
         assert_eq!(
-            build(input(Registry::Listed(String::new()))),
+            row(input(Registry::Listed {
+                name: String::new(),
+                icon: None
+            }))
+            .label,
             "jei (jei.smod, not from the registry)"
         );
+        let revoked = row(input(Registry::Revoked));
+        assert_eq!(revoked.name, "jei");
+        assert!(revoked.icon.is_none());
+        assert_eq!(revoked.label, "jei (jei.smod, taken down)");
     }
 
     #[test]
@@ -166,8 +210,9 @@ mod tests {
             file: "jei.smod".into(),
             registry: Registry::Unchecked,
         }]);
+        assert_eq!(build.name(), "this mod");
         assert_eq!(
-            build.name(),
+            build.rows()[0].label,
             "jei (jei.smod, not checked against the registry)"
         );
     }
@@ -177,7 +222,10 @@ mod tests {
         let input = |id: &str, registry: Option<&str>| BuildInput {
             id: id.into(),
             file: format!("{id}.smod"),
-            registry: registry.map_or(Registry::NotListed, |name| Registry::Listed(name.into())),
+            registry: registry.map_or(Registry::NotListed, |name| Registry::Listed {
+                name: name.into(),
+                icon: None,
+            }),
         };
         // A name with a comma, the same name twice, and a package the registry doesn't list.
         let build = PendingConsent::Build(vec![
@@ -187,7 +235,11 @@ mod tests {
             input("own", None),
         ]);
         assert_eq!(
-            build.rows(),
+            build
+                .rows()
+                .into_iter()
+                .map(|r| r.label)
+                .collect::<Vec<_>>(),
             [
                 "Maps, Tools (maps_tools, from the Sunrise registry)",
                 "Recipes (recipes, from the Sunrise registry)",
@@ -198,6 +250,17 @@ mod tests {
         assert_eq!(build.name(), "4 mods");
         assert_eq!(PendingConsent::Build(Vec::new()).name(), "");
         assert!(PendingConsent::Build(Vec::new()).rows().is_empty());
+    }
+
+    #[test]
+    fn an_old_read_cannot_finish_a_new_consent_request_for_the_same_profile() {
+        let old = Arc::new(PathBuf::from("profile"));
+        let current = Arc::new(PathBuf::from("profile"));
+        let mut pending = PendingConsent::ReadingBuild(current.clone());
+        pending.finish_read(&old, Vec::new());
+        assert!(matches!(&pending, PendingConsent::ReadingBuild(_)));
+        pending.finish_read(&current, Vec::new());
+        assert!(matches!(&pending, PendingConsent::Build(_)));
     }
 
     #[test]

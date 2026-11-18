@@ -853,17 +853,79 @@ impl Launcher {
 
     // ---- Consent ----
 
+    pub(crate) fn request_native_build_consent(&mut self) {
+        self.native_consent_build = None;
+        self.ui.sheets.ticked.0 = false;
+        self.consent_error = None;
+        // Play can ask before Mods has ever opened. Bind the same folder for the names in
+        // the question, Decline's toggle and the build that Allow dispatches.
+        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
+            self.pending_consent = None;
+            return;
+        };
+        let read = self.mods.begin_build_consent(home);
+        self.pending_consent = Some(PendingConsent::ReadingBuild(read.clone()));
+        // Snapshot the registry's own answer before hashing. An answer arriving later must
+        // not replace the names for this question.
+        let index = sunrise_launcher::browser::sunrise::fetched_index();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let inputs = native_status::build_inputs(&read, index.as_deref());
+            let _ = tx.send(Msg::NativeConsentRead(read, inputs));
+        });
+    }
+
     fn consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let pending = self.pending_consent.as_ref();
+        if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
+            let body = div()
+                .flex()
+                .flex_col()
+                .child(title(tr("Checking package files…").into()))
+                .child(div().flex().justify_end().child(
+                    button("alt-consent-cancel", tr("Cancel")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.close_sheet();
+                            cx.notify();
+                        },
+                    )),
+                ));
+            return frame("alt-consent", 760., body, cx);
+        }
         let name = pending
             .map(PendingConsent::name)
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| tr("your mods").into());
         let building = matches!(pending, Some(PendingConsent::Build(_)));
-        // One row per package.
-        let rows = match pending.map(PendingConsent::rows) {
-            Some(rows) if building && !rows.is_empty() => rows,
-            _ => vec![name.clone()],
+        let heading = match pending {
+            Some(PendingConsent::Build(inputs)) if inputs.len() == 1 => {
+                tr("Build this mod?").into()
+            }
+            Some(PendingConsent::Build(_)) => {
+                trf("Build {name} on this computer?", &[("name", &name)])
+            }
+            _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
+        };
+        let rows = pending.map(PendingConsent::rows).unwrap_or_default();
+        let mods = if rows.is_empty() {
+            fact(tr("Mods"), name.clone(), false)
+        } else {
+            let packages = div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .children(rows.into_iter().map(|row| {
+                    let picture = row.icon.and_then(|url| {
+                        self.mods_image(&url, sunrise_launcher::browser::images::ROW)
+                    });
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .child(crate::mod_icons::tile(picture, &row.id, &row.name, 32.))
+                        .child(div().min_w_0().child(row.label))
+                }));
+            fact(tr("Mods"), packages, false)
         };
         let host = sunrise_launcher::rust_toolchain::host();
         let downloads = match (host, sunrise_launcher::rust_toolchain::installed()) {
@@ -895,28 +957,22 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(title(if building {
-                trf("Build {name} on this computer?", &[("name", &name)])
-            } else {
-                trf("Allow {name} to run as native code?", &[("name", &name)])
-            }))
+            .child(title(heading))
             .child(muted(tr(
                 "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.",
             )))
             .child(
                 card()
-                    .children(rows.into_iter().enumerate().map(|(n, row)| {
-                        fact(if n == 0 { tr("Mods") } else { "" }, row, false)
-                    }))
+                    .child(mods)
                     .child(fact(tr("Downloads"), downloads, true))
                     .child(fact(
                         tr("While building"),
-                        tr("If a code library the mod uses wants to run its own programs, Sunrise stops and shows you the list first. Nothing runs before you say so.").into(),
+                        tr("If a code library the mod uses wants to run its own programs, Sunrise stops and shows you the list first. Nothing runs before you say so."),
                         true,
                     ))
                     .child(fact(
                         tr("When you play"),
-                        tr("The mod, inside the game, with the same access to your files and programs as the game has.").into(),
+                        tr("The mod, inside the game, with the same access to your files and programs as the game has."),
                         true,
                     )),
             )
@@ -966,6 +1022,7 @@ impl Launcher {
                 self.storage_revoke_error = None;
                 self.ui.sheets.ticked = (false, false);
                 match action {
+                    PendingConsent::ReadingBuild(_) => {}
                     PendingConsent::Build(_) => {
                         let (base, back_up) = self.native_consent_build.take().unwrap_or_default();
                         self.build_native_on(base, back_up)
@@ -1418,7 +1475,7 @@ fn list_or_none(names: &[String]) -> String {
     }
 }
 
-fn fact(label: &str, value: String, rule: bool) -> Div {
+fn fact(label: &str, value: impl IntoElement, rule: bool) -> Div {
     div()
         .flex()
         .gap(px(16.))

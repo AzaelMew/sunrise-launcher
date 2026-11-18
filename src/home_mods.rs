@@ -8,8 +8,9 @@
 use super::*;
 use crate::frame::{button, Page, Reach as _};
 use crate::home::{card, heading, muted};
+use crate::mod_icons::tile;
 use crate::paint::palette;
-use gpui::{rgb, ImageSource, RenderImage};
+use gpui::{rgb, RenderImage};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -440,47 +441,6 @@ pub(crate) fn side_by_side(window_width: f32) -> bool {
 }
 
 const PICTURE: f32 = 40.;
-
-/// A mod's or a pack's picture, `side` square: it fills the square edge to edge, cropped
-/// rather than boxed. Without one (it has none, it has not arrived, or it is not a picture)
-/// the first letter of `name` stands on a quiet colour of the theme that `id` always gets. It
-/// takes what the launcher's shared tile for these takes, so that one replaces this call for
-/// call.
-fn tile(picture: Option<impl Into<ImageSource>>, id: &str, name: &str, side: f32) -> Div {
-    let p = palette();
-    let fills = [p.selected, p.hover, p.line, p.chrome_raised];
-    let fill = fills[id
-        .bytes()
-        .fold(0usize, |sum, b| sum.wrapping_mul(31) + b as usize)
-        % 4];
-    let initial = crate::join::initial(name);
-    let letter = move || {
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgb(fill))
-            .text_size(px(side * 0.45))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(rgb(palette().muted))
-            .child(initial.clone())
-    };
-    let square = div()
-        .flex_none()
-        .size(px(side))
-        .rounded(px(tokens::R_CONTROL))
-        .overflow_hidden();
-    match picture {
-        Some(picture) => square.child(
-            gpui::img(picture)
-                .size_full()
-                .object_fit(gpui::ObjectFit::Cover)
-                .with_fallback(move || letter().into_any_element()),
-        ),
-        None => square.child(letter()),
-    }
-}
 
 /// A line of text that is pressed like a link: a Tab stop with the ring.
 fn link(id: &'static str, label: String) -> Stateful<Div> {
