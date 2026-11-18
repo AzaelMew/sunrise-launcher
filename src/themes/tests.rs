@@ -134,14 +134,8 @@ fn a_background_is_a_picture_kept_once() {
     let jpg = picture("noon.jpg", 160, 90);
     let second = keep_background(&dir, &jpg).unwrap();
     assert!(second.ends_with(".jpg") && second != first, "{second}");
-    assert!(
-        dir.join(&first).exists(),
-        "the older one stays until the choice is saved"
-    );
-    retire_backgrounds(&dir, Some(&second));
-    assert!(!dir.join(&first).exists(), "then it goes");
+    assert!(dir.join(&first).exists(), "the older one stays");
     assert_eq!(background(&dir, Some(&second)), Some(dir.join(&second)));
-    assert_eq!(background(&dir, Some(&first)), None, "gone");
     assert_eq!(background(&dir, Some("../noon.jpg")), None);
     assert_eq!(background(&dir, None), None);
 

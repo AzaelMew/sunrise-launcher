@@ -202,8 +202,6 @@ impl Launcher {
             self.settings.scenery_on = scenery;
             return;
         }
-        // Saved: now the picture it replaced can go.
-        themes::retire_backgrounds(&backend::data_dir(), self.settings.background.as_deref());
         self.appearance_changed(window);
     }
 

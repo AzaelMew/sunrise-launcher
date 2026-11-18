@@ -1484,11 +1484,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 let value = value.ok_or("settings KEY VALUE: the value is missing")?;
                 set_setting(&mut settings, &key, &value)?;
                 settings.save()?;
-                // Saved: a kept picture that is no longer the choice can go.
-                sunrise_launcher::themes::retire_backgrounds(
-                    &backend::data_dir(),
-                    settings.background.as_deref(),
-                );
                 sunrise_launcher::proxy::announce(settings.proxy.clone());
             }
             let all = settings_json(&settings);

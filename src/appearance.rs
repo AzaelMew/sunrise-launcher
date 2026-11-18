@@ -2,8 +2,8 @@
 //! it, and Home's picture. Settings › Appearance and `settings KEY VALUE` on the command line
 //! both call these, so a choice means the same from either.
 //!
-//! Nothing here saves. A caller saves the settings, and only then lets go of what the choice
-//! replaced ([`themes::retire_backgrounds`]): a save that fails leaves the old choice whole.
+//! Nothing here saves, and nothing here deletes: a picture the choice replaced stays in the
+//! data folder, so a save that fails, or another writer's choice, loses nothing.
 //! What is painted when a choice can't be honoured (Dawn for a theme file that is gone, a
 //! darker Play under a pale accent) is never written back.
 use crate::backend::Settings;

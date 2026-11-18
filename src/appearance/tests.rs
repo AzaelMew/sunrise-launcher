@@ -241,7 +241,7 @@ fn home_shows_the_players_picture_then_the_themes_then_the_scene() {
 }
 
 #[test]
-fn a_new_picture_leaves_the_old_one_until_the_choice_is_saved() {
+fn a_new_picture_leaves_the_old_one_where_it_is() {
     let data = tempfile::tempdir().unwrap();
     let picture = |name: &str, shade: u8| {
         let path = data.path().join(name);
@@ -261,14 +261,48 @@ fn a_new_picture_leaves_the_old_one_until_the_choice_is_saved() {
     set_background(&mut settings, data.path(), &picture("two.png", 200)).unwrap();
     let second = settings.background.clone().unwrap();
     assert_ne!(first, second);
-    assert!(data.path().join(&first).is_file(), "kept until the save");
+    assert!(data.path().join(&first).is_file(), "the older copy stays");
     // A file that isn't a picture is refused and the choice stays.
     std::fs::write(data.path().join("notes.png"), "hello").unwrap();
     assert!(set_background(&mut settings, data.path(), &data.path().join("notes.png")).is_err());
     assert_eq!(settings.background.as_deref(), Some(second.as_str()));
-    // After the save, only the launcher's own older copy goes.
-    themes::retire_backgrounds(data.path(), settings.background.as_deref());
-    assert!(!data.path().join(&first).exists());
     assert!(data.path().join(&second).is_file());
     assert!(data.path().join("one.png").is_file() && data.path().join("two.png").is_file());
+}
+
+/// No choice of look deletes a file: not a player's own `background-original.png` in the data
+/// folder, nor the copy another choice named a moment ago.
+#[test]
+fn no_change_of_look_deletes_a_file_in_the_data_folder() {
+    let data = tempfile::tempdir().unwrap();
+    let png = |shade: u8| {
+        let mut bytes = Vec::new();
+        image::RgbaImage::from_pixel(80, 80, image::Rgba([shade, 0, 0, 255]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .unwrap();
+        bytes
+    };
+    let theirs = data.path().join("background-original.png");
+    std::fs::write(&theirs, png(1)).unwrap();
+    let source = data.path().join("pick.png");
+    std::fs::write(&source, png(2)).unwrap();
+    let mut settings = Settings::parse("{}");
+    set_background(&mut settings, data.path(), &source).unwrap();
+    let first = data.path().join(settings.background.clone().unwrap());
+    std::fs::write(&source, png(3)).unwrap();
+    set_background(&mut settings, data.path(), &source).unwrap();
+    type_accent(&mut settings, "teal").unwrap();
+    select_theme(&mut settings, "nord").unwrap();
+    reset_accent(&mut settings).unwrap();
+    settings.background = None;
+    let second = std::fs::read_dir(data.path()).unwrap().count();
+    assert!(theirs.is_file(), "a player's own file");
+    assert!(first.is_file(), "the copy an earlier choice named");
+    assert_eq!(
+        second, 4,
+        "the two files written here and the two kept copies"
+    );
 }

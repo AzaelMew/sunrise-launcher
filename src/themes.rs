@@ -824,8 +824,8 @@ pub const BACKGROUND_SIDE: u32 = 3840;
 
 /// Keeps `file` as Home's background in `dir` (`background-<hash>.<ext>`: a new picture gets a
 /// new name, so the window doesn't show the one it cached), after checking it is a picture, and
-/// returns the kept file's name. An older background stays until the choice is saved
-/// ([`retire_backgrounds`]), so a save that fails loses nothing.
+/// returns the kept file's name. An older background stays: nothing in the data folder is
+/// deleted because a setting changed, since a name alone doesn't say whose a file is.
 pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     let shown = file.display();
     let ext = file
@@ -857,17 +857,6 @@ pub fn keep_background(dir: &Path, file: &Path) -> Result<String, String> {
     let name = format!("background-{}.{ext}", &hash[..12]);
     std::fs::write(dir.join(&name), &bytes).map_err(|e| format!("{name}: {e}"))?;
     Ok(name)
-}
-
-/// Removes the backgrounds the launcher kept in `dir` other than `keep`, once the settings that
-/// name `keep` are saved. Only its own copies: never a player's original or a theme's picture.
-pub fn retire_backgrounds(dir: &Path, keep: Option<&str>) {
-    for old in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let other = old.file_name().to_string_lossy().into_owned();
-        if other.starts_with("background-") && Some(other.as_str()) != keep {
-            let _ = std::fs::remove_file(old.path());
-        }
-    }
 }
 
 /// Home's background, if the player keeps one and it is still there.
