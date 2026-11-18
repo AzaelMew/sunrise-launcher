@@ -20,7 +20,7 @@ fn section(label: &'static str, body: Div) -> Div {
         .gap(px(20.))
         .py(px(15.))
         .border_b_1()
-        .border_color(rgb(0x332d2e))
+        .border_color(rgb(crate::alt::SOFT))
         .child(
             div()
                 .w(px(116.))
@@ -135,17 +135,20 @@ impl Launcher {
             }
             look = look.child(options);
         }
-        look = look.child(row(
-            tr("Theme"),
-            tr("This preview uses one dark palette."),
-            div().text_color(rgb(MUTED)).child(tr("Daybreak")),
-        ));
         let mut privacy = div();
         if !show_privacy {
             privacy = privacy.child(row(
                 tr("Count me as playing"),
                 tr("Once a minute while the game runs: build, system, LAN status and a random number."),
-                div().child(self.ping_switch("alt-ping", cx)),
+                div().child(
+                    crate::alt_mods::switch("alt-ping", !self.settings.ping_off).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.settings.ping_off = !this.settings.ping_off;
+                            this.save_settings();
+                            cx.notify();
+                        }),
+                    ),
+                ),
             ));
         }
         privacy = privacy.child(row(

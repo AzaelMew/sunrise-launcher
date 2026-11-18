@@ -20,7 +20,7 @@
 //!   a row opens the project page of the Mods screens (`alt_mods_show_project`).
 //! - signed out with no worlds, the top is the welcome banner (mock 10) in place of worlds.
 use super::*;
-use crate::alt::{button, BG, CARD, GOLD, LINE, MUTED, TEXT};
+use crate::alt::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use crate::worlds_page;
 use gpui::{rgb, rgba};
 use sunrise_launcher::browser::{self, Kind, Project, Query, SourceId};
@@ -155,7 +155,7 @@ fn card() -> Div {
     div()
         .bg(rgb(CARD))
         .border_1()
-        .border_color(rgb(LINE))
+        .border_color(rgb(SOFT))
         .rounded(px(12.))
         .overflow_hidden()
 }
@@ -332,8 +332,8 @@ impl Launcher {
                 band.child(tiles)
                     .child(div().absolute().inset_0().bg(rgba(0x0000_0073)))
             }
-            // No dirt: plain charcoal, no letter.
-            None => band.bg(rgb(CARD)),
+            // No dirt: plain charcoal a step above the card, no letter.
+            None => band.bg(rgb(0x2b2627)),
         }
     }
 
@@ -543,7 +543,7 @@ impl Launcher {
             .px(px(14.))
             .py(px(10.))
             .border_t_1()
-            .border_color(rgb(LINE))
+            .border_color(rgb(SOFT))
             .child(tile(server.name, 36.))
             .child(
                 div()
@@ -677,7 +677,7 @@ impl Launcher {
             .px(px(14.))
             .py(px(10.))
             .border_t_1()
-            .border_color(rgb(LINE))
+            .border_color(rgb(SOFT))
             .child(picture)
             .child(
                 div()
@@ -951,7 +951,7 @@ impl Launcher {
             .gap(px(12.))
             .px(px(14.))
             .py(px(10.))
-            .when(i > 0, |d| d.border_t_1().border_color(rgb(LINE)))
+            .when(i > 0, |d| d.border_t_1().border_color(rgb(SOFT)))
             .child(icon)
             .child(
                 div()
