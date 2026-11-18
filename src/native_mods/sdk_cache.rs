@@ -68,8 +68,9 @@ pub enum Refusal {
     Offline { build: String, bytes: Option<u64> },
     /// The SDK's signature or checksums don't hold: never used.
     Unsigned { build: String, why: String },
-    /// The build's dated tag now serves a later build of that day, signed for that build: the
-    /// requested one's mod tools are gone, not tampered with.
+    /// The build's dated tag now serves another build of that day, signed for that build: the
+    /// requested one's mod tools are gone, not tampered with. The signature can't say which of the
+    /// two is newer.
     Superseded { build: String },
     /// The SDK is newer than this launcher reads (`what`: its schema, package format or Rust).
     UpdateLauncher { build: String, what: String },
@@ -154,7 +155,7 @@ impl std::fmt::Display for Refusal {
                 &[("build", build)],
             ),
             Self::Superseded { build } => trf(
-                "The mod tools for {build} aren't available any more: a newer build of that day replaced it. Pick a newer version.",
+                "The mod tools for {build} aren't available any more: another build of that day replaced it. Pick another version.",
                 &[("build", build)],
             ),
             Self::UpdateLauncher { build, what } => trf(
@@ -1034,12 +1035,12 @@ fn signed_game_index(
                 keys,
             )
         };
-        // A dated tag republished with a later build of the same day holds that build's index,
+        // A dated tag republished with another build of the same day holds that build's index,
         // validly signed for it: the build asked for is gone, which is no safety failure. The
-        // index names the later build only as a guess to check; the signature decides.
+        // index names that build only as a guess to check; the signature decides.
         digest(version).map_err(|why| {
             let named = version.rsplit('-').next().unwrap_or_default();
-            let later = Index::build_of(&bytes)
+            let same_day = Index::build_of(&bytes)
                 .ok()
                 .map(|build| build.commit)
                 .filter(|commit| super::is_revision(commit) && !commit.starts_with(named))
@@ -1047,9 +1048,9 @@ fn signed_game_index(
                     let day = &version[..version.len() - named.len()];
                     format!("{day}{}", &commit[..named.len()])
                 });
-            match later {
-                Some(later)
-                    if digest(&later).is_ok_and(|signed| {
+            match same_day {
+                Some(same_day)
+                    if digest(&same_day).is_ok_and(|signed| {
                         sunrise_launcher_release_verify::check(INDEX, &signed, &sha256(&bytes))
                             .is_ok()
                     }) =>
