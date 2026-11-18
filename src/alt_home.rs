@@ -855,7 +855,7 @@ impl Launcher {
 
     /// The first start: signed out, nothing to play yet (mock 10). Nothing is read from outside
     /// the launcher's own data.
-    fn alt_welcome(&mut self, _cx: &mut Context<Self>) -> Div {
+    fn alt_welcome(&mut self, cx: &mut Context<Self>) -> Div {
         card()
             .flex()
             .flex_col()
@@ -877,6 +877,19 @@ impl Launcher {
                     .child(div().text_size(px(12.5)).text_color(rgb(MUTED)).child(tr(
                         "While you play, Sunrise counts you as playing once a minute. Nothing else is sent.",
                     )))
+                    .child(
+                        div()
+                            .id("alt-privacy")
+                            .cursor_pointer()
+                            .text_size(px(13.))
+                            .text_color(rgb(GOLD))
+                            .child(tr("Privacy choices"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.alt_settings_open(crate::alt_settings::Section::Privacy);
+                                this.alt.page = crate::alt::Page::Settings;
+                                cx.notify();
+                            })),
+                    )
     }
 
     /// Asks the registry for the most downloaded mods once per game version.

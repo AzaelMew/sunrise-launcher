@@ -27,6 +27,7 @@ pub(super) enum Page {
     /// A pack's page, opened from Packs › Discover.
     PackProject,
     Project,
+    Settings,
 }
 
 #[derive(Default)]
@@ -36,6 +37,7 @@ pub(super) struct State {
     pub mods: crate::alt_mods::AltModsState,
     pub sheet: Option<Sheet>,
     pub sheets: crate::alt_sheets::AltSheetsState,
+    pub settings: crate::alt_settings::SettingsView,
     pub picker: bool,
     pub after_install: Option<(String, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
@@ -331,6 +333,10 @@ impl Launcher {
                             .children(head),
                     )
                     .child(name)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.alt.page = Page::Settings;
+                        cx.notify();
+                    }))
             }))
             .when(multiple, |d| {
                 d.child(
@@ -581,8 +587,15 @@ impl Launcher {
             .child(rail_link(Page::Home, "alt-nav-home", "Home", "home"))
             .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"))
             .child(rail_link(Page::Packs, "alt-nav-packs", "Packs", "archive"))
-            .child(div().flex_1());
+            .child(div().flex_1())
+            .child(rail_link(
+                Page::Settings,
+                "alt-nav-settings",
+                "Settings",
+                "sliders",
+            ));
         let content = match page {
+            Page::Settings => self.alt_settings(window, cx),
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
                 .p(px(24.))
                 .child(tr(
