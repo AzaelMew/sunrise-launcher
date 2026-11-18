@@ -203,7 +203,7 @@ pub fn shown(commit: &str, nightly: Option<&str>) -> String {
 }
 
 /// Build `commit`'s Nightly name, from its kept index or an installed version made from it.
-fn nightly_of(commit: &str) -> Option<String> {
+pub(super) fn nightly_of(commit: &str) -> Option<String> {
     if !super::is_revision(commit) {
         return None;
     }

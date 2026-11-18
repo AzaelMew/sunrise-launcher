@@ -35,7 +35,7 @@ mod isolate;
 mod picker;
 pub mod sdk_cache;
 
-pub use isolate::{LeftOut, Why};
+pub use isolate::{kept as kept_left_out, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::Consent;
 mod uses;
@@ -1418,7 +1418,7 @@ fn pipeline(
                 .filter_map(|(id, verdict)| {
                     let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
                     let why = isolate::Why::Unfit(fit::line(id, verdict, &shown));
-                    Some(LeftOut::new(bundle, why))
+                    Some(LeftOut::new(bundle, why).with_detail(fit::detail(verdict)))
                 })
                 .collect();
             let left = isolate::with_dependents(&unfit, &pairs);
@@ -1725,7 +1725,8 @@ const COMPILE_RETRIES: usize = 3;
 
 /// Runs `pipeline` until it builds, each time without the mods that stopped it before (they
 /// are said with `progress` as they are left out, and those needing them once it built). The
-/// error, when it can't, starts with the mods already left out.
+/// error, when it can't, starts with the mods already left out; when leaving them out left
+/// nothing to build, it is [`Failed::Mods`] with all of them.
 fn isolated(
     mut pipeline: impl FnMut(&[LeftOut]) -> Result<Built, Failed>,
     progress: &impl Fn(Step),
@@ -1734,7 +1735,12 @@ fn isolated(
     let mut compiles = 0;
     let mut last = String::new();
     let said = |skip: &[LeftOut], error: String| {
-        let labels: Vec<String> = skip.iter().map(LeftOut::label).collect();
+        // A mod whose own refusal is the error isn't said a second time before it.
+        let labels: Vec<String> = skip
+            .iter()
+            .filter(|left| !matches!(&left.why, isolate::Why::Unfit(line) if error.contains(line)))
+            .map(LeftOut::label)
+            .collect();
         Failed::Other(match labels.is_empty() {
             true => error,
             false => format!("{}\n\n{error}", labels.join("\n")),
@@ -1771,7 +1777,15 @@ fn isolated(
             }
             // Nothing was there to build: said as such, not as an empty failure.
             Err(Failed::Nothing) if skip.is_empty() => return Err(Failed::Nothing),
-            Err(Failed::Nothing) => return Err(said(&skip, last)),
+            // Every mod with native code was left out: there is nothing to build, and the
+            // caller decides what that means (a client plays the game as it is).
+            Err(Failed::Nothing) => {
+                return Err(Failed::Mods {
+                    left: skip,
+                    error: last,
+                    compiling: false,
+                })
+            }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),
@@ -1842,8 +1856,30 @@ pub fn build(
                 )
             },
             &progress,
-        )
-        .map_err(|failed| match failed {
+        );
+        // Every mod with native code was left out: the game is the plain one, as it is. The
+        // instance plays it (following its channel when that is the build the channel gives),
+        // and keeps which mods wait and why.
+        if let Err(Failed::Mods { left, .. }) = &built {
+            check_cancelled()?;
+            let plain = about(base).map_or_else(|| base.to_owned(), |about| about.base);
+            isolate::keep(&instance.home, &plain, left)?;
+            let follows = Instance {
+                version: None,
+                ..instance.clone()
+            }
+            .resolve_version(None)
+            .is_ok_and(|version| version == plain);
+            instances::edit(&instance.id, |meta| {
+                let unchanged = meta.version == instance.version
+                    && meta.channel.unwrap_or_default() == instance.channel;
+                if unchanged {
+                    meta.version = (!follows).then(|| plain.clone());
+                }
+            })?;
+            return Ok(plain);
+        }
+        let built = built.map_err(|failed| match failed {
             // "Stay" keeps the build the instance plays now.
             Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
                 stay: playing(instance),
@@ -1853,6 +1889,7 @@ pub fn build(
             other => other,
         })?;
         check_cancelled()?;
+        isolate::forget(&instance.home);
         // A version or channel the player saved while this built wins: the build stays
         // available, the instance keeps their choice.
         instances::edit(&instance.id, |meta| {
@@ -2236,6 +2273,7 @@ mod tests {
                             id: "broken".into(),
                             version: "1.0.0".into(),
                             why: isolate::Why::OtherVersion,
+                            detail: None,
                         }],
                         error: "compiler failure".into(),
                         compiling: true,
@@ -2284,6 +2322,7 @@ mod tests {
             id: "greeter".into(),
             version: "1.0.0".into(),
             why,
+            detail: None,
         };
         let build = "nightly-2026-11-20 (9a8b7c6)";
         // A mod that fit but didn't compile goes through the same rule as one that doesn't fit.
@@ -2346,9 +2385,33 @@ mod tests {
             id: "other".into(),
             version: "1.0.0".into(),
             why: isolate::Why::DidNotBuild,
+            detail: None,
         };
         assert!(guard_worlds(&home, &[other], build, false, &|_| {}).is_ok());
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_build_whose_every_mod_was_left_out_hands_them_back_instead_of_failing_in_words() {
+        let _guard = scratch_state();
+        let unfit = LeftOut {
+            id: "jei".into(),
+            version: "1.8.0".into(),
+            why: isolate::Why::Unfit("made for another build".into()),
+            detail: None,
+        };
+        let result = isolated(
+            |skip| match skip {
+                [] => Err(Failed::Mods {
+                    left: vec![unfit.clone()],
+                    error: "jei doesn't fit this game.".into(),
+                    compiling: false,
+                }),
+                _ => Err(Failed::Nothing),
+            },
+            &|_| {},
+        );
+        assert!(matches!(result, Err(Failed::Mods { left, .. }) if left == [unfit]));
     }
 
     #[test]
@@ -2371,6 +2434,7 @@ mod tests {
                         id: format!("broken_{attempts}"),
                         version: "1.0.0".into(),
                         why: isolate::Why::OtherVersion,
+                        detail: None,
                     }],
                     error: "compiler failure".into(),
                     compiling: true,

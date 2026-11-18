@@ -22,12 +22,59 @@ pub enum Why {
     DidNotBuild,
 }
 
+/// What a mod that doesn't fit was made for and what changed since, each on its own, for a
+/// window that says it in its own words ([`Why::Unfit`] holds the same as one sentence).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Detail {
+    /// The Nightly or release it was made for, by its version name, when that is known here.
+    pub made_for: Option<String>,
+    /// Each thing the game changed that it uses, or the one reason it is tied to its build.
+    pub changes: Vec<String>,
+}
+
 /// A mod left out of a build.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LeftOut {
     pub id: String,
     pub version: String,
     pub why: Why,
+    /// The parts of an [`Why::Unfit`] reason, when the check that found it gave them.
+    pub detail: Option<Detail>,
+}
+
+/// Where an instance keeps the mods left out of a game that needed no build: every mod with
+/// native code was left out, so the game is the plain one (`<home>/native-left-out.json`).
+const KEPT: &str = "native-left-out.json";
+
+/// Records that `base`, played as it is from `home`, leaves out `left`.
+pub(super) fn keep(home: &std::path::Path, base: &str, left: &[LeftOut]) -> Result<(), String> {
+    let record = serde_json::json!({
+        "base": base,
+        "left_out": left.iter().map(LeftOut::to_json).collect::<Vec<_>>(),
+    });
+    std::fs::write(home.join(KEPT), record.to_string()).map_err(|e| format!("{KEPT}: {e}"))
+}
+
+/// Forgets [`keep`]'s record: a build was made, and it has its own.
+pub(super) fn forget(home: &std::path::Path) {
+    let _ = std::fs::remove_file(home.join(KEPT));
+}
+
+/// The mods [`keep`] recorded as left out of `base` for the instance playing from `home`.
+pub fn kept(home: &std::path::Path, base: &str) -> Vec<LeftOut> {
+    let record: serde_json::Value = std::fs::read(home.join(KEPT))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    if record["base"].as_str() != Some(base) {
+        return Vec::new();
+    }
+    record["left_out"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(LeftOut::from_json)
+        .collect()
 }
 
 impl LeftOut {
@@ -36,6 +83,14 @@ impl LeftOut {
             id: bundle.manifest.id.clone(),
             version: bundle.manifest.version.clone(),
             why,
+            detail: None,
+        }
+    }
+
+    pub(super) fn with_detail(self, detail: Detail) -> Self {
+        Self {
+            detail: Some(detail),
+            ..self
         }
     }
 
@@ -71,7 +126,13 @@ impl LeftOut {
             Why::Unfit(line) => ("unfit", Some(line)),
             Why::DidNotBuild => ("did-not-build", None),
         };
-        serde_json::json!({"id": self.id, "version": self.version, "why": why, "with": with})
+        let mut json =
+            serde_json::json!({"id": self.id, "version": self.version, "why": why, "with": with});
+        if let Some(detail) = &self.detail {
+            json["made_for"] = serde_json::json!(detail.made_for);
+            json["changes"] = serde_json::json!(detail.changes);
+        }
+        json
     }
 
     pub(super) fn from_json(value: &serde_json::Value) -> Option<Self> {
@@ -86,6 +147,13 @@ impl LeftOut {
                 "did-not-build" => Why::DidNotBuild,
                 _ => Why::OtherVersion,
             },
+            detail: value["changes"].as_array().map(|changes| Detail {
+                made_for: value["made_for"].as_str().map(str::to_owned),
+                changes: changes
+                    .iter()
+                    .filter_map(|c| c.as_str().map(str::to_owned))
+                    .collect(),
+            }),
         })
     }
 }
@@ -169,7 +237,11 @@ mod tests {
         );
         // What a build's record keeps reads back the same.
         let did_not_build = LeftOut::new(&other, Why::DidNotBuild);
-        for l in left.iter().chain([&did_not_build]) {
+        let detailed = LeftOut::new(&lib, Why::Unfit("why".into())).with_detail(Detail {
+            made_for: Some("nightly-2026-11-16".into()),
+            changes: vec!["the type Block changed".into()],
+        });
+        for l in left.iter().chain([&did_not_build, &detailed]) {
             assert_eq!(LeftOut::from_json(&l.to_json()).as_ref(), Some(l));
         }
         assert_eq!(

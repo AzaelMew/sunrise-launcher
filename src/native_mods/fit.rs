@@ -215,6 +215,27 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
     }
 }
 
+/// The parts of why `verdict` keeps a mod out of a build, each on its own: the build it was made
+/// for, by its version name when known here, and every changed item (none are cut, unlike
+/// [`changes`]).
+pub fn detail(verdict: &Verdict) -> super::isolate::Detail {
+    let (made_for, changes) = match verdict {
+        Verdict::MadeFor => return super::isolate::Detail::default(),
+        Verdict::Fits { made_for } => (made_for, Vec::new()),
+        Verdict::DoesNotFit { made_for, misfits } => {
+            (made_for, misfits.iter().map(change).collect())
+        }
+        Verdict::Points { made_for, why } => (made_for, vec![why.clone()]),
+        Verdict::Exact { made_for, .. } | Verdict::NoList { made_for } => {
+            (made_for, vec![short(verdict)])
+        }
+    };
+    super::isolate::Detail {
+        made_for: sdk_cache::nightly_of(made_for),
+        changes,
+    }
+}
+
 /// The headline over a verdict the build can't use: "Greeter doesn't fit this game."
 pub fn headline(name: &str, verdict: &Verdict) -> String {
     match verdict {

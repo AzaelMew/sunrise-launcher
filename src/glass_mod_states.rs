@@ -208,6 +208,7 @@ fn left_out() -> Vec<nm::LeftOut> {
         id: "hitbox-plus".into(),
         version: "1.3.0".into(),
         why: nm::Why::Unfit("it changes the game's own code".into()),
+        detail: None,
     }]
 }
 
