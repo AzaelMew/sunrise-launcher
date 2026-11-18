@@ -20,6 +20,28 @@ pub(crate) struct State {
     focused: bool,
     /// The build chosen in the list, before it is kept.
     pick: Option<String>,
+    /// The list's scroll, which the arrow keys move to the row they land on.
+    scroll: gpui::UniformListScrollHandle,
+    /// The keyboard focus of each row, by line: a row that is not drawn has no element, so the
+    /// handles live here for the arrow keys to land on a row before it is on screen.
+    rows: std::collections::HashMap<usize, FocusHandle>,
+}
+
+/// The line the Up or Down key lands on from line `from` (None: no row has the keyboard):
+/// the nearest build in that direction that can be chosen, or none at the end of the list.
+fn next_row(
+    lines: &[Line],
+    from: Option<usize>,
+    down: bool,
+    usable: impl Fn(&Build) -> bool,
+) -> Option<usize> {
+    let ok = |n: &usize| matches!(&lines[*n], Line::Build(b) if usable(b));
+    match (from, down) {
+        (None, true) => (0..lines.len()).find(ok),
+        (None, false) => (0..lines.len()).rev().find(ok),
+        (Some(n), true) => (n + 1..lines.len()).find(ok),
+        (Some(n), false) => (0..n.min(lines.len())).rev().find(ok),
+    }
 }
 
 /// A line of the list.
@@ -154,6 +176,7 @@ impl Launcher {
         let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
         v.pick = pinned;
+        v.rows.clear();
     }
 
     /// Reads whether the field has the keyboard, before the sheet is drawn.
@@ -228,10 +251,11 @@ impl Launcher {
 
         let shown = Rc::clone(&list);
         let (now, chosen) = (plays.clone(), pick.clone());
+        let scroll = self.ui.sheets.versions.scroll.clone();
         let rows = gpui::uniform_list(
             "alt-versions-list",
             list.len(),
-            cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
                 range
                     .map(|n| match &shown[n] {
                         Line::Head(text) => div()
@@ -249,6 +273,14 @@ impl Launcher {
                             let playing = now.as_deref() == Some(b.tag.as_str());
                             let blocked = has_native && !playing;
                             let tag = b.tag.clone();
+                            let handle = this
+                                .ui
+                                .sheets
+                                .versions
+                                .rows
+                                .entry(n)
+                                .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+                                .clone();
                             div()
                                 .id(("alt-version", n))
                                 .w_full()
@@ -293,7 +325,8 @@ impl Launcher {
                                 }))
                                 .when(blocked, |d| d.opacity(0.45))
                                 .when(!blocked, |d| {
-                                    d.reach()
+                                    d.track_focus(&handle)
+                                        .reach()
                                         .cursor_pointer()
                                         .hover(|s| s.bg(rgb(BG)))
                                         .on_click(cx.listener(
@@ -308,6 +341,7 @@ impl Launcher {
                     .collect::<Vec<_>>()
             }),
         )
+        .track_scroll(&scroll)
         // As tall as what it lists, up to the room the window has; past that it scrolls.
         .h(px((list.len() as f32 * LINE_H)
             .min((self.window_height - 330.).clamp(LINE_H * 4., LINE_H * 9.))));
@@ -353,9 +387,38 @@ impl Launcher {
                 .text_size(px(tokens::SMALL)))
                 .children(self.native_check_block(cx))
         });
+        // Up and Down move through the builds, from the field or from a row: the list scrolls to
+        // the row and the row takes the keyboard.
+        let (all, playing, blocked_by_native) = (Rc::clone(&list), plays.clone(), has_native);
         let body = div()
             .flex()
             .flex_col()
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                let down = match ev.keystroke.key.as_str() {
+                    "down" => true,
+                    "up" => false,
+                    _ => return,
+                };
+                let v = &mut this.ui.sheets.versions;
+                let from = v
+                    .rows
+                    .iter()
+                    .find(|(_, h)| h.is_focused(window))
+                    .map(|(n, _)| *n);
+                let usable =
+                    |b: &Build| !blocked_by_native || playing.as_deref() == Some(b.tag.as_str());
+                if let Some(to) = next_row(&all, from, down, usable) {
+                    v.scroll.scroll_to_item(to, gpui::ScrollStrategy::Nearest);
+                    let row = v
+                        .rows
+                        .entry(to)
+                        .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+                        .clone();
+                    window.focus(&row, cx);
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
             .child(title(tr("Choose a version").into()))
             .child(field)
             .children(native)
@@ -401,6 +464,37 @@ mod tests {
             prerelease: false,
             nightly: nightly.then(|| "nightly".to_owned()),
         }
+    }
+
+    fn build(tag: &str) -> Line {
+        Line::Build(Build {
+            tag: tag.into(),
+            name: tag.into(),
+            about: String::new(),
+            installed: false,
+        })
+    }
+
+    #[test]
+    fn arrow_keys_step_over_headings_and_unusable_rows_and_stop_at_the_ends() {
+        let lines = [
+            Line::Head("November".into()),
+            build("a"),
+            build("b"),
+            Line::Head("October".into()),
+            build("c"),
+            build("d"),
+        ];
+        let all = |_: &Build| true;
+        assert_eq!(next_row(&lines, None, true, all), Some(1));
+        assert_eq!(next_row(&lines, None, false, all), Some(5));
+        assert_eq!(next_row(&lines, Some(2), true, all), Some(4));
+        assert_eq!(next_row(&lines, Some(4), false, all), Some(2));
+        assert_eq!(next_row(&lines, Some(5), true, all), None);
+        assert_eq!(next_row(&lines, Some(1), false, all), None);
+        let not_c = |b: &Build| b.tag != "c";
+        assert_eq!(next_row(&lines, Some(2), true, not_c), Some(5));
+        assert_eq!(next_row(&[], None, true, all), None);
     }
 
     fn shape(lines: &[Line]) -> Vec<String> {
