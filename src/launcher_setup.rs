@@ -111,7 +111,6 @@ impl Launcher {
             picker: glass_home::PickerState::default(),
             language_menu: false,
             account_menu: false,
-            row_menu: Default::default(),
             // The first draw takes the launcher theme from Settings.
             location_error: location_page::startup_error(),
             location_note: location_page::startup_note(),
@@ -345,14 +344,12 @@ impl Launcher {
             || self.mods.browse.sort_menu
             || self.account_menu
             || self.version_menu
-            || self.row_menu.open.is_some()
             || self.list_menu.is_some();
         self.picker.open = false;
         self.language_menu = false;
         self.mods.browse.sort_menu = false;
         self.account_menu = false;
         self.version_menu = false;
-        self.row_menu.open = None;
         self.list_menu = None;
         open
     }

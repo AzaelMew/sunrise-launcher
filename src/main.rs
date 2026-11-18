@@ -29,7 +29,6 @@ mod console_page;
 mod cull;
 mod datapacks_page;
 mod developer_play;
-mod frame;
 mod game_tools;
 mod github_mods_page;
 mod glass_home;
@@ -285,8 +284,6 @@ struct Launcher {
     language_menu: bool,
     /// The top bar's quick switch of who plays (`switch_page.rs`).
     account_menu: bool,
-    /// The glass sidebar's ⋮ menu (`frame.rs`).
-    row_menu: frame::RowMenu,
     location_error: Option<String>,
     location_note: Option<String>,
     settings: Settings,
