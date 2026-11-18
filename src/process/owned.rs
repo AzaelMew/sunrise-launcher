@@ -61,7 +61,7 @@ impl Registry {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     fn holds(&self, pid: u32) -> bool {
         self.entries().iter().any(|entry| entry.pid == pid)
     }

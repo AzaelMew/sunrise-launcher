@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(unix)]
 use std::cell::RefCell;
 
 /// A tool that reads the plan, then says what `events` holds, one line each; `CONSENT` waits for the answer.

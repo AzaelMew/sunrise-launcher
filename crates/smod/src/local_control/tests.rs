@@ -4,7 +4,13 @@ use std::os::{fd::AsRawFd, unix::ffi::OsStrExt};
 pub(super) fn marker() -> (tempfile::TempDir, Marker) {
     let root = tempfile::tempdir().unwrap();
     let parent = root.path().canonicalize().unwrap();
-    let directory = parent.join(std::ffi::OsStr::from_bytes(b"fresh-\xff"));
+    // APFS refuses a name that isn't UTF-8 (EILSEQ): there the name is non-ASCII UTF-8 instead.
+    let name: &[u8] = if cfg!(target_os = "macos") {
+        "fresh-ÿ".as_bytes()
+    } else {
+        b"fresh-\xff"
+    };
+    let directory = parent.join(std::ffi::OsStr::from_bytes(name));
     let marker = Marker::new(directory).unwrap();
     (root, marker)
 }
