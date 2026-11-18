@@ -25,8 +25,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
 
-/// A world's picture in a row: its 64 pixels, one to one.
-const WORLD_ICON: f32 = 64.;
+/// A world's picture in a row.
+const WORLD_ICON: f32 = 40.;
 /// And as a tile: its 64 pixels, doubled.
 const WORLD_TILE: f32 = 128.;
 /// How much of a tile's data packs button shows while nothing points at the tile.
@@ -422,7 +422,8 @@ impl Launcher {
             }))
     }
 
-    /// The selected profile's recent worlds, or what to do when it has none.
+    /// Home's lower panel: the selected profile's worlds (or what to do when it has none)
+    /// beside its mods.
     fn continue_playing(
         &mut self,
         instance: &instances::Instance,
@@ -432,18 +433,10 @@ impl Launcher {
         let list: Vec<World> = self.worlds.list.clone();
         let tiles = self.settings.world_layout == backend::WorldLayout::Tiles;
         let top = div()
+            .h(px(tokens::CONTROL))
             .flex()
-            .flex_col()
-            .gap(px(6.))
-            .child(
-                heading(tr("Continue playing"))
-                    .text_size(px(tokens::TITLE - 4.))
-                    .font_weight(FontWeight::BOLD),
-            )
-            .child(muted(trf(
-                "Recent worlds in {profile}",
-                &[("profile", &instance.name)],
-            )));
+            .items_center()
+            .child(heading(tr("Continue playing")));
         let body = if !list.is_empty() {
             if tiles {
                 let mut grid = div().flex().flex_wrap().gap(px(16.));
@@ -452,7 +445,7 @@ impl Launcher {
                 }
                 grid
             } else {
-                let mut rows = div().flex().flex_col().gap(px(8.));
+                let mut rows = div().flex().flex_col().gap(px(4.));
                 for world in list.iter() {
                     rows = rows.child(self.world_row(world, cx));
                 }
@@ -492,13 +485,28 @@ impl Launcher {
                         }),
                 )
         };
-        div()
-            .flex_grow(1.)
+        let worlds = div()
+            .flex_1()
+            .min_w_0()
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .gap(px(10.))
             .child(top)
-            .child(body)
+            .child(body);
+        let mods = self.home_mods(cx).flex_1().min_w_0();
+        // Worlds, then what the profile plays with: side by side, or in that order down a
+        // narrow window.
+        let both = div()
+            .flex_grow(1.)
+            .flex()
+            .gap(px(22.))
+            .child(worlds)
+            .child(mods);
+        if crate::home_mods::side_by_side(f32::from(window.viewport_size().width)) {
+            both
+        } else {
+            both.flex_col()
+        }
     }
 
     /// A world's picture, `side` points square: its own `icon.png` (64 pixels square, as the
@@ -545,32 +553,42 @@ impl Launcher {
         )
     }
 
-    /// One world as a row: its picture, what it is, and its two buttons at the end.
+    /// One world as a compact row: its picture, what it is, and its two small buttons, each
+    /// named by its tooltip.
     fn world_row(&mut self, world: &World, cx: &mut Context<Self>) -> Div {
         let (folder, path) = (world.folder.clone(), world.path.clone());
-        let packs = button(
+        let small = |id: String, glyph: &'static str, says: &'static str| {
+            button(id, "")
+                .size(px(30.))
+                .px_0()
+                .child(blocks::icon(glyph, 14., rgb(palette().text).into()))
+                .tooltip(crate::glass_ui::tip(tr(says)))
+        };
+        let packs = small(
             format!("alt-world-packs-{}", world.folder),
-            tr("Data packs"),
+            "archive",
+            "Data packs",
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
             this.show_world_packs(path.clone());
             cx.notify();
         }));
-        let play = button(format!("alt-world-{}", world.folder), "")
-            .gap(px(6.))
-            .child(blocks::icon("play", 15., rgb(palette().text).into()))
-            .child(tr("Play"))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.play_to("--world", folder.clone());
-                cx.notify();
-            }));
+        let play = small(
+            format!("alt-world-{}", world.folder),
+            "play",
+            "Play this world",
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.play_to("--world", folder.clone());
+            cx.notify();
+        }));
         card()
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(14.))
-            .p(px(8.))
-            .pr(px(14.))
+            .gap(px(10.))
+            .p(px(5.))
+            .pr(px(8.))
             .child(self.world_icon(world, WORLD_ICON))
             .child(
                 div()
@@ -578,10 +596,9 @@ impl Launcher {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap(px(2.))
                     .child(
                         div()
-                            .text_size(px(tokens::BODY))
+                            .text_size(px(tokens::LABEL))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(palette().text))
                             .truncate()
@@ -593,7 +610,7 @@ impl Launcher {
                 div()
                     .flex()
                     .flex_none()
-                    .gap(px(8.))
+                    .gap(px(6.))
                     .child(packs)
                     .child(play),
             )
