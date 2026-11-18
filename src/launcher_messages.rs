@@ -471,9 +471,7 @@ impl Launcher {
                 }
             }
         }
-        if !cfg!(feature = "redesign-preview") {
-            changed |= self.servers_tick();
-        }
+        changed |= self.servers_tick();
         changed |= self.mods_tick();
         changed |= self.alt_mods_drain();
         changed |= self.github_tick();

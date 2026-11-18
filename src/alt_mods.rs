@@ -36,7 +36,7 @@ mod pack_discover;
 mod packs;
 mod project;
 mod ui;
-pub(crate) use ui::{chip, field_theme, switch};
+pub(crate) use ui::{checkbox, chip, field_theme, switch};
 
 use model::{Card, Row};
 

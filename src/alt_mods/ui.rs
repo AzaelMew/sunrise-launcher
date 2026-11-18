@@ -84,7 +84,7 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         )
 }
 
-pub(super) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()

@@ -61,7 +61,7 @@ pub(super) struct SettingsView {
 }
 
 /// A card of rows with a rule between them.
-fn group(rows: Vec<Div>) -> Div {
+pub(crate) fn group(rows: Vec<Div>) -> Div {
     let mut card = div()
         .flex()
         .flex_col()
@@ -79,14 +79,18 @@ fn group(rows: Vec<Div>) -> Div {
     card
 }
 
-fn hint(text: impl Into<SharedString>) -> Div {
+pub(crate) fn hint(text: impl Into<SharedString>) -> Div {
     div()
         .text_color(rgb(MUTED))
         .text_size(px(12.5))
         .child(text.into())
 }
 
-fn row(title: impl Into<SharedString>, about: impl Into<SharedString>, actions: Div) -> Div {
+pub(crate) fn row(
+    title: impl Into<SharedString>,
+    about: impl Into<SharedString>,
+    actions: Div,
+) -> Div {
     let about = about.into();
     div()
         .flex()
@@ -122,15 +126,15 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
         .child(below)
 }
 
-fn off(b: Stateful<Div>) -> Stateful<Div> {
+pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.4).cursor_default()
 }
 
-fn danger(b: Stateful<Div>) -> Stateful<Div> {
+pub(crate) fn danger(b: Stateful<Div>) -> Stateful<Div> {
     b.text_color(rgb(BAD))
 }
 
-fn warning(text: impl Into<SharedString>) -> Div {
+pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(12.5))
         .text_color(rgb(BAD))

@@ -570,8 +570,8 @@ actions!(sunrise_launcher, [Quit, CloseWindow]);
 /// What closing the last window does: stop the servers this launcher started, send the telemetry,
 /// exit. A game that is running keeps running. Cmd+Q goes through here too.
 fn shut_down(cx: &mut App) {
+    servers_page::stop_on_quit();
     if !cfg!(feature = "redesign-preview") {
-        servers_page::stop_on_quit();
         telemetry::send_before_exit();
         // The preview never owns the installed launcher's pending update.
         sunrise_launcher::update_handoff::forget();
