@@ -8,7 +8,7 @@ use crate::glass_ui::{self as ui, white};
 use new_instance::{NewKind, VersionList};
 use servers_page::Field;
 use std::sync::Arc;
-use sunrise_launcher::instances::{self, Channel, Icon, Instance};
+use sunrise_launcher::instances::{self, stable_builds, Channel, Icon, Instance, StableBuild};
 use sunrise_launcher::loaders::Kind as Loader;
 use sunrise_launcher_theme::glass::{fill, ink, radius};
 
@@ -587,64 +587,6 @@ impl Launcher {
             .child(div().flex_1().min_h(px(32.)))
             .children(import)
     }
-}
-
-/// A build on the Stable channel; `week` is the Monday of its week when it stands for one.
-#[derive(Debug, PartialEq, Eq)]
-pub(super) struct StableBuild {
-    pub(super) tag: String,
-    pub(super) week: Option<String>,
-}
-
-/// The Stable channel's builds, newest first: the real (non-Nightly, non-pre-release) releases
-/// when any exist; until then the newest Nightly of each Monday to Sunday week. `releases` is
-/// newest first, as GitHub lists them.
-pub(super) fn stable_builds(releases: &[Release]) -> Vec<StableBuild> {
-    let real: Vec<_> = releases
-        .iter()
-        .filter(|r| {
-            r.nightly.is_none()
-                && r.asset.is_some()
-                && !r.prerelease
-                && sunrise_launcher::backend::launcher_version(&r.tag).is_none()
-        })
-        .map(|r| StableBuild {
-            tag: r.tag.clone(),
-            week: None,
-        })
-        .collect();
-    if !real.is_empty() {
-        return real;
-    }
-    use chrono::Datelike;
-    // (monday, date, tag): the newest date of a week wins; the first listed on a tie.
-    let mut weeks: Vec<(String, String, String)> = Vec::new();
-    for r in releases
-        .iter()
-        .filter(|r| r.nightly.is_some() && r.asset.is_some())
-    {
-        let Some(date) = sunrise_launcher::nightly::date_of(&r.tag) else {
-            continue;
-        };
-        let Ok(day) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
-            continue;
-        };
-        let monday =
-            (day - chrono::Duration::days(day.weekday().num_days_from_monday() as i64)).to_string();
-        match weeks.iter_mut().find(|w| w.0 == monday) {
-            Some(w) if w.1.as_str() < date => *w = (monday, date.into(), r.tag.clone()),
-            Some(_) => {}
-            None => weeks.push((monday, date.into(), r.tag.clone())),
-        }
-    }
-    weeks.sort_by(|a, b| b.0.cmp(&a.0));
-    weeks
-        .into_iter()
-        .map(|(monday, _, tag)| StableBuild {
-            tag,
-            week: Some(monday),
-        })
-        .collect()
 }
 
 /// Every Nightly published with a build for this platform, newest first, then the installed

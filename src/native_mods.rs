@@ -1889,14 +1889,18 @@ pub fn build(
         // and keeps which mods wait and why.
         if let Err(Failed::Mods { left, .. }) = &built {
             check_cancelled()?;
-            let plain = about(base).map_or_else(|| base.to_owned(), |about| about.base);
+            let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
             isolate::keep(&instance.home, &plain, left)?;
-            let follows = Instance {
-                version: None,
-                ..instance.clone()
-            }
-            .resolve_version(None)
-            .is_ok_and(|version| version == plain);
+            let installed = backend::installed();
+            let selected = backend::Settings::load()
+                .selected
+                .filter(|s| installed.contains(s));
+            let follows = follows_plain(instance.channel, &plain, selected.as_deref(), || {
+                instances::stable_builds(&backend::releases().ok()?)
+                    .into_iter()
+                    .find(|b| installed.contains(&b.tag))
+                    .map(|b| b.tag)
+            });
             instances::edit(&instance.id, |meta| {
                 let unchanged = meta.version == instance.version
                     && meta.channel.unwrap_or_default() == instance.channel;
@@ -1936,6 +1940,22 @@ pub fn build(
         }
         Ok(built.version)
     })
+}
+
+/// Clearing the pin must play the checked base both in the window and on the command line.
+/// Nightly follows the launcher's selection. Stable follows the newest installed Stable choice
+/// in the window; if that isn't known, pin rather than guess from an offline list.
+fn follows_plain(
+    channel: instances::Channel,
+    plain: &str,
+    selected: Option<&str>,
+    stable: impl FnOnce() -> Option<String>,
+) -> bool {
+    selected == Some(plain)
+        && match channel {
+            instances::Channel::Nightly => true,
+            instances::Channel::Stable => stable().as_deref() == Some(plain),
+        }
 }
 
 /// The release or Nightly `instance` plays now (the one a native build of it started from).
@@ -2461,6 +2481,29 @@ mod tests {
         drop(saved);
         drop(lock);
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_stable_setup_cannot_unpin_to_a_different_or_unknown_build_after_a_plain_fallback() {
+        use instances::Channel::{Nightly, Stable};
+        let nightly = "nightly-2026-11-17-2d81263";
+        let stable = "v1.0.0";
+        let checked = |tag: &str| Some(tag.to_owned());
+        assert!(!follows_plain(Stable, nightly, Some(nightly), || checked(
+            stable
+        )));
+        assert!(!follows_plain(Stable, nightly, Some(nightly), || None));
+        assert!(follows_plain(Stable, stable, Some(stable), || checked(
+            stable
+        )));
+        // The CLI without an explicit version follows the launcher's selection.
+        assert!(!follows_plain(Stable, stable, Some(nightly), || checked(
+            stable
+        )));
+        assert!(follows_plain(Nightly, nightly, Some(nightly), || panic!(
+            "unneeded release lookup"
+        )));
+        assert!(!follows_plain(Nightly, nightly, None, || None));
     }
 
     #[test]
