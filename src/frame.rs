@@ -47,6 +47,18 @@ fn first_sentence(text: &str) -> &str {
     }
 }
 
+/// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
+/// gold. Behind a see-through control it would show as a fill: give that one an edge instead.
+fn focus_ring(color: u32) -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: rgb(color).into(),
+        offset: gpui::point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+        inset: false,
+    }]
+}
+
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     button_base(id, label).hover(|s| s.bg(rgb(0x393233)))
 }
@@ -353,6 +365,10 @@ impl Launcher {
                 div()
                     .id("alt-build")
                     .tab_index(0)
+                    .rounded(px(tokens::R_CONTROL))
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .focus_visible(|s| s.border_color(rgb(GOLD)))
                     .cursor_pointer()
                     .flex()
                     .items_center()
@@ -483,6 +499,7 @@ impl Launcher {
                 d.child(blocks::icon("play", 17., ink.into()))
             })
             .child(label)
+            .focus_visible(move |s| s.shadow(focus_ring(if signed_in { TEXT } else { GOLD })))
             .when(!enabled, |d| d.opacity(0.6))
             .when(enabled, |d| {
                 d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
@@ -533,6 +550,7 @@ impl Launcher {
         self.scale = window.scale_factor();
         self.scale_factor = self.scale;
         self.window_long_side = self.window_width.max(self.window_height);
+        self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);
         self.mods.note_focus(window);
@@ -550,6 +568,9 @@ impl Launcher {
                 .w(px(56.))
                 .h(px(56.))
                 .rounded(px(tokens::R_CARD))
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .focus_visible(|s| s.border_color(rgb(GOLD)))
                 .relative()
                 .flex()
                 .flex_col()

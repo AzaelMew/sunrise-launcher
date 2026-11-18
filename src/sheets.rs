@@ -57,6 +57,10 @@ pub(crate) struct SheetsState {
     focus: Option<FocusHandle>,
     /// What had the keyboard when that layer opened: it gets it back when the layer closes.
     opener: Option<FocusHandle>,
+    /// What has the keyboard while no layer is open, read as each frame starts: the opener of
+    /// the next layer, even when the page hands the keyboard to one of that layer's fields.
+    before: Option<FocusHandle>,
+    layered: bool,
     registry: Option<(Consent, Sender<bool>)>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
@@ -397,6 +401,13 @@ impl Launcher {
         .detach();
     }
 
+    /// Reads what has the keyboard, before this frame moves it: see [`Self::modal`].
+    pub(crate) fn modal_before(&mut self, window: &Window, cx: &App) {
+        if !self.ui.sheets.layered {
+            self.ui.sheets.before = window.focused(cx);
+        }
+    }
+
     /// The one focus rule for anything drawn over the page (a sheet, Host's Create, the
     /// sign-in): `layer` takes the keyboard when it opens, Tab stays inside it, and when it
     /// closes, by Escape or any other way, the keyboard goes back to what opened it. Escape
@@ -408,6 +419,7 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let Some(layer) = layer else {
+            self.ui.sheets.layered = false;
             if let Some(opener) = self.ui.sheets.opener.take() {
                 // What opened it may have left the page since: then the frame has the keyboard.
                 let still_there = self.root_focus.contains(&opener, window);
@@ -428,10 +440,13 @@ impl Launcher {
             .focus
             .get_or_insert_with(|| cx.focus_handle())
             .clone();
-        if !focus.contains_focused(window, cx) {
-            if self.ui.sheets.opener.is_none() {
-                self.ui.sheets.opener = window.focused(cx);
-            }
+        if !self.ui.sheets.layered {
+            self.ui.sheets.layered = true;
+            self.ui.sheets.opener = self.ui.sheets.before.take();
+        }
+        // The keyboard is somewhere on the page under the layer: the layer takes it. A field
+        // the page focused for this layer, not drawn until this frame, keeps it.
+        if !focus.contains_focused(window, cx) && self.root_focus.contains_focused(window, cx) {
             window.focus(&focus, cx);
         }
         Some(
