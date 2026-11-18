@@ -94,7 +94,21 @@ impl Launcher {
                 Msg::Playing(playing) => self.playing = playing,
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
-                Msg::JarClient { run, prepared } => {
+                Msg::JarClient {
+                    run,
+                    registry_notices,
+                    prepared,
+                } => {
+                    if !registry_notices.is_empty() {
+                        crate::glass_toast::say(registry_notices.join("\n"));
+                        for notice in registry_notices {
+                            console_page::keep_line(
+                                &mut self.prepare_log,
+                                &mut self.log_revision,
+                                notice,
+                            );
+                        }
+                    }
                     self.starting_client = None;
                     match *prepared {
                         Ok(cmd) => {

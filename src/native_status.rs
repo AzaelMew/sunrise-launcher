@@ -307,6 +307,34 @@ pub fn built(version: &str) -> Option<Vec<Mod>> {
     Some(parse_built(&record(version)?))
 }
 
+/// A mod actually linked into a build, not one the build left out.
+#[derive(serde::Deserialize)]
+pub(crate) struct Included {
+    pub id: String,
+    pub version: String,
+}
+
+#[derive(serde::Deserialize)]
+struct IncludedRecord {
+    mods: Vec<Included>,
+}
+
+/// The mods in the selected binary. Unlike [`built`], these exclude `left_out`.
+pub(crate) fn included(version: &str) -> Result<Vec<Included>, String> {
+    if !native_mods::is_native(version) {
+        return Ok(Vec::new());
+    }
+    record(version)
+        .and_then(|v| serde_json::from_value::<IncludedRecord>(v).ok())
+        .map(|r| r.mods)
+        .ok_or_else(|| {
+            crate::i18n::tr(
+                "This native build doesn't say which mods it includes. Choose another game build.",
+            )
+            .into()
+        })
+}
+
 /// Native build `version`'s `native-mods.json`.
 fn record(version: &str) -> Option<serde_json::Value> {
     if !native_mods::is_native(version) {
@@ -770,6 +798,21 @@ mod tests {
         let on = [m("zoom", "2.1"), d("hitbox_plus", "1.3.0", "bb")];
         assert_eq!(state(&on, Some(build.as_slice())), State::Outdated);
         assert_eq!(built("v0.1.0"), None, "not a native build");
+    }
+
+    #[test]
+    fn registry_play_only_considers_mods_actually_in_the_native_binary() {
+        let record: IncludedRecord = serde_json::from_value(serde_json::json!({
+            "mods": [{"id": "zoom", "version": "2.1"}],
+            "left_out": [{"id": "hitbox_plus", "version": "1.3.0"}],
+        }))
+        .unwrap();
+        let [linked] = record.mods.as_slice() else {
+            panic!("expected only the linked mod");
+        };
+        assert_eq!(linked.id, "zoom");
+        assert_eq!(linked.version, "2.1");
+        assert!(serde_json::from_value::<IncludedRecord>(serde_json::json!({})).is_err());
     }
 
     #[test]

@@ -1371,10 +1371,8 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 ),
                 None => None,
             };
-            let mut cmd = backend::client_as(
-                &instance.resolve_version(version.as_deref())?,
-                who.as_deref(),
-            )?;
+            let tag = instance.resolve_version(version.as_deref())?;
+            let mut cmd = backend::client_as(&tag, who.as_deref())?;
             instances::apply(&mut cmd, &instance)?;
             if let Some(code) = join {
                 backend::join_friend(&mut cmd, &code)?;
@@ -1394,6 +1392,11 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             let started = std::time::Instant::now();
             let vars = instance.vars();
             cmd.envs(vars.iter().map(|(k, v)| (k, v)));
+            for notice in
+                sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &instance.launch)?
+            {
+                eprintln!("{notice}");
+            }
             sunrise_launcher::jars::prepare_launch(
                 &mut cmd,
                 &instance.launch,
@@ -2086,9 +2089,9 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         .entries
         .iter()
         .any(|e| e.source == SourceId::Sunrise);
-    if from_registry {
-        if let Ok(index) = sunrise::index() {
-            for said in sunrise::turn_off_revoked(&index, &home) {
+    if from_registry && sunrise::index().is_ok() {
+        if let Some(index) = sunrise::fetched_index() {
+            for said in sunrise::turn_off_revoked(&index, &home)? {
                 eprintln!("{said}");
             }
         }
@@ -2992,11 +2995,16 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
             version,
             allow_jar_downloads,
         } => {
-            let mut cmd = backend::client(&backend::resolve_version(version.as_deref())?)?;
+            let tag = backend::resolve_version(version.as_deref())?;
+            let mut cmd = backend::client(&tag)?;
             sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
+            let launch = Default::default();
+            for notice in sunrise::before_play(&mut cmd, &tag, &launch)? {
+                eprintln!("{notice}");
+            }
             sunrise_launcher::jars::prepare_launch(
                 &mut cmd,
-                &Default::default(),
+                &launch,
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;

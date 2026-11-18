@@ -40,6 +40,7 @@ pub enum Msg {
     },
     JarClient {
         run: Option<String>,
+        registry_notices: Vec<String>,
         prepared: Box<Result<Command, String>>,
     },
     /// Where the native-mods build is (`native_mods::Step::label`), and how far along.

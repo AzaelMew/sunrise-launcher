@@ -29,7 +29,6 @@ pub fn client_as(tag: &str, who: Option<&str>) -> Result<Command, String> {
     }
     play_step("checking the game's assets");
     complete_assets(tag);
-    crate::browser::sunrise::before_play(&game_home());
     let mut cmd = client_command(tag);
     if let Some(session) = session {
         if let Some(e) = session.apply(&mut cmd) {

@@ -213,16 +213,20 @@ impl Launcher {
             self.pending_consent = Some(PendingConsent::Toggle(e.clone()));
             return;
         }
-        let revoked = sunrise::known_index().and_then(|index| {
+        let index = sunrise::fetched_index();
+        let title = index
+            .as_ref()
+            .and_then(|index| index.project(&e.project))
+            .map_or(id, |project| &project.name);
+        let revoked = index.as_ref().and_then(|index| {
             let hash = e.checksum.trim_start_matches("SHA-256:");
-            index.revoked(&e.project, hash).map(|r| r.reason.clone())
+            index.revoked(&e.project, hash)
         });
         self.mods.message = Some(match revoked.filter(|_| on) {
-            Some(reason) => Err(format!("{} was taken down: {reason}", e.title)),
+            Some(revoked) => Err(format!("{title} was taken down: {}", revoked.reason)),
             None => mod_list::set_enabled(&home, id, on).map(|()| {
                 format!(
-                    "{} is {}. The game reads this when it starts.",
-                    e.title,
+                    "{title} is {}. The game reads this when it starts.",
                     if on { "on" } else { "off" }
                 )
             }),

@@ -110,12 +110,11 @@ impl Session {
                 if let Some(extra) = args.get("arg").and_then(Value::as_array) {
                     cmd.args(extra.iter().filter_map(Value::as_str));
                 }
-                jars::prepare_launch(
-                    &mut cmd,
-                    &Default::default(),
-                    Permission::headless(allow_jar_downloads),
-                )
-                .map_err(|error| error.to_string())?;
+                let launch = Default::default();
+                let notices =
+                    sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
+                jars::prepare_launch(&mut cmd, &launch, Permission::headless(allow_jar_downloads))
+                    .map_err(|error| error.to_string())?;
                 let client = Logged::start(Job::Client, cmd)?;
                 // Started once its control socket answers, as sunrise-ctl launch waits.
                 let deadline = std::time::Instant::now() + Duration::from_secs(120);
@@ -136,9 +135,14 @@ impl Session {
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 self.client = Some(client);
-                Ok(format!(
+                let mut started = format!(
                     "Started the {tag} client. The game_* tools play it; game_wait_ready waits until the world is ready."
-                ))
+                );
+                for notice in notices {
+                    started.push('\n');
+                    started.push_str(&notice);
+                }
+                Ok(started)
             }
             "server" => {
                 if self.server.as_ref().is_some_and(|s| s.finished().is_none()) {
