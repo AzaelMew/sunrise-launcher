@@ -29,7 +29,7 @@ fn failed_launch_log_keeps_paths_but_not_argument_or_environment_secrets() {
     command
         .args(["--token", "private-argument", "--token=private-inline"])
         .current_dir(root.path())
-        .env("SUNRISE_ACCOUNT_SESSIONS", "private-environment")
+        .env("TEST_PRIVATE_ENV", "private-environment")
         .env("TMPDIR", root.path());
     let error = std::io::Error::new(
         std::io::ErrorKind::NotFound,

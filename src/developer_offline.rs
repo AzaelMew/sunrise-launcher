@@ -93,7 +93,6 @@ fn supports_restriction(bytes: &[u8]) -> bool {
 pub fn mark(cmd: &mut Command) {
     cmd.arg(FLAG)
         .env_remove("SUNRISE_SESSION_FILE")
-        .env_remove("SUNRISE_ACCOUNT_SESSIONS")
         .env_remove("SUNRISE_LAUNCHER_EXE");
 }
 
@@ -102,8 +101,7 @@ pub fn validate(cmd: &Command) -> Result<(), String> {
     let offline = cmd.get_args().any(|a| a == FLAG);
     if offline
         && cmd.get_envs().any(|(key, value)| {
-            (key == "SUNRISE_SESSION_FILE" || key == "SUNRISE_ACCOUNT_SESSIONS")
-                && value.is_some_and(|v| !v.is_empty())
+            key == "SUNRISE_SESSION_FILE" && value.is_some_and(|v| !v.is_empty())
         })
     {
         return Err(tr(NOTICE).into());
@@ -238,13 +236,8 @@ mod tests {
     fn composition_cannot_reintroduce_account_state_or_clear_the_restriction() {
         let mut command = Command::new("game");
         command.env("SUNRISE_SESSION_FILE", "inherited-session.json");
-        command.env("SUNRISE_ACCOUNT_SESSIONS", "inherited sessions");
         mark(&mut command);
-        for key in [
-            "SUNRISE_SESSION_FILE",
-            "SUNRISE_ACCOUNT_SESSIONS",
-            "SUNRISE_LAUNCHER_EXE",
-        ] {
+        for key in ["SUNRISE_SESSION_FILE", "SUNRISE_LAUNCHER_EXE"] {
             assert_eq!(
                 command.get_envs().find(|(name, _)| *name == key).unwrap().1,
                 None
@@ -253,16 +246,18 @@ mod tests {
         command.env(ENV, "0");
         assert!(command.get_args().any(|argument| argument == FLAG));
         assert!(validate(&command).is_ok());
-        for key in ["SUNRISE_SESSION_FILE", "SUNRISE_ACCOUNT_SESSIONS"] {
-            let mut command = Command::new("game");
-            mark(&mut command);
-            let launch = crate::launch::Launch {
-                env: [(key.to_string(), "reintroduced".to_string())].into(),
-                ..Default::default()
-            };
-            let wrapped = crate::launch::wrap(command, &launch);
-            assert!(validate(&wrapped).is_err(), "{key}");
-        }
+        let mut command = Command::new("game");
+        mark(&mut command);
+        let launch = crate::launch::Launch {
+            env: [(
+                "SUNRISE_SESSION_FILE".to_string(),
+                "reintroduced".to_string(),
+            )]
+            .into(),
+            ..Default::default()
+        };
+        let wrapped = crate::launch::wrap(command, &launch);
+        assert!(validate(&wrapped).is_err());
     }
 
     #[test]

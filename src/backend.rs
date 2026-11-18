@@ -2765,7 +2765,6 @@ pub fn client_command(tag: &str) -> Command {
     crate::telemetry::ping_only_if_allowed(&mut cmd, !Settings::load().ping_off);
     cmd.current_dir(&home)
         .env("SUNRISE_HOME", &home)
-        .env_remove("SUNRISE_ACCOUNT_SESSIONS")
         .arg("--resources")
         .arg(resources(tag));
     // How the game asks for a renewed session (`account session`) while it runs.
