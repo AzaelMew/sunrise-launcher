@@ -1448,5 +1448,7 @@
   "{size} to download": "{size} to download",
   "{version} is out": "{version} is out",
   "The game does not start. Build again when you are ready.": "The game does not start. Build again when you are ready.",
-  "{id} ({file}, not from the registry)": "{id} ({file}, not from the registry)"
+  "{id} ({file}, not from the registry)": "{id} ({file}, not from the registry)",
+  "{name} ({id}, from the Sunrise registry)": "{name} ({id}, from the Sunrise registry)",
+  "{count} mods": "{count} mods"
 }

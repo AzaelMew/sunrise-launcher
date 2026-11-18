@@ -16,13 +16,14 @@ pub(super) enum PendingConsent {
 }
 
 impl PendingConsent {
+    /// What the question is about, for its heading: one mod's name, or how many a build takes.
     pub(super) fn name(&self) -> String {
         match self {
-            Self::Build(inputs) => inputs
-                .iter()
-                .map(build_label)
-                .collect::<Vec<_>>()
-                .join(", "),
+            Self::Build(inputs) => match inputs.as_slice() {
+                [] => String::new(),
+                [one] => build_label(one),
+                many => crate::i18n::trf("{count} mods", &[("count", &many.len().to_string())]),
+            },
             Self::Toggle(entry) => entry.title.clone(),
             // The mod as its page names it ("JEI"), not its id ("jei").
             Self::Install(_, id, project) => project
@@ -33,6 +34,15 @@ impl PendingConsent {
             Self::Github(found, _) => found.label(),
         }
     }
+
+    /// The question's Mods rows: one per package, so two packages never read as one name or one
+    /// as two. A build's rows carry each package's id and where its file is from.
+    pub(super) fn rows(&self) -> Vec<String> {
+        match self {
+            Self::Build(inputs) => inputs.iter().map(build_label).collect(),
+            _ => vec![self.name()],
+        }
+    }
 }
 
 /// A build's package as the question names it: the registry's name only for a file the registry
@@ -40,7 +50,10 @@ impl PendingConsent {
 /// under a registry mod's id never reads as that mod.
 fn build_label(input: &BuildInput) -> String {
     match &input.registry {
-        Some(name) if !name.is_empty() => name.clone(),
+        Some(name) if !name.is_empty() => crate::i18n::trf(
+            "{name} ({id}, from the Sunrise registry)",
+            &[("name", name), ("id", &input.id)],
+        ),
         _ => crate::i18n::trf(
             "{id} ({file}, not from the registry)",
             &[("id", &input.id), ("file", &input.file)],
@@ -121,12 +134,43 @@ mod tests {
             registry: registry.map(Into::into),
         };
         let build = |i| PendingConsent::Build(vec![i]).name();
-        assert_eq!(build(input(Some("JEI"))), "JEI");
+        assert_eq!(
+            build(input(Some("JEI"))),
+            "JEI (jei, from the Sunrise registry)"
+        );
         assert_eq!(build(input(None)), "jei (jei.smod, not from the registry)");
         assert_eq!(
             build(input(Some(""))),
             "jei (jei.smod, not from the registry)"
         );
+    }
+
+    #[test]
+    fn a_build_lists_one_row_per_package_whatever_their_names() {
+        let input = |id: &str, registry: Option<&str>| BuildInput {
+            id: id.into(),
+            file: format!("{id}.smod"),
+            registry: registry.map(Into::into),
+        };
+        // A name with a comma, the same name twice, and a package the registry doesn't list.
+        let build = PendingConsent::Build(vec![
+            input("maps_tools", Some("Maps, Tools")),
+            input("recipes", Some("Recipes")),
+            input("recipes_two", Some("Recipes")),
+            input("own", None),
+        ]);
+        assert_eq!(
+            build.rows(),
+            [
+                "Maps, Tools (maps_tools, from the Sunrise registry)",
+                "Recipes (recipes, from the Sunrise registry)",
+                "Recipes (recipes_two, from the Sunrise registry)",
+                "own (own.smod, not from the registry)",
+            ]
+        );
+        assert_eq!(build.name(), "4 mods");
+        assert_eq!(PendingConsent::Build(Vec::new()).name(), "");
+        assert!(PendingConsent::Build(Vec::new()).rows().is_empty());
     }
 
     #[test]
