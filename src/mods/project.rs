@@ -447,8 +447,9 @@ impl Launcher {
                     dim(b).into_any_element()
                 } else {
                     let id = p.id.clone();
+                    let name = p.name.clone();
                     b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.add(id.clone());
+                        this.add(id.clone(), name.clone());
                         cx.notify();
                     }))
                     .into_any_element()

@@ -262,8 +262,16 @@ impl Launcher {
     }
 
     /// Installs (or updates) a project on a thread: a pack into its folder, a modpack into
-    /// Modpacks. `known` is the project when the page has it; else it is asked for first.
-    pub(super) fn mods_install(&mut self, source: SourceId, id: String, known: Option<Project>) {
+    /// Modpacks. `known` is the project when the page has it; else it is asked for first. `shown`
+    /// is the name the page or card that asks shows for it, which the native-code question
+    /// repeats; the id stays what is installed.
+    pub(super) fn mods_install(
+        &mut self,
+        source: SourceId,
+        id: String,
+        known: Option<Project>,
+        shown: Option<String>,
+    ) {
         if self.mods.busy.is_some() {
             return;
         }
@@ -272,7 +280,7 @@ impl Launcher {
             && self.settings.native_mods_allowed_at.is_none()
             && sunrise::is_native_mod(&id);
         if first_native {
-            self.pending_consent = Some(PendingConsent::Install(source, id, known));
+            self.pending_consent = Some(PendingConsent::Install(source, id, known, shown));
             self.content_scroll
                 .handle
                 .set_offset(gpui::point(px(0.), px(0.)));

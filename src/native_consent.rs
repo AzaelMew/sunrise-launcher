@@ -11,7 +11,9 @@ pub(super) enum PendingConsent {
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
     Toggle(Entry),
-    Install(SourceId, String, Option<Project>),
+    /// The project to install by id, the project when the page had it, and the name the page or
+    /// card that asked was showing for it.
+    Install(SourceId, String, Option<Project>, Option<String>),
     Github(Resolved, Option<String>),
 }
 
@@ -25,10 +27,10 @@ impl PendingConsent {
                 many => crate::i18n::trf("{count} mods", &[("count", &many.len().to_string())]),
             },
             Self::Toggle(entry) => entry.title.clone(),
-            // The mod as its page names it ("JEI"), not its id ("jei").
-            Self::Install(_, id, project) => project
-                .as_ref()
-                .map(|p| p.title.clone())
+            // The mod as the page that asked names it ("JEI"), not its id ("jei").
+            Self::Install(_, id, project, shown) => shown
+                .clone()
+                .or_else(|| project.as_ref().map(|p| p.title.clone()))
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| id.clone()),
             Self::Github(found, _) => found.label(),
@@ -120,10 +122,16 @@ mod tests {
             loaders: Vec::new(),
             blocked: None,
         };
-        let install = |p| PendingConsent::Install(SourceId::Sunrise, "jei".into(), p);
+        let install = |p| PendingConsent::Install(SourceId::Sunrise, "jei".into(), p, None);
         assert_eq!(install(Some(project("JEI"))).name(), "JEI");
         assert_eq!(install(Some(project(""))).name(), "jei");
         assert_eq!(install(None).name(), "jei");
+        // The name the page that asked was showing wins: an install by id alone has no other,
+        // and a project read earlier may carry the name from before a rename.
+        let shown =
+            |p| PendingConsent::Install(SourceId::Sunrise, "jei".into(), p, Some("JEI 2".into()));
+        assert_eq!(shown(None).name(), "JEI 2");
+        assert_eq!(shown(Some(project("JEI"))).name(), "JEI 2");
     }
 
     #[test]
