@@ -1,7 +1,5 @@
 name: release
-# Builds the launcher's release files on each platform and checks them; on main with LAUNCHER_RELEASES on it leaves them, unsigned, as a draft vX.Y.Z (Cargo.toml's version) with build provenance.
-# By hand only, a dry run unless told otherwise: gh workflow run release --ref main -f dry_run=false
-# No key is held here: sunrise-org/sunrise's launcher-bridge.yml checks the draft's provenance, signs it with the game's RELEASE_SIGNING_KEY in its `release` environment, publishes it here and as launcher@X.Y.Z there.
+# Builds and checks the launcher's release files; a real run on main (LAUNCHER_RELEASES=on) leaves them as an unsigned draft vX.Y.Z with build provenance, which sunrise-org/sunrise's launcher-bridge.yml signs and publishes.
 on:
   workflow_dispatch:
     inputs:

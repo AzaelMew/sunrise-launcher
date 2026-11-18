@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Writes SHA256SUMS for the files given and signs it with a throwaway key, for dry runs and tests: SHA256SUMS.sig over "sunrise-launcher release <tag>\n" + SHA256SUMS, the key's public half in ephemeral.pub.
-# No real key is ever here: sunrise-org/sunrise's launcher-bridge.yml signs real releases with the game's RELEASE_SIGNING_KEY, the same message.
-#   tools/ci/sign_release.sh v1.1.0 dist/sunrise-launcher-linux-x86_64.tar.gz dist/sunrise-launcher-windows-x64.zip ...
+# Dry runs and tests only: writes SHA256SUMS and signs it, as launcher-bridge.yml in sunrise-org/sunrise signs real releases, with a throwaway key (its public half in ephemeral.pub).
 set -euo pipefail
 tag=$1; shift
 dir=$(dirname "$1")
