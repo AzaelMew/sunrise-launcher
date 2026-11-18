@@ -351,7 +351,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     own.sort();
     // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
     // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
+    if !cfg!(feature = "redesign-preview") && game_home.join(OWN).is_dir() {
         let before = store.instances.len();
         store
             .instances

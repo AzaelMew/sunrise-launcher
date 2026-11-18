@@ -151,6 +151,9 @@ pub struct UpdateCheck {
     pub worlds: Vec<String>,
     /// A mod the tool refuses on any build: `summary` names it, and there is no update to take until it is fixed or removed.
     pub blocked: bool,
+    /// The mods the update would switch off, by id, each with why (`summary` says the same in
+    /// sentences).
+    pub off: Vec<(String, String)>,
 }
 
 /// [`UpdateCheck`] for the native mods turned on in game folder `home`, on the installed release
@@ -185,6 +188,7 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
                 summary: refusal,
                 worlds: Vec::new(),
                 blocked: true,
+                off: Vec::new(),
             })
         }
     };
@@ -213,5 +217,6 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
         summary: fit::update_summary(&shown, found.len(), &off),
         worlds,
         blocked: false,
+        off,
     })
 }

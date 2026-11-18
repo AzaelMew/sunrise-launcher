@@ -229,8 +229,9 @@ pub fn game_files_ready() -> bool {
 /// Whether an installed version can host: it ships `sunrise-server` and is prepared.
 pub fn can_host(tag: &str) -> Result<(), String> {
     if !backend::version_dir(tag).join(PROGRAM).is_file() {
-        return Err(format!(
-            "Sunrise {tag} has no server program. Install a newer version on the Versions page."
+        return Err(trf(
+            "Sunrise {tag} has no server program. Install a newer game build first.",
+            &[("tag", tag)],
         ));
     }
     if !backend::check_prepared(tag) {
@@ -823,10 +824,10 @@ pub fn settings_args(spec: &NewServer, panel_port: u16) -> Vec<String> {
 /// set up, and no installed version (`tag`) to set them up from.
 pub fn create_blocked(tag: Option<&str>) -> Option<Problem> {
     let set_up = program().is_some() && game_files_ready();
-    (!set_up && tag.is_none()).then(|| Problem::plain(NEEDS_VERSION))
+    (!set_up && tag.is_none()).then(|| Problem::plain(tr(NEEDS_VERSION)))
 }
 
-const NEEDS_VERSION: &str = "Install a Sunrise version first (Versions page), then prepare it.";
+const NEEDS_VERSION: &str = "Install a Sunrise game build first, then prepare it.";
 
 /// Creates a server: its folder, the world (a copy when asked), `init` and the settings, then adds it to
 /// the list. `tag` is the installed version whose programs and game files it uses when none are set up.
@@ -838,7 +839,7 @@ pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Resu
         });
     }
     if program().is_none() || !game_files_ready() {
-        let tag = tag.ok_or_else(|| Problem::plain(NEEDS_VERSION))?;
+        let tag = tag.ok_or_else(|| Problem::plain(tr(NEEDS_VERSION)))?;
         log(format!("Setting up the server programs from Sunrise {tag}"));
         set_up(tag).map_err(|e| {
             if e.contains("prepared") {

@@ -20,6 +20,9 @@ pub(super) struct Multiplayer {
     pub(super) error: Option<String>,
     /// What each address answered to the status ping, asked once per list.
     pub(super) reach: HashMap<String, Reach>,
+    /// The picture each address sent with that answer, for a server the game hasn't saved one
+    /// for.
+    pub(super) icons: HashMap<String, Arc<Image>>,
 }
 
 /// A saved server as its status ping found it.
@@ -53,23 +56,41 @@ impl Launcher {
             let address = ip.clone();
             let task = cx
                 .background_executor()
-                .spawn(async move { sunrise_launcher::telemetry::server_players(&address) });
+                .spawn(async move { sunrise_launcher::telemetry::server_status(&address) });
             cx.spawn(async move |this, cx| {
                 let answer = task.await;
                 let _ = this.update(cx, |this, cx| {
-                    let reach = match answer {
-                        Some(p) => Reach::Online {
-                            players: p.online,
-                            max: p.max,
-                        },
-                        None => Reach::Offline,
-                    };
-                    this.multiplayer.reach.insert(ip, reach);
+                    this.server_answered(ip, answer);
                     cx.notify();
                 });
             })
             .detach();
         }
+    }
+
+    /// Records what `address` answered to the status ping: its players and its picture.
+    pub(super) fn server_answered(
+        &mut self,
+        address: String,
+        answer: Option<(
+            sunrise_launcher_telemetry::server_status::Players,
+            Option<Vec<u8>>,
+        )>,
+    ) {
+        let reach = match answer {
+            Some((players, icon)) => {
+                if let Some(png) = icon {
+                    let image = Arc::new(Image::from_bytes(ImageFormat::Png, png));
+                    self.multiplayer.icons.insert(address.clone(), image);
+                }
+                Reach::Online {
+                    players: players.online,
+                    max: players.max,
+                }
+            }
+            None => Reach::Offline,
+        };
+        self.multiplayer.reach.insert(address, reach);
     }
 
     pub(super) fn load_servers(&mut self, home: PathBuf) {
