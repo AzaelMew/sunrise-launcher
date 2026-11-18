@@ -493,7 +493,7 @@ impl Launcher {
         let scroll = crate::frame::scrolls("project");
         let right = div()
             .relative()
-            .top(px(self.mods_sticky.shift(&scroll, 1)))
+            .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
             .w(px(360.))
             .flex_none()
             .flex()
