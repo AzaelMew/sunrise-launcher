@@ -25,6 +25,22 @@ use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
 
+/// MOCK ONLY: name, kind, glyph, on.
+type MockItem = (&'static str, &'static str, &'static str, bool);
+const MOCK_MODS_AND_PACKS: [MockItem; 7] = [
+    ("Lanternlight", "Mod", "package", true),
+    ("Quiet Rain", "Mod", "package", true),
+    ("Trailmarks", "Mod", "package", false),
+    ("Better Signs", "Mod", "package", true),
+    ("Soft Edges 16x", "Resource pack", "folder", true),
+    ("Old Paper Maps", "Resource pack", "folder", false),
+    ("Evening Glow", "Shader pack", "globe", true),
+];
+const MOCK_MORE_PACKS: [MockItem; 2] = [
+    ("Plain Glass", "Resource pack", "folder", true),
+    ("Tidy Inventory", "Resource pack", "folder", true),
+];
+
 /// A world's picture in a row: its 64 pixels, one to one.
 const WORLD_ICON: f32 = 64.;
 /// And as a tile: its 64 pixels, doubled.
@@ -448,7 +464,12 @@ impl Launcher {
             )));
         // MOCK ONLY (two columns, sample mods and packs): never handed over.
         if let Ok(mock) = std::env::var("SUNRISE_HOME_MOCK") {
-            return self.two_column_mock(&list, mock == "two-column-empty", window, cx);
+            return match mock.as_str() {
+                "no-worlds" | "no-worlds-empty" => {
+                    Self::no_worlds_mock(mock == "no-worlds-empty", window)
+                }
+                _ => self.two_column_mock(&list, mock == "two-column-empty", window, cx),
+            };
         }
         let body = if !list.is_empty() {
             if tiles {
@@ -748,23 +769,98 @@ impl Launcher {
                     .child(play),
             );
         }
-        let samples: [(&str, &str, &str, bool); 7] = [
-            ("Lanternlight", "Mod", "package", true),
-            ("Quiet Rain", "Mod", "package", true),
-            ("Trailmarks", "Mod", "package", false),
-            ("Better Signs", "Mod", "package", true),
-            ("Soft Edges 16x", "Resource pack", "folder", true),
-            ("Old Paper Maps", "Resource pack", "folder", false),
-            ("Evening Glow", "Shader pack", "globe", true),
-        ];
+        let column = |head: Div, body: Div| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(head)
+                .child(body)
+        };
+        let left = column(
+            div()
+                .h(px(tokens::CONTROL))
+                .flex()
+                .items_center()
+                .child(title(tr("Continue playing"))),
+            worlds,
+        );
+        let right = Self::mock_group(
+            "mods",
+            "Mods",
+            "Manage mods",
+            ("No mods yet", "Browse mods"),
+            if empty { &[] } else { &MOCK_MODS_AND_PACKS },
+        );
+        let both = div().flex().gap(px(22.)).child(left).child(right);
+        if stacked {
+            both.flex_col()
+        } else {
+            both
+        }
+    }
+
+    /// MOCK ONLY: Home with no worlds list: the profile's mods and its resource packs, each a
+    /// read-only group. Samples, not read from the profile.
+    fn no_worlds_mock(empty: bool, window: &Window) -> Div {
+        let (mods, packs): (Vec<MockItem>, Vec<MockItem>) = MOCK_MODS_AND_PACKS
+            .into_iter()
+            .chain(MOCK_MORE_PACKS)
+            .filter(|item| !empty && item.1 != "Shader pack")
+            .partition(|item| item.1 == "Mod");
+        let both = div()
+            .flex()
+            .gap(px(22.))
+            .child(Self::mock_group(
+                "mods",
+                "Mods",
+                "Manage mods",
+                ("No mods yet", "Browse mods"),
+                &mods,
+            ))
+            .child(Self::mock_group(
+                "packs",
+                "Resource packs",
+                "Manage packs",
+                ("No resource packs yet", "Browse packs"),
+                &packs,
+            ));
+        if window.viewport_size().width < px(1000.) {
+            both.flex_col()
+        } else {
+            both
+        }
+    }
+
+    /// MOCK ONLY: one read-only group: its title and its way to the Mods tab, what is on as
+    /// rows that open the item's page, a quiet line for what is off, or its empty line.
+    fn mock_group(
+        id: &'static str,
+        title: &'static str,
+        manage: &'static str,
+        (none, browse): (&'static str, &'static str),
+        samples: &[MockItem],
+    ) -> Div {
         let active: Vec<_> = samples.iter().filter(|s| s.3).collect();
         let off = samples.len() - active.len();
+        let link = |id: SharedString, label: String| {
+            div()
+                .id(id)
+                .cursor_pointer()
+                .tab_index(0)
+                .rounded(px(tokens::R_CONTROL))
+                .text_size(px(tokens::SMALL))
+                .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+                .seen()
+                .child(label)
+        };
         let mut items = div().flex().flex_col().gap(px(4.));
         for (n, (name, kind, glyph, _)) in active.iter().enumerate() {
-            // A press opens the mod's or the pack's own page.
             items = items.child(
                 card()
-                    .id(("mock-item", n))
+                    .id((id, n))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -811,90 +907,46 @@ impl Launcher {
             );
         }
         if off > 0 {
-            // To the Mods tab, filtered to what is off.
             items = items.child(
-                div()
-                    .id("mock-turned-off")
-                    .mt(px(4.))
-                    .px(px(6.))
-                    .flex()
-                    .cursor_pointer()
-                    .tab_index(0)
-                    .rounded(px(tokens::R_CONTROL))
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().muted))
-                    .hover(|s| s.text_color(rgb(palette().text)))
-                    .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-                    .seen()
-                    .child(format!("{off} turned off")),
+                div().flex().mt(px(4.)).px(px(6.)).child(
+                    link(format!("mock-{id}-off").into(), format!("{off} turned off"))
+                        .text_color(rgb(palette().muted))
+                        .hover(|s| s.text_color(rgb(palette().text))),
+                ),
             );
         }
-        let manage = button("mock-manage-mods", "Manage mods");
-        let right = if empty {
+        let body = if samples.is_empty() {
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .py(px(8.))
-                .child(muted("No mods yet"))
+                .child(muted(none))
                 .child(muted("·"))
                 .child(
-                    div()
-                        .id("mock-browse-mods")
-                        .cursor_pointer()
-                        .tab_index(0)
-                        .rounded(px(tokens::R_CONTROL))
-                        .text_size(px(tokens::SMALL))
+                    link(format!("mock-{id}-browse").into(), browse.to_string())
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(rgb(palette().text))
-                        .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-                        .seen()
-                        .child("Browse mods"),
+                        .text_color(rgb(palette().text)),
                 )
         } else {
             items
         };
-        let column = |head: Div, body: Div| {
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(10.))
-                .child(head)
-                .child(body)
-        };
-        let left = column(
-            div()
-                .h(px(tokens::CONTROL))
-                .flex()
-                .items_center()
-                .child(title(tr("Continue playing"))),
-            worlds,
-        );
-        let right = column(
-            div()
-                .h(px(tokens::CONTROL))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .items_baseline()
-                        .gap(px(8.))
-                        .child(title("Mods"))
-                        .when(!empty, |d| d.child(muted(format!("· {}", active.len())))),
-                )
-                .child(manage),
-            right,
-        );
-        let both = div().flex().gap(px(22.)).child(left).child(right);
-        if stacked {
-            both.flex_col()
-        } else {
-            both
-        }
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .h(px(tokens::CONTROL))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(heading(title).text_size(px(tokens::HEADING)))
+                    .child(button(format!("mock-{id}-manage"), manage)),
+            )
+            .child(body)
     }
 
     /// Every destination goes through `play_game`, which runs the sign-in, install, prepare,
