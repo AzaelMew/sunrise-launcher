@@ -40,3 +40,25 @@ fn storage_command_and_cache_limit() {
     set_setting(&mut settings, "cache-limit-gib", "default").unwrap();
     assert_eq!(settings.cache_limit_gib, None);
 }
+
+#[test]
+fn the_cat_is_on_until_the_player_switches_it_off() {
+    let mut settings = backend::Settings::default();
+    assert!(settings.show_cat());
+    assert!(serde_json::from_str::<backend::Settings>("{}")
+        .unwrap()
+        .show_cat());
+    let old: backend::Settings = serde_json::from_str(r#"{"native_cache_gib":100}"#).unwrap();
+    assert!(old.show_cat());
+    assert_eq!(settings_json(&settings)["cat"], true);
+    set_setting(&mut settings, "cat", "off").unwrap();
+    assert!(!settings.show_cat());
+    assert_eq!(settings_json(&settings)["cat"], false);
+    let loaded: backend::Settings =
+        serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+    assert!(!loaded.show_cat());
+    set_setting(&mut settings, "cat", "on").unwrap();
+    assert!(settings.show_cat());
+    assert!(set_setting(&mut settings, "cat", "maybe").is_err());
+    assert!(Cli::try_parse_from(["sunrise-launcher", "settings", "cat", "off"]).is_ok());
+}
