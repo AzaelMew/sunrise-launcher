@@ -1044,6 +1044,52 @@ fn client_id_is_configuration() {
     std::env::remove_var("SUNRISE_MSA_CLIENT_ID");
 }
 
+/// The account switcher's one click: who plays is on disk at once, and is still who plays
+/// after a restart; an account that isn't signed in changes nothing.
+#[test]
+fn a_switch_is_saved_and_survives_a_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("accounts.json");
+    let named = |uuid: &str, name: &str| Account {
+        uuid: uuid.into(),
+        name: name.into(),
+        skin: None,
+        cape: None,
+    };
+    Accounts {
+        accounts: vec![
+            named("a1", "Juniper"),
+            named("b2", "Mossbyte"),
+            named("c3", "Cinder"),
+        ],
+        selected: Some("a1".into()),
+        ..Accounts::default()
+    }
+    .save_to(&path)
+    .unwrap();
+
+    let kept = Accounts::switch_in(&path, "c3").unwrap();
+    assert_eq!(kept.selected().unwrap().name, "Cinder");
+    let restarted = Accounts::load_from(&path);
+    assert_eq!(restarted, kept);
+    assert_eq!(restarted.selected.as_deref(), Some("c3"));
+    assert_eq!(restarted.accounts.len(), 3, "switching signs nobody out");
+
+    assert!(Accounts::switch_in(&path, "zz").is_err());
+    assert_eq!(
+        Accounts::load_from(&path).selected.as_deref(),
+        Some("c3"),
+        "a refused switch leaves who plays"
+    );
+    // An account signed in since the window read the list is not lost by a switch.
+    let mut grown = Accounts::load_from(&path);
+    grown.accounts.push(named("d4", "Fennel"));
+    grown.save_to(&path).unwrap();
+    let after = Accounts::switch_in(&path, "b2").unwrap();
+    assert_eq!(after.accounts.len(), 4);
+    assert_eq!(after.selected.as_deref(), Some("b2"));
+}
+
 #[test]
 fn play_as_picks_a_signed_in_account() {
     let mut a = Accounts {

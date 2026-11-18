@@ -34,6 +34,8 @@ pub(crate) enum Sheet {
     Worlds,
     /// One build to keep, picked from all of them (`versions`).
     Versions,
+    /// Who plays, under the account chip (`account_chip`).
+    AccountMenu,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -246,7 +248,32 @@ pub(crate) fn title(text: String) -> Div {
         .child(text)
 }
 
+/// Moves the keyboard to the next Tab stop inside the layer that `focus` holds, or the one
+/// before it (`back`); the page's own stops are passed over.
+fn step_inside(focus: &FocusHandle, back: bool, window: &mut Window, cx: &mut App) {
+    for _ in 0..TAB_STOPS {
+        if back {
+            window.focus_prev(cx);
+        } else {
+            window.focus_next(cx);
+        }
+        if focus.contains_focused(window, cx) {
+            break;
+        }
+    }
+    if !focus.contains_focused(window, cx) {
+        window.focus(focus, cx);
+    }
+}
+
 impl Launcher {
+    /// The arrow keys in a layer that is a menu: the row below, or the one above (`back`).
+    pub(crate) fn step_in_layer(&self, back: bool, window: &mut Window, cx: &mut App) {
+        if let Some(focus) = &self.ui.sheets.focus {
+            step_inside(focus, back, window, cx);
+        }
+    }
+
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
         self.ui.sheets.error = None;
@@ -461,20 +488,7 @@ impl Launcher {
                     if ev.keystroke.key != "tab" {
                         return;
                     }
-                    // The next stop that is inside the layer; the page's own are passed over.
-                    for _ in 0..TAB_STOPS {
-                        if ev.keystroke.modifiers.shift {
-                            window.focus_prev(cx);
-                        } else {
-                            window.focus_next(cx);
-                        }
-                        if focus.contains_focused(window, cx) {
-                            break;
-                        }
-                    }
-                    if !focus.contains_focused(window, cx) {
-                        window.focus(&focus, cx);
-                    }
+                    step_inside(&focus, ev.keystroke.modifiers.shift, window, cx);
                     cx.stop_propagation();
                 })
                 .into_any_element(),
@@ -494,6 +508,7 @@ impl Launcher {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
+            Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Worlds) => {
                 let sheet = self.world_pick_sheet(cx);
                 if sheet.is_none() {
