@@ -390,6 +390,8 @@ pub(super) struct Row {
     pub(super) version: String,
     pub(super) on: bool,
     pub(super) need: Option<Need>,
+    /// A browser-installed mod whose registry status couldn't be checked this run.
+    pub(super) registry_unchecked: bool,
     /// The version an update would install.
     pub(super) update: Option<String>,
     /// Installed because another mod needed it.
@@ -436,7 +438,9 @@ pub(super) fn mark_left_out(
         else {
             continue;
         };
-        row.need = None;
+        if !matches!(row.need, Some(Need::TakenDown(_))) {
+            row.need = None;
+        }
         match l.why {
             native_mods::Why::Unfit(_) | native_mods::Why::OtherVersion => {
                 let detail = l.detail.clone().unwrap_or_default();
@@ -728,13 +732,14 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 .zip(p)
                 .and_then(|(i, p)| newer(i, p, &e.version, w.game));
             Some(Row {
+                title: p.map_or_else(|| id.clone(), |p| p.name.clone()),
                 id,
-                title: e.title.clone(),
                 authors: p.map(|p| p.authors.join(", ")).unwrap_or_default(),
                 make,
                 version: e.number.clone(),
                 on,
                 need,
+                registry_unchecked: w.index.is_none(),
                 update,
                 dependency: e.dependency,
                 pinned: w.chosen.contains_key(&e.project),
@@ -761,6 +766,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             version: l.version.clone(),
             on,
             need,
+            registry_unchecked: false,
             update: None,
             dependency: false,
             pinned: false,

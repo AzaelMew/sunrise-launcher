@@ -262,7 +262,7 @@ impl Launcher {
             match confirm {
                 Confirm::Remove(chosen) => {
                     let ids: HashSet<String> = chosen.iter().map(|(id, ..)| id.clone()).collect();
-                    let index = sunrise::known_index();
+                    let index = sunrise::fetched_index();
                     let dependents = model::dependents(&rows, &ids, index.as_deref());
                     let names = chosen.iter().map(|(_, _, t)| t.as_str()).take(12).collect::<Vec<_>>().join(", ");
                     let more = chosen.len().saturating_sub(12);

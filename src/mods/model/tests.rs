@@ -249,6 +249,33 @@ fn rows_put_what_needs_the_player_first_then_updates_then_the_rest() {
 }
 
 #[test]
+fn registry_installed_rows_use_live_names_and_statuses_or_ids_and_not_checked() {
+    let (idx, mut entries) = pack();
+    let bad = entries.iter_mut().find(|e| e.project == "bad").unwrap();
+    bad.title = "Unverified saved name".into();
+    let none = HashSet::new();
+    let live = world(&idx, &none, &none, true);
+    let row = rows(std::slice::from_ref(bad), &live).pop().unwrap();
+    assert_eq!(row.title, "BAD");
+    assert_eq!(row.authors, "Someone");
+    assert_eq!(row.need, Some(Need::TakenDown("unsafe".into())));
+    assert_eq!(row.update.as_deref(), Some("2.0.0"));
+    assert!(!row.registry_unchecked);
+
+    let offline = World {
+        index: None,
+        ..live
+    };
+    let row = rows(std::slice::from_ref(bad), &offline).pop().unwrap();
+    assert_eq!(row.title, row.id);
+    assert!(row.authors.is_empty());
+    assert!(row.icon.is_none());
+    assert!(row.need.is_none());
+    assert!(row.update.is_none());
+    assert!(row.registry_unchecked);
+}
+
+#[test]
 fn native_code_that_is_on_without_permission_says_so_instead_of_asking_to_build() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["deep".to_string()].into();

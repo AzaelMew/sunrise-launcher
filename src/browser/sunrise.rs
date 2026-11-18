@@ -81,8 +81,8 @@ pub fn known_index() -> Option<Arc<Index>> {
     LOADED.lock().unwrap().as_ref().map(|l| l.index.clone())
 }
 
-/// [`known_index`], only when the registry answered with it in this run: None for the copy kept
-/// in the game folder. What decides whether a file on disk is the registry's asks this one.
+/// [`known_index`], only when the registry answered over HTTPS in this run: neither the local
+/// test registry nor the game-folder cache can vouch for a file or a takedown decision.
 pub fn fetched_index() -> Option<Arc<Index>> {
     LOADED.lock().unwrap().as_ref().and_then(Loaded::fetched)
 }
@@ -132,7 +132,8 @@ pub fn github_stars(id: &str) -> Option<u64> {
 /// The index: the one fetched in the last ten minutes, else fetched again (and kept in the game
 /// folder), else the copy kept last time.
 pub fn index() -> Result<Arc<Index>, String> {
-    if location().is_empty() {
+    let at = location();
+    if at.is_empty() {
         return Err("The Sunrise mod registry is not available yet.".into());
     }
     if let Some(loaded) = LOADED.lock().unwrap().as_ref() {
@@ -141,7 +142,8 @@ pub fn index() -> Result<Arc<Index>, String> {
         }
     }
     let cache = crate::backend::game_home().join(CACHE);
-    let loaded = load(fetch_index(), &cache, local())?;
+    let local = !at.starts_with("https://");
+    let loaded = load(fetch_index(&at, local), &cache, local)?;
     let index = loaded.index.clone();
     *LOADED.lock().unwrap() = Some(loaded);
     Ok(index)
@@ -160,7 +162,7 @@ fn load(
                 let _ = fs::create_dir_all(dir);
             }
             let _ = fs::write(cache, text);
-            (index, true)
+            (index, !local)
         }
         Err(e) => {
             let kept = fs::read_to_string(cache).map_err(|_| e.clone())?;
@@ -179,29 +181,36 @@ fn load(
     })
 }
 
-fn fetch_index() -> Result<(Index, String), String> {
+fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     use std::io::Read;
-    let at = location();
-    let text = if at.starts_with("https://") {
-        let response = download::agent(&at).get(&at).call().map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
-            ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
-        })?;
-        let mut text = String::new();
-        response
-            .into_reader()
-            .take(MAX_INDEX)
-            .read_to_string(&mut text)
-            .map_err(|e| e.to_string())?;
-        text
-    } else {
-        fs::read_to_string(&at).map_err(|e| format!("{at}: {e}"))?
-    };
-    let index = match local() {
-        true => Index::parse_local(&text)?,
-        false => Index::parse(&text)?,
-    };
-    Ok((index, text))
+    if local {
+        let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
+        return Ok((Index::parse_local(&text)?, text));
+    }
+    let spec = crate::proxy::spec_for(at);
+    let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
+        let builder = ureq::AgentBuilder::new()
+            .https_only(true)
+            .timeout(Duration::from_secs(10));
+        match proxy {
+            Some(proxy) => builder.proxy(proxy).build(),
+            None => builder.build(),
+        }
+    });
+    let response = agent.get(at).call().map_err(|e| match e {
+        ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
+        ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
+    })?;
+    let mut text = String::new();
+    response
+        .into_reader()
+        .take(MAX_INDEX + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    if text.len() as u64 > MAX_INDEX {
+        return Err("The mod registry index is too large.".into());
+    }
+    Ok((Index::parse(&text)?, text))
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -1118,14 +1127,8 @@ pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
 
 /// Turns the registry's files that were taken down off in the game folder `home`, and says
 /// which. Their files stay, so the player sees them and can remove them.
-pub fn turn_off_revoked(index: &Index, home: &Path) -> Vec<String> {
-    let _lock = match crate::browser::lock_home(home) {
-        Ok(guard) => guard,
-        Err(e) => {
-            eprintln!("Cannot lock mod browser in {}: {e}", home.display());
-            return Vec::new();
-        }
-    };
+pub fn turn_off_revoked(index: &Index, home: &Path) -> Result<Vec<String>, String> {
+    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for e in installed::Installed::load(home).entries {
         let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
@@ -1136,7 +1139,8 @@ pub fn turn_off_revoked(index: &Index, home: &Path) -> Vec<String> {
             continue;
         };
         if let (Kind::Mod, Some(id)) = (e.kind, mod_id(&e)) {
-            if mod_list::is_enabled(home, id) && mod_list::set_enabled(home, id, false).is_ok() {
+            if mod_list::is_enabled(home, id) {
+                mod_list::set_enabled(home, id, false)?;
                 out.push(format!(
                     "{} was taken down and is off: {}",
                     e.title, r.reason
@@ -1149,36 +1153,76 @@ pub fn turn_off_revoked(index: &Index, home: &Path) -> Vec<String> {
             ));
         }
     }
-    out
+    Ok(out)
 }
 
-/// Before the game starts: registry files taken down are turned off, by the index kept last
-/// time (no waiting on the network), and the index is fetched again in the background for the
-/// next start. Nothing happens when nothing came from the registry.
-pub fn before_play(home: &Path) {
-    let from_registry = installed::Installed::load(home)
-        .entries
-        .iter()
-        .any(|e| e.source == SourceId::Sunrise);
-    if !from_registry {
-        return;
+/// Check the actual launch profile, after its folder has been applied and before starting it.
+/// May contact the registry. A failed fetch permits play with a notice, not a clean verdict.
+pub fn before_play(
+    cmd: &mut std::process::Command,
+    tag: &str,
+    launch: &crate::launch::Launch,
+) -> Result<Vec<String>, String> {
+    use sunrise_launcher_smod::selection::LaunchArguments;
+
+    crate::launch::apply_environment(cmd, launch);
+    let args = LaunchArguments::for_command(cmd).map_err(|e| e.to_string())?;
+    if args.is_information_request() {
+        return Ok(Vec::new());
     }
-    let kept = fs::read_to_string(crate::backend::game_home().join(CACHE)).ok();
-    let parse = |t: String| match local() {
-        true => Index::parse_local(&t).ok(),
-        false => Index::parse(&t).ok(),
+    let included = crate::native_status::included(tag)?;
+    // The mod list lives with the game’s packages, not the separate cache/data home.
+    check_before_play(&args.context.game_dir, &included, || {
+        index().ok()?;
+        fetched_index()
+    })
+}
+
+fn check_before_play(
+    home: &Path,
+    included: &[crate::native_status::Included],
+    load: impl FnOnce() -> Option<Arc<Index>>,
+) -> Result<Vec<String>, String> {
+    let entries = installed::Installed::load(home).entries;
+    if included.is_empty() && !entries.iter().any(|e| e.source == SourceId::Sunrise) {
+        return Ok(Vec::new());
+    }
+    let Some(index) = load() else {
+        return Ok(vec![
+            tr("Mods were not checked for registry takedowns.").into()
+        ]);
     };
-    if let Some(index) = kept.and_then(parse) {
-        for line in turn_off_revoked(&index, home) {
-            eprintln!("{line}");
+    let lines = turn_off_revoked(&index, home)?;
+    // Switching the mod off in this profile cannot remove code from the selected binary.
+    for crate::native_status::Included { id, version } in included {
+        let published = index
+            .project(id)
+            .and_then(|p| p.versions.iter().find(|v| &v.version == version));
+        let installed_hash = entries.iter().find_map(|e| {
+            (e.source == SourceId::Sunrise && &e.project == id && &e.version == version)
+                .then(|| e.checksum.strip_prefix("SHA-256:"))
+                .flatten()
+        });
+        let revoked = index
+            .revoked(id, "")
+            .or_else(|| published.and_then(|v| index.revoked(id, &v.file.sha256)))
+            .or_else(|| installed_hash.and_then(|hash| index.revoked(id, hash)));
+        if let Some(revoked) = revoked {
+            return Err(trf(
+                "This build includes a mod the registry took down. Choose another game build.\n{mod}: {reason}",
+                &[("mod", id), ("reason", &revoked.reason)],
+            ));
+        }
+        if published.is_none() && index.revoked.iter().any(|r| &r.id == id) {
+            // Older builds don't record the registry file's hash. Once a version disappears
+            // from the index, an installed file with the same id can't prove what was baked in.
+            return Err(trf(
+                "This build cannot rule out a mod the registry took down. Choose another game build.\nMod: {mod}",
+                &[("mod", id)],
+            ));
         }
     }
-    let home = home.to_owned();
-    std::thread::spawn(move || {
-        if let Ok(index) = index() {
-            turn_off_revoked(&index, &home);
-        }
-    });
+    Ok(lines)
 }
 
 pub mod auto;

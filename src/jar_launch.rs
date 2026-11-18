@@ -7,6 +7,7 @@ use std::{
 };
 use sunrise_launcher::{
     backend::Msg,
+    browser::sunrise,
     i18n::{tr, trf},
     jars::{self, Permission},
     launch::{self, Launch},
@@ -15,6 +16,7 @@ use sunrise_launcher_smod::manifest::JarRef;
 
 pub fn client(
     mut command: Command,
+    tag: String,
     launch: Launch,
     run: Option<String>,
     account: Option<String>,
@@ -22,15 +24,20 @@ pub fn client(
     tx: Sender<Msg>,
 ) {
     std::thread::spawn(move || {
-        let prepared = with_consent(&tx, |permission| {
-            jars::prepare_launch(&mut command, &launch, permission)
-        })
-        .map_err(|error| error.to_string())
-        .and_then(|()| launch::wrap(command, &launch));
+        let mut registry_notices = Vec::new();
+        let prepared = sunrise::before_play(&mut command, &tag, &launch).and_then(|notices| {
+            registry_notices = notices;
+            with_consent(&tx, |permission| {
+                jars::prepare_launch(&mut command, &launch, permission)
+            })
+            .map_err(|error| error.to_string())?;
+            launch::wrap(command, &launch)
+        });
         if let Err(mpsc::SendError(Msg::JarClient { session_file, .. })) = tx.send(Msg::JarClient {
             run,
             account,
             session_file,
+            registry_notices,
             prepared: Box::new(prepared),
         }) {
             sunrise_launcher::account::discard_launch_session(session_file);

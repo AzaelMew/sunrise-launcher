@@ -98,12 +98,23 @@ impl Launcher {
                     run,
                     account: accepted,
                     session_file,
+                    registry_notices,
                     prepared,
                 } => {
                     let Some(tag) = self.starting_client.take() else {
                         account::discard_launch_session(session_file);
                         continue;
                     };
+                    if !registry_notices.is_empty() {
+                        crate::glass_toast::say(registry_notices.join("\n"));
+                        for notice in registry_notices {
+                            console_page::keep_line(
+                                &mut self.prepare_log,
+                                &mut self.log_revision,
+                                notice,
+                            );
+                        }
+                    }
                     let started = prepared.and_then(|cmd| {
                         self.accounts = Accounts::load();
                         if let Some(uuid) = accepted.as_deref() {

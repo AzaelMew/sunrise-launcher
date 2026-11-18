@@ -42,6 +42,7 @@ pub enum Msg {
         run: Option<String>,
         account: Option<String>,
         session_file: Option<PathBuf>,
+        registry_notices: Vec<String>,
         prepared: Box<Result<Command, String>>,
     },
     /// Where the native-mods build is.

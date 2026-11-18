@@ -565,7 +565,7 @@ fn installs_checked_turns_on_and_removes() {
         reason: "Test.".into(),
         date: String::new(),
     });
-    let said = turn_off_revoked(&revoked, &home);
+    let said = turn_off_revoked(&revoked, &home).unwrap();
     assert_eq!(said, ["Coordinates HUD was taken down and is off: Test."]);
     assert_eq!(
         fs::read_to_string(home.join("sunrise-mods.txt")).unwrap(),
@@ -576,6 +576,87 @@ fn installs_checked_turns_on_and_removes() {
     assert!(!home.join("sunrise-mods/coords_hud.smod").exists());
     assert!(installed::Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    let cache = home.join(CACHE);
+    put(&sample(), true, home).unwrap();
+    let text = fs::read_to_string(fixtures().join("index-v1.json")).unwrap();
+    fs::create_dir_all(cache.parent().unwrap()).unwrap();
+    fs::write(&cache, &text).unwrap();
+    let offline = load(Err("offline".into()), &cache, false).unwrap();
+    assert!(offline.index.project("coords_hud").is_some());
+    assert!(offline.fetched().is_none());
+    assert_eq!(
+        check_before_play(home, &[], || offline.fetched()).unwrap(),
+        ["Mods were not checked for registry takedowns."]
+    );
+    assert!(mod_list::is_enabled(home, "coords_hud"));
+
+    let mut index = Index::parse(&text).unwrap();
+    index.revoked.push(index::Revoked {
+        id: "coords_hud".into(),
+        sha256: None,
+        reason: "Test.".into(),
+        date: String::new(),
+    });
+    let text = serde_json::to_string(&index).unwrap();
+    let local = load(Ok((index.clone(), text.clone())), &cache, true).unwrap();
+    assert!(local.fetched().is_none());
+    assert_eq!(
+        check_before_play(home, &[], || local.fetched()).unwrap(),
+        ["Mods were not checked for registry takedowns."]
+    );
+    assert!(mod_list::is_enabled(home, "coords_hud"));
+
+    let live = load(Ok((index, text)), &cache, false).unwrap();
+    assert!(live.fetched().is_some());
+    assert_eq!(
+        check_before_play(home, &[], || live.fetched()).unwrap(),
+        ["Coordinates HUD was taken down and is off: Test."]
+    );
+    assert!(!mod_list::is_enabled(home, "coords_hud"));
+}
+
+#[test]
+fn registry_play_refuses_a_taken_down_mod_baked_into_a_build() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    let cache = home.join(CACHE);
+    let mut index = sample();
+    let version = index.project("coords_hud").unwrap().versions[0].clone();
+    index.revoked.push(index::Revoked {
+        id: "coords_hud".into(),
+        sha256: Some(version.file.sha256),
+        reason: "Test.".into(),
+        date: String::new(),
+    });
+    let built = [crate::native_status::Included {
+        id: "coords_hud".into(),
+        version: version.version,
+    }];
+    let loaded = |index: Index| {
+        let text = serde_json::to_string(&index).unwrap();
+        load(Ok((index, text)), &cache, false).unwrap().fetched()
+    };
+    // Even if the installed-list entry and the enable flag are already gone, the build holds it.
+    let error = check_before_play(home, &built, || loaded(index.clone())).unwrap_err();
+    assert!(
+        error.contains("includes a mod the registry took down"),
+        "{error}"
+    );
+    let p = index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "coords_hud")
+        .unwrap();
+    p.versions.clear();
+    // Old builds don't record the registry hash. An unlisted version cannot rule it out.
+    let error = check_before_play(home, &built, || loaded(index)).unwrap_err();
+    assert!(error.contains("cannot rule out a mod"), "{error}");
 }
 
 #[test]
@@ -629,7 +710,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
         reason: "Test.".into(),
         date: String::new(),
     });
-    let said = turn_off_revoked(&revoked, &home);
+    let said = turn_off_revoked(&revoked, &home).unwrap();
     assert_eq!(said, ["Soft Glow was taken down: Test. Remove it."]);
 
     installed::remove(&home, "glow").unwrap();

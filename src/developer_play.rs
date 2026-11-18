@@ -94,9 +94,10 @@ impl Launcher {
             self.client_vars = instance.as_ref().map(|i| i.vars()).unwrap_or_default();
             cmd.envs(self.client_vars.iter().map(|(k, v)| (k, v)));
             let launch = instance.map(|i| i.launch).unwrap_or_default();
-            self.starting_client = Some(tag);
+            self.starting_client = Some(tag.clone());
             jar_launch::client(
                 cmd,
+                tag,
                 launch,
                 run,
                 intent.account,
