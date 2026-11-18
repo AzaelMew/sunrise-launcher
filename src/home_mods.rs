@@ -23,6 +23,38 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
+    const ALL: [Kind; 3] = [Kind::Mod, Kind::Resource, Kind::Shader];
+
+    pub(crate) fn of(pack: PackKind) -> Kind {
+        match pack {
+            PackKind::Resource => Kind::Resource,
+            PackKind::Shader => Kind::Shader,
+        }
+    }
+
+    /// Where the ones of this kind that are turned off are listed.
+    pub(crate) fn turned_off(self) -> crate::mods::Installed {
+        use crate::mods::Installed;
+        match self {
+            Kind::Mod => Installed::ModsOff,
+            Kind::Resource => Installed::Shelf(PackKind::Resource),
+            Kind::Shader => Installed::Shelf(PackKind::Shader),
+        }
+    }
+
+    /// "2 mods", for the line that counts what is turned off.
+    fn counted(self, count: usize) -> String {
+        let (one, many) = match self {
+            Kind::Mod => ("1 mod", "{count} mods"),
+            Kind::Resource => ("1 resource pack", "{count} resource packs"),
+            Kind::Shader => ("1 shader pack", "{count} shader packs"),
+        };
+        match count {
+            1 => tr(one).to_string(),
+            _ => trf(many, &[("count", &count.to_string())]),
+        }
+    }
+
     /// What a row says under the name.
     fn label(self) -> &'static str {
         match self {
@@ -64,25 +96,12 @@ pub(crate) struct Item {
     pub on: bool,
 }
 
-/// What the column lists: the items that are on, in the order given, and how many are off.
+/// What the column lists: the items that are on, in the order given, and how many of each
+/// kind are off.
 pub(crate) struct Column {
     pub shown: Vec<Item>,
-    pub mods_off: usize,
-    pub packs_off: usize,
-}
-
-impl Column {
-    pub(crate) fn off(&self) -> usize {
-        self.mods_off + self.packs_off
-    }
-
-    /// Where "N turned off" leads: the mods that are off, or the packs when only packs are.
-    pub(crate) fn off_page(&self) -> Page {
-        match self.mods_off {
-            0 => Page::Packs,
-            _ => Page::Installed,
-        }
-    }
+    /// By kind, as [`Kind::ALL`] orders them.
+    pub off: [usize; 3],
 }
 
 /// The column for a profile with `items` installed; `None` when it has nothing at all.
@@ -90,15 +109,8 @@ pub(crate) fn column(items: Vec<Item>) -> Option<Column> {
     if items.is_empty() {
         return None;
     }
-    let off = |mods: bool| {
-        items
-            .iter()
-            .filter(|i| !i.on && (i.kind == Kind::Mod) == mods)
-            .count()
-    };
     Some(Column {
-        mods_off: off(true),
-        packs_off: off(false),
+        off: Kind::ALL.map(|kind| items.iter().filter(|i| !i.on && i.kind == kind).count()),
         shown: items.into_iter().filter(|i| i.on).collect(),
     })
 }
@@ -149,10 +161,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     }));
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
-        kind: match pack.kind {
-            PackKind::Resource => Kind::Resource,
-            PackKind::Shader => Kind::Shader,
-        },
+        kind: Kind::of(pack.kind),
         picture: Picture::Image(pack.icon.map(image)),
         open: Open::Pack(pack.kind, pack.title.clone()),
         on: pack.enabled,
@@ -474,29 +483,37 @@ impl Launcher {
                     );
                 }
                 let mut rows = div().flex().flex_col().gap(px(4.)).child(place(rows));
-                let off = column.off();
-                if off > 0 {
-                    let page = column.off_page();
-                    let label = match off {
-                        1 => tr("1 turned off").to_string(),
-                        _ => trf("{count} turned off", &[("count", &off.to_string())]),
-                    };
-                    rows = rows.child(
-                        div().flex().mt(px(4.)).px(px(6.)).child(
-                            link("alt-home-mods-off", label)
+                // What is off is counted by kind, each count leading to where those are listed.
+                if column.off.iter().any(|&count| count > 0) {
+                    let mut line = div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_x(px(10.))
+                        .gap_y(px(4.))
+                        .mt(px(4.))
+                        .px(px(6.))
+                        .child(muted(tr("Turned off:")));
+                    for (kind, count) in Kind::ALL.into_iter().zip(column.off) {
+                        if count == 0 {
+                            continue;
+                        }
+                        let id = match kind {
+                            Kind::Mod => "alt-home-off-mods",
+                            Kind::Resource => "alt-home-off-resource",
+                            Kind::Shader => "alt-home-off-shader",
+                        };
+                        line = line.child(
+                            link(id, kind.counted(count))
                                 .text_color(rgb(palette().muted))
                                 .hover(|s| s.text_color(rgb(palette().text)))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    match page {
-                                        Page::Installed => {
-                                            this.open_installed(crate::mods::Installed::ModsOff)
-                                        }
-                                        _ => this.navigate(page),
-                                    }
+                                    this.open_installed(kind.turned_off());
                                     cx.notify();
                                 })),
-                        ),
-                    );
+                        );
+                    }
+                    rows = rows.child(line);
                 }
                 rows
             }
@@ -536,26 +553,28 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(names(&column), ["Lanternlight", "Quiet Rain", "Soft Edges"]);
-        assert_eq!((column.mods_off, column.packs_off, column.off()), (1, 2, 3));
-        // The line leads to the mods that are off when any mod is.
-        assert!(column.off_page() == Page::Installed);
+        assert_eq!(column.off, [1, 1, 1], "mods, resource packs, shader packs");
     }
 
     #[test]
-    fn nothing_off_says_nothing_and_only_packs_off_leads_to_packs() {
+    fn each_kind_that_is_off_is_counted_and_leads_to_its_own_list() {
+        use crate::mods::Installed;
         let all_on = column(vec![
             item("Lanternlight", Kind::Mod, true),
             item("Soft Edges", Kind::Resource, true),
         ])
         .unwrap();
-        assert_eq!((all_on.shown.len(), all_on.off()), (2, 0));
-        let packs = column(vec![
+        assert_eq!((all_on.shown.len(), all_on.off), (2, [0, 0, 0]));
+        // Only a shader pack is off: it is counted as one, not as a mod.
+        let shader = column(vec![
             item("Lanternlight", Kind::Mod, true),
             item("Evening Glow", Kind::Shader, false),
         ])
         .unwrap();
-        assert_eq!(packs.off(), 1);
-        assert!(packs.off_page() == Page::Packs);
+        assert_eq!(shader.off, [0, 0, 1]);
+        assert!(Kind::Mod.turned_off() == Installed::ModsOff);
+        assert!(Kind::Resource.turned_off() == Installed::Shelf(PackKind::Resource));
+        assert!(Kind::Shader.turned_off() == Installed::Shelf(PackKind::Shader));
     }
 
     #[test]
@@ -567,7 +586,7 @@ mod tests {
         ])
         .unwrap();
         assert!(all_off.shown.is_empty());
-        assert_eq!(all_off.off(), 2);
+        assert_eq!(all_off.off, [1, 1, 0]);
     }
 
     #[test]
@@ -668,7 +687,7 @@ mod tests {
             on(&shown),
             [("Lanternlight", true), ("Soft Edges.zip", true)]
         );
-        assert_eq!(column(shown.to_vec()).unwrap().off(), 0);
+        assert_eq!(column(shown.to_vec()).unwrap().off, [0, 0, 0]);
         // Nothing moved: the watch sees the stamp it knows, and a check reads nothing.
         assert_eq!(stamp(&home), kept.stamp);
         assert!(read_changed(&home, &kept.stamp).is_none());
@@ -687,7 +706,7 @@ mod tests {
             [("Lanternlight", true), ("Soft Edges.zip", false)]
         );
         let column = column(shown.to_vec()).unwrap();
-        assert_eq!((column.shown.len(), column.off()), (1, 1));
+        assert_eq!((column.shown.len(), column.off), (1, [0, 1, 0]));
 
         // `sunrise-launcher mods disable`, the same way.
         mod_list::set_enabled(&home, "lanternlight", false).unwrap();
