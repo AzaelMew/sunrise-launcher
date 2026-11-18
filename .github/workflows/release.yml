@@ -311,6 +311,18 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/${{ env.LAUNCHER_PREFIX }}-*
+      - name: The release record (tag, version and commit) for the game repository's bridge
+        env:
+          TAG: ${{ needs.decide.outputs.tag }}
+          VERSION: ${{ needs.decide.outputs.version }}
+        run: |
+          jq -n --arg tag "$TAG" --arg version "$VERSION" --arg commit "$GITHUB_SHA" '{tag: $tag, version: $version, commit: $commit}' > "$RUNNER_TEMP/release-record.json"
+      # One attestation binds the whole release: every file name and SHA-256 in SHA256SUMS, for this tag at this commit; the bridge signs nothing else.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+          predicate-type: https://playsunrise.net/attestation/launcher-release/v1
+          predicate-path: ${{ runner.temp }}/release-record.json
       - name: Tag ${{ needs.decide.outputs.tag }} at the built commit, never an existing tag
         env:
           GH_TOKEN: ${{ github.token }}
