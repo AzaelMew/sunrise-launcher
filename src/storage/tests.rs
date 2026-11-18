@@ -110,6 +110,58 @@ fn refuses_linked_ancestor_and_descendant_before_deletion() {
     assert!(storage.clear(BuildCache::Source).is_err());
 }
 
+/// The game's prepare step fills an instance's mod-content cache with links into the installed
+/// build. They are the cache's normal shape: nothing to count, removed as links, targets kept.
+#[cfg(unix)]
+#[test]
+fn links_into_an_installed_build_count_as_nothing_and_are_removed_as_links() {
+    use std::os::unix::fs::symlink;
+    let home = Home::new();
+    let build = crate::backend::data_dir()
+        .join("versions")
+        .join(home.0.file_name().unwrap());
+    fs::create_dir_all(build.join("prepared/assets")).unwrap();
+    fs::write(build.join("prepared/asset-index.json"), vec![7; 1 << 20]).unwrap();
+    fs::write(build.join("prepared/assets/texture"), b"texture").unwrap();
+    home.seed("cache/mod-content/e677/own");
+    let cache = home.0.join("cache");
+    let before = allocated_bytes(&cache).unwrap();
+    let entry = cache.join("mod-content/e677");
+    symlink(
+        build.join("prepared/asset-index.json"),
+        entry.join("asset-index.json"),
+    )
+    .unwrap();
+    symlink(build.join("prepared/assets"), entry.join("assets")).unwrap();
+    assert!(allocated_bytes(&cache).unwrap() < before + (1 << 20));
+    let storage = Storage::at(&home.0).unwrap();
+    Storage::clear_entry(&storage.directory, &storage.directory, Path::new("cache")).unwrap();
+    for name in ["own", "asset-index.json", "assets"] {
+        assert!(fs::symlink_metadata(entry.join(name)).is_err(), "{name}");
+    }
+    assert!(build.join("prepared/asset-index.json").exists());
+    assert!(build.join("prepared/assets/texture").exists());
+    // A link that only passes through the build, or leaves the launcher's builds, is refused.
+    let kept = home.seed("cache/kept");
+    home.seed("worlds/keep");
+    for target in [
+        home.0.join("worlds"),
+        build.join("../../../worlds"),
+        PathBuf::from("prepared"),
+    ] {
+        symlink(&target, cache.join("bad")).unwrap();
+        assert!(matches!(allocated_bytes(&cache), Err(Error::Unsafe(_))));
+        assert!(matches!(
+            Storage::clear_entry(&storage.directory, &storage.directory, Path::new("cache")),
+            Err(Error::Unsafe(_))
+        ));
+        assert!(kept.exists());
+        fs::remove_file(cache.join("bad")).unwrap();
+    }
+    assert!(home.0.join("worlds/keep").exists());
+    fs::remove_dir_all(build).unwrap();
+}
+
 #[test]
 fn read_only_file_can_be_removed() {
     let home = Home::new();

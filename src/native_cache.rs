@@ -49,6 +49,25 @@ impl From<sunrise_launcher_smod::runtime_leases::Error> for Error {
     }
 }
 
+/// Whether `target` is where a link the game's prepare step leaves in a cache points: into an
+/// installed build under the launcher's own `versions/`. Such a link is counted as nothing and
+/// removed as the link itself. Its target is never opened, so the test is on the written path
+/// alone, and every other link is refused as before.
+pub(crate) fn known_link(target: &Path) -> bool {
+    if !target.is_absolute()
+        || target
+            .components()
+            .any(|part| matches!(part, std::path::Component::ParentDir))
+    {
+        return false;
+    }
+    let versions = crate::backend::data_dir().join("versions");
+    target.starts_with(&versions)
+        || versions.canonicalize().is_ok_and(|canonical| {
+            target.starts_with(&canonical) || target.starts_with(crate::backend::plain(canonical))
+        })
+}
+
 fn lock(path: &Path) -> Result<Locked, Error> {
     checked(path, false)?;
     let file = File::options()

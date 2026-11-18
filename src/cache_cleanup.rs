@@ -4,7 +4,7 @@
 //! each file's removal. A late Cargo either blocks deletion or starts after it has completed.
 //! Only snapshotted files are selected. Same-user swaps inside caches are not a security boundary.
 pub use crate::native_cache::Error;
-use crate::native_cache::{locked, LockMode, Locked};
+use crate::native_cache::{known_link, locked, LockMode, Locked};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -172,6 +172,14 @@ pub struct Plan {
     outputs: Vec<PathBuf>,
 }
 
+/// A link is kept in a plan only when it is one the game leaves here (`known_link`); clearing
+/// removes the link itself and never opens what it points at.
+fn known(directory: &Dir, name: &Path) -> bool {
+    directory
+        .read_link_contents(name)
+        .is_ok_and(|target| known_link(&target))
+}
+
 fn exists(directory: &Dir, name: &str) -> Result<bool, Error> {
     match directory.symlink_metadata(name) {
         Ok(_) => Ok(true),
@@ -257,11 +265,13 @@ impl Plan {
                 continue;
             }
             let meta = directory.symlink_metadata(&name)?;
-            if meta.file_type().is_symlink() {
-                return Err(Error::Unsafe(name));
-            }
             let path = relative.join(&name);
-            if meta.is_dir() {
+            if meta.file_type().is_symlink() {
+                if !known(directory, &name) {
+                    return Err(Error::Unsafe(name));
+                }
+                self.outputs.push(path);
+            } else if meta.is_dir() {
                 self.visit(&directory.open_dir_nofollow(&name)?, &path, observe)?;
             } else if meta.is_file() {
                 self.outputs.push(path);
@@ -302,7 +312,9 @@ impl Plan {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error.into()),
             };
-            if !meta.is_file() {
+            let link = meta.file_type().is_symlink();
+            // Pinned as a file or as a known link; whatever else stands here now is left alone.
+            if !(meta.is_file() || link && known(&parent, file)) {
                 continue;
             }
             let name = format!(
@@ -331,7 +343,11 @@ impl Plan {
                     .open_with(&name, &options)?
                     .set_permissions(permissions)?;
             }
-            trash.remove_file(&name)?;
+            // A link to a folder is itself a folder entry on Windows.
+            match trash.remove_file(&name) {
+                Err(_) if link && cfg!(windows) => trash.remove_dir(&name)?,
+                result => result?,
+            }
         }
         Ok(())
     }
@@ -370,6 +386,9 @@ fn contains_operational_locks(directory: &Dir) -> Result<bool, Error> {
         }
         let meta = directory.symlink_metadata(&name)?;
         if meta.file_type().is_symlink() {
+            if known(directory, &name) {
+                continue;
+            }
             return Err(Error::Unsafe(name));
         }
         if meta.is_dir() && contains_operational_locks(&directory.open_dir_nofollow(&name)?)? {
