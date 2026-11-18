@@ -27,6 +27,7 @@ pub(super) enum Page {
 pub(super) struct State {
     pub page: Page,
     pub home: crate::home::HomeState,
+    pub backdrop: crate::backdrop::Backdrop,
     pub mods: crate::mods::ModsState,
     pub sheet: Option<Sheet>,
     pub sheets: crate::sheets::SheetsState,
@@ -908,9 +909,11 @@ impl Launcher {
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
         self.pictures.free_retired(window);
+        let scenery = self.ui.backdrop.render(&self.settings, &self.theme, window);
         div()
             .relative()
             .size_full()
+            .child(scenery)
             .child(frame)
             .children(titlebar::resize_handles(window))
     }

@@ -5,8 +5,8 @@
 //! text, one accent) under the names of the theme-file contract, for the player's theme and
 //! accent. [`begin`] sets the palette once per frame from the settings and the theme in use;
 //! [`Palette::of`] computes it. The accent the player (or the theme) picked is never changed:
-//! [`Palette::accent`] is that colour, and each role that must read is a separate fit of it, along
-//! its own hue in OKLab (`fit`), so a pale or dark accent keeps its character.
+//! [`Palette::accent`] is that colour, and each role that must read is a separate fit of it, toward
+//! white or black (`fit`), so a pale or dark accent keeps its character.
 //!
 //! Every `u32` is an opaque `0xRRGGBB`, so a field, a menu, a selection or a tooltip reads on
 //! its own, whatever is behind it. Only the plates are see-through: [`Palette::card`] and
@@ -27,7 +27,7 @@ const SCRIM_ALPHAS: std::ops::RangeInclusive<u32> = 45..=75;
 /// The brightest pages a scrim is judged over (`BRIGHT_BACKDROP`, and white).
 const BRIGHT: [u32; 2] = [sunrise_launcher_theme::BRIGHT_BACKDROP, 0xffffff];
 /// The glass plates' own opacity, as the mockup's `.hzl-glass` mixes it (`Glass::new`).
-const PLATE_BASE: f32 = 0.22;
+const PLATE_BASE: f32 = 0.81;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
@@ -91,7 +91,7 @@ impl Inputs {
             night: theme.night,
             accent: theme.accent_choice.rgb(),
             tint: settings.glass_tint(),
-            scenery: settings.scenery(),
+            scenery: settings.scenery() && settings.background.is_none() && !settings.performance(),
         }
     }
 }
@@ -165,7 +165,13 @@ impl Inputs {
         let lighter = n.dark;
         // The theme's own plates with the player's Glass: white (or the light theme's ink)
         // at `tint`.
-        let veil = |plate: u32| over(n.ink, tint, plate);
+        let veil = |plate: u32| {
+            over(
+                n.ink,
+                (tint - sunrise_launcher_theme::glass::TINT).max(0.),
+                plate,
+            )
+        };
         let background = n.page;
         let card_color = veil(n.card);
         let raised = veil(n.card_hi);

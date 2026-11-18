@@ -239,6 +239,13 @@ impl gpui::Render for Coast {
     }
 }
 
+/// A still of Sunrise's original violet coast. Scale the art once on the GPU rather than
+/// generating an animation for every different window size.
+pub fn poster() -> Arc<RenderImage> {
+    let (cols, rows) = (320, 200);
+    bake(&still(&SUNRISE, cols, rows), cols, rows, 1., 1.)
+}
+
 /// A 4×4 ordered dither's threshold at a texel, 0 to 1.
 fn bayer(x: usize, y: usize) -> f32 {
     const M: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];

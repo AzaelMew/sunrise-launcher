@@ -86,3 +86,10 @@ with Microsoft accounts
 The four-square Microsoft symbol in `src/microsoft.rs` reproduces the squares, positions and
 colours of Microsoft's official `ms-symbollockup_mssymbol_19.svg` from that page, unmodified. Microsoft
 and its logo are trademarks of the Microsoft group of companies; Sunrise is not endorsed by Microsoft.
+
+## Dawn meadow
+
+`assets/media/dawn.webp` is a static composite of the Sunrise site's original Dawn sky, sun,
+terrain and grass (`playsunrise.net/art/dawn-*-desktop.webp`), with a reading shade. Artwork by
+the Sunrise contributors, used under the project's asset licence (`assets/LICENSE`). No game
+textures or screenshots are part of the meadow.

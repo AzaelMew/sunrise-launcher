@@ -123,7 +123,7 @@ pub const NORD: Theme = Theme {
 pub const DAWN_DARK: Night = Night {
     sky: [0x1f1a1c, 0x2c2427, 0x3b2f2e, 0x5a4034, 0x8f5e3e, 0xd9935a],
     page: 0x2c2427,
-    side: 0x251f21,
+    side: 0x362c2f,
     card: 0x362c2f,
     card_alpha: 0.88,
     card_hi: 0x43373a,
@@ -136,10 +136,10 @@ pub const DAWN_DARK: Night = Night {
     muted: 0xd2c1b6,
     accent: 0xb4552f,
     accent_hi: 0xf4b98c,
-    on_accent: 0xfff6ec,
-    success: 0x9fd6a0,
-    warn: 0xf2a65e,
-    danger: 0xf6a893,
+    on_accent: 0xffffff,
+    success: 0x9ae2ba,
+    warn: 0xf5cd8b,
+    danger: 0xffb6b0,
     dark: true,
     art: SkyArt {
         sun: [0xfff1d6, 0xf7c9a2, 0xf2a65e],

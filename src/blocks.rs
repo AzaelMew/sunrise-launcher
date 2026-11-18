@@ -13,6 +13,11 @@ pub struct Assets;
 
 impl gpui::AssetSource for Assets {
     fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        if path == "dawn.webp" {
+            return Ok(Some(Cow::Borrowed(include_bytes!(
+                "../assets/media/dawn.webp"
+            ))));
+        }
         if let Some(name) = path
             .strip_prefix("icons/glass/")
             .and_then(|p| p.strip_suffix(".svg"))
@@ -42,8 +47,33 @@ impl gpui::AssetSource for Assets {
 
 /// A pixel icon (`sunrise_launcher_theme::icons`) in `color`.
 pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
+    let glass = match name {
+        "home" => "dashboard-square-01",
+        "package" | "box" | "archive" => "package-01",
+        "server" => "computer",
+        "sliders" => "sliders-horizontal",
+        "play" => "play",
+        "chevron-down" => "arrow-down-01",
+        "chevron-right" => "arrow-right-01",
+        "search" => "search-01",
+        "check" => "tick-02",
+        "user" => "user",
+        "map" => "map",
+        "plus" => "plus-sign",
+        "globe" => "earth",
+        "message" => "chat",
+        "folder" => "folder-01",
+        "close" => "cancel-01",
+        _ => {
+            return svg()
+                .path(format!("icons/{name}.svg"))
+                .flex_none()
+                .size(px(size))
+                .text_color(color)
+        }
+    };
     svg()
-        .path(format!("icons/{name}.svg"))
+        .path(format!("icons/glass/{glass}.svg"))
         .flex_none()
         .size(px(size))
         .text_color(color)
