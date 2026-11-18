@@ -1710,6 +1710,17 @@ pub(super) struct CatState {
     wake: Option<Instant>,
 }
 
+impl CatState {
+    /// The cat is switched off: nothing of it is kept, no timer is due, and the picture it last
+    /// drew is handed back to be dropped.
+    fn switch_off(&mut self) -> Option<Arc<RenderImage>> {
+        self.cat = None;
+        self.seen = None;
+        self.wake = None;
+        self.shown.take().map(|(_, _, _, image)| image)
+    }
+}
+
 impl Launcher {
     /// The empty stretch of the play bar between its text and Play, and the cat when it is out.
     /// The cat is drawn inside this stretch and cut at its edges, under Play, so it comes out
@@ -1743,6 +1754,12 @@ impl Launcher {
                 .absolute()
                 .size_full(),
             );
+        if !self.settings.show_cat() {
+            if let Some(image) = self.ui.cat.switch_off() {
+                let _ = window.drop_image(image);
+            }
+            return (lane, None);
+        }
         let roomy = beside && self.window_width >= ROOM.0 && self.window_height >= ROOM.1;
         let room = if roomy {
             self.ui.cat.lane.get() - UNDER - 6.
@@ -2046,6 +2063,28 @@ mod tests {
         assert!(cat.pose(700. * TABBY_WAYS.pace)[ANGER] > 0.9);
         cat.advance(2800. * TABBY_WAYS.pace + 1.);
         assert_eq!(cat.state, State::Sleep);
+    }
+
+    #[test]
+    fn a_cat_switched_off_keeps_nothing_and_schedules_nothing() {
+        let mut state = CatState {
+            cat: Some(Outing::new(&SIAMESE_WAYS, 1, 0.)),
+            seen: Some(Instant::now()),
+            wake: Some(Instant::now() + Duration::from_secs(5)),
+            shown: Some((
+                rest(State::Sit),
+                1,
+                false,
+                Arc::new(RenderImage::new([image::Frame::new(
+                    image::RgbaImage::new(1, 1),
+                )])),
+            )),
+            ..CatState::default()
+        };
+        assert!(state.switch_off().is_some());
+        assert!(state.cat.is_none() && state.seen.is_none() && state.wake.is_none());
+        assert!(state.shown.is_none());
+        assert!(state.switch_off().is_none());
     }
 
     #[test]

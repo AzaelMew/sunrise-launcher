@@ -762,7 +762,7 @@ enum Cmd {
     /// minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions
     /// on|off, prune-old-versions on|off (delete old versions after an install, keeping the
     /// selected one, the ones instances use and the newest few), keep-versions N (how many of the
-    /// newest to keep; "default" is 2), opening-animation on|off, proxy http://host:port|socks5://host:port
+    /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
     /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
     /// system follows the computer's; a wrong code lists them all), accent
@@ -914,7 +914,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 14] = [
+const SETTING_KEYS: [&str; 15] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -922,6 +922,7 @@ const SETTING_KEYS: [&str; 14] = [
     "prune-old-versions",
     "keep-versions",
     "opening-animation",
+    "cat",
     "game-architecture",
     "proxy",
     "while-playing",
@@ -959,6 +960,7 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
             }
         }
         "opening-animation" => s.skip_opening = !on_off(value)?,
+        "cat" => s.cat = Some(on_off(value)?),
         "game-architecture" => {
             let choice = backend::GameArchitecture::parse(value).ok_or_else(|| {
                 tr("Say auto, x64 or arm64 for the game architecture.").to_string()

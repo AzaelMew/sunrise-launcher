@@ -1133,12 +1133,24 @@ impl Launcher {
         if let Some(why) = refused {
             proxy = proxy.child(warning(why));
         }
+        let cat =
+            row(
+                tr("Show the cat"),
+                "",
+                div().child(switch("alt-cat-toggle", self.settings.show_cat()).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.settings.cat = Some(!this.settings.show_cat());
+                        this.save_settings();
+                        cx.notify();
+                    }),
+                )),
+            );
         let version = self.launcher_update_row(cx);
         div()
             .flex()
             .flex_col()
             .gap(px(14.))
-            .child(group(vec![language]))
+            .child(group(vec![language, cat]))
             .child(group(vec![proxy]))
             .child(group(vec![version]))
     }
