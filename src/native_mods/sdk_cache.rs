@@ -68,6 +68,10 @@ pub enum Refusal {
     Offline { build: String, bytes: Option<u64> },
     /// The SDK's signature or checksums don't hold: never used.
     Unsigned { build: String, why: String },
+    /// The build's dated tag now serves another build of that day, signed for that build: the
+    /// requested one's mod tools are gone, not tampered with. The signature can't say which of the
+    /// two is newer.
+    Superseded { build: String },
     /// The SDK is newer than this launcher reads (`what`: its schema, package format or Rust).
     UpdateLauncher { build: String, what: String },
     /// The SDK was made with an older Rust than this launcher compiles with.
@@ -112,6 +116,7 @@ pub fn way_on(text: &str) -> Option<WayOn> {
     };
     let mark = || "\0".to_owned();
     if said(Refusal::NoSdk { build: mark() })
+        || said(Refusal::Superseded { build: mark() })
         || said(Refusal::OlderRust {
             build: mark(),
             rust: mark(),
@@ -147,6 +152,10 @@ impl std::fmt::Display for Refusal {
             ),
             Self::Unsigned { build, .. } => trf(
                 "The mod tools for {build} didn't pass Sunrise's safety check, so nothing was installed and your game is untouched. Try again later; if it keeps happening, please report it.",
+                &[("build", build)],
+            ),
+            Self::Superseded { build } => trf(
+                "The mod tools for {build} aren't available any more: another build of that day replaced it. Pick another version.",
                 &[("build", build)],
             ),
             Self::UpdateLauncher { build, what } => trf(
@@ -1016,14 +1025,43 @@ fn signed_game_index(
     };
     let signed = if let Some(channel) = channel {
         let signature = read(SIGNATURE_V2)?.map(|b| String::from_utf8_lossy(&b).into_owned());
-        sunrise_launcher_release_verify::build_digest(
-            channel,
-            version,
-            INDEX,
-            sums.as_deref(),
-            signature.as_deref(),
-            keys,
-        )
+        let digest = |version: &str| {
+            sunrise_launcher_release_verify::build_digest(
+                channel,
+                version,
+                INDEX,
+                sums.as_deref(),
+                signature.as_deref(),
+                keys,
+            )
+        };
+        // A dated tag republished with another build of the same day holds that build's index,
+        // validly signed for it: the build asked for is gone, which is no safety failure. The
+        // index names that build only as a guess to check; the signature decides.
+        digest(version).map_err(|why| {
+            let named = version.rsplit('-').next().unwrap_or_default();
+            let same_day = Index::build_of(&bytes)
+                .ok()
+                .map(|build| build.commit)
+                .filter(|commit| super::is_revision(commit) && !commit.starts_with(named))
+                .map(|commit| {
+                    let day = &version[..version.len() - named.len()];
+                    format!("{day}{}", &commit[..named.len()])
+                });
+            match same_day {
+                Some(same_day)
+                    if digest(&same_day).is_ok_and(|signed| {
+                        sunrise_launcher_release_verify::check(INDEX, &signed, &sha256(&bytes))
+                            .is_ok()
+                    }) =>
+                {
+                    Refusal::Superseded {
+                        build: version.to_owned(),
+                    }
+                }
+                _ => unsigned(why),
+            }
+        })
     } else {
         let signature = read(SIGNATURE)?.map(|b| String::from_utf8_lossy(&b).into_owned());
         sunrise_launcher_release_verify::signed_digest(
@@ -1033,8 +1071,8 @@ fn signed_game_index(
             signature.as_deref(),
             keys,
         )
-    }
-    .map_err(unsigned)?;
+        .map_err(unsigned)
+    }?;
     sunrise_launcher_release_verify::check(INDEX, &signed, &sha256(&bytes)).map_err(unsigned)?;
     Ok(bytes)
 }

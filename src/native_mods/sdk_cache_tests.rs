@@ -413,6 +413,58 @@ fn a_game_release_names_its_build_through_its_signed_index() {
         &[],
     );
     assert!(matches!(read(other), Err(Refusal::Refused { .. })));
+    // A dated tag republished with another build of that day, signed for that build: the build
+    // asked for is gone, not tampered with.
+    let replaced = "nightly-2026-11-17-abcdef0";
+    publish(
+        &base,
+        "nightly-2026-11-17",
+        "nightly-2026-11-17-0123456",
+        &fixture.key,
+        index.as_bytes(),
+        &[],
+    );
+    assert!(matches!(read(replaced), Err(Refusal::Superseded { .. })));
+    // That build signed by a key Sunrise doesn't trust, or a partial upload missing its
+    // signature or its sums, is a safety refusal.
+    let republish = |key: &SigningKey| {
+        publish(
+            &base,
+            "nightly-2026-11-17",
+            "nightly-2026-11-17-0123456",
+            key,
+            index.as_bytes(),
+            &[],
+        )
+    };
+    republish(&SigningKey::generate().unwrap().0);
+    assert!(matches!(read(replaced), Err(Refusal::Unsigned { .. })));
+    for missing in [SIGNATURE_V2, SUMS] {
+        republish(&fixture.key);
+        fs::remove_file(base.join("nightly-2026-11-17").join(missing)).unwrap();
+        assert!(matches!(read(replaced), Err(Refusal::Unsigned { .. })));
+    }
+    republish(&fixture.key);
+    // An index that still names that build but isn't the one its signed sums list is no
+    // replacement: it's a safety refusal.
+    fs::write(
+        base.join("nightly-2026-11-17").join(INDEX),
+        format!("{index} "),
+    )
+    .unwrap();
+    assert!(matches!(read(replaced), Err(Refusal::Unsigned { .. })));
+    // Only the signature decides: an index naming another build of that day, signed for
+    // anything else, is still a safety refusal.
+    let unproven = "nightly-2026-11-18-abcdef0";
+    publish(
+        &base,
+        "nightly-2026-11-18",
+        "nightly-2026-11-19-0123456",
+        &fixture.key,
+        index.as_bytes(),
+        &[],
+    );
+    assert!(matches!(read(unproven), Err(Refusal::Unsigned { .. })));
     // A snapshot, installed by its tag: read there, signed for its own version on its channel.
     let snapshot = "snapshot-2026-11-13-0123456";
     publish(
@@ -506,6 +558,10 @@ fn a_refusal_offers_the_way_on_its_text_promises() {
     let way = |refusal: Refusal| way_on(&format!("{refusal}"));
     assert_eq!(
         way(Refusal::NoSdk { build: build() }),
+        Some(WayOn::OtherBuild)
+    );
+    assert_eq!(
+        way(Refusal::Superseded { build: build() }),
         Some(WayOn::OtherBuild)
     );
     assert_eq!(
