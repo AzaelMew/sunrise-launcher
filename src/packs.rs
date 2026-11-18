@@ -180,6 +180,11 @@ fn enabled(home: &Path, kind: Kind) -> Vec<String> {
 
 fn read(path: &Path, kind: Kind, on: &[String]) -> Option<Pack> {
     let file = path.file_name()?.to_str()?.to_string();
+    read_named(path, file, kind, on)
+}
+
+/// `read`, for a pack at `path` that is shown under the name `file`: a copy not yet put in place.
+fn read_named(path: &Path, file: String, kind: Kind, on: &[String]) -> Option<Pack> {
     if file.starts_with('.') {
         return None;
     }
@@ -454,9 +459,12 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
 #[cfg(feature = "redesign-preview")]
 pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
     let name = file.file_name().ok_or("A pack file has a name")?;
+    if !fs::metadata(file).is_ok_and(|m| m.is_file()) {
+        return Err(format!("{} is not a file.", file.display()));
+    }
     let dir = home.join(kind.folder());
     let made = !dir.exists();
-    let put = || -> Result<PathBuf, String> {
+    let put = || -> Result<Pack, String> {
         fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let ext = Path::new(name)
             .extension()
@@ -507,22 +515,26 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
                 ));
             }
         }
+        // What the game reads, under the name it will have, before anything is published.
         let target = free_target(&dir, name);
+        let shown = target
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(str::to_string);
+        let mut pack = shown
+            .and_then(|shown| read_named(temp.path(), shown, kind, &[]))
+            .ok_or_else(|| format!("{} is not a pack the game reads", name.to_string_lossy()))?;
         temp.persist_noclobber(&target)
             .map_err(|e| format!("Could not add {}: {}", target.display(), e.error))?;
-        Ok(target)
+        pack.path = target;
+        Ok(pack)
     };
-    let target = put();
-    if target.is_err() && made {
+    let pack = put();
+    if pack.is_err() && made {
         let _ = fs::remove_dir(&dir);
     }
-    let target = target?;
-    read(&target, kind, &[]).ok_or_else(|| {
-        let _ = fs::remove_file(&target);
-        format!("{} is not a pack the game reads", name.to_string_lossy())
-    })
+    pack
 }
-
 /// The enabled resource packs the folder shows, as `resourcePacks` holds them: each one's index
 /// in the raw list (bottom first) and its file name. Builtins and references to packs that are
 /// not there are left out.
@@ -542,15 +554,15 @@ fn visible_enabled(home: &Path) -> (Vec<String>, Vec<(usize, String)>) {
     (raw, slots)
 }
 
-/// The enabled resource packs the folder shows, highest priority (the game's top) first.
+/// The file names in `resourcePacks`, highest priority (the game's top) first. Packs that are
+/// not there are included: a page ranks the ones it shows.
 #[cfg(feature = "redesign-preview")]
 pub fn resource_order(home: &Path) -> Vec<String> {
-    let (_, slots) = visible_enabled(home);
-    slots.into_iter().rev().map(|(_, name)| name).collect()
+    enabled(home, Kind::Resource).into_iter().rev().collect()
 }
 
-/// Swaps `file` with `neighbor`, two enabled resource packs next to each other in
-/// `resource_order`. Everything else in `resourcePacks` stays where it is, builtins and
+/// Swaps `file` with `neighbor`, two enabled resource packs next to each other among the
+/// ones the folder shows (`resource_order` without the missing ones). Everything else in `resourcePacks` stays where it is, builtins and
 /// references to missing packs included. A pair that is not enabled, not adjacent (the list
 /// changed since the page read it), or a pack listed twice is refused and nothing is written.
 #[cfg(feature = "redesign-preview")]

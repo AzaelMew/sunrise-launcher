@@ -342,6 +342,8 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
         &drops.join("Data.zip"),
         &[("pack.mcmeta", META), ("data/x/tags/a.json", b"{}")],
     );
+    zip_file(&drops.join("Bad.zip"), &[("pack.mcmeta", b"{")]);
+    zip_file(&drops.join(".hidden.zip"), &[("pack.mcmeta", META)]);
     zip_file(
         &drops.join("Both.zip"),
         &[
@@ -367,6 +369,9 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
         (Kind::Shader, "hollow.sshader"),
         (Kind::Shader, "typo.sshader"),
         (Kind::Resource, "Data.zip"),
+        (Kind::Resource, "Bad.zip"),
+        (Kind::Resource, ".hidden.zip"),
+        (Kind::Resource, "."),
         (Kind::Shader, "broken.sshader"),
         (Kind::Resource, "missing.zip"),
     ] {
@@ -406,6 +411,12 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
     // Bad content found only after the copy: the folder made for it goes too.
     assert!(add_local(&empty, Kind::Shader, &drops.join("typo.sshader")).is_err());
     assert!(add_local(&empty, Kind::Resource, &drops.join("Data.zip")).is_err());
+    assert!(add_local(&empty, Kind::Resource, &drops.join("Bad.zip")).is_err());
+    assert!(add_local(&empty, Kind::Resource, &drops.join(".hidden.zip")).is_err());
+    assert!(
+        add_local(&empty, Kind::Resource, &drops).is_err(),
+        "a folder"
+    );
     assert!(
         fs::read_dir(&empty).unwrap().next().is_none(),
         "a refused file makes no folder"
@@ -441,7 +452,19 @@ fn resource_order_lists_enabled_packs_top_first_and_moves_adjacent_pairs() {
         r#"["vanilla","file/A.zip","mod_resources","file/gone.zip","file/B.zip","file/C.zip","file/Glass.zip"]"#,
     );
     fs::remove_file(rp.join("Glass.zip")).unwrap();
-    assert_eq!(resource_order(&home), ["C.zip", "B.zip", "A.zip"]);
+    assert_eq!(
+        resource_order(&home),
+        ["Glass.zip", "C.zip", "B.zip", "gone.zip", "A.zip"],
+        "the raw list: a page ranks the packs it shows"
+    );
+    let shown = |home: &Path| -> Vec<String> {
+        let on = list(home, Kind::Resource);
+        resource_order(home)
+            .into_iter()
+            .filter(|n| on.iter().any(|p| &p.file == n))
+            .collect()
+    };
+    assert_eq!(shown(&home), ["C.zip", "B.zip", "A.zip"]);
 
     // Adjacent among the packs shown, in either direction; the rest keeps its place.
     move_resource(&home, "A.zip", "B.zip").unwrap();
@@ -449,9 +472,9 @@ fn resource_order_lists_enabled_packs_top_first_and_moves_adjacent_pairs() {
         line(),
         r#"["vanilla","file/B.zip","mod_resources","file/gone.zip","file/A.zip","file/C.zip","file/Glass.zip"]"#
     );
-    assert_eq!(resource_order(&home), ["C.zip", "A.zip", "B.zip"]);
+    assert_eq!(shown(&home), ["C.zip", "A.zip", "B.zip"]);
     move_resource(&home, "C.zip", "A.zip").unwrap();
-    assert_eq!(resource_order(&home), ["A.zip", "C.zip", "B.zip"]);
+    assert_eq!(shown(&home), ["A.zip", "C.zip", "B.zip"]);
 
     // A stale page: not adjacent, not enabled, itself, unknown, or a pack listed twice.
     let before = fs::read_to_string(home.join(OPTIONS)).unwrap();
