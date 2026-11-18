@@ -24,6 +24,7 @@ pub(super) enum Page {
 #[derive(Default)]
 pub(super) struct State {
     pub page: Page,
+    pub home: crate::alt_home::AltHomeState,
     pub sheet: Option<Sheet>,
     pub sheets: crate::alt_sheets::AltSheetsState,
     pub picker: bool,
@@ -546,10 +547,7 @@ impl Launcher {
                     "Choose a Sunrise setup in the play bar. Your other setups haven't changed.",
                 ))
                 .into_any_element(),
-            Page::Home => div()
-                .p(px(32.))
-                .child(tr("Welcome to Sunrise"))
-                .into_any_element(),
+            Page::Home => self.alt_home(window, cx),
         };
         let page_body = div()
             .relative()
