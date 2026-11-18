@@ -158,35 +158,35 @@ fn a_short_problem_has_no_action_and_the_strip_leads_home() {
 #[test]
 fn missing_game_files_are_fixed_by_choosing_the_folder() {
     let view = Facts {
-        prepare_error: Some("Minecraft was not found".into()),
+        prepare_error: Some("Minecraft was not found here.".into()),
         // The channel's way out is the build's, never this problem's.
         build_gone: Some(instances::Channel::Stable),
         ..idle()
     }
     .view();
     let fix = Act::Notice {
-        text: "Minecraft was not found".into(),
+        text: "Minecraft was not found here.".into(),
         way_out: Some(WayOut::MinecraftFolder),
     };
     assert_eq!(fix.label(), "Fix…");
     assert_eq!(view.act, Some(fix.clone()));
     assert_eq!(
         view.strip(),
-        Some(("Minecraft was not found".into(), StripAct::Act(fix)))
+        Some(("Minecraft was not found here.".into(), StripAct::Act(fix)))
     );
 }
 
 #[test]
 fn a_build_that_is_gone_is_fixed_by_the_newest_of_its_channel_once_idle() {
     let gone = Facts {
-        native_error: Some("No mod tools".into()),
+        native_error: Some("No mod tools for it.".into()),
         build_gone: Some(instances::Channel::Nightly),
         ..idle()
     };
     assert_eq!(
         gone.view().act,
         Some(Act::Notice {
-            text: "No mod tools".into(),
+            text: "No mod tools for it.".into(),
             way_out: Some(WayOut::Newest(instances::Channel::Nightly)),
         })
     );
@@ -201,19 +201,19 @@ fn a_build_that_is_gone_is_fixed_by_the_newest_of_its_channel_once_idle() {
 #[test]
 fn problems_win_in_the_order_the_launch_meets_them() {
     let mut facts = Facts {
-        client_error: Some("client".into()),
-        prepare_error: Some("prepare".into()),
-        native_error: Some("native".into()),
-        install_error: Some("install".into()),
-        crash: Some("crash".into()),
+        client_error: Some("The client step failed.".into()),
+        prepare_error: Some("The prepare step failed.".into()),
+        native_error: Some("The native step failed.".into()),
+        install_error: Some("The install step failed.".into()),
+        crash: Some("The crash step failed.".into()),
         ..idle()
     };
     let steps: [(&str, Next); 5] = [
-        ("client", |f| f.client_error = None),
-        ("prepare", |f| f.prepare_error = None),
-        ("native", |f| f.native_error = None),
-        ("install", |f| f.install_error = None),
-        ("crash", |f| f.crash = None),
+        ("The client step failed.", |f| f.client_error = None),
+        ("The prepare step failed.", |f| f.prepare_error = None),
+        ("The native step failed.", |f| f.native_error = None),
+        ("The install step failed.", |f| f.install_error = None),
+        ("The crash step failed.", |f| f.crash = None),
     ];
     for (said, next) in steps {
         assert_eq!(facts.view().said.as_deref(), Some(said));
@@ -252,10 +252,13 @@ fn a_held_update_speaks_for_the_build_and_is_fixed_in_its_sheet() {
     };
     assert_eq!(busy.view().act, None);
     let other = Facts {
-        crash: Some("The game stopped".into()),
+        crash: Some("The game stopped early.".into()),
         ..held
     };
-    assert_eq!(other.view().said.as_deref(), Some("The game stopped"));
+    assert_eq!(
+        other.view().said.as_deref(),
+        Some("The game stopped early.")
+    );
     assert_eq!(other.view().act, Some(Act::Resolve));
 }
 
@@ -298,7 +301,7 @@ fn mods_left_out_are_one_quiet_line_when_nothing_else_is_said() {
     assert_eq!(off.view().mods_off, Some(2));
     assert_eq!(off.view().strip(), None);
     let said = Facts {
-        crash: Some("The game stopped".into()),
+        crash: Some("The game stopped early.".into()),
         ..off
     };
     assert_eq!(said.view().mods_off, None);
@@ -377,4 +380,233 @@ fn the_first_sentence_is_what_is_said() {
     assert_eq!(first_sentence("  One. Two.\nThree"), "One.");
     assert_eq!(first_sentence("One line\nand another"), "One line");
     assert_eq!(first_sentence(""), "");
+}
+
+/// Puts a raw message where one step of Play leaves its error.
+type Raise = fn(&mut Facts, String);
+
+/// Each step's error, and what it says when nothing plain can be said of it.
+const STEPS: [(Raise, &str); 4] = [
+    (|f, e| f.client_error = Some(e), "The game couldn't start."),
+    (
+        |f, e| f.prepare_error = Some(e),
+        "The game's files couldn't be prepared.",
+    ),
+    (
+        |f, e| f.native_error = Some(e),
+        "The mods couldn't be built.",
+    ),
+    (
+        |f, e| f.install_error = Some(e),
+        "The game couldn't be installed.",
+    ),
+];
+
+const OFFLINE: &str = "No connection: https://github.com/sunrise-org/sunrise/releases/download/nightly/SHA256SUMS: Connection Failed: Connect error: Connection refused (os error 111)";
+
+fn raised(raise: Raise, raw: &str) -> View {
+    let mut facts = idle();
+    raise(&mut facts, raw.to_string());
+    facts.view()
+}
+
+/// The whole message, behind the one action.
+fn details(view: &View) -> &str {
+    match &view.act {
+        Some(Act::Notice { text, .. }) => text,
+        other => panic!("{:?}: {other:?}", view.said),
+    }
+}
+
+#[test]
+fn a_dead_connection_is_one_plain_line_with_the_address_behind_details() {
+    let says = [
+        "No connection: Sunrise couldn't check what it needs to play.",
+        "No connection: the game's files couldn't be downloaded.",
+        "No connection: the mod tools couldn't be downloaded.",
+        "No connection: the game couldn't be downloaded.",
+    ];
+    for ((raise, _), says) in STEPS.into_iter().zip(says) {
+        let view = raised(raise, OFFLINE);
+        assert_eq!(view.said.as_deref(), Some(says));
+        assert_eq!(details(&view), OFFLINE, "every word is still there to read");
+        // The strip says the same line and opens the same sheet.
+        let (line, act) = view.strip().unwrap();
+        assert_eq!(line, says);
+        assert_eq!(act, StripAct::Act(view.act.clone().unwrap()));
+    }
+}
+
+#[test]
+fn what_a_program_or_the_system_said_is_never_put_beside_play() {
+    let raw = [
+        // A path with the system's error, on either system, and a bare path.
+        "/home/ana/.local/share/sunrise/launcher/versions/nightly-2026-11-17/sunrise: Permission denied (os error 13)",
+        "C:\\Users\\ana\\AppData\\Roaming\\sunrise\\launcher\\settings.json: Access is denied. (os error 5)",
+        "/home/ana/.local/share/sunrise/launcher/versions/nightly-2026-11-17/sunrise",
+        "C:\\Users\\ana\\AppData\\Roaming\\sunrise\\launcher\\versions",
+        "\\\\server\\share\\sunrise\\settings.json",
+        // An address that answered: a status, a checksum. Reached, so not "no connection".
+        "HTTP 404 from https://github.com/sunrise-org/sunrise/releases/download/nightly/SHA256SUMS",
+        "https://github.com/sunrise-org/sunrise/releases/download/nightly/sunrise-linux-x86_64.tar.gz: SHA-256 is 9f2c… but SHA256SUMS says 77ab…",
+        "sunrise-linux-x86_64.tar.gz failed its signature check",
+        // One-line diagnostics nobody wrote for a player.
+        "invalid type: map, expected a string at line 3 column 5",
+        "Permission denied",
+        "Connection refused",
+        "expected value at line 1 column 1",
+        "Error { kind: InvalidData, message: \"stream did not contain valid UTF-8\" }",
+        "serde_json::Error(\"expected value\", line: 1, column: 1)",
+        "called `Result::unwrap()` on an `Err` value: Os { code: 2, kind: NotFound }",
+        "ENOENT",
+        "exit status: 101",
+        "sunrise-prepare ended with exit status: 101\nthread 'main' panicked at src/main.rs:42",
+        "error[E0432]: unresolved import `sunrise_mod_api::hooks`",
+        "The requested operation requires elevation. (os error 740)",
+        "Failed to read manifest: missing field `name` at line 1 column 2.",
+        "",
+    ];
+    for (raise, stopped) in STEPS {
+        for raw in raw {
+            let view = raised(raise, raw);
+            assert_eq!(view.said.as_deref(), Some(stopped), "{raw:?}");
+            if raw.is_empty() {
+                continue;
+            }
+            assert_eq!(
+                details(&view),
+                raw,
+                "the whole message is behind the action"
+            );
+            assert_eq!(view.strip().map(|(line, _)| line), Some(stopped.into()));
+        }
+    }
+    // Only a connection that was not made is called one.
+    for reached in [
+        "HTTP 503 from https://api.github.com/repos/sunrise-org/sunrise/releases",
+        "The download stopped: No connection",
+    ] {
+        assert_eq!(
+            plain(Step::Install, reached),
+            "The game couldn't be installed."
+        );
+    }
+}
+
+#[test]
+fn the_launchers_own_sentences_are_said_as_written_and_a_long_one_is_cut_at_a_word() {
+    for own in [
+        "The game is already running.",
+        "Install a Sunrise game build first.",
+        "Checking available builds. Press Play when the list is ready.",
+        "No downloadable build matches this setup. Choose a game build.",
+        "Wait for the preparation to finish, then press Play.",
+        "Sunrise nightly-2026-11-17 is too old for this launcher: install a newer version.",
+        "Nov 17 isn't prepared yet: choose Prepare in Play's menu.",
+    ] {
+        assert_eq!(plain(Step::Start, own), first_sentence(own), "{own}");
+    }
+    let long = "The game stopped before it opened a window because the graphics driver on this computer answered with something Sunrise has never seen from any driver before.";
+    let said = plain(Step::Start, long);
+    assert!(
+        said.ends_with('…') && said.chars().count() <= BRIEF + 1,
+        "{said}"
+    );
+    assert!(long.starts_with(said.trim_end_matches('…')));
+    assert!(!said.trim_end_matches('…').ends_with(' '));
+    let view = raised(STEPS[0].0, long);
+    assert_eq!(details(&view), long);
+    assert_eq!(view.act.as_ref().map(Act::label), Some("Details…"));
+    // A plain first sentence is said; the lines after it wait behind Details.
+    let two = "The build stopped for one mod.\nerror[E0432]: unresolved import in fixture_minimap/src/lib.rs";
+    let view = raised(STEPS[2].0, two);
+    assert_eq!(view.said.as_deref(), Some("The build stopped for one mod."));
+    assert_eq!(details(&view), two);
+    // A short problem with nothing more to read has no Details….
+    assert_eq!(raised(STEPS[0].0, "The game is already running.").act, None);
+    // A crash's summary is the launcher's own; one that isn't plain says only that it stopped.
+    let crashed = |summary: &str| {
+        Facts {
+            crash: Some(summary.into()),
+            ..idle()
+        }
+        .view()
+        .said
+    };
+    assert_eq!(
+        crashed("The game crashed while drawing. Its report is in the crash folder.").as_deref(),
+        Some("The game crashed while drawing.")
+    );
+    assert_eq!(
+        crashed("thread 'main' panicked at src/render.rs:9").as_deref(),
+        Some("The game stopped.")
+    );
+}
+
+#[test]
+fn the_way_out_is_the_said_problems_own() {
+    let missing =
+        "sunrise-prepare: /home/ana/.minecraft/versions: No such file or directory (os error 2)";
+    // The game's files not found: Fix… to the folder chooser, with the raw text whole.
+    let view = raised(STEPS[1].0, missing);
+    let fix = Act::Notice {
+        text: missing.into(),
+        way_out: Some(WayOut::MinecraftFolder),
+    };
+    assert_eq!(fix.label(), "Fix…");
+    assert_eq!(view.act, Some(fix.clone()));
+    assert_eq!(view.strip().map(|(_, act)| act), Some(StripAct::Act(fix)));
+    // A start that failed is said first. Its action is its own Details…: the folder chooser
+    // is the other problem's way out, and would fix nothing here.
+    let both = Facts {
+        client_error: Some(OFFLINE.into()),
+        prepare_error: Some(missing.into()),
+        ..idle()
+    }
+    .view();
+    assert_eq!(
+        both.said.as_deref(),
+        Some("No connection: Sunrise couldn't check what it needs to play.")
+    );
+    assert_eq!(
+        both.act,
+        Some(Act::Notice {
+            text: OFFLINE.into(),
+            way_out: None,
+        })
+    );
+    // The same for a build that is gone: its way out shows only when its problem is the one
+    // said.
+    let gone = Facts {
+        native_error: Some(OFFLINE.into()),
+        build_gone: Some(instances::Channel::Stable),
+        ..idle()
+    };
+    assert_eq!(
+        gone.view().act,
+        Some(Act::Notice {
+            text: OFFLINE.into(),
+            way_out: Some(WayOut::Newest(instances::Channel::Stable)),
+        })
+    );
+    let behind = Facts {
+        client_error: Some("exit status: 101".into()),
+        ..gone.clone()
+    }
+    .view();
+    assert_eq!(behind.said.as_deref(), Some("The game couldn't start."));
+    assert_eq!(
+        behind.act,
+        Some(Act::Notice {
+            text: "exit status: 101".into(),
+            way_out: None,
+        })
+    );
+    // A short plain start problem has nothing to open, whatever else is left over.
+    let quiet = Facts {
+        client_error: Some("The game is already running.".into()),
+        ..gone
+    }
+    .view();
+    assert_eq!(quiet.act, None);
 }
