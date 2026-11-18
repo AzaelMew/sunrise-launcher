@@ -7,7 +7,9 @@ impl Launcher {
         // Play can ask before Mods has ever opened. Bind the same folder for the names in
         // the question, Decline's toggle and the build that Allow dispatches.
         let selected = self.selected_instance().map(|i| i.home.clone());
-        self.pending_consent = selected.map(|home| self.mods.build_consent(home));
+        // Name the files when the question opens, not when the registry next answers.
+        let index = sunrise_launcher::browser::sunrise::known_index();
+        self.pending_consent = selected.map(|home| self.mods.build_consent(home, index.as_deref()));
     }
 
     /// Cancel and Escape share the transition; neither can execute a pending action.

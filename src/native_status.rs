@@ -172,6 +172,16 @@ pub fn sunrise_label(version: &str) -> String {
 
 /// Enabled wasm packages that need the patchable engine, never native compilation.
 pub fn wasm_points(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bundle> {
+    wasm_points_at(home).into_iter().map(|(_, b)| b).collect()
+}
+
+/// [`wasm_points`], each with the file it was read from.
+fn wasm_points_at(
+    home: &Path,
+) -> Vec<(
+    std::path::PathBuf,
+    sunrise_launcher_smod::index::native::Bundle,
+)> {
     use std::io::Read;
     wasm_hmods(home)
         .into_iter()
@@ -196,10 +206,11 @@ pub fn wasm_points(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bun
                 entry.read_to_end(&mut bytes).ok()?;
                 files.insert(name, bytes);
             }
-            Some(sunrise_launcher_smod::index::native::Bundle {
+            let bundle = sunrise_launcher_smod::index::native::Bundle {
                 manifest: package.manifest,
                 files,
-            })
+            };
+            Some((path, bundle))
         })
         .collect()
 }
@@ -208,6 +219,11 @@ pub fn wasm_points(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bun
 /// read always counts, with its file name and no version, so it needs a build (which says why):
 /// the on/off list is keyed by the manifest id, which an unreadable file can't give.
 pub fn enabled(home: &Path) -> Vec<Mod> {
+    enabled_files(home).into_iter().map(|(_, m)| m).collect()
+}
+
+/// [`enabled`], each with the file it was read from: the files a build takes in.
+fn enabled_files(home: &Path) -> Vec<(std::path::PathBuf, Mod)> {
     let mut out = Vec::new();
     for path in hmods(home) {
         match sunrise_launcher_smod::index::native::Bundle::read(&path) {
@@ -215,17 +231,58 @@ pub fn enabled(home: &Path) -> Vec<Mod> {
                 if mod_list::is_enabled(home, &b.manifest.id) {
                     let digest =
                         archive_digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
-                    out.push((b.manifest.id, b.manifest.version, Some(digest)));
+                    out.push((path, (b.manifest.id, b.manifest.version, Some(digest))));
                 }
             }
-            Err(_) => out.push((stem(&path), String::new(), None)),
+            Err(_) => {
+                let id = stem(&path);
+                out.push((path, (id, String::new(), None)));
+            }
         }
     }
-    out.extend(wasm_points(home).into_iter().map(|b| {
+    out.extend(wasm_points_at(home).into_iter().map(|(path, b)| {
         let digest = native_mods::digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
-        (b.manifest.id, b.manifest.version, Some(digest))
+        (path, (b.manifest.id, b.manifest.version, Some(digest)))
     }));
     out
+}
+
+/// One package a build takes in, as the native-code question names it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuildInput {
+    /// The manifest's id (the file's name without `.smod` when it can't be read): the key of the
+    /// on/off list.
+    pub id: String,
+    /// The package's file name in the game folder.
+    pub file: String,
+    /// The registry's name for it, only when this very file is one the registry lists for `id`.
+    pub registry: Option<String>,
+}
+
+/// What a build of game folder `home` takes in ([`enabled`]'s packages), each named from its own
+/// file: a package gets the registry's name only when its bytes are a file `index` lists for its
+/// id. A package someone put there under a registry mod's id stays an id and a file name.
+pub fn build_inputs(
+    home: &Path,
+    index: Option<&sunrise_launcher_smod::index::Index>,
+) -> Vec<BuildInput> {
+    enabled_files(home)
+        .into_iter()
+        .map(|(path, (id, _, _))| {
+            let registry = index.and_then(|i| i.project(&id)).and_then(|p| {
+                let hash = sunrise_launcher_smod::index::sha256_file(&path).ok()?;
+                p.versions
+                    .iter()
+                    .any(|v| v.file.sha256.eq_ignore_ascii_case(&hash))
+                    .then(|| p.name.clone())
+            });
+            let file = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            BuildInput { id, file, registry }
+        })
+        .collect()
 }
 
 /// The native mods turned on in game folder `home` that pin Sunrise commit `revision`.
@@ -768,6 +825,67 @@ mod tests {
         );
         assert!(files[0].icon.is_err(), "a refusal is not an absent icon");
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_local_package_never_takes_the_name_of_the_registry_mod_with_its_id() {
+        use std::io::Write;
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index");
+        let mut index = sunrise_launcher_smod::index::Index::parse(
+            &fs::read_to_string(fixtures.join("index-v1.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(index.project("coords_hud").unwrap().name, "Coordinates HUD");
+        let home = tempfile::tempdir().unwrap();
+        let folder = home.path().join(native_mods::INSTALLED);
+        fs::create_dir_all(&folder).unwrap();
+        // A package of someone's own under the registry mod's id, in a file named like its file.
+        let local = folder.join("coords_hud-0.1.0.smod");
+        let pin = "a".repeat(40);
+        let mut zip = zip::ZipWriter::new(fs::File::create(&local).unwrap());
+        let manifest = format!(
+            "id = 'coords_hud'\nname = 'Coordinates HUD'\nversion = '0.1.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = '{pin}'\nmixins = '{pin}'\n"
+        );
+        for (name, bytes) in [
+            ("sunrise-mod.toml", manifest.as_str()),
+            ("Cargo.toml", "[package]\nname = 'x'\nversion = '1'\n"),
+            ("src/lib.rs", "pub fn hooks() {}\n"),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        mod_list::set_enabled(home.path(), "coords_hud", true).unwrap();
+        let input = |registry: Option<&str>| BuildInput {
+            id: "coords_hud".into(),
+            file: "coords_hud-0.1.0.smod".into(),
+            registry: registry.map(Into::into),
+        };
+        assert_eq!(build_inputs(home.path(), Some(&index)), [input(None)]);
+        assert_eq!(build_inputs(home.path(), None), [input(None)]);
+        // The same bytes as a file the registry lists for that id: the registry's name.
+        let listed = &mut index
+            .projects
+            .iter_mut()
+            .find(|p| p.id == "coords_hud")
+            .unwrap();
+        listed.versions[0].file.sha256 = sunrise_launcher_smod::index::sha256_file(&local).unwrap();
+        assert_eq!(
+            build_inputs(home.path(), Some(&index)),
+            [input(Some("Coordinates HUD"))]
+        );
+        assert_eq!(build_inputs(home.path(), None), [input(None)]);
+        // Listed under another project's id only: still not the registry's.
+        let hash = index.project("coords_hud").unwrap().versions[0]
+            .file
+            .sha256
+            .clone();
+        for p in &mut index.projects {
+            let own = p.id == "coords_hud";
+            p.versions[0].file.sha256 = if own { "0".repeat(64) } else { hash.clone() };
+        }
+        assert_eq!(build_inputs(home.path(), Some(&index)), [input(None)]);
     }
 
     #[test]

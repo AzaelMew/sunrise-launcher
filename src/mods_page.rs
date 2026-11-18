@@ -76,14 +76,13 @@ impl ModsHome {
         self.0.clone().unwrap_or_else(backend::game_home)
     }
 
-    fn build_consent(&mut self, selected: PathBuf) -> PendingConsent {
+    fn build_consent(
+        &mut self,
+        selected: PathBuf,
+        index: Option<&sunrise_launcher_smod::index::Index>,
+    ) -> PendingConsent {
         self.follow_home(Some(selected));
-        PendingConsent::Build(
-            native_status::enabled(&self.current())
-                .into_iter()
-                .map(|(id, _, _)| id)
-                .collect(),
-        )
+        PendingConsent::Build(native_status::build_inputs(&self.current(), index))
     }
 }
 
@@ -118,8 +117,12 @@ impl Mods {
         self.home.current()
     }
 
-    pub(super) fn build_consent(&mut self, selected: PathBuf) -> PendingConsent {
-        self.home.build_consent(selected)
+    pub(super) fn build_consent(
+        &mut self,
+        selected: PathBuf,
+        index: Option<&sunrise_launcher_smod::index::Index>,
+    ) -> PendingConsent {
+        self.home.build_consent(selected, index)
     }
 
     pub(super) fn new(cx: &mut App) -> Self {

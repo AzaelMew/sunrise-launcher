@@ -855,15 +855,9 @@ impl Launcher {
 
     fn consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let pending = self.pending_consent.as_ref();
-        // Mods by the names their cards show, where the request knows only their ids.
+        // An install by id alone: the mod by the name its card shows.
         let name = match pending {
             Some(PendingConsent::Install(_, id, None)) => self.mod_name(id),
-            Some(PendingConsent::Build(ids)) => Some(
-                ids.iter()
-                    .map(|id| self.mod_name(id).unwrap_or_else(|| id.clone()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
             _ => None,
         }
         .or_else(|| pending.map(PendingConsent::name))

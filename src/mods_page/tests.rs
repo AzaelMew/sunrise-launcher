@@ -50,14 +50,18 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
         mod_list::set_enabled(&selected, "selected_mod", true).unwrap();
         let mut home = ModsHome::default();
         assert_eq!(home.current(), default, "Mods has never opened");
-        let mut pending = Some(home.build_consent(selected.clone()));
-        assert_eq!(pending.as_ref().unwrap().name(), "selected_mod");
+        let mut pending = Some(home.build_consent(selected.clone(), None));
+        assert_eq!(
+            pending.as_ref().unwrap().name(),
+            "selected_mod (selected_mod.smod, not from the registry)"
+        );
         assert_eq!(home.current(), selected);
         let action =
             native_consent::resolve(&mut pending, allow, true, &mut settings, &home.current())
                 .unwrap();
         if allow {
-            assert!(matches!(action, Some(PendingConsent::Build(ids)) if ids == ["selected_mod"]));
+            assert!(matches!(action, Some(PendingConsent::Build(inputs))
+                if matches!(inputs.as_slice(), [one] if one.id == "selected_mod")));
             assert!(settings.native_mods_allowed_at.is_some());
         } else {
             assert!(action.is_none());

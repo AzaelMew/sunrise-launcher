@@ -1447,5 +1447,6 @@
   "{profile} · Sunrise {build}": "{profile} · Sunrise {build}",
   "{size} to download": "{size} to download",
   "{version} is out": "{version} is out",
-  "The game does not start. Build again when you are ready.": "The game does not start. Build again when you are ready."
+  "The game does not start. Build again when you are ready.": "The game does not start. Build again when you are ready.",
+  "{id} ({file}, not from the registry)": "{id} ({file}, not from the registry)"
 }
