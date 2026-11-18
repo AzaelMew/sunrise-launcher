@@ -669,9 +669,14 @@ mod tests {
     /// not hold the label.
     #[test]
     fn dawns_play_is_the_brand_orange_under_white() {
-        for id in [None, Some("dawn")] {
-            let own = themes::starting_accent(id, &Default::default());
-            let (settings, theme) = look(id, own, 6., true);
+        for json in [
+            "{}",
+            r#"{"theme":"dawn"}"#,
+            r##"{"accent":"#c2366f"}"##,
+            r##"{"theme":"dawn","accent":"#c2366f"}"##,
+        ] {
+            let settings = Settings::parse(json);
+            let theme = from_settings(&settings, WindowAppearance::Dark);
             let p = Palette::of(&settings, &theme);
             assert_eq!(
                 (p.accent, p.play_fill, p.accent_on),
@@ -683,20 +688,32 @@ mod tests {
             contrast(0xffffff, 0xc4623a) < TEXT,
             "the site's hover orange is too light"
         );
-        // Every built-in theme, Twilight's violet included, holds white on Play at its own accent.
-        let ids = [Some("twilight")]
+    }
+
+    #[test]
+    fn every_builtin_play_uses_its_accent_at_readable_white_contrast() {
+        let ids = [themes::TWILIGHT]
             .into_iter()
-            .chain(themes::THEMES.iter().map(|t| Some(t.id)));
+            .chain(themes::THEMES.iter().map(|t| t.id));
         for id in ids {
-            let own = themes::starting_accent(id, &Default::default());
-            let (settings, theme) = look(id, own, 6., true);
+            let own = themes::own_accent(Some(id)).rgb();
+            let settings = Settings::parse(&format!(r#"{{"theme":"{id}"}}"#));
+            let theme = from_settings(&settings, WindowAppearance::Dark);
             let p = Palette::of(&settings, &theme);
-            assert!(contrast(p.accent_on, p.play_fill) >= TEXT, "{id:?}");
-            assert_eq!(
-                p.accent,
-                own.rgb(),
-                "{id:?}: the accent itself is never changed"
-            );
+            assert_eq!(p.accent, own, "{id}: the theme's accent is unchanged");
+            assert_eq!(p.accent_on, 0xffffff, "{id}: white label and icon");
+            let actual = contrast(p.accent_on, p.play_fill);
+            assert!(actual >= TEXT, "{id}: white contrast is {actual:.3}:1");
+            if contrast(0xffffff, own) >= TEXT {
+                assert_eq!(p.play_fill, own, "{id}: no fit needed");
+            } else {
+                // Only just dark enough to read, within the rounding of an RGB step.
+                assert!(actual < TEXT + 0.06, "{id}: darkened too far");
+                let shade = luminance(p.play_fill) / luminance(own);
+                assert!(shade < 1.0, "{id}: fit must darken the fill");
+                let drift = (hue(p.play_fill) - hue(own)).abs();
+                assert!(drift.min(std::f32::consts::TAU - drift) < 0.02, "{id}");
+            }
         }
     }
 

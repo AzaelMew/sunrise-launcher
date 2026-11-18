@@ -332,8 +332,8 @@ impl Launcher {
     ) -> Div {
         let view = self.launch_facts().view();
         let idle = view.main == Main::Play;
-        let busy = self.launch_busy();
-        let on = rgb(palette().accent_on);
+        let p = palette();
+        let on = rgb(p.accent_on);
         let play = div()
             .id("alt-play")
             .tab_index(0)
@@ -349,22 +349,19 @@ impl Launcher {
             .font_weight(FontWeight::BOLD)
             .text_size(px(tokens::LEAD))
             .text_color(on)
-            .bg(rgb(palette().play_fill))
+            .bg(rgb(p.play_fill))
             .when(idle, |d| d.child(blocks::icon("play", 17., on.into())))
             .child(view.main.label())
-            .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+            .focus_visible(move |s| s.shadow(crate::frame::focus_ring(p.focus)))
             .seen()
-            // Work under way keeps Play's colours, so what it says reads; only a launcher that
-            // can't play at all dims it.
-            .when(!view.enabled && !busy, |d| d.opacity(0.6))
+            // Keep the fill and the white label opaque even on glass. Only the available
+            // action gets a pointer and a click handler.
             .when(view.enabled, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.opacity(0.92))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.cat_off_play();
-                        this.press_play();
-                        cx.notify();
-                    }))
+                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                    this.cat_off_play();
+                    this.press_play();
+                    cx.notify();
+                }))
             });
         let act = view.act.clone().map(|act| {
             let id = match act {
