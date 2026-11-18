@@ -23,7 +23,7 @@ pub enum Verdict {
     Fits { made_for: String },
     /// It changes game code or names the game's internals (`why`: the table that does, or `internals`): it works on the build it was made for only.
     Exact { made_for: String, why: String },
-    /// Its package doesn't say what it uses: it works on the build it was made for only.
+    /// Its package has no uses list for its pin: it works on the build it was made for only.
     NoList { made_for: String },
     /// Items it uses changed in this build.
     DoesNotFit {
@@ -180,8 +180,8 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
             &[("made_for", &made(made_for))],
         ),
         Verdict::NoList { made_for } => trf(
-            "{mod}'s package was made by an older tool and doesn't say what it uses, so it works on {made_for} only. Its author can rebuild it with the current mod tools.",
-            &[("mod", name), ("made_for", &made(made_for))],
+            "{mod} pins build {made_for} and its package carries no list of what it uses for that build, so it can't be shown to fit another build. Its author can pack it with `cargo sunrise-mod build`, which writes the list, or repin it first with `cargo sunrise-mod update --sunrise <build>`.",
+            &[("mod", name), ("made_for", &sdk_cache::name_of(made_for).unwrap_or_else(|| made_for.to_owned()))],
         ),
         Verdict::DoesNotFit { made_for, misfits } => {
             let count = misfits.len().to_string();
