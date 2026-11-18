@@ -67,7 +67,12 @@ impl Bundle {
         Facts {
             id: Some(self.manifest.id.clone()),
             version: Some(self.manifest.version.clone()),
-            api: format!("native-1/{}/{}", native.sunrise, native.mixins),
+            // Packages built with the mod tool carry the resolved pin. A source-only archive
+            // can still omit it; record only what the manifest names when no SDK is at hand.
+            api: match &native.mixins {
+                Some(mixins) => format!("native-1/{}/{mixins}", native.sunrise),
+                None => format!("native-1/{}", native.sunrise),
+            },
             game: Some(native.game.clone()),
             ..Facts::default()
         }
@@ -110,6 +115,28 @@ mod tests {
         let result = Bundle::read(&path);
         std::fs::remove_file(path).unwrap();
         result
+    }
+
+    #[test]
+    fn a_source_archive_can_defer_its_mixins_pin_to_the_sdk() {
+        let text = manifest();
+        let build = "a".repeat(40);
+        let pin = "b".repeat(40);
+        let explicit = read("explicit-pin", &text, &[]).unwrap();
+        assert_eq!(explicit.facts().api, format!("native-1/{build}/{pin}"));
+
+        let omitted = text.replace(&format!("mixins = '{pin}'\n"), "");
+        let implicit = read("omitted-pin", &omitted, &[]).unwrap();
+        assert_eq!(implicit.facts().api, format!("native-1/{build}"));
+        assert_eq!(implicit.manifest.native.unwrap().mixins, None);
+
+        let bad = omitted + "mixins = 'main'\n";
+        assert!(
+            read("bad-pin", &bad, &[])
+                .err()
+                .unwrap()
+                .contains("exact revisions")
+        );
     }
 
     #[test]
