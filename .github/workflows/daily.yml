@@ -1,5 +1,5 @@
 name: daily
-# Daily and by hand: the ignored tests on Linux and Windows, except the ones tools/ci/manual-tests.txt lists.
+# Daily and by hand: compare game copies and run ignored tests except those in tools/ci/manual-tests.txt.
 on:
   schedule:
     - cron: '23 3 * * *'
@@ -29,6 +29,42 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run daily.yml -R "$GITHUB_REPOSITORY" --ref main
+
+  game-copies:
+    # Reuse the schedule's dispatch, but don't wait for a build runner for an advisory check.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency: game-copies-daily
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Compare game copies to Sunrise main
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          head=$(git ls-remote --exit-code https://github.com/sunrise-org/sunrise refs/heads/main | cut -f1)
+          game="$RUNNER_TEMP/sunrise-game"
+          tools/ci/game_at.sh "$head" "$game"
+          if SUNRISE_GAME_DIR="$game" python3 tools/tests/test_game_copies.py --report "$RUNNER_TEMP/game-copies.json"; then
+            exit 0
+          else
+            status=$?
+            if [[ "$status" != 1 ]]; then exit "$status"; fi
+          fi
+          # Fetch history only on drift. Keep the compared head even if main has advanced.
+          git -C "$game" fetch --quiet --no-tags --unshallow --filter=blob:none origin "$head" "$(< tools/ci/sunrise-commit)"
+      - name: Update the game-copy drift issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tools/ci/game_copies_issue.py "$RUNNER_TEMP/sunrise-game"
+          tools/ci/sunrise-commit "$RUNNER_TEMP/game-copies.json"
 
   # Linux on Dyna's pool while SUNRISE_LAUNCHER_CI_RUNNER names it and its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds; only a maintainer dispatches this.
   route:
