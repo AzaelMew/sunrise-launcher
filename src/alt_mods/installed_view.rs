@@ -53,13 +53,17 @@ impl Launcher {
 
         let filter = self.alt.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
-        let shown_ids: Rc<Vec<String>> =
-            Rc::new(visible.iter().map(|&i| rows[i].id.clone()).collect());
+        let shown_ids: Rc<Vec<String>> = Rc::new(
+            visible
+                .iter()
+                .filter(|&&i| rows[i].local.is_none())
+                .map(|&i| rows[i].id.clone())
+                .collect(),
+        );
         let selected: Vec<&Row> = rows
             .iter()
-            .filter(|r| self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
             .collect();
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
 
         // ---- left column: what to show
         let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
@@ -255,7 +259,7 @@ impl Launcher {
                     )))
                     .child(if real && !busy {
                         on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_bulk_toggle(true);
+                            this.alt_bulk_on();
                             cx.notify();
                         }))
                     } else {
@@ -263,7 +267,7 @@ impl Launcher {
                     })
                     .child(if real && !busy {
                         off.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_bulk_toggle(false);
+                            this.alt_bulk_off();
                             cx.notify();
                         }))
                     } else {
@@ -336,10 +340,40 @@ impl Launcher {
                                     crate::alt::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
                                         .text_color(c(DANGER))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.alt_remove(items.clone());
+                                            this.alt_run(actions::Action::Remove(items.clone()), false);
                                             cx.notify();
                                         })),
                                 ),
+                        )
+                }
+                Confirm::Stake(action, worlds) => {
+                    let action = action.clone();
+                    let n = worlds.len();
+                    panel
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf(
+                            "{count} of your worlds were saved with these mods",
+                            &[("count", &n.to_string())],
+                        )))
+                        .children(worlds.iter().map(|(world, mods)| {
+                            div().text_size(px(13.)).child(format!("{world}: {}", mods.join(", ")))
+                        }))
+                        .child(div().text_size(px(13.)).text_color(c(GOLD)).child(trf(
+                            "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
+                            &[("what", action.consequence())],
+                        )))
+                        .child(muted(tr("Sunrise backs up each of these worlds first (a zip in backups/) and reads the backup back. If one can't be made or checked, nothing is changed.")))
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(10.))
+                                .child(crate::alt::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.alt.mods.confirm = None;
+                                    cx.notify();
+                                })))
+                                .child(primary("alt-confirm-backup", trf("Back up {count} worlds and continue", &[("count", &n.to_string())])).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.alt_run(action.clone(), true);
+                                    cx.notify();
+                                }))),
                         )
                 }
                 Confirm::Update(plan) => {
@@ -383,7 +417,7 @@ impl Launcher {
                                         dim(b)
                                     } else {
                                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.alt_update(included.clone());
+                                            this.alt_run(actions::Action::Update(included.clone()), false);
                                             cx.notify();
                                         }))
                                     }
@@ -396,6 +430,7 @@ impl Launcher {
         // ---- rows, in three groups
         let mut list = div().flex().flex_col();
         let mut last: Option<Group> = None;
+        let mut position = 0;
         let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
         let updates_total = rows.iter().filter(|r| r.update.is_some()).count();
         for (n, &i) in visible.iter().enumerate() {
@@ -440,8 +475,11 @@ impl Launcher {
                 }
                 list = list.child(head);
             }
-            list =
-                list.child(self.alt_row(n, r, shown_ids.clone(), native_allowed, real, busy, cx));
+            let pos = position;
+            if r.local.is_none() {
+                position += 1;
+            }
+            list = list.child(self.alt_row(n, pos, r, shown_ids.clone(), real, busy, cx));
         }
         if visible.is_empty() {
             list = list.child(
@@ -488,9 +526,9 @@ impl Launcher {
     fn alt_row(
         &mut self,
         n: usize,
+        pos: usize,
         r: Row,
         ids: Rc<Vec<String>>,
-        native_allowed: bool,
         real: bool,
         busy: bool,
         cx: &mut Context<Self>,
@@ -512,7 +550,7 @@ impl Launcher {
                     let m = &mut this.alt.mods;
                     match (ev.modifiers().shift, m.anchor) {
                         (true, Some(a)) => {
-                            let (lo, hi) = (a.min(n), a.max(n));
+                            let (lo, hi) = (a.min(pos), a.max(pos));
                             m.selection
                                 .extend(ids[lo..=hi.min(ids.len() - 1)].iter().cloned());
                         }
@@ -522,7 +560,7 @@ impl Launcher {
                             }
                         }
                     }
-                    m.anchor = Some(n);
+                    m.anchor = Some(pos);
                     cx.notify();
                 },
             ))
@@ -540,6 +578,15 @@ impl Launcher {
             }
         };
         let mut verdict = div().flex().items_center().gap(px(12.));
+        if let Some(local) = &r.local {
+            verdict = verdict.child(say(
+                match local.github {
+                    true => tr("From GitHub, not the registry: read-only here").to_string(),
+                    false => tr("A local file, not from the registry: read-only here").to_string(),
+                },
+                0x9a948a,
+            ));
+        }
         if let Some(why) = error {
             verdict = verdict.child(say(why, GOLD));
         }
@@ -592,10 +639,9 @@ impl Launcher {
                     b
                 });
         }
-        let _ = native_allowed;
         let sw = {
             let s = ui::switch(("alt-row-switch", n), r.on);
-            if real && !matches!(r.need, Some(Need::TakenDown(_))) {
+            if real && r.local.is_none() && !matches!(r.need, Some(Need::TakenDown(_))) {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.alt_toggle(&row);
@@ -647,7 +693,10 @@ impl Launcher {
             .border_t_1()
             .border_color(c(LINE))
             .when(selected, |d| d.bg(c(0x2a2724)))
-            .child(check)
+            .child(match r.local {
+                Some(_) => div().flex_none().w(px(18.)),
+                None => div().flex_none().child(check),
+            })
             .child(tile(picture, &r.title, 32.))
             .child(title)
             .child(
@@ -668,16 +717,5 @@ impl Launcher {
             )
             .child(verdict)
             .child(sw)
-    }
-
-    /// Plans "Update N mods" for the whole pack, or for the selected rows only.
-    pub(super) fn alt_ask_update(&mut self, only_selected: bool) {
-        let rows: Vec<Row> = self
-            .alt_rows()
-            .into_iter()
-            .filter(|r| !only_selected || self.alt.mods.selection.contains(&r.id))
-            .collect();
-        let plan = model::plan_updates(&rows, self.settings.native_mods_allowed_at.is_some());
-        self.alt.mods.confirm = Some(Confirm::Update(plan));
     }
 }

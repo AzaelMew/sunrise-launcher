@@ -63,6 +63,7 @@ fn world<'a>(
         unbuilt,
         native_allowed: allowed,
         chosen: &NO_PINS,
+        local: &[],
     }
 }
 
@@ -316,7 +317,7 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
 fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
     let (idx, entries) = pack();
     let none = HashSet::new();
-    let on: HashSet<String> = ["zoom".to_string()].into();
+    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
     let r = rows(&entries, &world(&idx, &on, &none, false));
     let plan = plan_updates(&r, false);
     let ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
@@ -331,12 +332,7 @@ fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
         .iter()
         .any(|(t, why)| t == "DEEP" && why.contains("native")));
     let with = plan_updates(&r, true);
-    assert!(
-        with.included
-            .iter()
-            .any(|i| i.id == "deep" && i.native && !i.was_on),
-        "an off mod is updated and stays off"
-    );
+    assert!(with.included.iter().any(|i| i.id == "deep" && i.native));
     assert!(with.skipped.is_empty());
 
     // A version the player chose is never moved by a batch.
@@ -348,6 +344,57 @@ fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
     let pinned = plan_updates(&rows(&entries, &w), true);
     assert!(pinned.included.iter().all(|i| i.id != "zoom"));
     assert!(pinned.skipped.iter().any(|(t, _)| t == "ZOOM"));
+}
+
+#[test]
+fn an_update_never_switches_a_turned_off_mod_on() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["zoom".to_string()].into();
+    let none = HashSet::new();
+    let r = rows(&entries, &world(&idx, &on, &none, true));
+    let plan = plan_updates(&r, true);
+    assert_eq!(
+        plan.included
+            .iter()
+            .map(|i| i.id.as_str())
+            .collect::<Vec<_>>(),
+        ["zoom"]
+    );
+    let off: Vec<&str> = plan
+        .skipped
+        .iter()
+        .filter(|(_, why)| why.contains("turned off"))
+        .map(|(t, _)| t.as_str())
+        .collect();
+    assert_eq!(off, ["BAD", "DEEP"]);
+}
+
+#[test]
+fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["mine", "zoom"].map(String::from).into();
+    let none = HashSet::new();
+    let local = [Local {
+        id: "mine".into(),
+        version: "0.3".into(),
+        github: false,
+    }];
+    let w = World {
+        local: &local,
+        ..world(&idx, &on, &none, false)
+    };
+    let r = rows(&entries, &w);
+    let mine = r.iter().find(|r| r.id == "mine").expect("listed");
+    assert!(mine.local.is_some() && mine.entry.is_none() && mine.update.is_none());
+    assert_eq!(
+        mine.need,
+        Some(Need::Permission),
+        "it can't run without permission, like any native mod"
+    );
+    assert!(plan_updates(&r, true)
+        .included
+        .iter()
+        .all(|i| i.id != "mine"));
 }
 
 #[test]

@@ -389,6 +389,8 @@ pub(super) struct Row {
     pub(super) dependency: bool,
     /// The player chose this version (`sunrise::chosen`): a batch leaves it alone.
     pub(super) pinned: bool,
+    /// Not installed by the browser: read-only here.
+    pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
     pub(super) example: bool,
@@ -429,6 +431,17 @@ pub(super) struct World<'a> {
     pub(super) native_allowed: bool,
     /// The versions the player picked, by project id.
     pub(super) chosen: &'a std::collections::BTreeMap<String, String>,
+    /// Native files the browser didn't install.
+    pub(super) local: &'a [Local],
+}
+
+/// A native `.smod` in the game folder that the registry browser didn't install (a local file or a
+/// GitHub install): where it came from isn't verified, so it is listed and left alone.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Local {
+    pub(super) id: String,
+    pub(super) version: String,
+    pub(super) github: bool,
 }
 
 /// The registry mods the browser installed, as rows. Packs, files of other sources and files
@@ -475,12 +488,37 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 update,
                 dependency: e.dependency,
                 pinned: w.chosen.contains_key(&e.project),
+                local: None,
                 icon: p.and_then(|p| p.icon.clone()),
                 entry: Some(e.clone()),
                 example: false,
             })
         })
         .collect();
+    out.extend(w.local.iter().map(|l| {
+        let on = w.enabled.contains(&l.id);
+        let need = match on {
+            true if !w.native_allowed => Some(Need::Permission),
+            true if w.unbuilt.contains(&l.id) => Some(Need::Build),
+            _ => None,
+        };
+        Row {
+            id: l.id.clone(),
+            title: l.id.clone(),
+            authors: String::new(),
+            make: Some(Make::Native),
+            version: l.version.clone(),
+            on,
+            need,
+            update: None,
+            dependency: false,
+            pinned: false,
+            local: Some(l.clone()),
+            icon: None,
+            entry: None,
+            example: false,
+        }
+    }));
     out.sort_by(|a, b| {
         (a.group(), a.title.to_lowercase()).cmp(&(b.group(), b.title.to_lowercase()))
     });
@@ -569,8 +607,6 @@ pub(super) struct Included {
     pub(super) from: String,
     pub(super) to: String,
     pub(super) native: bool,
-    /// It is off now and stays off after the update.
-    pub(super) was_on: bool,
 }
 
 /// The whole pack's compatible updates, not only the visible rows. Native code is only updated
@@ -578,9 +614,15 @@ pub(super) struct Included {
 /// updated: the new file is checked like any install and replaces the one that was taken down.
 pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
     let mut plan = UpdatePlan::default();
-    for r in rows.iter().filter(|r| !r.example) {
+    for r in rows.iter().filter(|r| !r.example && r.local.is_none()) {
         let Some(to) = &r.update else { continue };
-        if r.pinned {
+        if !r.on {
+            // An update never switches a mod on, even for a moment: a mod that is off waits.
+            plan.skipped.push((
+                r.title.clone(),
+                tr("turned off: turn it on first, then update").to_string(),
+            ));
+        } else if r.pinned {
             plan.skipped.push((
                 r.title.clone(),
                 tr("you chose its version: update it on its own").to_string(),
@@ -597,7 +639,6 @@ pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
                 from: r.version.clone(),
                 to: to.clone(),
                 native: r.native(),
-                was_on: r.on,
             });
         }
     }
