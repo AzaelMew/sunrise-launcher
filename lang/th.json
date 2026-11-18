@@ -1335,5 +1335,6 @@
   "{title} · {count}": "{title} · {count}",
   "→ {to}": "→ {to}",
   "{kind} · {version}": "{kind} · {version}",
-  "Host": "Host"
+  "Host": "Host",
+  "A shader pack with the ID {id} is already installed ({file}). Remove it first to add this one.": "A shader pack with the ID {id} is already installed ({file}). Remove it first to add this one."
 }

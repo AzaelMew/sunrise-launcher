@@ -64,6 +64,28 @@ fn shader_key(path: &Path) -> Option<String> {
     Some(format!("sunrise:{}", manifest.id))
 }
 
+/// Refuses a Sunrise shader pack whose id an installed one already has: two would show as one
+/// pack, and which one the game ran would depend on their file names.
+fn refuse_installed_shader(dir: &Path, incoming: &Path) -> Result<(), String> {
+    let Some(key) = shader_key(incoming) else {
+        return Ok(());
+    };
+    let installed = fs::read_dir(dir).into_iter().flatten().flatten().find(|e| {
+        !e.file_name().to_string_lossy().starts_with('.')
+            && shader_key(&e.path()).as_ref() == Some(&key)
+    });
+    match installed {
+        Some(e) => Err(trf(
+            "A shader pack with the ID {id} is already installed ({file}). Remove it first to add this one.",
+            &[
+                ("id", key.strip_prefix("sunrise:").unwrap_or(&key)),
+                ("file", &e.file_name().to_string_lossy()),
+            ],
+        )),
+        None => Ok(()),
+    }
+}
+
 fn migrate_shader_values(home: &Path, pack: &Path, key: &str) -> std::io::Result<()> {
     let Some(id) = key.strip_prefix("sunrise:") else {
         return Ok(());
@@ -475,6 +497,9 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
     let name = file
         .file_name()
         .ok_or_else(|| tr("A pack file has a name").to_string())?;
+    if kind == Kind::Shader {
+        refuse_installed_shader(&dir, file)?;
+    }
     let target = free_target(&dir, name);
     fs::copy(file, &target).map_err(|e| {
         trf(
@@ -553,6 +578,7 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             ));
         }
         if ext.eq_ignore_ascii_case(".sshader") {
+            refuse_installed_shader(&dir, temp.path())?;
             let pack = sunrise_launcher_shader_api::Pack::read(temp.path())?;
             if let Err(problems) = sunrise_launcher_shader_api::check(&pack) {
                 let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
