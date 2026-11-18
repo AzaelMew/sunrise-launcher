@@ -45,7 +45,8 @@ pub(super) enum Event {
     Found(u64, usize, Result<Vec<Project>, String>),
     Progress(String, f32),
     Done(Result<String, String>, bool),
-    Updates(HashMap<(SourceId, String), String>),
+    /// Newer versions of what the browser installed, looked for on one build (`checked_for`).
+    Updates(Option<String>, HashMap<(SourceId, String), String>),
     /// A Java mod's check (its jar read, or why it couldn't be), for the Minecraft version it picked the jar for.
     Checked((SourceId, String), String, Result<Box<Check>, String>),
     /// What a Sunrise registry project says before install: signed or not, what it may do.
@@ -99,7 +100,7 @@ pub(super) struct Mods {
     /// The Sunrise the selected instance played when its updates were last looked for.
     pub(super) checked_for: Option<String>,
     /// The build the page's Minecraft version was last worked out for (the selected instance's).
-    game_for: Option<Option<String>>,
+    game_for: Option<(Option<String>, Option<String>)>,
     /// Whether the start's auto-update ran: it waits for the release list.
     pub(super) auto_updated: bool,
     loaded: bool,
@@ -458,7 +459,9 @@ impl Launcher {
                         self.packs_loaded = None;
                     }
                 }
-                Event::Updates(found) => m.updates = found,
+                // A look for an earlier build than the instance's now is dropped.
+                Event::Updates(build, found) if build == m.checked_for => m.updates = found,
+                Event::Updates(..) => {}
                 // A check for another Minecraft version than the page's (the instance moved) is dropped.
                 Event::Checked(key, game, result) if game == m.game => {
                     let state = match result {
@@ -542,11 +545,7 @@ impl Launcher {
         // registry, where it can't be seen or turned off, it would list what the note says is
         // hidden.
         let glass = self.theme.glass;
-        // A registry modpack becomes an instance of its own, on the launcher's build, as its import does.
-        let game = match (self.mods.kind, self.mods.source) {
-            (PackKind::Modpack, SourceId::Sunrise) => browser::game(),
-            _ => self.mods_game(),
-        };
+        let game = self.mods_search_game();
         let m = &mut self.mods;
         let everything = m.everything && !(glass && m.source == SourceId::Sunrise);
         m.search += 1;
@@ -712,6 +711,14 @@ impl Launcher {
         });
     }
 
+    /// The Minecraft version the page searches for: the selected instance's, but a registry modpack becomes an instance of its own on the launcher's build, as its import does.
+    fn mods_search_game(&self) -> String {
+        match (self.mods.kind, self.mods.source) {
+            (PackKind::Modpack, SourceId::Sunrise) => browser::game(),
+            _ => self.mods_game(),
+        }
+    }
+
     /// Checks the Java mods among `found` that aren't checked yet, a few at a time, on threads:
     /// a cached check answers at once, else the jar is downloaded and read.
     fn mods_check(&mut self, found: Vec<Project>) {
@@ -719,17 +726,21 @@ impl Launcher {
         if m.java.is_some() {
             return;
         }
-        let todo: Vec<Project> = found
-            .into_iter()
-            .filter(|p| p.kind == PackKind::Mod && p.source != SourceId::Sunrise)
-            .filter(|p| p.support(&m.game).installable())
-            .filter(|p| !m.checks.contains_key(&(p.source, p.id.clone())))
-            .collect();
+        // Each project is claimed as it is taken, so one listed twice (a result and a re-queued check) gets one worker.
+        let mut todo = Vec::new();
+        for p in found {
+            let key = (p.source, p.id.clone());
+            if p.kind == PackKind::Mod
+                && p.source != SourceId::Sunrise
+                && p.support(&m.game).installable()
+                && !m.checks.contains_key(&key)
+            {
+                m.checks.insert(key, Checking::Running);
+                todo.push(p);
+            }
+        }
         if todo.is_empty() {
             return;
-        }
-        for p in &todo {
-            m.checks.insert((p.source, p.id.clone()), Checking::Running);
         }
         // A version other than 26.3 asked for: check the newest file for 1.21 and later.
         let everything = m.everything || m.browse.filters.other_version(&m.game);
@@ -785,6 +796,7 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let java = self.mods.java.clone();
         let game = self.mods_game();
+        let build = self.mods.checked_for.clone();
         std::thread::spawn(move || {
             let mut found = HashMap::new();
             for e in entries {
@@ -799,7 +811,7 @@ impl Launcher {
                     found.insert((e.source, e.project.clone()), v.number);
                 }
             }
-            let _ = tx.send(Event::Updates(found));
+            let _ = tx.send(Event::Updates(build, found));
         });
     }
 
@@ -1126,14 +1138,16 @@ impl Launcher {
         if java != self.mods.java {
             self.mods.asked = false;
         }
-        // Another build: its Minecraft version, and so the search, may differ. Worked out only when the build changes, not per frame.
-        let build = self
-            .selected_instance()
-            .and_then(|i| self.version_of(i))
-            .cloned();
-        if self.mods.game_for.as_ref() != Some(&build) {
-            self.mods.game_for = Some(build);
-            if self.mods_game() != self.mods.game {
+        // Another build (the instance's, or the launcher's for registry modpacks): the search's Minecraft version may differ. Worked out only when one changes, not per frame.
+        let builds = (
+            self.selected_instance()
+                .and_then(|i| self.version_of(i))
+                .cloned(),
+            self.selected().cloned(),
+        );
+        if self.mods.game_for.as_ref() != Some(&builds) {
+            self.mods.game_for = Some(builds);
+            if self.mods_search_game() != self.mods.game {
                 self.mods.asked = false;
             }
         }
