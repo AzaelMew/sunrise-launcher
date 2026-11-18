@@ -1,6 +1,6 @@
 //! The launcher look's part of `settings.json`: the accent kept per theme and reduced motion,
-//! each dropped alone when it isn't one, and an old light appearance moved to the Taiga
-//! theme.
+//! each dropped alone when it isn't one, an old light appearance moved to the Taiga theme, and
+//! the indigo theme once saved as "sunrise" read as Twilight.
 use super::{Appearance, Settings};
 use serde_json::{Map, Value};
 
@@ -14,6 +14,18 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
             fields.remove("theme_accents");
         }
         None => {}
+    }
+    // Twilight was saved as "sunrise" while it carried that name: its choice and the accent
+    // kept under it are read under its own id. Nothing saves the old one any more, so this
+    // can't catch a newer choice.
+    use crate::themes::{TWILIGHT, TWILIGHT_BEFORE};
+    if fields.get("theme").and_then(Value::as_str) == Some(TWILIGHT_BEFORE) {
+        fields.insert("theme".into(), TWILIGHT.into());
+    }
+    if let Some(Value::Object(accents)) = fields.get_mut("theme_accents") {
+        if let Some(kept) = accents.remove(TWILIGHT_BEFORE) {
+            accents.entry(TWILIGHT).or_insert(kept);
+        }
     }
     if fields
         .get("reduce_motion")
@@ -48,11 +60,65 @@ mod tests {
         assert_eq!(s.game_args, "--x");
         assert_eq!(s.reduce_motion, None);
         assert_eq!(s.theme_accents.len(), 2);
-        assert_eq!(s.theme_accents["sunrise"], crate::themes::Accent::TEAL);
+        assert_eq!(s.theme_accents["twilight"], crate::themes::Accent::TEAL);
         let s = Settings::parse(r#"{"theme_accents": [1], "reduce_motion": true}"#);
         assert!(s.theme_accents.is_empty());
         assert_eq!(s.reduce_motion, Some(true));
         let saved = serde_json::to_string(&Settings::default()).unwrap();
         assert!(!saved.contains("theme_accents") && !saved.contains("reduce_motion"));
+    }
+
+    /// Sunrise now names the orange theme. A player who chose the indigo one while it was
+    /// called Sunrise keeps it, with the accent they picked under it; one on the orange theme,
+    /// saved as `dawn` or not at all, stays there.
+    #[test]
+    fn the_indigo_theme_saved_as_sunrise_is_read_as_twilight() {
+        use crate::themes::{self, Accent};
+        let old = Settings::parse(
+            r##"{"theme": "sunrise", "theme_accents": {"sunrise": "pink", "dawn": "teal"}}"##,
+        );
+        assert_eq!(old.theme.as_deref(), Some("twilight"));
+        assert_eq!(
+            old.accent,
+            Accent::PINK,
+            "the accent kept under it comes along"
+        );
+        assert_eq!(old.theme_accents["twilight"], Accent::PINK);
+        assert!(!old.theme_accents.contains_key("sunrise"));
+        assert_eq!(old.theme_accents["dawn"], Accent::TEAL);
+        assert!(matches!(
+            themes::resolve(old.theme.as_deref()),
+            themes::Resolved::Twilight
+        ));
+        // Without an accent of the player's it is the violet it always was.
+        assert_eq!(
+            Settings::parse(r#"{"theme": "sunrise"}"#).accent,
+            Accent::VIOLET
+        );
+        // Saved again it says twilight, and reads the same from then on.
+        let saved = serde_json::to_string(&old).unwrap();
+        assert!(
+            saved.contains(r#""theme":"twilight""#) && !saved.contains("sunrise"),
+            "{saved}"
+        );
+        let again = Settings::parse(&saved);
+        assert_eq!((again.theme, again.accent), (old.theme, old.accent));
+        // The orange one is untouched: saved as dawn it stays dawn, and none saved is the same.
+        for text in [r#"{"theme": "dawn"}"#, "{}"] {
+            let orange = Settings::parse(text);
+            assert_eq!(orange.accent.rgb(), 0xb4552f, "{text}");
+            assert!(matches!(
+                themes::resolve(orange.theme.as_deref()),
+                themes::Resolved::Builtin(t) if t.id == "dawn" && t.name == "Sunrise"
+            ));
+        }
+        assert_eq!(
+            Settings::parse(r#"{"theme": "dawn"}"#).theme.as_deref(),
+            Some("dawn")
+        );
+        // A newer accent already kept under twilight wins over the old key.
+        let both =
+            Settings::parse(r##"{"theme_accents": {"sunrise": "pink", "twilight": "green"}}"##);
+        assert_eq!(both.theme_accents["twilight"], Accent::GREEN);
     }
 }

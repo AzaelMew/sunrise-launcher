@@ -34,6 +34,9 @@ pub(crate) enum HomePhoto {
     Theme(Arc<RenderImage>),
 }
 
+/// The settings what is behind Home depends on: the theme, the player's picture, scenery.
+type BehindKey = (Option<String>, Option<String>, bool);
+
 pub(crate) struct State {
     /// The themes to choose from, made again when the folder is read or a choice changes.
     choices: Option<Vec<Choice>>,
@@ -44,7 +47,7 @@ pub(crate) struct State {
     /// What Reload found.
     note: Option<String>,
     /// What is behind Home for the settings it was worked out from (theme, picture, scenery).
-    behind: Option<((Option<String>, Option<String>, bool), Behind)>,
+    behind: Option<(BehindKey, Behind)>,
     /// The theme's picture: its file, and the picture once it is decoded (None: it could not
     /// be).
     photo: Option<(PathBuf, Option<Arc<RenderImage>>)>,
@@ -317,9 +320,14 @@ impl Launcher {
             return;
         }
         let tint = self.settings.glass_tint();
-        let kept = &self.settings.theme_accents;
+        let in_use = appearance::effective_id(&self.settings);
         let choice = |id: String, name: SharedString, about: SharedString, night| {
-            let accent = themes::starting_accent(Some(&id), kept).rgb();
+            // Each preview wears its theme's own accent; the one in use, the accent in use.
+            let accent = if id == in_use {
+                appearance::accent(&self.settings).rgb()
+            } else {
+                themes::own_accent(Some(&id)).rgb()
+            };
             Choice {
                 palette: Palette::plain(night, accent, tint),
                 id,
@@ -338,9 +346,9 @@ impl Launcher {
         let mut all = vec![
             builtin(&themes::DAWN_THEME),
             choice(
-                themes::SUNRISE.into(),
-                tr("Sunrise").into(),
-                tr(themes::SUNRISE_DESCRIPTION).into(),
+                themes::TWILIGHT.into(),
+                tr(themes::TWILIGHT_NAME).into(),
+                tr(themes::TWILIGHT_DESCRIPTION).into(),
                 theme::night::NIGHT,
             ),
         ];
@@ -421,20 +429,25 @@ impl Launcher {
                                             .truncate()
                                             .child(choice.name.clone()),
                                     )
-                                    .child(hint(choice.about.clone()).truncate()),
-                            )
-                            // Chosen is said by the tick, not by colour alone.
-                            .children(on.then(|| {
-                                div()
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .text_size(px(tokens::CAPTION))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(blocks::icon("check", 13., rgb(palette().text).into()))
-                                    .child(tr("Selected"))
-                            })),
+                                    // Chosen is said in words and by the tick, not by colour
+                                    // alone.
+                                    .child(if on {
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(4.))
+                                            .text_size(px(tokens::SMALL))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(blocks::icon(
+                                                "check",
+                                                13.,
+                                                rgb(palette().text).into(),
+                                            ))
+                                            .child(tr("Selected"))
+                                    } else {
+                                        hint(choice.about.clone()).truncate()
+                                    }),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.appearance_change(|s| appearance::select_theme(s, &id), window);

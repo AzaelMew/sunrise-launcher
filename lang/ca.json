@@ -1317,7 +1317,6 @@
   "Cherry Blossom": "Cherry Blossom",
   "Choose picture…": "Choose picture…",
   "Colours and scenery for the whole launcher. Play stays solid, with a white label, in every one.": "Colours and scenery for the whole launcher. Play stays solid, with a white label, in every one.",
-  "Dawn": "Dawn",
   "Deep Ocean": "Deep Ocean",
   "Falling leaves at dusk": "Falling leaves at dusk",
   "Home background": "Home background",
@@ -1354,7 +1353,6 @@
   "The name must be 1 to 64 characters of plain text on one line.": "The name must be 1 to 64 characters of plain text on one line.",
   "The picture you chose is no longer there; choose it again or use the theme's.": "The picture you chose is no longer there; choose it again or use the theme's.",
   "The picture {name} isn't in the theme's folder.": "The picture {name} isn't in the theme's folder.",
-  "The pixel sunset": "The pixel sunset",
   "The theme's picture, on Home.": "The theme's picture, on Home.",
   "The theme's scene.": "The theme's scene.",
   "The theme, its accent and what is behind Home.": "The theme, its accent and what is behind Home.",
@@ -1363,7 +1361,6 @@
   "There is no theme.toml in this folder.": "There is no theme.toml in this folder.",
   "Use theme accent": "Use theme accent",
   "Use theme background": "Use theme background",
-  "Warm charcoal and amber": "Warm charcoal and amber",
   "Your picture, on Home.": "Your picture, on Home.",
   "Your theme · {folder}": "Your theme · {folder}",
   "Your themes": "Your themes",
@@ -1386,5 +1383,8 @@
   "{name} isn't a PNG, JPEG or WebP picture.": "{name} isn't a PNG, JPEG or WebP picture.",
   "{value}: say theme, {names}, a colour like #2563eb or a hue in degrees (0 to 360)": "{value}: say theme, {names}, a colour like #2563eb or a hue in degrees (0 to 360)",
   "Show the cat": "Show the cat",
-  "It visits Home now and then. It stays away while motion is reduced.": "It visits Home now and then. It stays away while motion is reduced."
+  "It visits Home now and then. It stays away while motion is reduced.": "It visits Home now and then. It stays away while motion is reduced.",
+  "Twilight": "Twilight",
+  "Indigo night and violet": "Indigo night and violet",
+  "Warm charcoal and orange": "Warm charcoal and orange"
 }

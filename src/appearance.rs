@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 /// that is missing, Sunrise for an id this launcher doesn't know.
 pub fn effective_id(settings: &Settings) -> String {
     match themes::resolve(settings.theme.as_deref()) {
-        Resolved::Sunrise => themes::SUNRISE.into(),
+        Resolved::Twilight => themes::TWILIGHT.into(),
         Resolved::Builtin(theme) => theme.id.into(),
         Resolved::Local(local) => local.id(),
         Resolved::Missing => themes::DAWN_THEME.id.into(),
@@ -47,7 +47,7 @@ pub fn accent(settings: &Settings) -> Accent {
 /// Every theme that can be chosen, by id, then each folder that can't with its reason: what a
 /// refused choice lists.
 fn choices() -> String {
-    let mut ids = vec![themes::SUNRISE.to_string()];
+    let mut ids = vec![themes::TWILIGHT.to_string()];
     ids.extend(themes::THEMES.iter().map(|t| t.id.to_string()));
     let mut bad = Vec::new();
     for entry in theme_files::loaded().iter() {
@@ -75,7 +75,7 @@ pub fn select_theme(settings: &mut Settings, choice: &str) -> Result<(), String>
     let id = (choice != "default").then_some(choice);
     let known = match id {
         None => true,
-        Some(id) if id == themes::SUNRISE => true,
+        Some(id) if id == themes::TWILIGHT => true,
         Some(id) if id.starts_with(theme_files::PREFIX) => theme_files::find(id).is_some(),
         Some(id) => themes::THEMES.iter().any(|t| t.id == id),
     };

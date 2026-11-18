@@ -528,8 +528,8 @@ mod tests {
             contrast(0xffffff, 0xc4623a) < TEXT,
             "the site's hover orange is too light"
         );
-        // Every built-in theme, Sunrise's violet included, holds white on Play at its own accent.
-        let ids = [Some("sunrise")]
+        // Every built-in theme, Twilight's violet included, holds white on Play at its own accent.
+        let ids = [Some("twilight")]
             .into_iter()
             .chain(themes::THEMES.iter().map(|t| Some(t.id)));
         for id in ids {

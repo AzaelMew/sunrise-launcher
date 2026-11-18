@@ -191,11 +191,12 @@ pub const HYPR_DARK: Night = Night {
     },
 };
 
-/// Dawn: the Sunrise website's warm dawn, on Sunrise's glass pages.
+/// Sunrise: the look of playsunrise.net, its warm charcoal and brand orange, and the theme a
+/// launcher with none saved wears. Its id is `dawn`, as it was saved before it took the name.
 pub const DAWN_THEME: Theme = Theme {
     id: "dawn",
-    name: "Dawn",
-    description: "Warm charcoal and amber",
+    name: "Sunrise",
+    description: "Warm charcoal and orange",
     sky: DAWN_DARK.sky,
     accent: ThemeAccent::Colour(0xb4552f),
     palette: Some(&DAWN_DARK),
@@ -488,7 +489,8 @@ pub const TAIGA: Theme = Theme {
 };
 
 /// Sunrise's own theme's line in Settings.
-pub const SUNRISE_DESCRIPTION: &str = "The pixel sunset";
+pub const TWILIGHT_NAME: &str = "Twilight";
+pub const TWILIGHT_DESCRIPTION: &str = "Indigo night and violet";
 
 /// The launcher themes past Sunrise's own sky: the featured families first, then the older ones.
 pub const THEMES: [Theme; 10] = [
@@ -505,21 +507,26 @@ pub const THEMES: [Theme; 10] = [
 ];
 
 /// Sunrise's own theme's key in `Settings::theme_accents`.
-pub const SUNRISE: &str = "sunrise";
+pub const TWILIGHT: &str = "twilight";
+
+/// What Twilight was saved as while it carried the name Sunrise. Settings that say so are read
+/// as Twilight (`backend::look_settings`), so the indigo look a player chose stays theirs now
+/// that Sunrise names the orange one.
+pub const TWILIGHT_BEFORE: &str = "sunrise";
 
 /// A theme's key in `Settings::theme_accents`: its id (a player's theme keeps its own
-/// `local:<slug>`, there or not), or [`SUNRISE`]. No saved theme and `dawn` share Dawn's.
+/// `local:<slug>`, there or not), or [`TWILIGHT`]. No saved theme and `dawn` share Dawn's.
 pub fn accent_key(id: Option<&str>) -> &str {
     match id {
         Some(local) if local.starts_with(crate::theme_files::PREFIX) => local,
-        _ => theme(id).map_or(SUNRISE, |t| t.id),
+        _ => theme(id).map_or(TWILIGHT, |t| t.id),
     }
 }
 
 /// The accent a theme brings, before any the player picked under it.
 pub fn own_accent(id: Option<&str>) -> Accent {
     match resolve(id) {
-        Resolved::Sunrise => Accent::VIOLET,
+        Resolved::Twilight => Accent::VIOLET,
         Resolved::Builtin(t) => t.accent.accent(),
         Resolved::Local(local) => Accent::from_rgb(local.roles.accent),
         Resolved::Missing => DAWN_THEME.accent.accent(),
@@ -540,8 +547,8 @@ pub fn starting_accent(
 /// What a saved theme id means right now.
 #[derive(Clone)]
 pub enum Resolved {
-    /// Sunrise's own violet look: `sunrise`, or an id from before this launcher knew ids.
-    Sunrise,
+    /// The indigo and violet look: `twilight`, or an id this launcher doesn't know.
+    Twilight,
     Builtin(&'static Theme),
     /// A theme file of the player's (`theme_files`).
     Local(crate::theme_files::Local),
@@ -557,12 +564,12 @@ pub fn resolve(id: Option<&str>) -> Resolved {
         Some(local) if local.starts_with(crate::theme_files::PREFIX) => {
             crate::theme_files::find(local).map_or(Resolved::Missing, Resolved::Local)
         }
-        _ => theme(id).map_or(Resolved::Sunrise, Resolved::Builtin),
+        _ => theme(id).map_or(Resolved::Twilight, Resolved::Builtin),
     }
 }
 
 /// The theme named `id` (`Settings::theme`): Dawn while none is saved, None for Sunrise's own sky
-/// ([`SUNRISE`]) or a name this launcher doesn't know.
+/// ([`TWILIGHT`]) or a name this launcher doesn't know.
 pub fn theme(id: Option<&str>) -> Option<&'static Theme> {
     let id = id.unwrap_or(DAWN_THEME.id);
     THEMES.iter().find(|t| t.id == id)
