@@ -49,6 +49,7 @@ impl Launcher {
             let error = tr("Install Sunrise first.").to_string();
             self.native_log_preflight(&error);
             self.native_error = Some(error);
+            self.play_after_build = None;
             return;
         };
         // The mods this build is given: its failure is read against them, even if another
@@ -62,6 +63,7 @@ impl Launcher {
             Err(e) => {
                 self.native_log_preflight(&e);
                 self.native_error = Some(e);
+                self.play_after_build = None;
                 return;
             }
         };
@@ -74,7 +76,10 @@ impl Launcher {
             .flatten();
         // The build window's build: a line per mod the build is given. Play's own build opens
         // the window; Build opens it itself.
-        let for_play = self.play_after_build.as_deref() == Some(instance.id.as_str());
+        let for_play = self
+            .play_after_build
+            .as_ref()
+            .is_some_and(|play| play.instance == instance.id);
         let mut run = crate::mods::build_run::Run::start(
             instance.id.clone(),
             instance.name.clone(),

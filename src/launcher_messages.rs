@@ -298,19 +298,14 @@ impl Launcher {
                     // was left out and it follows one.
                     let plays = self
                         .selected_instance()
-                        .map(|i| (i.id.clone(), self.version_of(i).cloned()));
-                    if crate::mods::build_run::plays_after(
-                        wanted.as_deref(),
-                        built.as_deref(),
-                        plays
-                            .as_ref()
-                            .map(|(id, version)| (id.as_str(), version.as_deref())),
-                    ) {
+                        .map(|i| (i.id.as_str(), self.version_of(i).map(String::as_str)));
+                    if let Some(play) = wanted.and_then(|play| play.ready(built.as_deref(), plays))
+                    {
                         // The game is what the player asked for: its window gets out of the way.
                         if shown {
                             self.close_sheet();
                         }
-                        self.play();
+                        self.play(play.account);
                     }
                 }
                 Msg::LauncherProgress(p) => {

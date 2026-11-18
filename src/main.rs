@@ -250,9 +250,8 @@ struct Launcher {
     native_progress: Option<native_mods::Progress>,
     /// The first build's one-time download (the compiler), in bytes; `None` once it is there.
     first_build: Option<u64>,
-    /// Play was pressed while this instance's native mods needed a build (Build and play): the
-    /// game starts once the build worked, if it is still the instance selected.
-    play_after_build: Option<String>,
+    /// Play is waiting for a build, with the profile and account that pressed it.
+    play_after_build: Option<mods::build_run::PlayAfterBuild>,
     native_error: Option<String>,
     /// The mods that stopped the last build (`native_mods::Failed::Mods`): their rows say Failed,
     /// the others keep their own state.
