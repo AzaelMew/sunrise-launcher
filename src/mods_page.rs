@@ -158,6 +158,11 @@ pub(super) struct Mods {
 }
 
 impl Mods {
+    /// The saved settings changed (a save, or its retry): the builds the search follows are worked out again.
+    pub(super) fn settings_saved(&mut self) {
+        self.game_for = None;
+    }
+
     pub(super) fn reset_lists(&self) {
         self.results_list.reset();
         self.installed_list.reset();
@@ -793,6 +798,8 @@ impl Launcher {
 
     /// Looks for newer versions of what the browser installed.
     fn mods_check_updates(&mut self) {
+        // Asked even with nothing to look at, so an earlier look's late answer isn't taken for this list.
+        let request = begin_look(&mut self.mods.updates_asked);
         let entries = self.mods.installed.clone();
         if entries.is_empty() {
             return;
@@ -800,8 +807,6 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let java = self.mods.java.clone();
         let game = self.mods_game();
-        self.mods.updates_asked += 1;
-        let request = self.mods.updates_asked;
         std::thread::spawn(move || {
             let mut found = HashMap::new();
             for e in entries {
@@ -1959,6 +1964,12 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
     lines
 }
 
+/// Numbers a new look for updates: from then on, only its answer is taken ([`offer_updates`]).
+fn begin_look(asked: &mut u64) -> u64 {
+    *asked += 1;
+    *asked
+}
+
 /// Takes the update offers of look `request` when it is the latest asked for (`latest`): an earlier one (another instance's list, another build) that answers late changes nothing.
 fn offer_updates(
     offers: &mut HashMap<(SourceId, String), String>,
@@ -2028,6 +2039,18 @@ fn source_switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_look_from_before_a_switch_to_an_instance_with_nothing_installed_changes_nothing() {
+        let offer = HashMap::from([((SourceId::Sunrise, "old-mod".to_owned()), "9".to_owned())]);
+        let mut asked = 0;
+        let old = begin_look(&mut asked);
+        // The new instance has nothing to look at: its look sends nothing, but still counts.
+        begin_look(&mut asked);
+        let mut offers = HashMap::new();
+        offer_updates(&mut offers, asked, old, offer);
+        assert!(offers.is_empty());
+    }
 
     #[test]
     fn an_earlier_look_for_updates_that_answers_late_changes_nothing() {
