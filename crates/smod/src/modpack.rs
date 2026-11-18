@@ -480,39 +480,6 @@ sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Links `home/resourcepacks` to a folder outside `home` with `link(outside, at)`, then checks
-    /// that an override for `resourcepacks/pack.zip` is refused and the folder outside is left alone,
-    /// and so is the player's `options.txt`, which the pack also overrides and imports first.
-    fn refuses_a_link(name: &str, link: impl FnOnce(&Path, &Path) -> std::io::Result<()>) {
-        let dir = scratch(name);
-        let outside = dir.join("outside");
-        let home = dir.join("home");
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(outside.join("pack.zip"), b"not the pack's").unwrap();
-        std::fs::write(home.join("options.txt"), b"mine\n").unwrap();
-        if let Err(e) = link(&outside, &home.join("resourcepacks")) {
-            eprintln!("skipped: cannot create a symlink here ({e})");
-            std::fs::remove_dir_all(&dir).unwrap();
-            return;
-        }
-        let path = write_pack(
-            &dir,
-            PACK,
-            &[
-                ("overrides/options.txt", b"from the pack\n"),
-                ("overrides/resourcepacks/pack.zip", b"from the pack"),
-            ],
-        );
-        assert!(Modpack::extract_overrides(&path, &home).is_err());
-        assert_eq!(std::fs::read(home.join("options.txt")).unwrap(), b"mine\n");
-        assert_eq!(
-            std::fs::read(outside.join("pack.zip")).unwrap(),
-            b"not the pack's"
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
     #[test]
     fn a_failure_while_placing_restores_the_files_already_replaced() {
         let dir = scratch("place");
@@ -538,32 +505,6 @@ sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
         left.sort();
         assert_eq!(left, ["options.txt", "resourcepacks"]);
         std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn an_override_is_not_written_through_a_linked_folder() {
-        refuses_a_link("link", |to, at| {
-            #[cfg(unix)]
-            return std::os::unix::fs::symlink(to, at);
-            #[cfg(windows)]
-            return std::os::windows::fs::symlink_dir(to, at);
-        });
-    }
-
-    /// A junction needs no privilege on Windows, so unlike the symlink above this test never skips.
-    #[cfg(windows)]
-    #[test]
-    fn an_override_is_not_written_through_a_junction() {
-        refuses_a_link("junction", |to, at| {
-            let made = std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(at)
-                .arg(to)
-                .output()
-                .unwrap();
-            assert!(made.status.success(), "mklink /J failed: {made:?}");
-            Ok(())
-        });
     }
 
     #[test]
@@ -653,5 +594,64 @@ sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
         left.sort();
         assert_eq!(left, ["options.txt", "sunrise-extras.txt"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Links `home/resourcepacks` to a folder outside `home` with `link(outside, at)`, then checks
+    /// that an override for `resourcepacks/pack.zip` is refused and the folder outside is left alone,
+    /// and so is the player's `options.txt`, which the pack also overrides and imports first.
+    fn refuses_a_link(name: &str, link: impl FnOnce(&Path, &Path) -> std::io::Result<()>) {
+        let dir = scratch(name);
+        let outside = dir.join("outside");
+        let home = dir.join("home");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(outside.join("pack.zip"), b"not the pack's").unwrap();
+        std::fs::write(home.join("options.txt"), b"mine\n").unwrap();
+        if let Err(e) = link(&outside, &home.join("resourcepacks")) {
+            eprintln!("skipped: cannot create a symlink here ({e})");
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        let path = write_pack(
+            &dir,
+            PACK,
+            &[
+                ("overrides/options.txt", b"from the pack\n"),
+                ("overrides/resourcepacks/pack.zip", b"from the pack"),
+            ],
+        );
+        assert!(Modpack::extract_overrides(&path, &home).is_err());
+        assert_eq!(std::fs::read(home.join("options.txt")).unwrap(), b"mine\n");
+        assert_eq!(
+            std::fs::read(outside.join("pack.zip")).unwrap(),
+            b"not the pack's"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_override_is_not_written_through_a_linked_folder() {
+        refuses_a_link("link", |to, at| {
+            #[cfg(unix)]
+            return std::os::unix::fs::symlink(to, at);
+            #[cfg(windows)]
+            return std::os::windows::fs::symlink_dir(to, at);
+        });
+    }
+
+    /// A junction needs no privilege on Windows, so unlike the symlink above this test never skips.
+    #[cfg(windows)]
+    #[test]
+    fn an_override_is_not_written_through_a_junction() {
+        refuses_a_link("junction", |to, at| {
+            let made = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(at)
+                .arg(to)
+                .output()
+                .unwrap();
+            assert!(made.status.success(), "mklink /J failed: {made:?}");
+            Ok(())
+        });
     }
 }

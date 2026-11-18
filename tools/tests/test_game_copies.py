@@ -30,7 +30,6 @@ SAME_BYTES = (
     ("packaging/icons/hicolor/scalable/apps/sunrise.svg", "assets/icons/hicolor/scalable/apps/sunrise.svg"),
     ("packaging/icons/sunrise.icns", "assets/icons/sunrise.icns"),
     ("packaging/icons/sunrise.ico", "assets/icons/sunrise.ico"),
-    ("packaging/linux/sunrise.desktop", "assets/linux/sunrise.desktop"),
     ("docs/media/village.webp", "assets/media/village.webp"),
     ("docs/media/underwater.webp", "assets/media/underwater.webp"),
     ("docs/media/nether.webp", "assets/media/nether.webp"),
