@@ -160,7 +160,7 @@ impl Launcher {
                     Some(End::Cancelled) => Some(
                         div()
                             .text_size(px(tokens::LABEL))
-                            .child(tr("Nothing was changed. Your game is as it was.")),
+                            .child(tr("The game does not start. Build again when you are ready.")),
                     ),
                     Some(End::Done) if counts.needs_update + counts.failed > 0 => Some(
                         div()
@@ -232,8 +232,8 @@ impl Launcher {
                 .gap(px(10.))
                 .child(
                     button("build-cancel", tr("Cancel build")).on_click(cx.listener(
-                        |_, _: &ClickEvent, _, cx| {
-                            native_mods::cancel();
+                        |this, _: &ClickEvent, _, cx| {
+                            this.stop_build();
                             cx.notify();
                         },
                     )),
@@ -491,6 +491,13 @@ impl Launcher {
             self.ui.mods.build_wanted = false;
             self.open_sheet(crate::sheets::Sheet::ModBuild);
         }
+    }
+
+    /// Cancel build in the window, Stop on the strip and on Home: the build is told to stop,
+    /// and from this press on it starts no game, even if it ends well before it hears.
+    pub(crate) fn stop_build(&mut self) {
+        build_run::stop_asked(self.ui.mods.build.as_mut(), &mut self.play_after_build);
+        native_mods::cancel();
     }
 
     /// Asks the registry again whether a newer version of mod `id` is out, and says what it

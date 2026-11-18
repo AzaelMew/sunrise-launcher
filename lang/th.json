@@ -1426,7 +1426,6 @@
   "Not in this build": "Not in this build",
   "Not signed by its author": "Not signed by its author",
   "Not signed by its author: Sunrise checks the download arrives complete and unchanged.": "Not signed by its author: Sunrise checks the download arrives complete and unchanged.",
-  "Nothing was changed. Your game is as it was.": "Nothing was changed. Your game is as it was.",
   "Open the build log": "Open the build log",
   "Show the build": "Show the build",
   "Skipped": "Skipped",
@@ -1455,5 +1454,6 @@
   "{mod} {version} is out. Update it under Mods.": "{mod} {version} is out. Update it under Mods.",
   "{profile} · Sunrise {build}": "{profile} · Sunrise {build}",
   "{size} to download": "{size} to download",
-  "{version} is out": "{version} is out"
+  "{version} is out": "{version} is out",
+  "The game does not start. Build again when you are ready.": "The game does not start. Build again when you are ready."
 }

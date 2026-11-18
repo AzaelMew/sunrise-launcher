@@ -78,6 +78,9 @@ pub(crate) struct Run {
     pub for_play: bool,
     /// When it ended with its window closed: the strip says how it went for [`SAID_FOR`].
     pub said_at: Option<Instant>,
+    /// The player asked it to stop (Cancel build, or Stop on the strip and Home). The build's
+    /// worker may only hear of it later, or not at all.
+    pub stop_asked: bool,
 }
 
 /// How much of the whole each stage is: compiling is nearly all of a build.
@@ -117,6 +120,7 @@ impl Run {
             details: false,
             for_play,
             said_at: None,
+            stop_asked: false,
         }
     }
 
@@ -172,7 +176,7 @@ impl Run {
         self.end = Some(End::Done);
     }
 
-    /// The player cancelled: nothing was installed, so nothing reads as built.
+    /// The player cancelled and the build heard it: it gave no game, so nothing reads as built.
     pub(crate) fn cancelled(&mut self) {
         self.unbuild();
         self.end = Some(End::Cancelled);
@@ -317,6 +321,18 @@ impl Run {
             ));
         }
         Some(parts.join(" · "))
+    }
+}
+
+/// The player asked the build to stop: from this press on nothing waits to start the game,
+/// however the build ends. A build that had already finished its last check for a cancel, or
+/// had not started checking yet, can still end well; `wanted` (the profile Play was pressed
+/// for) is forgotten here, at the press, so that result starts nothing.
+pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<String>) {
+    *wanted = None;
+    if let Some(run) = run {
+        run.stop_asked = true;
+        run.for_play = false;
     }
 }
 
@@ -593,6 +609,19 @@ mod tests {
             None,
             Some(("autumn", Some("v1")))
         ));
+        // Cancel pressed, and the build ended well all the same (the press came after its last
+        // check): the game it gave is kept and said, and nothing starts.
+        let mut late = self::run(true);
+        let mut wanted = Some("autumn".to_owned());
+        stop_asked(Some(&mut late), &mut wanted);
+        assert!(late.stop_asked && !late.for_play);
+        assert!(!plays_after(
+            wanted.as_deref(),
+            built,
+            Some(("autumn", Some("native-abc")))
+        ));
+        late.done();
+        assert_eq!(late.headline(), "Your mods are ready");
         // Build, not Play: nothing was asked to start.
         assert!(!plays_after(
             None,

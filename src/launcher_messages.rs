@@ -236,6 +236,11 @@ impl Launcher {
                     self.native_progress = Some(step.progress());
                     if let Some(run) = &mut self.ui.mods.build {
                         run.step(&step);
+                        // A build clears the last build's cancel as it starts: a press that
+                        // came before that is said again, so it is never lost.
+                        if run.stop_asked {
+                            native_mods::cancel();
+                        }
                     }
                 }
                 Msg::Native(result) => {
