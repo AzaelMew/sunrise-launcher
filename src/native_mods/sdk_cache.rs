@@ -1036,8 +1036,11 @@ fn signed_game_index(
         };
         // A dated tag republished with a later build of the same day holds that build's index,
         // validly signed for it: the build asked for is gone, which is no safety failure. The
-        // index names the later build only as a guess to check; the signature decides.
+        // index names the later build only as a guess: verify its signature AND its bytes.
         digest(version).map_err(|why| {
+            if channel != sunrise_launcher_release_verify::Channel::Nightly {
+                return unsigned(why);
+            }
             let named = version.rsplit('-').next().unwrap_or_default();
             let later = Index::build_of(&bytes)
                 .ok()
@@ -1047,11 +1050,17 @@ fn signed_game_index(
                     let day = &version[..version.len() - named.len()];
                     format!("{day}{}", &commit[..named.len()])
                 });
-            match later {
-                Some(later) if digest(&later).is_ok() => Refusal::Superseded {
+            if later
+                .and_then(|later| digest(&later).ok())
+                .is_some_and(|signed| {
+                    sunrise_launcher_release_verify::check(INDEX, &signed, &sha256(&bytes)).is_ok()
+                })
+            {
+                Refusal::Superseded {
                     build: version.to_owned(),
-                },
-                _ => unsigned(why),
+                }
+            } else {
+                unsigned(why)
             }
         })
     } else {
