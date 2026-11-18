@@ -161,6 +161,41 @@ impl Launcher {
     pub(crate) fn start_client(&mut self, tag: String, instance_id: Option<String>) {
         self.client_error = None;
         self.crash = None;
+        // Every way to Play ends here, so this is where a build with native code is held to
+        // the permission as it stands now and to the profile about to play it.
+        let home = self
+            .instances
+            .list
+            .iter()
+            .find(|i| Some(&i.id) == instance_id.as_ref())
+            .map(|i| i.home.clone());
+        let native = native_mods::is_native(&tag);
+        let refused = native_status::launch_refusal(
+            native,
+            backend::Settings::load().native_mods_allowed_at.is_some(),
+            &home
+                .filter(|_| native)
+                .map(|home| native_status::enabled(&home))
+                .unwrap_or_default(),
+            native_status::built(&tag).as_deref(),
+        );
+        if let Some(refused) = refused {
+            self.client_error = Some(
+                match refused {
+                    native_status::Refused::NoPermission => tr(
+                        "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
+                    ),
+                    native_status::Refused::NotThisProfiles => tr(
+                        "This profile plays a build made with mods it doesn't have turned on. Choose another game build for it in Versions.",
+                    ),
+                }
+                .into(),
+            );
+            self.starting_pack = None;
+            self.joining = None;
+            self.quick_play = None;
+            return;
+        }
         self.prepare_log.clear();
         // A little earlier than the spawn: file times can be coarse.
         self.client_started =

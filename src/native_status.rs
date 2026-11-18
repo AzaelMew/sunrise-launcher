@@ -58,6 +58,38 @@ pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     }
 }
 
+/// Why a build with native mods must not start for a profile now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Refused {
+    /// The player hasn't allowed native mods, or took the permission back.
+    NoPermission,
+    /// It runs a mod this profile doesn't have turned on, or can't say which mods it runs.
+    NotThisProfiles,
+}
+
+/// The last check before the game starts, whatever led there (a pinned version, a picker, a
+/// build kept on disk from before the permission went): a build compiled with mods' native code
+/// (`native`; `built` is what it says it holds) starts only while native mods are `allowed` and
+/// every mod in it is one of the profile's `enabled` ones. A game as released always may.
+pub fn launch_refusal(
+    native: bool,
+    allowed: bool,
+    enabled: &[Mod],
+    built: Option<&[Mod]>,
+) -> Option<Refused> {
+    if !native {
+        return None;
+    }
+    if !allowed {
+        return Some(Refused::NoPermission);
+    }
+    let on = |m: &Mod| enabled.iter().any(|e| e.0 == m.0);
+    match built {
+        Some(built) if built.iter().all(on) => None,
+        _ => Some(Refused::NotThisProfiles),
+    }
+}
+
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the
 /// mod tool packs beside the source but the build's own digest of the copied source never holds
 /// (else every mod packed with a uses table read Needs rebuild after each build).
@@ -370,6 +402,36 @@ fn stem(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_native_build_starts_only_with_permission_and_for_a_profile_with_its_mods() {
+        let a: Mod = ("a".into(), "1.0".into(), None);
+        let b: Mod = ("b".into(), "1.0".into(), None);
+        let built = [a.clone(), b.clone()];
+        let refusal =
+            |allowed, enabled: &[Mod]| launch_refusal(true, allowed, enabled, Some(&built));
+        assert_eq!(refusal(true, &[a.clone(), b.clone()]), None);
+        // An empty profile pinned to someone's build reads NoMods, so nothing else stops it.
+        assert_eq!(state(&[], Some(&built)), State::NoMods);
+        assert_eq!(refusal(true, &[]), Some(Refused::NotThisProfiles));
+        assert_eq!(
+            refusal(true, std::slice::from_ref(&a)),
+            Some(Refused::NotThisProfiles)
+        );
+        // The permission taken back: the build is still on disk, and stays unstarted.
+        assert_eq!(
+            refusal(false, &[a.clone(), b.clone()]),
+            Some(Refused::NoPermission)
+        );
+        assert_eq!(refusal(false, &[]), Some(Refused::NoPermission));
+        // A native build that can't say what it holds is nobody's.
+        assert_eq!(
+            launch_refusal(true, true, std::slice::from_ref(&a), None),
+            Some(Refused::NotThisProfiles)
+        );
+        // A game as released needs neither.
+        assert_eq!(launch_refusal(false, false, &[], None), None);
+    }
+
     #[test]
     fn the_uses_table_is_not_part_of_a_mods_digest() {
         let source = [("Cargo.toml", b"a".as_slice()), ("src/lib.rs", b"b")];
