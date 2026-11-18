@@ -167,6 +167,9 @@ pub(crate) struct ModsState {
     pub(crate) build: Option<build_run::Run>,
     /// Build was pressed and the build has not started yet (it asks for permission first).
     pub(crate) build_wanted: bool,
+    /// Whether Installed drew its Build button in the frame being drawn (the page is drawn
+    /// before the status strip).
+    pub(crate) build_button_drawn: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
     facts_open: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
@@ -208,6 +211,7 @@ impl Default for ModsState {
             unfit_details: false,
             build: None,
             build_wanted: false,
+            build_button_drawn: false,
             facts_open: false,
             last_mods: None,
             last_packs: None,

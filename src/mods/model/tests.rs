@@ -631,3 +631,64 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     both.need = Some(Need::Permission);
     assert_eq!(cells(&both, None, None).action, Some(RowAction::Allow));
 }
+
+#[test]
+fn the_build_button_is_only_counted_as_drawn_when_its_group_is_shown() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["lib", "addon", "fine"].map(String::from).into();
+    let unbuilt: HashSet<String> = ["addon".to_string()].into();
+    let local = ["lib", "addon", "fine"].map(|id| Local {
+        id: id.into(),
+        name: id.into(),
+        version: "1.0".into(),
+        github: false,
+        native: true,
+    });
+    let w = World {
+        local: &local,
+        native_allowed: true,
+        ..world(&idx, &on, &unbuilt, false)
+    };
+    let r = rows(&entries, &w);
+    let addon = r.iter().find(|r| r.id == "addon").unwrap();
+    assert_eq!((addon.need.clone(), addon.on), (Some(Need::Build), true));
+    // Unfiltered: Build stands in the NEEDS YOU head, for the one mod that waits.
+    let all = visible(&r, &RowFilter::default());
+    assert_eq!(build_in_head(&r, &all), Some(1));
+    // A filter that still shows a row of the group keeps its head, and the button with it.
+    let off = visible(
+        &r,
+        &RowFilter {
+            show: Show::Off,
+            ..RowFilter::default()
+        },
+    );
+    assert!(off.iter().any(|&i| r[i].id == "bad"));
+    assert_eq!(build_in_head(&r, &off), Some(1));
+    // A search that leaves the whole group out: no button is drawn, so the status strip keeps
+    // the running build's bar.
+    let shown = visible(
+        &r,
+        &RowFilter {
+            text: "fine".into(),
+            ..RowFilter::default()
+        },
+    );
+    assert!(!shown.is_empty());
+    assert!(shown.iter().all(|&i| r[i].group() != Group::NeedsYou));
+    assert_eq!(build_in_head(&r, &shown), None);
+    // Nothing waits for a build: no button either way.
+    let none: HashSet<String> = HashSet::new();
+    let built = rows(
+        &entries,
+        &World {
+            local: &local,
+            native_allowed: true,
+            ..world(&idx, &on, &none, false)
+        },
+    );
+    assert_eq!(
+        build_in_head(&built, &visible(&built, &RowFilter::default())),
+        None
+    );
+}

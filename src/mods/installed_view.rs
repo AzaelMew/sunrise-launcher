@@ -25,6 +25,7 @@ impl Launcher {
             .child(header)
             .children(self.strip(cx));
 
+        self.ui.mods.build_button_drawn = false;
         let rows = self.rows();
         if rows.is_empty() {
             return page
@@ -52,6 +53,10 @@ impl Launcher {
 
         let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
+        // Whether this page draws the Build button, and with it a running build's bar: the
+        // status strip, drawn after the page, leaves its own bar out only then.
+        let build = model::build_in_head(&rows, &visible);
+        self.ui.mods.build_button_drawn = build.is_some();
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
                 .iter()
@@ -408,8 +413,7 @@ impl Launcher {
                                 &[("title", title), ("count", &count.to_string())],
                             ))),
                     );
-                let waiting = rows.iter().filter(|r| r.need == Some(Need::Build)).count();
-                if g == Group::NeedsYou && waiting > 0 {
+                if let Some(waiting) = build.filter(|_| g == Group::NeedsYou) {
                     // The button has as much room above and below as beside it.
                     head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
                 }
