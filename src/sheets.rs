@@ -36,6 +36,8 @@ pub(crate) enum Sheet {
     Versions,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
+    /// The launcher's search (`command_search`).
+    Search,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -274,6 +276,16 @@ impl Launcher {
         }
     }
 
+    /// Whether anything is over the page, or about to be: a sheet, a question, the sign-in,
+    /// Host's Create.
+    pub(crate) fn layer_open(&self) -> bool {
+        self.ui.sheets.layered
+            || self.ui.sheet.is_some()
+            || self.ui.sheets.registry.is_some()
+            || self.pending_consent.is_some()
+            || self.owner_screen_open
+    }
+
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
         self.ui.sheets.error = None;
@@ -509,6 +521,7 @@ impl Launcher {
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
+            Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::Worlds) => {
                 let sheet = self.world_pick_sheet(cx);
                 if sheet.is_none() {

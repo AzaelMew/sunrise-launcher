@@ -29,7 +29,7 @@ pub(super) fn startup_section(location_error: bool, location_note: bool) -> Opti
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    pub(super) const ALL: [Section; 6] = [
         Section::Account,
         Section::Game,
         Section::Mods,
@@ -38,7 +38,7 @@ impl Section {
         Section::Launcher,
     ];
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Section::Account => "Account",
             Section::Game => "Game",
