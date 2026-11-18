@@ -394,8 +394,20 @@ impl Launcher {
                         })),
                 ),
             Some(column) => {
-                let mut rows = div().flex().flex_col().gap(px(4.));
-                for (n, item) in column.shown.iter().enumerate() {
+                let (built, place) = self.ui.home.mods_at.clone().list(
+                    column.shown.len(),
+                    1,
+                    crate::home::ROW,
+                    crate::home::ROW_GAP,
+                );
+                let mut rows = div().flex().flex_col().gap(px(crate::home::ROW_GAP));
+                for (n, item) in column
+                    .shown
+                    .iter()
+                    .enumerate()
+                    .take(built.end)
+                    .skip(built.start)
+                {
                     let picture = match &item.picture {
                         Picture::Project(project) => tile(
                             index
@@ -415,6 +427,7 @@ impl Launcher {
                         card()
                             .id(("alt-home-mod", n))
                             .flex_none()
+                            .min_h(px(crate::home::ROW))
                             .flex()
                             .items_center()
                             .gap(px(10.))
@@ -453,6 +466,7 @@ impl Launcher {
                             })),
                     );
                 }
+                let mut rows = div().flex().flex_col().gap(px(4.)).child(place(rows));
                 let off = column.off();
                 if off > 0 {
                     let page = column.off_page();

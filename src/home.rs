@@ -42,6 +42,103 @@ pub(crate) struct HomeState {
     picker: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
     /// What the selected profile has installed, for the Mods column.
     pub(crate) mods: crate::home_mods::Inventory,
+    /// Where the worlds and the Mods rows were last drawn: only those near the window's view
+    /// are built.
+    worlds_at: Near,
+    pub(crate) mods_at: Near,
+}
+
+/// A row of Home's lists, and the room to the next.
+pub(crate) const ROW: f32 = 52.;
+pub(crate) const ROW_GAP: f32 = 4.;
+/// A world's tile with its two lines, and the room between tiles.
+const TILE_TALL: f32 = 180.;
+const TILE_GAP: f32 = 16.;
+
+/// Which of `count` items to build, `across` to a band and the bands `pitch` apart, when the
+/// page shows the list from `from` to `to` (measured down from the list's top): the bands in
+/// view and a few on either side, so the next Tab stop and the next turn of the wheel are there.
+pub(crate) fn near(
+    count: usize,
+    across: usize,
+    pitch: f32,
+    (from, to): (f32, f32),
+) -> std::ops::Range<usize> {
+    const SPARE: f32 = 3.;
+    let band = |y: f32| (y / pitch).max(0.) as usize;
+    let first = band(from - SPARE * pitch) * across;
+    let last = band(to + SPARE * pitch + pitch) * across;
+    first.min(count)..last.min(count)
+}
+
+/// Where a long list of Home was last drawn. All of its items stay reachable (the list is as
+/// tall as all of them) while only those near the view are built.
+#[derive(Clone, Default)]
+pub(crate) struct Near(Rc<Cell<Option<Bounds<gpui::Pixels>>>>);
+
+impl Near {
+    /// How wide the list was last drawn.
+    fn width(&self) -> Option<f32> {
+        self.0.get().map(|at| f32::from(at.size.width))
+    }
+
+    /// The items to build of `count`, and the list they stand in: `items` is given the built
+    /// ones' place in `list`, between two blanks as tall as the ones left out.
+    pub(crate) fn list(
+        &self,
+        count: usize,
+        across: usize,
+        tall: f32,
+        gap: f32,
+    ) -> (std::ops::Range<usize>, impl FnOnce(Div) -> Div) {
+        let pitch = tall + gap;
+        let view = crate::frame::scrolls("home").bounds();
+        let built = match self.0.get() {
+            Some(at) => near(
+                count,
+                across,
+                pitch,
+                (
+                    f32::from(view.top() - at.top()),
+                    f32::from(view.bottom() - at.top()),
+                ),
+            ),
+            // Not drawn yet: a first screenful, measured by the next frame.
+            None => 0..count.min(across * 12),
+        };
+        let bands = |items: usize| items.div_ceil(across) as f32;
+        let blank =
+            |items: usize| (items > 0).then(|| div().flex_none().h(px(bands(items) * pitch - gap)));
+        let (above, below) = (blank(built.start), blank(count - built.end));
+        let at = self.0.clone();
+        let list = move |items: Div| {
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .gap(px(gap))
+                .children(above)
+                .child(items)
+                .children(below)
+                .child(
+                    gpui::canvas(
+                        move |bounds, window, cx| {
+                            if at.replace(Some(bounds)) != Some(bounds) {
+                                // The page moved: what is near is chosen again next frame.
+                                let window = window.window_handle();
+                                cx.defer(move |cx| {
+                                    window.update(cx, |_, window, _| window.refresh()).ok();
+                                });
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+        };
+        (built, list)
+    }
 }
 
 impl HomeState {
@@ -440,18 +537,25 @@ impl Launcher {
             .items_center()
             .child(heading(tr("Continue playing")));
         let body = if !list.is_empty() {
+            let near = self.ui.home.worlds_at.clone();
             if tiles {
-                let mut grid = div().flex().flex_wrap().gap(px(16.));
-                for world in list.iter() {
+                // As many tiles to a band as the column is wide; the rest wrap under them.
+                let across = near.width().map_or(4, |wide| {
+                    ((wide + TILE_GAP) / (WORLD_TILE + TILE_GAP)).max(1.) as usize
+                });
+                let (built, place) = near.list(list.len(), across, TILE_TALL, TILE_GAP);
+                let mut grid = div().flex().flex_wrap().gap(px(TILE_GAP));
+                for world in &list[built] {
                     grid = grid.child(self.world_tile(world, window, cx));
                 }
-                grid
+                place(grid)
             } else {
-                let mut rows = div().flex().flex_col().gap(px(4.));
-                for world in list.iter() {
+                let (built, place) = near.list(list.len(), 1, ROW, ROW_GAP);
+                let mut rows = div().flex().flex_col().gap(px(ROW_GAP));
+                for world in &list[built] {
                     rows = rows.child(self.world_row(world, cx));
                 }
-                rows
+                place(rows)
             }
         } else if !self.worlds.fresh {
             // Still being read: no "none yet" until that is known.
@@ -586,6 +690,7 @@ impl Launcher {
         }));
         card()
             .flex_none()
+            .min_h(px(ROW))
             .flex()
             .items_center()
             .gap(px(10.))
@@ -681,6 +786,7 @@ impl Launcher {
         div()
             .flex_none()
             .w(px(WORLD_TILE))
+            .h(px(TILE_TALL))
             .flex()
             .flex_col()
             .gap(px(8.))
