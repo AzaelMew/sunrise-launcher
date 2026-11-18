@@ -25,6 +25,7 @@ use gpui::rgb;
 use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
+use sunrise_launcher_theme::glass::radius;
 
 /// A world's picture in a row.
 const WORLD_ICON: f32 = 40.;
@@ -323,7 +324,7 @@ impl Launcher {
             .child(self.play_row(instance, window, cx).mt(px(18.)))
     }
 
-    /// Play, the build picker, Play's one action and its one sentence, then the cat's lane.
+    /// Play, the build picker and profile shortcuts, then Play's status and the cat's lane.
     fn play_row(
         &mut self,
         instance: &instances::Instance,
@@ -332,40 +333,74 @@ impl Launcher {
     ) -> Div {
         let view = self.launch_facts().view();
         let idle = view.main == Main::Play;
-        let busy = self.launch_busy();
-        let on = rgb(palette().accent_on);
-        let play = div()
+        let p = palette();
+        let on = rgb(p.accent_on);
+        // Xmilon's accent halo sits outside the button. Hover strengthens it without putting
+        // a veil over the gradient or its text.
+        let glow = move |hover| {
+            vec![gpui::BoxShadow {
+                color: Hsla::from(rgb(p.accent)).opacity(if hover { 0.78 } else { 0.58 }),
+                offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
+                blur_radius: px(if hover { 32. } else { 22. }),
+                spread_radius: px(-8.),
+                inset: false,
+            }]
+        };
+        let play = crate::frame::input(false)
             .id("alt-play")
-            .tab_index(0)
             .flex_none()
-            .flex()
-            .items_center()
             .justify_center()
             .gap(px(10.))
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(px(radius::LARGE))
             .h(px(tokens::PLAY))
-            .min_w(px(132.))
+            .min_w(px(172.))
             .px(px(22.))
             .font_weight(FontWeight::BOLD)
             .text_size(px(tokens::LEAD))
             .text_color(on)
-            .bg(rgb(palette().play_fill))
+            .bg(p.play_gradient())
+            .shadow(glow(false))
             .when(idle, |d| d.child(blocks::icon("play", 17., on.into())))
             .child(view.main.label())
-            .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-            .seen()
-            // Work under way keeps Play's colours, so what it says reads; only a launcher that
-            // can't play at all dims it.
-            .when(!view.enabled && !busy, |d| d.opacity(0.6))
             .when(view.enabled, |d| {
                 d.cursor_pointer()
-                    .hover(|s| s.opacity(0.92))
+                    .hover(move |s| {
+                        s.border_color(Hsla::from(on).opacity(0.25))
+                            .shadow(glow(true))
+                    })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.cat_off_play();
                         this.press_play();
                         cx.notify();
                     }))
-            });
+            })
+            .reach_edge();
+        let icon_button = |id, icon, label| {
+            crate::frame::input(false)
+                .id(id)
+                .flex_none()
+                .justify_center()
+                .rounded(px(radius::LARGE))
+                .size(px(tokens::PLAY))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(p.hover)))
+                .reach_edge()
+                .tooltip(crate::glass_ui::tip(label))
+                .child(crate::glass_ui::icon(icon, 21., rgb(p.text).into()))
+        };
+        let mods = icon_button("alt-quick-mods", "puzzle", tr("Manage mods")).on_click(
+            cx.listener(|this, _, _, cx| {
+                this.show_installed_mods();
+                cx.notify();
+            }),
+        );
+        let home = instance.home.clone();
+        let folder = icon_button("alt-quick-folder", "folder-01", tr("Open folder")).on_click(
+            cx.listener(move |_, _, _, cx| {
+                crate::glass_toast::open(cx, &home);
+                cx.notify();
+            }),
+        );
         let act = view.act.clone().map(|act| {
             let id = match act {
                 crate::launch_state::Act::StopBuild => "alt-build-stop",
@@ -427,20 +462,20 @@ impl Launcher {
                     .h(px(tall))
                     .child(play)
                     .child(self.build_picker(instance, cx))
+                    .child(mods)
+                    .child(folder)
                     .children(act)
                     .child(says),
             )
             .child(lane.ml(px(12.)).mb(px(-GAP)))
     }
 
-    /// The build the profile plays and how it follows new ones: a press opens the chooser.
+    /// The build the profile plays. Press to see how it follows new ones.
     fn build_picker(
         &mut self,
         instance: &instances::Instance,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let signed_in =
-            self.accounts.selected().is_some() || sunrise_launcher::developer_offline::selected();
         let version = self.version_of(instance);
         // A game built with mods reads as the build it was made from, like any other.
         let made_from = version
@@ -455,24 +490,13 @@ impl Launcher {
             Some(t) => self.version_label(t),
             None => tr("Sunrise").into(),
         };
-        let follows = if version.is_none() && !signed_in {
-            tr("Installs after you sign in")
-        } else if version.is_none() {
-            tr("Not installed yet")
-        } else if instance.version.is_some() {
-            tr("Stays on this build")
-        } else if instance.channel == instances::Channel::Stable {
-            tr("Stable")
-        } else {
-            tr("Nightly")
-        };
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
             .flex_none()
             .rounded(px(tokens::R_CONTROL))
             .border_1()
-            .border_color(rgb(palette().line))
+            .border_color(palette().input_edge())
             .bg(palette().card())
             .reach_edge()
             .cursor_pointer()
@@ -485,22 +509,10 @@ impl Launcher {
             .pr(px(14.))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .text_size(px(tokens::BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(palette().text))
-                            .child(build),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(palette().muted))
-                            .child(follows),
-                    ),
+                    .text_size(px(tokens::BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(palette().text))
+                    .child(build),
             )
             .child(blocks::icon(
                 "chevron-down",

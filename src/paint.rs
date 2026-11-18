@@ -18,7 +18,7 @@ use gpui::{rgb, Hsla};
 use std::cell::Cell;
 use sunrise_launcher::backend::Settings;
 use sunrise_launcher_theme::contrast;
-use sunrise_launcher_theme::glass::{fill, SCRIM};
+use sunrise_launcher_theme::glass::{fill, mix_oklab, SCRIM};
 use sunrise_launcher_theme::night::{over, Night};
 
 /// What a dialog's scrim may dim a bright page by: the opacity is the one in this range that
@@ -69,8 +69,8 @@ pub(crate) struct Palette {
     pub accent: u32,
     /// Text and glyphs on the accent: white, always.
     pub accent_on: u32,
-    /// Play's solid fill: the accent, darkened along its hue only as far as white needs (4.5:1).
-    pub play_fill: u32,
+    /// Play's two opaque accent stops, both fitted to hold white text.
+    play_stops: [u32; 2],
     /// The accent as text, a link or a tick on the surfaces above (4.5:1).
     pub accent_ink: u32,
     /// The keyboard ring, on every surface (3:1).
@@ -160,7 +160,11 @@ fn reads(on: &[u32], min: f32) -> impl Fn(u32) -> bool + '_ {
 /// `c`, mixed toward white (`lighter`) or black, which keeps its hue, by the least that makes
 /// `reads` hold: found by bisection; `c` itself when it already reads.
 fn fit(c: u32, lighter: bool, reads: impl Fn(u32) -> bool) -> u32 {
-    let end = if lighter { 0xffffff } else { 0x000000 };
+    fit_toward(c, if lighter { 0xffffff } else { 0x000000 }, reads)
+}
+
+/// Bring a colour toward a known readable end without going further than the check needs.
+fn fit_toward(c: u32, end: u32, reads: impl Fn(u32) -> bool) -> u32 {
     if reads(c) || !reads(end) {
         return if reads(c) { c } else { end };
     }
@@ -233,8 +237,16 @@ impl Inputs {
         let chrome_muted = fit(n.muted, lighter, reads(&on_chrome, TEXT));
         let chrome_line = fit(over(n.ink, 0.4, chrome), lighter, reads(&on_chrome, MARK));
 
-        // The accent, and what must read in front of or on it.
-        let play_fill = fit(raw, false, |c| contrast(0xffffff, c) >= TEXT);
+        // Keep as much of the original control's quarter-white lift as the label allows.
+        // On bright accents, shade the accent itself instead of first washing it out with white.
+        // Leave room beyond 4.5:1 for renderer rounding.
+        let accent_on = 0xffffff;
+        let play_text = |c| contrast(accent_on, c) >= 4.65;
+        let base = fit(raw, false, play_text);
+        let light = fit_toward(mix_oklab(accent_on, raw, 0.25), base, play_text);
+        let dark = fit(raw, false, |c| {
+            contrast(accent_on, c) >= contrast(accent_on, light) + 1.5
+        });
         let accent_ink = fit(raw, lighter, reads(&surfaces[..5], TEXT));
         let everywhere = [surfaces.as_slice(), on_chrome.as_slice()].concat();
         let focus = fit(raw, lighter, reads(&everywhere, MARK));
@@ -292,8 +304,8 @@ impl Inputs {
             chrome_text,
             chrome_muted,
             accent: raw,
-            accent_on: 0xffffff,
-            play_fill,
+            accent_on,
+            play_stops: [dark, light],
             accent_ink,
             focus,
             danger: status(n.danger),
@@ -373,6 +385,18 @@ impl Palette {
     /// the glass behind it shows.
     pub(crate) fn input_fill(&self) -> Hsla {
         Hsla::from(rgb(self.field)).opacity(0.55)
+    }
+
+    /// Play's opaque accent gradient. Linear sRGB interpolation cannot produce luminance above
+    /// the brighter stop, so the white label holds between the stops as well as on them.
+    pub(crate) fn play_gradient(&self) -> gpui::Background {
+        let [dark, light] = self.play_stops.map(rgb);
+        gpui::linear_gradient(
+            135.,
+            gpui::linear_color_stop(light, 0.),
+            gpui::linear_color_stop(dark, 1.),
+        )
+        .color_space(gpui::ColorSpace::Srgb)
     }
 
     /// A resting input's outline: faint. The focus ring, not this line, marks the one in use.
@@ -484,22 +508,19 @@ mod tests {
                 assert!(r >= min, "{name}: {role} on {s:06x} {r:.2}");
             }
         };
-        // The accent is never changed; Play is white on a darkened fit of it, keeping its hue.
+        // The swatch stays as picked; the gradient holds the white label at every point.
         assert_eq!(p.accent, theme.accent_choice.rgb(), "{name}: raw accent");
         assert_eq!(p.accent_on, 0xffffff, "{name}: Play's text is white");
-        reads("white on Play", 0xffffff, &[p.play_fill], TEXT);
-        if p.play_fill != p.accent {
+        let [dark, light] = p.play_stops;
+        let ramp = std::array::from_fn::<_, 101, _>(|i| over(light, i as f32 / 100., dark));
+        reads("white on Play", p.accent_on, &ramp, TEXT);
+        assert!(luminance(light) > luminance(dark));
+        if spread(p.accent) > 60 && spread(dark) > 40 {
+            let drift = (hue(dark) - hue(p.accent)).abs();
             assert!(
-                luminance(p.play_fill) < luminance(p.accent),
-                "{name}: Play is darker"
+                drift.min(std::f32::consts::TAU - drift) < 0.1,
+                "{name}: hue {drift}"
             );
-            if spread(p.accent) > 60 && spread(p.play_fill) > 40 {
-                let drift = (hue(p.play_fill) - hue(p.accent)).abs();
-                assert!(
-                    drift.min(std::f32::consts::TAU - drift) < 0.1,
-                    "{name}: hue {drift}"
-                );
-            }
         }
         let surfaces = [
             p.background,
@@ -665,38 +686,49 @@ mod tests {
         assert!(sectors.iter().all(|&n| n >= 40), "{sectors:?}");
     }
 
-    /// Dawn's Play is the site's brand orange as it is, under white; a lighter orange would
-    /// not hold the label.
+    /// Old Dawn settings use the brand orange, not the retired pink, under the glass.
     #[test]
     fn dawns_play_is_the_brand_orange_under_white() {
-        for id in [None, Some("dawn")] {
-            let own = themes::starting_accent(id, &Default::default());
-            let (settings, theme) = look(id, own, 6., true);
+        for json in [
+            "{}",
+            r#"{"theme":"dawn"}"#,
+            r##"{"accent":"#c2366f"}"##,
+            r##"{"theme":"dawn","accent":"#c2366f"}"##,
+        ] {
+            let settings = Settings::parse(json);
+            let theme = from_settings(&settings, WindowAppearance::Dark);
             let p = Palette::of(&settings, &theme);
-            assert_eq!(
-                (p.accent, p.play_fill, p.accent_on),
-                (0xb4552f, 0xb4552f, 0xffffff)
-            );
-            assert!((contrast(0xffffff, p.play_fill) - 4.905).abs() < 0.01);
+            assert_eq!((p.accent, p.accent_on), (0xb4552f, 0xffffff));
+            assert!(contrast(p.accent_on, p.play_stops[1]) >= TEXT);
         }
         assert!(
             contrast(0xffffff, 0xc4623a) < TEXT,
             "the site's hover orange is too light"
         );
-        // Every built-in theme, Twilight's violet included, holds white on Play at its own accent.
-        let ids = [Some("twilight")]
+    }
+
+    #[test]
+    fn every_builtin_play_uses_its_accent_at_readable_white_contrast() {
+        let ids = [themes::TWILIGHT]
             .into_iter()
-            .chain(themes::THEMES.iter().map(|t| Some(t.id)));
+            .chain(themes::THEMES.iter().map(|t| t.id));
         for id in ids {
-            let own = themes::starting_accent(id, &Default::default());
-            let (settings, theme) = look(id, own, 6., true);
+            let own = themes::own_accent(Some(id)).rgb();
+            let settings = Settings::parse(&format!(r#"{{"theme":"{id}"}}"#));
+            let theme = from_settings(&settings, WindowAppearance::Dark);
             let p = Palette::of(&settings, &theme);
-            assert!(contrast(p.accent_on, p.play_fill) >= TEXT, "{id:?}");
-            assert_eq!(
-                p.accent,
-                own.rgb(),
-                "{id:?}: the accent itself is never changed"
+            assert_eq!(p.accent, own, "{id}: the theme's accent is unchanged");
+            assert_eq!(p.accent_on, 0xffffff, "{id}: white label and icon");
+            let [dark, light] = p.play_stops;
+            let bright_contrast = contrast(p.accent_on, light);
+            let dark_contrast = contrast(p.accent_on, dark);
+            assert!(bright_contrast >= TEXT, "{id}: {bright_contrast:.3}");
+            assert!(
+                dark_contrast >= bright_contrast + 1.5,
+                "{id}: flat gradient"
             );
+            let drift = (hue(dark) - hue(own)).abs();
+            assert!(drift.min(std::f32::consts::TAU - drift) < 0.02, "{id}");
         }
     }
 
@@ -802,14 +834,11 @@ accent = "#101010""##,
         let (settings, theme) = look(None, Accent::from_rgb(0xffe39a), 6., true);
         let p = Palette::of(&settings, &theme);
         assert_eq!(p.accent, 0xffe39a);
-        assert_ne!(p.play_fill, p.accent);
-        let (settings, theme) = look(None, Accent::from_rgb(glass::ACCENT), 6., true);
+        assert_ne!(p.play_stops[0], p.accent);
+        let (settings, theme) = look(None, Accent::from_rgb(0x372890), 6., true);
         let p = Palette::of(&settings, &theme);
-        assert_eq!(
-            (p.play_fill, p.accent_on),
-            (p.accent, 0xffffff),
-            "a dark enough accent stays"
-        );
+        assert_eq!(p.play_stops[0], p.accent, "a dark accent needs no shading");
+        assert_eq!(p.play_stops[1], mix_oklab(p.accent_on, p.accent, 0.25));
     }
 
     /// The theme and the player's accent decide the palette; a frame reads what it began, and
@@ -829,7 +858,10 @@ accent = "#101010""##,
             (0x2e3440, 0x88c0d0),
             "Nord's night and frost"
         );
-        assert_ne!(pb.play_fill, pb.accent, "pale frost cannot hold white text");
+        assert_ne!(
+            pb.play_stops[0], pb.accent,
+            "pale frost cannot hold white text"
+        );
         begin(&nord, &b);
         assert_eq!(palette(), pb);
         let kept = CURRENT.get().1;

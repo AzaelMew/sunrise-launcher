@@ -47,11 +47,46 @@ pub(super) fn settle(settings: &mut Settings) {
             crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
     }
     settings.appearance = Appearance::Dark;
+
+    // Old Dawn saved its pink default like a picked accent. If it wasn't saved under
+    // the theme as a choice, follow the updated default instead of keeping the old one.
+    use crate::themes::DAWN_THEME;
+    if settings
+        .theme
+        .as_deref()
+        .is_none_or(|id| id == DAWN_THEME.id)
+        && settings.accent.rgb() == 0xc2366f
+        && !settings.theme_accents.contains_key(DAWN_THEME.id)
+    {
+        settings.accent = DAWN_THEME.accent.accent();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Settings;
+
+    #[test]
+    fn dawn_follows_the_new_default_but_keeps_accent_choices() {
+        for theme in ["null", "\"dawn\""] {
+            let legacy = format!(r##"{{"theme":{theme}, "accent":"#C2366F"}}"##);
+            let settled = Settings::parse(&legacy);
+            assert_eq!(settled.accent.rgb(), 0xb4552f);
+            let saved = serde_json::to_string(&settled).unwrap();
+            assert_eq!(Settings::parse(&saved).accent, settled.accent);
+            let picked = format!(
+                r##"{{"theme":{theme}, "accent":"#C2366F", "theme_accents":{{"dawn":"#C2366F"}}}}"##
+            );
+            assert_eq!(Settings::parse(&picked).accent.rgb(), 0xc2366f);
+        }
+        for (json, expected) in [
+            (r##"{"theme":"twilight", "accent":"#C2366F"}"##, 0xc2366f),
+            (r##"{"theme":"dawn", "accent":"#C23670"}"##, 0xc23670),
+            (r##"{"theme":"dawn", "accent":"pink"}"##, 0xbe185d),
+        ] {
+            assert_eq!(Settings::parse(json).accent.rgb(), expected);
+        }
+    }
 
     /// A wrong accent under one theme, or a motion choice that isn't one, loses only itself.
     #[test]
