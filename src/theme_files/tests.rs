@@ -334,7 +334,9 @@ fn a_picture_is_checked_by_what_it_holds_and_how_big_it_is() {
     let local = read().unwrap();
     assert_eq!(local.picture, Some(folder.join("shore.png")));
     assert_eq!(
-        picture(&folder.join("shore.png")).unwrap().dimensions(),
+        picture_in(root.path(), &folder.join("shore.png"))
+            .unwrap()
+            .dimensions(),
         (320, 200)
     );
     // Its name says PNG; what it holds decides.
@@ -369,10 +371,15 @@ fn a_picture_is_checked_by_what_it_holds_and_how_big_it_is() {
     // A truncated picture is refused when it is decoded, without a panic.
     let cut = png(320, 200);
     fs::write(folder.join("shore.png"), &cut[..cut.len() / 2]).unwrap();
-    assert!(picture(&folder.join("shore.png")).is_err());
+    assert!(picture_in(root.path(), &folder.join("shore.png")).is_err());
     // A wide one is scaled down for the window.
     fs::write(folder.join("shore.png"), png(5120, 1000)).unwrap();
-    assert_eq!(picture(&folder.join("shore.png")).unwrap().width(), 2560);
+    assert_eq!(
+        picture_in(root.path(), &folder.join("shore.png"))
+            .unwrap()
+            .width(),
+        2560
+    );
 }
 
 #[cfg(unix)]
@@ -411,5 +418,61 @@ fn a_linked_folder_file_or_picture_is_refused() {
             ("linked".to_string(), Reason::Linked("folder")),
             ("picture".to_string(), Reason::Linked("picture")),
         ]
+    );
+}
+
+/// A link or junction where the themes folder should be is listed as that, and nothing behind
+/// it is read; a theme's folder swapped for a link after the themes were read leads nowhere.
+#[cfg(unix)]
+#[test]
+fn a_linked_themes_folder_or_a_folder_swapped_for_a_link_is_never_read_through() {
+    use std::os::unix::fs::symlink;
+    let with = TIDEPOOL.replace(
+        "name = \"Tidepool\"",
+        "name = \"Tidepool\"\nbackground = \"shore.png\"",
+    );
+    // Someone else's themes, with a picture.
+    let outside = tempfile::tempdir().unwrap();
+    let theirs = theme(outside.path(), "tidepool", &with);
+    fs::write(theirs.join("shore.png"), png(320, 200)).unwrap();
+
+    // The whole themes folder is a link to them.
+    let data = tempfile::tempdir().unwrap();
+    let root = data.path().join("themes");
+    symlink(outside.path(), &root).unwrap();
+    assert!(root_linked(&root));
+    assert_eq!(
+        scan(&root),
+        [Entry::Bad {
+            folder: "themes".into(),
+            reason: Reason::Linked("folder"),
+        }]
+    );
+    assert_eq!(
+        picture_in(&root, &root.join("tidepool").join("shore.png")),
+        Err(Reason::Linked("folder"))
+    );
+
+    // A real themes folder, read while its theme was real.
+    let data = tempfile::tempdir().unwrap();
+    let root = data.path().join("themes");
+    let mine = theme(&root, "tidepool", &with);
+    fs::write(mine.join("shore.png"), png(320, 200)).unwrap();
+    assert!(!root_linked(&root));
+    let Entry::Good(local) = scan(&root).remove(0) else {
+        panic!("the theme is good while it is real");
+    };
+    let kept = local.picture.unwrap();
+    assert!(picture_in(&root, &kept).is_ok());
+    // Then the theme's folder is replaced with a link: the saved path still names a picture,
+    // but Home's read stops at the link.
+    fs::remove_dir_all(&mine).unwrap();
+    symlink(&theirs, &mine).unwrap();
+    assert!(kept.is_file(), "the path alone would be followed");
+    assert_eq!(picture_in(&root, &kept), Err(Reason::Linked("folder")));
+    // And a path that isn't a theme's own picture is no picture at all.
+    assert_eq!(
+        picture_in(&root, &outside.path().join("tidepool").join("shore.png")),
+        Err(Reason::PictureMissing("shore.png".into()))
     );
 }

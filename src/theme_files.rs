@@ -12,6 +12,8 @@
 //! and never stops another theme from loading.
 use crate::i18n::{tr, trf};
 use crate::themes::DAWN_DARK;
+use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
+use cap_std::fs::Dir;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -257,17 +259,71 @@ fn linked(meta: &fs::Metadata) -> bool {
     meta.file_type().is_symlink()
 }
 
-/// At most `max` bytes of the regular file at `path`, which is not a link; `over` when it holds
-/// more.
-fn bounded(path: &Path, max: u64, what: &'static str, over: Reason) -> Result<Vec<u8>, Reason> {
+/// The themes folder at `root`, opened as itself: a link or junction standing in its place
+/// is refused, never followed. `None` when there is no themes folder.
+fn open_root(root: &Path) -> Result<Option<Dir>, Reason> {
+    let meta = match fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(Reason::Io(e.to_string())),
+    };
+    if linked(&meta) || !meta.is_dir() {
+        return Err(Reason::Linked("folder"));
+    }
+    let (Some(parent), Some(name)) = (root.parent(), root.file_name()) else {
+        return Err(Reason::Linked("folder"));
+    };
+    // Opened through its parent without following: a link put there since the check above is
+    // refused by the open itself.
+    Dir::open_ambient_dir(parent, cap_std::ambient_authority())
+        .and_then(|parent| parent.open_dir_nofollow(name))
+        .map(Some)
+        .map_err(|_| Reason::Linked("folder"))
+}
+
+/// Whether a link stands where the themes folder should be: nothing is opened through it.
+pub fn root_linked(root: &Path) -> bool {
+    matches!(open_root(root), Err(Reason::Linked(_)))
+}
+
+/// The folder `name` directly in `dir`, opened relative to it and never through a link.
+fn open_folder(dir: &Dir, name: &str) -> Result<Dir, Reason> {
+    dir.open_dir_nofollow(name)
+        .map_err(|e| match dir.symlink_metadata(name) {
+            Ok(meta) if !meta.is_dir() => Reason::Linked("folder"),
+            _ => Reason::Io(e.to_string()),
+        })
+}
+
+/// At most `max` bytes of the regular file `name` directly in `dir`: opened relative to the
+/// open folder without following a link, and checked on the opened file, so what is checked is
+/// what is read. `over` when it holds more.
+fn bounded(
+    dir: &Dir,
+    name: &str,
+    max: u64,
+    what: &'static str,
+    over: Reason,
+) -> Result<Vec<u8>, Reason> {
     use std::io::Read as _;
-    let meta = fs::symlink_metadata(path).map_err(|e| Reason::Io(e.to_string()))?;
-    if linked(&meta) || !meta.is_file() {
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    let file = dir
+        .open_with(name, &options)
+        .map_err(|e| match dir.symlink_metadata(name) {
+            Ok(meta) if !meta.is_file() => Reason::Linked(what),
+            _ => Reason::Io(e.to_string()),
+        })?;
+    if !file
+        .metadata()
+        .map_err(|e| Reason::Io(e.to_string()))?
+        .is_file()
+    {
         return Err(Reason::Linked(what));
     }
     let mut bytes = Vec::new();
-    fs::File::open(path)
-        .and_then(|f| f.take(max + 1).read_to_end(&mut bytes))
+    file.take(max + 1)
+        .read_to_end(&mut bytes)
         .map_err(|e| Reason::Io(e.to_string()))?;
     if bytes.len() as u64 > max {
         return Err(over);
@@ -387,16 +443,14 @@ pub fn parse(text: &str) -> Result<Parsed, Reason> {
 
 /// The picture's bytes if it is one the launcher shows: PNG, JPEG or WebP by what it holds,
 /// 40 MB at most, 64 to 8192 pixels a side and 16 megapixels at most.
-fn picture_bytes(path: &Path) -> Result<Vec<u8>, Reason> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if fs::symlink_metadata(path).is_err() {
+fn picture_bytes(folder: &Dir, name: &str) -> Result<Vec<u8>, Reason> {
+    let name = name.to_string();
+    if folder.symlink_metadata(&name).is_err() {
         return Err(Reason::PictureMissing(name));
     }
     let bytes = bounded(
-        path,
+        folder,
+        &name,
         MAX_PICTURE,
         "picture",
         Reason::PictureTooBig(name.clone()),
@@ -423,14 +477,27 @@ fn picture_bytes(path: &Path) -> Result<Vec<u8>, Reason> {
 /// The theme's picture, decoded for Home: its first frame, never more memory than its checked
 /// size needs, scaled down to what a window shows. Slow: call it off the window's thread.
 pub fn picture(path: &Path) -> Result<image::RgbaImage, Reason> {
-    let bytes = picture_bytes(path)?;
-    let name = || {
-        Reason::PictureKind(
-            path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        )
+    picture_in(&dir(), path)
+}
+
+/// [`picture`] for the themes folder at `root`. The path is walked again from the folder
+/// itself, each step opened relative to the last and never through a link: a folder swapped
+/// for a link since the themes were read leads nowhere.
+pub fn picture_in(root: &Path, path: &Path) -> Result<image::RgbaImage, Reason> {
+    let shown = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let missing = || Reason::PictureMissing(shown.clone());
+    let inside = path.strip_prefix(root).map_err(|_| missing())?;
+    let mut parts = inside.iter().map(|part| part.to_str());
+    let (Some(Some(slug)), Some(Some(file)), None) = (parts.next(), parts.next(), parts.next())
+    else {
+        return Err(missing());
     };
+    let folder = open_folder(&open_root(root)?.ok_or_else(missing)?, slug)?;
+    let bytes = picture_bytes(&folder, file)?;
+    let name = || Reason::PictureKind(shown.clone());
     let mut reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
         .with_guessed_format()
         .map_err(|_| name())?;
@@ -449,27 +516,22 @@ pub fn picture(path: &Path) -> Result<image::RgbaImage, Reason> {
     Ok(shown.to_rgba8())
 }
 
-/// Reads the theme in `folder`, a child of the themes folder.
-fn read(folder: &Path, slug: &str) -> Result<Local, Reason> {
+/// Reads the theme in the folder `slug` of the open themes folder, which is at `root`.
+fn read(themes: &Dir, root: &Path, slug: &str) -> Result<Local, Reason> {
     if !slug_ok(slug) {
         return Err(Reason::Slug);
     }
-    let meta = fs::symlink_metadata(folder).map_err(|e| Reason::Io(e.to_string()))?;
-    if linked(&meta) {
-        return Err(Reason::Linked("folder"));
-    }
-    let file = folder.join(FILE);
-    if fs::symlink_metadata(&file).is_err() {
+    let folder = open_folder(themes, slug)?;
+    if folder.symlink_metadata(FILE).is_err() {
         return Err(Reason::NoFile);
     }
-    let bytes = bounded(&file, MAX_TOML, "theme.toml", Reason::TooLong)?;
+    let bytes = bounded(&folder, FILE, MAX_TOML, "theme.toml", Reason::TooLong)?;
     let text = String::from_utf8(bytes).map_err(|_| Reason::NotText)?;
     let parsed = parse(&text)?;
     let picture = match parsed.picture {
         Some(name) => {
-            let path = folder.join(name);
-            picture_bytes(&path)?;
-            Some(path)
+            picture_bytes(&folder, &name)?;
+            Some(root.join(slug).join(name))
         }
         None => None,
     };
@@ -482,21 +544,34 @@ fn read(folder: &Path, slug: &str) -> Result<Local, Reason> {
 }
 
 /// Every folder directly under `root`, by name: each a theme or the reason it isn't one. A
-/// themes folder that isn't there has no themes.
+/// themes folder that isn't there has no themes, and one that is a link is listed as that and
+/// not looked into.
 pub fn scan(root: &Path) -> Vec<Entry> {
-    let mut folders: Vec<(String, PathBuf)> = fs::read_dir(root)
+    let themes = match open_root(root) {
+        Ok(Some(themes)) => themes,
+        Ok(None) => return Vec::new(),
+        Err(reason) => {
+            return vec![Entry::Bad {
+                folder: root
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                reason,
+            }]
+        }
+    };
+    let mut folders: Vec<String> = themes
+        .entries()
         .into_iter()
         .flatten()
         .flatten()
-        .filter(|e| {
-            fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir() || m.file_type().is_symlink())
-        })
-        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir() || t.is_symlink()))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     folders.sort();
     folders
         .into_iter()
-        .map(|(name, path)| match read(&path, &name) {
+        .map(|name| match read(&themes, root, &name) {
             Ok(local) => Entry::Good(local),
             Err(reason) => Entry::Bad {
                 folder: name,

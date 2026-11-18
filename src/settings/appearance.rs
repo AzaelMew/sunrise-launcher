@@ -519,6 +519,17 @@ impl Launcher {
                         button("alt-themes-folder", tr("Open themes folder")).on_click(
                             cx.listener(|this, _: &ClickEvent, _, cx| {
                                 let dir = theme_files::dir();
+                                // A link there is not the launcher's folder: never opened
+                                // or made through.
+                                if theme_files::root_linked(&dir) {
+                                    this.ui.settings.appearance.error = Some(format!(
+                                        "{}: {}",
+                                        dir.display(),
+                                        theme_files::Reason::Linked("folder").text()
+                                    ));
+                                    cx.notify();
+                                    return;
+                                }
                                 match std::fs::create_dir_all(&dir) {
                                     Ok(()) => crate::glass_toast::open(cx, &dir),
                                     Err(e) => {
