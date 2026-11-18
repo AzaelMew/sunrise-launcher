@@ -290,7 +290,7 @@ impl Launcher {
             let release = match &self.releases {
                 Load::Ready(rows) => match expected {
                     Some(tag) => rows.iter().find(|r| r.asset.is_some() && &r.tag == tag),
-                    None => instance.channel.builds(rows).next(),
+                    None => instance.channel.following(rows).builds(rows).next(),
                 }
                 .cloned(),
                 _ => None,

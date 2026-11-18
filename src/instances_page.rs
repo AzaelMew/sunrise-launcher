@@ -68,9 +68,9 @@ impl Launcher {
     pub(super) fn version_of(&self, instance: &Instance) -> Option<&String> {
         match &instance.version {
             Some(own) => self.installed.iter().find(|t| *t == own),
-            // Latest of its channel. Stable must be known from the catalogue, not inferred
-            // from the version the launcher happens to be playing.
-            None => match instance.channel {
+            // Play Nightly while the catalogue has no Stable download. Keep the saved
+            // channel so the profile switches when Stable becomes available.
+            None => match self.followed_channel(instance.channel) {
                 instances::Channel::Stable => self
                     .stable_builds()
                     .find_map(|b| self.installed.iter().find(|t| **t == b.tag)),

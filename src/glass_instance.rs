@@ -22,28 +22,33 @@ impl Launcher {
                 .cloned()
                 .or_else(|| self.sunrise_choices().into_iter().next())
         };
-        match channel {
+        match self.followed_channel(channel) {
             Channel::Stable => self.stable_builds().next().map(|b| b.tag.clone()),
             Channel::Nightly => nightly(),
         }
     }
 
-    /// The Stable channel's builds, newest first (none until the release list is here).
-    pub(super) fn stable_builds(&self) -> impl Iterator<Item = &Release> {
-        Channel::Stable.builds(match &self.releases {
+    fn game_releases(&self) -> &[Release] {
+        match &self.releases {
             Load::Ready(releases) => releases,
             _ => &[],
-        })
+        }
+    }
+
+    /// The channel the profile actually follows, without changing its saved preference.
+    pub(super) fn followed_channel(&self, channel: Channel) -> Channel {
+        channel.following(self.game_releases())
+    }
+
+    /// The Stable channel's builds, newest first (none until the release list is here).
+    pub(super) fn stable_builds(&self) -> impl Iterator<Item = &Release> {
+        Channel::Stable.builds(self.game_releases())
     }
 
     /// The Sunrise versions the dialog offers (the mockup's `data.nightlies`): see
     /// [`sunrise_choices`].
     pub(super) fn sunrise_choices(&self) -> Vec<String> {
-        let releases = match &self.releases {
-            Load::Ready(r) => r.as_slice(),
-            _ => &[],
-        };
-        sunrise_choices(releases, &self.installed)
+        sunrise_choices(self.game_releases(), &self.installed)
     }
 
     /// The release to download for the Sunrise version `tag`, when it isn't installed.
@@ -160,6 +165,32 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["v1.0.0"]
         );
+    }
+
+    #[test]
+    fn a_stable_profile_follows_the_newest_nightly_until_a_stable_release_exists() {
+        let stable = Channel::Stable;
+        let mut releases = vec![
+            release("nightly-2026-11-17-aaaaaaa", true, true),
+            release("nightly-2026-11-16-bbbbbbb", true, true),
+            Release {
+                prerelease: true,
+                ..release("v1.1.0", false, true)
+            },
+        ];
+        let plays = |releases: &[Release]| {
+            stable
+                .following(releases)
+                .builds(releases)
+                .next()
+                .map(|r| r.tag.clone())
+        };
+        assert_eq!(
+            plays(&releases).as_deref(),
+            Some("nightly-2026-11-17-aaaaaaa")
+        );
+        releases.push(release("v1.0.0", false, true));
+        assert_eq!(plays(&releases).as_deref(), Some("v1.0.0"));
     }
 
     #[test]

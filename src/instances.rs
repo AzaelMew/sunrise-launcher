@@ -222,6 +222,16 @@ impl Channel {
             .iter()
             .filter(move |r| r.asset.is_some() && Self::of_release(r) == Some(self))
     }
+
+    /// What an unpinned profile follows for now. Without a Stable download it plays Nightly
+    /// without changing the saved channel; Stable takes over when one becomes available.
+    pub fn following(self, releases: &[backend::Release]) -> Self {
+        if self == Self::Stable && self.builds(releases).next().is_none() {
+            Self::Nightly
+        } else {
+            self
+        }
+    }
 }
 
 // An unknown channel must not invalidate unrelated instance metadata.

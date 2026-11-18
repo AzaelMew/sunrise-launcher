@@ -16,11 +16,7 @@ impl Launcher {
         self.servers.text(Field::InstanceGroup).set(String::new());
         self.focus_handle(Field::InstanceName, cx);
         self.servers.focus_soon = Some(Field::InstanceName);
-        let channel = if self.stable_builds().next().is_some() {
-            Channel::Stable
-        } else {
-            Channel::Nightly
-        };
+        let channel = self.followed_channel(Channel::Stable);
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
             copy: false,

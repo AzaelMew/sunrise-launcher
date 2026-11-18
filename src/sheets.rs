@@ -1273,6 +1273,8 @@ impl Launcher {
                 tr("Latest Stable").into(),
                 if stable {
                     tr("Only builds marked stable.").into()
+                } else if follow_stable {
+                    tr("No stable release yet. Plays Nightly for now.").into()
                 } else {
                     tr("No stable release yet").into()
                 },

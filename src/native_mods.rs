@@ -2004,7 +2004,8 @@ pub fn build(
 
 /// Clearing the pin must play the checked base both in the window and on the command line.
 /// Nightly follows the launcher's selection. Stable follows the newest installed Stable choice
-/// in the window; if that isn't known, pin rather than guess from an offline list.
+/// in the window, or Nightly when the known catalogue has no Stable release. With no catalogue,
+/// pin rather than guess.
 fn follows_plain(
     channel: instances::Channel,
     plain: &str,
@@ -2032,10 +2033,14 @@ fn plain_pin(
     cancelled: impl FnOnce() -> Result<(), String>,
 ) -> Result<Option<String>, String> {
     let follows = follows_plain(channel, plain, selected, || {
-        instances::Channel::Stable
-            .builds(&catalogue()?)
-            .find(|b| installed.contains(&b.tag))
-            .map(|b| b.tag.clone())
+        let releases = catalogue()?;
+        match channel.following(&releases) {
+            instances::Channel::Stable => channel
+                .builds(&releases)
+                .find(|b| installed.contains(&b.tag))
+                .map(|b| b.tag.clone()),
+            instances::Channel::Nightly => selected.map(str::to_owned),
+        }
     });
     cancelled()?;
     Ok((!follows).then(|| plain.to_owned()))
@@ -2693,6 +2698,40 @@ mod tests {
             || Ok(()),
         );
         assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+    }
+
+    #[test]
+    fn a_stable_setup_can_unpin_to_nightly_only_while_there_is_no_stable_release() {
+        let nightly = "nightly-2026-11-17-2d81263";
+        let mut releases = vec![backend::Release {
+            tag: "v1.1.0".into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((String::new(), 1)),
+            prerelease: true,
+            nightly: None,
+        }];
+        let installed = [nightly.to_owned()];
+        let pin = |releases| {
+            plain_pin(
+                instances::Channel::Stable,
+                nightly,
+                Some(nightly),
+                &installed,
+                || Some(releases),
+                || Ok(()),
+            )
+        };
+        assert_eq!(pin(releases.clone()), Ok(None));
+        releases.push(backend::Release {
+            tag: "v1.0.0".into(),
+            prerelease: false,
+            ..releases[0].clone()
+        });
+        // Stable will download v1.0.0 next Play, so keep the Nightly we actually checked.
+        assert_eq!(pin(releases), Ok(Some(nightly.to_owned())));
     }
 
     #[test]
