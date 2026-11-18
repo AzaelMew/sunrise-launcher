@@ -6,6 +6,7 @@
 #[cfg(windows)]
 use sunrise_launcher_scenery::coast;
 use sunrise_launcher_scenery::{art, clock, glass};
+mod account_chip;
 mod blocks_settings;
 mod launcher_messages;
 mod launcher_play;
@@ -301,6 +302,8 @@ struct Launcher {
     auth_status: HashMap<String, account::session::Status>,
     auth_progress: HashMap<String, account::session::Phase>,
     profile_heads: profile_heads::Heads,
+    /// The account chip's menu (`account_chip`).
+    account_menu: account_chip::Menu,
     /// When page switches last checked every account's sign-in.
     auth_checked: Option<Instant>,
     sign_in_target: Option<account::Account>,

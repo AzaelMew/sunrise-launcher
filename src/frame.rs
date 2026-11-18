@@ -452,6 +452,7 @@ impl Launcher {
             .border_color(rgb(p.divider))
             .bg(p.chrome_plate())
             .child(tabs)
+            .child(self.account_chip(cx))
     }
 
     pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {

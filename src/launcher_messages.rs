@@ -440,12 +440,10 @@ impl Launcher {
                         self.settings.owner_notice_seen = true;
                         self.save_settings();
                     }
-                    if self
-                        .ui
-                        .after_sign_in
-                        .take()
-                        .is_some_and(|id| self.selected_instance().is_some_and(|i| i.id == id))
-                    {
+                    if account_chip::plays_after_sign_in(
+                        self.ui.after_sign_in.take(),
+                        self.selected_instance().map(|i| i.id.as_str()),
+                    ) {
                         self.play_game();
                     }
                 }

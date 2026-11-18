@@ -1923,6 +1923,18 @@ impl Accounts {
         Ok(())
     }
 
+    /// Switches who plays to `uuid`, on disk: the list as it is saved now with that account
+    /// selected, saved again. The window keeps what this returns.
+    pub fn switch(uuid: &str) -> Result<Self, String> {
+        Self::switch_in(&Self::path(), uuid)
+    }
+    pub(crate) fn switch_in(path: &Path, uuid: &str) -> Result<Self, String> {
+        let mut accounts = Self::load_from(path);
+        accounts.play_as(uuid)?;
+        accounts.save_to(path)?;
+        Ok(accounts)
+    }
+
     /// A renewed profile (its name or skin changed) in place of the old one; who plays stays.
     fn update(&mut self, account: Account) {
         if let Some(a) = self.accounts.iter_mut().find(|a| a.uuid == account.uuid) {
