@@ -20,6 +20,9 @@ pub(super) enum Page {
     PackProject,
     Project,
     Hosting,
+    /// Stand-ins for the glass frame's own: Servers › Join and Versions.
+    Join,
+    Versions,
     Settings,
 }
 
@@ -770,7 +773,7 @@ impl Launcher {
         let content = match page {
             Page::Settings => self.settings(window, cx),
             Page::Hosting => self.hosting(cx),
-            Page::Home => self.home(window, cx),
+            Page::Home | Page::Join | Page::Versions => self.home(window, cx),
             _ => self.mods(window, cx),
         };
         let page_body = div()
@@ -797,6 +800,19 @@ impl Launcher {
             .text_color(rgb(palette().text))
             .font_family("Figtree")
             .text_size(px(tokens::BODY))
+            // Ctrl+K (Cmd+K on macOS) wherever the keyboard is, even in a field.
+            .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                let k = &ev.keystroke;
+                let command = if cfg!(target_os = "macos") {
+                    k.modifiers.platform
+                } else {
+                    k.modifiers.control
+                };
+                if command && !k.modifiers.shift && k.key == "k" && this.toggle_search() {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 match ev.keystroke.key.as_str() {
                     "tab" => {
@@ -833,6 +849,8 @@ impl Launcher {
                     .h(px(64.))
                     .px(px(26.))
                     .bg(palette().chrome_plate())
+                    .gap(px(12.))
+                    .child(self.search_button(cx))
                     .child(self.account_chip(cx)),
             )
             .child(div().flex().flex_1().min_h_0().child(rail).child(page_body))
