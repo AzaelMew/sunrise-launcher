@@ -4,10 +4,6 @@ use crate::theme::Theme;
 use gpui::{Div, TitlebarOptions, Window};
 use sunrise_launcher::backend::Appearance;
 
-/// Whether the launcher draws its own title bar and needs the native chrome to be transparent.
-#[cfg(not(target_os = "linux"))]
-pub const DRAWN: bool = cfg!(target_os = "windows");
-
 pub fn options() -> TitlebarOptions {
     TitlebarOptions {
         title: Some(sunrise_launcher::identity::WINDOW_TITLE.into()),
