@@ -163,36 +163,74 @@ fn unsafe_parents_are_refused() {
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-#[test]
-fn full_backlog_cannot_block_connect_past_its_deadline() {
-    use std::{os::unix::fs::DirBuilderExt, sync::mpsc};
-    let (_root, marker) = marker();
+fn private_listener(marker: &Marker) -> std::os::unix::net::UnixListener {
+    use std::os::unix::fs::DirBuilderExt;
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&marker.directory)
         .unwrap();
-    let listener =
-        std::os::unix::net::UnixListener::bind(marker.directory.join("control")).unwrap();
+    std::os::unix::net::UnixListener::bind(marker.directory.join("control")).unwrap()
+}
+
+#[test]
+fn refused_connect_retries_until_its_deadline() {
+    let (_root, marker) = marker();
+    // The socket file outlives its listener, so every attempt is refused and connect can only stop at its deadline.
+    drop(private_listener(&marker));
+    let started = Instant::now();
+    let result = connect(&marker, started + Duration::from_millis(200));
+    let waited = started.elapsed();
+    assert_eq!(
+        result.err().map(|error| error.kind()),
+        Some(io::ErrorKind::TimedOut)
+    );
+    assert!(
+        waited >= Duration::from_millis(200),
+        "gave up before its deadline: {waited:?}"
+    );
+    assert!(
+        waited < Duration::from_secs(2),
+        "ran past its deadline: {waited:?}"
+    );
+}
+
+// macOS queues UNIX-socket clients far past a zero backlog (64 connected in CI), so it never exhausts; the deadline path is refused_connect_retries_until_its_deadline there.
+#[cfg(not(target_os = "macos"))]
+#[test]
+fn full_backlog_cannot_block_connect_past_its_deadline() {
+    use std::sync::mpsc;
+    let (_root, marker) = marker();
+    let listener = private_listener(&marker);
     // SAFETY: live listener, lowering the backlog exposes exhaustion with one queued client.
     assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
-    // How many a zero backlog still queues differs by system (BSD rounds it up): fill it until a connect is refused, and none may block past its deadline.
+    // A queued client stays connected, so the backlog stays full until the test ends.
+    let mut queued = Vec::new();
     for _ in 0..64 {
         let (send, receive) = mpsc::channel();
         let marker = marker.clone();
         std::thread::spawn(move || {
-            let result = connect(&marker, Instant::now() + Duration::from_millis(20));
-            // A queued client stays connected, so the backlog stays full.
-            let _ = send.send(result.map(std::mem::forget));
+            let started = Instant::now();
+            let result = connect(&marker, started + Duration::from_millis(20));
+            let _ = send.send((result, started.elapsed()));
         });
         match receive.recv_timeout(Duration::from_secs(1)) {
-            Ok(Ok(())) => continue,
-            Ok(Err(_)) => return,
+            Ok((Ok(stream), _)) => queued.push(stream),
+            Ok((Err(error), waited)) => {
+                // How a full backlog fails differs by system (EAGAIN, a hang-up, a timeout); what matters is that it ends by the deadline.
+                assert!(
+                    waited < Duration::from_millis(500),
+                    "connect ran past its deadline ({error}): {waited:?}"
+                );
+                assert!(
+                    !queued.is_empty(),
+                    "the first client was refused: no backlog was filled"
+                );
+                return;
+            }
             Err(_) => panic!("connect blocked behind the full backlog"),
         }
     }
-    // macOS queues UNIX-socket clients far past a zero backlog: none blocked, which is what this guards.
-    #[cfg(not(target_os = "macos"))]
-    panic!("64 clients queued behind a zero backlog");
+    panic!("64 clients queued behind a zero backlog: it never filled");
 }
 
 #[test]

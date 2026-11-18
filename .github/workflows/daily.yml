@@ -35,6 +35,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions: {}
     outputs:
       runner: ${{ steps.pool.outputs.runner }}
     steps:
@@ -47,6 +48,13 @@ jobs:
           runner=ubuntu-24.04
           if [[ "$FORCE_HOSTED" != true && -n "$POOL" && "$LEASE" =~ ^[0-9]{1,12}$ ]] && [ "$LEASE" -gt "$(date +%s)" ]; then
             runner=$POOL
+          fi
+          # Hosted is the agreed fallback, but a trusted run says why it left the pool.
+          if [[ "$runner" != "$POOL" && "$FORCE_HOSTED" != true ]]; then
+            if [[ -z "$POOL" ]]; then why="vars.SUNRISE_LAUNCHER_CI_RUNNER is unset"
+            elif [[ ! "$LEASE" =~ ^[0-9]{1,12}$ ]]; then why="vars.DYNA_CI_POOL_UNTIL is unset or not Unix seconds"
+            else why="Dyna's lease ran out at $(date -u -d "@$LEASE" +%FT%TZ)"; fi
+            echo "::warning title=Linux on GitHub's runner::$why, so Linux runs on ubuntu-24.04"
           fi
           echo "runner=$runner" | tee -a "$GITHUB_OUTPUT"
 
@@ -65,7 +73,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # Dyna's runners carry these headers and Rust's caches already.
@@ -74,10 +82,14 @@ jobs:
         run: >-
           bash tools/ci/install_launcher_deps.sh libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
           libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
+          toolchain: ${{ steps.rust.outputs.version }}
           targets: ${{ matrix.targets }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: runner.environment == 'github-hosted'
         with:
           shared-key: daily-${{ matrix.name }}
@@ -99,3 +111,42 @@ jobs:
           skip=()
           while read -r _ test _; do skip+=(--skip "$test"); done < <(grep -v '^#' tools/ci/manual-tests.txt | grep .)
           cargo test --locked --workspace --no-fail-fast -- --ignored "${skip[@]}"
+
+  # The tests/ targets that start the launcher on Windows, and the 1 MiB stack test by name, as the game repository's launcher-windows-check did.
+  processes:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: daily-processes
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Keep the tests away from this runner's own folders
+        run: |
+          for name in SUNRISE_HOME SUNRISE_LAUNCHER_HOME XDG_DATA_HOME XDG_CONFIG_HOME SUNRISE_LAUNCHER_TRASH SUNRISE_LAUNCHER_CLIPBOARD SUNRISE_LAUNCHER_DESKTOP; do
+            path="${RUNNER_TEMP//\\//}/launcher-isolation/$name"
+            mkdir -p "$path"
+            echo "$name=$path" >> "$GITHUB_ENV"
+          done
+          echo "SUNRISE_LAUNCHER_NO_SELF_UPDATE=1" >> "$GITHUB_ENV"
+          echo "SUNRISE_NO_AUDIO=1" >> "$GITHUB_ENV"
+      - name: The tests/ targets that start the launcher
+        run: >-
+          cargo test --no-fail-fast --locked --test desktop --test hidden_processes --test logs
+          --test owner_gate --test startup --test storage
+      - name: The 1 MiB process stack test, by name
+        run: cargo test --locked --test startup cli_settings_work_with_one_mib_process_stack -- --ignored --exact

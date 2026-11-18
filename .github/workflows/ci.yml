@@ -36,7 +36,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
       pull-requests: read
     outputs:
       full: ${{ steps.route.outputs.full }}
@@ -70,6 +69,13 @@ jobs:
              [ "$LEASE" -gt "$(date +%s)" ]; then
             runner=$POOL
           fi
+          # Hosted is the agreed fallback, but a trusted run says why it left the pool.
+          if [[ "$trusted" == true && "$runner" != "$POOL" && "$FORCE_HOSTED" != true ]]; then
+            if [[ -z "$POOL" ]]; then why="vars.SUNRISE_LAUNCHER_CI_RUNNER is unset"
+            elif [[ ! "$LEASE" =~ ^[0-9]{1,12}$ ]]; then why="vars.DYNA_CI_POOL_UNTIL is unset or not Unix seconds"
+            else why="Dyna's lease ran out at $(date -u -d "@$LEASE" +%FT%TZ)"; fi
+            echo "::warning title=Linux on GitHub's runner::$why, so Linux runs on ubuntu-24.04"
+          fi
           echo "full=$full sha=${sha:-the event commit} trusted=$trusted runner=$runner"
           { echo "full=$full"; echo "sha=$sha"; echo "trusted=$trusted"; echo "runner=$runner"; } >> "$GITHUB_OUTPUT"
 
@@ -79,12 +85,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.route.outputs.sha }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
+          toolchain: ${{ steps.rust.outputs.version }}
           components: rustfmt
       - run: cargo fmt --all --check
 
@@ -106,7 +116,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # A dispatch with `pr`: that pull request's head; otherwise this event's commit.
           ref: ${{ needs.route.outputs.sha }}
@@ -117,12 +127,16 @@ jobs:
         run: >-
           bash tools/ci/install_launcher_deps.sh libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
           libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
+          toolchain: ${{ steps.rust.outputs.version }}
           components: rustfmt, clippy
           targets: ${{ matrix.targets }}
       # A fork's code, dispatched on main, never touches main's caches: no restore, no save.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: runner.environment == 'github-hosted' && needs.route.outputs.trusted == 'true'
         with:
           shared-key: ci-${{ matrix.name }}
@@ -154,12 +168,16 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo test --locked --workspace --doc
 
-  # The one check branch protection requires; on a fork's pull request it is named otherwise, so `build` waits for a maintainer's dispatch.
+  # The one check branch protection requires, on the commit it tested: a fork's pull request names it otherwise until a maintainer's dispatch posts `build`, and a dispatch's own run (on main) never names it.
   build:
-    name: ${{ needs.route.outputs.full == 'true' && 'build' || 'format (full checks wait for a maintainer)' }}
+    name: >-
+      ${{ inputs.pr && format('checks of PR #{0}', inputs.pr) ||
+      github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository &&
+      'format (full checks wait for a maintainer)' || 'build' }}
     needs: [route, format, check]
     if: always()
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
       - name: Every system passed
         env:
@@ -169,12 +187,15 @@ jobs:
           CHECK: ${{ needs.check.result }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          test "$ROUTE" = success && test "$FORMAT" = success
-          if [[ "$FULL" != true ]]; then
+          [[ "$ROUTE" == success ]] || { echo "::error::routing $ROUTE"; exit 1; }
+          [[ "$FORMAT" == success ]] || { echo "::error::format $FORMAT"; exit 1; }
+          if [[ "$FULL" == true ]]; then
+            [[ "$CHECK" == success ]] || { echo "::error::systems $CHECK"; exit 1; }
+          elif [[ "$FULL" == false ]]; then
             echo "::notice::A fork's pull request: a maintainer runs the full checks with gh workflow run ci.yml -R $GITHUB_REPOSITORY --ref main -f pr=$PR"
-            exit 0
+          else
+            echo "::error::routing gave no answer"; exit 1
           fi
-          test "$CHECK" = success
 
   # A dispatch for a fork's pull request: posts `build` on its head. It runs none of that code, so it alone holds the write permission, and only for commit statuses.
   pr-status:
