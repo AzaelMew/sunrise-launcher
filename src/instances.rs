@@ -164,7 +164,7 @@ pub fn stable_builds(releases: &[backend::Release]) -> Vec<StableBuild> {
             r.nightly.is_none()
                 && r.asset.is_some()
                 && !r.prerelease
-                && backend::launcher_version(&r.tag).is_none()
+                && backend::is_game_tag(&r.tag)
         })
         .map(|r| StableBuild {
             tag: r.tag.clone(),
