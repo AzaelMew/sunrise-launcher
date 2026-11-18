@@ -363,7 +363,7 @@ fn the_game_mode_comes_from_server_toml() {
 fn the_engine_command_reply_becomes_the_command_and_its_problems() {
     let reply = br#"{"format": 1, "program": "/opt/sunrise/sunrise-engine", "args": ["--dedicated", "--nogui"],
         "cwd": "/srv/mc", "env": {"SUNRISE_NO_AUDIO": "1", "GONE": null}, "resources": "/srv/mc/resources"}"#;
-    let (engine, resources) = engine_from_reply(reply).unwrap();
+    let (engine, resources) = engine_from_reply(reply).unwrap().unwrap();
     assert_eq!(resources, Path::new("/srv/mc/resources"));
     assert_eq!(engine.get_program(), "/opt/sunrise/sunrise-engine");
     assert_eq!(
@@ -395,8 +395,7 @@ fn the_engine_command_reply_becomes_the_command_and_its_problems() {
         b"",
         b"[]",
     ] {
-        let too_old = engine_from_reply(usage).unwrap_err();
-        assert!(too_old.message.contains("too old"), "{}", too_old.message);
+        assert!(engine_from_reply(usage).unwrap().is_none());
     }
     let odd = engine_from_reply(
         br#"{"format": 1, "program": "x", "args": ["--dedicated", 7], "cwd": "/"}"#,

@@ -394,7 +394,12 @@ fn publish_host_runtime(dir: &Path, resources: Option<&Path>) -> Result<(), Stri
     let resources = match resources {
         Some(path) => path,
         None => {
-            (_, reported) = engine_command(dir).map_err(|problem| problem.message)?;
+            let Some((_, path)) = engine_command(dir).map_err(|problem| problem.message)? else {
+                // Before engine-command the CLI forwarded these verbs directly. There is
+                // no authoritative resource path to publish for those supervisors.
+                return Ok(());
+            };
+            reported = path;
             &reported
         }
     };
@@ -448,7 +453,11 @@ pub fn run_managed(
     line: &dyn Fn(String),
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
-    let (mut engine, resources) = engine_command(dir)?;
+    let (mut engine, resources) = engine_command(dir)?.ok_or_else(|| {
+        Problem::plain(tr(
+            "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
+        ))
+    })?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
     let supervisor = supervisor_command(dir, args, Some(&resources)).map_err(Problem::plain)?;
@@ -458,8 +467,8 @@ pub fn run_managed(
 /// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).
 const ENGINE_COMMAND_FORMAT: u64 = 1;
 
-/// The engine `sunrise-server run` would start in `dir`, as the folder's own `sunrise-server` describes it.
-fn engine_command(dir: &Path) -> Result<(Command, PathBuf), Problem> {
+/// The engine and resources the supervisor would use, or `None` for a pre-protocol supervisor.
+fn engine_command(dir: &Path) -> Result<Option<(Command, PathBuf)>, Problem> {
     let output = command(dir, &["engine-command", "--json"])
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
@@ -477,15 +486,13 @@ fn unrun(error: &std::io::Error) -> Problem {
 }
 
 /// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
-fn engine_from_reply(stdout: &[u8]) -> Result<(Command, PathBuf), Problem> {
+fn engine_from_reply(stdout: &[u8]) -> Result<Option<(Command, PathBuf)>, Problem> {
     // A build from before `engine-command` answers with its usage, never with a JSON object, whatever its exit code.
     let Some(reply) = serde_json::from_slice::<serde_json::Value>(stdout)
         .ok()
         .filter(serde_json::Value::is_object)
     else {
-        return Err(Problem::plain(tr(
-            "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
-        )));
+        return Ok(None);
     };
     if reply["format"]
         .as_u64()
@@ -519,7 +526,7 @@ fn engine_from_reply(stdout: &[u8]) -> Result<(Command, PathBuf), Problem> {
             None => engine.env_remove(key),
         };
     }
-    Ok((engine, PathBuf::from(text("resources")?)))
+    Ok(Some((engine, PathBuf::from(text("resources")?))))
 }
 
 fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(), Problem> {
