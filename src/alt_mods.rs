@@ -27,6 +27,7 @@ use sunrise_launcher::browser::{
     java, sunrise, Source, SourceId,
 };
 
+mod actions;
 mod discover;
 mod examples;
 mod installed_view;
@@ -53,6 +54,9 @@ enum Confirm {
     /// (mod id, project id, title)
     Remove(Vec<(String, String, String)>),
     Update(model::UpdatePlan),
+    /// Saved worlds hold content of these mods: which worlds and which mods. Nothing has been
+    /// changed; continuing backs each world up and checks the backup first.
+    Stake(actions::Action, Vec<(String, Vec<String>)>),
 }
 
 struct Open {
@@ -68,12 +72,18 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
+    /// Native files the browser didn't install: listed, never changed from here.
+    local: Vec<model::Local>,
 }
 
 enum Event {
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
+    /// Worlds would be affected: nothing was changed, the player decides.
+    Stake(actions::Action, Vec<(String, Vec<String>)>),
+    /// The batch was refused before changing anything.
+    Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
     Done(String, Vec<(String, String)>),
 }
@@ -178,8 +188,10 @@ impl Launcher {
     }
 
     /// What the workers said. Nothing here touches a file.
-    fn alt_mods_drain(&mut self) {
+    pub(super) fn alt_mods_drain(&mut self) -> bool {
+        let mut changed = false;
         while let Ok(event) = self.alt.mods.rx.try_recv() {
+            changed = true;
             let m = &mut self.alt.mods;
             match event {
                 Event::Catalog(Ok((cards, categories))) => {
@@ -192,6 +204,14 @@ impl Launcher {
                     }
                 }
                 Event::Progress(line, f) => m.busy = Some((line, f)),
+                Event::Stake(action, worlds) => {
+                    m.busy = None;
+                    m.confirm = Some(Confirm::Stake(action, worlds));
+                }
+                Event::Refused(why) => {
+                    m.busy = None;
+                    m.notice = Some(Err(why));
+                }
                 Event::Done(said, failed) => {
                     m.busy = None;
                     m.errors.clear();
@@ -217,6 +237,7 @@ impl Launcher {
                 }
             }
         }
+        changed
     }
 
     /// Reads what is installed again when the files' fingerprint moved (an install, a toggle or a
@@ -231,12 +252,26 @@ impl Launcher {
         let key = native_status::fingerprint(&home, None);
         if self.alt.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
             let entries = installed::Installed::load(&home).entries;
-            let enabled = entries
+            let local: Vec<model::Local> = native_status::untracked(&home)
+                .into_iter()
+                .map(|f| model::Local {
+                    id: f.id,
+                    version: f.version,
+                    github: f.origin.is_some(),
+                })
+                .collect();
+            let mut enabled: HashSet<String> = entries
                 .iter()
                 .filter_map(|e| sunrise::mod_id(e))
                 .filter(|id| java::is_enabled(&home, id))
                 .map(str::to_owned)
                 .collect();
+            enabled.extend(
+                local
+                    .iter()
+                    .filter(|l| java::is_enabled(&home, &l.id))
+                    .map(|l| l.id.clone()),
+            );
             let chosen = sunrise::chosen(&home);
             self.alt.mods.snapshot = Some(Snapshot {
                 key,
@@ -244,6 +279,7 @@ impl Launcher {
                 entries,
                 enabled,
                 chosen,
+                local,
             });
             let rows: HashSet<String> = self.alt_rows().into_iter().map(|r| r.id).collect();
             self.alt.mods.selection.retain(|id| rows.contains(id));
@@ -311,10 +347,11 @@ impl Launcher {
         let Some(snap) = &self.alt.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = match snap
-            .entries
-            .iter()
-            .any(|e| native_status::is_native_file(&e.file))
+        let unbuilt: HashSet<String> = match !snap.local.is_empty()
+            || snap
+                .entries
+                .iter()
+                .any(|e| native_status::is_native_file(&e.file))
         {
             true => {
                 self.native_mod_unbuilt("");
@@ -338,223 +375,20 @@ impl Launcher {
                 unbuilt: &unbuilt,
                 native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.chosen,
+                local: &snap.local,
             },
         )
     }
 
     /// Whether another install or update holds the folder right now.
     fn alt_mods_busy(&self) -> bool {
+        self.alt_mutating()
+    }
+
+    /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
+    /// and setup gates. Reads only the Mods busy flags, never the launch state.
+    pub(super) fn alt_mutating(&self) -> bool {
         self.alt.mods.busy.is_some() || self.mods.busy.is_some()
-    }
-
-    // ------------------------------------------------------------------ actions
-
-    /// Add `id` to the game: the existing install path, which asks first for native code, checks
-    /// the file against the index and its signature, and refuses what was taken down.
-    fn alt_add(&mut self, id: String) {
-        if self.alt.mods.examples || self.alt_mods_busy() {
-            return;
-        }
-        self.alt.mods.notice = None;
-        self.mods.message = None;
-        self.mods_install(SourceId::Sunrise, id, None);
-    }
-
-    /// One mod on or off: the existing switch, with its native-permission and taken-down checks.
-    fn alt_toggle(&mut self, row: &Row) {
-        let Some(entry) = row.entry.clone().filter(|_| !row.example) else {
-            return;
-        };
-        self.mods.message = None;
-        self.mods_switch(&entry);
-        if let Some(Err(e)) = self.mods.message.take() {
-            self.alt.mods.notice = Some(Err(e));
-        }
-    }
-
-    /// Turn the chosen mods on or off in one rewrite of the list. A mod that can't be turned on
-    /// (taken down, or native code with no permission) stays as it is and its row says why.
-    fn alt_bulk_toggle(&mut self, on: bool) {
-        let rows = self.alt_rows();
-        let chosen: Vec<&Row> = rows
-            .iter()
-            .filter(|r| !r.example && self.alt.mods.selection.contains(&r.id))
-            .collect();
-        let (go, held) = match on {
-            true => model::turn_on_plan(&chosen, self.settings.native_mods_allowed_at.is_some()),
-            false => (chosen.clone(), Vec::new()),
-        };
-        let m = &mut self.alt.mods;
-        m.errors = held
-            .iter()
-            .map(|(r, why)| (r.id.clone(), why.clone()))
-            .collect();
-        let Some(home) = m.snapshot.as_ref().map(|s| s.home.clone()) else {
-            return;
-        };
-        if go.is_empty() {
-            m.notice = Some(Err(tr("Nothing selected can be turned on yet.").to_string()));
-            return;
-        }
-        let Some(_lock) = sunrise_launcher::browser::try_lock_home(&home) else {
-            m.notice = Some(Err(
-                tr("Wait for the current operation to finish.").to_string()
-            ));
-            return;
-        };
-        let ids: Vec<&str> = go.iter().map(|r| r.id.as_str()).collect();
-        m.notice = Some(match java::set_all_enabled(&home, &ids, on) {
-            Ok(()) if held.is_empty() => Ok(match on {
-                true => trf(
-                    "Turned on {count} mods. The game reads this when it starts.",
-                    &[("count", &ids.len().to_string())],
-                ),
-                false => trf(
-                    "Turned off {count} mods. The game reads this when it starts.",
-                    &[("count", &ids.len().to_string())],
-                ),
-            }),
-            Ok(()) => Err(trf(
-                "Turned on {done}. {held} stayed off: see their rows.",
-                &[
-                    ("done", &ids.len().to_string()),
-                    ("held", &held.len().to_string()),
-                ],
-            )),
-            Err(e) => Err(e),
-        });
-    }
-
-    /// Asks for confirmation before removing the chosen mods.
-    fn alt_ask_remove(&mut self) {
-        let rows = self.alt_rows();
-        let chosen: Vec<(String, String, String)> = rows
-            .iter()
-            .filter(|r| !r.example && self.alt.mods.selection.contains(&r.id))
-            .filter_map(|r| {
-                Some((
-                    r.id.clone(),
-                    r.entry.as_ref()?.project.clone(),
-                    r.title.clone(),
-                ))
-            })
-            .collect();
-        if !chosen.is_empty() {
-            self.alt.mods.confirm = Some(Confirm::Remove(chosen));
-        }
-    }
-
-    fn alt_remove(&mut self, chosen: Vec<(String, String, String)>) {
-        if self.alt_mods_busy() {
-            return;
-        }
-        let m = &mut self.alt.mods;
-        m.confirm = None;
-        m.notice = None;
-        m.busy = Some((tr("Removing…").to_string(), 0.));
-        m.selection.clear();
-        let (tx, home) = (
-            m.tx.clone(),
-            m.snapshot
-                .as_ref()
-                .map(|s| s.home.clone())
-                .unwrap_or_else(backend::game_home),
-        );
-        std::thread::spawn(move || {
-            let (mut done, mut failed) = (0, Vec::new());
-            for (i, (id, project, title)) in chosen.iter().enumerate() {
-                let _ = tx.send(Event::Progress(
-                    trf("Removing {name}…", &[("name", title)]),
-                    i as f32 / chosen.len() as f32,
-                ));
-                match installed::remove(&home, project) {
-                    Ok(_) => done += 1,
-                    Err(e) => failed.push((id.clone(), e)),
-                }
-            }
-            let said = trf("Removed {count} mods.", &[("count", &done.to_string())]);
-            let _ = tx.send(Event::Done(said, failed));
-        });
-    }
-
-    /// One mod's update. Native code without permission asks first, as installing it does.
-    fn alt_update_one(&mut self, row: &Row) {
-        let Some(to) = row.update.clone().filter(|_| !row.example) else {
-            return;
-        };
-        if row.native() && self.settings.native_mods_allowed_at.is_none() {
-            self.pending_consent = Some(PendingConsent::Install(
-                SourceId::Sunrise,
-                row.id.clone(),
-                None,
-            ));
-            return;
-        }
-        self.alt_update(vec![model::Included {
-            id: row.id.clone(),
-            title: row.title.clone(),
-            from: row.version.clone(),
-            to,
-            native: row.native(),
-            was_on: row.on,
-        }]);
-    }
-
-    /// Installs each update through the registry's checked install (size, SHA-256, signature,
-    /// taken-down list), one after the other. An update leaves the mod as the player had it:
-    /// one that was off is turned off again. A failure is tied to its mod and stops nothing else.
-    fn alt_update(&mut self, items: Vec<model::Included>) {
-        if self.alt_mods_busy() || items.is_empty() {
-            return;
-        }
-        let game = self.mods_game();
-        let m = &mut self.alt.mods;
-        m.confirm = None;
-        m.notice = None;
-        m.errors.clear();
-        m.busy = Some((tr("Updating…").to_string(), 0.));
-        let (tx, home) = (
-            m.tx.clone(),
-            m.snapshot
-                .as_ref()
-                .map(|s| s.home.clone())
-                .unwrap_or_else(backend::game_home),
-        );
-        std::thread::spawn(move || {
-            let (mut done, mut failed) = (0, Vec::new());
-            let count = items.len();
-            for (i, item) in items.iter().enumerate() {
-                let step = |line: &str, f: f32| {
-                    let _ = tx.send(Event::Progress(
-                        trf(
-                            "{n} of {count}: {line}",
-                            &[
-                                ("n", &(i + 1).to_string()),
-                                ("count", &count.to_string()),
-                                ("line", line),
-                            ],
-                        ),
-                        (i as f32 + f) / count as f32,
-                    ));
-                };
-                let result = sunrise::Registry
-                    .project(&item.id)
-                    .and_then(|p| sunrise::install(&p, &home, &game, &step))
-                    .and_then(|_| match item.was_on {
-                        true => Ok(()),
-                        false => java::set_enabled(&home, &item.id, false),
-                    });
-                match result {
-                    Ok(()) => done += 1,
-                    Err(e) => failed.push((item.id.clone(), e)),
-                }
-            }
-            let said = trf(
-                "Updated {count} mods, each checked against the registry.",
-                &[("count", &done.to_string())],
-            );
-            let _ = tx.send(Event::Done(said, failed));
-        });
     }
 
     /// Build… on a row: the one native build path, which asks for permission first.

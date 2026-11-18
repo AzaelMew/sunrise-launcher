@@ -262,6 +262,7 @@ fn row(
         update: update.map(str::to_owned),
         dependency: false,
         pinned: false,
+        local: None,
         icon: None,
         entry: None,
         example: true,
