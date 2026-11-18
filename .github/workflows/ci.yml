@@ -1,11 +1,18 @@
 name: CI
-# Every pull request and every push to main: format, lint and the launcher's tests on each system it ships for.
+# A dispatch with `pr` runs on main but tests that pull request's head, so it is named for it.
+run-name: "${{ inputs.pr && format('PR #{0} checks', inputs.pr) || github.event.pull_request.title || github.event.head_commit.message || github.workflow }}"
+# Every pull request gets the format check; the full checks (everything that compiles) run for this repository's own branches, main's pushes and dispatches.
+# A fork's pull request gets them only when a maintainer runs `gh workflow run ci.yml -R sunrise-org/sunrise-launcher --ref main -f pr=<number>`, on GitHub's runners, which posts `build` on its head.
 on:
   pull_request:
   push:
     branches: [main]
   workflow_dispatch:
     inputs:
+      pr:
+        description: Run the full checks on this pull request's head (a fork's on GitHub's runners) and post `build` on it
+        type: string
+        default: ''
       force_hosted:
         description: Run on GitHub's runners even while Dyna's pool is leased
         type: boolean
@@ -15,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: ci-${{ github.event.pull_request.number || inputs.pr && format('pr-{0}', inputs.pr) || github.sha }}
   cancel-in-progress: true
 
 env:
@@ -24,31 +31,67 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Linux runs on Dyna's pool while its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds and SUNRISE_LAUNCHER_CI_RUNNER names it; a fork's pull request, or force_hosted, always on GitHub's.
+  # Decides on GitHub's runner, running none of the repository's code: whether the full checks run, on which commit, and whether that code may use Dyna's pool.
   route:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      runner: ${{ steps.pool.outputs.runner }}
+      full: ${{ steps.route.outputs.full }}
+      sha: ${{ steps.route.outputs.sha }}
+      trusted: ${{ steps.route.outputs.trusted }}
+      runner: ${{ steps.route.outputs.runner }}
     steps:
-      - id: pool
+      - id: route
         env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR: ${{ inputs.pr }}
           FORCE_HOSTED: ${{ github.event_name == 'workflow_dispatch' && inputs.force_hosted }}
           LEASE: ${{ vars.DYNA_CI_POOL_UNTIL }}
           POOL: ${{ vars.SUNRISE_LAUNCHER_CI_RUNNER }}
-          SERVED: >-
-            ${{ github.event_name != 'pull_request' ||
-            github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
+          full=true sha= trusted=true
+          if [[ "$EVENT" == pull_request && "$HEAD_REPO" != "$GITHUB_REPOSITORY" ]]; then
+            full=false trusted=false
+          elif [[ "$EVENT" == workflow_dispatch && -n "$PR" ]]; then
+            [[ "$PR" =~ ^[1-9][0-9]{0,6}$ ]] || { echo "::error::pr must be a pull request number, not $PR"; exit 1; }
+            read -r state sha repo < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '"\(.state) \(.head.sha) \(.head.repo.full_name // "")"')
+            [[ "$state" == open ]] || { echo "::error::pull request #$PR is $state"; exit 1; }
+            [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::pull request #$PR has no head commit"; exit 1; }
+            [[ "$repo" == "$GITHUB_REPOSITORY" ]] || trusted=false
+          fi
+          # Dyna's pool only for this repository's own code, while SUNRISE_LAUNCHER_CI_RUNNER names it and its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds.
           runner=ubuntu-24.04
-          if [[ "$FORCE_HOSTED" != true && "$SERVED" == true && -n "$POOL" && "$LEASE" =~ ^[0-9]{1,12}$ ]] &&
+          if [[ "$trusted" == true && "$FORCE_HOSTED" != true && -n "$POOL" && "$LEASE" =~ ^[0-9]{1,12}$ ]] &&
              [ "$LEASE" -gt "$(date +%s)" ]; then
             runner=$POOL
           fi
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "full=$full sha=${sha:-the event commit} trusted=$trusted runner=$runner"
+          { echo "full=$full"; echo "sha=$sha"; echo "trusted=$trusted"; echo "runner=$runner"; } >> "$GITHUB_OUTPUT"
+
+  # The cheap check every pull request gets, a fork's included: no build, GitHub's runner.
+  format:
+    needs: route
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.route.outputs.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
 
   check:
     name: check (${{ matrix.name }})
     needs: route
+    if: needs.route.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -65,6 +108,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # A dispatch with `pr`: that pull request's head; otherwise this event's commit.
+          ref: ${{ needs.route.outputs.sha }}
           persist-credentials: false
       # Dyna's runners carry these headers and Rust's caches already.
       - name: Linux headers GPUI links against
@@ -76,11 +121,12 @@ jobs:
         with:
           components: rustfmt, clippy
           targets: ${{ matrix.targets }}
+      # A fork's code, dispatched on main, never touches main's caches: no restore, no save.
       - uses: Swatinem/rust-cache@v2
-        if: runner.environment == 'github-hosted'
+        if: runner.environment == 'github-hosted' && needs.route.outputs.trusted == 'true'
         with:
           shared-key: ci-${{ matrix.name }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       - name: Keep the tests away from this runner's own folders
         run: |
           for name in SUNRISE_HOME SUNRISE_LAUNCHER_HOME XDG_DATA_HOME XDG_CONFIG_HOME SUNRISE_LAUNCHER_TRASH SUNRISE_LAUNCHER_CLIPBOARD SUNRISE_LAUNCHER_DESKTOP; do
@@ -94,9 +140,6 @@ jobs:
           if [[ "$RUNNER_OS" == macOS ]]; then
             echo "TMPDIR=$(cd "$RUNNER_TEMP" && pwd -P)/" >> "$GITHUB_ENV"
           fi
-      - name: Format
-        if: runner.os == 'Linux'
-        run: cargo fmt --all --check
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
       - name: The holder test's actor (Windows)
@@ -111,13 +154,47 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo test --locked --workspace --doc
 
-  # The one check branch protection requires: every system passed.
+  # The one check branch protection requires; on a fork's pull request it is named otherwise, so `build` waits for a maintainer's dispatch.
   build:
-    needs: check
+    name: ${{ needs.route.outputs.full == 'true' && 'build' || 'format (full checks wait for a maintainer)' }}
+    needs: [route, format, check]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Every system passed
         env:
-          RESULT: ${{ needs.check.result }}
-        run: test "$RESULT" = success
+          FULL: ${{ needs.route.outputs.full }}
+          ROUTE: ${{ needs.route.result }}
+          FORMAT: ${{ needs.format.result }}
+          CHECK: ${{ needs.check.result }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          test "$ROUTE" = success && test "$FORMAT" = success
+          if [[ "$FULL" != true ]]; then
+            echo "::notice::A fork's pull request: a maintainer runs the full checks with gh workflow run ci.yml -R $GITHUB_REPOSITORY --ref main -f pr=$PR"
+            exit 0
+          fi
+          test "$CHECK" = success
+
+  # A dispatch for a fork's pull request: posts `build` on its head. It runs none of that code, so it alone holds the write permission, and only for commit statuses.
+  pr-status:
+    needs: [route, format, check]
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.pr != '' && needs.route.outputs.sha != '' && needs.route.outputs.trusted == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.route.outputs.sha }}
+          FORMAT: ${{ needs.format.result }}
+          CHECK: ${{ needs.check.result }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          state=failure
+          if [[ "$FORMAT" == success && "$CHECK" == success ]]; then state=success
+          elif [[ "$FORMAT" == cancelled || "$CHECK" == cancelled ]]; then state=error; fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$SHA" -f state="$state" -f context=build \
+            -f description="Full checks dispatched on this head: format $FORMAT, systems $CHECK" -f target_url="$RUN" > /dev/null
+          echo "build=$state on $SHA"

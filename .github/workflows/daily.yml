@@ -18,27 +18,37 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Linux runs on Dyna's pool while its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds and SUNRISE_LAUNCHER_CI_RUNNER names it; a fork's pull request, or force_hosted, always on GitHub's.
-  route:
+  # Dyna's runners take dispatches, not scheduled events: the schedule only dispatches this workflow on main.
+  dispatch:
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run daily.yml -R "$GITHUB_REPOSITORY" --ref main
+
+  # Linux on Dyna's pool while SUNRISE_LAUNCHER_CI_RUNNER names it and its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds; only a maintainer dispatches this.
+  route:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       runner: ${{ steps.pool.outputs.runner }}
     steps:
       - id: pool
         env:
-          FORCE_HOSTED: ${{ github.event_name == 'workflow_dispatch' && inputs.force_hosted }}
+          FORCE_HOSTED: ${{ inputs.force_hosted }}
           LEASE: ${{ vars.DYNA_CI_POOL_UNTIL }}
           POOL: ${{ vars.SUNRISE_LAUNCHER_CI_RUNNER }}
-          SERVED: >-
-            ${{ github.event_name != 'pull_request' ||
-            github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           runner=ubuntu-24.04
-          if [[ "$FORCE_HOSTED" != true && "$SERVED" == true && -n "$POOL" && "$LEASE" =~ ^[0-9]{1,12}$ ]] &&
-             [ "$LEASE" -gt "$(date +%s)" ]; then
+          if [[ "$FORCE_HOSTED" != true && -n "$POOL" && "$LEASE" =~ ^[0-9]{1,12}$ ]] && [ "$LEASE" -gt "$(date +%s)" ]; then
             runner=$POOL
           fi
-          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+          echo "runner=$runner" | tee -a "$GITHUB_OUTPUT"
 
   ignored:
     name: ignored tests (${{ matrix.name }})
@@ -71,6 +81,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         with:
           shared-key: daily-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Keep the tests away from this runner's own folders
         run: |
           for name in SUNRISE_HOME SUNRISE_LAUNCHER_HOME XDG_DATA_HOME XDG_CONFIG_HOME SUNRISE_LAUNCHER_TRASH SUNRISE_LAUNCHER_CLIPBOARD SUNRISE_LAUNCHER_DESKTOP; do
