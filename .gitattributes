@@ -4,3 +4,7 @@ crates/theme/tokens.css text eol=lf
 # Signed test fixtures, checked byte for byte against their signatures and hashes: never converted.
 crates/release-verify/tests/signed/** -text
 crates/smod/tests/index/** -text
+# Read line by line by packaging scripts on every OS: LF, also where core.autocrlf would give CRLF.
+packaging/notices.txt text eol=lf
+*.sh text eol=lf
+tools/ci/rust-version text eol=lf
