@@ -274,3 +274,37 @@ fn polish_entries_are_valid_and_keep_placeholders() {
         assert_eq!(holes(en), holes(said), "Polish: {en:?}");
     }
 }
+
+/// The duplicate-name error and the reminder to check worlds and profiles before deleting the
+/// old folders are said in every language the launcher has, not in English: renaming a key
+/// carries its translation along, with the name and the paths still filled in.
+#[test]
+fn the_renamed_profile_sentences_kept_their_translations() {
+    let taken = "There is already a profile called {name}. Choose another name.";
+    let moved = "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.";
+    let moves = "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.";
+    for language in Language::ALL
+        .into_iter()
+        .filter(|language| *language != Language::English)
+    {
+        for key in [taken, moved, moves] {
+            let said = tr_in(language, key);
+            assert_ne!(said, key, "{} says it in English", language.code());
+            assert_eq!(holes(said), holes(key), "{}: {said}", language.code());
+        }
+    }
+    assert_eq!(
+        tr_in(Language::French, taken),
+        "Un profil nommé {name} existe déjà. Choisissez un autre nom."
+    );
+    assert_eq!(
+        tr_in(Language::German, taken),
+        "Es gibt bereits ein Profil namens {name}. Wähle einen anderen Namen."
+    );
+    assert_eq!(
+        tr_in(Language::Japanese, taken),
+        "{name}という名前のプロファイルは既にあります。別の名前を選んでください。"
+    );
+    assert!(tr_in(Language::French, moved).contains("vos mondes et vos profils"));
+    assert!(tr_in(Language::Polish, moved).contains("światy i profile"));
+}
