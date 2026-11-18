@@ -1,0 +1,93 @@
+name: CI
+# Every pull request and every push to main: format, lint and the launcher's tests on each system it ships for.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  # Test runs never reach the telemetry server: no live-count ping, no uploads.
+  SUNRISE_TELEMETRY_URL: "off"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: check (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux, os: ubuntu-24.04 }
+          - { name: macos, os: macos-latest }
+          # The launcher builds native mods for windows-gnu: registry_compile's tests emit metadata for it.
+          - { name: windows, os: windows-latest, targets: x86_64-pc-windows-gnu }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Linux headers GPUI links against
+        if: runner.os == 'Linux'
+        run: >-
+          bash tools/ci/install_launcher_deps.sh libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
+          libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Keep the tests away from this runner's own folders
+        run: |
+          for name in SUNRISE_HOME SUNRISE_LAUNCHER_HOME XDG_DATA_HOME XDG_CONFIG_HOME SUNRISE_LAUNCHER_TRASH SUNRISE_LAUNCHER_CLIPBOARD SUNRISE_LAUNCHER_DESKTOP; do
+            path="${RUNNER_TEMP//\\//}/launcher-isolation/$name"
+            mkdir -p "$path"
+            echo "$name=$path" >> "$GITHUB_ENV"
+          done
+          echo "SUNRISE_LAUNCHER_NO_SELF_UPDATE=1" >> "$GITHUB_ENV"
+          echo "SUNRISE_NO_AUDIO=1" >> "$GITHUB_ENV"
+          # Lease fixtures refuse symlinked paths, and macOS's default TMPDIR goes through /var.
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            echo "TMPDIR=$(cd "$RUNNER_TEMP" && pwd -P)/" >> "$GITHUB_ENV"
+          fi
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: The holder test's actor (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --locked -p sunrise-launcher-smod --example holder_actor
+      - name: Tests
+        run: cargo test --locked --workspace --lib --bins
+      - name: The tests/ targets that start no process (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test --locked --test developer_install --test modpack_headline --test storage_consent
+      - name: Doc tests
+        if: runner.os == 'Linux'
+        run: cargo test --locked --workspace --doc
+
+  # The one check branch protection requires: every system passed.
+  build:
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every system passed
+        env:
+          RESULT: ${{ needs.check.result }}
+        run: test "$RESULT" = success
