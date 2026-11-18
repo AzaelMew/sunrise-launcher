@@ -17,7 +17,7 @@ use gpui::{rgb, Hsla};
 use std::cell::Cell;
 use sunrise_launcher::backend::Settings;
 use sunrise_launcher_theme::contrast;
-use sunrise_launcher_theme::glass::{fill, from_oklab, mix_oklab, oklab, SCRIM};
+use sunrise_launcher_theme::glass::{fill, from_oklab, luminance, mix_oklab, oklab, SCRIM};
 use sunrise_launcher_theme::night::{over, Night};
 
 /// What a dialog's scrim may dim a bright page by: the opacity is the one in this range that
@@ -30,6 +30,16 @@ const PLATE_BASE: f32 = 0.81;
 /// Text reads at this contrast on its surface; edges, marks and the focus ring at the other.
 const TEXT: f32 = 4.5;
 const MARK: f32 = 3.;
+/// The fully shaded part of the Home backdrop, directly behind the unboxed profile.
+pub(crate) const HERO_SHADE_ALPHA: f32 = 0.58;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct HeroInk {
+    pub text: u32,
+    pub warning: u32,
+    pub link: u32,
+    pub shade: u32,
+}
 
 /// What the info colour starts from (a blue), on dark and on light themes, before it is fitted.
 const INFO_ON_DARK: u32 = 0x7fb0ff;
@@ -64,6 +74,8 @@ pub(crate) struct Palette {
     pub chrome_line: u32,
     pub chrome_text: u32,
     pub chrome_muted: u32,
+    /// Text drawn without a plate over the shaded Home scene.
+    pub hero: HeroInk,
     /// The accent as picked: never changed. Marks, active indicators, progress.
     pub accent: u32,
     /// Text and glyphs on the accent: white, always.
@@ -122,7 +134,8 @@ impl Inputs {
     fn of(settings: &Settings, theme: &Theme, photo: Option<&HomePhoto>) -> Inputs {
         Inputs {
             night: theme.night,
-            tone: photo.and_then(|p| p.tone).or(theme.scene_tone),
+            scene_tone: theme.scene_tone,
+            photo_tone: photo.and_then(|p| p.tone),
             accent: theme.accent_choice.rgb(),
             tint: settings.glass_tint(),
             scenery: settings.scenery() && !theme.photo && !settings.performance(),
@@ -180,12 +193,19 @@ fn fit_toward(c: u32, end: u32, reads: impl Fn(u32) -> bool) -> u32 {
     over(end, hi, c)
 }
 
+/// Check contrast at the worst backdrop in the direction that keeps it safe at every pixel.
+fn reads_over(ink: f32, plate: f32, lighter: bool, min: f32) -> bool {
+    let (light, dark) = if lighter { (ink, plate) } else { (plate, ink) };
+    (light + 0.05) / (dark + 0.05) >= min
+}
+
 /// Everything a palette depends on: it is computed again only when one of these changes.
 #[derive(Clone, Copy, PartialEq)]
 struct Inputs {
     night: Night,
-    /// The photo or built-in scene. None keeps the theme file's authored plates.
-    tone: Option<u32>,
+    /// If neither tone is available, use the theme file's authored plates.
+    scene_tone: Option<u32>,
+    photo_tone: Option<u32>,
     accent: u32,
     tint: f32,
     scenery: bool,
@@ -197,7 +217,8 @@ impl Inputs {
     fn palette(&self) -> Palette {
         let Inputs {
             night: n,
-            tone,
+            scene_tone,
+            photo_tone,
             accent: raw,
             tint,
             scenery,
@@ -213,7 +234,7 @@ impl Inputs {
                 plate,
             )
         };
-        let [chrome_base, card_base, raised_base] = if let Some(tone) = tone {
+        let [chrome_base, card_base, raised_base] = if let Some(tone) = photo_tone.or(scene_tone) {
             let [l, a, b] = oklab(tone);
             let chroma = a.hypot(b);
             let levels = if n.dark {
@@ -279,6 +300,25 @@ impl Inputs {
         let everywhere = [surfaces.as_slice(), on_chrome.as_slice()].concat();
         let focus = fit(raw, lighter, reads(&everywhere, MARK));
         let status = |c: u32| fit(c, lighter, reads(&surfaces[..5], TEXT));
+        let warning = status(n.warn);
+
+        // On a pale photo, a light feather and dark type leave much more of the picture
+        // visible than a dark shadow. Either way fit against the worst sRGB pixel, not the
+        // photo's average (individual pixels may have any colour).
+        let light_ink = photo_tone.map_or(lighter, |tone| luminance(tone) < 0.54);
+        let shade = if light_ink { 0 } else { 0xffffff };
+        let worst = luminance(over(shade, HERO_SHADE_ALPHA, 0xffffff - shade));
+        let hero_ink = |c| {
+            fit(c, light_ink, |c| {
+                reads_over(luminance(c), worst, light_ink, TEXT)
+            })
+        };
+        let hero = HeroInk {
+            text: hero_ink(text),
+            warning: hero_ink(warning),
+            link: hero_ink(accent_ink),
+            shade,
+        };
 
         // Opaque without scenery; with it, as see-through as text over the sky's worst band
         // allows.
@@ -331,6 +371,7 @@ impl Inputs {
             chrome_line,
             chrome_text,
             chrome_muted,
+            hero,
             accent: raw,
             accent_on,
             play_stops: [dark, light],
@@ -339,7 +380,7 @@ impl Inputs {
             danger: status(n.danger),
             info: status(if n.dark { INFO_ON_DARK } else { INFO_ON_LIGHT }),
             success: status(n.success),
-            warning: status(n.warn),
+            warning,
             alpha,
             scrim_alpha,
         }
@@ -352,7 +393,8 @@ impl Palette {
     pub(crate) fn plain(night: Night, accent: u32, tint: f32, tone: Option<u32>) -> Palette {
         Inputs {
             night,
-            tone,
+            scene_tone: tone,
+            photo_tone: None,
             accent,
             tint,
             scenery: false,
@@ -372,7 +414,6 @@ impl Palette {
     /// on a light one, so every tile of a theme weighs the same; the letter is the text washed
     /// with the same hue, and reads on it (4.5:1).
     pub(crate) fn tile(&self, id: &str) -> Tile {
-        use sunrise_launcher_theme::glass::luminance;
         let hue = hue_colour(tile_hue(id));
         let card = self.card_color;
         let lighter = luminance(self.text) > luminance(card);
@@ -449,7 +490,7 @@ mod tests {
     use gpui::WindowAppearance;
     use sunrise_launcher::backend::Appearance;
     use sunrise_launcher::themes::{self, Accent};
-    use sunrise_launcher_theme::{glass, glass::luminance};
+    use sunrise_launcher_theme::glass;
 
     fn look(id: Option<&str>, accent: Accent, glass: f32, scenery: bool) -> (Settings, Theme) {
         let settings = Settings {
@@ -856,6 +897,7 @@ accent = "#101010""##,
         assert_ne!(shown.chrome, scene.chrome);
         assert_eq!(shown.play_stops, scene.play_stops);
         assert_eq!(shown.card().a, 1.);
+        assert_eq!(shown.hero.shade, 0xffffff, "shade a pale photo lightly");
         for ink in [shown.text, shown.muted, shown.warning, shown.accent_ink] {
             assert!(contrast(ink, shown.card_color) >= TEXT, "{ink:06x}");
         }
@@ -891,6 +933,23 @@ accent = "#101010""##,
         );
         for plate in [gray.chrome, gray.card_color, gray.raised] {
             assert_eq!(spread(plate), 0);
+        }
+    }
+
+    #[test]
+    fn unboxed_home_text_reads_over_the_shaded_backdrop() {
+        let themes = looks(false)
+            .into_iter()
+            .map(|(_, s, t)| Palette::of(&s, &t));
+        let light = Palette::plain(theme::night::DAWN, 0x6a4910, glass::TINT, None);
+        assert_eq!(light.hero.shade, 0xffffff);
+        for p in themes.chain([light]) {
+            for pixel in [0, 0xffffff] {
+                let behind = over(p.hero.shade, HERO_SHADE_ALPHA, pixel);
+                for ink in [p.hero.text, p.hero.warning, p.hero.link] {
+                    assert!(contrast(ink, behind) >= TEXT, "{ink:06x} on {behind:06x}");
+                }
+            }
         }
     }
 

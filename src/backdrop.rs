@@ -32,9 +32,8 @@ impl Backdrop {
         }
         if let Some(photo) = photo {
             let picture = img(photo.image);
-            // A picture someone chose is there to be seen: only a thin wash of the page ties it
-            // to the theme. Nothing is written on it. Home sets its header on a plate when a
-            // picture is behind it, and the plates over a picture are opaque.
+            // Only a thin wash of the page ties the picture to the theme. Home shades
+            // the scene separately under the profile so it can sit directly on the picture.
             return back
                 .child(picture.size_full().object_fit(ObjectFit::Cover))
                 .child(div().absolute().inset_0().bg(page.opacity(PICTURE_WASH)));

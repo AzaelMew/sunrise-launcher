@@ -630,6 +630,10 @@ impl Launcher {
             .relative()
             .size_full()
             .child(scenery)
+            .children(
+                (page == Page::Home && self.settings.scenery())
+                    .then(|| self.ui.home.profile_scrim()),
+            )
             .child(frame)
             .children(titlebar::resize_handles(window))
     }

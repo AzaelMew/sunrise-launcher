@@ -71,7 +71,7 @@ pub struct Theme {
     pub(crate) scene_tone: Option<u32>,
     /// The accent this look was built from, before the glass look's mixes.
     pub accent_choice: Accent,
-    /// Home reserves a plate for its header when a picture is configured.
+    /// A Home picture is configured: automatic panel opacity stays solid.
     pub photo: bool,
     pub dark: bool,
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink

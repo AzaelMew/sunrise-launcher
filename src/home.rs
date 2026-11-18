@@ -42,6 +42,8 @@ const INSET: f32 = 32.;
 pub(crate) struct HomeState {
     /// Where the build picker was last drawn: the build chooser opens under it.
     picker: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
+    /// The current frame's unboxed profile, measured before the backdrop is painted.
+    hero: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
     /// What the selected profile has installed, for the Mods column.
     pub(crate) mods: crate::home_mods::Inventory,
     /// Where the worlds and the Mods rows were last drawn: only those near the window's view
@@ -144,6 +146,55 @@ impl Near {
 }
 
 impl HomeState {
+    /// Measure the uncovered text, not the full width of the header or the controls.
+    fn shade_behind(&self, text: Div, on: bool) -> Div {
+        text.when(on, |d| {
+            let hero = self.hero.clone();
+            d.relative().child(
+                gpui::canvas(
+                    move |bounds, _, _| {
+                        if !bounds.is_empty() {
+                            hero.set(Some(hero.get().map_or(bounds, |old| old.union(&bounds))));
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+        })
+    }
+
+    /// Feather the scene just behind the text. There is no fill or outline on the header;
+    /// the picture stays unshaded away from the text and fades at all four edges.
+    pub(crate) fn profile_scrim(&self) -> impl IntoElement {
+        const BLUR: f32 = 24.;
+        let hero = self.hero.clone();
+        let shade = gpui::BoxShadow {
+            color: Hsla::from(rgb(palette().hero.shade)).opacity(0.63),
+            offset: gpui::point(px(0.), px(0.)),
+            blur_radius: px(BLUR),
+            spread_radius: px(0.),
+            inset: false,
+        };
+        gpui::canvas(
+            |_, _, _| {},
+            move |_, (), window, _| {
+                if let Some(hero) = hero.get() {
+                    // At three blur radii in from each edge, the text is in the shadow's
+                    // full-strength centre, above the opacity Paint uses to fit the ink.
+                    window.paint_drop_shadows(
+                        hero.dilate(px(3. * BLUR)),
+                        Default::default(),
+                        &[shade],
+                    );
+                }
+            },
+        )
+        .absolute()
+        .inset_0()
+    }
+
     /// Whether Play and what it says show: false once Home is scrolled so far that the row
     /// they stand in is more than half above the page's top edge. The status strip then says
     /// it instead.
@@ -217,6 +268,7 @@ pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
 
 impl Launcher {
     pub(crate) fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.ui.home.hero.set(None);
         self.refresh_home_inventory(cx);
         let Some(instance) = self.selected_instance().cloned() else {
             return div()
@@ -237,22 +289,8 @@ impl Launcher {
             .flex_col()
             .gap(px(GAP))
             .pt(px(24.))
-            // Home paints no page of its own: the header stands on the scenery, inset like the
-            // text of the panel under it. A picture may be any colour, so over one the header
-            // stands on a plate of its own, as wide as what it holds; the picture shows beside
-            // it.
-            .child(if self.theme.photo {
-                div().flex_none().flex().child(
-                    card()
-                        .min_w_0()
-                        .rounded(px(tokens::R_PANEL))
-                        .px(px(INSET))
-                        .py(px(20.))
-                        .child(header),
-                )
-            } else {
-                header.flex_none().px(px(INSET))
-            })
+            // The profile sits on the scene, inset like the text of the panel under it.
+            .child(header.flex_none().px(px(INSET)))
             // The panel is the sidebar's material and fills Home's box to its left, right and
             // bottom edges, so the frame lines it up with the sidebar. It reaches the foot when
             // the worlds leave room and is never squeezed: a short window scrolls the page.
@@ -285,14 +323,19 @@ impl Launcher {
             Some((time, last)) => format!("{time}  ·  {last}"),
             None => tr("Not played yet").to_string(),
         };
-        div()
+        let p = palette();
+        let scenery = self.settings.scenery();
+        let text = rgb(if scenery { p.hero.text } else { p.text });
+        let labels = div()
             .flex()
             .flex_col()
+            .self_start()
+            .max_w_full()
             .child(
                 div()
                     .text_size(px(tokens::SMALL))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(palette().text))
+                    .text_color(text)
                     .child(tr("Selected profile")),
             )
             .child(
@@ -308,7 +351,7 @@ impl Launcher {
                             .text_size(px(tokens::HERO))
                             .line_height(px(tokens::HERO * 1.15))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(palette().text))
+                            .text_color(text)
                             .truncate()
                             .child(instance.name.clone()),
                     ),
@@ -317,10 +360,14 @@ impl Launcher {
                 div()
                     .mt(px(10.))
                     .text_size(px(tokens::BODY))
-                    .text_color(rgb(palette().text))
+                    .text_color(text)
                     .truncate()
                     .child(played),
-            )
+            );
+        div()
+            .flex()
+            .flex_col()
+            .child(self.ui.home.shade_behind(labels, scenery))
             .child(self.play_row(instance, window, cx).mt(px(18.)))
     }
 
@@ -412,15 +459,18 @@ impl Launcher {
                 cx.notify();
             }))
         });
+        let p = palette();
+        let (text, warning, link_ink) = if self.settings.scenery() {
+            (p.hero.text, p.hero.warning, p.hero.link)
+        } else {
+            (p.text, p.warning, p.accent_ink)
+        };
+        let status_ink = if view.failed { warning } else { text };
         let says = div()
             // As wide as what it says: the rest of the row is the cat's.
             .min_w_0()
             .text_size(px(tokens::LABEL))
-            .text_color(rgb(if view.failed {
-                palette().warning
-            } else {
-                palette().text
-            }))
+            .text_color(rgb(status_ink))
             // Two lines fit beside Play; a longer message is cut, never drawn outside the row.
             .line_clamp(2)
             .text_ellipsis()
@@ -433,7 +483,7 @@ impl Launcher {
                     .id("alt-not-on-build")
                     .reach()
                     .cursor_pointer()
-                    .hover(|s| s.text_color(rgb(palette().accent_ink)))
+                    .hover(move |s| s.text_color(rgb(link_ink)))
                     .child(match count {
                         1 => tr("1 mod not on this build").to_string(),
                         n => trf(
@@ -446,6 +496,7 @@ impl Launcher {
                         cx.notify();
                     }))
             }));
+        let says = self.ui.home.shade_behind(says, self.settings.scenery());
         // The cat walks the empty stretch and stands on the panel's edge. It stays in while a
         // button stands in its way.
         let (lane, _) = self.cat(act.is_none(), false, window, cx);
