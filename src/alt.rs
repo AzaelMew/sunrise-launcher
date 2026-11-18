@@ -27,6 +27,7 @@ pub(super) enum Page {
     /// A pack's page, opened from Packs › Discover.
     PackProject,
     Project,
+    Hosting,
     Settings,
 }
 
@@ -587,6 +588,12 @@ impl Launcher {
             .child(rail_link(Page::Home, "alt-nav-home", "Home", "home"))
             .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"))
             .child(rail_link(Page::Packs, "alt-nav-packs", "Packs", "archive"))
+            .child(rail_link(
+                Page::Hosting,
+                "alt-nav-hosting",
+                "Host",
+                "server",
+            ))
             .child(div().flex_1())
             .child(rail_link(
                 Page::Settings,
@@ -596,6 +603,7 @@ impl Launcher {
             ));
         let content = match page {
             Page::Settings => self.alt_settings(window, cx),
+            Page::Hosting => self.alt_hosting(cx),
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
                 .p(px(24.))
                 .child(tr(
@@ -642,6 +650,7 @@ impl Launcher {
                         this.owner_screen_open = false;
                     }
                     "escape" if this.alt_sheet_escape() => {}
+                    "escape" if this.alt.page == Page::Hosting && this.alt_hosting_escape() => {}
                     "escape" => {
                         this.alt.sheet = None;
                         this.alt.picker = false;
@@ -690,6 +699,10 @@ impl Launcher {
                 );
             }
             frame = frame.child(choices);
+        }
+        if page == Page::Hosting {
+            let create = self.alt_hosting_create(cx);
+            frame = frame.children(create);
         }
         let sheet = self.alt_sheet(window, cx);
         frame = frame.children(sheet);
