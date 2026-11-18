@@ -25,7 +25,7 @@ impl Target {
     }
 }
 
-/// The horizon-mixins commit a mod that pins none builds with: the game's `mixins_tool::REV`.
+/// The launcher's own horizon-mixins pin, used for legacy mixed-pin key selection and tool storage.
 pub const MIXINS_REV: &str = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0";
 
 /// A registry download's `sunrise-mod.toml` at the `.smod` package root.

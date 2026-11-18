@@ -77,6 +77,20 @@ fn written_index_reads_back_and_unknown_fields_are_ignored() {
 }
 
 #[test]
+fn mixins_revision_must_be_a_full_lowercase_commit() {
+    let mut value = json(&index(&[]));
+    for rev in [
+        "".to_owned(),
+        "f".repeat(39),
+        "F".repeat(40),
+        "g".repeat(40),
+    ] {
+        value["mixins"]["rev"] = rev.clone().into();
+        assert_eq!(read(&value), Err(Refusal::MixinsRev(rev)));
+    }
+}
+
+#[test]
 fn a_game_releases_copy_names_its_build_before_the_build_is_known() {
     let mut value = json(&index(&[(ENGINE, b"engine")]));
     value["build"]["nightly"] = serde_json::json!("nightly-2026-11-13");

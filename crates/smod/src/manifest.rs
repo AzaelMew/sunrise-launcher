@@ -238,7 +238,9 @@ impl Rule {
 pub struct Native {
     pub game: String,
     pub sunrise: String,
-    pub mixins: String,
+    /// When omitted, the mod uses the horizon-mixins revision in its pinned SDK's `sdk.json`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mixins: Option<String>,
     /// Source-level edits of game functions, native only: the one form that compiles game code.
     #[serde(default)]
     pub mixin: Vec<mixin::Mixin>,
@@ -625,7 +627,7 @@ impl Manifest {
             if m.version.is_empty()
                 || native.game.is_empty()
                 || !revision(&native.sunrise)
-                || !revision(&native.mixins)
+                || native.mixins.as_deref().is_some_and(|pin| !revision(pin))
             {
                 return Err(format!(
                     "{MANIFEST}: native requires game and exact revisions"
