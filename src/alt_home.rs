@@ -584,7 +584,7 @@ impl Launcher {
         let saved = self.multiplayer.list.clone();
         let mut shown = 0;
         for server in featured() {
-            // Saved already, on any port: it shows once, as the saved row marked Featured.
+            // Saved already, on any port: it shows once, as the saved row.
             if saved
                 .iter()
                 .any(|(s, _)| featured_at(&s.ip).as_ref() == Some(&server))
@@ -673,18 +673,10 @@ impl Launcher {
                     .min_w(px(0.))
                     .child(
                         div()
-                            .flex()
-                            .gap(px(8.))
                             .text_size(px(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(TEXT))
-                            .child(tr(server.name))
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(MUTED))
-                                    .child(tr("Featured")),
-                            ),
+                            .child(tr(server.name)),
                     )
                     .child(muted(line)),
             )
@@ -778,10 +770,9 @@ impl Launcher {
             )),
         };
         // The picture the game saved, else the one the server just sent.
-        let featured = featured_at(&server.ip);
         let picture = server_picture(
             icon.or_else(|| self.multiplayer.icons.get(&server.ip).cloned()),
-            featured.as_ref().map(|f| f.badge),
+            featured_at(&server.ip).map(|f| f.badge),
             &server.name,
         );
         div()
@@ -799,27 +790,13 @@ impl Launcher {
                     .min_w(px(0.))
                     .child(
                         div()
-                            .flex()
-                            .items_baseline()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .min_w(px(0.))
-                                    .text_size(px(14.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(TEXT))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(server.name),
-                            )
-                            .children(featured.map(|_| {
-                                div()
-                                    .flex_none()
-                                    .text_size(px(11.))
-                                    .text_color(rgb(MUTED))
-                                    .child(tr("Featured"))
-                            })),
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(TEXT))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(server.name),
                     )
                     .child(muted(line)),
             )
