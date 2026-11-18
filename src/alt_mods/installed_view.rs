@@ -26,7 +26,6 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(TEXT))
             .child(header)
-            .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
 
         let rows = self.alt_rows();
@@ -124,13 +123,12 @@ impl Launcher {
             .count();
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
-        let real = !self.alt.mods.examples;
         let busy = self.alt_mods_busy();
         let with_update = selected.iter().filter(|r| r.update.is_some()).count();
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::alt::button(id, label);
             let b = if danger { b.text_color(c(DANGER)) } else { b };
-            if enabled && real && !busy {
+            if enabled && !busy {
                 b
             } else {
                 dim(b)
@@ -203,7 +201,7 @@ impl Launcher {
                             ("shown", &shown_ids.len().to_string()),
                         ],
                     )))
-                    .child(if real && !busy {
+                    .child(if !busy {
                         on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.alt_bulk_on();
                             cx.notify();
@@ -211,7 +209,7 @@ impl Launcher {
                     } else {
                         on
                     })
-                    .child(if real && !busy {
+                    .child(if !busy {
                         off.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.alt_bulk_off();
                             cx.notify();
@@ -219,7 +217,7 @@ impl Launcher {
                     } else {
                         off
                     })
-                    .child(if real && !busy && with_update > 0 {
+                    .child(if !busy && with_update > 0 {
                         upd.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.alt_ask_update(true);
                             cx.notify();
@@ -227,7 +225,7 @@ impl Launcher {
                     } else {
                         upd
                     })
-                    .child(if real && !busy {
+                    .child(if !busy {
                         rm.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.alt_ask_remove();
                             cx.notify();
@@ -410,7 +408,7 @@ impl Launcher {
                             &[("count", &updates_total.to_string())],
                         ),
                     );
-                    head = head.child(if real && !busy {
+                    head = head.child(if !busy {
                         b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.alt_ask_update(false);
                             cx.notify();
@@ -425,7 +423,7 @@ impl Launcher {
             if r.local.is_none() {
                 position += 1;
             }
-            list = list.child(self.alt_row(n, pos, r, shown_ids.clone(), real, busy, cx));
+            list = list.child(self.alt_row(n, pos, r, shown_ids.clone(), busy, cx));
         }
         if visible.is_empty() {
             list = list.child(
@@ -467,7 +465,6 @@ impl Launcher {
         pos: usize,
         r: Row,
         ids: Rc<Vec<String>>,
-        real: bool,
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -475,7 +472,6 @@ impl Launcher {
         let picture = r
             .icon
             .clone()
-            .filter(|_| !r.example)
             .and_then(|u| self.mods_image(&u, images::ROW));
         let error = self.alt.mods.errors.get(&r.id).cloned();
         let project = r.entry.as_ref().map(|e| e.project.clone());
@@ -519,7 +515,7 @@ impl Launcher {
         let mut notes: Vec<Div> = Vec::new();
         let act = |id: &'static str, label: &'static str, on: bool| {
             let b = crate::alt::button((id, n), tr(label));
-            if on && real && !busy {
+            if on && !busy {
                 b
             } else {
                 dim(b)
@@ -550,7 +546,7 @@ impl Launcher {
                     true,
                 );
                 notes.push(say(tr("Not built for this computer yet").to_string(), GOLD));
-                verdict = verdict.child(if real && !busy && !building {
+                verdict = verdict.child(if !busy && !building {
                     b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.alt_build();
                         cx.notify();
@@ -565,7 +561,7 @@ impl Launcher {
                     tr("Needs your permission to run native code").to_string(),
                     GOLD,
                 ));
-                verdict = verdict.child(if real && !busy {
+                verdict = verdict.child(if !busy {
                     b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.alt_allow();
                         cx.notify();
@@ -580,7 +576,7 @@ impl Launcher {
             let b = act("alt-row-update", "Update", true);
             let row = r.clone();
             notes.push(say(format!("→ {to}"), BLUE));
-            verdict = verdict.child(if real && !busy {
+            verdict = verdict.child(if !busy {
                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.alt_update_one(&row);
                     cx.notify();
@@ -591,7 +587,7 @@ impl Launcher {
         }
         let sw = {
             let s = ui::switch(("alt-row-switch", n), r.on);
-            if real && r.local.is_none() && !matches!(r.need, Some(Need::TakenDown(_))) {
+            if r.local.is_none() && !matches!(r.need, Some(Need::TakenDown(_))) {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.alt_toggle(&row);
@@ -624,7 +620,7 @@ impl Launcher {
                         .truncate()
                         .child(r.authors.clone()),
                 );
-            match project.filter(|_| real) {
+            match project {
                 Some(id) => {
                     d.cursor_pointer()
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -703,23 +699,14 @@ impl Launcher {
             )
         };
         match r.unfit.clone() {
-            Some(unfit) => row
-                .child(verdict)
-                .child(self.alt_unfit(n, &r, unfit, real, cx)),
+            Some(unfit) => row.child(verdict).child(self.alt_unfit(n, &r, unfit, cx)),
             None => row.child(verdict).child(sw),
         }
     }
 
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
-    fn alt_unfit(
-        &mut self,
-        n: usize,
-        r: &Row,
-        unfit: model::Unfit,
-        real: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn alt_unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
         use crate::alt::{button, CARD, LINE, TEXT};
         let open = self.alt.mods.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
@@ -818,33 +805,25 @@ impl Launcher {
                         trf("Update {mod}", &[("mod", &r.title)]),
                     );
                     let row = r.clone();
-                    Some(if real {
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.alt.mods.unfit_open = None;
-                            this.alt_update_one(&row);
-                            cx.stop_propagation();
-                            cx.notify();
-                        }))
-                    } else {
-                        dim(b)
-                    })
+                    Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.alt.mods.unfit_open = None;
+                        this.alt_update_one(&row);
+                        cx.stop_propagation();
+                        cx.notify();
+                    })))
                 }
-                (None, Some((tag, made))) if !real || self.installed.contains(tag) => {
+                (None, Some((tag, made))) if self.installed.contains(tag) => {
                     let b = button(
                         "alt-unfit-stay",
                         trf("Stay on {build}", &[("build", made)]),
                     );
                     let tag = tag.clone();
-                    Some(if real {
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.alt.mods.unfit_open = None;
-                            this.alt_stay_on(tag.clone());
-                            cx.stop_propagation();
-                            cx.notify();
-                        }))
-                    } else {
-                        dim(b)
-                    })
+                    Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.alt.mods.unfit_open = None;
+                        this.alt_stay_on(tag.clone());
+                        cx.stop_propagation();
+                        cx.notify();
+                    })))
                 }
                 _ => None,
             };

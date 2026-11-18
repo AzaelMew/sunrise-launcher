@@ -1,4 +1,4 @@
-//! The preview frame owns navigation and the single launch transaction. Backends still
+//! The launcher frame owns navigation and the single launch transaction. Backends still
 //! own the on-disk formats, Microsoft device flow, preparation and process lifecycle.
 use super::*;
 use crate::alt_sheets::Sheet;

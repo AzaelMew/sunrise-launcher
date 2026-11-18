@@ -1,6 +1,6 @@
 //! Small pieces the three Mods screens share. Colours are the alternative look's (`crate::alt`).
 use super::*;
-use crate::alt::{BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::alt::{BG, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Hsla};
 use std::path::PathBuf;
 
@@ -254,19 +254,4 @@ pub(crate) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
     t.muted = c(MUTED);
     t.glass = false;
     t
-}
-
-/// "Example data" strip drawn over every screen that shows the opt-in example lists.
-pub(super) fn example_banner() -> Div {
-    div()
-        .px(px(12.))
-        .py(px(8.))
-        .rounded(px(8.))
-        .border_1()
-        .border_color(c(GOLD))
-        .text_size(px(12.))
-        .text_color(c(GOLD))
-        .child(tr(
-            "Example data for design review. Nothing here is read from the registry or your files, and nothing can be installed, changed or removed.",
-        ))
 }

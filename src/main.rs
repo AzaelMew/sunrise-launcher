@@ -572,11 +572,8 @@ actions!(sunrise_launcher, [Quit, CloseWindow]);
 /// exit. A game that is running keeps running. Cmd+Q goes through here too.
 fn shut_down(cx: &mut App) {
     servers_page::stop_on_quit();
-    if !cfg!(feature = "redesign-preview") {
-        telemetry::send_before_exit();
-        // The preview never owns the installed launcher's pending update.
-        sunrise_launcher::update_handoff::forget();
-    }
+    telemetry::send_before_exit();
+    sunrise_launcher::update_handoff::forget();
     cx.quit()
 }
 

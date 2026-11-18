@@ -51,17 +51,6 @@ pub fn json_optional(url: &str) -> Result<Option<serde_json::Value>, String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
-    // The critique build must not refresh or replace the player's release cache simply
-    // by opening Home. It gets the same conditional requests in a process-private cache.
-    if cfg!(feature = "redesign-preview") {
-        static CACHE: std::sync::OnceLock<Result<tempfile::TempDir, String>> =
-            std::sync::OnceLock::new();
-        let cache = CACHE
-            .get_or_init(|| tempfile::tempdir().map_err(|e| e.to_string()))
-            .as_ref()
-            .map_err(Clone::clone)?;
-        return json_with(url, cache.path(), now, &mirror_base(), github, mirror);
-    }
     json_with(url, &cache_dir(), now, &mirror_base(), github, mirror)
 }
 

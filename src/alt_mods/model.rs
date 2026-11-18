@@ -1,6 +1,5 @@
 //! What the Mods screens show, worked out from the registry index and the installed list:
 //! pure data in and out, no files, no network, no window. Everything here only reads.
-use super::examples;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
@@ -67,8 +66,6 @@ pub(super) struct Card {
     pub(super) fit: Fit,
     /// A native mod with no prebuilt binary for this game: it is built on this computer.
     pub(super) builds_locally: bool,
-    /// Shown from the built-in example list: nothing on it can be installed.
-    pub(super) example: bool,
 }
 
 pub(super) fn make_of(p: &index::Project) -> Option<Make> {
@@ -138,7 +135,6 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                     && index
                         .installable(p, game)
                         .is_some_and(|v| v.native_binaries.is_empty()),
-                example: false,
             })
         })
         .collect()
@@ -293,7 +289,6 @@ pub(super) struct Page {
     pub(super) trust: Vec<String>,
     /// Mods the newest version lists as part of itself (a registry modpack's rule; a mod rarely has any).
     pub(super) requires: Vec<(String, String)>,
-    pub(super) example: bool,
 }
 
 pub(super) fn page(index: &Index, id: &str, game: &str, trust: Vec<String>) -> Option<Page> {
@@ -357,7 +352,6 @@ pub(super) fn page(index: &Index, id: &str, game: &str, trust: Vec<String>) -> O
                     .collect()
             })
             .unwrap_or_default(),
-        example: false,
     })
 }
 
@@ -393,7 +387,6 @@ pub(super) struct Row {
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
-    pub(super) example: bool,
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
 }
@@ -504,7 +497,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 local: None,
                 icon: p.and_then(|p| p.icon.clone()),
                 entry: Some(e.clone()),
-                example: false,
                 unfit: None,
             })
         })
@@ -530,7 +522,6 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             local: Some(l.clone()),
             icon: None,
             entry: None,
-            example: false,
             unfit: None,
         }
     }));
@@ -634,7 +625,7 @@ pub(super) struct Included {
 /// updated: the new file is checked like any install and replaces the one that was taken down.
 pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
     let mut plan = UpdatePlan::default();
-    for r in rows.iter().filter(|r| !r.example && r.local.is_none()) {
+    for r in rows.iter().filter(|r| r.local.is_none()) {
         let Some(to) = &r.update else { continue };
         if !r.on {
             // An update never switches a mod on, even for a moment: a mod that is off waits.
@@ -715,12 +706,6 @@ pub(super) fn dependents(
             (!needed.is_empty()).then(|| (r.title.clone(), needed))
         })
         .collect()
-}
-
-/// Whether the opt-in example lists are asked for (`SUNRISE_PREVIEW_EXAMPLES`), for critique:
-/// they are labelled on screen and nothing on them runs.
-pub(super) fn examples_on() -> bool {
-    examples::on()
 }
 
 #[cfg(test)]

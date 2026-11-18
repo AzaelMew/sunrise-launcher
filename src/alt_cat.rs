@@ -1768,16 +1768,8 @@ impl Launcher {
                 &TABBY_WAYS
             };
             let mut outing = Outing::new(ways, seed, 0.);
-            // `SUNRISE_PREVIEW_CAT=1` brings it out at once, for design critique, and
-            // `SUNRISE_PREVIEW_CAT=play` onto Play.
-            let preview = std::env::var_os("SUNRISE_PREVIEW_CAT");
-            outing.perch_next = preview.as_deref().is_some_and(|v| v == "play");
             outing.scene = Scene::Away {
-                until: if preview.is_some() {
-                    1500.
-                } else {
-                    outing.cat.random.span([15000., 40000.])
-                },
+                until: outing.cat.random.span([15000., 40000.]),
             };
             outing
         });

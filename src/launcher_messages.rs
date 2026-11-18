@@ -39,7 +39,7 @@ impl Launcher {
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
                     // Once the list is in (or failed), each instance resolves to the build it plays.
-                    if !cfg!(feature = "redesign-preview") && !self.mods.auto_updated {
+                    if !self.mods.auto_updated {
                         self.mods.auto_updated = true;
                         self.mods_auto_update();
                     }
@@ -198,7 +198,7 @@ impl Launcher {
                             }
                             // Pruning reads settings from disk: protect the selection only once
                             // it has been saved there. A failed save leaves all versions in place.
-                            if self.save_settings() && !cfg!(feature = "redesign-preview") {
+                            if self.save_settings() {
                                 let tx = self.tx.clone();
                                 std::thread::spawn(move || {
                                     let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
@@ -246,21 +246,15 @@ impl Launcher {
                 Msg::Updates(updates) => {
                     self.update_error = updates.sunrise_error.clone();
                     self.updates = *updates;
-                    if !cfg!(feature = "redesign-preview") && self.settings.auto_install() {
+                    if self.settings.auto_install() {
                         self.install_update();
                     }
-                    if !cfg!(feature = "redesign-preview") {
-                        if let Some(release) = self.updates.launcher.clone() {
-                            self.update_launcher(release);
-                        }
+                    if let Some(release) = self.updates.launcher.clone() {
+                        self.update_launcher(release);
                     }
                 }
                 Msg::NativeRegistryConsent(inventory, reply) => {
-                    if cfg!(feature = "redesign-preview") {
-                        self.alt_registry_consent(inventory, reply);
-                    } else {
-                        native_registry_consent::show(window, inventory, reply, cx)
-                    }
+                    self.alt_registry_consent(inventory, reply);
                 }
                 Msg::NativeProgress(step, progress) => {
                     self.native_step = Some(step);
@@ -376,16 +370,10 @@ impl Launcher {
                             if let Some((tag, instance)) = self.play_when_prepared.take() {
                                 if error.is_none() && backend::check_prepared(&tag) {
                                     self.starting_pack = None;
-                                    if cfg!(feature = "redesign-preview") {
-                                        if self
-                                            .selected_instance()
-                                            .is_some_and(|i| i.id == instance)
-                                            && self.selected() == Some(&tag)
-                                        {
-                                            self.alt_play();
-                                        }
-                                    } else {
-                                        self.start_client(tag, Some(instance));
+                                    if self.selected_instance().is_some_and(|i| i.id == instance)
+                                        && self.selected() == Some(&tag)
+                                    {
+                                        self.alt_play();
                                     }
                                 }
                             }
@@ -421,11 +409,9 @@ impl Launcher {
                                 }
                                 if let Some(i) = instances::list().into_iter().find(|i| i.id == id)
                                 {
-                                    if !cfg!(feature = "redesign-preview") {
-                                        sunrise_launcher::launch::run_after_exit(
-                                            &i.launch, &i.home, &vars,
-                                        );
-                                    }
+                                    sunrise_launcher::launch::run_after_exit(
+                                        &i.launch, &i.home, &vars,
+                                    );
                                 }
                                 self.reload_instances();
                             }

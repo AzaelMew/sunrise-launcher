@@ -6,8 +6,6 @@
 //! * **Consent** is the real `pending_consent` and `native_consent::resolve`; the registry-crate
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
 //! * **Build** edits the selected instance's pin and channel with `instances::edit`.
-//!
-//! `SUNRISE_PREVIEW_EXAMPLES=resolve|consent` shows a labelled made-up sheet with no side effects.
 use super::*;
 use crate::alt::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, MouseButton, MouseDownEvent};
@@ -53,7 +51,6 @@ pub(crate) struct AltSheetsState {
     /// What the Notice sheet says.
     notice: String,
     versions: versions::State,
-    example_closed: bool,
 }
 
 /// The explicit native-mod check against the newer installed build.
@@ -124,22 +121,6 @@ impl Held {
             base: check.to,
             stopped: false,
         })
-    }
-}
-
-/// The made-up case of `alt/06` and `alt/07`.
-#[derive(Clone, Copy, PartialEq)]
-enum Example {
-    Resolve,
-    Consent,
-}
-
-fn example() -> Option<Example> {
-    match std::env::var("SUNRISE_PREVIEW_EXAMPLES").as_deref() {
-        Ok("consent") => Some(Example::Consent),
-        // `build` is the build strip's example (`alt_build`); `mods` is the example lists alone.
-        Ok("" | "build" | "mods") | Err(_) => None,
-        Ok(_) => Some(Example::Resolve),
     }
 }
 
@@ -233,20 +214,6 @@ pub(crate) fn title(text: String) -> Div {
         .child(text)
 }
 
-fn banner() -> Div {
-    div()
-        .px(px(10.))
-        .py(px(6.))
-        .rounded(px(8.))
-        .border_1()
-        .border_color(rgb(GOLD))
-        .text_size(px(12.))
-        .text_color(rgb(GOLD))
-        .child(tr(
-            "EXAMPLE with made-up data. Nothing here is yours and no button changes anything.",
-        ))
-}
-
 impl Launcher {
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_alt_sheet(&mut self, sheet: Sheet) {
@@ -282,15 +249,13 @@ impl Launcher {
         self.alt.sheet = None;
         self.alt.sheets.ticked = (false, false);
         self.alt.sheets.error = None;
-        self.alt.sheets.example_closed = true;
     }
 
     /// Escape: true when a sheet was open and is closed now.
     pub(crate) fn alt_sheet_escape(&mut self) -> bool {
         let open = self.alt.sheets.registry.is_some()
             || self.pending_consent.is_some()
-            || self.alt.sheet.is_some()
-            || (example().is_some() && !self.alt.sheets.example_closed);
+            || self.alt.sheet.is_some();
         if open {
             self.close_alt_sheet();
         }
@@ -302,9 +267,7 @@ impl Launcher {
     /// sheet ([`Self::alt_check_native`]). It never runs a check itself, because a check stages
     /// files into the real build folder.
     pub(crate) fn alt_held_update(&self) -> Option<Held> {
-        // The labelled example is reached the way a real hold is: from the play bar.
         self.alt_held_real()
-            .or_else(|| (example() == Some(Example::Resolve)).then(example_held))
     }
 
     fn alt_held_real(&self) -> Option<Held> {
@@ -409,8 +372,8 @@ impl Launcher {
         .detach();
     }
 
-    /// The sheet on screen, if any. Real state wins over an example: a pending library question,
-    /// a pending permission, the sheet asked for, then `SUNRISE_PREVIEW_EXAMPLES`.
+    /// The sheet on screen, if any: a pending library question, a pending permission, then the
+    /// sheet asked for.
     pub(crate) fn alt_sheet(
         &mut self,
         window: &mut Window,
@@ -463,22 +426,14 @@ impl Launcher {
                 sheet
             }
             Some(Sheet::Resolve) => match self.alt_held_update() {
-                Some(held) => {
-                    let sample = held.base == EXAMPLE_BASE;
-                    Some(self.resolve_sheet(held, sample, cx))
-                }
+                Some(held) => Some(self.resolve_sheet(held, cx)),
                 None => {
                     // Nothing is held any more (it was resolved elsewhere): close quietly.
                     self.alt.sheet = None;
                     None
                 }
             },
-            // The consent example has no entry point of its own; the held-update example is
-            // opened from the play bar like a real one, never by itself.
-            None => match example().filter(|_| !self.alt.sheets.example_closed)? {
-                Example::Resolve => None,
-                Example::Consent => Some(self.example_consent_sheet(cx)),
-            },
+            None => None,
         }
     }
 
@@ -486,7 +441,7 @@ impl Launcher {
 
     /// An update is out and some mods don't work with it yet: which, and the two ways on.
     /// Staying is the default and what closing does; nothing here runs until a button is pressed.
-    fn resolve_sheet(&mut self, held: Held, sample: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn resolve_sheet(&mut self, held: Held, cx: &mut Context<Self>) -> Stateful<Div> {
         let Held {
             to,
             plays,
@@ -622,11 +577,9 @@ impl Launcher {
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.close_alt_sheet();
-                if !sample {
-                    // With worlds at stake the worker backs each up and checks the backup before
-                    // anything is turned off; a backup that fails stops with nothing changed.
-                    this.build_native_on(Some(base.clone()), back_up);
-                }
+                // With worlds at stake the worker backs each up and checks the backup before
+                // anything is turned off; a backup that fails stops with nothing changed.
+                this.build_native_on(Some(base.clone()), back_up);
                 cx.notify();
             }))
         });
@@ -678,7 +631,6 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .children(sample.then(banner))
             .child(title(heading))
             .child(div().text_size(px(14.)).child(lead))
             .children((!mods.is_empty()).then_some(list))
@@ -932,63 +884,6 @@ impl Launcher {
                 go,
             ));
         frame("alt-libraries", 760., body, cx)
-    }
-
-    /// `alt/07` as drawn, with both permissions on one sheet. The real flow asks the second one
-    /// during the build, with the real list.
-    fn example_consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let (a, b) = self.alt.sheets.ticked;
-        let go = button("alt-example-go", tr("Build and turn on"));
-        let go = if a && b {
-            go.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.close_alt_sheet();
-                cx.notify();
-            }))
-        } else {
-            disabled(go)
-        };
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(banner())
-            .child(title(
-                trf("Build {name} on this computer?", &[("name", "Machinist’s Workbench")]),
-            ))
-            .child(muted(tr(
-                "Its authors haven’t published a ready-made copy of 3.1.2 for your game. Sunrise can make one here from the source they published. Your game is not changed.",
-            )))
-            .child(
-                card()
-                    .child(fact(tr("Mod"), "Machinist’s Workbench 3.1.2 · Kiln Club (example)".into(), false))
-                    .child(fact(tr("Downloads"), "318 MiB of build tools, and 14 code libraries the mod uses (example)".into(), true))
-                    .child(fact(tr("While building"), "Programs from 3 of those libraries (example). In the real flow Sunrise names them in a second question during the build.".into(), true))
-                    .child(fact(tr("When you play"), tr("The mod, inside the game, with the same access to your files and programs as the game has.").into(), true)),
-            )
-            .child(
-                checkbox("alt-example-a", a, tr("Let those 3 libraries run their programs while building").into())
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.sheets.ticked.0 ^= true;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                checkbox("alt-example-b", b, tr("Let the mod run as native code in my game").into())
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.sheets.ticked.1 ^= true;
-                        cx.notify();
-                    })),
-            )
-            .child(consent_footer(
-                tr("These permissions would be saved on this computer."),
-                button("alt-example-cancel", tr("Not now")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.close_alt_sheet();
-                        cx.notify();
-                    },
-                )),
-                go,
-            ));
-        frame("alt-example", 760., body, cx)
     }
 
     // ---- Game build ----
@@ -1360,25 +1255,6 @@ fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
                 .child(cancel)
                 .child(go),
         )
-}
-
-/// `alt/06`'s case, for `SUNRISE_PREVIEW_EXAMPLES`.
-const EXAMPLE_BASE: &str = "example";
-
-fn example_held() -> Held {
-    Held {
-        to: "Nov 17".into(),
-        plays: "Nov 16".into(),
-        mods: vec!["JEI".into()],
-        details: vec![
-            "Move to Nov 17? 1 of your 2 native mods fit it. (example)".into(),
-            "JEI 1.8.0 does not: it was made for the Nov 16 game. It will be switched off until its author makes a version that fits. (example)".into(),
-        ],
-        worlds: vec!["Harbor at Low Tide".into()],
-        blocked: false,
-        base: EXAMPLE_BASE.into(),
-        stopped: false,
-    }
 }
 
 #[cfg(test)]

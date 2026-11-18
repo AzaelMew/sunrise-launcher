@@ -29,18 +29,10 @@ impl Launcher {
             .p(px(24.))
             .text_color(c(TEXT))
             .child(header)
-            .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
-        let examples = self.alt.mods.examples;
-        let (cards, categories): (Vec<Card>, Vec<String>) = match (&self.alt.mods.catalog, examples)
-        {
-            (_, true) => {
-                let cards = examples::cards();
-                let cats = model::categories(&cards);
-                (cards, cats)
-            }
-            (Catalog::Ready(cards, cats), _) => (cards.clone(), cats.clone()),
-            (Catalog::Failed(e), _) => {
+        let (cards, categories): (Vec<Card>, Vec<String>) = match &self.alt.mods.catalog {
+            Catalog::Ready(cards, cats) => (cards.clone(), cats.clone()),
+            Catalog::Failed(e) => {
                 let e = e.clone();
                 return page
                     .child(
@@ -263,7 +255,6 @@ impl Launcher {
             let picture = card_data
                 .icon
                 .clone()
-                .filter(|_| !card_data.example)
                 .and_then(|url| self.mods_image(&url, images::ICON));
             let is_added = added.contains(&id);
             let working = adding.as_deref() == Some(id.as_str());
@@ -283,9 +274,9 @@ impl Launcher {
                     _ => tr("Add"),
                 };
                 let b = crate::alt::button(("alt-add", n), label);
-                Some(match (card_data.example, working) {
-                    (true, _) | (_, true) => dim(b).into_any_element(),
-                    _ => {
+                Some(match working {
+                    true => dim(b).into_any_element(),
+                    false => {
                         let id = id.clone();
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             cx.stop_propagation();

@@ -28,9 +28,6 @@ pub fn client(mut command: Command, launch: Launch, run: Option<String>, tx: Sen
 
 /// Used only from background jobs: the UI owns the one complete-set prompt.
 pub fn with_consent<T>(tx: &Sender<Msg>, prepare: impl FnOnce(Permission<'_>) -> T) -> T {
-    if cfg!(feature = "redesign-preview") {
-        return prepare(Permission::Refuse);
-    }
     let ask = |missing: &[&JarRef]| {
         let (reply, answer) = mpsc::channel();
         let jars = missing.iter().map(|jar| (*jar).clone()).collect();

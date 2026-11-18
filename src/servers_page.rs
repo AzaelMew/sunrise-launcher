@@ -501,14 +501,9 @@ impl Launcher {
 
     /// Called with the launcher's other work: what the background sent, and the next status poll.
     pub(super) fn servers_tick(&mut self) -> bool {
-        // The glass page shows how friends reach the server beside it, whatever the tab.
-        // The new look's Hosting page is this page.
-        let hosting =
-            cfg!(feature = "redesign-preview") && self.alt.page == crate::alt::Page::Hosting;
-        let showing = self.page == Page::Servers || hosting;
-        let overview = showing
-            && self.servers.open.is_some()
-            && (self.servers.tab == Tab::Overview || (self.theme.glass && !hosting));
+        // The Hosting page shows how friends reach the server beside it, whatever the tab.
+        let showing = self.alt.page == crate::alt::Page::Hosting;
+        let overview = showing && self.servers.open.is_some() && self.servers.tab == Tab::Overview;
         let mut changed = self.internet_tick(overview);
         while let Ok(event) = self.servers.rx.try_recv() {
             changed |= self.servers_event(event);
@@ -1106,33 +1101,6 @@ impl Launcher {
                         .font_family(theme::MONO)
                         .text_size(px(13.))
                 })
-                // The mockup's focus ring (`:focus-visible`, 2 px of the accent's soft shade) on a
-                // field of its own, drawn inside its edge: GPUI has no outline.
-                .when(
-                    // The new look's fields mark focus on their own edge.
-                    focused
-                        && !invalid
-                        && !cfg!(feature = "redesign-preview")
-                        && !matches!(f, Field::Players | Field::Command),
-                    |d| {
-                        let small = matches!(
-                            f,
-                            Field::InstanceModsFilter
-                                | Field::ConsoleSearch
-                                | Field::AccentHex
-                                | Field::Motd
-                                | Field::Port
-                                | Field::Token
-                                | Field::AddPlayer
-                                | Field::DeleteServer
-                        );
-                        d.child(crate::glass_ui::focus_ring(if small {
-                            radius::CONTROL
-                        } else {
-                            radius::ROW
-                        }))
-                    },
-                )
         } else {
             div()
                 .flex()
@@ -3445,20 +3413,12 @@ mod tests {
             let dir = root.path().to_path_buf();
             let job = std::thread::spawn(move || run_managed_server(&tx, &dir, &[action], &|_| {}));
             let message = rx.recv_timeout(Duration::from_secs(10));
-            if cfg!(feature = "redesign-preview") {
-                // The preview has no Modrinth flow. It refuses the launch without prompting.
-                assert!(matches!(
-                    message,
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
-                ));
-            } else {
-                let backend::Msg::JarConsent { jars, reply } = message.unwrap() else {
-                    panic!("expected jar consent")
-                };
-                assert_eq!(jars.len(), 1);
-                assert_eq!(jars[0].id(), "fixture");
-                reply.send(false).unwrap();
-            }
+            let backend::Msg::JarConsent { jars, reply } = message.unwrap() else {
+                panic!("expected jar consent")
+            };
+            assert_eq!(jars.len(), 1);
+            assert_eq!(jars[0].id(), "fixture");
+            reply.send(false).unwrap();
             assert!(job.join().unwrap().is_err());
             assert!(!root.path().join("ran").exists());
         }

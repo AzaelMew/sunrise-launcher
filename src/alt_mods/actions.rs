@@ -70,11 +70,9 @@ impl Launcher {
         }
     }
 
-    /// The gate every change passes: not an example, not locked, nothing else running.
+    /// The gate every change passes: not locked, nothing else running.
     pub(super) fn alt_guard(&mut self) -> bool {
-        let refusal = if self.alt.mods.examples {
-            Some(tr("These are examples: nothing can be changed.").to_string())
-        } else if let Some(why) = self.alt_mods_locked() {
+        let refusal = if let Some(why) = self.alt_mods_locked() {
             Some(why.to_string())
         } else if self.alt_mutating() {
             Some(tr("Wait for the current operation to finish.").to_string())
@@ -124,7 +122,7 @@ impl Launcher {
     /// checks. Off: like any change that could take content out of a world, after the worlds
     /// check.
     pub(super) fn alt_toggle(&mut self, row: &Row) {
-        if row.example || row.local.is_some() || !self.alt_guard() {
+        if row.local.is_some() || !self.alt_guard() {
             return;
         }
         let Some(entry) = row.entry.clone() else {
@@ -153,7 +151,7 @@ impl Launcher {
         let rows = self.alt_rows();
         let chosen: Vec<&Row> = rows
             .iter()
-            .filter(|r| !r.example && r.local.is_none() && self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
             .collect();
         let (go, held) =
             model::turn_on_plan(&chosen, self.settings.native_mods_allowed_at.is_some());
@@ -194,9 +192,7 @@ impl Launcher {
         let rows = self.alt_rows();
         let chosen: Vec<(String, String)> = rows
             .iter()
-            .filter(|r| {
-                !r.example && r.local.is_none() && r.on && self.alt.mods.selection.contains(&r.id)
-            })
+            .filter(|r| r.local.is_none() && r.on && self.alt.mods.selection.contains(&r.id))
             .map(|r| (r.id.clone(), r.title.clone()))
             .collect();
         if chosen.is_empty() {
@@ -213,7 +209,7 @@ impl Launcher {
         let rows = self.alt_rows();
         let chosen: Vec<(String, String, String)> = rows
             .iter()
-            .filter(|r| !r.example && r.local.is_none() && self.alt.mods.selection.contains(&r.id))
+            .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
             .filter_map(|r| {
                 Some((
                     r.id.clone(),
@@ -240,11 +236,7 @@ impl Launcher {
 
     /// One mod's update: the same reviewed path as the batch, for one mod.
     pub(super) fn alt_update_one(&mut self, row: &Row) {
-        let Some(to) = row
-            .update
-            .clone()
-            .filter(|_| !row.example && row.local.is_none())
-        else {
+        let Some(to) = row.update.clone().filter(|_| row.local.is_none()) else {
             return;
         };
         let refusal = if !row.on {

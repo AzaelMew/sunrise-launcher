@@ -350,8 +350,7 @@ impl Launcher {
         let query = self.alt.mods.have.text().trim().to_lowercase();
         let editable = self.location_error.is_none()
             && self.alt_mods_locked().is_none()
-            && !self.alt_mutating()
-            && !self.alt.mods.examples;
+            && !self.alt_mutating();
         let d = &self.alt.mods.data;
         let mut worlds: Vec<(World, Vec<Listed>)> =
             d.list.as_ref().map_or_else(Vec::new, |l| l.worlds.clone());

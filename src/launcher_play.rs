@@ -323,7 +323,7 @@ impl Launcher {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
             backend::complete_assets(&tag);
-            if let Some(auto) = auto.filter(|_| !cfg!(feature = "redesign-preview")) {
+            if let Some(auto) = auto {
                 backend::play_step("updating registry mods");
                 let lines = mods_page::auto_update(&[auto], auto_enabled);
                 if !lines.is_empty() {

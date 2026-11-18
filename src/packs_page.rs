@@ -47,7 +47,6 @@ impl Launcher {
                 (p, icon)
             })
             .collect();
-        #[cfg(feature = "redesign-preview")]
         {
             let priority = packs::resource_order(&home);
             let rank: HashMap<_, _> = priority

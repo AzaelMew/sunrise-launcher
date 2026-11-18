@@ -30,7 +30,6 @@ use sunrise_launcher::browser::{
 mod actions;
 mod data_packs;
 mod discover;
-mod examples;
 mod installed_view;
 mod model;
 mod pack_discover;
@@ -122,8 +121,6 @@ impl Shelf {
 pub(crate) struct AltModsState {
     tx: Sender<Event>,
     rx: Receiver<Event>,
-    /// `SUNRISE_PREVIEW_EXAMPLES`, read once.
-    examples: bool,
     catalog: Catalog,
     find: LineEdit,
     find_focus: Option<FocusHandle>,
@@ -168,7 +165,6 @@ impl Default for AltModsState {
         Self {
             tx,
             rx,
-            examples: model::examples_on(),
             catalog: Catalog::Idle,
             find: LineEdit::default(),
             find_focus: None,
@@ -431,9 +427,6 @@ impl Launcher {
     /// Reads what is installed again when the files' fingerprint moved (an install, a toggle or a
     /// build elsewhere), and asks for the registry once. Reads only.
     fn alt_mods_refresh(&mut self) {
-        if self.alt.mods.examples {
-            return;
-        }
         let home = self.alt_mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
@@ -515,16 +508,6 @@ impl Launcher {
     }
 
     fn alt_mods_load_page(&mut self, id: String, from: Page) {
-        if self.alt.mods.examples {
-            let page =
-                examples::page(&id).ok_or_else(|| tr("This example has no page.").to_string());
-            self.alt.mods.open = Some(Open {
-                id,
-                from,
-                page: Some(page.map(Box::new)),
-            });
-            return;
-        }
         self.alt.mods.open = Some(Open {
             id: id.clone(),
             from,
@@ -543,12 +526,9 @@ impl Launcher {
         });
     }
 
-    /// The installed mods as rows (or the labelled examples). Reads the index already in memory
+    /// The installed mods as rows. Reads the index already in memory
     /// and the native build state's memo; never asks the network and never writes.
     fn alt_rows(&self) -> Vec<Row> {
-        if self.alt.mods.examples {
-            return examples::rows(120);
-        }
         let Some(snap) = &self.alt.mods.snapshot else {
             return Vec::new();
         };
@@ -663,7 +643,7 @@ impl Launcher {
         self.mods.message = None;
     }
 
-    /// The strip shown above either list: example banner, progress, or the last result.
+    /// The strip shown above either list: progress, or the last result.
     fn alt_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         use ui::{c, muted};
         let busy = self.alt.mods.busy.clone().or_else(|| {

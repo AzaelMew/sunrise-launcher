@@ -93,7 +93,6 @@ impl Launcher {
         self.location_error.is_none()
             && self.alt_mods_locked().is_none()
             && !self.alt_mutating()
-            && !self.alt.mods.examples
             && self.alt.page == Page::Packs
             && self.alt.mods.shelf.kind() == Some(kind)
             && self

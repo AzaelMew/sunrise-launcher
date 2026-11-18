@@ -614,7 +614,7 @@ impl Launcher {
             let plays = selected.as_ref() == Some(&a.uuid);
             let uuid = a.uuid.clone();
             let mut actions = div().flex().gap(px(4.));
-            if plays && !cfg!(feature = "redesign-preview") {
+            if plays {
                 actions = actions.child(
                     button(format!("offline-{i}"), "Play offline", Kind::Ghost, &t).on_click(
                         cx.listener(|this, _: &ClickEvent, _, cx| {

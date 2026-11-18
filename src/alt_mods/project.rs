@@ -118,7 +118,6 @@ impl Launcher {
                     cx.notify();
                 })),
             )
-            .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
         let loaded = self.alt.mods.open.as_ref().map(|o| o.page.clone());
         let p = match loaded {
@@ -147,7 +146,6 @@ impl Launcher {
         let picture = p
             .icon
             .clone()
-            .filter(|_| !p.example)
             .and_then(|u| self.mods_image(&u, images::ICON));
         let shots: Vec<Option<PathBuf>> = p
             .screenshots
@@ -269,7 +267,7 @@ impl Launcher {
                     _ => tr("Add to my game"),
                 };
                 let b = primary("alt-project-add", label).w_full().h(px(44.));
-                if p.example || busy {
+                if busy {
                     dim(b).into_any_element()
                 } else {
                     let id = p.id.clone();

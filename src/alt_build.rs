@@ -6,35 +6,20 @@ use crate::alt::{button, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Animation, AnimationExt as _};
 use native_mods::Stage;
 
-/// `SUNRISE_PREVIEW_EXAMPLES=build`: a made-up build half way through compiling, for design
-/// review. Nothing is built.
-fn example() -> Option<(String, native_mods::Progress)> {
-    (std::env::var("SUNRISE_PREVIEW_EXAMPLES").as_deref() == Ok("build")).then(|| {
-        let step = native_mods::Step::Mod {
-            id: "trail-atlas".into(),
-            done: 2,
-            total: 3,
-        };
-        (step.shown(), step.progress())
-    })
-}
-
 impl Launcher {
     /// Whether the build that runs, or last ran, is the selected setup's.
     fn alt_build_mine(&self) -> bool {
-        example().is_some()
-            || self
-                .selected_instance()
-                .is_some_and(|i| self.native_for.as_deref() == Some(i.id.as_str()))
+        self.selected_instance()
+            .is_some_and(|i| self.native_for.as_deref() == Some(i.id.as_str()))
     }
 
     /// The step a running build is at, in words.
     fn alt_build_step(&self) -> Option<String> {
-        self.native_step.clone().or_else(|| example().map(|e| e.0))
+        self.native_step.clone()
     }
 
     fn alt_build_progress(&self) -> Option<native_mods::Progress> {
-        self.native_progress.or_else(|| example().map(|e| e.1))
+        self.native_progress
     }
 
     /// The three stages as one bar: done ones full, the current one as far as it reports, or

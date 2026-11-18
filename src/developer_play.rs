@@ -96,10 +96,7 @@ impl Launcher {
                 .map(|i| i.vars(cmd.get_program()))
                 .unwrap_or_default();
             cmd.envs(self.client_vars.iter().map(|(k, v)| (k, v)));
-            let launch = instance
-                .filter(|_| !cfg!(feature = "redesign-preview"))
-                .map(|i| i.launch)
-                .unwrap_or_default();
+            let launch = instance.map(|i| i.launch).unwrap_or_default();
             self.starting_client = Some(tag);
             jar_launch::client(cmd, launch, run, self.tx.clone());
         }

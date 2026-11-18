@@ -450,23 +450,6 @@ fn removing_a_mod_names_what_still_needs_it() {
 }
 
 #[test]
-fn example_rows_are_marked_and_never_planned() {
-    let rows = examples::rows(120);
-    assert_eq!(rows.len(), 120);
-    assert!(
-        rows.iter().all(|r| r.example && r.entry.is_none()),
-        "no example carries an installed entry"
-    );
-    let plan = plan_updates(&rows, true);
-    assert!(
-        plan.included.is_empty() && plan.skipped.is_empty(),
-        "no example reaches an update"
-    );
-    assert!(examples::cards().iter().all(|c| c.example));
-    assert!(examples::page("jei").is_some_and(|p| p.example));
-}
-
-#[test]
 fn counts_read_short() {
     assert_eq!(size(2048), "2.0 KiB");
     assert_eq!(size(3 << 20), "3.0 MiB");

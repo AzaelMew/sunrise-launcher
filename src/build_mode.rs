@@ -335,11 +335,7 @@ impl Launcher {
             return state;
         }
         let version = self.version_of(instance).cloned();
-        let home = if cfg!(feature = "redesign-preview") {
-            instance.home.clone()
-        } else {
-            self.mods.home()
-        };
+        let home = instance.home.clone();
         let profile = Profile::Optimized;
         let key = format!(
             "{}{profile:?}",

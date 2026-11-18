@@ -1116,7 +1116,7 @@ impl Launcher {
                 "Sunrise Launcher {version}",
                 &[("version", backend::VERSION)],
             ),
-            tr("A design preview. It doesn't update itself."),
+            "",
             div(),
         );
         div()
