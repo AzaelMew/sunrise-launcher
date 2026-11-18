@@ -32,6 +32,8 @@ mod discover;
 mod examples;
 mod installed_view;
 mod model;
+#[cfg(feature = "redesign-preview")]
+mod packs;
 mod project;
 mod ui;
 pub(crate) use ui::{chip, field_theme, switch};
@@ -102,6 +104,8 @@ pub(crate) struct AltModsState {
     filters: model::Filters,
     menu: Option<Menu>,
     row_filter: model::RowFilter,
+    #[cfg(feature = "redesign-preview")]
+    collection: Option<sunrise_launcher::packs::Kind>,
     selection: BTreeSet<String>,
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
@@ -134,6 +138,8 @@ impl Default for AltModsState {
             filters: model::Filters::default(),
             menu: None,
             row_filter: model::RowFilter::default(),
+            #[cfg(feature = "redesign-preview")]
+            collection: None,
             selection: BTreeSet::new(),
             anchor: None,
             confirm: None,
@@ -527,6 +533,16 @@ impl Launcher {
                 &[("count", &n.to_string())],
             )
             .into(),
+        };
+        #[cfg(feature = "redesign-preview")]
+        let placeholder = match (installed, self.alt.mods.collection) {
+            (true, Some(sunrise_launcher::packs::Kind::Resource)) => {
+                tr("Search your resource packs").into()
+            }
+            (true, Some(sunrise_launcher::packs::Kind::Shader)) => {
+                tr("Search your shader packs").into()
+            }
+            _ => placeholder,
         };
         let edit = if installed {
             &self.alt.mods.have

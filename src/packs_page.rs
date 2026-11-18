@@ -47,6 +47,19 @@ impl Launcher {
                 (p, icon)
             })
             .collect();
+        #[cfg(feature = "redesign-preview")]
+        {
+            let priority = packs::resource_order(&home);
+            let rank: HashMap<_, _> = priority
+                .iter()
+                .enumerate()
+                .map(|(i, name)| (name, i))
+                .collect();
+            // Stable sort leaves unselected packs alphabetic after the active stack.
+            self.game_packs
+                .resource
+                .sort_by_key(|(p, _)| rank.get(&p.file).copied().unwrap_or(usize::MAX));
+        }
         self.game_packs.shader = packs::list(&home, PackKind::Shader);
         self.game_packs.fresh = true;
     }

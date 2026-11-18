@@ -28,6 +28,15 @@ impl Launcher {
             .child(header)
             .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
+        #[cfg(feature = "redesign-preview")]
+        {
+            page = page.child(self.collection_tabs(cx));
+            if let Some(kind) = self.alt.mods.collection {
+                return page
+                    .child(self.installed_packs(kind, cx))
+                    .into_any_element();
+            }
+        }
 
         let rows = self.alt_rows();
         if rows.is_empty() {
