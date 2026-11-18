@@ -340,12 +340,7 @@ pub fn install(options: &Options, progress: impl Fn(Step, f32)) -> Result<PathBu
     }
     fs::write(dir.join("LICENSE"), include_str!("../assets/LICENSE"))
         .map_err(|e| format!("The licence: {e}"))?;
-    fs::create_dir_all(dir.join("LICENSES")).map_err(|e| format!("The licences: {e}"))?;
-    fs::write(
-        dir.join("LICENSES/MIT-Horizon.txt"),
-        include_str!("../assets/LICENSES/MIT-Horizon.txt"),
-    )
-    .map_err(|e| format!("The MIT notice: {e}"))?;
+    crate::notices::write_into(&dir).map_err(|e| format!("The licences: {e}"))?;
     progress(Step::Shortcuts, 0.6);
     if let Some(link) = start_menu_link() {
         write_link(&link, &exe).map_err(|e| format!("{}: {e}", link.display()))?;
@@ -512,10 +507,8 @@ pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<
             left.push(format!("{}: {e}", own.display()));
         }
     }
-    for notice in ["LICENSE", "LICENSES/MIT-Horizon.txt"] {
-        remove_file(&dir.join(notice), &mut left);
-    }
-    let _ = fs::remove_dir(dir.join("LICENSES"));
+    remove_file(&dir.join("LICENSE"), &mut left);
+    left.extend(crate::notices::remove_from(&dir));
     // Only what setup and self-updates put there: the launcher and what they moved aside.
     for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().to_lowercase();
@@ -574,6 +567,8 @@ pub fn after_update(version: &str) {
     {
         return;
     }
+    // An install from before these notices existed gets them with its first update.
+    let _ = crate::notices::write_into(&registered.dir);
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok(key) = hkcu.open_subkey_with_flags(UNINSTALL_KEY, KEY_WRITE) {
         let _ = key.set_value("DisplayVersion", &version.to_string());

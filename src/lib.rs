@@ -43,6 +43,7 @@ pub mod native_status;
 pub mod net;
 pub mod nightly;
 pub mod no_ai;
+pub mod notices;
 pub mod other_launchers;
 pub mod packs;
 pub mod pictures;

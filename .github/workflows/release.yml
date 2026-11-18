@@ -209,9 +209,9 @@ jobs:
               # The .tar.gz is what the launcher updates itself from; the AppImage replaces itself instead.
               packaging/linux/appimage.sh "$BIN/${{ matrix.binary }}" "$SUNRISE_LAUNCHER_VERSION" out
             fi
-            mkdir -p dist/LICENSES
+            mkdir -p dist
             cp "$BIN/${{ matrix.binary }}" LICENSE dist/
-            cp LICENSES/MIT-Horizon.txt dist/LICENSES/
+            packaging/copy-notices.sh . dist/LICENSES
             if [[ "${{ matrix.asset }}" == *.tar.gz ]]; then
               (cd dist && tar czf ../out/${{ matrix.asset }} ${{ matrix.binary }} LICENSE LICENSES)
             else

@@ -31,6 +31,29 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
+## Fonts and icons that ship in the launcher
+
+Every route that ships the launcher (the AppImage, the macOS app, the archives, Windows Setup and a
+self-updated Windows install) puts the notices below in its `LICENSES` folder, from the list in
+`packaging/notices.txt`.
+
+## Figtree
+
+`assets/fonts/Figtree-*.ttf` is [Figtree](https://github.com/erikdkennedy/figtree) by The Figtree
+Project Authors, under the SIL Open Font License 1.1 (`assets/fonts/OFL-Figtree.txt`).
+
+## Geist and Geist Mono
+
+`crates/theme/fonts/Geist-*.ttf` and `GeistMono-Regular.ttf` are
+[Geist](https://github.com/vercel/geist-font) by The Geist Project Authors, under the SIL Open Font
+License 1.1 (`crates/theme/fonts/OFL-Geist.txt`).
+
+## Bricolage Grotesque
+
+`crates/theme/fonts/BricolageGrotesque*.ttf` is
+[Bricolage Grotesque](https://github.com/ateliertriay/bricolage) by The Bricolage Grotesque Project
+Authors, under the SIL Open Font License 1.1 (`crates/theme/fonts/OFL-BricolageGrotesque.txt`).
+
 ## Pixelify Sans
 
 `crates/theme/fonts/PixelifySans-*.ttf` is [Pixelify Sans](https://github.com/eifetx/Pixelify-Sans)
