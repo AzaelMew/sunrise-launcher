@@ -3,7 +3,7 @@
 use super::model::{self, Group, Make, Need, Row, Show};
 use super::ui::*;
 use super::*;
-use crate::alt::{BG, CARD, GOLD, LINE, MUTED, TEXT};
+use crate::alt::{BG, CARD, GOLD, MUTED, SOFT, TEXT};
 use std::rc::Rc;
 use sunrise_launcher::browser::images;
 
@@ -214,7 +214,7 @@ impl Launcher {
                 .px(px(14.))
                 .h(px(48.))
                 .border_b_1()
-                .border_color(c(LINE))
+                .border_color(c(SOFT))
                 .child(select_all);
             if n_sel == 0 {
                 bar = bar.child(muted(trf(
@@ -505,7 +505,7 @@ impl Launcher {
             .children(confirm)
             .child(div().id("alt-installed-scroll").flex_1().min_h_0().overflow_y_scroll().child(list))
             .children((hidden > 0).then(|| {
-                div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(LINE)).child(muted(trf(
+                div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(SOFT)).child(muted(trf(
                     "{count} other files the launcher installed (packs, or from other sources) aren't listed here.",
                     &[("count", &hidden.to_string())],
                 )))
@@ -691,7 +691,7 @@ impl Launcher {
             .px(px(14.))
             .h(px(52.))
             .border_t_1()
-            .border_color(c(LINE))
+            .border_color(c(SOFT))
             .when(selected, |d| d.bg(c(0x2a2724)))
             .child(match r.local {
                 Some(_) => div().flex_none().w(px(18.)),

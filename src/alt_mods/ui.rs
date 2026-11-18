@@ -1,6 +1,6 @@
 //! Small pieces the three Mods screens share. Colours are the alternative look's (`crate::alt`).
 use super::*;
-use crate::alt::{BG, CARD, GOLD, LINE, MUTED, TEXT};
+use crate::alt::{BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Hsla};
 use std::path::PathBuf;
 
@@ -28,12 +28,13 @@ pub(super) fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
-/// The one gold action on a screen.
+/// The main action on a screen, in cream: gold is Play's alone.
 pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     crate::alt::button(id, label)
-        .bg(c(GOLD))
+        .bg(c(TEXT))
+        .border_color(c(TEXT))
         .text_color(c(BG))
-        .font_weight(FontWeight::SEMIBOLD)
+        .hover(|s| s.bg(c(0xffffff)))
 }
 
 /// A control that can't be used now: drawn dim, with no handler.
@@ -63,7 +64,7 @@ pub(super) fn chip(
         .child(label.into())
 }
 
-pub(super) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -95,10 +96,8 @@ pub(super) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .flex()
         .items_center()
         .justify_center()
-        .text_size(px(12.))
-        .text_color(c(BG))
         .cursor_pointer()
-        .child(if on { "✓" } else { "" })
+        .children(on.then(|| blocks::icon("check", 12., c(BG))))
 }
 
 /// A mod's picture, or its first letter until it arrives.
@@ -127,7 +126,7 @@ pub(super) fn card() -> Div {
     div()
         .rounded(px(12.))
         .border_1()
-        .border_color(c(LINE))
+        .border_color(c(SOFT))
         .bg(c(CARD))
 }
 

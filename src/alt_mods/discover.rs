@@ -122,7 +122,7 @@ impl Launcher {
             .cursor_pointer()
             .text_size(px(13.))
             .child(ui::switch("alt-fits-switch", f.fits_only))
-            .child(tr("Fits my build"))
+            .child(tr("Fits my game"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 let f = &mut this.alt.mods.filters;
                 f.fits_only = !f.fits_only;
@@ -188,7 +188,7 @@ impl Launcher {
                 .cursor_pointer()
                 .text_size(px(13.))
                 .child(label.to_owned())
-                .child(div().text_color(c(MUTED)).child("⌄"))
+                .child(blocks::icon("chevron-down", 13., c(MUTED)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let same = matches!(
                         (&this.alt.mods.menu, &which),
@@ -267,9 +267,13 @@ impl Launcher {
             let working = adding.as_deref() == Some(id.as_str());
             let action: AnyElement = if is_added {
                 div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
                     .text_size(px(13.))
                     .text_color(c(0x7fd6a0))
-                    .child(tr("✓ Added"))
+                    .child(blocks::icon("check", 12., c(0x7fd6a0)))
+                    .child(tr("Added"))
                     .into_any_element()
             } else if let Some(why) = card_data.fit.reason() {
                 muted(why).into_any_element()
@@ -376,7 +380,7 @@ impl Launcher {
             div().child(muted(if f.text.is_empty() && f.category.is_none() {
                 tr("The registry has no mods for this build yet.")
             } else {
-                tr("No mods match. Try a different search, or turn off “Fits my build”.")
+                tr("No mods match. Try a different search, or turn off “Fits my game”.")
             }))
         } else {
             div()

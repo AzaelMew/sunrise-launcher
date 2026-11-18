@@ -103,7 +103,7 @@ fn discover_lists_mods_not_packs_and_says_which_fit() {
     assert_eq!(cards[1].make, Make::Native);
 
     let mut f = Filters::default();
-    assert_eq!(discover(&cards, &f), [0], "Fits my build is on by default");
+    assert_eq!(discover(&cards, &f), [0], "Fits my game is on by default");
     f.fits_only = false;
     assert_eq!(discover(&cards, &f), [1, 0], "most downloaded first");
     f.make = Some(Make::Content);

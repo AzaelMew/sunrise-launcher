@@ -34,6 +34,7 @@ mod installed_view;
 mod model;
 mod project;
 mod ui;
+pub(crate) use ui::switch;
 
 use model::{Card, Row};
 
@@ -520,6 +521,7 @@ impl Launcher {
         let placeholder: SharedString = match (installed, count) {
             (true, _) => tr("Search your mods by name, author or id").into(),
             (false, 0) => tr("Search the Sunrise registry").into(),
+            (false, 1) => tr("Search the one mod in the Sunrise registry").into(),
             (false, n) => trf(
                 "Search {count} mods in the Sunrise registry",
                 &[("count", &n.to_string())],

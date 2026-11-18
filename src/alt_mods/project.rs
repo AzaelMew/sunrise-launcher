@@ -2,7 +2,7 @@
 use super::model::{self, Make};
 use super::ui::*;
 use super::*;
-use crate::alt::{CARD, GOLD, LINE, MUTED, TEXT};
+use crate::alt::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use sunrise_launcher::browser::images;
 
 impl Launcher {
@@ -158,19 +158,11 @@ impl Launcher {
                 }))
         });
 
-        let about: Vec<AnyElement> = p
-            .description
-            .split("\n\n")
-            .map(|para| para.trim().trim_start_matches('#').trim().to_owned())
-            .filter(|para| !para.is_empty())
-            .map(|para| {
-                div()
-                    .text_size(px(14.))
-                    .text_color(c(0xcfc9c0))
-                    .child(para)
-                    .into_any_element()
-            })
-            .collect();
+        let mut prose = field_theme(self.theme);
+        prose.ink_soft = c(0xcfc9c0);
+        prose.plate_soft = c(CARD);
+        prose.rule = c(SOFT);
+        let about = crate::markdown::render(&p.description, &prose);
 
         let versions = card().children(p.versions.iter().enumerate().map(|(i, v)| {
             let installed = installed_here.as_deref() == Some(v.number.as_str());
@@ -184,7 +176,7 @@ impl Launcher {
                 .gap(px(16.))
                 .px(px(14.))
                 .py(px(10.))
-                .when(i > 0, |d| d.border_t_1().border_color(c(LINE)))
+                .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
                 .text_size(px(13.))
                 .child(
                     div()
@@ -374,7 +366,7 @@ impl Launcher {
             .gap(px(14.))
             .child(head)
             .children(gallery)
-            .children(about)
+            .child(about)
             .child(
                 div()
                     .text_size(px(18.))
