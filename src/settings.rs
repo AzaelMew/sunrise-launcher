@@ -1152,28 +1152,46 @@ impl Launcher {
                 cx,
             )
             .w(px(52.));
-        row(
-            tr("Corner rounding"),
-            "",
-            div()
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .child(crate::slider::slider(
-                    "alt-corners",
-                    f32::from(now) / max,
-                    1. / max,
-                    change,
-                    cx,
-                ))
-                .child(field)
-                .child(
-                    div()
-                        .text_size(px(tokens::LABEL))
-                        .text_color(rgb(palette().muted))
-                        .child(tr("px")),
-                ),
-        )
+        // The words keep their width; the slider gives way when the window is narrow.
+        div()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .child(
+                div()
+                    .flex_none()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(tr("Corner rounding")),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(10.))
+                    .child(
+                        crate::slider::slider(
+                            "alt-corners",
+                            f32::from(now) / max,
+                            1. / max,
+                            change,
+                            cx,
+                        )
+                        .flex_1()
+                        .min_w(px(80.))
+                        .max_w(px(200.)),
+                    )
+                    .child(field.flex_none())
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens::LABEL))
+                            .text_color(rgb(palette().muted))
+                            .child(tr("px")),
+                    ),
+            )
     }
 
     /// The corner radius as typed: a number up to the most it goes; anything else waits.
