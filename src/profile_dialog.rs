@@ -88,7 +88,7 @@ impl Launcher {
             .gap(px(12.))
             .rounded(px(tokens::R_CARD))
             .border_1()
-            .border_color(gpui::transparent_black())
+            .border_color(p.input_edge())
             .bg(p.card())
             .when(!busy, |d| {
                 d.group("new-picture-preview")
@@ -262,7 +262,7 @@ impl Launcher {
                     })),
             );
         }
-        let mut icons = row().child(
+        let mut icons = row().flex_wrap().child(
             button("new-mark", tr("Sunrise"))
                 .when(icon.is_none(), |d| d.border_color(rgb(p.accent_ink)))
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -295,12 +295,6 @@ impl Launcher {
                     })),
             );
         }
-        icons = icons.child(button("new-picture", tr("Picture…")).on_click(cx.listener(
-            |this, _, _, cx| {
-                this.choose_profile_picture(cx);
-                cx.notify();
-            },
-        )));
         let body = div()
             .flex()
             .flex_col()
