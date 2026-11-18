@@ -187,7 +187,7 @@ jobs:
       - name: Release tools
         if: runner.os == 'Linux'
         # test_game_copies needs the pinned Sunrise checkout and runs in `format`, which fetches it.
-        run: python3 -m unittest tools/tests/test_release_notes.py tools/tests/test_game_copies_issue.py
+        run: python3 -m unittest tools/tests/test_release_notes.py tools/tests/test_game_copies_issue.py tools/tests/test_rerun_unacquired.py
 
   # The one check branch protection requires, on the commit it tested: a fork's pull request names it otherwise until a maintainer's dispatch posts `build`, and a dispatch's own run (on main) never names it.
   build:
