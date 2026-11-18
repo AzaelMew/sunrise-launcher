@@ -217,7 +217,7 @@ impl Launcher {
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
-            self.client_error = Some(tr("Choose a version on the Versions page first.").into());
+            self.client_error = Some(tr("Install a Sunrise game build first.").into());
             return;
         };
         if let Some(why) = self.why_not_now(&tag) {
