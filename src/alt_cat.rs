@@ -1,4 +1,5 @@
-//! The website's cat, sitting in the play bar: click it to pet it.
+//! The website's cat, hiding behind Play: now and then it peeks out, or walks out into the empty
+//! part of the play bar and stays a while. Click it to pet it.
 //!
 //! Its look and its ways are the Sunrise site's, ported from sunrise-org/sunny
 //! (`frontend/site/art/`: `cat.ts` for the poses and coats, `cat-actions.ts` for what it does and
@@ -1411,30 +1412,254 @@ impl Cat {
 const ROOM: (f32, f32) = (1000., 560.);
 /// Screen pixels per pixel of the cat, at a scale factor of 1.
 const SIZE: f32 = 2.;
-/// A moving cat is drawn 12 times a second.
+const WIDTH: f32 = W as f32 * SIZE;
+/// A cat acting in place is drawn 12 times a second, a cat on the move 25 times.
 const FRAME: Duration = Duration::from_millis(83);
+const STEP_FRAME: Duration = Duration::from_millis(40);
+/// The cat's lane runs this far under Play's edge, so the cat comes out from behind the button.
+const UNDER: f32 = 8.;
+/// A peek shows the head and chest, and lasts this long.
+const PEEK_OUT: f32 = 44.;
+const PEEK: f32 = 4200.;
+/// Walking: pixels a millisecond, and the leg swing that keeps the paws from sliding at that pace.
+const SPEED: f32 = 0.055;
+const STRIDE: f32 = 0.012;
+
+/// Where the cat is. Mostly it is away, behind Play; now and then it peeks out, or walks out
+/// into the empty part of the bar, stays a while and walks back.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Scene {
+    Away {
+        until: f32,
+    },
+    Peek {
+        since: f32,
+    },
+    /// `from` and `to` are how far out of hiding the cat is, in pixels.
+    Walk {
+        from: f32,
+        to: f32,
+        since: f32,
+    },
+    Visit {
+        at: f32,
+        until: f32,
+    },
+}
+
+/// What to draw of the cat: how far out it is, its pose, and whether it faces left.
+struct View {
+    out: f32,
+    pose: Pose,
+    left: bool,
+    pettable: bool,
+}
+
+struct Outing {
+    cat: Cat,
+    scene: Scene,
+    /// The first time out is a visit, so the cat introduces itself properly.
+    been_out: bool,
+}
+
+impl Outing {
+    fn new(ways: &'static Ways, seed: u64, first: f32) -> Self {
+        Self {
+            cat: Cat::new(ways, seed),
+            scene: Scene::Away { until: first },
+            been_out: false,
+        }
+    }
+
+    fn hide(&mut self, now: f32) {
+        self.scene = Scene::Away {
+            until: now + self.cat.random.span([60000., 200000.]),
+        };
+    }
+
+    /// Moves the scene on to `now` (ms). `room` is the empty width beside Play, in pixels: the
+    /// cat never goes further out than that, and stays hidden when there is none.
+    fn step(&mut self, now: f32, room: f32) {
+        match self.scene {
+            Scene::Away { until } if now >= until => {
+                if room < PEEK_OUT {
+                    self.scene = Scene::Away { until: now + 5000. };
+                } else if room >= WIDTH * 1.5 && (!self.been_out || self.cat.random.next() < 0.7) {
+                    let far = room.min(WIDTH + 16. + 520.);
+                    let to = self.cat.random.span([WIDTH + 16., far]);
+                    self.scene = Scene::Walk {
+                        from: 0.,
+                        to: (to / SIZE).round() * SIZE,
+                        since: now,
+                    };
+                    self.been_out = true;
+                } else {
+                    self.scene = Scene::Peek { since: now };
+                }
+            }
+            Scene::Peek { since } if now - since >= PEEK => self.hide(now),
+            Scene::Walk { from, to, since } => {
+                let gone = (now - since) * SPEED;
+                if gone >= (to - from).abs() {
+                    if to <= 0. {
+                        self.hide(now);
+                    } else {
+                        // It sits down fresh, and looks around before doing anything else.
+                        self.cat.state = State::Sit;
+                        self.cat.playing = None;
+                        self.cat.next_at = now + self.cat.random.span([900., 2200.]);
+                        self.scene = Scene::Visit {
+                            at: to,
+                            until: now + self.cat.random.span([20000., 60000.]),
+                        };
+                    }
+                } else if to > from && from + gone > room {
+                    // The room shrank ahead of it: it turns round.
+                    self.scene = Scene::Walk {
+                        from: from + gone,
+                        to: 0.,
+                        since: now,
+                    };
+                }
+            }
+            Scene::Visit { at, until } => {
+                self.cat.advance(now);
+                // It goes home when its time is up, but never mid-action and never asleep.
+                if (now >= until || at > room)
+                    && self.cat.playing.is_none()
+                    && self.cat.state == State::Sit
+                {
+                    self.scene = Scene::Walk {
+                        from: at,
+                        to: 0.,
+                        since: now,
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn view(&self, now: f32) -> Option<View> {
+        let ease = |k: f32| {
+            let k = unit(k);
+            k * k * (3. - 2. * k)
+        };
+        match self.scene {
+            Scene::Away { .. } => None,
+            Scene::Peek { since } => {
+                let t = now - since;
+                // Out, a look at you with a blink and a tilt of the head, and back in.
+                let look = ease((t - 900.) / 300.) * ease((PEEK - 900. - t) / 300.);
+                let tilt = ease((t - 2500.) / 250.) * ease((3400. - t) / 250.);
+                let blink = (1900. ..2050.).contains(&t);
+                Some(View {
+                    out: PEEK_OUT * ease(t / 700.) * ease((PEEK - t) / 600.),
+                    pose: with(
+                        SIT,
+                        &[
+                            (TURN, look),
+                            (TILT, -0.3 * tilt),
+                            (EYES, if blink { 0. } else { 1. }),
+                        ],
+                    ),
+                    left: true,
+                    pettable: false,
+                })
+            }
+            Scene::Walk { from, to, since } => {
+                let t = now - since;
+                let gone = (t * SPEED).min((to - from).abs());
+                Some(View {
+                    out: from + gone * (to - from).signum(),
+                    pose: with(
+                        SIT,
+                        &[(WALK, t * STRIDE), (TAIL_SWAY, (t * STRIDE * 0.5).sin())],
+                    ),
+                    left: to > from,
+                    pettable: false,
+                })
+            }
+            Scene::Visit { at, .. } => Some(View {
+                out: at,
+                pose: self.cat.pose(now),
+                left: true,
+                pettable: true,
+            }),
+        }
+    }
+
+    /// How long until the cat next needs a look.
+    fn next_change(&self, now: f32) -> Duration {
+        let until = |at: f32| Duration::from_secs_f32((at - now).max(0.) / 1000.);
+        match self.scene {
+            Scene::Away { until: at } => until(at),
+            Scene::Peek { .. } | Scene::Walk { .. } => STEP_FRAME,
+            Scene::Visit { until: at, .. } => self
+                .cat
+                .next_change()
+                .map_or(FRAME, |change| until(change.min(at.max(now + 500.)))),
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct CatState {
-    cat: Option<(Cat, Instant)>,
-    /// The picture on screen, and the pose and scale it was drawn for.
-    shown: Option<(Pose, usize, Arc<RenderImage>)>,
+    cat: Option<Outing>,
+    /// The cat's own time, in ms: it stands still while the window is in the background.
+    clock: f32,
+    seen: Option<Instant>,
+    /// The width of the cat's lane as last laid out.
+    lane: std::rc::Rc<std::cell::Cell<f32>>,
+    /// The picture on screen, and the pose, scale and facing it was drawn for.
+    shown: Option<(Pose, usize, bool, Arc<RenderImage>)>,
     /// When the pending wake fires: one timer at a time.
     wake: Option<Instant>,
 }
 
 impl Launcher {
-    /// The cat for the play bar, or nothing when the window has no room for it. It is a child of
-    /// the bar's row, so it never lies over a control.
+    /// The empty stretch of the play bar between its text and Play, and the cat when it is out.
+    /// The cat is drawn inside this stretch and cut at its edges, under Play, so it comes out
+    /// from behind the button and can never lie over text or a control. `beside` says Play is
+    /// what follows; with other buttons in between the cat stays in.
     pub(super) fn alt_cat(
         &mut self,
+        beside: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        if self.window_width < ROOM.0 || self.window_height < ROOM.1 {
-            return None;
+    ) -> Div {
+        let measured = self.alt.cat.lane.clone();
+        let lane = div()
+            .flex_1()
+            .min_w_0()
+            .h(px(H as f32 * SIZE))
+            .relative()
+            .overflow_hidden()
+            // Over the bar's gap and a little under Play.
+            .when(beside, |d| d.mr(px(-(14. + UNDER))))
+            .child(
+                gpui::canvas(
+                    move |bounds, _, _| measured.set(f32::from(bounds.size.width)),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            );
+        let room = if beside && self.window_width >= ROOM.0 && self.window_height >= ROOM.1 {
+            self.alt.cat.lane.get() - UNDER - 6.
+        } else {
+            0.
+        };
+        // A window in the background keeps its cat still: nothing is scheduled until it is back.
+        let awake = window.is_window_active();
+        if awake {
+            if let Some(seen) = self.alt.cat.seen {
+                self.alt.cat.clock += seen.elapsed().as_secs_f32() * 1000.;
+            }
         }
-        let (cat, born) = self.alt.cat.cat.get_or_insert_with(|| {
+        self.alt.cat.seen = awake.then(Instant::now);
+        let now = self.alt.cat.clock;
+        let outing = self.alt.cat.cat.get_or_insert_with(|| {
             let seed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(4, |d| d.as_millis() as u64);
@@ -1444,62 +1669,88 @@ impl Launcher {
             } else {
                 &TABBY_WAYS
             };
-            (Cat::new(ways, seed), Instant::now())
+            let mut outing = Outing::new(ways, seed, 0.);
+            // `SUNRISE_PREVIEW_CAT=1` brings it out at once, for design critique.
+            outing.scene = Scene::Away {
+                until: if std::env::var_os("SUNRISE_PREVIEW_CAT").is_some() {
+                    1500.
+                } else {
+                    outing.cat.random.span([15000., 40000.])
+                },
+            };
+            outing
         });
-        let now = born.elapsed().as_secs_f32() * 1000.;
-        // A window in the background keeps its cat still: nothing is scheduled until it is back.
-        let awake = window.is_window_active();
         if awake {
-            cat.advance(now);
+            if room <= 0. && !matches!(outing.scene, Scene::Away { .. }) {
+                outing.hide(now);
+            }
+            outing.step(now, room);
         }
-        let pose = cat.pose(now);
-        let after = cat.next_change().map_or(FRAME, |at| {
-            Duration::from_secs_f32((at - now).max(0.) / 1000.)
-        });
-        let coat = cat.ways.coat;
+        let after = outing.next_change(now);
+        let coat = outing.cat.ways.coat;
+        let view = outing.view(now).filter(|_| room > 0.);
+        if awake {
+            self.alt_cat_wake(after, cx);
+        }
+        let Some(view) = view else {
+            return lane;
+        };
         let scale = (SIZE * self.scale).round().max(1.) as usize;
         let image = match &self.alt.cat.shown {
-            Some((drawn, at, image)) if *drawn == pose && *at == scale => image.clone(),
+            Some((drawn, at, left, image))
+                if *drawn == view.pose && *at == scale && *left == view.left =>
+            {
+                image.clone()
+            }
             _ => {
-                let small = picture(coat, &pose);
+                let small = picture(coat, &view.pose);
                 let mut big = vec![0u8; W * scale * H * scale * 4];
                 for (y, row) in big.chunks_exact_mut(W * scale * 4).enumerate() {
                     for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                        let from = (y / scale * W + x / scale) * 4;
+                        // The cat is drawn facing right; facing left is its mirror image.
+                        let x = if view.left {
+                            W - 1 - x / scale
+                        } else {
+                            x / scale
+                        };
+                        let from = (y / scale * W + x) * 4;
                         px.copy_from_slice(&small.0[from..from + 4]);
                     }
                 }
                 let frame = image::RgbaImage::from_raw((W * scale) as u32, (H * scale) as u32, big)
                     .expect("the buffer is the picture's size");
                 let image = Arc::new(RenderImage::new([image::Frame::new(frame)]));
-                if let Some((_, _, old)) = self.alt.cat.shown.replace((pose, scale, image.clone()))
+                if let Some((_, _, _, old)) =
+                    self.alt
+                        .cat
+                        .shown
+                        .replace((view.pose, scale, view.left, image.clone()))
                 {
                     let _ = window.drop_image(old);
                 }
                 image
             }
         };
-        if awake {
-            self.alt_cat_wake(after, cx);
-        }
-        Some(
-            div()
-                .id("alt-cat")
-                .flex_none()
-                .cursor_pointer()
-                .child(
-                    gpui::img(image)
-                        .w(px(W as f32 * SIZE))
-                        .h(px(H as f32 * SIZE)),
-                )
+        // Whole cat pixels, so the picture stays crisp as it moves.
+        let out = (view.out / SIZE).round() * SIZE;
+        let cat = div()
+            .id("alt-cat")
+            .absolute()
+            .top(px(0.))
+            .right(px(out + UNDER - WIDTH))
+            .child(gpui::img(image).w(px(WIDTH)).h(px(H as f32 * SIZE)));
+        lane.child(if view.pettable {
+            cat.cursor_pointer()
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    if let Some((cat, born)) = &mut this.alt.cat.cat {
-                        cat.pet(born.elapsed().as_secs_f32() * 1000.);
+                    let now = this.alt.cat.clock;
+                    if let Some(outing) = &mut this.alt.cat.cat {
+                        outing.cat.pet(now);
                     }
                     cx.notify();
                 }))
-                .into_any_element(),
-        )
+        } else {
+            cat
+        })
     }
 
     /// Draws the launcher again `after` this, unless a wake is already due by then.
@@ -1537,6 +1788,51 @@ mod tests {
             .iter()
             .filter(|p| p[3] == 255)
             .count()
+    }
+
+    #[test]
+    fn the_cat_hides_comes_out_into_the_room_it_has_and_goes_back() {
+        let mut outing = Outing::new(&TABBY_WAYS, 7, 1000.);
+        outing.step(0., 400.);
+        assert!(outing.view(0.).is_none(), "it starts out of sight");
+        let (mut now, mut furthest, mut visited) = (0., 0f32, false);
+        // Until it has come out and is away again.
+        while !(visited && matches!(outing.scene, Scene::Away { .. })) {
+            now += 40.;
+            assert!(now < 600_000., "it went home within ten minutes");
+            outing.step(now, 400.);
+            if let Some(view) = outing.view(now) {
+                furthest = furthest.max(view.out);
+                visited |= view.pettable;
+            }
+        }
+        assert!(
+            furthest > WIDTH && furthest <= 400.,
+            "wholly out, and never past the room: {furthest}"
+        );
+        assert!(outing.view(now).is_none());
+    }
+
+    #[test]
+    fn with_too_little_room_the_cat_only_peeks_and_with_none_it_stays_in() {
+        let mut outing = Outing::new(&SIAMESE_WAYS, 3, 0.);
+        for step in 0..200 {
+            outing.step(step as f32 * 40., 0.);
+            assert!(outing.view(step as f32 * 40.).is_none());
+        }
+        let mut furthest = 0f32;
+        for step in 200..2000 {
+            let now = step as f32 * 40.;
+            outing.step(now, 60.);
+            if let Some(view) = outing.view(now) {
+                assert!(!view.pettable);
+                furthest = furthest.max(view.out);
+            }
+        }
+        assert!(
+            furthest > PEEK_OUT - 1. && furthest <= PEEK_OUT,
+            "head and chest, no further: {furthest}"
+        );
     }
 
     #[test]

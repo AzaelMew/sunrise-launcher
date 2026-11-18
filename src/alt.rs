@@ -299,7 +299,7 @@ impl Launcher {
         let waiting = (said.is_none() && self.native_step.is_none())
             .then(|| self.alt_mods_not_on_build())
             .filter(|count| *count > 0);
-        let mut bar = div()
+        let bar = div()
             .flex()
             .items_center()
             .gap(px(14.))
@@ -388,7 +388,7 @@ impl Launcher {
             )
             .child(
                 div()
-                    .flex_1()
+                    // As wide as what it says: the rest of the bar is the cat's.
                     .min_w_0()
                     .text_size(px(13.))
                     .text_color(rgb(MUTED))
@@ -416,21 +416,22 @@ impl Launcher {
                             }))
                     })),
             );
+        let mut actions: Vec<AnyElement> = Vec::new();
         if let Some(all) = more.filter(|_| self.native_step.is_none()) {
-            bar = bar.child(
+            actions.push(gpui::IntoElement::into_any_element(
                 button("alt-problem-details", tr("Details…"))
                     .flex_none()
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_alt_notice(all.clone());
                         cx.notify();
                     })),
-            );
+            ));
         }
         if status.is_some() && self.prepare_error.is_some() {
-            bar = bar.child(
+            actions.push(gpui::IntoElement::into_any_element(
                 button("alt-choose-source", tr("Choose Minecraft folder"))
                     .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
-            );
+            ));
         } else if let Some(channel) = self.alt_build_gone().filter(|_| !busy) {
             // The build this setup stays on can't be built for any more: one press follows its
             // channel again, and the build sheet opens on what that chose.
@@ -438,7 +439,7 @@ impl Launcher {
                 instances::Channel::Stable => tr("Use the newest Stable"),
                 _ => tr("Use the newest Nightly"),
             };
-            bar = bar.child(
+            actions.push(gpui::IntoElement::into_any_element(
                 button("alt-newest-build", label)
                     .flex_none()
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -447,28 +448,28 @@ impl Launcher {
                         this.open_alt_sheet(Sheet::Build);
                         cx.notify();
                     })),
-            );
+            ));
         } else if hold.is_some() && !busy {
-            bar = bar.child(button("alt-resolve", tr("Choose…")).on_click(cx.listener(
-                |this, _, _, cx| {
+            actions.push(gpui::IntoElement::into_any_element(
+                button("alt-resolve", tr("Choose…")).on_click(cx.listener(|this, _, _, cx| {
                     this.open_alt_sheet(Sheet::Resolve);
                     cx.notify();
-                },
-            )));
+                })),
+            ));
         } else if let Some(release) = update {
-            bar = bar.child(
+            actions.push(gpui::IntoElement::into_any_element(
                 button("alt-update", tr("Update game")).on_click(cx.listener(
                     move |this, _, _, cx| {
                         this.install_update_if_safe(&release);
                         cx.notify();
                     },
                 )),
-            );
+            ));
         }
         let enabled = !busy && self.location_error.is_none();
         let ink = rgb(0x221203);
-        let cat = self.alt_cat(window, cx);
-        bar.children(cat).child(
+        let lane = self.alt_cat(actions.is_empty(), window, cx);
+        bar.child(lane).children(actions).child(
             div()
                 .id("alt-play")
                 .tab_index(0)
