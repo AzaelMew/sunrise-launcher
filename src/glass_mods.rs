@@ -371,7 +371,7 @@ impl Launcher {
         {
             return None;
         }
-        let count = browser::sunrise::projects_left_out().filter(|n| *n > 0)?;
+        let count = browser::sunrise::projects_left_out(&m.game).filter(|n| *n > 0)?;
         Some(
             div()
                 .flex()

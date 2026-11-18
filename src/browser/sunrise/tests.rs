@@ -1,6 +1,7 @@
 //! The registry source against the sample index of `sunrise_launcher_smod::index`
 //! (`crates/smod/tests/index/`), its files served from disk.
 use super::*;
+const GAME: &str = crate::backend::PINNED_GAME;
 
 fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("crates/smod/tests/index")
@@ -30,7 +31,7 @@ pub(super) fn scratch(name: &str) -> PathBuf {
 }
 
 fn hud(index: &Index) -> Project {
-    project_of(index, index.project("coords_hud").unwrap()).unwrap()
+    project_of(index, index.project("coords_hud").unwrap(), GAME).unwrap()
 }
 
 /// Installs the sample's checked content mod, as a modpack does.
@@ -146,7 +147,7 @@ fn searches_by_kind_and_words() {
         ["zoom", "coords_hud"]
     );
     let p = hud(&index);
-    assert_eq!(p.support(), super::super::Support::Works);
+    assert_eq!(p.support(GAME), super::super::Support::Works);
     assert_eq!(p.page, "https://playsunrise.net/mods/coords_hud");
 }
 
@@ -360,7 +361,7 @@ fn data_pack(index: &mut Index, dir: &Path) -> Project {
         versions: vec![version],
         ..base
     });
-    project_of(index, index.project("lanterns").unwrap()).unwrap()
+    project_of(index, index.project("lanterns").unwrap(), GAME).unwrap()
 }
 
 #[test]
@@ -369,15 +370,16 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
     let mut index = sample();
     let p = data_pack(&mut index, &dir);
     assert_eq!(p.kind, Kind::DataPack);
-    assert_eq!(p.support(), super::super::Support::Works);
+    assert_eq!(p.support(GAME), super::super::Support::Works);
     let found: Vec<String> = search(&index, &Query::new("", Kind::DataPack))
         .into_iter()
         .map(|p| p.id)
         .collect();
     assert_eq!(found, ["lanterns"]);
     // Not into the game folder: into a world.
-    assert!(install_from(&index, true, &p, &dir.join("home"), &|_, _| {}).is_err());
-    let (zip, number) = fetch_datapack_from(&index, true, &p, &dir.join("dl"), &|_| {}).unwrap();
+    assert!(install_from(&index, true, &p, &dir.join("home"), GAME, &|_, _| {}).is_err());
+    let (zip, number) =
+        fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
     assert_eq!(number, "1.0.0");
     let world = dir.join("world");
     let pack = crate::datapacks::add(&world, &zip).unwrap();
@@ -387,7 +389,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
     let mut changed = index.clone();
     let at = changed.projects.len() - 1;
     changed.projects[at].versions[0].file.sha256 = "0".repeat(64);
-    let e = fetch_datapack_from(&changed, true, &p, &dir.join("dl2"), &|_| {}).unwrap_err();
+    let e = fetch_datapack_from(&changed, true, &p, &dir.join("dl2"), GAME, &|_| {}).unwrap_err();
     assert!(e.contains("checksum") || e.contains("SHA-256"), "{e}");
     // Nor one taken down.
     index.revoked.push(index::Revoked {
@@ -396,7 +398,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         reason: "Test.".into(),
         date: String::new(),
     });
-    let e = fetch_datapack_from(&index, true, &p, &dir.join("dl3"), &|_| {}).unwrap_err();
+    let e = fetch_datapack_from(&index, true, &p, &dir.join("dl3"), GAME, &|_| {}).unwrap_err();
     assert_eq!(e, "Lanterns was taken down: Test.");
     fs::remove_dir_all(&dir).unwrap();
 }
@@ -467,7 +469,10 @@ fn installs_checked_turns_on_and_removes() {
     let index = sample();
     let home = scratch("install");
     let p = hud(&index);
-    let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
+    // An instance on another build's Minecraft version gets that version's file, or none.
+    let other = install_from(&index, true, &p, &home, "26.9", &|_, _| {}).unwrap_err();
+    assert!(other.contains("no version for 26.9"), "{other}");
+    let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
     assert!(done[0].skipped.is_empty());
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
@@ -543,9 +548,9 @@ fn executable_content_is_refused_without_installing_or_skipping_code() {
 fn installs_a_shader_pack_into_shaderpacks() {
     let index = sample();
     let home = scratch("shader");
-    let p = project_of(&index, index.project("glow").unwrap()).unwrap();
-    assert_eq!(p.support(), super::super::Support::Works);
-    let done = install_from(&index, true, &p, &home, &|_, _| {}).unwrap();
+    let p = project_of(&index, index.project("glow").unwrap(), GAME).unwrap();
+    assert_eq!(p.support(GAME), super::super::Support::Works);
+    let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.sshader");
     assert_eq!(done[0].kind, Kind::Shader);
     assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
@@ -566,7 +571,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
     // A file of the same name the registry didn't put there is left alone.
     fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = install_from(&index, true, &p, &home, &|_, _| {}).unwrap_err();
+    let e = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap_err();
     assert_eq!(
         e,
         "shaderpacks/glow-1.0.0.sshader is already there: move it away first."
@@ -610,8 +615,8 @@ fn registry_versions_run_when_made_for_this_game() {
     use super::super::{pick, support, Support};
     let v = |game: &str| vec![game.to_owned()];
     let sunrise = vec![LOADER.to_owned()];
-    assert_eq!(support(Kind::Mod, &v(GAME), &sunrise), Support::Works);
-    assert!(!support(Kind::Mod, &v("26.2"), &sunrise).installable());
+    assert_eq!(support(Kind::Mod, &v(GAME), &sunrise, GAME), Support::Works);
+    assert!(!support(Kind::Mod, &v("26.2"), &sunrise, GAME).installable());
     let index = sample();
     let versions = |id: &str| -> Vec<Version> {
         let p = index.project(id).unwrap();
@@ -621,14 +626,14 @@ fn registry_versions_run_when_made_for_this_game() {
             .collect()
     };
     assert_eq!(
-        pick(Kind::Modpack, &versions("cozy"), false)
+        pick(Kind::Modpack, &versions("cozy"), false, GAME)
             .unwrap()
             .number,
         "1.0.0"
     );
     let hud = versions("coords_hud");
     assert!(hud[0].blocked.is_none());
-    assert_eq!(pick(Kind::Mod, &hud, false).unwrap().number, "0.1.0");
+    assert_eq!(pick(Kind::Mod, &hud, false, GAME).unwrap().number, "0.1.0");
 }
 
 #[test]
@@ -641,9 +646,13 @@ fn a_project_made_for_the_earlier_mod_system_says_it_cant_be_installed() {
         .unwrap();
     hud.versions[0].game = GAME.into();
     hud.versions[0].capabilities = vec!["game-read".to_string()].into();
-    let p = project_of(&index, index.project("coords_hud").unwrap()).unwrap();
-    assert!(!p.support().installable());
-    assert!(p.support().reason().unwrap().contains("earlier mod system"));
+    let p = project_of(&index, index.project("coords_hud").unwrap(), GAME).unwrap();
+    assert!(!p.support(GAME).installable());
+    assert!(p
+        .support(GAME)
+        .reason()
+        .unwrap()
+        .contains("earlier mod system"));
     // Beside a mod that installs, with fewer downloads:
     let mut other = index.project("coords_hud").unwrap().clone();
     other.id = "lanterns_plus".into();
@@ -675,7 +684,7 @@ fn a_project_made_for_the_earlier_mod_system_says_it_cant_be_installed() {
         .unwrap()
         .versions[0]
         .game = GAME.into();
-    let p = project_of(&fine, fine.project("coords_hud").unwrap()).unwrap();
+    let p = project_of(&fine, fine.project("coords_hud").unwrap(), GAME).unwrap();
     assert!(p.blocked.is_none());
 }
 

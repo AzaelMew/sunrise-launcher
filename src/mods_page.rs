@@ -45,9 +45,10 @@ pub(super) enum Event {
     Found(u64, usize, Result<Vec<Project>, String>),
     Progress(String, f32),
     Done(Result<String, String>, bool),
-    Updates(HashMap<(SourceId, String), String>),
-    /// A Java mod's check: its jar read, or why it couldn't be.
-    Checked((SourceId, String), Result<Box<Check>, String>),
+    /// Newer versions of what the browser installed, looked for on one build (`checked_for`).
+    Updates(u64, HashMap<(SourceId, String), String>),
+    /// A Java mod's check (its jar read, or why it couldn't be), for the Minecraft version it picked the jar for.
+    Checked((SourceId, String), String, Result<Box<Check>, String>),
     /// What a Sunrise registry project says before install: signed or not, what it may do.
     About(HashMap<String, Vec<String>>),
     /// Registry files taken down that the launcher turned off.
@@ -74,6 +75,8 @@ pub(super) struct Mods {
     focus: FocusHandle,
     pub(super) focused: bool,
     everything: bool,
+    /// The Minecraft version Sunrise plays, read again with each search ([`browser::game`]).
+    pub(super) game: String,
     /// Which search is the current one; answers for older ones are dropped.
     search: u64,
     searching: bool,
@@ -96,6 +99,12 @@ pub(super) struct Mods {
     pub(super) chosen: std::collections::BTreeMap<String, String>,
     /// The Sunrise the selected instance played when its updates were last looked for.
     pub(super) checked_for: Option<String>,
+    /// The number of the latest look for updates: only its answer is taken ([`offer_updates`]).
+    updates_asked: u64,
+    /// The build the page's Minecraft version was last worked out for (the selected instance's).
+    game_for: Option<(Option<String>, Option<String>)>,
+    /// Whether the start's auto-update ran: it waits for the release list.
+    pub(super) auto_updated: bool,
     loaded: bool,
     /// Whether the page searched for the instance as it is (its version and loader).
     asked: bool,
@@ -149,6 +158,11 @@ pub(super) struct Mods {
 }
 
 impl Mods {
+    /// The saved settings changed (a save, or its retry): the builds the search follows are worked out again.
+    pub(super) fn settings_saved(&mut self) {
+        self.game_for = None;
+    }
+
     pub(super) fn reset_lists(&self) {
         self.results_list.reset();
         self.installed_list.reset();
@@ -205,6 +219,7 @@ impl Mods {
             focus: cx.focus_handle().tab_index(0).tab_stop(true),
             focused: false,
             everything: false,
+            game: browser::game(),
             search: 0,
             searching: false,
             refreshing: false,
@@ -220,6 +235,9 @@ impl Mods {
             installed: Vec::new(),
             chosen: Default::default(),
             checked_for: None,
+            updates_asked: 0,
+            game_for: None,
+            auto_updated: false,
             loaded: false,
             asked: false,
             home: None,
@@ -272,7 +290,7 @@ impl Mods {
                 self.checks.get(&(p.source, p.id.clone())),
                 None | Some(Checking::Running)
             )
-            && p.support().installable()
+            && p.support(&self.game).installable()
     }
 
     /// How well a result runs: a Java mod's from its check once it has one. In a Java
@@ -281,7 +299,7 @@ impl Mods {
         if self.java_for(p.kind).is_some() {
             return Support::Works;
         }
-        let metadata = p.support();
+        let metadata = p.support(&self.game);
         if p.kind != PackKind::Mod || p.source == SourceId::Sunrise || !metadata.installable() {
             return metadata;
         }
@@ -449,13 +467,28 @@ impl Launcher {
                         self.packs_loaded = None;
                     }
                 }
-                Event::Updates(found) => m.updates = found,
-                Event::Checked(key, result) => {
+                // A look for an earlier build than the instance's now is dropped.
+                Event::Updates(request, found) => {
+                    offer_updates(&mut m.updates, m.updates_asked, request, found)
+                }
+                // A check for another Minecraft version than the page's (the instance moved) is dropped.
+                Event::Checked(key, game, result) if game == m.game => {
                     let state = match result {
                         Ok(c) => Checking::Done(c),
                         Err(e) => Checking::Failed(e),
                     };
                     m.checks.insert(key, state);
+                }
+                // Its worker is done: the project is checked again, for the page's version, without two workers on one jar.
+                Event::Checked(key, ..) => {
+                    m.checks.remove(&key);
+                    if let Some(p) = m
+                        .results
+                        .iter()
+                        .find(|p| (p.source, &p.id) == (key.0, &key.1))
+                    {
+                        to_check.push(p.clone());
+                    }
                 }
                 Event::Loaded(l) => loaded.push(l),
                 Event::About(about) => {
@@ -521,6 +554,7 @@ impl Launcher {
         // registry, where it can't be seen or turned off, it would list what the note says is
         // hidden.
         let glass = self.theme.glass;
+        let game = self.mods_search_game();
         let m = &mut self.mods;
         let everything = m.everything && !(glass && m.source == SourceId::Sunrise);
         m.search += 1;
@@ -540,14 +574,25 @@ impl Launcher {
                 limit: PAGE,
                 ..target.search(m.text.text(), m.kind, &m.browse.filters)
             },
-            None => Query {
-                everything,
-                offset,
-                limit: PAGE,
-                filters: m.browse.filters.clone(),
-                ..Query::new(m.text.text(), m.kind)
-            },
+            None => {
+                let query = Query::new(m.text.text(), m.kind);
+                Query {
+                    everything,
+                    offset,
+                    limit: PAGE,
+                    filters: m.browse.filters.clone(),
+                    game,
+                    ..query
+                }
+            }
         };
+        // Another Minecraft version: verdicts, an open project and the last card were for the old one; running checks finish first.
+        if m.game != query.game {
+            m.checks.retain(|_, c| matches!(c, Checking::Running));
+            m.browse.open = None;
+            m.shown = None;
+        }
+        m.game = query.game.clone();
         // A Java instance's files are Modrinth's; Sunrise's registry is for Sunrise.
         let source = match m.java_for(m.kind) {
             Some(_) => SourceId::Modrinth,
@@ -564,7 +609,11 @@ impl Launcher {
                     found
                         .iter()
                         .map(|p| {
-                            let lines = sunrise::trust_and_capabilities(&p.id, Some(&instance));
+                            let lines = sunrise::trust_and_capabilities(
+                                &p.id,
+                                Some(&instance),
+                                &query.game,
+                            );
                             (p.id.clone(), lines)
                         })
                         .collect()
@@ -612,6 +661,7 @@ impl Launcher {
             .iter()
             .map(|i| AutoTarget {
                 instance: i.clone(),
+                game: self.game_of(i),
             })
             .collect();
         let tx = self.mods.tx.clone();
@@ -670,6 +720,14 @@ impl Launcher {
         });
     }
 
+    /// The Minecraft version the page searches for: the selected instance's, but a registry modpack becomes an instance of its own on the launcher's build, as its import does.
+    fn mods_search_game(&self) -> String {
+        match (self.mods.kind, self.mods.source) {
+            (PackKind::Modpack, SourceId::Sunrise) => browser::game(),
+            _ => self.mods_game(),
+        }
+    }
+
     /// Checks the Java mods among `found` that aren't checked yet, a few at a time, on threads:
     /// a cached check answers at once, else the jar is downloaded and read.
     fn mods_check(&mut self, found: Vec<Project>) {
@@ -677,20 +735,25 @@ impl Launcher {
         if m.java.is_some() {
             return;
         }
-        let todo: Vec<Project> = found
-            .into_iter()
-            .filter(|p| p.kind == PackKind::Mod && p.source != SourceId::Sunrise)
-            .filter(|p| p.support().installable())
-            .filter(|p| !m.checks.contains_key(&(p.source, p.id.clone())))
-            .collect();
+        // Each project is claimed as it is taken, so one listed twice (a result and a re-queued check) gets one worker.
+        let mut todo = Vec::new();
+        for p in found {
+            let key = (p.source, p.id.clone());
+            if p.kind == PackKind::Mod
+                && p.source != SourceId::Sunrise
+                && p.support(&m.game).installable()
+                && !m.checks.contains_key(&key)
+            {
+                m.checks.insert(key, Checking::Running);
+                todo.push(p);
+            }
+        }
         if todo.is_empty() {
             return;
         }
-        for p in &todo {
-            m.checks.insert((p.source, p.id.clone()), Checking::Running);
-        }
         // A version other than 26.3 asked for: check the newest file for 1.21 and later.
-        let everything = m.everything || m.browse.filters.other_version();
+        let everything = m.everything || m.browse.filters.other_version(&m.game);
+        let game = m.game.clone();
         let tx = m.tx.clone();
         let queue = std::sync::Mutex::new(todo.into_iter());
         std::thread::spawn(move || {
@@ -705,7 +768,14 @@ impl Launcher {
                                     trf("{source} isn't set up.", &[("source", p.source.label())])
                                 })
                                 .and_then(|source| {
-                                    java::check_project(&home, &*source, &p, everything, &|_| {})
+                                    java::check_project(
+                                        &home,
+                                        &*source,
+                                        &p,
+                                        everything,
+                                        &game,
+                                        &|_| {},
+                                    )
                                 });
                             // The project's page, if open, shows the verdict beside its version.
                             if let Ok((version, check)) = &result {
@@ -718,7 +788,7 @@ impl Launcher {
                                     )));
                             }
                             let result = result.map(|(_, check)| Box::new(check));
-                            let _ = tx.send(Event::Checked((p.source, p.id), result));
+                            let _ = tx.send(Event::Checked((p.source, p.id), game.clone(), result));
                         }
                     });
                 }
@@ -728,12 +798,15 @@ impl Launcher {
 
     /// Looks for newer versions of what the browser installed.
     fn mods_check_updates(&mut self) {
+        // Asked even with nothing to look at, so an earlier look's late answer isn't taken for this list.
+        let request = begin_look(&mut self.mods.updates_asked);
         let entries = self.mods.installed.clone();
         if entries.is_empty() {
             return;
         }
         let tx = self.mods.tx.clone();
         let java = self.mods.java.clone();
+        let game = self.mods_game();
         std::thread::spawn(move || {
             let mut found = HashMap::new();
             for e in entries {
@@ -742,13 +815,13 @@ impl Launcher {
                 };
                 let newer = match &java {
                     Some(target) => java_instance::update_for(&*source, target, &e),
-                    None => installed::update_for(&*source, &e),
+                    None => installed::update_for(&*source, &e, &game),
                 };
                 if let Ok(Some(v)) = newer {
                     found.insert((e.source, e.project.clone()), v.number);
                 }
             }
-            let _ = tx.send(Event::Updates(found));
+            let _ = tx.send(Event::Updates(request, found));
         });
     }
 
@@ -775,6 +848,7 @@ impl Launcher {
         self.mods.updates.clear();
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
+        let game = self.mods_game();
         let java = self.mods.java.clone();
         std::thread::spawn(move || {
             let count = todo.len();
@@ -795,7 +869,7 @@ impl Launcher {
                             Some(target) => {
                                 java_instance::install(&*source, target, &p, &home, &step)
                             }
-                            None => installed::install(&*source, &p, true, &home, &step),
+                            None => installed::install(&*source, &p, true, &home, &game, &step),
                         }
                     });
                 match updated {
@@ -842,11 +916,13 @@ impl Launcher {
         self.mods.message = None;
         self.mods.busy = Some((id.clone(), format!("Asking {}…", source.label()), 0.));
         self.mods.updates.remove(&(source, id.clone()));
-        let everything = self.mods.everything || self.mods.browse.filters.other_version();
+        let everything =
+            self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);
         // A modpack is ported for the selected version as soon as it is imported.
         let tag = self.selected().map(|tag| tag.to_string());
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
+        let game = self.mods_game();
         let java = self.mods.java.clone();
         let instance = self
             .selected_instance()
@@ -886,10 +962,14 @@ impl Launcher {
                         let (world, name) = world.ok_or_else(|| {
                             tr("Pick the world the data pack goes into first.").to_string()
                         })?;
-                        let done =
-                            installed::install_datapack(&*source, &p, everything, &world, &|f| {
-                                progress(&p.title, f)
-                            })?;
+                        let done = installed::install_datapack(
+                            &*source,
+                            &p,
+                            everything,
+                            &world,
+                            &game,
+                            &|f| progress(&p.title, f),
+                        )?;
                         return Ok(trf(
                             "Put {pack} {version} in {world}'s data packs, checksum checked: the \
                              game turns it on when the world opens. {coverage}",
@@ -922,7 +1002,7 @@ impl Launcher {
                     }
                     if modpack {
                         let folder = modpacks::ports_dir().join("downloads");
-                        let file = installed::fetch_modpack(&*source, &p, &folder, &|f| {
+                        let file = installed::fetch_modpack(&*source, &p, &folder, &game, &|f| {
                             progress(&p.title, f)
                         })?;
                         let log = |line: String| progress(&line, 1.);
@@ -940,7 +1020,8 @@ impl Launcher {
                             tr("Play it from the list above.")
                         ));
                     }
-                    let done = installed::install(&*source, &p, everything, &home, &progress)?;
+                    let done =
+                        installed::install(&*source, &p, everything, &home, &game, &progress)?;
                     let names: Vec<String> = done
                         .iter()
                         .map(|e| format!("{} {}", e.title, e.number))
@@ -1067,29 +1148,42 @@ impl Launcher {
         if java != self.mods.java {
             self.mods.asked = false;
         }
+        // Another build (the instance's, or the launcher's for registry modpacks): the search's Minecraft version may differ. Worked out only when one changes, not per frame.
+        let builds = (
+            self.selected_instance()
+                .and_then(|i| self.version_of(i))
+                .cloned(),
+            backend::launcher_build(self.settings.selected.as_deref(), &self.installed)
+                .map(String::from),
+        );
+        if self.mods.game_for.as_ref() != Some(&builds) {
+            self.mods.game_for = Some(builds);
+            if self.mods_search_game() != self.mods.game {
+                self.mods.asked = false;
+            }
+        }
         self.mods.java = java;
         // The instance moved to another Sunrise (picked, or an update it follows): the versions
         // that fit change, so look for updates again.
         let plays = self
             .selected_instance()
-            .and_then(|i| i.version.clone())
-            .or_else(|| self.installed.first().cloned());
-        if self.mods.loaded && self.mods.java.is_none() && plays != self.mods.checked_for {
-            self.mods.checked_for = plays.clone();
-            self.mods.updates.clear();
-            self.mods_check_updates();
-        }
-        if !self.mods.loaded || (home.is_some() && self.mods.home != home) {
-            self.mods.checked_for = plays;
+            .and_then(|i| self.version_of(i))
+            .cloned();
+        let moved = !self.mods.loaded || (home.is_some() && self.mods.home != home);
+        if moved {
             self.mods.home = home;
             self.mods.reload_installed();
             self.mods.installed_list.reset();
-            self.mods.updates.clear();
             self.mods.confirm_remove = None;
             self.mods.read_worlds();
-            self.mods_check_updates();
             self.mods_taken_down();
             self.mods.loaded = true;
+        }
+        // The new instance's list is read first, then looked at once.
+        if moved || (self.mods.java.is_none() && plays != self.mods.checked_for) {
+            self.mods.checked_for = plays;
+            self.mods.updates.clear();
+            self.mods_check_updates();
         }
     }
 
@@ -1845,6 +1939,8 @@ impl Launcher {
 /// An instance whose registry projects may update.
 pub(super) struct AutoTarget {
     pub(super) instance: instances::Instance,
+    /// The Minecraft version its own build plays ([`Launcher::game_of`]).
+    pub(super) game: String,
 }
 
 /// Updates the registry projects of `targets`: Sunrise's own instances only, never a modpack's
@@ -1859,12 +1955,31 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
         };
         let ctx = sunrise::auto::Context {
             in_pack: sunrise::auto::in_pack(&i.home),
+            game: &t.game,
         };
         if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, &|_, _| {}) {
             lines.extend(report.lines());
         }
     }
     lines
+}
+
+/// Numbers a new look for updates: from then on, only its answer is taken ([`offer_updates`]).
+fn begin_look(asked: &mut u64) -> u64 {
+    *asked += 1;
+    *asked
+}
+
+/// Takes the update offers of look `request` when it is the latest asked for (`latest`): an earlier one (another instance's list, another build) that answers late changes nothing.
+fn offer_updates(
+    offers: &mut HashMap<(SourceId, String), String>,
+    latest: u64,
+    request: u64,
+    found: HashMap<(SourceId, String), String>,
+) {
+    if request == latest {
+        *offers = found;
+    }
 }
 
 /// Where a kind's tab searches first: Sunrise's registry for mods and shader packs, Modrinth for
@@ -1924,6 +2039,30 @@ fn source_switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_look_from_before_a_switch_to_an_instance_with_nothing_installed_changes_nothing() {
+        let offer = HashMap::from([((SourceId::Sunrise, "old-mod".to_owned()), "9".to_owned())]);
+        let mut asked = 0;
+        let old = begin_look(&mut asked);
+        // The new instance has nothing to look at: its look sends nothing, but still counts.
+        begin_look(&mut asked);
+        let mut offers = HashMap::new();
+        offer_updates(&mut offers, asked, old, offer);
+        assert!(offers.is_empty());
+    }
+
+    #[test]
+    fn an_earlier_look_for_updates_that_answers_late_changes_nothing() {
+        let offer = |id: &str, number: &str| {
+            HashMap::from([((SourceId::Sunrise, id.to_owned()), number.to_owned())])
+        };
+        let mut offers = HashMap::new();
+        // The old instance's look (1) and the new one's (2) are both out; the new one answers first.
+        offer_updates(&mut offers, 2, 2, offer("new-mod", "3"));
+        offer_updates(&mut offers, 2, 1, offer("old-mod", "9"));
+        assert_eq!(offers, offer("new-mod", "3"));
+    }
 
     #[test]
     fn counts_and_checksums_read_short() {

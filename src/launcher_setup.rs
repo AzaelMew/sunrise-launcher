@@ -291,7 +291,6 @@ impl Launcher {
         this.load_profile_heads();
         this.load_auth_statuses(true);
         this.fetch_startup_releases();
-        this.mods_auto_update();
         this.fetch_links();
         if home::getting_ready_preview() {
             this.preparing = true;
@@ -326,6 +325,9 @@ impl Launcher {
     /// Keeps the current choices in memory if writing fails; every page offers the same retry.
     pub(crate) fn save_settings(&mut self) -> bool {
         self.settings_save_error = self.settings.save().err();
+        if self.settings_save_error.is_none() {
+            self.mods.settings_saved();
+        }
         self.settings_save_error.is_none()
     }
 

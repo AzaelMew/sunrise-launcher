@@ -146,7 +146,12 @@ pub struct Step {
 
 /// What installing `project` takes, dependencies first, checked before any byte is downloaded:
 /// every file runs in Sunrise and has a version to install.
-pub fn plan(source: &dyn Source, project: &Project, everything: bool) -> Result<Vec<Step>, String> {
+pub fn plan(
+    source: &dyn Source,
+    project: &Project,
+    everything: bool,
+    game: &str,
+) -> Result<Vec<Step>, String> {
     if project.kind == Kind::Modpack {
         return Err(format!(
             "{} is a modpack: it is imported, not installed.",
@@ -160,7 +165,15 @@ pub fn plan(source: &dyn Source, project: &Project, everything: bool) -> Result<
         ));
     }
     let mut steps = Vec::new();
-    add(source, project.clone(), everything, false, 0, &mut steps)?;
+    add(
+        source,
+        project.clone(),
+        everything,
+        game,
+        false,
+        0,
+        &mut steps,
+    )?;
     Ok(steps)
 }
 
@@ -168,6 +181,7 @@ fn add(
     source: &dyn Source,
     project: Project,
     everything: bool,
+    game: &str,
     dependency: bool,
     depth: usize,
     steps: &mut Vec<Step>,
@@ -178,11 +192,11 @@ fn add(
     if depth > MAX_DEPTH {
         return Err(format!("{}'s dependencies go too deep.", project.title));
     }
-    if let Support::No(why) = project.support() {
+    if let Support::No(why) = project.support(game) {
         return Err(format!("{} doesn't run in Sunrise: {why}", project.title));
     }
     let versions = source.versions(&project)?;
-    let Some(version) = pick(project.kind, &versions, everything).cloned() else {
+    let Some(version) = pick(project.kind, &versions, everything, game).cloned() else {
         return Err(match versions.iter().find_map(|v| v.blocked.clone()) {
             Some(why) => format!("{} can't be installed from here: {why}", project.title),
             None => format!("{} has no version Sunrise runs.", project.title),
@@ -199,7 +213,7 @@ fn add(
         if needed.kind.folder().is_none() {
             return Err(format!("{} needs {}.", project.title, needed.title));
         }
-        add(source, needed, everything, true, depth + 1, steps)?;
+        add(source, needed, everything, game, true, depth + 1, steps)?;
     }
     steps.push(Step {
         project,
@@ -216,16 +230,17 @@ pub fn install(
     project: &Project,
     everything: bool,
     home: &Path,
+    game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     if project.source == SourceId::Sunrise {
-        return super::sunrise::install(project, home, progress);
+        return super::sunrise::install(project, home, game, progress);
     }
     if project.kind == Kind::Mod {
-        return super::java::install(source, project, everything, home, progress);
+        return super::java::install(source, project, everything, home, game, progress);
     }
-    let steps = plan(source, project, everything)?;
+    let steps = plan(source, project, everything, game)?;
     put(
         source,
         steps,
@@ -339,11 +354,15 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     Ok(entry)
 }
 
-/// The newer version `entry` can be updated to, if any.
-pub fn update_for(source: &dyn Source, entry: &Entry) -> Result<Option<Version>, String> {
+/// The newer version `entry` can be updated to on the Minecraft version `game`, if any.
+pub fn update_for(
+    source: &dyn Source,
+    entry: &Entry,
+    game: &str,
+) -> Result<Option<Version>, String> {
     let project = source.project(&entry.project)?;
     let versions = source.versions(&project)?;
-    Ok(pick(project.kind, &versions, true)
+    Ok(pick(project.kind, &versions, true, game)
         .filter(|v| v.id != entry.version)
         .cloned())
 }
@@ -353,13 +372,14 @@ pub fn fetch_modpack(
     source: &dyn Source,
     project: &Project,
     folder: &Path,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<PathBuf, String> {
     if project.kind != Kind::Modpack {
         return Err(format!("{} isn't a modpack.", project.title));
     }
     let versions = source.versions(project)?;
-    let version = pick(Kind::Modpack, &versions, true)
+    let version = pick(Kind::Modpack, &versions, true, game)
         .ok_or_else(|| format!("{} has no file to download.", project.title))?;
     let file = version.file().expect("pick keeps versions with a file");
     source.fetch(file, folder, progress)
@@ -382,6 +402,7 @@ pub fn install_datapack(
     project: &Project,
     everything: bool,
     world: &Path,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<DataPackInstall, String> {
     if project.kind != Kind::DataPack && !project.loaders.iter().any(|l| l == "datapack") {
@@ -394,14 +415,14 @@ pub fn install_datapack(
     ));
     // The registry's are checked against its index (signature, `pack.mcmeta` and `data/`).
     let fetched = match project.source {
-        SourceId::Sunrise => super::sunrise::fetch_datapack(project, &folder, progress),
+        SourceId::Sunrise => super::sunrise::fetch_datapack(project, &folder, game, progress),
         _ => {
             let versions = source.versions(project)?;
-            let version = pick(Kind::DataPack, &versions, everything).ok_or_else(|| {
+            let version = pick(Kind::DataPack, &versions, everything, game).ok_or_else(|| {
                 format!(
                     "{} has no data pack for {}{}.",
                     project.title,
-                    super::GAME,
+                    game,
                     if everything {
                         " or any other version"
                     } else {

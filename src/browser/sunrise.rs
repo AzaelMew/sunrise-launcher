@@ -5,7 +5,7 @@
 //! content it can't load, with its own error), and files the index says were taken down are refused and turned off.
 use super::{
     details::{Details, GitHub, Link},
-    download, installed, java, FileRef, Kind, Project, Query, Source, SourceId, Version, GAME,
+    download, installed, java, FileRef, Kind, Project, Query, Source, SourceId, Version,
 };
 use crate::i18n::{tr, trf};
 use std::collections::HashMap;
@@ -71,8 +71,8 @@ pub fn is_native_mod(id: &str) -> bool {
 
 /// How many of the registry's projects this Sunrise left out because none of their versions
 /// passes the index's rules (mods published for the earlier mod system), by the index already
-/// read (never the network): None when no index was read.
-pub fn projects_left_out() -> Option<usize> {
+/// read (never the network), for the Minecraft version `game`: None when no index was read.
+pub fn projects_left_out(game: &str) -> Option<usize> {
     let index = known_index()?;
     // With those listed whose versions for this game all are (`Blocked::EarlierSystem`), which
     // the list hides too.
@@ -85,7 +85,7 @@ pub fn projects_left_out() -> Option<usize> {
             index
                 .projects
                 .iter()
-                .filter(|p| matches!(blocked(&index, p), Some(Blocked::EarlierSystem)))
+                .filter(|p| matches!(blocked(&index, p, game), Some(Blocked::EarlierSystem)))
                 .map(|p| p.id.as_str()),
         )
         .collect();
@@ -339,10 +339,11 @@ fn official_in(index: Option<&Index>, id: &str) -> bool {
 
 /// What the player reads about a registry project before installing it: who made it, whether its
 /// files are signed, and for a mod what it may do, in the game's words (Options > Mods). A native
-/// mod says it runs with the player's rights, and how it fits the Sunrise `instance` plays.
+/// mod says it runs with the player's rights, and how its version for `game` fits `instance`.
 pub fn trust_and_capabilities(
     id: &str,
     instance: Option<&crate::instances::Instance>,
+    game: &str,
 ) -> Vec<String> {
     let Ok(index) = index() else {
         return Vec::new();
@@ -371,7 +372,7 @@ pub fn trust_and_capabilities(
         lines.push(
             tr("Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed").to_string(),
         );
-        if let Some(v) = p.versions.iter().find(|v| v.game == GAME) {
+        if let Some(v) = p.versions.iter().find(|v| v.game == game) {
             let pin = v.api.split('/').nth(1).unwrap_or_default();
             lines.push(
                 instance
@@ -422,9 +423,9 @@ enum Blocked {
     TakenDown(String),
 }
 
-fn blocked(index: &Index, p: &index::Project) -> Option<Blocked> {
-    let for_game: Vec<&index::Version> = p.versions.iter().filter(|v| v.game == GAME).collect();
-    if for_game.is_empty() || index.installable(p, GAME).is_some() {
+fn blocked(index: &Index, p: &index::Project, game: &str) -> Option<Blocked> {
+    let for_game: Vec<&index::Version> = p.versions.iter().filter(|v| v.game == game).collect();
+    if for_game.is_empty() || index.installable(p, game).is_some() {
         return None;
     }
     let revoked = for_game
@@ -438,11 +439,11 @@ fn blocked(index: &Index, p: &index::Project) -> Option<Blocked> {
     })
 }
 
-fn project_of(index: &Index, p: &index::Project) -> Option<Project> {
+fn project_of(index: &Index, p: &index::Project, game: &str) -> Option<Project> {
     let mut game_versions: Vec<String> = p.versions.iter().map(|v| v.game.clone()).collect();
     game_versions.dedup();
     // Versions for this game, none of which this Sunrise may install: say why, once, here.
-    let blocked = blocked(index, p).map(|why| match why {
+    let blocked = blocked(index, p, game).map(|why| match why {
         Blocked::TakenDown(reason) => {
             trf("Taken down: {reason}", &[("reason", &reason)]).to_string()
         }
@@ -573,7 +574,7 @@ fn search(index: &Index, query: &Query) -> Vec<Project> {
                 .all(|c| p.categories.contains(c))
                 && query.filters.tags.iter().all(|t| p.tags.contains(t))
         })
-        .filter(|p| query.everything || p.versions.iter().any(|v| v.game == GAME))
+        .filter(|p| query.everything || p.versions.iter().any(|v| v.game == query.game))
         .collect();
     let day = |p: &index::Project, newest: bool| {
         let days = p.versions.iter().map(|v| v.published.as_str());
@@ -600,7 +601,7 @@ fn search(index: &Index, query: &Query) -> Vec<Project> {
     // `everything` goes after what can, each in the order asked for.
     let mut found: Vec<Project> = found
         .into_iter()
-        .filter_map(|p| project_of(index, p))
+        .filter_map(|p| project_of(index, p, &query.game))
         .filter(|p| query.everything || p.blocked.is_none())
         .collect();
     found.sort_by_key(|p| p.blocked.is_some());
@@ -645,7 +646,7 @@ impl Source for Registry {
         let p = index
             .project(id)
             .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
-        project_of(&index, p).ok_or_else(|| {
+        project_of(&index, p, &super::game()).ok_or_else(|| {
             format!(
                 "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
                 p.name,
@@ -827,9 +828,10 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
 pub fn install(
     project: &Project,
     home: &Path,
+    game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
-    install_from(&*index()?, local(), project, home, progress)
+    install_from(&*index()?, local(), project, home, game, progress)
 }
 
 /// [`install`] from `index`.
@@ -838,12 +840,13 @@ fn install_from(
     local: bool,
     project: &Project,
     home: &Path,
+    game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let p = index
         .project(&project.id)
         .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
-    let v = newest(index, p)?;
+    let v = newest(index, p, game)?;
     install_version(index, local, p, v, home, progress).map(|e| vec![e])
 }
 
@@ -853,9 +856,10 @@ fn install_from(
 pub fn fetch_datapack(
     project: &Project,
     folder: &Path,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<(PathBuf, String), String> {
-    fetch_datapack_from(&*index()?, local(), project, folder, progress)
+    fetch_datapack_from(&*index()?, local(), project, folder, game, progress)
 }
 
 fn fetch_datapack_from(
@@ -863,13 +867,14 @@ fn fetch_datapack_from(
     local: bool,
     project: &Project,
     folder: &Path,
+    game: &str,
     progress: &dyn Fn(f32),
 ) -> Result<(PathBuf, String), String> {
     let p = index
         .project(&project.id)
         .filter(|p| p.kind == index::Kind::DataPack)
         .ok_or_else(|| format!("{} isn't a data pack in Sunrise's registry.", project.title))?;
-    let v = newest(index, p)?;
+    let v = newest(index, p, game)?;
     let file = &version_of(index, p, v).files[0];
     let path = fetch(file, folder, local, progress)?;
     index::check_file(index, p, v, &path).inspect_err(|_| {
@@ -878,10 +883,14 @@ fn fetch_datapack_from(
     Ok((path, v.version.clone()))
 }
 
-/// A project's newest version for this game that wasn't taken down.
-fn newest<'a>(index: &Index, p: &'a index::Project) -> Result<&'a index::Version, String> {
+/// A project's newest version for the Minecraft version `game` that wasn't taken down.
+fn newest<'a>(
+    index: &Index,
+    p: &'a index::Project,
+    game: &str,
+) -> Result<&'a index::Version, String> {
     let mut taken_down = None;
-    for v in p.versions.iter().filter(|v| v.game == GAME) {
+    for v in p.versions.iter().filter(|v| v.game == game) {
         if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
             taken_down.get_or_insert(r);
         } else {
@@ -890,7 +899,7 @@ fn newest<'a>(index: &Index, p: &'a index::Project) -> Result<&'a index::Version
     }
     Err(match taken_down {
         Some(r) => format!("{} was taken down: {}", p.name, r.reason),
-        None => format!("{} has no version for {GAME} to install.", p.name),
+        None => format!("{} has no version for {game} to install.", p.name),
     })
 }
 
@@ -926,8 +935,8 @@ fn install_version_guarded(
     progress: &dyn Fn(&str, f32),
 ) -> Result<installed::Entry, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let project =
-        project_of(index, p).ok_or_else(|| format!("{} can't be installed here.", p.name))?;
+    let project = project_of(index, p, &v.game)
+        .ok_or_else(|| format!("{} can't be installed here.", p.name))?;
     if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
         return Err(format!("{} was taken down: {}", p.name, r.reason));
     }

@@ -1178,7 +1178,39 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
         &sha256,
         selected_game_architecture(&settings),
         progress,
-    )
+    )?;
+    // An older build publishes no release file; `played` then reads its research-lock.json.
+    let source = release.nightly.as_deref().unwrap_or(tag);
+    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
+    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
+        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
+    }
+    Ok(())
+}
+
+/// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
+const RELEASE_FILE: &str = "sunrise-release.json";
+
+/// [`RELEASE_FILE`]'s signed digest in `release`, published under the GitHub tag `source`.
+fn release_file_digest(release: &Release, source: &str) -> Result<String, String> {
+    match &release.nightly {
+        Some(_) => crate::signed::build_digest(
+            source,
+            &release.tag,
+            RELEASE_FILE,
+            &sunrise_launcher_release_verify::trusted_keys_for(REPO),
+            fetch_small,
+        ),
+        None => signed_digest(source, RELEASE_FILE),
+    }
+}
+
+/// Keeps `bytes` as the installed build's [`RELEASE_FILE`] in `dir` when they are the signed `sha256`'s.
+fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), String> {
+    if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
+        return Err(format!("{RELEASE_FILE}: not the signed file"));
+    }
+    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file
@@ -1243,9 +1275,64 @@ fn read_json(path: &Path) -> Option<serde_json::Value> {
 }
 
 fn game_version_at(dir: &Path) -> String {
-    read_json(&dir.join("research-lock.json"))
-        .and_then(|v| v["minecraft"]["version"].as_str().map(String::from))
-        .unwrap_or_else(|| sunrise_platform::version::VANILLA_VERSION.into())
+    locked_game(dir).unwrap_or_else(|| PINNED_GAME.into())
+}
+
+fn locked_game(dir: &Path) -> Option<String> {
+    read_json(&dir.join("research-lock.json"))?["minecraft"]["version"]
+        .as_str()
+        .map(String::from)
+}
+
+/// The Minecraft version played when no installed build says (the game's `VERSION_ID`).
+pub const PINNED_GAME: &str = "26.3";
+
+/// The Minecraft version the launcher plays (`WorldVersion.id()`), for the mod browser.
+pub fn played_version_id() -> String {
+    played("version_id")
+}
+
+/// The name of the Minecraft version the launcher plays (`WorldVersion.name()`).
+pub fn played_vanilla() -> String {
+    played("vanilla")
+}
+
+fn played(field: &str) -> String {
+    played_by(None, field)
+}
+
+/// The build `selected` names when it is installed, else the newest installed: what the launcher plays, and what [`played_version_id`] reads.
+pub fn launcher_build<'a>(selected: Option<&'a str>, installed: &'a [String]) -> Option<&'a str> {
+    selected
+        .filter(|s| installed.iter().any(|t| t == s))
+        .or(installed.first().map(String::as_str))
+}
+
+/// The Minecraft version id the installed build `tag` plays (an instance's own build), else the launcher's.
+pub fn played_version_id_by(tag: Option<&str>) -> String {
+    played_by(tag, "version_id")
+}
+
+fn played_by(tag: Option<&str>, field: &str) -> String {
+    // Tests share one scratch launcher folder whose installed builds other tests change.
+    if cfg!(test) {
+        return PINNED_GAME.into();
+    }
+    let selected = Settings::load().selected;
+    played_in(&versions_dir(), tag.or(selected.as_deref()), field)
+}
+
+/// The played build's sunrise-release.json `field`, else its locked Minecraft, else [`PINNED_GAME`].
+fn played_in(versions: &Path, selected: Option<&str>, field: &str) -> String {
+    let installed = installed_in(versions);
+    launcher_build(selected, &installed)
+        .map(|t| versions.join(t))
+        .and_then(|dir| {
+            read_json(&dir.join(RELEASE_FILE))
+                .and_then(|release| release[field].as_str().map(String::from))
+                .or_else(|| locked_game(&dir))
+        })
+        .unwrap_or_else(|| PINNED_GAME.into())
 }
 
 pub fn resources(tag: &str) -> PathBuf {
@@ -4344,6 +4431,74 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn the_launchers_build_is_its_selected_one_when_installed_else_the_newest() {
+        let installed = ["v0.4.0".to_owned(), "v0.3.0".to_owned()];
+        assert_eq!(launcher_build(Some("v0.3.0"), &installed), Some("v0.3.0"));
+        assert_eq!(launcher_build(Some("v0.2.0"), &installed), Some("v0.4.0"));
+        assert_eq!(launcher_build(None, &installed), Some("v0.4.0"));
+        assert_eq!(launcher_build(Some("v0.3.0"), &[]), None);
+    }
+
+    #[test]
+    fn an_installed_build_keeps_its_release_file_only_when_it_is_the_signed_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = br#"{"version_id":"26.4-pre1","vanilla":"26.4 Pre-Release 1"}"#;
+        let signed = sunrise_launcher_release_verify::sha256_hex(file);
+        assert!(keep_release_file(dir.path(), b"{}", &signed).is_err());
+        assert!(!dir.path().join(RELEASE_FILE).exists());
+        keep_release_file(dir.path(), file, &signed).unwrap();
+        let kept = read_json(&dir.path().join(RELEASE_FILE)).unwrap();
+        assert_eq!(kept["version_id"], "26.4-pre1");
+    }
+
+    #[test]
+    fn the_played_game_comes_from_the_release_file_else_the_lock_else_the_pin() {
+        let versions = tempfile::tempdir().unwrap();
+        let v = versions.path();
+        let played = |selected, field| played_in(v, selected, field);
+        assert_eq!(played(None, "version_id"), PINNED_GAME);
+        for (tag, files) in [
+            ("v0.3.1", vec![]),
+            (
+                "v0.3.2",
+                vec![("research-lock.json", r#"{"minecraft":{"version":"26.2"}}"#)],
+            ),
+            (
+                "v0.3.3",
+                vec![
+                    ("research-lock.json", r#"{"minecraft":{"version":"26.2"}}"#),
+                    (
+                        "sunrise-release.json",
+                        r#"{"version_id":"26.4-pre1","vanilla":"26.4 Pre-Release 1"}"#,
+                    ),
+                ],
+            ),
+            (
+                "v0.3.4",
+                vec![("research-lock.json", r#"{"minecraft":{"version":"26.9"}}"#)],
+            ),
+        ] {
+            fs::create_dir_all(v.join(tag)).unwrap();
+            for (name, text) in files {
+                fs::write(v.join(tag).join(name), text).unwrap();
+            }
+        }
+        assert_eq!(
+            played(None, "version_id"),
+            PINNED_GAME,
+            "only installed builds count"
+        );
+        for tag in ["v0.3.1", "v0.3.2", "v0.3.3"] {
+            fs::write(v.join(tag).join(COMPLETE), "").unwrap();
+        }
+        assert_eq!(played(None, "version_id"), "26.4-pre1");
+        assert_eq!(played(None, "vanilla"), "26.4 Pre-Release 1");
+        assert_eq!(played(Some("v0.3.2"), "vanilla"), "26.2");
+        assert_eq!(played(Some("v0.3.1"), "version_id"), PINNED_GAME);
+        assert_eq!(played(Some("v9.9.9"), "version_id"), "26.4-pre1");
+    }
 
     fn pe_architecture(bytes: &[u8]) -> Option<GameArchitecture> {
         if bytes.get(..2)? != b"MZ" {
