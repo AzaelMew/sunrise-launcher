@@ -265,18 +265,6 @@ impl Launcher {
         }
     }
 
-    /// Reads the setup's mods for the play bar, when no Mods page has yet.
-    pub(crate) fn mods_read_once(&mut self) {
-        if self.ui.mods.snapshot.is_none() {
-            self.mods_refresh();
-        }
-    }
-
-    /// How many of the setup's mods the game it plays was made without.
-    pub(crate) fn mods_not_on_build(&self) -> usize {
-        model::not_on_build(&self.rows())
-    }
-
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
         self.leave_section(false);
@@ -516,15 +504,24 @@ impl Launcher {
             .as_ref()
             .is_some_and(|s| !s.entries.is_empty())
             || self.ui.page != Page::Installed;
-        if wants_index && matches!(self.ui.mods.catalog, Catalog::Idle) {
-            self.mods_load_catalog();
+        if wants_index {
+            self.ensure_mod_catalog();
         }
     }
 
-    fn mods_load_catalog(&mut self) {
+    pub(crate) fn ensure_mod_catalog(&mut self) {
+        if !matches!(self.ui.mods.catalog, Catalog::Idle) {
+            return;
+        }
         self.ui.mods.catalog = Catalog::Loading;
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
+        let tx = self.ui.mods.tx.clone();
+        let version = self
+            .selected_instance()
+            .map(|i| self.version_of(i).cloned());
         std::thread::spawn(move || {
+            let game = version.map_or_else(sunrise_launcher::browser::game, |v| {
+                backend::played_version_id_by(v.as_deref())
+            });
             let result = sunrise::index().map(|index| {
                 let cards = model::cards(&index, &game);
                 let categories = model::categories(&cards);

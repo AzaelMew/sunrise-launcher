@@ -529,5 +529,4 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     );
     assert!(row("old").left_out.is_none());
     assert!(row("fine").unfit.is_none() && row("fine").left_out.is_none());
-    assert_eq!(not_on_build(&r), 3, "the play bar counts all of them");
 }

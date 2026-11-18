@@ -623,7 +623,8 @@ pub(crate) fn resource_dependents(tag: &str) -> bool {
         .any(|version| about(version).is_some_and(|about| about.base == tag))
 }
 
-pub(crate) fn newest_installed(installed: &[String]) -> Option<&String> {
+/// The newest installed release or Nightly in the launcher's newest-first build list.
+pub fn newest_installed(installed: &[String]) -> Option<&String> {
     installed
         .iter()
         .find(|t| backend::is_game_tag(t) || t.starts_with("nightly-"))

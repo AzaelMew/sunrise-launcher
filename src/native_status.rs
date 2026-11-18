@@ -391,7 +391,7 @@ fn parse_built(about: &serde_json::Value) -> Vec<Mod> {
 pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     let mut out = format!("{}\n{version:?}\n", home.display());
     // The on/off list (`browser::mod_list::is_enabled`).
-    out += &fs::read_to_string(home.join("sunrise-mods.txt")).unwrap_or_default();
+    out += &mod_list::selection_text(home);
     for path in hmods(home)
         .into_iter()
         .chain(wasm_hmods(home))
@@ -411,7 +411,7 @@ fn wasm_hmods(home: &Path) -> Vec<std::path::PathBuf> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "smod"))
+        .filter(|p| p.extension().is_some_and(|e| e == "smod") && p.is_file())
         .collect();
     paths.sort();
     paths
@@ -421,7 +421,8 @@ fn hmods(home: &Path) -> Vec<std::path::PathBuf> {
     let mut paths: Vec<_> = fs::read_dir(home.join(native_mods::INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
-    paths.retain(|p| p.extension().is_some_and(|e| e == "smod"));
+    // A directory or pipe named `.smod` is not an archive to open.
+    paths.retain(|p| p.extension().is_some_and(|e| e == "smod") && p.is_file());
     paths.sort();
     paths
 }
@@ -434,6 +435,20 @@ fn stem(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn non_files_with_smod_names_are_not_archive_candidates() {
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(native_mods::INSTALLED);
+        let wasm = home.path().join(sunrise_launcher_smod::mod_list::DIR);
+        for dir in [&native, &wasm] {
+            fs::create_dir_all(dir.join("not-an-archive.smod")).unwrap();
+        }
+        assert!(hmods(home.path()).is_empty());
+        assert!(wasm_hmods(home.path()).is_empty());
+        assert!(enabled(home.path()).is_empty());
+        assert!(untracked(home.path()).is_empty());
+    }
+
     #[test]
     fn a_native_build_starts_only_with_permission_and_for_a_profile_with_its_mods() {
         let a: Mod = ("a".into(), "1.0".into(), None);

@@ -439,14 +439,6 @@ pub(super) fn mark_left_out(
     }
 }
 
-/// How many rows the play bar counts as "not on this build": every mod the build left out,
-/// whatever the reason.
-pub(super) fn not_on_build(rows: &[Row]) -> usize {
-    rows.iter()
-        .filter(|r| r.unfit.is_some() || r.left_out.is_some())
-        .count()
-}
-
 impl Row {
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)

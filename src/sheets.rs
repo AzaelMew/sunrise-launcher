@@ -93,7 +93,7 @@ pub(crate) enum CheckState {
     Done(UpdateCheck),
 }
 
-fn check_key(home: &std::path::Path, to: &str) -> String {
+pub(super) fn check_key(home: &std::path::Path, to: &str) -> String {
     format!("{}{to}", native_status::fingerprint(home, Some(to)))
 }
 
@@ -356,10 +356,25 @@ impl Launcher {
     /// sheet ([`Self::check_native`]). It never runs a check itself, because a check stages
     /// files into the real build folder.
     pub(crate) fn held_update(&self) -> Option<Held> {
-        self.held_real()
+        self.held_real(|| match self.check_state() {
+            CheckState::Done(check) => Some(check),
+            _ => None,
+        })
     }
 
-    fn held_real(&self) -> Option<Held> {
+    /// The launch status uses the background snapshot's check key, not a new mod scan.
+    pub(crate) fn held_for_launch(&self, check_key: Option<&str>) -> Option<Held> {
+        self.held_real(|| {
+            self.settings.native_mods_allowed_at?;
+            let memo = self.ui.sheets.update.borrow();
+            let memo = memo
+                .as_ref()
+                .filter(|memo| Some(memo.key.as_str()) == check_key)?;
+            memo.result.as_ref()?.as_ref().ok().cloned()
+        })
+    }
+
+    fn held_real(&self, checked: impl FnOnce() -> Option<UpdateCheck>) -> Option<Held> {
         let instance = self.selected_instance()?;
         let plays = self.version_of(instance)?.clone();
         if let Some(stake) = self
@@ -378,10 +393,7 @@ impl Launcher {
                 stopped: true,
             });
         }
-        match self.check_state() {
-            CheckState::Done(check) => Held::of_check(check, &plays),
-            _ => None,
-        }
+        Held::of_check(checked()?, &plays)
     }
 
     /// Where the selected setup's native-mod check against the newer installed build stands.

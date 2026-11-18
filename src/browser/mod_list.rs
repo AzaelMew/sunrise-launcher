@@ -7,11 +7,20 @@ use std::path::Path;
 pub const MODS_DIR: &str = "sunrise-mods";
 const MODS_LIST: &str = "sunrise-mods.txt";
 
+/// The saved on/off list, which can only be read from a regular file.
+pub(crate) fn selection_text(home: &Path) -> String {
+    let path = home.join(MODS_LIST);
+    if path.is_file() {
+        fs::read_to_string(path).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
 /// Whether mod `id` is on in `sunrise-mods.txt`.
 pub fn is_enabled(home: &Path, id: &str) -> bool {
     let key = format!("mod.{id}");
-    fs::read_to_string(home.join(MODS_LIST))
-        .unwrap_or_default()
+    selection_text(home)
         .lines()
         .filter_map(|l| l.split_once(':'))
         .any(|(k, v)| k.trim() == key && v.trim() == "true")

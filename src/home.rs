@@ -216,6 +216,7 @@ pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
 
 impl Launcher {
     pub(crate) fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.refresh_home_inventory(cx);
         let Some(instance) = self.selected_instance().cloned() else {
             return div()
                 .p(px(32.))
@@ -329,7 +330,6 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        self.mods_read_once();
         let view = self.launch_facts().view();
         let idle = view.main == Main::Play;
         let busy = self.launch_busy();

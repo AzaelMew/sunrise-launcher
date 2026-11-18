@@ -10,6 +10,7 @@ use crate::frame::{button, Page, Reach as _};
 use crate::home::{card, heading, muted};
 use crate::paint::palette;
 use gpui::{rgb, ImageSource, RenderImage};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use sunrise_launcher::browser::{installed, mod_list, sunrise};
@@ -170,6 +171,8 @@ pub(crate) struct Item {
     pub picture: Picture,
     pub open: Open,
     pub on: bool,
+    // Matches the version in native-mods.json when counting what the build left out.
+    mod_version: Option<String>,
 }
 
 /// What the column lists: the items that are on, in the order given, and how many of each
@@ -213,6 +216,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
                 picture: Picture::Project(e.project.clone()),
                 open: Open::Project(e.project.clone()),
                 on: mod_list::is_enabled(home, id),
+                mod_version: Some(e.number.clone()),
             })
         })
         .collect();
@@ -223,6 +227,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     mods.extend(by_hand.map(|file| {
         Item {
             on: mod_list::is_enabled(home, &file.id),
+            mod_version: Some(file.version),
             name: file.name,
             kind: Kind::Mod,
             picture: Picture::Image(
@@ -245,6 +250,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         })),
         open: Open::Pack(pack.kind, pack.file.clone()),
         on: pack.enabled,
+        mod_version: None,
         id: pack.file,
         name: pack.title,
     };
@@ -264,23 +270,102 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         .collect()
 }
 
-/// What [`read`] depends on, from the files' names, sizes and times and the saved choices.
-pub(crate) fn stamp(home: &Path) -> String {
-    native_status::fingerprint(home, None) + "\n" + &packs::stamp(home)
+/// A home and the builds that can affect its launch summary. These inputs come from the UI's
+/// in-memory profile and installed-build lists; files are read only by the worker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Query {
+    home: PathBuf,
+    version: Option<String>,
+    newest: Option<String>,
+}
+
+/// Just the facts about installed mods needed to draw Play and its strip. The launch and
+/// consent paths continue to read live state when the player actually acts.
+#[derive(Default)]
+pub(crate) struct LaunchSummary {
+    pub(crate) mods_off: usize,
+    pub(crate) update_check: Option<String>,
+}
+
+#[derive(Default)]
+struct Snapshot {
+    column: Option<Column>,
+    launch: LaunchSummary,
+}
+
+fn stamp(query: &Query) -> String {
+    let home = &query.home;
+    let build = query.version.as_deref().and_then(|version| {
+        std::fs::metadata(backend::version_dir(version).join("native-mods.json")).ok()
+    });
+    format!(
+        "{}\n{}\n{}\n{:?}",
+        native_status::fingerprint(home, query.version.as_deref()),
+        packs::stamp(home),
+        native_mods::kept_stamp(home),
+        build.map(|m| (m.len(), m.modified().ok())),
+    )
+}
+
+fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
+    let stamp = stamp(query);
+    if stamp == known {
+        return None;
+    }
+    let items = read(&query.home);
+    let build = query
+        .version
+        .as_deref()
+        .and_then(native_status::Build::read);
+    let update_check = build
+        .as_ref()
+        .zip(query.newest.as_deref())
+        .filter(|(build, next)| backend::compare_versions(next, &build.base).is_gt())
+        .filter(|_| !native_status::enabled(&query.home).is_empty())
+        .map(|(_, next)| crate::sheets::check_key(&query.home, next));
+    let left_out = match build {
+        Some(build) => build.left_out,
+        None => query.version.as_deref().map_or_else(Vec::new, |version| {
+            native_mods::kept_left_out(&query.home, version)
+        }),
+    };
+    let left: HashSet<_> = left_out
+        .iter()
+        .map(|m| (m.id.as_str(), m.version.as_str()))
+        .collect();
+    let mods_off = items
+        .iter()
+        .filter(|item| {
+            item.on
+                && item
+                    .mod_version
+                    .as_deref()
+                    .is_some_and(|version| left.contains(&(item.id.as_str(), version)))
+        })
+        .count();
+    Some((
+        stamp,
+        Snapshot {
+            column: column(items),
+            launch: LaunchSummary {
+                mods_off,
+                update_check,
+            },
+        },
+    ))
 }
 
 /// What the selected profile has installed, as last read.
 #[derive(Default)]
 pub(crate) struct Inventory {
-    home: Option<PathBuf>,
+    query: Option<Query>,
     /// None until the first read ends: Home says nothing about mods before it knows.
-    items: Option<Arc<Vec<Item>>>,
-    /// [`stamp`] when `items` were read.
+    snapshot: Option<Arc<Snapshot>>,
     stamp: String,
+    generation: u64,
     reading: bool,
     /// Something may have changed: check the stamp, in the background, when Home next draws.
     stale: bool,
-    /// When Home last drew the column.
     drawn: Option<Instant>,
     watched: bool,
 }
@@ -291,43 +376,45 @@ const AWAY: Duration = Duration::from_secs(1);
 const WATCH: Duration = Duration::from_secs(2);
 
 impl Inventory {
-    /// The column is being drawn for `home` at `now`: what to show, and the stamp to read
-    /// against when a read should start.
-    fn draw(&mut self, home: &Path, now: Instant) -> (Option<Arc<Vec<Item>>>, Option<String>) {
-        if self.home.as_deref() != Some(home) {
-            // Another profile: nothing of the last one is shown as this one's.
-            *self = Inventory {
-                home: Some(home.to_path_buf()),
-                watched: self.watched,
-                ..Inventory::default()
-            };
+    pub(crate) fn launch(&self) -> Option<&LaunchSummary> {
+        self.snapshot.as_deref().map(|snapshot| &snapshot.launch)
+    }
+
+    /// Starts a read only if needed. Returns the generation and the stamp to read against.
+    fn draw(&mut self, query: &Query, now: Instant) -> Option<(u64, String)> {
+        if self.query.as_ref() != Some(query) {
+            self.query = Some(query.clone());
+            self.snapshot = None;
+            self.stamp.clear();
+            self.reading = false;
         }
         let away = self
             .drawn
             .is_none_or(|last| now.duration_since(last) > AWAY);
         self.drawn = Some(now);
-        let due = !self.reading && (self.items.is_none() || self.stale || away);
-        if due {
-            self.reading = true;
-            self.stale = false;
+        if self.reading || !(self.snapshot.is_none() || self.stale || away) {
+            return None;
         }
-        (self.items.clone(), due.then(|| self.stamp.clone()))
+        self.reading = true;
+        self.stale = false;
+        self.generation += 1;
+        Some((self.generation, self.stamp.clone()))
     }
 
-    /// A read for `home` ended: `None` when its files were as the kept list knows them.
-    fn took(&mut self, home: &Path, read: Option<(String, Vec<Item>)>) -> Option<Arc<Vec<Item>>> {
-        if self.home.as_deref() != Some(home) {
+    /// Only the active request may clear the in-flight flag or publish a snapshot, even when
+    /// switching A → B → A before the first read of A returns.
+    fn took(&mut self, generation: u64, read: Option<(String, Snapshot)>) -> Option<Arc<Snapshot>> {
+        if self.generation != generation {
             return None;
         }
         self.reading = false;
         match read {
-            Some((stamp, items)) => {
+            Some((stamp, snapshot)) => {
                 self.stamp = stamp;
-                self.items.replace(Arc::new(items))
+                self.snapshot.replace(Arc::new(snapshot))
             }
-            // Nothing there and nothing known is still an answer: an empty profile.
             None => {
-                self.items.get_or_insert_default();
+                self.snapshot.get_or_insert_default();
                 None
             }
         }
@@ -335,20 +422,14 @@ impl Inventory {
 }
 
 /// Release superseded pack thumbnails from the window's sprite atlas on its next frame.
-fn retire(items: &[Item], pictures: &mut crate::picture_cache::Pictures) {
-    for item in items {
+fn retire(snapshot: &Snapshot, pictures: &mut crate::picture_cache::Pictures) {
+    for item in snapshot.column.iter().flat_map(|column| &column.shown) {
         if let Picture::Pack(art) = &item.picture {
             if let Thumbnail::Ready(Some(image)) = &*art.thumbnail.lock().unwrap() {
                 pictures.retire(image.clone());
             }
         }
     }
-}
-
-/// [`read`], unless the files are as `known` says.
-fn read_changed(home: &Path, known: &str) -> Option<(String, Vec<Item>)> {
-    let stamp = stamp(home);
-    (stamp != known).then(|| (stamp, read(home)))
 }
 
 /// Home's two columns stand side by side from this window width; under it they stack.
@@ -424,27 +505,42 @@ impl Launcher {
         }
     }
 
-    /// What the selected profile has, as last read; reads it in the background when it is not
-    /// known yet or may have changed.
-    fn home_inventory(&mut self, home: &Path, cx: &mut Context<Self>) -> Option<Arc<Vec<Item>>> {
-        let home = home.to_path_buf();
+    /// Refresh what the selected profile has installed off-thread. Home and the status strip
+    /// read the same answer; no launch summary reads a file while drawing.
+    pub(crate) fn refresh_home_inventory(&mut self, cx: &mut Context<Self>) {
+        let Some(instance) = self.selected_instance() else {
+            if let Some(old) = self.ui.home.mods.snapshot.take() {
+                retire(&old, &mut self.pictures);
+            }
+            // Invalidate any answer for the previously selected profile.
+            if self.ui.home.mods.query.take().is_some() {
+                self.ui.home.mods.generation += 1;
+            }
+            return;
+        };
+        let query = Query {
+            home: instance.home.clone(),
+            version: self.version_of(instance).cloned(),
+            newest: native_mods::newest_installed(&self.installed).cloned(),
+        };
         let mods = &mut self.ui.home.mods;
-        if mods.home.as_deref() != Some(&home) {
-            if let Some(old) = mods.items.take() {
+        if mods.query.as_ref() != Some(&query) {
+            if let Some(old) = mods.snapshot.take() {
                 retire(&old, &mut self.pictures);
             }
         }
-        let (items, read) = mods.draw(&home, Instant::now());
-        if let Some(known) = read {
-            let at = home.clone();
+        if let Some((generation, known)) = mods.draw(&query, Instant::now()) {
             let task = cx
                 .background_executor()
-                .spawn(async move { read_changed(&at, &known) });
+                .spawn(async move { read_changed(&query, &known) });
             cx.spawn(async move |this, cx| {
                 let read = task.await;
                 let _ = this.update(cx, |this, cx| {
+                    if this.ui.home.mods.generation != generation {
+                        return;
+                    }
                     let changed = read.is_some();
-                    if let Some(old) = this.ui.home.mods.took(&home, read) {
+                    if let Some(old) = this.ui.home.mods.took(generation, read) {
                         retire(&old, &mut this.pictures);
                     }
                     if changed {
@@ -461,36 +557,39 @@ impl Launcher {
                 cx.background_executor().timer(WATCH).await;
                 let Ok(shown) = this.update(cx, |this, _| {
                     let mods = &this.ui.home.mods;
-                    (this.ui.page == Page::Home && !mods.reading)
-                        .then(|| mods.home.clone().zip(Some(mods.stamp.clone())))
-                        .flatten()
+                    if this.ui.page != Page::Home || mods.reading {
+                        return None;
+                    }
+                    Some((mods.query.clone()?, mods.generation, mods.stamp.clone()))
                 }) else {
                     break;
                 };
-                let Some((home, known)) = shown else {
+                let Some((query, generation, known)) = shown else {
                     continue;
                 };
                 let now = cx
                     .background_executor()
-                    .spawn(async move { stamp(&home) })
+                    .spawn(async move { stamp(&query) })
                     .await;
                 if now != known {
                     let _ = this.update(cx, |this, cx| {
-                        this.ui.home.mods.stale = true;
-                        cx.notify();
+                        if this.ui.home.mods.generation == generation {
+                            this.ui.home.mods.stale = true;
+                            cx.notify();
+                        }
                     });
                 }
             })
             .detach();
         }
-        items
     }
 
     /// Home's Mods column for the profile whose game folder is `home`.
     pub(crate) fn home_mods(&mut self, home: &Path, cx: &mut Context<Self>) -> Div {
-        let items = self.home_inventory(home, cx);
-        let known = items.is_some();
-        let column = column(items.map(|items| items.to_vec()).unwrap_or_default());
+        let snapshot = self.ui.home.mods.snapshot.clone();
+        let column = snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.column.as_ref());
         let index = sunrise::known_index();
         let head = div()
             .h(px(tokens::CONTROL))
@@ -509,7 +608,7 @@ impl Launcher {
             );
         let body = match column {
             // Still being read: no "none yet" until that is known.
-            None if !known => div(),
+            None if snapshot.is_none() => div(),
             None => div()
                 .flex()
                 .items_center()
@@ -534,19 +633,25 @@ impl Launcher {
                     crate::home::ROW_GAP,
                 );
                 let mut rows = div().flex().flex_col().gap(px(crate::home::ROW_GAP));
-                for item in column.shown.iter().take(built.end).skip(built.start) {
+                for item in &column.shown[built] {
                     let picture = match &item.picture {
-                        Picture::Project(project) => tile(
-                            index
-                                .as_ref()
-                                .and_then(|index| index.project(project)?.icon.clone())
-                                .and_then(|url| {
-                                    self.mods_image(&url, sunrise_launcher::browser::images::ROW)
-                                }),
-                            &item.id,
-                            &item.name,
-                            PICTURE,
-                        ),
+                        Picture::Project(project) => {
+                            self.ensure_mod_catalog();
+                            tile(
+                                index
+                                    .as_ref()
+                                    .and_then(|index| index.project(project)?.icon.clone())
+                                    .and_then(|url| {
+                                        self.mods_image(
+                                            &url,
+                                            sunrise_launcher::browser::images::ROW,
+                                        )
+                                    }),
+                                &item.id,
+                                &item.name,
+                                PICTURE,
+                            )
+                        }
                         Picture::Image(image) => tile(image.clone(), &item.id, &item.name, PICTURE),
                         Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
                     };
@@ -653,6 +758,7 @@ mod tests {
             picture: Picture::Image(None),
             open: Open::Installed(name.into()),
             on,
+            mod_version: (kind == Kind::Mod).then(|| "1.0.0".into()),
         }
     }
 
@@ -732,43 +838,66 @@ mod tests {
         assert_eq!(all_off.off, [1, 1, 0]);
     }
 
+    fn query(path: impl Into<PathBuf>) -> Query {
+        Query {
+            home: path.into(),
+            version: None,
+            newest: None,
+        }
+    }
+
     #[test]
     fn the_profiles_list_is_read_once_and_again_only_when_asked() {
-        let (a, b) = (Path::new("/profiles/a"), Path::new("/profiles/b"));
+        let a = query("/profiles/a");
         let start = Instant::now();
         let mut kept = Inventory::default();
-        // Nothing known: nothing shown, and a read starts against no stamp.
-        let (shown, read) = kept.draw(a, start);
-        assert!(shown.is_none());
-        assert_eq!(read.as_deref(), Some(""));
-        // While it runs, drawing starts no other.
-        assert!(kept.draw(a, start).1.is_none());
+        let (generation, stamp) = kept.draw(&a, start).unwrap();
+        assert!(stamp.is_empty() && kept.snapshot.is_none());
+        assert!(kept.draw(&a, start).is_none(), "one read at a time");
         kept.took(
-            a,
-            Some(("one".into(), vec![item("Lanternlight", Kind::Mod, true)])),
+            generation,
+            Some((
+                "one".into(),
+                Snapshot {
+                    column: column(vec![item("Lanternlight", Kind::Mod, true)]),
+                    launch: LaunchSummary::default(),
+                },
+            )),
         );
         let soon = start + Duration::from_millis(100);
-        let (shown, read) = kept.draw(a, soon);
-        assert_eq!(shown.unwrap().len(), 1);
-        assert!(read.is_none(), "a redraw reads nothing");
-        // Told that the files moved, the next draw checks against what it knows.
+        let shown = kept.snapshot.clone().unwrap();
+        assert!(kept.draw(&a, soon).is_none(), "a redraw reads nothing");
         kept.stale = true;
-        assert_eq!(kept.draw(a, soon).1.as_deref(), Some("one"));
-        kept.took(a, None);
-        assert_eq!(kept.draw(a, soon).0.unwrap().len(), 1, "unchanged: kept");
-        // Coming back to Home after a while checks once.
+        let (generation, known) = kept.draw(&a, soon).unwrap();
+        assert_eq!(known, "one");
+        kept.took(generation, None);
+        assert!(
+            Arc::ptr_eq(kept.snapshot.as_ref().unwrap(), &shown),
+            "unchanged: kept"
+        );
         let later = soon + AWAY + Duration::from_millis(1);
-        assert_eq!(kept.draw(a, later).1.as_deref(), Some("one"));
-        kept.took(a, None);
-        // Another profile shows nothing of this one, and an answer for the old one is dropped.
-        let (shown, read) = kept.draw(b, later);
-        assert!(shown.is_none());
-        assert_eq!(read.as_deref(), Some(""));
-        kept.took(a, Some(("late".into(), vec![item("Old", Kind::Mod, true)])));
-        assert!(kept.draw(b, later).0.is_none());
-        // A profile with nothing is known to be empty, not still unread.
-        kept.took(b, None);
-        assert_eq!(kept.draw(b, later).0.unwrap().len(), 0);
+        assert_eq!(kept.draw(&a, later).unwrap().1, "one");
+    }
+
+    #[test]
+    fn going_back_to_a_profile_does_not_accept_its_old_in_flight_answer() {
+        let (a, b) = (query("/profiles/a"), query("/profiles/b"));
+        let now = Instant::now();
+        let mut kept = Inventory::default();
+        let first_a = kept.draw(&a, now).unwrap().0;
+        let for_b = kept.draw(&b, now).unwrap().0;
+        let second_a = kept.draw(&a, now).unwrap().0;
+        kept.took(for_b, None);
+        kept.took(first_a, Some(("old-a".into(), Snapshot::default())));
+        assert!(kept.snapshot.is_none());
+        assert!(
+            kept.reading,
+            "older answers can't clear the new read's flag"
+        );
+        kept.took(second_a, Some(("new-a".into(), Snapshot::default())));
+        kept.took(first_a, Some(("old-a".into(), Snapshot::default())));
+        assert_eq!(kept.stamp, "new-a");
+        assert!(kept.snapshot.is_some() && !kept.reading);
     }
 
     /// A profile's game folder with one resource pack and one registry mod, both on.
@@ -813,53 +942,55 @@ mod tests {
         home
     }
 
-    fn on(items: &[Item]) -> Vec<(&str, bool)> {
-        items.iter().map(|i| (i.name.as_str(), i.on)).collect()
-    }
-
     #[test]
-    fn a_change_made_from_the_command_line_reaches_the_open_profile() {
+    fn the_watched_snapshot_updates_pack_mod_and_launch_state_together() {
         let home = profile("cli");
+        let mut query = query(&home);
+        query.version = Some("test-base".into());
+        std::fs::write(
+            home.join("native-left-out.json"),
+            r#"{
+            "base": "test-base",
+            "left_out": [
+                {"id": "lanternlight", "version": "1.0.0", "why": "did-not-build"},
+                {"id": "lanternlight", "version": "0.9.0", "why": "did-not-build"},
+                {"id": "absent", "version": "1.0.0", "why": "did-not-build"}
+            ]
+        }"#,
+        )
+        .unwrap();
         let mut kept = Inventory::default();
         let now = Instant::now();
-        // Home opens: the first read.
-        let known = kept.draw(&home, now).1.unwrap();
-        kept.took(&home, read_changed(&home, &known));
-        let shown = kept.draw(&home, now).0.unwrap();
+        let (generation, known) = kept.draw(&query, now).unwrap();
+        kept.took(generation, read_changed(&query, &known));
+        let snapshot = kept.snapshot.as_deref().unwrap();
+        let column = snapshot.column.as_ref().unwrap();
+        assert_eq!(names(column), ["Lanternlight", "Soft Edges.zip"]);
+        assert_eq!(column.off, [0, 0, 0]);
         assert_eq!(
-            on(&shown),
-            [("Lanternlight", true), ("Soft Edges.zip", true)]
+            snapshot.launch.mods_off, 1,
+            "only the enabled recorded version"
         );
-        assert_eq!(column(shown.to_vec()).unwrap().off, [0, 0, 0]);
-        // Nothing moved: the watch sees the stamp it knows, and a check reads nothing.
-        assert_eq!(stamp(&home), kept.stamp);
-        assert!(read_changed(&home, &kept.stamp).is_none());
+        assert!(read_changed(&query, &kept.stamp).is_none());
 
-        // `sunrise-launcher packs off` on the same profile (`cli::set_pack` calls these).
+        // `sunrise-launcher packs off` and `mods disable` use these same setters.
         let pack = packs::find(&home, PackKind::Resource, "Soft Edges.zip").unwrap();
         packs::set_enabled(&home, &pack, false).unwrap();
-        // The watch sees another stamp and says so; the next draw reads again.
-        assert_ne!(stamp(&home), kept.stamp);
-        kept.stale = true;
-        let known = kept.draw(&home, now).1.unwrap();
-        kept.took(&home, read_changed(&home, &known));
-        let shown = kept.draw(&home, now).0.unwrap();
-        assert_eq!(
-            on(&shown),
-            [("Lanternlight", true), ("Soft Edges.zip", false)]
-        );
-        let column = column(shown.to_vec()).unwrap();
-        assert_eq!((column.shown.len(), column.off), (1, [0, 1, 0]));
-
-        // `sunrise-launcher mods disable`, the same way.
         mod_list::set_enabled(&home, "lanternlight", false).unwrap();
-        assert_ne!(stamp(&home), kept.stamp);
-        kept.took(&home, read_changed(&home, &kept.stamp));
-        let shown = kept.draw(&home, now).0.unwrap();
         assert_eq!(
-            on(&shown),
-            [("Lanternlight", false), ("Soft Edges.zip", false)]
+            kept.launch().unwrap().mods_off,
+            1,
+            "launch redraw reads only its current snapshot"
         );
+        assert_ne!(stamp(&query), kept.stamp);
+        kept.stale = true;
+        let (generation, known) = kept.draw(&query, now).unwrap();
+        kept.took(generation, read_changed(&query, &known));
+        let snapshot = kept.snapshot.as_deref().unwrap();
+        let column = snapshot.column.as_ref().unwrap();
+        assert!(column.shown.is_empty());
+        assert_eq!(column.off, [1, 1, 0]);
+        assert_eq!(snapshot.launch.mods_off, 0);
         std::fs::remove_dir_all(&home).unwrap();
     }
 

@@ -12,8 +12,12 @@ impl Launcher {
     /// The strip, for the frame to place above the page: one row, as wide as it is given.
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
         let home = self.ui.page == crate::frame::Page::Home;
-        if home && self.ui.home.play_in_view() {
-            return None;
+        if home {
+            if self.ui.home.play_in_view() {
+                return None;
+            }
+        } else {
+            self.refresh_home_inventory(cx);
         }
         let view = self.launch_facts().view();
         let (says, act) = view.strip()?;
