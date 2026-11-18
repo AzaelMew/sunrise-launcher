@@ -54,11 +54,7 @@ impl Icon {
             if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Ok(Icon::Colour(format!("#{}", hex.to_ascii_lowercase())));
             }
-        } else if !text.is_empty()
-            && text
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        {
+        } else if texture_name(text) {
             return Ok(Icon::Texture(text.into()));
         }
         Err(format!(
@@ -66,17 +62,68 @@ impl Icon {
         ))
     }
 
-    /// The texture's file in prepared resources, if it is a texture they hold.
+    /// The texture's file in prepared resources, if it is a texture they hold. Only a name
+    /// [`Icon::parse`] takes is looked for, and only a file that really is inside the resources'
+    /// textures is answered: a name with a path in it, or a link leading out, reads nothing.
     pub fn texture(&self, resources: &Path) -> Option<PathBuf> {
         let Icon::Texture(name) = self else {
             return None;
         };
-        let textures = resources.join("assets/minecraft/textures");
+        if !texture_name(name) {
+            return None;
+        }
+        let textures = resources
+            .join("assets/minecraft/textures")
+            .canonicalize()
+            .ok()?;
         ["block", "item"]
             .iter()
-            .map(|kind| textures.join(kind).join(format!("{name}.png")))
-            .find(|p| p.is_file())
+            .filter_map(|kind| {
+                textures
+                    .join(kind)
+                    .join(format!("{name}.png"))
+                    .canonicalize()
+                    .ok()
+            })
+            .find(|p| p.starts_with(&textures) && p.is_file())
     }
+}
+
+/// A texture's name: lowercase letters, digits and `_`, so never a path.
+fn texture_name(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+// A saved icon is held to what the dialog and the command line take; one that isn't is no icon,
+// and never a reason to lose the instance's other choices.
+fn saved_icon<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Icon>, D::Error> {
+    let saved: Option<Icon> =
+        serde_json::from_value(serde_json::Value::deserialize(deserializer)?).ok();
+    Ok(saved.filter(|icon| match icon {
+        Icon::Texture(name) => texture_name(name),
+        Icon::Colour(hex) => Icon::parse(hex).as_ref() == Ok(icon),
+    }))
+}
+
+/// The most a picture drawn as artwork (a profile's, a world's, a texture) is read: one a game
+/// or the launcher wrote is far smaller.
+pub const MAX_ARTWORK: u64 = 8 << 20;
+
+/// The file at `path` for drawing, or None when it is no regular file or is over
+/// [`MAX_ARTWORK`]: nothing larger is ever read into memory, whatever its length claims.
+pub fn read_artwork(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let file = fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_ARTWORK {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_ARTWORK + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_ARTWORK).then_some(bytes)
 }
 
 /// An instance's own picture, in its game folder: one the player chose, or its modpack's icon.
@@ -217,7 +264,11 @@ fn saved_channel<'de, D: serde::Deserializer<'de>>(
 pub struct Meta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "saved_icon",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub icon: Option<Icon>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,

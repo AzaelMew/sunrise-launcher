@@ -44,14 +44,14 @@ impl Launcher {
 
     pub(super) fn profile_mark(&mut self, i: &Instance, size: f32) -> Div {
         let p = palette();
-        let picture = self.icon_image(format!("picture:{}", i.id), size, true, || {
-            std::fs::read(i.home.join(instances::PICTURE)).ok()
+        let picture = self.icon_image(format!("picture:{}", i.id), size, || {
+            Some(i.home.join(instances::PICTURE))
         });
         let texture = match &i.icon {
             Some(icon @ Icon::Texture(name)) if picture.is_none() => {
                 self.version_of(i).cloned().and_then(|tag| {
-                    self.icon_image(format!("texture:{tag}:{name}"), size, true, || {
-                        std::fs::read(icon.texture(&backend::resources(&tag))?).ok()
+                    self.icon_image(format!("texture:{tag}:{name}"), size, || {
+                        icon.texture(&backend::resources(&tag))
                     })
                 })
             }

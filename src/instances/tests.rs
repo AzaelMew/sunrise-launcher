@@ -615,3 +615,88 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
     assert!(made.home.join(PICTURE).is_file());
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_saved_texture_name_is_held_to_the_typed_ones_and_stays_inside_the_resources() {
+    let root = scratch("saved-icon");
+    let (home, data) = (root.join("home"), root.join("data"));
+    for slug in ["escape", "odd", "fine", "tinted"] {
+        fs::create_dir_all(home.join(OWN).join(slug)).unwrap();
+    }
+    put(
+        &data.join(FILE),
+        r##"{"instances": {
+            "escape": {"icon": {"texture": "../../../../secret"}, "group": "Kept"},
+            "odd": {"icon": {"colour": "red; x"}, "name": "Odd"},
+            "fine": {"icon": {"texture": "diamond"}},
+            "tinted": {"icon": {"colour": "#3fa7d6"}}}}"##,
+    );
+    let all = list_in(&home, &data);
+    let of = |id: &str| all.iter().find(|i| i.id == id).unwrap();
+    // The bad icon alone is dropped: the instance and its other choices stay.
+    assert_eq!(of("escape").icon, None);
+    assert_eq!(of("escape").group.as_deref(), Some("Kept"));
+    assert_eq!(
+        (of("odd").icon.clone(), of("odd").name.as_str()),
+        (None, "Odd")
+    );
+    assert_eq!(of("fine").icon, Some(Icon::Texture("diamond".into())));
+    assert_eq!(of("tinted").icon, Some(Icon::Colour("#3fa7d6".into())));
+
+    // Even a name made in code reads nothing outside the textures.
+    let resources = root.join("resources");
+    put(
+        &resources.join("assets/minecraft/textures/item/diamond.png"),
+        "png",
+    );
+    put(&root.join("secret.png"), "secret");
+    for name in ["../../../../secret", "item/diamond", "/etc/passwd", ""] {
+        assert_eq!(
+            Icon::Texture(name.into()).texture(&resources),
+            None,
+            "{name}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        fs::create_dir_all(resources.join("assets/minecraft/textures/block")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("secret.png"),
+            resources.join("assets/minecraft/textures/block/linked.png"),
+        )
+        .unwrap();
+        assert_eq!(Icon::Texture("linked".into()).texture(&resources), None);
+    }
+    assert!(Icon::Texture("diamond".into())
+        .texture(&resources)
+        .unwrap()
+        .ends_with("item/diamond.png"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn artwork_is_read_only_up_to_its_limit() {
+    let root = scratch("artwork");
+    let small = root.join("icon.png");
+    fs::write(&small, b"png").unwrap();
+    assert_eq!(read_artwork(&small).as_deref(), Some(&b"png"[..]));
+    // One byte over: refused before anything of it is read (a sparse file, so no disk either).
+    let big = root.join("big.png");
+    fs::File::create(&big)
+        .unwrap()
+        .set_len(MAX_ARTWORK + 1)
+        .unwrap();
+    assert_eq!(read_artwork(&big), None);
+    let most = root.join("most.png");
+    fs::File::create(&most)
+        .unwrap()
+        .set_len(MAX_ARTWORK)
+        .unwrap();
+    assert_eq!(
+        read_artwork(&most).map(|b| b.len() as u64),
+        Some(MAX_ARTWORK)
+    );
+    assert_eq!(read_artwork(&root), None, "a folder is no picture");
+    assert_eq!(read_artwork(&root.join("missing.png")), None);
+    fs::remove_dir_all(&root).unwrap();
+}

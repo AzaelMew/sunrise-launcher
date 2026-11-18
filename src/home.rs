@@ -33,8 +33,6 @@ const BAND: f32 = 150.;
 const BAND_ART: f32 = 480.;
 /// One texture tile, in points (16 pixels at 8×).
 const TILE: f32 = 128.;
-/// The icons of a world or a server are small: anything larger is not one.
-const MAX_PICTURE: u64 = 4 << 20;
 /// A world card is never narrower than this beside another, nor wider than this alone.
 const CARD_MIN: f32 = 190.;
 const CARD_MAX: f32 = 600.;
@@ -502,12 +500,7 @@ impl Launcher {
         if let Some(icon) = world.icon.clone() {
             let key = format!("alt-world:{}:{stamp}", icon.display());
             let read = icon.clone();
-            let picture = self.icon_image(key, BAND_ART, true, move || {
-                std::fs::metadata(&read)
-                    .ok()
-                    .filter(|m| m.len() <= MAX_PICTURE)
-                    .and_then(|_| std::fs::read(&read).ok())
-            });
+            let picture = self.icon_image(key, BAND_ART, move || Some(read));
             if let Some(image) = picture {
                 let dim = image.size(0);
                 return band.child(
@@ -523,7 +516,7 @@ impl Launcher {
             .game_resources()
             .join("assets/minecraft/textures/block/dirt.png");
         let key = format!("alt-dirt:{}", file.display());
-        let texture = self.icon_image(key, TILE, true, move || std::fs::read(file).ok());
+        let texture = self.icon_image(key, TILE, move || Some(file));
         match texture {
             Some(image) => {
                 let dim = image.size(0);

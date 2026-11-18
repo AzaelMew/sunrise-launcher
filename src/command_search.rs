@@ -537,7 +537,7 @@ impl Launcher {
             Art::World(icon, stamp) => {
                 let picture = icon.clone().and_then(|file| {
                     let key = format!("search-world:{}:{stamp}", file.display());
-                    self.icon_image(key, ART, true, move || std::fs::read(file).ok())
+                    self.icon_image(key, ART, move || Some(file))
                 });
                 match picture {
                     Some(image) => tile().child(gpui::img(image).size(px(ART))),
