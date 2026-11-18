@@ -694,10 +694,15 @@ pub fn version_for(
         // The uses table is no source file, but it decides whether a mod made for another build
         // fits this one, and so which mods the build keeps: a changed table is another build.
         let uses = sunrise_launcher_smod::manifest::USES_FILE;
-        if let Ok(table) = fs::read(b.dir.join(uses)) {
-            hash.update(uses.as_bytes());
-            hash.update((table.len() as u64).to_le_bytes());
-            hash.update(&table);
+        let path = b.dir.join(uses);
+        match fs::read(&path) {
+            Ok(table) => {
+                hash.update(uses.as_bytes());
+                hash.update((table.len() as u64).to_le_bytes());
+                hash.update(&table);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", path.display())),
         }
     }
     let key: String = hash.finalize()[..6]
@@ -2617,6 +2622,19 @@ mod tests {
         assert_ne!(key(), with, "a changed table is another build");
         fs::remove_file(&table).unwrap();
         assert_eq!(key(), without, "a table that goes is another build again");
+        fs::create_dir(&table).unwrap();
+        let unreadable = version_for(
+            B,
+            B,
+            Profile::Optimized,
+            Target::Client,
+            None,
+            &bundles(&d).unwrap(),
+        );
+        assert!(
+            unreadable.is_err(),
+            "a table that can't be read is no build"
+        );
     }
 
     const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
