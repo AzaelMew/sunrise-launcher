@@ -76,6 +76,48 @@ pub(crate) struct Featured {
     pub note: &'static str,
     /// What an entry without an address says.
     pub inert: &'static str,
+    /// The picture it wears when the server sends none of its own.
+    pub badge: Badge,
+}
+
+/// A featured server's bundled picture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Badge {
+    /// Horizon's site icon.
+    Horizon,
+    /// The launcher's own mark.
+    Sunrise,
+}
+
+/// Horizon's icon as its site draws it: an H on dark purple, 16 cells a side, painted as
+/// rectangles so it stays sharp at any size.
+fn horizon_mark(size: f32) -> Div {
+    const CELLS: [(f32, f32, f32, f32, u32); 5] = [
+        (4., 3., 2., 4., 0xffffffff),
+        (10., 3., 2., 4., 0xffffffff),
+        (4., 8., 2., 4., 0xffffff66),
+        (10., 8., 2., 4., 0xffffff66),
+        (1., 7., 14., 1., 0xa98fffff),
+    ];
+    let u = size / 16.;
+    let mut tile = div()
+        .relative()
+        .flex_none()
+        .size(px(size))
+        .rounded(px(3. * u))
+        .bg(rgb(0x100a1f));
+    for (x, y, w, h, color) in CELLS {
+        tile = tile.child(
+            div()
+                .absolute()
+                .left(px(x * u))
+                .top(px(y * u))
+                .w(px(w * u))
+                .h(px(h * u))
+                .bg(rgba(color)),
+        );
+    }
+    tile
 }
 
 pub(crate) fn featured() -> Vec<Featured> {
@@ -89,12 +131,14 @@ fn featured_with(horizon: &'static str) -> Vec<Featured> {
             address: Some(horizon).filter(|a| !a.is_empty()),
             note: "A Horizon community server",
             inert: "Address coming soon",
+            badge: Badge::Horizon,
         },
         Featured {
             name: "Sunrise server",
             address: None,
             note: "Sunrise's own server",
             inert: "Coming soon",
+            badge: Badge::Sunrise,
         },
     ]
 }
@@ -195,6 +239,12 @@ fn server_picture(icon: Option<std::sync::Arc<gpui::Image>>, name: &str) -> AnyE
 }
 
 fn tile(label: &str, side: f32) -> Div {
+    // A colour of its own from its name, the same every time, kept quiet enough to sit on the
+    // card: the letter reads as the server's badge rather than a missing picture.
+    let hash = label.bytes().fold(0x811c_9dc5_u32, |h, b| {
+        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
+    });
+    let hue = (hash % 360) as f32 / 360.;
     div()
         .flex()
         .flex_none()
@@ -202,10 +252,10 @@ fn tile(label: &str, side: f32) -> Div {
         .justify_center()
         .size(px(side))
         .rounded(px(8.))
-        .bg(rgb(LINE))
+        .bg(gpui::hsla(hue, 0.28, 0.24, 1.))
         .text_size(px(side * 0.45))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(MUTED))
+        .text_color(gpui::hsla(hue, 0.45, 0.82, 1.))
         .child(initial(label))
 }
 
@@ -625,12 +675,19 @@ impl Launcher {
             .py(px(10.))
             .border_t_1()
             .border_color(rgb(SOFT))
-            .child(server_picture(
-                server
+            // The picture the server sends wins; until it does, the bundled one.
+            .child(
+                match server
                     .address
-                    .and_then(|a| self.multiplayer.icons.get(a).cloned()),
-                server.name,
-            ))
+                    .and_then(|a| self.multiplayer.icons.get(a).cloned())
+                {
+                    Some(icon) => server_picture(Some(icon), server.name),
+                    None => match server.badge {
+                        Badge::Horizon => horizon_mark(36.).into_any_element(),
+                        Badge::Sunrise => crate::mark(36.).into_any_element(),
+                    },
+                },
+            )
             .child(
                 div()
                     .flex_1()
