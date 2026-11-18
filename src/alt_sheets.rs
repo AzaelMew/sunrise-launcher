@@ -16,6 +16,8 @@ use std::cell::RefCell;
 use std::sync::mpsc::Sender;
 use sunrise_launcher::native_mods::{Consent, UpdateCheck};
 
+mod versions;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Sheet {
     /// The game-build chooser, a popover over the bar's build chip.
@@ -26,6 +28,8 @@ pub(crate) enum Sheet {
     Notice,
     /// The worlds a data pack goes into (`alt_mods::data_packs`).
     Worlds,
+    /// One build to keep, picked from all of them (`versions`).
+    Versions,
 }
 
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
@@ -44,12 +48,11 @@ pub(crate) struct AltSheetsState {
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
     error: Option<String>,
-    /// The Build chooser lists builds to keep.
-    picking: bool,
     /// The Resolve sheet shows what the check said word for word.
     details: bool,
     /// What the Notice sheet says.
     notice: String,
+    versions: versions::State,
     example_closed: bool,
 }
 
@@ -134,8 +137,8 @@ enum Example {
 fn example() -> Option<Example> {
     match std::env::var("SUNRISE_PREVIEW_EXAMPLES").as_deref() {
         Ok("consent") => Some(Example::Consent),
-        // `build` is the build strip's example (`alt_build`).
-        Ok("" | "build") | Err(_) => None,
+        // `build` is the build strip's example (`alt_build`); `mods` is the example lists alone.
+        Ok("" | "build" | "mods") | Err(_) => None,
         Ok(_) => Some(Example::Resolve),
     }
 }
@@ -248,7 +251,6 @@ impl Launcher {
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_alt_sheet(&mut self, sheet: Sheet) {
         self.alt.sheets.error = None;
-        self.alt.sheets.picking = false;
         self.alt.sheets.details = false;
         self.alt.sheet = Some(sheet);
     }
@@ -280,7 +282,6 @@ impl Launcher {
         self.alt.sheet = None;
         self.alt.sheets.ticked = (false, false);
         self.alt.sheets.error = None;
-        self.alt.sheets.picking = false;
         self.alt.sheets.example_closed = true;
     }
 
@@ -415,6 +416,7 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        self.alt_versions_focus(window);
         let sheet = self.live_sheet(cx)?;
         // The sheet takes the keyboard: keys never reach the page under it.
         let focus = match self.alt.sheets.focus.clone() {
@@ -452,6 +454,7 @@ impl Launcher {
         match self.alt.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
+            Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::Worlds) => {
                 let sheet = self.alt_world_pick_sheet(cx);
                 if sheet.is_none() {
@@ -1107,17 +1110,8 @@ impl Launcher {
             return div().id("alt-build");
         };
         let pinned = instance.version.clone();
-        let channel = instance.channel;
         let plays = self.version_of(instance).cloned();
         let stable = self.stable_builds().iter().any(|b| b.week.is_none());
-        let mut builds: Vec<String> = self
-            .installed
-            .iter()
-            .filter(|v| !native_mods::is_native(v))
-            .filter(|v| sunrise_launcher::backend::launcher_version(v).is_none())
-            .cloned()
-            .collect();
-        builds.sort_by(|a, b| sunrise_launcher::backend::compare_versions(b, a));
         // A different build under native mods is never activated from here: those mods have to be
         // checked against it first (the check button), and the build that follows protects worlds.
         let has_native = !native_status::enabled(&instance.home).is_empty();
@@ -1129,12 +1123,10 @@ impl Launcher {
             .cloned()
             .or_else(|| nightly_target.clone());
         let gated = |target: &Option<String>| has_native && *target != plays;
-        let nightly_gated = gated(&nightly_target);
-        let stable_gated = gated(&stable_target);
-        let gate_note = tr("Your native mods would change build. Check them first with “Check native mod compatibility”.");
-        let picking = self.alt.sheets.picking || pinned.is_some();
-        let follow_nightly = pinned.is_none() && channel == instances::Channel::Nightly;
-        let follow_stable = pinned.is_none() && channel == instances::Channel::Stable;
+        let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
+        let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
+        let nightly_gated = !follow_nightly && gated(&nightly_target);
+        let stable_gated = !follow_stable && gated(&stable_target);
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
@@ -1164,19 +1156,17 @@ impl Launcher {
                         .child(muted(sub).text_size(px(12.))),
                 )
         };
+        // Three choices, however many builds there are: the two that follow, and one build
+        // picked in its own sheet.
         let mut list = div().flex().flex_col().gap(px(2.));
         list = list.child(
             option(
                 "alt-build-nightly",
                 follow_nightly,
-                tr("Follow Nightly").into(),
-                if nightly_gated {
-                    gate_note.into()
-                } else {
-                    tr("The newest build each day.").into()
-                },
+                tr("Latest Nightly").into(),
+                tr("The newest build each day.").into(),
             )
-            .when(nightly_gated, |d| d.opacity(0.5))
+            .when(nightly_gated, |d| d.opacity(0.5).cursor_default())
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.pin_alt_build(None, instances::Channel::Nightly);
@@ -1184,77 +1174,53 @@ impl Launcher {
                 }))
             }),
         );
-        if stable || follow_stable {
-            list = list.child(
-                option(
-                    "alt-build-stable",
-                    follow_stable,
-                    tr("Follow Stable").into(),
-                    if stable_gated {
-                        gate_note.into()
-                    } else {
-                        tr("Only builds marked stable.").into()
-                    },
-                )
-                .when(stable_gated, |d| d.opacity(0.5))
-                .when(!stable_gated, |d| {
-                    d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.pin_alt_build(None, instances::Channel::Stable);
-                        cx.notify();
-                    }))
-                }),
-            );
-        }
-        let keep_now = plays.clone();
+        let stable_off = (!stable && !follow_stable) || stable_gated;
+        list = list.child(
+            option(
+                "alt-build-stable",
+                follow_stable,
+                tr("Latest Stable").into(),
+                if stable || follow_stable {
+                    tr("Only builds marked stable.").into()
+                } else {
+                    tr("No stable release yet").into()
+                },
+            )
+            .when(stable_off, |d| d.opacity(0.5).cursor_default())
+            .when(!stable_off, |d| {
+                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.pin_alt_build(None, instances::Channel::Stable);
+                    cx.notify();
+                }))
+            }),
+        );
         list = list.child(
             option(
                 "alt-build-keep",
-                picking,
-                tr("Stay on one build").into(),
-                tr("Pick a build and keep it until you change this.").into(),
+                pinned.is_some(),
+                tr("A specific version…").into(),
+                match &pinned {
+                    Some(tag) => sunrise_launcher::nightly::label(tag)
+                        .map(|l| format!("{} · {l}", build_name(tag)))
+                        .unwrap_or_else(|| build_name(tag)),
+                    None => tr("Pick one build and keep it until you change this.").into(),
+                },
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.alt.sheets.picking = true;
-                if let Some(now) = keep_now.clone() {
-                    this.pin_alt_build(Some(now), channel);
-                }
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.open_alt_versions();
                 cx.notify();
             })),
         );
-        if picking {
-            let mut choices = div().flex().flex_col().pl(px(36.)).pb(px(6.));
-            for (i, tag) in builds.into_iter().enumerate() {
-                let on = pinned.as_deref() == Some(tag.as_str());
-                let label = sunrise_launcher::nightly::label(&tag)
-                    .map(|l| format!("{} · {l}", build_name(&tag)))
-                    .unwrap_or_else(|| tag.clone());
-                let pick = tag.clone();
-                let blocked = has_native && plays.as_deref() != Some(tag.as_str());
-                choices = choices.child(
-                    div()
-                        .id(("alt-build-choice", i))
-                        .px(px(8.))
-                        .py(px(5.))
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .text_size(px(13.))
-                        .text_color(rgb(if on { GOLD } else { TEXT }))
-                        .child(label)
-                        .when(blocked, |d| d.opacity(0.5))
-                        .when(!blocked, |d| {
-                            d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.pin_alt_build(Some(pick.clone()), channel);
-                                cx.notify();
-                            }))
-                        }),
-                );
-            }
-            list = list.child(choices);
-            if has_native {
-                list = list.child(muted(gate_note).text_size(px(12.)).px(px(10.)));
-            }
-        }
-        let native = self.native_check_block(cx);
+        // Said once, and only when native mods stop a choice above; the check sits with it.
+        let native = self.native_check_block(cx).or_else(|| {
+            (nightly_gated || stable_gated).then(|| {
+                muted(tr(
+                    "Your native mods are made for the build you play. Another build needs them checked first.",
+                ))
+                .text_size(px(12.))
+                .px(px(10.))
+            })
+        });
         let extras = div()
             .flex()
             .items_start()
