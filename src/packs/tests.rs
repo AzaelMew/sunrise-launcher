@@ -496,3 +496,48 @@ fn resource_order_lists_enabled_packs_top_first_and_moves_adjacent_pairs() {
     assert!(!home.join(OPTIONS).exists());
     fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn reordering_never_treats_an_unreadable_options_file_as_empty() {
+    let home = home("order-unreadable");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    // A folder where the file should be: reading it fails, and nothing may replace it.
+    fs::remove_file(home.join(OPTIONS)).ok();
+    fs::create_dir(home.join(OPTIONS)).unwrap();
+    let error = move_resource(&home, "A.zip", "B.zip").unwrap_err();
+    assert!(error.contains(OPTIONS), "{error}");
+    assert!(home.join(OPTIONS).is_dir());
+}
+
+#[test]
+fn reordering_replaces_options_whole_and_keeps_its_other_lines() {
+    let home = home("order-atomic");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    fs::write(
+        home.join(OPTIONS),
+        "version:4786\nresourcePacks:[\"vanilla\",\"file/A.zip\",\"file/B.zip\"]\nlang:fr_ch\n",
+    )
+    .unwrap();
+    move_resource(&home, "A.zip", "B.zip").unwrap();
+    let text = fs::read_to_string(home.join(OPTIONS)).unwrap();
+    assert_eq!(
+        text,
+        "version:4786\nresourcePacks:[\"vanilla\",\"file/B.zip\",\"file/A.zip\"]\nlang:fr_ch\n"
+    );
+    let left: Vec<_> = fs::read_dir(&home)
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".sunrise-options-")
+        })
+        .collect();
+    assert!(left.is_empty(), "a temporary file was left behind");
+}

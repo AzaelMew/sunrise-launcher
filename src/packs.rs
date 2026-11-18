@@ -292,9 +292,39 @@ fn option_list(options: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The file's text; a file that is not there is empty, and any other failure to read it is an
+/// error: an options file that could not be read is never written over as if it were empty.
+fn read_settings(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Puts `text` in place of the file whole: a temporary file in the same folder, then a rename.
+fn write_settings(path: &Path, text: &str) -> Result<(), String> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".sunrise-options-")
+        .tempfile_in(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::io::Write::write_all(&mut temp, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    temp.persist(path)
+        .map_err(|e| format!("{}: {}", path.display(), e.error))?;
+    Ok(())
+}
+
 /// Sets `key:value` in the file, or adds the line; every other line stays.
 fn set_line(path: &Path, key: &str, value: &str) -> Result<(), String> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = read_settings(path)?;
+    write_settings(path, &with_line(&text, key, value))
+}
+
+/// `text` with `key:value` set, or added as a line; every other line stays.
+fn with_line(text: &str, key: &str, value: &str) -> String {
     let mut found = false;
     let mut out: Vec<String> = text
         .lines()
@@ -313,10 +343,7 @@ fn set_line(path: &Path, key: &str, value: &str) -> Result<(), String> {
     }
     let mut text = out.join("\n");
     text.push('\n');
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    text
 }
 
 /// Turns a pack on or off. A resource pack turned on goes on top; a shader pack turned on
@@ -445,12 +472,17 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
     let kind = kind_of(file)?;
     let dir = home.join(kind.folder());
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = file.file_name().ok_or_else(|| tr("A pack file has a name").to_string())?;
+    let name = file
+        .file_name()
+        .ok_or_else(|| tr("A pack file has a name").to_string())?;
     let target = free_target(&dir, name);
     fs::copy(file, &target).map_err(|e| {
         trf(
             "Could not copy {file}: {error}",
-            &[("file", &file.display().to_string()), ("error", &e.to_string())],
+            &[
+                ("file", &file.display().to_string()),
+                ("error", &e.to_string()),
+            ],
         )
     })?;
     read(&target, kind, &[]).ok_or_else(|| {
@@ -467,9 +499,14 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
 /// in place only whole, never over a pack already there (a same name gets `(2)`), so an error
 /// leaves the folder as it was.
 pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
-    let name = file.file_name().ok_or_else(|| tr("A pack file has a name").to_string())?;
+    let name = file
+        .file_name()
+        .ok_or_else(|| tr("A pack file has a name").to_string())?;
     if !fs::metadata(file).is_ok_and(|m| m.is_file()) {
-        return Err(trf("{file} is not a file.", &[("file", &file.display().to_string())]));
+        return Err(trf(
+            "{file} is not a file.",
+            &[("file", &file.display().to_string())],
+        ));
     }
     let dir = home.join(kind.folder());
     let made = !dir.exists();
@@ -484,20 +521,24 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             .suffix(&ext)
             .tempfile_in(&dir)
             .map_err(|e| format!("{}: {e}", dir.display()))?;
-        let mut source =
-            fs::File::open(file).map_err(|e| {
+        let mut source = fs::File::open(file).map_err(|e| {
             trf(
                 "Could not read {file}: {error}",
-                &[("file", &file.display().to_string()), ("error", &e.to_string())],
+                &[
+                    ("file", &file.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
             )
         })?;
-        std::io::copy(&mut source, temp.as_file_mut())
-            .map_err(|e| {
-                trf(
-                    "Could not copy {file}: {error}",
-                    &[("file", &file.display().to_string()), ("error", &e.to_string())],
-                )
-            })?;
+        std::io::copy(&mut source, temp.as_file_mut()).map_err(|e| {
+            trf(
+                "Could not copy {file}: {error}",
+                &[
+                    ("file", &file.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            )
+        })?;
         // What is checked is the copy that gets put in place.
         let found = kind_of(temp.path())
             .map_err(|e| e.replace(&temp.path().display().to_string(), &name.to_string_lossy()))?;
@@ -517,7 +558,10 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
                 let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
                 return Err(trf(
                     "{file} fails the shader pack check:\n{problems}",
-                    &[("file", &name.to_string_lossy()), ("problems", &lines.join("\n"))],
+                    &[
+                        ("file", &name.to_string_lossy()),
+                        ("problems", &lines.join("\n")),
+                    ],
                 ));
             }
         }
@@ -552,7 +596,10 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
         temp.persist_noclobber(&target).map_err(|e| {
             trf(
                 "Could not add {file}: {error}",
-                &[("file", &target.display().to_string()), ("error", &e.error.to_string())],
+                &[
+                    ("file", &target.display().to_string()),
+                    ("error", &e.error.to_string()),
+                ],
             )
         })?;
         pack.path = target;
@@ -567,8 +614,8 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
 /// The enabled resource packs the folder shows, as `resourcePacks` holds them: each one's index
 /// in the raw list (bottom first) and its file name. Builtins and references to packs that are
 /// not there are left out.
-fn visible_enabled(home: &Path) -> (Vec<String>, Vec<(usize, String)>) {
-    let raw = option_list(&fs::read_to_string(home.join(OPTIONS)).unwrap_or_default());
+fn visible_enabled(home: &Path, options: &str) -> (Vec<String>, Vec<(usize, String)>) {
+    let raw = option_list(options);
     let shown: Vec<String> = list(home, Kind::Resource)
         .into_iter()
         .map(|p| p.file)
@@ -593,7 +640,9 @@ pub fn resource_order(home: &Path) -> Vec<String> {
 /// references to missing packs included. A pair that is not enabled, not adjacent (the list
 /// changed since the page read it), or a pack listed twice is refused and nothing is written.
 pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), String> {
-    let (mut raw, slots) = visible_enabled(home);
+    let options = home.join(OPTIONS);
+    let text = read_settings(&options)?;
+    let (mut raw, slots) = visible_enabled(home, &text);
     let at = |name: &str| {
         let mut found = slots.iter().filter(|(_, n)| n == name).map(|(i, _)| *i);
         (found.next(), found.next().is_some())
@@ -607,11 +656,12 @@ pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), Stri
         return Err(stale());
     }
     raw.swap(a, b);
-    set_line(
-        &home.join(OPTIONS),
+    let text = with_line(
+        &text,
         "resourcePacks",
         &serde_json::to_string(&raw).unwrap(),
-    )
+    );
+    write_settings(&options, &text)
 }
 
 /// Turns the pack off and moves it to the system's trash.
