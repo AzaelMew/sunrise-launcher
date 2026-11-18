@@ -134,29 +134,46 @@ impl Launcher {
                 .text_size(px(tokens::LABEL))
                 .child(s)
         };
-        let toggle = row(
-            "sidebar-toggle".into(),
-            tr("Toggle sidebar · Ctrl+B").into(),
-            false,
-        )
-        .child(
-            div()
-                .w(px(18.))
-                .h(px(14.))
-                .flex()
-                .rounded(px(3.))
-                .border_1()
-                .border_color(rgb(p.chrome_muted))
-                .child(div().ml(px(5.)).w(px(1.)).h_full().bg(rgb(p.chrome_muted))),
-        )
-        .when(wide, |d| {
-            d.child(txt(tr("Sidebar").into()))
-                .child(div().text_size(px(tokens::CAPTION)).child("Ctrl B"))
-        })
-        .on_click(cx.listener(|this, _, _, cx| {
-            this.toggle_sidebar();
-            cx.notify();
-        }));
+        // A small toolbar button, not a row: it names itself in its tooltip only. Ctrl+B does
+        // the same, and the search lists that key.
+        let toggle = div()
+            .flex()
+            .flex_none()
+            .h(px(32.))
+            .items_center()
+            .when(wide, |d| d.px(px(4.)))
+            .when(!wide, |d| d.justify_center())
+            .child(
+                div()
+                    .id("sidebar-toggle")
+                    .reach()
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(tokens::R_SMALL))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(rgb(p.chrome_raised)))
+                    .tooltip(crate::glass_ui::tip(if wide {
+                        tr("Hide sidebar")
+                    } else {
+                        tr("Show sidebar")
+                    }))
+                    .child(
+                        div()
+                            .w(px(16.))
+                            .h(px(13.))
+                            .flex()
+                            .rounded(px(3.))
+                            .border_1()
+                            .border_color(rgb(p.chrome_muted))
+                            .child(div().ml(px(4.)).w(px(1.)).h_full().bg(rgb(p.chrome_muted))),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.toggle_sidebar();
+                        cx.notify();
+                    })),
+            );
         let locked = self.profile_locked();
         let add = row("sidebar-create".into(), tr("New profile").into(), false)
             .child(blocks::icon("plus", 20., rgb(p.chrome_text).into()))
