@@ -2,7 +2,7 @@
 //! with a dark outline, a light bevel on top and a darker lip below, sunk wells, badges, the
 //! inventory tabs, and the slots that hold icons downloaded at run time.
 use crate::theme;
-use gpui::{div, prelude::*, px, svg, AnyElement, Div, FontWeight, Hsla, SharedString, Svg};
+use gpui::{div, prelude::*, px, svg, AnyElement, Div, Hsla, SharedString, Svg};
 use std::borrow::Cow;
 
 /// The icons, served to `svg()` as `icons/<name>.svg`.
@@ -77,7 +77,10 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
 }
 
 /// Text in the pixel face: headings, navigation, buttons, badges.
-pub fn pixel(size: f32, weight: FontWeight) -> Div {
+// Only the title bars the launcher draws itself use it, on Linux and Windows; macOS keeps its
+// native one, where this would be dead code.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+pub fn pixel(size: f32, weight: gpui::FontWeight) -> Div {
     div()
         .font_family(theme::PIXEL)
         .font_weight(weight)
