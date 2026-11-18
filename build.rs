@@ -38,12 +38,10 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
         resource.set_icon(&ico);
-        if repository == "sunrise-org/sunrise" {
-            resource.set("FileDescription", "Sunrise Launcher");
-            resource.set("ProductName", "Sunrise Launcher");
-            resource.set("InternalName", "sunrise-launcher");
-            resource.set("OriginalFilename", "sunrise-launcher.exe");
-        }
+        resource.set("FileDescription", "Sunrise Launcher");
+        resource.set("ProductName", "Sunrise Launcher");
+        resource.set("InternalName", "sunrise-launcher");
+        resource.set("OriginalFilename", "sunrise-launcher.exe");
         if let Err(e) = resource.compile() {
             panic!("embedding {ico}: {e}");
         }
