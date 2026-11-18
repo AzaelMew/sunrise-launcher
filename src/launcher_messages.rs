@@ -92,31 +92,6 @@ impl Launcher {
                     }
                 }
                 Msg::Playing(playing) => self.playing = playing,
-                Msg::JavaGame(id, home, cmd) => {
-                    self.starting_client = None;
-                    let spawned = cmd.and_then(|(cmd, vars)| {
-                        self.client_vars = vars;
-                        backend::spawn(Job::Client, cmd, self.tx.clone())
-                    });
-                    match spawned {
-                        Ok(r) => {
-                            self.client = Some(r);
-                            self.client_home = Some(home);
-                            self.client_run = Some((id, Instant::now()));
-                            self.client_error = account::take_unsaved();
-                            self.step_aside(cx);
-                        }
-                        Err(e) => {
-                            if e == account::NoOwner::default().to_string() {
-                                self.owner = Some(false);
-                                self.owner_screen_open = true;
-                                self.client_error = Some(account::NoOwner::default().in_window());
-                            } else {
-                                self.client_error = Some(e);
-                            }
-                        }
-                    }
-                }
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
                 Msg::JarClient { run, prepared } => {

@@ -128,10 +128,9 @@ pub fn validate(cmd: &Command) -> Result<(), String> {
 
 pub fn selected() -> bool {
     let instance = crate::instances::selected();
-    instance.java.is_none()
-        && instance
-            .resolve_version(None)
-            .is_ok_and(|tag| enabled(&tag))
+    instance
+        .resolve_version(None)
+        .is_ok_and(|tag| enabled(&tag))
 }
 
 #[cfg(test)]

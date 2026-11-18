@@ -266,11 +266,6 @@ impl Launcher {
         let Some(instance) = self.selected_instance().cloned() else {
             return;
         };
-        if instance.java.is_some() {
-            self.client_error =
-                Some(tr("This setup does not run Sunrise. Choose a Sunrise setup.").into());
-            return;
-        }
         if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
             let destination = self.quick_play.take();
             let invite = self.joining.take();
@@ -393,14 +388,7 @@ impl Launcher {
             Some(i) if i.channel == instances::Channel::Stable => tr("Stable"),
             _ => tr("Nightly"),
         };
-        let multiple = self
-            .instances
-            .list
-            .iter()
-            .filter(|i| i.java.is_none())
-            .count()
-            > 1
-            || active.as_ref().is_some_and(|i| i.java.is_some());
+        let multiple = self.instances.list.len() > 1;
         // A held update says so itself and its sheet carries the build's words: only then is
         // the build's error left to it.
         let held = self.held_update().is_some();
@@ -444,9 +432,10 @@ impl Launcher {
             .held_update()
             .map(|h| trf("The update to {build} is on hold", &[("build", &h.to)]));
         let update = self.updates.sunrise.clone().filter(|_| {
-            active.as_ref().is_some_and(|i| {
-                i.java.is_none() && i.version.is_none() && i.channel == instances::Channel::Nightly
-            }) && version.is_some()
+            active
+                .as_ref()
+                .is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly)
+                && version.is_some()
                 && !busy
                 && self.client.is_none()
         });
@@ -813,12 +802,6 @@ impl Launcher {
         let content = match page {
             Page::Settings => self.settings(window, cx),
             Page::Hosting => self.hosting(cx),
-            _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
-                .p(px(24.))
-                .child(tr(
-                    "Choose a Sunrise setup in the play bar. Your other setups haven't changed.",
-                ))
-                .into_any_element(),
             Page::Home => self.home(window, cx),
             _ => self.mods(window, cx),
         };
@@ -887,14 +870,7 @@ impl Launcher {
                 .bg(rgb(CARD))
                 .border_1()
                 .border_color(rgb(LINE));
-            for (n, item) in self
-                .instances
-                .list
-                .iter()
-                .filter(|i| i.java.is_none())
-                .cloned()
-                .enumerate()
-            {
+            for (n, item) in self.instances.list.iter().cloned().enumerate() {
                 choices = choices.child(
                     button(ElementId::named_usize("alt-pick", n), item.name.clone()).on_click(
                         cx.listener(move |this, _, _, cx| {

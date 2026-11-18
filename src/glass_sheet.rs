@@ -1,13 +1,12 @@
 //! Instance settings as a dialog centred over the page, drawn as Settings is (the glass look):
 //! its icon, "Instance settings", the instance's name and version at the top; Settings' list of
-//! sections on the left (General, Installation, Launch, Hooks, Storage) and the open one on the
+//! sections on the left (General, Installation, Hooks, Storage) and the open one on the
 //! right, under its name and what it is for, its rows in groups; Save and Cancel and the
 //! instance's folder along the foot. The page behind is frosted and dimmed, as under Settings.
 use super::*;
 
-use new_instance::NewKind;
 use servers_page::Field;
-use sunrise_launcher::instances::{Channel, Icon, Instance, Plays};
+use sunrise_launcher::instances::{Channel, Icon, Instance};
 
 /// The sheet's sections.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -15,7 +14,6 @@ pub(super) enum SheetTab {
     #[default]
     General,
     Installation,
-    Launch,
     Hooks,
 }
 
@@ -28,15 +26,10 @@ struct Draft {
     picture: bool,
     /// Sunrise's version and builds, for an instance that plays Sunrise.
     sunrise: Option<(Option<String>, Channel)>,
-    plays: Plays,
-    /// A Java instance's arguments and window size.
-    java: (String, (String, String)),
     /// The hook fields (before, wrapper, after, variables), once the Hooks section was opened.
     hooks: Option<[String; 4]>,
     /// The Linux switches, once one was flipped.
     switches: Option<[bool; 3]>,
-    /// A Java instance's maximum memory, once changed; Err while the box holds no size.
-    memory: Result<Option<u32>, ()>,
 }
 
 impl Draft {
@@ -52,27 +45,10 @@ impl Draft {
             || self.group != saved.group.clone().unwrap_or_default()
             || self.icon != saved.icon
             || self.picture;
-        let installation = self.plays != Plays::of(saved)
-            || self
-                .sunrise
-                .as_ref()
-                .is_some_and(|(pin, channel)| *pin != saved.version || *channel != saved.channel);
-        let launch = saved.java.as_ref().is_some_and(|j| {
-            self.java
-                != (
-                    j.jvm_args.trim().to_string(),
-                    j.window
-                        .map(|(w, h)| (w.to_string(), h.to_string()))
-                        .unwrap_or_default(),
-                )
-                || match self.memory {
-                    Ok(memory) => memory.is_some_and(|mb| {
-                        mb != j.memory_mb.unwrap_or(instances::DEFAULT_MEMORY_MB)
-                    }),
-                    // Text that isn't a size is still an edit, kept until it is fixed.
-                    Err(()) => true,
-                }
-        });
+        let installation = self
+            .sunrise
+            .as_ref()
+            .is_some_and(|(pin, channel)| *pin != saved.version || *channel != saved.channel);
         let l = &saved.launch;
         let hooks = self.hooks.as_ref().is_some_and(|typed| *typed != hooks)
             || self
@@ -81,7 +57,6 @@ impl Draft {
         [
             (general, SheetTab::General),
             (installation, SheetTab::Installation),
-            (launch, SheetTab::Launch),
             (hooks, SheetTab::Hooks),
         ]
         .into_iter()
@@ -117,18 +92,9 @@ impl Launcher {
                 Some(None) => saved.home.join(instances::PICTURE).is_file(),
                 None => false,
             },
-            sunrise: (d.java.kind == NewKind::Sunrise).then(|| (d.pin.clone(), d.channel)),
-            plays: self.draft_plays(saved).unwrap_or_else(|| Plays::of(saved)),
-            java: (
-                self.servers.value(Field::JavaArgs).trim().to_string(),
-                (
-                    self.servers.value(Field::WindowWidth).trim().to_string(),
-                    self.servers.value(Field::WindowHeight).trim().to_string(),
-                ),
-            ),
+            sunrise: Some((d.pin.clone(), d.channel)),
             hooks: self.hooks_typed(&saved.id),
             switches: self.switches_typed(&saved.id),
-            memory: self.sheet_memory(),
         };
         draft.changed(saved)
     }
@@ -154,7 +120,6 @@ mod tests {
             played: Default::default(),
             last_played: None,
             launch: Default::default(),
-            java: None,
         }
     }
 
@@ -165,44 +130,9 @@ mod tests {
             icon: None,
             picture: false,
             sunrise: Some((None, Channel::Stable)),
-            plays: Plays::Sunrise,
-            java: (String::new(), (String::new(), String::new())),
             hooks: None,
             switches: None,
-            memory: Ok(None),
         }
-    }
-
-    #[test]
-    fn invalid_window_text_still_counts_as_an_unsaved_edit() {
-        let mut saved = saved();
-        saved.java = Some(instances::JavaGame::default());
-        let mut draft = untouched(&saved);
-        draft.plays = Plays::of(&saved);
-        assert!(draft.changed(&saved).is_empty());
-        for (width, height) in [
-            ("bad", ""),
-            ("0", "720"),
-            ("1280", ""),
-            ("4294967296", "720"),
-        ] {
-            draft.java.1 = (width.into(), height.into());
-            assert_eq!(draft.changed(&saved), vec![SheetTab::Launch]);
-        }
-        saved.java.as_mut().unwrap().window = Some((1280, 720));
-        draft.java.1 = ("1280".into(), "720".into());
-        assert!(draft.changed(&saved).is_empty());
-        draft.java.1 .0 = "oops".into();
-        assert_eq!(draft.changed(&saved), vec![SheetTab::Launch]);
-        // Memory set in the sheet waits for Save too; set back to what is saved, it is no edit.
-        draft.java.1 = ("1280".into(), "720".into());
-        draft.memory = Ok(Some(instances::DEFAULT_MEMORY_MB));
-        assert!(draft.changed(&saved).is_empty());
-        draft.memory = Ok(Some(instances::DEFAULT_MEMORY_MB * 2));
-        assert_eq!(draft.changed(&saved), vec![SheetTab::Launch]);
-        // Text in the box that isn't a size is an edit too, until it is fixed.
-        draft.memory = Err(());
-        assert_eq!(draft.changed(&saved), vec![SheetTab::Launch]);
     }
 
     #[test]

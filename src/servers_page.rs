@@ -68,15 +68,9 @@ pub(super) enum Field {
     Wrapper,
     LaunchEnv,
     PostExit,
-    /// Home's memory row (`launch_page.rs`).
-    MemoryLimit,
     DeleteServer,
     /// Settings' accent as hex (`themes_page.rs`).
     AccentHex,
-    /// A Java instance's own JVM arguments and window size (the instance sheet's Launch).
-    JavaArgs,
-    WindowWidth,
-    WindowHeight,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -295,15 +289,6 @@ impl Servers {
 
     pub(super) fn value(&self, f: Field) -> &str {
         self.texts.get(&f).map_or("", LineEdit::text)
-    }
-
-    /// Mark a field invalid without an explanatory message, or clear its previous error.
-    pub(super) fn set_field_invalid(&mut self, field: Field, invalid: bool) {
-        if invalid {
-            self.invalid = Some((field, ""));
-        } else if self.invalid.is_some_and(|(current, _)| current == field) {
-            self.invalid = None;
-        }
     }
 
     /// Whether this field has the keyboard, as of this frame.
@@ -1167,17 +1152,11 @@ impl Launcher {
             Field::Port => self.save_port(),
             Field::Token => self.save_token(),
             Field::Email => self.invite_friend(),
-            Field::InstanceName
-            | Field::InstanceGroup
-            | Field::JavaArgs
-            | Field::WindowWidth
-            | Field::WindowHeight
-            | Field::DeleteServer
-            | Field::AccentHex => {}
+            Field::InstanceName | Field::InstanceGroup | Field::DeleteServer | Field::AccentHex => {
+            }
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {
                 self.save_launch()
             }
-            Field::MemoryLimit => self.memory_enter(),
             Field::ServerName | Field::ServerAddress => self.add_server(),
         }
     }

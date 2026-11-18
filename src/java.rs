@@ -1,4 +1,4 @@
-//! Java for the real Minecraft: Java Edition (Java instances): which runtime a version needs, the
+//! Java for preparing the game from the player's Minecraft: which runtime a version needs, the
 //! ones on this computer, and Mojang's own when none fits, as other launchers do.
 //!
 //! A version's JSON names what it runs on: `javaVersion.majorVersion` (21 for 1.21) and the

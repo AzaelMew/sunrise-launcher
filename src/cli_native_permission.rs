@@ -9,15 +9,11 @@ pub(super) fn native_permission(trust: bool) -> Result<(), String> {
 
 pub(super) fn github_native(
     home: &Path,
-    java: bool,
     found: &github_mods::Resolved,
     only: Option<&str>,
     all: bool,
     trust: bool,
 ) -> Result<(), String> {
-    if java {
-        return Err("Native mods from GitHub are for Sunrise instances.".into());
-    }
     println!("{}", found.label());
     println!("Source, to read: {}", found.source_url());
     eprintln!("{}", github_mods::WARNING);

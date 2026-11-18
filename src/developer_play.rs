@@ -91,10 +91,7 @@ impl Launcher {
             let instance = run
                 .as_ref()
                 .and_then(|id| instances::list().into_iter().find(|i| &i.id == id));
-            self.client_vars = instance
-                .as_ref()
-                .map(|i| i.vars(cmd.get_program()))
-                .unwrap_or_default();
+            self.client_vars = instance.as_ref().map(|i| i.vars()).unwrap_or_default();
             cmd.envs(self.client_vars.iter().map(|(k, v)| (k, v)));
             let launch = instance.map(|i| i.launch).unwrap_or_default();
             self.starting_client = Some(tag);

@@ -5,7 +5,7 @@
 //! - A result's title opens its page inside the launcher: icon, author, downloads, followers,
 //!   licence, how well it runs and Install, then Description (Markdown), Gallery, Versions and
 //!   the project's links.
-//! - Filters: sort, loader, game version, environment and categories, with the values the
+//! - Filters: sort, game version and categories, with the values the
 //!   source lists for the kind.
 //! - Icons and gallery images come from the source's image servers at run time, cached on disk;
 //!   a placeholder stands in until one arrives.

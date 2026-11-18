@@ -28,7 +28,6 @@ mod frame;
 mod game_tools;
 mod github_mods_page;
 mod glass_instance;
-mod glass_instance_java;
 mod glass_sheet;
 mod glass_storage;
 mod glass_toast;
@@ -55,7 +54,6 @@ mod motion;
 mod multiplayer_page;
 mod native_consent;
 mod native_log_page;
-mod new_instance;
 mod owner_page;
 mod packs_page;
 mod perf;
@@ -313,8 +311,7 @@ struct Launcher {
     owner: Option<bool>,
     /// Play was refused (or Home's Sign in pressed): the owner gate's screen is open.
     owner_screen_open: bool,
-    /// The game is waiting for its session (a token renewal), or a Java instance for its files
-    /// and Java (`start_java`), before it starts.
+    /// The game is waiting for its session (a token renewal), before it starts.
     starting_client: Option<String>,
     starting_instance: Option<String>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.
@@ -381,8 +378,6 @@ struct Launcher {
     game_packs: packs_page::Packs,
     world_packs: datapacks_page::WorldPacks,
     launch: Option<launch_page::LaunchPanel>,
-    /// The memory row on Home.
-    memory_slider: launch_page::MemorySlider,
     /// What the window did when the game started (`while_playing.rs`).
     aside: while_playing::Aside,
     /// The player's servers, for the sidebar until the Servers page has read them.

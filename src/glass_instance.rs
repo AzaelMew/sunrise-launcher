@@ -5,19 +5,9 @@
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
 
-use new_instance::VersionList;
 use sunrise_launcher::instances::{stable_builds, Channel, StableBuild};
 
 impl Launcher {
-    /// The Minecraft version a Java instance plays (or will), once Mojang's list says.
-    pub(super) fn draft_minecraft(&self) -> Option<String> {
-        let versions = match &self.instances.versions {
-            VersionList::Ready(v) => Some(v),
-            _ => None,
-        };
-        self.instances.dialog.as_ref()?.java.minecraft(versions)
-    }
-
     /// The Sunrise version an instance plays: the one it keeps, else the one it follows.
     pub(super) fn draft_sunrise(&self) -> Option<String> {
         let d = self.instances.dialog.as_ref()?;

@@ -359,10 +359,9 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
     let mut lines = Vec::new();
     for t in targets {
         let i = &t.instance;
-        let pack = i.id.starts_with("pack:") || i.id.starts_with("port:");
-        let (false, None) = (pack, &i.java) else {
+        if i.id.starts_with("pack:") {
             continue;
-        };
+        }
         let ctx = sunrise::auto::Context {
             in_pack: sunrise::auto::in_pack(&i.home),
             game: &t.game,

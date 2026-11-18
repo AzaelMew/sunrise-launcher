@@ -19,16 +19,12 @@ pub(super) struct InstanceDialog {
     pub(super) picture: Option<Option<instance_icons::Chosen>>,
     pub(super) error: Option<String>,
     pub(super) busy: bool,
-    /// Sunrise, or the Java game it plays.
-    pub(super) java: new_instance::JavaChoice,
     /// The Sunrise version it keeps (`Instance::version`); None follows the launcher's.
     pub(super) pin: Option<String>,
     /// The builds "latest" follows (`Instance::channel`); a new instance starts on Stable.
     pub(super) channel: instances::Channel,
     /// The sheet was closed with edits not saved: asking whether to drop them.
     pub(super) discarding: bool,
-    /// A Java instance's maximum memory as set in the sheet, kept with Save: None until changed.
-    pub(super) memory: Option<u32>,
 }
 
 /// The instances and their icons as images, kept between frames.
@@ -38,8 +34,6 @@ pub(super) struct Instances {
     pub(super) dialog: Option<InstanceDialog>,
     /// Textures, pictures and marks as images, by name and size in device pixels.
     pub(super) icons: HashMap<(String, u32), Option<Arc<RenderImage>>>,
-    /// Mojang's versions, for a new Java instance.
-    pub(super) versions: new_instance::VersionList,
 }
 
 impl Launcher {
@@ -166,46 +160,10 @@ impl Launcher {
         let selected = self.selected_instance().map(|i| i.id.clone());
         let name = self.servers.value(Field::InstanceName).trim().to_string();
         let group = Some(self.servers.value(Field::InstanceGroup).to_string());
-        // A Java instance's arguments and window (the sheet's Launch): both sizes or neither.
-        let jvm_args = self.servers.value(Field::JavaArgs).trim().to_string();
-        let window = match validate_window(
-            self.servers.value(Field::WindowWidth),
-            self.servers.value(Field::WindowHeight),
-        ) {
-            Ok(window) => window,
-            Err(()) => {
-                if let Some(d) = &mut self.instances.dialog {
-                    d.error = Some(tr("Window size: enter both width and height as positive whole numbers, or leave both empty.").into());
-                }
-                return;
-            }
-        };
         // A Sunrise version picked but not installed downloads once the instance is saved.
         let download = self
             .draft_sunrise()
             .and_then(|tag| self.release_to_install(&tag));
-        // An edited instance switched to another game (`instances::switch`).
-        let switch_to = self
-            .instances
-            .dialog
-            .as_ref()
-            .and_then(|d| d.editing.as_ref())
-            .and_then(|id| self.instances.list.iter().find(|i| &i.id == id))
-            .filter(|i| i.kind == InstanceKind::Own)
-            .and_then(|i| {
-                self.draft_plays(i)
-                    .filter(|to| *to != instances::Plays::of(i))
-            });
-        // Maximum memory as the box holds it, typed or not; text that isn't a size stops Save.
-        let Ok(memory) = self.sheet_memory() else {
-            if let Some(d) = &mut self.instances.dialog {
-                d.error = Some(
-                    tr("Maximum memory: enter a whole number of MB, or leave it empty for the default.")
-                        .into(),
-                );
-            }
-            return;
-        };
         let Some(d) = self.instances.dialog.as_mut().filter(|d| !d.busy) else {
             return;
         };
@@ -220,48 +178,15 @@ impl Launcher {
         let copy = selected.filter(|_| d.copy);
         // The picture choice this save keeps: once kept, it is no longer an unsaved edit.
         let sent_picture = picture.clone();
-        // The Sunrise version is Sunrise's instances' alone: a Java one plays its own game.
-        let plays_sunrise = d.java.kind == new_instance::NewKind::Sunrise;
-        // A new Java instance: what it plays, and its name when none is typed.
-        let java = (editing.is_none() && d.java.kind != new_instance::NewKind::Sunrise)
-            .then(|| d.java.clone());
-        let minecraft = java.as_ref().map(|j| {
-            j.minecraft(match &self.instances.versions {
-                new_instance::VersionList::Ready(v) => Some(v),
-                _ => None,
-            })
-        });
         let Some(d) = self.instances.dialog.as_mut() else {
             return;
-        };
-        let download = download.filter(|_| plays_sunrise);
-        let (java, name) = match (java, minecraft) {
-            (Some(_), Some(None)) => {
-                d.error = Some(tr("Mojang's version list isn't here yet.").into());
-                return;
-            }
-            (Some(j), Some(Some(mc))) => {
-                let name = if name.is_empty() {
-                    j.default_name(&mc)
-                } else {
-                    name
-                };
-                (Some((j, mc)), name)
-            }
-            _ => (None, name),
         };
         d.busy = true;
         d.error = None;
         let task = cx.background_executor().spawn(async move {
-            let id = match (editing, java) {
-                (Some(id), _) => {
-                    if let Some(to) = switch_to {
-                        instances::switch(&id, new_instance::with_loader(to)?)?;
-                    }
-                    id
-                }
-                (None, Some((j, mc))) => new_instance::create_java(&j, &name, &mc)?.id,
-                (None, None) => instances::create(&name, copy.as_deref())?.id,
+            let id = match editing {
+                Some(id) => id,
+                None => instances::create(&name, copy.as_deref())?.id,
             };
             // Finish fallible picture work before committing the edited metadata and commands.
             if let Some(png) = picture {
@@ -279,17 +204,8 @@ impl Launcher {
                 if let Some(launch) = launch {
                     m.launch = launch;
                 }
-                if let Some(game) = m.java.as_mut().filter(|_| edited) {
-                    game.jvm_args = jvm_args;
-                    game.window = window;
-                    if let Some(memory) = memory {
-                        game.memory_mb = Some(memory);
-                    }
-                }
-                if plays_sunrise {
-                    m.version = pin;
-                    m.channel = Some(channel);
-                }
+                m.version = pin;
+                m.channel = Some(channel);
             })?;
             Ok(instance)
         });
@@ -337,41 +253,5 @@ impl Launcher {
             });
         })
         .detach();
-    }
-}
-
-/// Validate the two fields together, without treating an invalid edit as an empty size.
-fn validate_window(width: &str, height: &str) -> Result<Option<(u32, u32)>, ()> {
-    let (width, height) = (width.trim(), height.trim());
-    if width.is_empty() && height.is_empty() {
-        return Ok(None);
-    }
-    let width = width.parse::<u32>().map_err(|_| ())?;
-    let height = height.parse::<u32>().map_err(|_| ())?;
-    if width == 0 || height == 0 {
-        return Err(());
-    }
-    Ok(Some((width, height)))
-}
-
-#[cfg(test)]
-mod window_tests {
-    use super::validate_window;
-
-    #[test]
-    fn window_size_requires_two_positive_dimensions_or_two_empty_fields() {
-        assert_eq!(validate_window("", " "), Ok(None));
-        assert_eq!(validate_window(" 1280", "720 "), Ok(Some((1280, 720))));
-        for (width, height) in [
-            ("", "720"),
-            ("1280", ""),
-            ("0", "720"),
-            ("1280", "0"),
-            ("wide", "720"),
-            ("1280", "1.5"),
-            ("4294967296", "720"),
-        ] {
-            assert_eq!(validate_window(width, height), Err(()));
-        }
     }
 }

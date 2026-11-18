@@ -119,27 +119,6 @@ impl Launcher {
     }
 
     pub(crate) fn play(&mut self) {
-        let java = self
-            .selected_instance()
-            .filter(|i| i.java.is_some())
-            .cloned();
-        if let Some(instance) = java {
-            // Mojang's game: no Sunrise version or preparation, only no game already running.
-            // It joins a server; a friend's code and opening a world are Sunrise's.
-            self.joining = None;
-            let server = self
-                .quick_play
-                .take()
-                .filter(|(flag, _)| *flag == "--server")
-                .map(|(_, ip)| ip);
-            if self.client.is_some() || self.starting_client.is_some() {
-                self.client_error = Some(tr("The game is already running.").into());
-                return;
-            }
-            self.starting_pack = None;
-            self.start_java(instance, server);
-            return;
-        }
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
@@ -152,30 +131,6 @@ impl Launcher {
         }
         self.starting_pack = None;
         self.start_client(tag, self.selected_instance().map(|i| i.id.clone()));
-    }
-
-    /// Starts a Java instance's Minecraft, joining `server` if given: its files and Java first
-    /// (downloaded the first time, their lines in the log), then `drain` starts the game when
-    /// the command arrives.
-    pub(crate) fn start_java(&mut self, instance: instances::Instance, server: Option<String>) {
-        self.client_error = None;
-        self.crash = None;
-        self.prepare_log.clear();
-        self.client_started =
-            Some(std::time::SystemTime::now() - std::time::Duration::from_secs(2));
-        self.starting_client = Some(instance.id.clone());
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let log = |line: String| {
-                let _ = tx.send(Msg::Line(Job::Client, line));
-            };
-            let cmd = backend::java_game(&instance, server.as_deref(), &log).map(|mut cmd| {
-                let vars = instance.vars(cmd.get_program());
-                cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-                (sunrise_launcher::launch::wrap(cmd, &instance.launch), vars)
-            });
-            let _ = tx.send(Msg::JavaGame(instance.id, instance.home, cmd));
-        });
     }
 
     /// Why `tag` cannot start now, as the player reads it; None when it can ([`Self::can_start`]).
