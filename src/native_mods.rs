@@ -2032,10 +2032,10 @@ fn plain_pin(
     cancelled: impl FnOnce() -> Result<(), String>,
 ) -> Result<Option<String>, String> {
     let follows = follows_plain(channel, plain, selected, || {
-        instances::stable_builds(&catalogue()?)
-            .into_iter()
+        instances::Channel::Stable
+            .builds(&catalogue()?)
             .find(|b| installed.contains(&b.tag))
-            .map(|b| b.tag)
+            .map(|b| b.tag.clone())
     });
     cancelled()?;
     Ok((!follows).then(|| plain.to_owned()))

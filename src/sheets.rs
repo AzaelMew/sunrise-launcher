@@ -1194,22 +1194,23 @@ impl Launcher {
         } else {
             None
         };
-        let stable = self.stable_builds().iter().any(|b| b.week.is_none());
+        let (stable, stable_target) = {
+            let mut builds = self.stable_builds().peekable();
+            let available = builds.peek().is_some();
+            let target = builds
+                .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
+                .cloned();
+            (available, target)
+        };
         // A different build under native mods is never activated from here: those mods have to be
         // checked against it first (the check button), and the build that follows protects worlds.
         let has_native = !native_status::enabled(&instance.home).is_empty();
         let nightly_target = self.launcher_version().cloned();
-        let stable_target = self
-            .stable_builds()
-            .iter()
-            .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
-            .cloned()
-            .or_else(|| nightly_target.clone());
         let gated = |target: &Option<String>| has_native && *target != plays;
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
         let nightly_gated = !follow_nightly && gated(&nightly_target);
-        let stable_gated = !follow_stable && gated(&stable_target);
+        let stable_gated = stable && !follow_stable && gated(&stable_target);
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
@@ -1264,13 +1265,13 @@ impl Launcher {
                 }))
             }),
         );
-        let stable_off = (!stable && !follow_stable) || stable_gated;
+        let stable_off = !stable || stable_gated;
         list = list.child(
             option(
                 "alt-build-stable",
                 follow_stable,
                 tr("Latest Stable").into(),
-                if stable || follow_stable {
+                if stable {
                     tr("Only builds marked stable.").into()
                 } else {
                     tr("No stable release yet").into()

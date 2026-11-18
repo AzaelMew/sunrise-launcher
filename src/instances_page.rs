@@ -21,7 +21,7 @@ pub(super) struct InstanceDialog {
     pub(super) busy: bool,
     /// The Sunrise version it keeps (`Instance::version`); None follows the launcher's.
     pub(super) pin: Option<String>,
-    /// The builds "latest" follows (`Instance::channel`); a new instance starts on Stable.
+    /// The builds "latest" follows (`Instance::channel`).
     pub(super) channel: instances::Channel,
     /// The sheet was closed with edits not saved: asking whether to drop them.
     pub(super) discarding: bool,
@@ -67,14 +67,12 @@ impl Launcher {
     pub(super) fn version_of(&self, instance: &Instance) -> Option<&String> {
         match &instance.version {
             Some(own) => self.installed.iter().find(|t| *t == own),
-            // Latest of its channel: the newest installed Stable build, or the launcher's
-            // version (which follows the newest Nightly; also what is left offline).
+            // Latest of its channel. Stable must be known from the catalogue, not inferred
+            // from the version the launcher happens to be playing.
             None => match instance.channel {
                 instances::Channel::Stable => self
                     .stable_builds()
-                    .iter()
-                    .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
-                    .or_else(|| self.launcher_version()),
+                    .find_map(|b| self.installed.iter().find(|t| **t == b.tag)),
                 instances::Channel::Nightly => self.launcher_version(),
             },
         }

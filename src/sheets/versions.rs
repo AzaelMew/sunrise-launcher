@@ -8,7 +8,7 @@ use super::*;
 use crate::line_edit::{self, LineEdit};
 use crate::paint::palette;
 use std::rc::Rc;
-use sunrise_launcher::backend::Release;
+use sunrise_launcher::{backend::Release, instances::Channel};
 
 /// The height of every line of the list, headings included.
 const LINE_H: f32 = 40.;
@@ -143,12 +143,16 @@ fn lines(
     }
     // A Nightly can be listed under two names that install as one version: it is one build.
     let mut seen = std::collections::HashSet::new();
-    for nightly in [true, false] {
+    for (channel, title) in [
+        (Some(Channel::Nightly), tr("Nightly")),
+        (Some(Channel::Stable), tr("Stable")),
+        (None, tr("Pre-release")),
+    ] {
         let mut heading = String::new();
         for r in releases.iter().filter(|r| {
             r.asset.is_some()
-                && r.nightly.is_some() == nightly
-                && game(&r.tag)
+                && Channel::of_release(r) == channel
+                && (channel.is_some() || backend::is_game_tag(&r.tag))
                 && !installed.contains(&r.tag)
                 && seen.insert(r.tag.as_str())
         }) {
@@ -157,8 +161,7 @@ fn lines(
             if !wanted(&b, &day) {
                 continue;
             }
-            let channel = if nightly { tr("Nightly") } else { tr("Stable") };
-            let under = format!("{channel} · {}", month(day.get(..7).unwrap_or(&day)));
+            let under = format!("{title} · {}", month(day.get(..7).unwrap_or(&day)));
             if under != heading {
                 out.push(Line::Head(under.clone()));
                 heading = under;
@@ -533,6 +536,31 @@ mod tests {
                 Line::Build(b) => b.tag.clone(),
             })
             .collect()
+    }
+
+    #[test]
+    fn a_rolling_nightly_and_an_old_prerelease_never_have_a_stable_heading() {
+        let mut releases = vec![
+            release("nightly-2026-11-17-aaaaaaa", "2026-11-17", true),
+            Release {
+                prerelease: true,
+                ..release("v1.1.0", "2026-11-16", false)
+            },
+        ];
+        assert_eq!(
+            shape(&lines(&releases, &[], None, "")),
+            [
+                "# Nightly · November 2026",
+                "nightly-2026-11-17-aaaaaaa",
+                "# Pre-release · November 2026",
+                "v1.1.0",
+            ]
+        );
+        releases.push(release("v1.0.0", "2026-10-01", false));
+        assert_eq!(
+            shape(&lines(&releases, &[], None, "v1.0.0")),
+            ["# Stable · October 2026", "v1.0.0"]
+        );
     }
 
     #[test]

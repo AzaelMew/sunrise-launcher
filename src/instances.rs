@@ -203,62 +203,25 @@ pub enum Channel {
     Nightly,
 }
 
-/// A build on the Stable channel; `week` is the Monday of its week when it stands for one.
-#[derive(Debug, PartialEq, Eq)]
-pub struct StableBuild {
-    pub tag: String,
-    pub week: Option<String>,
-}
-
-/// The Stable channel's builds, newest first: the real (non-Nightly, non-pre-release) releases
-/// when any exist; until then the newest Nightly of each Monday to Sunday week. `releases` is
-/// newest first, as GitHub lists them.
-pub fn stable_builds(releases: &[backend::Release]) -> Vec<StableBuild> {
-    let real: Vec<_> = releases
-        .iter()
-        .filter(|r| {
-            r.nightly.is_none()
-                && r.asset.is_some()
-                && !r.prerelease
-                && backend::is_game_tag(&r.tag)
-        })
-        .map(|r| StableBuild {
-            tag: r.tag.clone(),
-            week: None,
-        })
-        .collect();
-    if !real.is_empty() {
-        return real;
-    }
-    use chrono::Datelike;
-    // (monday, date, tag): the newest date of a week wins; the first listed on a tie.
-    let mut weeks: Vec<(String, String, String)> = Vec::new();
-    for r in releases
-        .iter()
-        .filter(|r| r.nightly.is_some() && r.asset.is_some())
-    {
-        let Some(date) = crate::nightly::date_of(&r.tag) else {
-            continue;
-        };
-        let Ok(day) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
-            continue;
-        };
-        let monday =
-            (day - chrono::Duration::days(day.weekday().num_days_from_monday() as i64)).to_string();
-        match weeks.iter_mut().find(|w| w.0 == monday) {
-            Some(w) if w.1.as_str() < date => *w = (monday, date.into(), r.tag.clone()),
-            Some(_) => {}
-            None => weeks.push((monday, date.into(), r.tag.clone())),
+impl Channel {
+    /// The channel a game release belongs to. Old versioned pre-releases can be pinned,
+    /// but are not followed. The rolling Nightly is a Nightly even when marked for updates.
+    pub fn of_release(release: &backend::Release) -> Option<Self> {
+        if release.nightly.is_some() || sunrise_launcher_release_verify::is_nightly(&release.tag) {
+            Some(Self::Nightly)
+        } else if !release.prerelease && backend::is_game_tag(&release.tag) {
+            Some(Self::Stable)
+        } else {
+            None
         }
     }
-    weeks.sort_by(|a, b| b.0.cmp(&a.0));
-    weeks
-        .into_iter()
-        .map(|(monday, _, tag)| StableBuild {
-            tag,
-            week: Some(monday),
-        })
-        .collect()
+
+    /// The downloadable releases on this channel, in catalogue order (newest first).
+    pub fn builds(self, releases: &[backend::Release]) -> impl Iterator<Item = &backend::Release> {
+        releases
+            .iter()
+            .filter(move |r| r.asset.is_some() && Self::of_release(r) == Some(self))
+    }
 }
 
 // An unknown channel must not invalidate unrelated instance metadata.

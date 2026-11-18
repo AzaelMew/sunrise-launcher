@@ -2,7 +2,7 @@
 //! instance creation/copy transaction as the launcher; the dialog doesn't write game files.
 use super::*;
 use crate::{
-    frame::{button, primary},
+    frame::{button, button_base, primary},
     instances_page::InstanceDialog,
     paint::palette,
     servers_page::Field,
@@ -16,6 +16,11 @@ impl Launcher {
         self.servers.text(Field::InstanceGroup).set(String::new());
         self.focus_handle(Field::InstanceName, cx);
         self.servers.focus_soon = Some(Field::InstanceName);
+        let channel = if self.stable_builds().next().is_some() {
+            Channel::Stable
+        } else {
+            Channel::Nightly
+        };
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
             copy: false,
@@ -24,7 +29,7 @@ impl Launcher {
             error: None,
             busy: false,
             pin: None,
-            channel: Channel::Stable,
+            channel,
             discarding: false,
         });
         cx.notify();
@@ -47,7 +52,17 @@ impl Launcher {
             .map(|c| c.preview.clone());
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
-        let ready = !name.is_empty() && !busy;
+        let (stable_available, tags) = {
+            let mut stable = self.stable_builds().peekable();
+            let available = stable.peek().is_some();
+            let tags: Vec<String> = match channel {
+                Channel::Stable => stable.map(|r| r.tag.clone()).collect(),
+                Channel::Nightly => self.sunrise_choices(),
+            };
+            (available, tags)
+        };
+        let channel_available = channel != Channel::Stable || stable_available;
+        let ready = !name.is_empty() && !busy && channel_available;
         let current = pin
             .as_deref()
             .map(|tag| self.version_label(tag))
@@ -138,24 +153,39 @@ impl Launcher {
             ("new-stable", Channel::Stable, tr("Stable")),
             ("new-nightly", Channel::Nightly, tr("Nightly")),
         ] {
-            channels = channels.child(
+            let available = c != Channel::Stable || stable_available;
+            let choice = if available {
                 button(id, label)
-                    .when(c == channel, |d| {
+            } else {
+                button_base(id, label)
+            };
+            channels = channels.child(
+                choice
+                    .when(available && c == channel, |d| {
                         d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
                     })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.channel = c;
-                            d.pin = None;
-                        }
-                        cx.notify();
-                    })),
+                    .when(!available, |d| {
+                        d.opacity(0.5).cursor_default().tab_stop(false)
+                    })
+                    .when(available, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                                d.channel = c;
+                                d.pin = None;
+                            }
+                            cx.notify();
+                        }))
+                    }),
             );
         }
-        let tags = match channel {
-            Channel::Stable => self.stable_builds().into_iter().map(|b| b.tag).collect(),
-            Channel::Nightly => self.sunrise_choices(),
-        };
+        if !stable_available {
+            channels = channels.child(
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(p.muted))
+                    .child(tr("No stable release yet")),
+            );
+        }
         let mut versions = div()
             .id("new-versions")
             .max_h(px(94.))
@@ -164,7 +194,9 @@ impl Launcher {
             .gap(px(3.))
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("new-versions"));
-        for (idx, tag) in std::iter::once(None)
+        for (idx, tag) in channel_available
+            .then_some(None)
+            .into_iter()
             .chain(tags.into_iter().map(Some))
             .enumerate()
         {
