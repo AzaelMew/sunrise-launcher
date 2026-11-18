@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       pr:
-        description: Run the full checks on this pull request's head (a fork's on GitHub's runners) and post `build` on it
+        description: A fork's pull request whose head gets the full checks, on GitHub's runners, and `build` posted on it
         type: string
         default: ''
       force_hosted:
@@ -35,13 +35,28 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      contents: read
       pull-requests: read
     outputs:
+      rust: ${{ steps.rust.outputs.version }}
       full: ${{ steps.route.outputs.full }}
       sha: ${{ steps.route.outputs.sha }}
       trusted: ${{ steps.route.outputs.trusted }}
       runner: ${{ steps.route.outputs.runner }}
     steps:
+      # Rust is pinned by the workflow's own revision (main's on a dispatch), never by the head a dispatch tests.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: pin
+          sparse-checkout: tools/ci/rust-version
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - id: rust
+        run: |
+          version=$(tr -d '[:space:]' < pin/tools/ci/rust-version)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tools/ci/rust-version holds $version, not X.Y.Z"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - id: route
         env:
           GH_TOKEN: ${{ github.token }}
@@ -60,7 +75,8 @@ jobs:
             read -r state sha repo < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '"\(.state) \(.head.sha) \(.head.repo.full_name // "")"')
             [[ "$state" == open ]] || { echo "::error::pull request #$PR is $state"; exit 1; }
             [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::pull request #$PR has no head commit"; exit 1; }
-            [[ "$repo" == "$GITHUB_REPOSITORY" ]] || trusted=false
+            [[ "$repo" != "$GITHUB_REPOSITORY" ]] || { echo "::error::#$PR is this repository's own: its own run checks its head, so re-run that"; exit 1; }
+            trusted=false
           fi
           # Dyna's pool only for this repository's own code, while SUNRISE_LAUNCHER_CI_RUNNER names it and its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds.
           runner=ubuntu-24.04
@@ -88,12 +104,9 @@ jobs:
         with:
           ref: ${{ needs.route.outputs.sha }}
           persist-credentials: false
-      - name: The pinned Rust (tools/ci/rust-version)
-        id: rust
-        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
-          toolchain: ${{ steps.rust.outputs.version }}
+          toolchain: ${{ needs.route.outputs.rust }}
           components: rustfmt
       - run: cargo fmt --all --check
 
@@ -126,12 +139,9 @@ jobs:
         run: >-
           bash tools/ci/install_launcher_deps.sh libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
           libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
-      - name: The pinned Rust (tools/ci/rust-version)
-        id: rust
-        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
-          toolchain: ${{ steps.rust.outputs.version }}
+          toolchain: ${{ needs.route.outputs.rust }}
           components: rustfmt, clippy
           targets: ${{ matrix.targets }}
       # A fork's code, dispatched on main, never touches main's caches: no restore, no save.

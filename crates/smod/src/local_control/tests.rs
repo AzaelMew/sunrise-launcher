@@ -207,10 +207,10 @@ fn full_backlog_cannot_block_connect_past_its_deadline() {
     let mut queued = Vec::new();
     for _ in 0..64 {
         let (send, receive) = mpsc::channel();
-        let marker = marker.clone();
+        let client = marker.clone();
         std::thread::spawn(move || {
             let started = Instant::now();
-            let result = connect(&marker, started + Duration::from_millis(20));
+            let result = connect(&client, started + Duration::from_millis(20));
             let _ = send.send((result, started.elapsed()));
         });
         match receive.recv_timeout(Duration::from_secs(1)) {
@@ -225,6 +225,22 @@ fn full_backlog_cannot_block_connect_past_its_deadline() {
                     !queued.is_empty(),
                     "the first client was refused: no backlog was filled"
                 );
+                // Independent proof the queue is full: a raw non-blocking connect gets EAGAIN, Linux's answer for a full AF_UNIX backlog.
+                #[cfg(target_os = "linux")]
+                {
+                    let raw =
+                        socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)
+                            .unwrap();
+                    raw.set_nonblocking(true).unwrap();
+                    let address =
+                        socket2::SockAddr::unix(marker.directory.join("control")).unwrap();
+                    let refused = raw.connect(&address).unwrap_err();
+                    assert_eq!(
+                        refused.raw_os_error(),
+                        Some(libc::EAGAIN),
+                        "the backlog isn't full: {refused}"
+                    );
+                }
                 return;
             }
             Err(_) => panic!("connect blocked behind the full backlog"),
