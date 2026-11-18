@@ -10,7 +10,7 @@ parser.add_argument("keys", nargs="+", help="New source-English strings used by 
 parser.add_argument("--remove", action="append", default=[], help="Obsolete source-English key")
 args = parser.parse_args()
 
-for path in sorted((Path(__file__).resolve().parents[1] / "launcher/lang").glob("*.json")):
+for path in sorted((Path(__file__).resolve().parents[1] / "lang").glob("*.json")):
     source = path.read_text(encoding="utf-8")
     table = json.loads(source)
     for key in args.remove:
