@@ -248,7 +248,7 @@ impl Launcher {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(tr("This mod can't be shown")),
                     )
-                    .child(muted(e))
+                    .child(note(e))
                     .into_any_element()
             }
             Some(Some(Ok(p))) => p,
@@ -285,7 +285,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
-                            .child(p.name.clone()),
+                            .child(crate::selectable::selectable(p.name.clone())),
                     )
                     .child(
                         div()
@@ -294,7 +294,7 @@ impl Launcher {
                             .items_center()
                             .gap_x(px(8.))
                             .gap_y(px(4.))
-                            .child(muted(credit))
+                            .child(note(credit))
                             .child(tag(p.make.label()))
                             .children(p.categories.first().map(|k| {
                                 div()
@@ -402,7 +402,7 @@ impl Launcher {
                 .child(dim(primary("alt-project-add", tr("Add to my game"))
                     .w_full()
                     .h(px(tokens::ACTION))))
-                .child(muted(fit.reason().unwrap_or_else(|| {
+                .child(note(fit.reason().unwrap_or_else(|| {
                     tr("No version fits this build.").to_string()
                 })))
                 .into_any_element(),
@@ -421,7 +421,7 @@ impl Launcher {
                 ],
             )
         });
-        let changes = |title: String, note: String, glyph: &'static str| {
+        let changes = |title: String, detail: String, glyph: &'static str| {
             div()
                 .flex()
                 .items_center()
@@ -438,7 +438,7 @@ impl Launcher {
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(title),
                         )
-                        .child(muted(note)),
+                        .child(note(detail)),
                 )
         };
         let mut what = div().flex().flex_col().child(
@@ -479,10 +479,10 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::SMALL))
                             .text_color(c(palette().muted))
-                            .child(l)
+                            .child(crate::selectable::selectable(l))
                     }))
                     .child(what)
-                    .children(p.trust.iter().map(|line| muted(line.clone()))),
+                    .children(p.trust.iter().map(|line| note(line.clone()))),
             )
             .child({
                 let row = about_row;

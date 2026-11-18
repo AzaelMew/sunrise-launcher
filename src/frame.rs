@@ -463,6 +463,7 @@ impl Launcher {
         self.window_long_side = self.window_width.max(self.window_height);
         crate::paint::begin(&self.settings, &self.theme);
         scrolls_begin();
+        crate::selectable::begin();
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);
