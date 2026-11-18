@@ -215,16 +215,21 @@ impl Launcher {
             (
                 "sidebar-discord",
                 tr("Discord"),
-                "message",
+                "discord",
                 self.links.discord.clone(),
             ),
             (
                 "sidebar-website",
                 tr("Website"),
-                "globe",
+                "earth",
                 self.links.website.clone(),
             ),
-            ("sidebar-settings", tr("Settings"), "sliders", String::new()),
+            (
+                "sidebar-settings",
+                tr("Settings"),
+                "sliders-horizontal",
+                String::new(),
+            ),
         ] {
             let settings = id == "sidebar-settings";
             rail = rail.child(
@@ -233,7 +238,7 @@ impl Launcher {
                     label.into(),
                     settings && self.ui.page == Page::Settings,
                 )
-                .child(blocks::icon(icon, 18., rgb(p.chrome_muted).into()))
+                .child(crate::glass_ui::icon(icon, 18., rgb(p.chrome_muted).into()))
                 .when(wide, |d| d.child(txt(label.into())))
                 .when(settings || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
