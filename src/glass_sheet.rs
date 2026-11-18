@@ -20,54 +20,6 @@ pub(super) enum SheetTab {
     Storage,
 }
 
-impl SheetTab {
-    const ALL: [SheetTab; 5] = [
-        SheetTab::General,
-        SheetTab::Installation,
-        SheetTab::Launch,
-        SheetTab::Hooks,
-        SheetTab::Storage,
-    ];
-
-    /// Its name, icon and the line under its name.
-    fn about(self) -> (&'static str, &'static str, &'static str) {
-        match self {
-            SheetTab::General => (
-                "General",
-                "pencil-edit-02",
-                "Name, icon and where it shows in the sidebar.",
-            ),
-            SheetTab::Installation => (
-                "Installation",
-                "download-04",
-                "The game version this instance runs.",
-            ),
-            SheetTab::Launch => (
-                "Launch",
-                "play",
-                "How the game starts and how much it may use.",
-            ),
-            SheetTab::Hooks => (
-                "Launch commands",
-                "computer-terminal-01",
-                "Commands that run before and after the game. Most people never need these.",
-            ),
-            SheetTab::Storage => (
-                "Storage",
-                "package-01",
-                "Space this instance takes, and ways to take it elsewhere.",
-            ),
-        }
-    }
-
-    /// `SUNRISE_LAUNCHER_SHEET` (screenshots): the section the sheet opens on.
-    pub(super) fn from_env() -> Option<SheetTab> {
-        let name = std::env::var("SUNRISE_LAUNCHER_SHEET").ok()?;
-        SheetTab::ALL
-            .into_iter()
-            .find(|t| t.about().0.eq_ignore_ascii_case(&name))
-    }
-}
 
 /// What the dialog would keep, as typed or picked.
 struct Draft {

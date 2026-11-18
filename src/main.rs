@@ -39,7 +39,6 @@ mod glass_storage;
 mod glass_toast;
 mod glass_ui;
 mod glass_versions;
-mod home_tabs;
 mod instance_icons;
 mod instance_mods;
 mod instances_page;
@@ -288,8 +287,6 @@ struct Launcher {
     account_menu: bool,
     /// The glass sidebar's ⋮ menu (`frame.rs`).
     row_menu: frame::RowMenu,
-    /// The instance sheet's open section (`glass_sheet.rs`).
-    sheet_tab: glass_sheet::SheetTab,
     location_error: Option<String>,
     location_note: Option<String>,
     settings: Settings,
@@ -386,8 +383,6 @@ struct Launcher {
     prepare_started: Option<Instant>,
     /// The download under way as first seen (when, files done), for the time left.
     download_seen: Option<(Instant, usize)>,
-    /// The tab open under Home's hero (`home_tabs.rs`).
-    home_tab: home_tabs::HomeTab,
     /// Home's Play or folder menu, while open (glass look).
     home_menu: glass_home::HomeMenu,
     /// A Home list row's ⋯ menu, while open, and whether its Delete… was clicked once.
@@ -488,7 +483,6 @@ fn menus() -> Vec<Menu> {
 }
 
 mod startup;
-mod worlds_page;
 
 fn main() {
     startup::run();
@@ -620,4 +614,5 @@ mod tests {
     }
 }
 
+mod worlds_page;
 mod native_build;

@@ -118,7 +118,6 @@ impl Launcher {
             language_menu: false,
             account_menu: false,
             row_menu: Default::default(),
-            sheet_tab: Default::default(),
             // The first draw takes the launcher theme from Settings.
             location_error: location_page::startup_error(),
             location_note: location_page::startup_note(),
@@ -186,7 +185,6 @@ impl Launcher {
             install_started: None,
             prepare_started: None,
             download_seen: None,
-            home_tab: home_tabs::HomeTab::from_env(),
             home_menu: Default::default(),
             list_menu: None,
             instance_mods: Default::default(),

@@ -110,12 +110,6 @@ impl NativeLog {
 }
 
 impl Launcher {
-    /// The top bar's Build log opens the panel; its button shows only while a log exists.
-    pub(super) fn native_log_open(&mut self) {
-        self.native_log.open = true;
-        self.native_log.note = None;
-        self.native_log.stale = true;
-    }
 
     /// Begins a build attempt's own log, before anything of it can fail: the last attempt's
     /// file is emptied, or the reason it could not be is shown in its place. An open panel

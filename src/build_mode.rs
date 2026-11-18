@@ -13,17 +13,6 @@ pub(super) struct RouteMemo {}
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
 pub(super) struct UpdateMemo {}
 
-/// What a mod in the list is.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ModKind {
-    /// Rust compiled into the game.
-    Native,
-    /// A sandboxed `mod.wasm`: never needs a build.
-    Wasm,
-    /// Data and assets only.
-    Content,
-}
-
 impl Launcher {
     /// A build stopped for worlds at stake: the choice is shown, and the mods that failed to
     /// compile stay marked past it.

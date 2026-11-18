@@ -98,69 +98,6 @@ impl Launcher {
         self.save_settings();
     }
 
-    pub(super) fn open_instance_dialog(&mut self, editing: Option<Instance>) {
-        self.version_menu = false;
-        // The hook fields start again from the saved instance, not from what was left typed, and
-        // so does the memory box.
-        self.launch = None;
-        self.memory_slider.forget_typing();
-        let editing_one = editing.is_some();
-        let (name, group) = editing
-            .as_ref()
-            .map(|i| (i.name.clone(), i.group.clone().unwrap_or_default()))
-            .unwrap_or_default();
-        self.servers.text(Field::InstanceName).set(name);
-        self.servers.text(Field::InstanceGroup).set(group);
-        let game = editing
-            .as_ref()
-            .and_then(|i| i.java.clone())
-            .unwrap_or_default();
-        let (width, height) = game
-            .window
-            .map(|(w, h)| (w.to_string(), h.to_string()))
-            .unwrap_or_default();
-        self.servers.text(Field::JavaArgs).set(game.jvm_args);
-        self.servers.text(Field::WindowWidth).set(width);
-        self.servers.text(Field::WindowHeight).set(height);
-        self.servers.focus_soon = Some(Field::InstanceName);
-        // What it plays now: Edit can switch it (`instances::switch`).
-        let java = match editing.as_ref().and_then(|i| i.java.as_ref()) {
-            None => Default::default(),
-            Some(j) => new_instance::JavaChoice {
-                kind: match &j.loader {
-                    Some(_) => new_instance::NewKind::Modded,
-                    None => new_instance::NewKind::Vanilla,
-                },
-                loader: j
-                    .loader
-                    .as_ref()
-                    .map_or(sunrise_launcher::loaders::Kind::Fabric, |l| l.kind),
-                version: Some(j.minecraft.clone()),
-                ..Default::default()
-            },
-        };
-        self.instances.dialog = Some(InstanceDialog {
-            icon: editing.as_ref().and_then(|i| i.icon.clone()),
-            pin: editing.as_ref().and_then(|i| i.version.clone()),
-            channel: editing
-                .as_ref()
-                .map_or(instances::Channel::Stable, |i| i.channel),
-            discarding: false,
-            memory: None,
-            picture: None,
-            editing: editing.map(|i| i.id),
-            copy: false,
-            error: None,
-            busy: false,
-            java,
-        });
-        self.servers.text(Field::InstanceVersion).set(String::new());
-        // A new one starts with the name it would get ("My Sunrise"), until the player types one.
-        if !editing_one {
-            self.change(|_| {});
-        }
-    }
-
     /// Closes the dialog; a sheet holding edits not saved asks first. A dialog that is saving
     /// stays.
     pub(super) fn close_instance_dialog(&mut self) {

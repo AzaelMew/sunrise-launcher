@@ -9,14 +9,9 @@
 //! cache at the row's size), else the package's icon or the one its jar names, else a generic glyph.
 use super::*;
 
-/// A mod as the tab lists it.
-#[derive(Clone)]
-pub(super) struct ModRow {}
-
 #[derive(Default)]
 pub(super) struct InstanceMods {
     pub(super) fresh: bool,
-    pub(super) list: Vec<ModRow>,
     /// Only the rows near the view are built (a modpack has hundreds), measured again when the
     /// shown list changes (its length and the filter).
     pub(super) cull: cull::Cull,

@@ -36,13 +36,6 @@ pub(super) struct MemorySlider {
     shown: Option<String>,
 }
 
-impl MemorySlider {
-    /// A new sheet starts from the saved value: nothing left typed in the box carries over.
-    pub(super) fn forget_typing(&mut self) {
-        self.typing = None;
-        self.shown = None;
-    }
-}
 
 impl Launcher {
     /// What the hook fields hold now, when the panel is open for `id`: the commands before and
