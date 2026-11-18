@@ -38,8 +38,8 @@ pub(super) enum Event {
 /// Where a Java mod's check is.
 pub(super) enum Checking {
     Running,
-    Done(Box<Check>),
-    Failed(String),
+    Done,
+    Failed
 }
 
 pub(super) struct Mods {
@@ -62,11 +62,6 @@ pub(super) struct Mods {
     installed_list: cull::Cull,
     pub(super) report_list: cull::Cull,
     more: bool,
-    error: Option<String>,
-    /// The failed search was Sunrise's own registry (its card offers Modrinth instead).
-    error_sunrise: bool,
-    /// The failed search's own words are shown under its plain message.
-    pub(super) error_details: bool,
     pub(super) installed: Vec<installed::Entry>,
     /// The registry native mods' versions the player picked on their Versions tab, by id
     /// (`sunrise::chosen`), read with `installed`.
@@ -191,9 +186,6 @@ impl Mods {
             installed_list: cull::Cull::default(),
             report_list: cull::Cull::default(),
             more: false,
-            error: None,
-            error_sunrise: false,
-            error_details: false,
             installed: Vec::new(),
             chosen: Default::default(),
             checked_for: None,
@@ -268,8 +260,8 @@ impl Launcher {
                 // A check for another Minecraft version than the page's (the instance moved) is dropped.
                 Event::Checked(key, game, result) if game == m.game => {
                     let state = match result {
-                        Ok(c) => Checking::Done(c),
-                        Err(e) => Checking::Failed(e),
+                        Ok(_) => Checking::Done,
+                        Err(_) => Checking::Failed,
                     };
                     m.checks.insert(key, state);
                 }
@@ -672,8 +664,3 @@ fn source_for(kind: PackKind) -> SourceId {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-}

@@ -278,8 +278,6 @@ impl Launcher {
                     };
                     self.installed = backend::installed();
                     self.reload_instances();
-                    // A build attempt ended: an open panel reads the log it left.
-                    self.native_log.stale = true;
                     // No permission: the question is the answer, not the refusal's words.
                     let no_consent = matches!(result, Err(native_mods::Failed::NoConsent));
                     if no_consent {
@@ -461,7 +459,6 @@ impl Launcher {
         changed |= self.mods_tick();
         changed |= self.alt_mods_drain();
         changed |= self.github_tick();
-        changed |= self.native_log_read(cx);
         changed |= self.toast_tick();
         if let Some(sign_in) = &self.sign_in {
             if let Some(state) = sign_in_change(&mut self.sign_in_state, sign_in.state()) {

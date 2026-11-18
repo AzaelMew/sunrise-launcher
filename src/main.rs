@@ -276,9 +276,8 @@ struct Launcher {
     /// contents, so an entry never goes stale.
     native_builds:
         std::cell::RefCell<std::collections::HashMap<String, Option<native_status::Build>>>,
-    /// The top bar's Build log panel (`native_log_page.rs`).
+    /// This attempt's build log (`native_log_page.rs`).
     native_log: native_log_page::NativeLog,
-    confirm_remove: Option<String>,
     picker: glass_home::PickerState,
     /// Settings > Language's dropdown (`language_page.rs`).
     language_menu: bool,

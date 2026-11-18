@@ -46,5 +46,4 @@ fn fitted(bytes: Vec<u8>, size: f32, scale: f32) -> Option<Arc<RenderImage>> {
 #[derive(Clone)]
 pub(super) struct Chosen {
     pub(super) png: Vec<u8>,
-    pub(super) preview: Arc<RenderImage>,
 }

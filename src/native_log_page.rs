@@ -1,125 +1,23 @@
-//! The top bar's Build log: the native-mods build's own log (`native_mods::log_path`), read on
-//! a background thread when the panel opens or Refresh is pressed, never per frame. Copy log
-//! copies the whole file; Open full log and Show in folder point at the file itself, and only
-//! a bounded tail of it is shown, with a notice when there is more. Each build attempt starts
-//! its own log before its preflight can fail (`native_log_reset`, `native_log_preflight`), so
-//! the panel never shows the last attempt as the latest, and an open panel reads again when a
-//! build starts or ends.
+//! A native-mods build attempt's own log (`native_mods::log_path`): each attempt starts it fresh
+//! before its preflight can fail (`native_log_reset`, `native_log_preflight`), so the file never
+//! shows the last attempt as the latest.
 use super::*;
 
-use gpui::{ScrollHandle, SharedString};
 use sunrise_launcher::native_mods;
 
-/// How much of the log the panel shows: its last lines. Copy log still copies all of it.
-const SHOWN: usize = LOG_LINES;
-
-/// The complete copyable snapshot and the bounded tail shown in the panel.
-pub(super) struct Log {
-    /// The whole file as it was read.
-    full: String,
-    /// How many lines the whole file has.
-    lines: usize,
-    /// Its last [`SHOWN`] lines, as the panel lays them out without copying per frame.
-    preview: Vec<SharedString>,
-}
-
-/// What the panel shows in place of the log.
-pub(super) enum Missing {
-    /// Nothing was ever built (or the log was deleted).
-    None,
-    /// It could not be read, or could not be reset for this attempt.
-    Failed(String),
-}
-
+/// Whether the attempt's log could be started, kept so a preflight failure is written only into
+/// a log that was cleared.
+#[derive(Default)]
 pub(super) struct NativeLog {
-    /// Whether the panel is open over the window.
-    pub(super) open: bool,
-    /// A read is wanted: the panel opened, or a build attempt began or ended. `drain` picks it
-    /// up between frames, so `render` never reads the file.
-    pub(super) stale: bool,
-    /// Whether a log exists at all, for the top bar's Build log button (checked in `drain`).
-    pub(super) available: bool,
-    /// A read is under way.
-    pub(super) reading: bool,
-    /// The log as it was last read: `None` while the first read of this opening is under way.
-    pub(super) loaded: Option<Result<Log, Missing>>,
-    /// Why this attempt's log could not be reset, shown in place of the last attempt's file.
-    pub(super) reset: Option<String>,
-    /// The panel's scroll, kept to land on the newest output.
-    pub(super) scroll: ScrollHandle,
-    /// What the last Copy log did.
-    pub(super) note: Option<String>,
-}
-
-impl Default for NativeLog {
-    fn default() -> Self {
-        NativeLog {
-            open: false,
-            stale: false,
-            available: native_mods::log_path().is_file(),
-            reading: false,
-            loaded: None,
-            reset: None,
-            scroll: ScrollHandle::new(),
-            note: None,
-        }
-    }
-}
-
-impl Log {
-    fn read(path: &std::path::Path) -> Result<Self, Missing> {
-        match std::fs::read_to_string(path) {
-            Ok(full) => {
-                let lines = full.lines().count();
-                let preview = full
-                    .lines()
-                    .skip(lines.saturating_sub(SHOWN))
-                    .map(SharedString::from)
-                    .collect();
-                Ok(Log {
-                    full,
-                    lines,
-                    preview,
-                })
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Missing::None),
-            Err(e) => Err(Missing::Failed(e.to_string())),
-        }
-    }
-}
-
-impl NativeLog {
-    fn begin_read(&mut self) -> bool {
-        if !self.open || !self.stale || self.reading {
-            return false;
-        }
-        self.stale = false;
-        self.reading = true;
-        self.loaded = None;
-        self.note = None;
-        true
-    }
-
-    fn finish_read(&mut self, result: Result<Log, Missing>) {
-        self.reading = false;
-        // A refresh or new attempt queued during this read supersedes its result.
-        if !self.stale {
-            self.loaded = Some(result);
-        }
-    }
+    /// Why this attempt's log could not be reset.
+    reset: Option<String>,
 }
 
 impl Launcher {
-
     /// Begins a build attempt's own log, before anything of it can fail: the last attempt's
-    /// file is emptied, or the reason it could not be is shown in its place. An open panel
-    /// reads again rather than keep showing the last attempt as the latest.
+    /// file is emptied.
     pub(super) fn native_log_reset(&mut self) {
         self.native_log.reset = native_mods::clear_log().err();
-        self.native_log.available = true;
-        self.native_log.loaded = None;
-        self.native_log.note = None;
-        self.native_log.stale = true;
     }
 
     /// Records a failure from before the build itself started (no Sunrise to build on, no mods
@@ -128,80 +26,5 @@ impl Launcher {
         if self.native_log.reset.is_none() {
             self.native_log.reset = native_mods::append_log(error).err();
         }
-        self.native_log.stale = true;
-    }
-
-    /// Reads the log again on a background thread, for an open panel: the newest output lands
-    /// in view. A read already under way is not restarted; the next `drain` picks this up.
-    pub(super) fn native_log_read(&mut self, cx: &mut Context<Self>) -> bool {
-        if !self.native_log.begin_read() {
-            return false;
-        }
-        let reset = self.native_log.reset.clone();
-        let task = cx.background_executor().spawn(async move {
-            if let Some(e) = reset {
-                // This attempt never got a fresh log: its own error replaces the file.
-                return Err(Missing::Failed(e));
-            }
-            Log::read(&native_mods::log_path())
-        });
-        cx.spawn(async move |this, cx| {
-            let done = task.await;
-            let _ = this.update(cx, |this, cx| {
-                this.native_log.finish_read(done);
-                this.native_log.scroll.scroll_to_bottom();
-                cx.notify();
-            });
-        })
-        .detach();
-        true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn snapshot_keeps_complete_diagnostics_and_only_renders_the_tail() {
-        let dir = std::env::temp_dir().join(format!("sunrise-log-preview-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("build.log");
-        let full = "first build context\n".repeat(SHOWN + 5)
-            + "error[E0308]: expected String, found &str\n";
-        std::fs::write(&path, &full).unwrap();
-        let log = Log::read(&path).unwrap_or_else(|_| panic!("read the diagnostic fixture"));
-        assert_eq!(log.full, full);
-        assert_eq!(log.lines, SHOWN + 6);
-        assert_eq!(log.preview.len(), SHOWN);
-        assert_eq!(
-            log.preview.last().unwrap().as_ref(),
-            "error[E0308]: expected String, found &str"
-        );
-        std::fs::remove_file(&path).unwrap();
-        assert!(matches!(Log::read(&path), Err(Missing::None)));
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn refresh_during_a_read_discards_old_output_and_retries() {
-        let mut state = NativeLog {
-            open: true,
-            stale: true,
-            ..Default::default()
-        };
-        assert!(state.begin_read());
-        state.stale = true; // A new build, a refresh, or completion while I/O is pending.
-        assert!(!state.begin_read());
-        state.finish_read(Err(Missing::Failed("old build error".into())));
-        assert!(state.loaded.is_none());
-        assert!(state.begin_read());
-        state.finish_read(Err(Missing::None));
-        assert!(matches!(state.loaded, Some(Err(Missing::None))));
-        state.open = false;
-        state.stale = true;
-        assert!(!state.begin_read());
-        state.open = true;
-        assert!(state.begin_read());
     }
 }

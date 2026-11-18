@@ -113,7 +113,6 @@ impl Launcher {
             native_built_mods: Vec::new(),
             native_builds: Default::default(),
             native_log: Default::default(),
-            confirm_remove: None,
             picker: glass_home::PickerState::default(),
             language_menu: false,
             account_menu: false,
