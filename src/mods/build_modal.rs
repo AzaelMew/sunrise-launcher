@@ -501,7 +501,9 @@ impl Launcher {
     /// and from this press on it starts no game, even if it ends well before it hears.
     pub(crate) fn stop_build(&mut self) {
         build_run::stop_asked(self.ui.mods.build.as_mut(), &mut self.play_after_build);
-        native_mods::cancel();
+        if let Some(cancellation) = &self.native_cancellation {
+            cancellation.stop();
+        }
     }
 
     /// Asks the registry again whether a newer version of mod `id` is out, and says what it

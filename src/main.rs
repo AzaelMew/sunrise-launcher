@@ -248,6 +248,7 @@ struct Launcher {
     native_step: Option<String>,
     /// Where the build under way is, for the card's stages and bar.
     native_progress: Option<native_mods::Progress>,
+    native_cancellation: Option<native_mods::Cancellation>,
     /// The first build's one-time download (the compiler), in bytes; `None` once it is there.
     first_build: Option<u64>,
     /// Play is waiting for a build, with the profile and account that pressed it.

@@ -642,6 +642,7 @@ pub(super) fn developer(
     revision: &str,
     target: Target,
     local: &Path,
+    cancellation: &super::Cancellation,
 ) -> Result<Package, String> {
     let host = rust_toolchain::host().ok_or_else(|| Refusal::Host.to_string())?;
     let unit = unit(revision, host.target, side(target));
@@ -655,6 +656,7 @@ pub(super) fn developer(
             "prebuilt": local, "build": revision, "host": host.target,
             "target": target.name(), "out": out,
         }),
+        cancellation,
     )?;
     let folder = |slice: &str| {
         reply["package"][slice]

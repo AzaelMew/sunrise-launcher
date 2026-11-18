@@ -78,9 +78,6 @@ pub(crate) struct Run {
     pub for_play: bool,
     /// When it ended with its window closed: the strip says how it went for [`SAID_FOR`].
     pub said_at: Option<Instant>,
-    /// The player asked it to stop (Cancel build, or Stop on the strip and Home). The build's
-    /// worker may only hear of it later, or not at all.
-    pub stop_asked: bool,
 }
 
 /// How much of the whole each stage is: compiling is nearly all of a build.
@@ -120,7 +117,6 @@ impl Run {
             details: false,
             for_play,
             said_at: None,
-            stop_asked: false,
         }
     }
 
@@ -341,7 +337,6 @@ impl Run {
 pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<PlayAfterBuild>) {
     *wanted = None;
     if let Some(run) = run {
-        run.stop_asked = true;
         run.for_play = false;
     }
 }
@@ -353,18 +348,18 @@ pub(crate) struct PlayAfterBuild {
     pub account: Option<String>,
 }
 
-impl PlayAfterBuild {
-    /// Resume only on the profile that asked, still playing the game just built. A skipped
-    /// mod doesn't stop this: the build still gave a game. Keep the original account.
-    pub(crate) fn ready(
-        self,
-        built: Option<&str>,
-        plays: Option<(&str, Option<&str>)>,
-    ) -> Option<Self> {
-        let built = built?;
-        let (selected, version) = plays?;
-        (self.instance == selected && version == Some(built)).then_some(self)
-    }
+/// Selects the Play handoff when a `Native` result completes. Resume only on the profile that
+/// asked, still playing the game just built. A skipped mod doesn't stop this: the build still
+/// gave a game. Keep the original account.
+pub(crate) fn play_on_finish(
+    wanted: Option<PlayAfterBuild>,
+    result: &Result<String, native_mods::Failed>,
+    plays: Option<(&str, Option<&str>)>,
+) -> Option<PlayAfterBuild> {
+    let play = wanted?;
+    let built = result.as_deref().ok()?;
+    let (selected, version) = plays?;
+    (play.instance == selected && version == Some(built)).then_some(play)
 }
 
 /// A mod the build left out, as its line says it.
@@ -608,11 +603,12 @@ mod tests {
             instance: "autumn".into(),
             account: Some("original-account".into()),
         };
-        let built = Some("native-abc");
-        let playing = Some(("autumn", built));
+        let built = Ok("native-abc".to_owned());
+        let version = Some("native-abc");
+        let playing = Some(("autumn", version));
         // Auto-launch on success: the same profile on the game just built, and the account
         // that originally pressed Play, independent of who is selected when the build ends.
-        let ready = press_play().ready(built, playing).unwrap();
+        let ready = play_on_finish(Some(press_play()), &built, playing).unwrap();
         assert_eq!(ready.account.as_deref(), Some("original-account"));
         // A mod the build skipped doesn't block: the build still gave a game. Closing the
         // window changes none of these: what starts the game is the build's result.
@@ -620,22 +616,25 @@ mod tests {
         skipped.step(&unfit("jei"));
         skipped.done();
         assert_eq!(skipped.counts().needs_update, 1);
-        assert!(press_play().ready(built, playing).is_some());
+        assert!(play_on_finish(Some(press_play()), &built, playing).is_some());
         // Cancel, or a build that stopped: no game, so no launch.
-        assert!(press_play().ready(None, playing).is_none());
+        assert!(play_on_finish(
+            Some(press_play()),
+            &Err(native_mods::Failed::Nothing),
+            playing
+        )
+        .is_none());
         // Cancel pressed, and the build ended well all the same (the press came after its last
         // check): the game it gave is kept and said, and nothing starts.
         let mut late = self::run(true);
         let mut wanted = Some(press_play());
         stop_asked(Some(&mut late), &mut wanted);
-        assert!(late.stop_asked && !late.for_play);
-        assert!(wanted.is_none());
+        assert!(!late.for_play);
+        assert!(play_on_finish(wanted, &built, playing).is_none());
         late.done();
         assert_eq!(late.headline(), "Your mods are ready");
         // Another profile was picked meanwhile, or this one's game changed.
-        assert!(press_play().ready(built, Some(("winter", built))).is_none());
-        assert!(press_play()
-            .ready(built, Some(("autumn", Some("v1"))))
-            .is_none());
+        assert!(play_on_finish(Some(press_play()), &built, Some(("winter", version))).is_none());
+        assert!(play_on_finish(Some(press_play()), &built, Some(("autumn", Some("v1")))).is_none());
     }
 }

@@ -67,6 +67,10 @@ impl Launcher {
                 return;
             }
         };
+        // The attempt belongs to both the controls and the worker from the start. A stop
+        // before the worker is scheduled is already visible when the worker first checks it.
+        let cancellation = native_mods::Cancellation::default();
+        self.native_cancellation = Some(cancellation.clone());
         self.native_step = Some(tr("Starting the build").into());
         self.native_progress = None;
         // The first build downloads the compiler: the card says so, with its size.
@@ -105,6 +109,7 @@ impl Launcher {
                 &instance,
                 None,
                 back_up,
+                &cancellation,
                 |step| {
                     let _ = tx.send(Msg::NativeProgress(step));
                 },

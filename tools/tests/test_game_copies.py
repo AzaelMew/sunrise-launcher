@@ -160,8 +160,7 @@ SAME_FUNCTIONS = (
         "bundle_in", "is_revision", "bundle_files", "digest", "source_digest", "copy_bundle",
     )),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/build_log.rs", (
-        "log_path", "clear_log", "append_log", "check_cancelled", "cancel", "clear_cancel", "mod_id_from_file",
-        "diagnostic",
+        "log_path", "clear_log", "append_log", "mod_id_from_file", "diagnostic",
     )),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/build_log.rs", ("compiling",)),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/sdk_cache.rs", ("at",)),
@@ -194,7 +193,7 @@ SAME_ITEMS = (
     }""", ""),
     ), ("pub enum Target", "impl Target", "pub const NATIVE_MANIFEST", "pub struct Bundle", "impl Bundle")),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/build_log.rs", (), (
-        "pub const CANCELLED", "static CANCEL",
+        "pub const CANCELLED",  # Cancellation state belongs to each launcher attempt, not a process global.
     )),
     ("crates/sunrise-native-build/src/prebuilt.rs", "src/native_mods/build_log.rs", (), (
         "pub enum Refusal", "impl std::fmt::Display for Refusal", "impl Refusal",

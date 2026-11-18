@@ -1,6 +1,7 @@
 //! Publish native installations before exposing their completion marker.
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn install(
     base: &str,
     version: &str,
@@ -9,6 +10,7 @@ pub(super) fn install(
     libraries: &[PathBuf],
     about: &serde_json::Value,
     mods: &[Bundle],
+    cancellation: &Cancellation,
 ) -> Result<(), String> {
     let _publication = crate::run_leases::installation().map_err(cache_error)?;
     let from = backend::version_dir(base);
@@ -32,7 +34,7 @@ pub(super) fn install(
                 .join(&bundle.manifest.id),
         )?;
     }
-    if let Err(cancelled) = check_cancelled() {
+    if let Err(cancelled) = cancellation.check() {
         let _ = fs::remove_dir_all(&partial);
         return Err(cancelled);
     }

@@ -236,14 +236,10 @@ impl Launcher {
                     self.native_progress = Some(step.progress());
                     if let Some(run) = &mut self.ui.mods.build {
                         run.step(&step);
-                        // A build clears the last build's cancel as it starts: a press that
-                        // came before that is said again, so it is never lost.
-                        if run.stop_asked {
-                            native_mods::cancel();
-                        }
                     }
                 }
                 Msg::Native(result) => {
+                    self.native_cancellation = None;
                     self.native_step = None;
                     self.native_progress = None;
                     self.first_build = None;
@@ -251,7 +247,6 @@ impl Launcher {
                     // instance it was pressed for, still on the build just made (another may
                     // have been picked, or its version changed, meanwhile).
                     let wanted = self.play_after_build.take();
-                    let built = result.as_ref().ok().cloned();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
                     self.installed = backend::installed();
                     self.reload_instances();
@@ -260,17 +255,17 @@ impl Launcher {
                     if no_consent {
                         self.request_native_build_consent();
                     }
-                    if let (Err(e), false) = (result, cancelled || no_consent) {
-                        if let native_mods::Failed::Worlds(stake) = &e {
+                    if let (Err(e), false) = (&result, cancelled || no_consent) {
+                        if let native_mods::Failed::Worlds(stake) = e {
                             self.keep_stop(stake);
                         }
-                        if let native_mods::Failed::Mods { left, .. } = &e {
+                        if let native_mods::Failed::Mods { left, .. } = e {
                             self.native_failed_mods = left.iter().map(|l| l.id.clone()).collect();
                         }
                         // Read against the mods this build was given, not the instance now
                         // selected.
                         let built = std::mem::take(&mut self.native_built_mods);
-                        self.native_failed(String::from(e), &built);
+                        self.native_failed(e.to_string(), &built);
                     }
                     // The build window's build ends as the build did. With its window closed,
                     // the strip says how it went for a moment.
@@ -278,10 +273,10 @@ impl Launcher {
                     if no_consent {
                         self.ui.mods.build = None;
                     } else if let Some(run) = &mut self.ui.mods.build {
-                        match (&built, cancelled, &self.native_error) {
-                            (Some(_), ..) => run.done(),
-                            (None, true, _) => run.cancelled(),
-                            (None, false, error) => run.stopped(
+                        match (result.is_ok(), cancelled, &self.native_error) {
+                            (true, ..) => run.done(),
+                            (false, true, _) => run.cancelled(),
+                            (false, false, error) => run.stopped(
                                 error.clone().unwrap_or_default(),
                                 &self.native_failed_mods,
                             ),
@@ -299,7 +294,8 @@ impl Launcher {
                     let plays = self
                         .selected_instance()
                         .map(|i| (i.id.as_str(), self.version_of(i).map(String::as_str)));
-                    if let Some(play) = wanted.and_then(|play| play.ready(built.as_deref(), plays))
+                    if let Some(play) =
+                        crate::mods::build_run::play_on_finish(wanted, &result, plays)
                     {
                         // The game is what the player asked for: its window gets out of the way.
                         if shown {

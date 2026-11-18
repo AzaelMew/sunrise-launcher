@@ -102,6 +102,7 @@ impl Launcher {
             import_error: None,
             native_step: None,
             native_progress: None,
+            native_cancellation: None,
             first_build: None,
             play_after_build: None,
             native_error: None,
