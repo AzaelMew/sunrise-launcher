@@ -120,6 +120,18 @@ fn holes(s: &str) -> BTreeSet<&str> {
         .collect()
 }
 
+/// A profile has one name wherever a player reads it. "Setup" is only the Windows installer,
+/// whose window is not translated through `tr`.
+#[test]
+fn a_profile_is_never_called_a_setup() {
+    let (asked, _) = strings();
+    let setups: Vec<_> = asked
+        .iter()
+        .filter(|said| said.to_lowercase().contains("setup"))
+        .collect();
+    assert!(setups.is_empty(), "{setups:#?}");
+}
+
 #[test]
 fn translations_are_valid_and_coverage_is_reported() {
     let (mut asked, all) = strings();

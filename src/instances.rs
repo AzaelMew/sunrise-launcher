@@ -565,7 +565,7 @@ fn retired_in(all: &[Instance], saved: Option<&str>) -> Option<String> {
 fn retired_message(id: &str) -> String {
     let name = id.split_once(':').map_or(id, |(_, rest)| rest);
     crate::i18n::trf(
-        "The selected setup {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
+        "The selected profile {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
         &[("name", name)],
     )
 }

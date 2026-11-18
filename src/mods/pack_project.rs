@@ -217,9 +217,9 @@ impl Launcher {
         let within = match self.ui.mods.data.worlds_with(p.source, &p.id) {
             _ if !data => None,
             0 => None,
-            1 => Some(tr("In 1 world of this setup.").to_string()),
+            1 => Some(tr("In 1 world of this profile.").to_string()),
             n => Some(trf(
-                "In {count} worlds of this setup.",
+                "In {count} worlds of this profile.",
                 &[("count", &n.to_string())],
             )),
         };

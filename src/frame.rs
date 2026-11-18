@@ -315,7 +315,8 @@ impl Launcher {
                     }
                     Load::Failed(e) => e.clone(),
                     Load::Ready(_) => {
-                        tr("No downloadable build matches this setup. Choose a game build.").into()
+                        tr("No downloadable build matches this profile. Choose a game build.")
+                            .into()
                     }
                 });
                 if matches!(self.releases, Load::Failed(_)) {

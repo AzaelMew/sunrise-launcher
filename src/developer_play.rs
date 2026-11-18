@@ -75,7 +75,7 @@ impl Launcher {
                         .find(|i| Some(&i.id) == instance_id.as_ref())
                     else {
                         self.client_error = Some(
-                            tr("This instance no longer exists. Choose another instance to play.")
+                            tr("This profile no longer exists. Choose another profile to play.")
                                 .into(),
                         );
                         self.joining = None;

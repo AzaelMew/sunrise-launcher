@@ -289,7 +289,7 @@ impl Launcher {
             .filter(|_| self.location_error.is_none())
             .map(|i| i.home.clone())
         else {
-            self.ui.mods.notice = Some(Err(tr("Select a Sunrise setup first.").to_string()));
+            self.ui.mods.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
             return;
         };
         // Only worlds of the setup on screen, in the order they are listed.
@@ -332,7 +332,7 @@ impl Launcher {
         let home = self.mods_home();
         let (world, file) = key;
         let result = match browser::try_lock_home(&home) {
-            None => Err(tr("This setup is busy. Try again when the operation finishes.").into()),
+            None => Err(tr("This profile is busy. Try again when the operation finishes.").into()),
             Some(_guard) => check_world(&home, &world).and_then(|_| {
                 let pack = datapacks::list(&world)
                     .into_iter()
@@ -554,7 +554,7 @@ impl Launcher {
                 .flex_col()
                 .child(heading)
                 .child(div().text_size(px(tokens::LABEL)).child(tr(
-                    "A data pack goes into a world, and this setup has none yet. Make one in the game first.",
+                    "A data pack goes into a world, and this profile has none yet. Make one in the game first.",
                 )))
                 .child(div().flex().justify_end().child(close(tr("Close"))));
             return Some(crate::sheets::frame("alt-pick", 520., body, cx));
@@ -635,7 +635,7 @@ impl Launcher {
             })),
         };
         let say = match free {
-            0 => tr("Every world of this setup has it already."),
+            0 => tr("Every world of this profile has it already."),
             _ => tr("Choose the worlds it goes into. The game turns it on when a world opens."),
         };
         let body = div()
@@ -667,7 +667,7 @@ fn add_to_worlds(
     progress: &dyn Fn(f32),
 ) -> Result<String, String> {
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
-        tr("This setup is busy. Try again when the operation finishes.").to_string()
+        tr("This profile is busy. Try again when the operation finishes.").to_string()
     })?;
     // The file the next world gets, the note that goes with it, and what the download said.
     let (mut file, mut origin, mut coverage) = match what {

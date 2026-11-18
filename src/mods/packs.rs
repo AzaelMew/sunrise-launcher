@@ -135,7 +135,7 @@ impl Launcher {
                 .spawn(async move {
                     let _lock =
                         sunrise_launcher::browser::try_lock_home(&home).ok_or_else(|| {
-                            tr("This setup is busy. Try again when the operation finishes.")
+                            tr("This profile is busy. Try again when the operation finishes.")
                                 .to_string()
                         })?;
                     let mut added = Vec::new();
@@ -179,7 +179,7 @@ impl Launcher {
         }
         let result = match sunrise_launcher::browser::try_lock_home(home) {
             Some(_guard) => change(),
-            None => Err(tr("This setup is busy. Try again when the operation finishes.").into()),
+            None => Err(tr("This profile is busy. Try again when the operation finishes.").into()),
         };
         self.ui.mods.notice = result.err().map(Err);
         self.game_packs.confirm_remove = None;

@@ -283,7 +283,7 @@ impl Launcher {
             m.confirm = None;
             m.selection.clear();
             m.notice = Some(Err(tr(
-                "The setup changed since you reviewed this. Nothing was changed; choose again.",
+                "The profile changed since you reviewed this. Nothing was changed; choose again.",
             )
             .to_string()));
             return;

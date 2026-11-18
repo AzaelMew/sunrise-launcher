@@ -499,7 +499,7 @@ fn the_launchers_own_sentences_are_said_as_written_and_a_long_one_is_cut_at_a_wo
         "The game is already running.",
         "Install a Sunrise game build first.",
         "Checking available builds. Press Play when the list is ready.",
-        "No downloadable build matches this setup. Choose a game build.",
+        "No downloadable build matches this profile. Choose a game build.",
         "Wait for the preparation to finish, then press Play.",
         "Sunrise nightly-2026-11-17 is too old for this launcher: install a newer version.",
         "Nov 17 isn't prepared yet: choose Prepare in Play's menu.",
