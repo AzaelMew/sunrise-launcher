@@ -259,3 +259,43 @@ fn a_level_dat_the_game_loads_is_read_past_the_default_tag_cap() {
     assert_eq!(read(&dir).unwrap().name, "Named");
     fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn a_last_played_too_far_ahead_for_a_system_time_is_clamped_not_a_panic() {
+    let home = scratch("last-played-far");
+    world(
+        &home,
+        "Far",
+        vec![
+            ("LevelName", name("Far")),
+            ("LastPlayed", Tag::Long(i64::MAX)),
+        ],
+    );
+    let worlds = list(&home);
+    assert_eq!(worlds.len(), 1);
+    assert_eq!(
+        worlds[0].last_played,
+        UNIX_EPOCH + Duration::from_millis(253_402_300_799_000)
+    );
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn worlds_played_past_the_clamp_keep_the_newest_first() {
+    let home = scratch("last-played-order");
+    // Both later than the clamp, the older one first in the folder.
+    for (folder, millis) in [("A", i64::MAX - 1), ("B", i64::MAX)] {
+        world(
+            &home,
+            folder,
+            vec![
+                ("LevelName", name("Twin")),
+                ("LastPlayed", Tag::Long(millis)),
+            ],
+        );
+    }
+    let folders: Vec<String> = list(&home).into_iter().map(|w| w.folder).collect();
+    assert_eq!(folders, ["B", "A"]);
+    assert_eq!(find(&home, "twin").unwrap().folder, "B");
+    fs::remove_dir_all(home).unwrap();
+}

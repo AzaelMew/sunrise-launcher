@@ -79,9 +79,10 @@ fn write(path: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
     let mut zip = zip::ZipWriter::new(fs::File::create(path).map_err(|e| e.to_string())?);
     let options = zip::write::SimpleFileOptions::default();
     for (rel, file) in files {
-        let bytes = match rel.ends_with("/level.dat") {
-            true => shareable_level(file)?,
-            false => fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?,
+        let bytes = match rel.as_str() {
+            rel if rel.ends_with("/level.dat") => shareable_level(file)?,
+            "options.txt" => shareable_options(file)?,
+            _ => fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?,
         };
         zip.start_file(rel, options).map_err(|e| e.to_string())?;
         zip.write_all(&bytes).map_err(|e| e.to_string())?;
@@ -110,6 +111,29 @@ fn walk(home: &Path, dir: &Path, skip: &[&str], out: &mut Vec<(String, PathBuf)>
             out.push((rel.to_string_lossy().replace('\\', "/"), path));
         }
     }
+}
+
+/// `options.txt` without its `lastServer:` line: the address the player last connected to is theirs,
+/// not part of the instance they share. Filtered as bytes, so a file that is not UTF-8 loses it too;
+/// every other line keeps its bytes and its ending.
+fn shareable_options(file: &Path) -> Result<Vec<u8>, String> {
+    let bytes = fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut rest = &bytes[..];
+    while !rest.is_empty() {
+        // The game ends a line at LF, CRLF or a bare CR, as `BufferedReader.lines()` does.
+        let end = match rest.iter().position(|b| matches!(b, b'\r' | b'\n')) {
+            Some(i) if rest[i] == b'\r' && rest.get(i + 1) == Some(&b'\n') => i + 2,
+            Some(i) => i + 1,
+            None => rest.len(),
+        };
+        let (line, tail) = rest.split_at(end);
+        if !line.starts_with(b"lastServer:") {
+            out.extend_from_slice(line);
+        }
+        rest = tail;
+    }
+    Ok(out)
 }
 
 /// A world's level.dat without the player's UUID; unreadable, it goes as it is.

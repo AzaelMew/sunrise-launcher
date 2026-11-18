@@ -101,6 +101,23 @@ fn read(zip: &Path, name: &str) -> Vec<u8> {
 }
 
 #[test]
+fn an_exported_options_file_does_not_carry_the_last_server() {
+    let home = home("last-server");
+    // The game ends a line at LF, CRLF or a bare CR, and reads past bytes that are not UTF-8.
+    put(
+        &home.join("options.txt"),
+        b"lang:fr_ch\rlastServer:203.0.113.7:25565\rfov:70\r\nlastServer:\r\nname:caf\xE9\xFF\nlastServer:x\rgamma:1",
+    );
+    let out = home.join("out/Share.zip");
+    export(&home, "Share", &[], &out).unwrap();
+    assert_eq!(
+        read(&out, "options.txt"),
+        b"lang:fr_ch\rfov:70\r\nname:caf\xE9\xFF\ngamma:1"
+    );
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
 fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     let home = home("zip");
     let out = home.join("out/Hardcore.zip");
