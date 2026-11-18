@@ -751,39 +751,12 @@ impl Launcher {
     /// The first start: signed out, nothing to play yet (mock 10). Nothing is read from outside
     /// the launcher's own data.
     fn alt_welcome(&mut self, cx: &mut Context<Self>) -> Div {
-        div()
-            .relative()
-            .h(px(270.))
-            .rounded(px(12.))
-            .overflow_hidden()
-            .border_1()
-            .border_color(rgb(LINE))
-            .bg(gpui::linear_gradient(
-                180.,
-                gpui::linear_color_stop(rgb(0x1a1320), 0.),
-                gpui::linear_color_stop(rgb(0x8a4a3e), 1.),
-            ))
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .h(px(110.))
-                    .bg(gpui::linear_gradient(
-                        0.,
-                        gpui::linear_color_stop(rgb(0x1a1214), 0.),
-                        gpui::linear_color_stop(rgba(0x1a121400), 1.),
-                    )),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .px(px(34.))
-                    .py(px(60.))
+        card()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .px(px(34.))
+            .py(px(40.))
                     .child(
                         div()
                             .text_size(px(30.))
@@ -811,8 +784,7 @@ impl Launcher {
                                 this.alt.page = crate::alt::Page::Settings;
                                 cx.notify();
                             })),
-                    ),
-            )
+                    )
     }
 
     /// Asks the registry for the most downloaded mods once per game version.
