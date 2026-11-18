@@ -557,7 +557,7 @@ impl Launcher {
                 .flex_col()
                 .gap(px(8.))
                 .child(native)
-                .child(warning(error));
+                .child(hint(error));
         }
         group(vec![native])
     }
@@ -598,7 +598,13 @@ impl Launcher {
             .storage_report
             .as_ref()
             .map(|report| report.rows.iter().map(|r| r.remaining_bytes).sum::<u64>());
-        let nothing = busy || total == Some(0);
+        let nothing = busy || total.is_none_or(|bytes| bytes == 0);
+        // Counting that failed is not still counting.
+        let uncounted = if self.storage_error.is_some() && !busy {
+            tr("Not counted")
+        } else {
+            tr("Counting…")
+        };
         let clear_all = button("alt-storage-clear-all", tr("Clear all…"));
         let mut cache = vec![row(
             tr("Downloads kept for reuse"),
@@ -606,7 +612,7 @@ impl Launcher {
                 "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
                 &[(
                     "size",
-                    &total.map_or_else(|| tr("Counting…").to_string(), storage::format_bytes),
+                    &total.map_or_else(|| uncounted.to_string(), storage::format_bytes),
                 )],
             ),
             div()
@@ -627,6 +633,18 @@ impl Launcher {
                     }))
                 }),
         )];
+        // A problem no row owns is said once, quietly, under the total.
+        if let Some(error) = self.storage_error.clone() {
+            let total = cache.remove(0);
+            cache.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(total)
+                    .child(hint(error)),
+            );
+        }
         if let Some(asked) = self.storage_confirm {
             let bytes: u64 = self
                 .storage_report
@@ -711,7 +729,7 @@ impl Launcher {
                 .as_ref()
                 .and_then(|report| report.rows.iter().find(|r| r.category == category));
             let size = found.map_or_else(
-                || tr("Counting…").to_string(),
+                || uncounted.to_string(),
                 |r| storage::format_bytes(r.remaining_bytes),
             );
             let empty = busy || found.is_none_or(|r| r.remaining_bytes == 0);
@@ -738,6 +756,10 @@ impl Launcher {
                 .iter()
                 .flat_map(|r| &r.kept)
                 .map(|k| {
+                    // A unit that was refused whole was not counted either.
+                    if k.bytes == 0 {
+                        return hint(k.reason.clone());
+                    }
                     hint(trf(
                         "Space it couldn't free: {bytes}. {reason}",
                         &[
@@ -762,7 +784,6 @@ impl Launcher {
                 .is_some()
                 .then(|| hint(tr("A game is running. Files it may use are kept."))),
             busy.then(|| hint(tr("Counting, or clearing…"))),
-            self.storage_error.clone().map(warning),
         ];
         div()
             .flex()
