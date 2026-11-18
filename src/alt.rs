@@ -19,12 +19,16 @@ const CHROME: u32 = 0x100e0f;
 pub(super) enum Page {
     #[default]
     Home,
+    Discover,
+    Installed,
+    Project,
 }
 
 #[derive(Default)]
 pub(super) struct State {
     pub page: Page,
     pub home: crate::alt_home::AltHomeState,
+    pub mods: crate::alt_mods::AltModsState,
     pub sheet: Option<Sheet>,
     pub sheets: crate::alt_sheets::AltSheetsState,
     pub picker: bool,
@@ -170,7 +174,8 @@ impl Launcher {
     }
 
     pub(super) fn alt_launch_busy(&self) -> bool {
-        self.installing.is_some()
+        self.alt_mutating()
+            || self.installing.is_some()
             || self.preparing
             || self.native_step.is_some()
             || self.starting_client.is_some()
@@ -247,6 +252,8 @@ impl Launcher {
             tr("Building mods…").into()
         } else if self.starting_client.is_some() {
             tr("Starting…").into()
+        } else if self.alt_mutating() {
+            tr("Changing mods…").into()
         } else if self.client.is_some() {
             tr("Stop game").into()
         } else if !signed_in {
@@ -266,6 +273,23 @@ impl Launcher {
                 && !busy
                 && self.client.is_none()
         });
+        let said = brief
+            .map(str::to_owned)
+            .filter(|_| self.native_step.is_none())
+            .or(hold.clone())
+            .or_else(|| {
+                update.as_ref().map(|r| {
+                    trf(
+                        "{build} is available",
+                        &[("build", &crate::alt_sheets::build_name(&r.tag))],
+                    )
+                })
+            });
+        // Mods the game was made without are no problem to raise: one quiet line, at most.
+        self.alt_mods_read_once();
+        let waiting = (said.is_none() && self.native_step.is_none())
+            .then(|| self.alt_mods_not_on_build())
+            .filter(|count| *count > 0);
         let mut bar = div()
             .flex()
             .items_center()
@@ -359,20 +383,25 @@ impl Launcher {
                     .line_clamp(2)
                     .text_ellipsis()
                     .children(self.alt_build_line())
-                    .children(
-                        brief
-                            .map(str::to_owned)
-                            .filter(|_| self.native_step.is_none())
-                            .or(hold.clone())
-                            .or_else(|| {
-                                update.as_ref().map(|r| {
-                                    trf(
-                                        "{build} is available",
-                                        &[("build", &crate::alt_sheets::build_name(&r.tag))],
-                                    )
-                                })
-                            }),
-                    ),
+                    .children(said)
+                    // Nothing to act on here: the row under Mods says why and what to do.
+                    .children(waiting.map(|count| {
+                        div()
+                            .id("alt-not-on-build")
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(TEXT)))
+                            .child(match count {
+                                1 => tr("1 mod not on this build").to_string(),
+                                n => trf(
+                                    "{count} mods not on this build",
+                                    &[("count", &n.to_string())],
+                                ),
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.alt_show_installed_mods();
+                                cx.notify();
+                            }))
+                    })),
             );
         if let Some(all) = more.filter(|_| self.native_step.is_none()) {
             bar = bar.child(
@@ -490,7 +519,8 @@ impl Launcher {
         }
         let page = self.alt.page;
         let rail_link = |p: Page, id: &'static str, label: &'static str, icon: &'static str| {
-            let on = page == p;
+            let on = page == p
+                || (p == Page::Discover && matches!(page, Page::Installed | Page::Project));
             div()
                 .id(id)
                 .tab_index(0)
@@ -524,7 +554,10 @@ impl Launcher {
                 ))
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.alt.page = p;
+                    match p {
+                        Page::Discover => this.alt_open_mods(),
+                        _ => this.alt.page = p,
+                    }
                     this.alt.picker = false;
                     cx.notify();
                 }))
@@ -539,6 +572,7 @@ impl Launcher {
             .gap(px(4.))
             .child(div().mb(px(12.)).child(crate::mark(36.)))
             .child(rail_link(Page::Home, "alt-nav-home", "Home", "home"))
+            .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"))
             .child(div().flex_1());
         let content = match page {
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
@@ -548,6 +582,7 @@ impl Launcher {
                 ))
                 .into_any_element(),
             Page::Home => self.alt_home(window, cx),
+            _ => self.alt_mods(window, cx),
         };
         let page_body = div()
             .relative()

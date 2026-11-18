@@ -18,6 +18,7 @@ mod agents_page;
 mod alt;
 mod alt_build;
 mod alt_home;
+mod alt_mods;
 mod alt_sheets;
 mod blocks;
 mod build_mode;

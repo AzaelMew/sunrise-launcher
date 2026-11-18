@@ -478,6 +478,7 @@ impl Launcher {
         }
         changed |= self.servers_tick();
         changed |= self.mods_tick();
+        changed |= self.alt_mods_drain();
         changed |= self.github_tick();
         changed |= self.native_log_read(cx);
         changed |= self.toast_tick();

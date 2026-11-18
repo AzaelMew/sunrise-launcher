@@ -925,7 +925,19 @@ impl Launcher {
             .flex()
             .items_center()
             .justify_between()
-            .child(heading(tr("Popular mods")));
+            .child(heading(tr("Popular mods")))
+            .child(
+                div()
+                    .id("alt-browse-mods")
+                    .cursor_pointer()
+                    .text_size(px(13.))
+                    .text_color(rgb(GOLD))
+                    .child(tr("Browse all mods"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.alt.page = crate::alt::Page::Discover;
+                        cx.notify();
+                    })),
+            );
         let game = self.mods_game();
         let body = match &self.alt.home.popular {
             Popular::Ready(_, found) => {
@@ -981,7 +993,7 @@ impl Launcher {
             .children(note)
     }
 
-    fn alt_popular_row(&mut self, i: usize, project: Project, _cx: &mut Context<Self>) -> Div {
+    fn alt_popular_row(&mut self, i: usize, project: Project, cx: &mut Context<Self>) -> Div {
         let busy = self
             .mods
             .busy
@@ -989,6 +1001,22 @@ impl Launcher {
             .map(|(id, line, _)| (id.clone(), line.clone()));
         let this_busy = busy.as_ref().is_some_and(|(id, _)| *id == project.id);
         let icon = self.mods_icon(&project, 36.);
+        let add = button(
+            format!("alt-popular-{i}-add"),
+            tr(if this_busy { "Adding…" } else { "Add" }),
+        );
+        let add = if !self.alt_launch_busy() && self.alt_mods_locked().is_none() {
+            let p = project.clone();
+            add.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if !this.alt_launch_busy() && this.alt_mods_locked().is_none() {
+                    this.mods_install(p.source, p.id.clone(), Some(p.clone()));
+                }
+                cx.notify();
+            }))
+        } else {
+            add.opacity(0.4).cursor_default()
+        };
+        let open = project.id.clone();
         div()
             .flex()
             .items_center()
@@ -999,8 +1027,10 @@ impl Launcher {
             .child(icon)
             .child(
                 div()
+                    .id(SharedString::from(format!("alt-popular-{i}-open")))
                     .flex_1()
                     .min_w(px(0.))
+                    .cursor_pointer()
                     .child(
                         div()
                             .text_size(px(14.))
@@ -1014,8 +1044,13 @@ impl Launcher {
                     .child(muted(match busy.filter(|_| this_busy) {
                         Some((_, line)) => line,
                         None => project.summary.clone(),
+                    }))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.alt_mods_show_project(open.clone());
+                        cx.notify();
                     })),
             )
+            .child(add)
     }
 }
 

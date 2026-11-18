@@ -488,7 +488,8 @@ impl Launcher {
             base,
             ..
         } = held;
-        let names = &mods;
+        let known = self.alt_mods_named(&mods);
+        let names: Vec<String> = known.iter().map(|(name, _)| name.clone()).collect();
         let them = match names.as_slice() {
             [one] => one.clone(),
             _ => tr("them").to_string(),
@@ -516,6 +517,8 @@ impl Launcher {
             )
         };
 
+        // The mods, each with what can be done about it right here.
+        let mut can_update = false;
         let mut list = div()
             .flex()
             .flex_col()
@@ -523,7 +526,33 @@ impl Launcher {
             .border_1()
             .border_color(rgb(LINE))
             .bg(rgb(BG));
-        for (n, name) in names.iter().enumerate() {
+        for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
+            let about = match newer {
+                Some(version) => trf(
+                    "Version {version} is out. Update it, then check the game update again.",
+                    &[("version", version)],
+                ),
+                None => tr(
+                    "Needs an update from its author. There is no newer version yet; when there is, it shows here and under Mods.",
+                )
+                .to_string(),
+            };
+            let update = newer.as_ref().map(|_| {
+                can_update = true;
+                let id = id.clone();
+                button(
+                    ElementId::named_usize("alt-resolve-mod", n),
+                    trf("Update {mod}", &[("mod", name)]),
+                )
+                .bg(rgb(TEXT))
+                .border_color(rgb(TEXT))
+                .text_color(rgb(BG))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.close_alt_sheet();
+                    this.alt_update_mod(&id);
+                    cx.notify();
+                }))
+            });
             list = list.child(
                 div()
                     .flex()
@@ -538,8 +567,10 @@ impl Launcher {
                             .flex()
                             .flex_col()
                             .gap(px(2.))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone())),
-                    ),
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone()))
+                            .child(muted(about)),
+                    )
+                    .children(update),
             );
         }
 
@@ -565,9 +596,10 @@ impl Launcher {
             "alt-resolve-stay",
             trf("Stay on {build} for now", &[("build", &plays)]),
         )
-        .bg(rgb(TEXT))
-        .border_color(rgb(TEXT))
-        .text_color(rgb(BG))
+        // Recommended, unless a mod can simply be updated.
+        .when(!can_update, |b| {
+            b.bg(rgb(TEXT)).border_color(rgb(TEXT)).text_color(rgb(BG))
+        })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             // Staying is what already happens: nothing is written.
             this.close_alt_sheet();
