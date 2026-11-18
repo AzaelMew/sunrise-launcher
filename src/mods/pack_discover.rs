@@ -125,7 +125,7 @@ pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
 /// a real folder directly in `saves/`, with neither it, `saves/` nor `datapacks/` a link to
 /// somewhere else. Gives the world's name.
 pub(super) fn check_world(home: &Path, world: &Path) -> Result<String, String> {
-    let stale = || tr("That world is no longer in this setup.");
+    let stale = || tr("That world is no longer in this profile.");
     let plain_dir = |p: &Path| {
         std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
     };
@@ -267,7 +267,7 @@ impl Launcher {
             return;
         }
         let Some((_, home)) = self.pack_setup() else {
-            self.ui.mods.notice = Some(Err(tr("Select a Sunrise setup first.").to_string()));
+            self.ui.mods.notice = Some(Err(tr("Select a Sunrise profile first.").to_string()));
             return;
         };
         self.dismiss_notice();
@@ -374,11 +374,11 @@ impl Launcher {
         let from: AnyElement = match scope {
             Scope::Data => self.data_pack_line(cx),
             Scope::Shader => muted(tr(
-                "From Sunrise's registry and Modrinth, into this setup's shader packs.",
+                "From Sunrise's registry and Modrinth, into this profile's shader packs.",
             ))
             .into_any_element(),
             Scope::Resource => {
-                muted(tr("From Modrinth, into this setup's resource packs.")).into_any_element()
+                muted(tr("From Modrinth, into this profile's resource packs.")).into_any_element()
             }
         };
         if scope == Scope::Data {
@@ -544,7 +544,7 @@ fn install(
 ) -> Result<String, String> {
     let source = browser::source(project.source);
     let _lock = browser::try_lock_home(home).ok_or_else(|| {
-        tr("This setup is busy. Try again when the operation finishes.").to_string()
+        tr("This profile is busy. Try again when the operation finishes.").to_string()
     })?;
     match project.kind {
         Kind::ResourcePack | Kind::Shader => {

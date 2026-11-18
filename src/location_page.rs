@@ -33,7 +33,7 @@ fn open_error(error: &str) -> String {
 pub(super) fn startup_note() -> Option<String> {
     env_value("SUNRISE_RELOCATION_BACKUP").map(|paths| {
         trf(
-            "Data moved. Old folders still use disk space: {paths}. Verify your worlds and instances before removing them yourself.",
+            "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.",
             &[("paths", &paths)],
         )
     })
@@ -212,7 +212,7 @@ impl Launcher {
         ));
         body = body
             .child(hint(tr(
-                "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.",
+                "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.",
             )))
             .child(hint(tr(
                 "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.",

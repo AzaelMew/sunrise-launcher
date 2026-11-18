@@ -492,7 +492,7 @@ fn find_in(all: &[Instance], query: &str) -> Result<Instance, String> {
         .or_else(|| all.iter().find(|i| i.name.eq_ignore_ascii_case(q)))
         .or_else(|| all.iter().find(|i| bare(&i.id) == q))
         .cloned()
-        .ok_or_else(|| format!("No instance {q}: sunrise-launcher instance list shows them"))
+        .ok_or_else(|| format!("No profile {q}: sunrise-launcher instance list shows them"))
 }
 
 /// Moves an instance's folder to the Trash (where the player can get it back, worlds and all)
@@ -565,7 +565,7 @@ fn retired_in(all: &[Instance], saved: Option<&str>) -> Option<String> {
 fn retired_message(id: &str) -> String {
     let name = id.split_once(':').map_or(id, |(_, rest)| rest);
     crate::i18n::trf(
-        "The selected setup {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
+        "The selected profile {name} was made by an earlier launcher and isn't supported any more. Its files are untouched. Choose another: sunrise-launcher instance select <name>",
         &[("name", name)],
     )
 }
@@ -667,7 +667,7 @@ pub fn create_with(
 /// What creating or renaming an instance says when another already has `name`.
 pub fn name_taken(name: &str) -> String {
     crate::i18n::trf(
-        "There is already an instance called {name}. Choose another name.",
+        "There is already a profile called {name}. Choose another name.",
         &[("name", name)],
     )
 }
@@ -682,7 +682,7 @@ fn create_whole_in(
 ) -> Result<Instance, String> {
     let name = name.trim();
     if name.is_empty() {
-        return Err("An instance needs a name.".into());
+        return Err("A profile needs a name.".into());
     }
     let all = list_in(game_home, data);
     if all.iter().any(|i| i.name.eq_ignore_ascii_case(name)) {
@@ -820,7 +820,7 @@ fn edit_in(
         .filter(|g| !g.is_empty());
     if let Some(name) = &meta.name {
         if name.is_empty() {
-            return Err("An instance needs a name.".into());
+            return Err("A profile needs a name.".into());
         }
         // Only a new name is checked: an import can share a name, and changing anything
         // else about it must still work.

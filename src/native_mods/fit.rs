@@ -187,7 +187,7 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
             let count = misfits.len().to_string();
             if misfits.len() == 1 {
                 trf(
-                    "It was made for {made_for} and this instance runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
+                    "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
                     &[
                         ("made_for", &made(made_for)),
                         ("build", build),
@@ -197,7 +197,7 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
                 )
             } else {
                 trf(
-                    "It was made for {made_for} and this instance runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
+                    "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
                     &[
                         ("made_for", &made(made_for)),
                         ("build", build),
@@ -209,7 +209,7 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
             }
         }
         Verdict::Points { made_for, why } => trf(
-            "It was made for {made_for} and this instance runs {build}, where a point it hooks is not the same: {why}",
+            "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
             &[("made_for", &made(made_for)), ("build", build), ("why", why)],
         ),
     }

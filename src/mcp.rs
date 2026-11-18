@@ -32,18 +32,18 @@ struct Session {
 /// The tools the session runs itself, under their CLI names: they keep a process (the game, a
 /// server) or a sign-in going between calls. Every other CLI command is generated (cli_tools.rs).
 fn session_tools() -> Value {
-    let version = json!({ "type": "string", "description": "An installed version tag such as v2026.10.13. Default: the selected version (play: the instance's own first)." });
+    let version = json!({ "type": "string", "description": "An installed version tag such as v2026.10.13. Default: the selected version (play: the profile's own first)." });
     let none = json!({ "type": "object", "properties": {} });
     let jar_downloads = json!({ "type": "boolean", "description": "Explicit consent to download missing original Java asset/data jars from Modrinth for this launch. Default: false; verified cached jars work offline." });
     json!([
         { "name": "play", "description": "Start the Sunrise client (a game window on the player's screen) under agent control: the game_* tools then play it. Returns once it has started; game_wait_ready waits for the world. CLI: sunrise-launcher play",
           "inputSchema": { "type": "object", "properties": { "version": version,
             "allow_jar_downloads": jar_downloads,
-            "instance": { "type": "string", "description": "The instance to play, by name or id (instance_list). Default: the selected one." },
+            "instance": { "type": "string", "description": "The profile to play, by name or id (instance_list). Default: the selected one." },
             "world": { "type": "string", "description": "Open or create this world (a folder under saves) at once." },
             "creative": { "type": "boolean", "description": "Creative mode for a new world." },
             "join": { "type": "string", "description": "Join a friend's world with its invite code. Only when the player asks." },
-            "server": { "type": "string", "description": "Join this server at once: an address, or a server of the instance's list (multiplayer_list) by name or position. Only when the player asks." },
+            "server": { "type": "string", "description": "Join this server at once: an address, or a server of the profile's list (multiplayer_list) by name or position. Only when the player asks." },
             "offscreen": { "type": "boolean", "description": "Render without showing a window (game_screenshot still works)." },
             "arg": { "type": "array", "items": { "type": "string" }, "description": "Extra game arguments, passed through as-is (for example \"--server-thread\")." } } } },
         { "name": "server", "description": "Start a Sunrise dedicated server. It runs until server_stop or the end of this MCP session. Requires agreeing to the Minecraft EULA. CLI: sunrise-launcher server",

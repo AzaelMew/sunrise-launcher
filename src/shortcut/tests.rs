@@ -220,6 +220,6 @@ fn shortcuts_are_made_found_renamed_and_removed() {
     // Someone else's file of that name stays.
     fs::write(desktop.join("Mine (Sunrise).desktop"), "not ours").unwrap();
     let err = make_in(System::Linux, &desktop, None, exe, "mine", "Mine", t).unwrap_err();
-    assert!(err.contains("isn't this instance's shortcut"), "{err}");
+    assert!(err.contains("isn't this profile's shortcut"), "{err}");
     fs::remove_dir_all(&root).unwrap();
 }

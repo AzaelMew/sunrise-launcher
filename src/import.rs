@@ -108,7 +108,7 @@ pub fn what(file: &Path) -> Result<Dropped, String> {
         return Ok(Dropped::Build);
     }
     Err(format!(
-        "{name} is neither a pack, a shared instance nor a game build: nothing in it that Sunrise reads."
+        "{name} is neither a pack, a shared profile nor a game build: nothing in it that Sunrise reads."
     ))
 }
 
@@ -148,7 +148,7 @@ pub fn import_into(
     create: &dyn Fn(&str) -> Result<Instance, String>,
 ) -> Result<Instance, String> {
     if what(file)? != Dropped::Instance {
-        return Err(format!("{} is not a shared instance.", name_of(file)));
+        return Err(format!("{} is not a shared profile.", name_of(file)));
     }
     import_any(file, progress, create, MAX_IMPORT)
 }
@@ -172,7 +172,7 @@ fn import_any(
             n => format!("{base} ({n})"),
         })
         .find_map(|name| create(&name).ok())
-        .ok_or_else(|| format!("Could not make an instance called {base}."))?;
+        .ok_or_else(|| format!("Could not make a profile called {base}."))?;
     let home = instance.home.clone();
     let filled = fill(&mut zip, &home, progress, limit);
     if let Err(e) = filled {

@@ -120,6 +120,26 @@ fn holes(s: &str) -> BTreeSet<&str> {
         .collect()
 }
 
+/// A profile has one name wherever a player reads it. "Setup" is only the Windows installer,
+/// whose window is not translated through `tr`; "instance" is only the command's name, which
+/// a sentence may quote (`sunrise-launcher instance select`, `--instance`).
+#[test]
+fn a_profile_is_never_called_a_setup_or_an_instance() {
+    let (asked, _) = strings();
+    let others: Vec<_> = asked
+        .iter()
+        .filter(|said| {
+            let said = said
+                .to_lowercase()
+                .replace("sunrise-launcher instance", "")
+                .replace("--instance", "")
+                .replace("{instance}", "");
+            said.contains("setup") || said.contains("instance")
+        })
+        .collect();
+    assert!(others.is_empty(), "{others:#?}");
+}
+
 #[test]
 fn translations_are_valid_and_coverage_is_reported() {
     let (mut asked, all) = strings();
@@ -252,5 +272,52 @@ fn polish_entries_are_valid_and_keep_placeholders() {
     for (en, said) in &table {
         assert!(!said.trim().is_empty(), "empty Polish string: {en:?}");
         assert_eq!(holes(en), holes(said), "Polish: {en:?}");
+    }
+}
+
+/// The duplicate-name error and the reminder to check worlds and profiles before deleting the
+/// old folders are said in every language the launcher has, not in English: renaming a key
+/// carries its translation along, with the name and the paths still filled in.
+#[test]
+fn the_renamed_profile_sentences_kept_their_translations() {
+    let taken = "There is already a profile called {name}. Choose another name.";
+    let moved = "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.";
+    let moves = "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.";
+    for language in Language::ALL
+        .into_iter()
+        .filter(|language| *language != Language::English)
+    {
+        for key in [taken, moved, moves] {
+            let said = tr_in(language, key);
+            assert_ne!(said, key, "{} says it in English", language.code());
+            assert_eq!(holes(said), holes(key), "{}: {said}", language.code());
+        }
+    }
+    assert_eq!(
+        tr_in(Language::French, taken),
+        "Un profil nommé {name} existe déjà. Choisissez un autre nom."
+    );
+    assert_eq!(
+        tr_in(Language::German, taken),
+        "Es gibt bereits ein Profil namens {name}. Wähle einen anderen Namen."
+    );
+    assert_eq!(
+        tr_in(Language::Japanese, taken),
+        "{name}という名前のプロファイルは既にあります。別の名前を選んでください。"
+    );
+    assert!(tr_in(Language::French, moved).contains("vos mondes et vos profils"));
+    assert!(tr_in(Language::Polish, moved).contains("światy i profile"));
+    // Deletion applies to the old folders, never to the worlds and profiles just checked.
+    for (language, object) in [
+        (Language::English, "deleting the old folders"),
+        (Language::Italian, "eliminare le vecchie cartelle"),
+        (Language::Catalan, "eliminar les carpetes antigues"),
+        (Language::Venetian, "cavar łe cartełe vece"),
+    ] {
+        assert!(
+            tr_in(language, moved).contains(object),
+            "{}",
+            language.code()
+        );
     }
 }

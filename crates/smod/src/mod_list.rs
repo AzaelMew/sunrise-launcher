@@ -18,7 +18,7 @@ pub const DIR: &str = "sunrise-mods";
 /// game the launcher built with them.
 pub const NATIVE_DIR: &str = "sunrise-native-mods";
 /// Why a native mod installed in [`NATIVE_DIR`] doesn't run in this game.
-pub const NOT_BUILT: &str = "Installed, not built into this game: build the game with it in the launcher (Settings > Native mods), then play the instance that build is in.";
+pub const NOT_BUILT: &str = "Installed, not built into this game: build the game with it in the launcher (Settings > Native mods), then play the profile that build is in.";
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModList {

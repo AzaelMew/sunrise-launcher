@@ -121,7 +121,7 @@ const SETTINGS_ROWS: [(&str, Section); 16] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
-    ("A second set of mods", Section::Game),
+    ("Profiles", Section::Game),
     ("Theme", Section::Appearance),
     ("Accent", Section::Appearance),
     ("Home background", Section::Appearance),
@@ -908,7 +908,8 @@ mod tests {
             "each group is listed once: {groups:?}"
         );
         assert!(found.contains(&(Group::Navigate, "Settings › Mods".to_string())));
-        assert!(found.contains(&(Group::Settings, "A second set of mods".to_string())));
+        // A row of Settings is found by its own title, in its own group.
+        assert!(listed(&entries, "profiles").contains(&(Group::Settings, "Profiles".to_string())));
     }
 
     #[test]

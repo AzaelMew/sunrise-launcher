@@ -199,37 +199,37 @@ enum ModpackCmd {
 
 #[derive(Subcommand)]
 enum InstanceCmd {
-    /// The instances, each with its game folder (* = the one Play starts)
+    /// The profiles, each with its game folder (* = the one Play starts)
     List,
-    /// Make an instance: empty but for your options and name, or a copy of another one's
+    /// Make a profile: empty but for your options and name, or a copy of another one's
     /// worlds, options and packs
     Create {
         name: String,
-        /// The instance to copy (its name or id)
+        /// The profile to copy (its name or id)
         #[arg(long)]
         copy: Option<String>,
     },
-    /// Rename an instance (its folder stays)
+    /// Rename a profile (its folder stays)
     Rename { instance: String, name: String },
-    /// Delete an instance: its folder (worlds, options, packs) goes to the Trash, where you can
-    /// get it back. Sunrise's own instance stays
+    /// Delete a profile: its folder (worlds, options, packs) goes to the Trash, where you can
+    /// get it back. Sunrise's own profile stays
     Delete { instance: String },
-    /// Set an instance's icon: a block or item name from your prepared files (grass_block),
+    /// Set a profile's icon: a block or item name from your prepared files (grass_block),
     /// a colour (#3fa7d6), or none
     Icon { instance: String, icon: String },
-    /// Put an instance in a sidebar group, or take it out with no group
+    /// Put a profile in a sidebar group, or take it out with no group
     Group {
         instance: String,
         group: Option<String>,
     },
-    /// Make Play start this instance
+    /// Make Play start this profile
     Select { instance: String },
-    /// Keep an instance on one installed Sunrise version, or "latest" to follow updates again
+    /// Keep a profile on one installed Sunrise version, or "latest" to follow updates again
     Version { instance: String, version: String },
-    /// Export an instance to share as a zip: its settings, packs, Sunrise mods and the worlds
+    /// Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds
     /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         instance: Option<String>,
         /// A world to put in it (its name or folder); repeat for more
         #[arg(long)]
@@ -238,7 +238,7 @@ enum InstanceCmd {
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Show or set what runs around an instance's game: a shell command before it (the game
+    /// Show or set what runs around a profile's game: a shell command before it (the game
     /// starts only if it succeeds), a wrapper it runs through (`nice -n 5`), environment
     /// variables ("NAME=value NAME2=value") and a shell command after it exits. An empty value
     /// clears one. The game and the commands also get INST_NAME, INST_ID, INST_DIR,
@@ -264,21 +264,21 @@ enum InstanceCmd {
         #[arg(long)]
         dedicated_gpu: Option<String>,
     },
-    /// Put a shortcut on the desktop that plays an instance (`play --instance`): a .desktop
+    /// Put a shortcut on the desktop that plays a profile (`play --instance`): a .desktop
     /// file (also in the applications menu) on Linux, an app on macOS, a .lnk on Windows
     Shortcut {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         instance: Option<String>,
-        /// Move the instance's shortcuts to the trash instead
+        /// Move the profile's shortcuts to the trash instead
         #[arg(long)]
         remove: bool,
     },
-    /// Import what a file is: a shared instance (a game folder zip, such as `instance export`
-    /// writes) becomes a new instance; a resource or shader pack goes into the instance
+    /// Import what a file is: a shared profile (a game folder zip, such as `instance export`
+    /// writes) becomes a new profile; a resource or shader pack goes into the profile
     /// (default: the selected one)
     Import {
         file: PathBuf,
-        /// The instance a pack goes into
+        /// The profile a pack goes into
         #[arg(long)]
         instance: Option<String>,
     },
@@ -288,11 +288,11 @@ enum InstanceCmd {
 enum WorldsCmd {
     /// The worlds: name, mode, version, last played and size (the default)
     List {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Zip a world into the instance's backups/ folder, as the game's Make Backup does
+    /// Zip a world into the profile's backups/ folder, as the game's Make Backup does
     Backup {
         /// Its folder or name
         world: String,
@@ -356,7 +356,7 @@ enum PacksCmd {
         /// Only this kind
         #[arg(long, value_enum)]
         kind: Option<PackKindArg>,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -397,7 +397,7 @@ enum PacksCmd {
 enum ScreenshotsCmd {
     /// The screenshots, the newest first, with their files (the default)
     List {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -414,7 +414,7 @@ enum ScreenshotsCmd {
 enum MultiplayerCmd {
     /// The servers of the game's Multiplayer screen (the default)
     List {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -438,9 +438,9 @@ enum MultiplayerCmd {
 
 #[derive(Subcommand)]
 enum ModsCmd {
-    /// What the browser installed in an instance (the default)
+    /// What the browser installed in a profile (the default)
     List {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -454,19 +454,19 @@ enum ModsCmd {
         everything: bool,
         #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
         source: SourceArg,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Install a pack or a Sunrise mod and what it needs into an instance, by its id or slug
-    /// (checksums checked); a Sunrise modpack is installed as an instance of its own; a data pack
+    /// Install a pack or a Sunrise mod and what it needs into a profile, by its id or slug
+    /// (checksums checked); a Sunrise modpack is installed as a profile of its own; a data pack
     /// goes into the world `--world` names
     Install {
         project: String,
-        /// Install the project's data pack into this world of the instance (its name or folder)
+        /// Install the project's data pack into this world of the profile (its name or folder)
         #[arg(long)]
         world: Option<String>,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
         /// Allow a version made for another Minecraft version
@@ -481,7 +481,7 @@ enum ModsCmd {
         /// Only say what is newer
         #[arg(long)]
         check: bool,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -497,7 +497,7 @@ enum ModsCmd {
         /// Install every mod the link holds
         #[arg(long)]
         all: bool,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
@@ -512,7 +512,7 @@ enum ModsCmd {
         /// Only say what is newer
         #[arg(long)]
         check: bool,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
@@ -522,7 +522,7 @@ enum ModsCmd {
     /// Remove a pack the browser installed
     Remove {
         project: String,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -530,14 +530,14 @@ enum ModsCmd {
     /// switch)
     Enable {
         project: String,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
     /// Turn off a mod the browser installed; it stays installed
     Disable {
         project: String,
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -625,9 +625,9 @@ enum Cmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long, help = "Installed version to play (default: instance version)")]
+        #[arg(long, help = "Installed version to play (default: profile version)")]
         version: Option<String>,
-        /// The instance to play (its name or id; default: the selected one)
+        /// The profile to play (its name or id; default: the selected one)
         #[arg(long)]
         instance: Option<String>,
         /// Open or create this world (a folder under saves) at once
@@ -685,8 +685,8 @@ enum Cmd {
         #[arg(long)]
         update_lock: bool,
     },
-    /// Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the instance's exact
-    /// Sunrise source revision with the launcher's own Rust, as the version the instance then
+    /// Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the profile's exact
+    /// Sunrise source revision with the launcher's own Rust, as the version the profile then
     /// plays. Not sandboxed: the mods' code runs with your rights. With no native mod found (content
     /// and wasm mods need no build), it says there is nothing to build and exits successfully; a
     /// server export still fails, as no engine is made
@@ -701,11 +701,11 @@ enum Cmd {
         #[arg(long, requires = "catalog")]
         catalog_output: Option<PathBuf>,
         /// A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them
-        /// (default: the native mods installed and turned on in the instance). Server exports
+        /// (default: the native mods installed and turned on in the profile). Server exports
         /// also read wasm internals declarations from .smod packages directly in this folder
         folder: Option<PathBuf>,
         /// Export mode: build a standalone dedicated-server engine into this folder instead of
-        /// an instance's build. Needs a mod FOLDER; no instance is read or changed, and no
+        /// a profile's build. Needs a mod FOLDER; no profile is read or changed, and no
         /// launcher config is written
         #[arg(
             long = "server-output",
@@ -718,16 +718,16 @@ enum Cmd {
         /// jar bytes are never included in the exported folder
         #[arg(long, requires = "server_output")]
         allow_jar_downloads: bool,
-        /// The instance whose installed native mods to build, and which then plays the build
+        /// The profile whose installed native mods to build, and which then plays the build
         /// (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
         /// The installed version whose game files the build reuses, and whose commit it builds on
-        /// when no mod pins one (default: the one the instance plays, so a rebuild stays on its
+        /// when no mod pins one (default: the one the profile plays, so a rebuild stays on its
         /// Sunrise)
         #[arg(long)]
         version: Option<String>,
-        /// Move to the newest installed release or Nightly instead of the Sunrise the instance
+        /// Move to the newest installed release or Nightly instead of the Sunrise the profile
         /// plays (rebuilds the mods for that pinned SDK)
         #[arg(long, conflicts_with = "version")]
         update: bool,
@@ -742,9 +742,9 @@ enum Cmd {
         /// prebuilt one: for CI, which keeps that path proven
         #[arg(long, hide = true)]
         mixins_from_source: bool,
-        /// When a mod this build can't use was saved into the instance's worlds, back those
+        /// When a mod this build can't use was saved into the profile's worlds, back those
         /// worlds up (into the game folder's backups/) and build without it. Without this the
-        /// build stops and names the worlds, leaving the instance as it is
+        /// build stops and names the worlds, leaving the profile as it is
         #[arg(long, conflicts_with = "server_output")]
         back_up_worlds: bool,
     },
@@ -761,7 +761,7 @@ enum Cmd {
     /// game-architecture auto|x64|arm64,
     /// minecraft-dir PATH, server-dir PATH ("default" resets a folder), install-new-versions
     /// on|off, prune-old-versions on|off (delete old versions after an install, keeping the
-    /// selected one, the ones instances use and the newest few), keep-versions N (how many of the
+    /// selected one, the ones profiles use and the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
     /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
@@ -787,11 +787,11 @@ enum Cmd {
         #[arg(allow_hyphen_values = true)]
         args: Option<String>,
     },
-    /// Upload an instance's latest.log to mclo.gs (a paste service for Minecraft logs) and print
+    /// Upload a profile's latest.log to mclo.gs (a paste service for Minecraft logs) and print
     /// its link, for a bug report: only when the player asks. The home folder, the user name and
     /// the account names are taken out first; the link expires after 90 days unread
     ShareLog {
-        /// The instance (default: the selected one)
+        /// The profile (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
@@ -834,32 +834,33 @@ enum Cmd {
         #[command(subcommand)]
         action: Option<DataCmd>,
     },
-    /// Instances: separate game folders, each with its own worlds, options and packs
+    /// Profiles: separate game folders, each with its own worlds, options and packs
+    #[command(visible_alias = "profile")]
     Instance {
         #[command(subcommand)]
         action: Option<InstanceCmd>,
     },
-    /// An instance's single-player worlds: list them, back one up, copy or delete it
+    /// A profile's single-player worlds: list them, back one up, copy or delete it
     Worlds {
         #[command(subcommand)]
         action: Option<WorldsCmd>,
     },
-    /// An instance's resource and shader packs: list, add, turn on or off, remove
+    /// A profile's resource and shader packs: list, add, turn on or off, remove
     Packs {
         #[command(subcommand)]
         action: Option<PacksCmd>,
     },
-    /// Java for Minecraft: Java Edition instances: list the runtimes, download Mojang's
+    /// Java for Minecraft: Java Edition profiles: list the runtimes, download Mojang's
     Java {
         #[command(subcommand)]
         action: Option<JavaCmd>,
     },
-    /// The screenshots F2 took in an instance: list, delete
+    /// The screenshots F2 took in a profile: list, delete
     Screenshots {
         #[command(subcommand)]
         action: Option<ScreenshotsCmd>,
     },
-    /// The servers in an instance's Multiplayer list (servers.dat): list, add, remove
+    /// The servers in a profile's Multiplayer list (servers.dat): list, add, remove
     Multiplayer {
         #[command(subcommand)]
         action: Option<MultiplayerCmd>,
@@ -1619,7 +1620,7 @@ fn java(action: JavaCmd, as_json: bool) -> Result<(), String> {
             if as_json {
                 json(serde_json::json!(all));
             } else if all.is_empty() {
-                println!("No Java yet. Sunrise downloads Mojang's when an instance needs it.");
+                println!("No Java yet. Sunrise downloads Mojang's when a profile needs it.");
             } else {
                 for r in &all {
                     let from = match r.source {
@@ -2376,7 +2377,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     }
     Ok(())
 }
-/// Runs the instance's post-exit command in this terminal, if it has one, and waits for it.
+/// Runs the profile's post-exit command in this terminal, if it has one, and waits for it.
 fn after_exit(instance: &instances::Instance, vars: &[(&'static str, std::ffi::OsString)]) {
     let Some(mut cmd) =
         sunrise_launcher::launch::after_exit(&instance.launch, &instance.home, vars)
@@ -2594,7 +2595,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                         json(value(&i, false));
                     } else {
                         println!(
-                            "Made the instance {} in {}: sunrise-launcher instance select \"{}\"",
+                            "Made the profile {} in {}: sunrise-launcher instance select \"{}\"",
                             i.name,
                             i.home.display(),
                             i.name

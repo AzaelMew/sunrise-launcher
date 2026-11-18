@@ -297,7 +297,7 @@ mod tests {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("unregistered"), "{stderr}");
         assert!(
-            stderr.contains("this managed installation has unregistered cache directories; use Sunrise Launcher Play from the same launcher data directory with the intended instance and installed version (sunrise-launcher play --instance <instance> --version <tag>)"),
+            stderr.contains("this managed installation has unregistered cache directories; use Sunrise Launcher Play from the same launcher data directory with the intended profile and installed version (sunrise-launcher play --instance <instance> --version <tag>)"),
             "{stderr}"
         );
         assert!(!stderr.contains("start the launcher once"), "{stderr}");

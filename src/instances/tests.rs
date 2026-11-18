@@ -198,7 +198,7 @@ fn names_stay_unique_and_packs_are_not_copied() {
     create_in(&home, &data, "Survival", None).unwrap();
     assert_eq!(
         create_in(&home, &data, "survival", None).unwrap_err(),
-        "There is already an instance called survival. Choose another name."
+        "There is already a profile called survival. Choose another name."
     );
     assert!(create_in(&home, &data, "  ", None).is_err());
     // Another name with the same folder name gets the next free folder.

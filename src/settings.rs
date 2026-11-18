@@ -487,10 +487,10 @@ impl Launcher {
         );
         let asking = self.ui.settings.setup;
         let mut setup = row(
-            tr("A second set of mods"),
-            tr("A setup keeps its own mods, worlds and servers. Switch between setups in the sidebar."),
+            tr("Profiles"),
+            tr("A profile keeps its own mods, worlds and servers. Switch between profiles in the sidebar."),
             div().child(
-                button("alt-create", tr(if asking { "Cancel" } else { "New setup…" })).on_click(
+                button("alt-create", tr(if asking { "Cancel" } else { "New profile…" })).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.ui.settings.setup = !this.ui.settings.setup;
                         this.ui.settings.note = None;
@@ -500,10 +500,10 @@ impl Launcher {
             ),
         );
         if asking {
-            let input = self.field(servers_page::Field::InstanceName, "Setup name", 250., cx);
+            let input = self.field(servers_page::Field::InstanceName, "Profile name", 250., cx);
             setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
                 div().flex().items_center().gap(px(8.)).child(input).child(
-                    button("alt-create-empty", tr("Create setup")).on_click(cx.listener(
+                    button("alt-create-empty", tr("Create profile")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
                             let name = this.servers.value(servers_page::Field::InstanceName).trim();
                             match instances::create(name, None) {
@@ -513,8 +513,9 @@ impl Launcher {
                                     this.servers
                                         .text(servers_page::Field::InstanceName)
                                         .set(String::new());
-                                    this.ui.settings.note =
-                                        Some(tr("Setup created. Select it in the sidebar.").into());
+                                    this.ui.settings.note = Some(
+                                        tr("Profile created. Select it in the sidebar.").into(),
+                                    );
                                 }
                                 Err(e) => this.ui.settings.note = Some(e),
                             };
@@ -565,8 +566,8 @@ impl Launcher {
                         &[("mods", &mods.to_string())],
                     ),
                     _ => trf(
-                        "This also turns off {mods} mods with native code in {setups} setups. Turn them back on in each setup's Mods; Sunrise asks again then.",
-                        &[("mods", &mods.to_string()), ("setups", &setups.to_string())],
+                        "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
+                        &[("mods", &mods.to_string()), ("profiles", &setups.to_string())],
                     ),
                 },
                 div()
