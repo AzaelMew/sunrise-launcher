@@ -62,7 +62,7 @@ pub(crate) struct SheetsState {
     /// What has the keyboard while no layer is open, read as each frame starts: the opener of
     /// the next layer, even when the page hands the keyboard to one of that layer's fields.
     before: Option<FocusHandle>,
-    layered: bool,
+    pub(super) layered: bool,
     registry: Option<(Consent, Sender<bool>)>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
@@ -194,6 +194,16 @@ pub(crate) fn frame(
     body: Div,
     cx: &mut Context<Launcher>,
 ) -> Stateful<Div> {
+    modal_frame(id, width, body, cx, Launcher::close_sheet)
+}
+
+pub(crate) fn modal_frame(
+    id: &'static str,
+    width: f32,
+    body: Div,
+    cx: &mut Context<Launcher>,
+    close: fn(&mut Launcher),
+) -> Stateful<Div> {
     div()
         .id(id)
         .absolute()
@@ -213,8 +223,8 @@ pub(crate) fn frame(
         .on_scroll(|_, _, cx| cx.stop_propagation())
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                this.close_sheet();
+            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                close(this);
                 cx.notify();
             }),
         )
@@ -1071,6 +1081,10 @@ impl Launcher {
     }
 
     pub(crate) fn pin_build(&mut self, version: Option<String>, channel: instances::Channel) {
+        if self.launch_busy() || self.client.is_some() {
+            self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
+            return;
+        }
         let Some(instance) = self.selected_instance() else {
             return;
         };

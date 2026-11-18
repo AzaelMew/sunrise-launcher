@@ -173,6 +173,11 @@ impl Launcher {
     /// Opens the sheet on the build the setup keeps now.
     pub(super) fn open_versions(&mut self) {
         self.open_sheet(Sheet::Versions);
+        self.reset_versions();
+    }
+
+    pub(crate) fn reset_versions(&mut self) {
+        self.ui.sheets.error = None;
         let pinned = self.selected_instance().and_then(|i| i.version.clone());
         let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
@@ -187,8 +192,24 @@ impl Launcher {
     }
 
     pub(super) fn versions_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let body = self.versions_content(true, cx);
+        frame("alt-versions", 560., body, cx)
+    }
+
+    pub(crate) fn versions_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        self.versions_content(false, cx)
+            .id("versions-page")
+            .flex_1()
+            .min_h_0()
+            .p(px(24.))
+            .gap(px(12.))
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("versions-page"))
+    }
+
+    fn versions_content(&mut self, sheet: bool, cx: &mut Context<Self>) -> Div {
         let Some(instance) = self.selected_instance() else {
-            return div().id("alt-versions");
+            return div().child(tr("No profile selected."));
         };
         let (pinned, channel) = (instance.version.clone(), instance.channel);
         let plays = self.version_of(instance).cloned();
@@ -370,20 +391,22 @@ impl Launcher {
                 cx.notify();
             },
         ));
-        let keep = button("alt-versions-keep", tr("Keep this build"))
+        let keep = crate::frame::button_base("alt-versions-keep", tr("Keep this build"))
             .bg(rgb(palette().text))
             .border_color(rgb(palette().text))
             .text_color(rgb(palette().background))
             .hover(|s| s.bg(rgb(palette().accent_on)));
         let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
-            Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.pin_build(Some(tag.clone()), channel);
-                if this.ui.sheets.error.is_none() {
-                    this.close_sheet();
-                }
-                cx.notify();
-            })),
-            None => keep.opacity(0.45).cursor_default().tab_stop(false),
+            Some(tag) if !self.launch_busy() && self.client.is_none() => {
+                keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.pin_build(Some(tag.clone()), channel);
+                    if sheet && this.ui.sheets.error.is_none() {
+                        this.close_sheet();
+                    }
+                    cx.notify();
+                }))
+            }
+            _ => keep.opacity(0.45).cursor_default().tab_stop(false),
         };
         // Said once, and only when it stops a choice: with the check that lifts it.
         let native = has_native.then(|| {
@@ -428,7 +451,14 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .child(title(tr("Choose a version").into()))
+            .child(title(
+                if sheet {
+                    tr("Choose a version")
+                } else {
+                    tr("Versions")
+                }
+                .into(),
+            ))
             .child(field)
             .children(native)
             .child(
@@ -451,10 +481,10 @@ impl Launcher {
                     .flex()
                     .justify_end()
                     .gap(px(8.))
-                    .child(cancel)
+                    .when(sheet, |d| d.child(cancel))
                     .child(keep),
             );
-        frame("alt-versions", 560., body, cx)
+        body
     }
 }
 

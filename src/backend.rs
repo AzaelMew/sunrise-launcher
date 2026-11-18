@@ -4166,6 +4166,9 @@ pub struct Settings {
     /// picture). Unset is on; off leaves the plain page (read it with [`Settings::scenery`]).
     #[serde(default, rename = "scenery", skip_serializing_if = "Option::is_none")]
     pub scenery_on: Option<bool>,
+    /// Show names alongside game profiles in the sidebar. Starts collapsed.
+    #[serde(default)]
+    pub sidebar_expanded: bool,
 }
 
 impl Settings {
@@ -5034,6 +5037,17 @@ pub fn {f}("
             None,
             "a stale ARM64 release selection must not install under an x64 choice"
         );
+    }
+
+    #[test]
+    fn sidebar_starts_collapsed_and_remembers_both_positions() {
+        let mut settings = Settings::parse("{}");
+        assert!(!settings.sidebar_expanded);
+        for expanded in [true, false] {
+            settings.sidebar_expanded = expanded;
+            let saved = serde_json::to_string(&settings).unwrap();
+            assert_eq!(Settings::parse(&saved).sidebar_expanded, expanded);
+        }
     }
 
     #[test]

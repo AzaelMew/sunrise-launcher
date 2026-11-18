@@ -239,7 +239,7 @@ impl Launcher {
                             this.install_for_instance(release);
                         }
                         if matches!(instance.kind, InstanceKind::Default | InstanceKind::Own) {
-                            this.go(Page::Play);
+                            this.navigate(crate::frame::Page::Home);
                         }
                     }
                     Err(e) => {

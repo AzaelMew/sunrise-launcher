@@ -603,7 +603,7 @@ impl Launcher {
         self.request_native_build_consent();
     }
 
-    fn open_url(url: &str, cx: &mut Context<Self>) {
+    pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {
         if url.starts_with("https://") {
             cx.open_url(url);
         }
@@ -829,10 +829,36 @@ impl Launcher {
             .gap(px(20.))
             .child(
                 div()
+                    .flex()
+                    .flex_col()
                     .flex_none()
-                    .text_size(px(tokens::DISPLAY))
-                    .font_weight(FontWeight::BOLD)
-                    .child(if packs { tr("Packs") } else { tr("Mods") }),
+                    .child(
+                        div()
+                            .text_size(px(tokens::TITLE))
+                            .font_weight(FontWeight::BOLD)
+                            .child(if packs { tr("Packs") } else { tr("Mods") }),
+                    )
+                    .child(
+                        div()
+                            .id("mods-packs-section")
+                            .reach()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(palette().accent_ink))
+                            .cursor_pointer()
+                            .child(if packs {
+                                tr("Browse mods")
+                            } else {
+                                tr("Browse packs")
+                            })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if packs {
+                                    this.open_mods()
+                                } else {
+                                    this.open_packs()
+                                }
+                                cx.notify();
+                            })),
+                    ),
             )
             .child(
                 div()
