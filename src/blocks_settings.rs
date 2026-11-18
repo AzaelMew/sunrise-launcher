@@ -4,12 +4,10 @@ use super::*;
 impl Launcher {
     pub(crate) fn request_native_build_consent(&mut self) {
         self.native_consent_build = None;
-        self.pending_consent = Some(PendingConsent::Build(
-            native_status::enabled(&self.mods.home())
-                .into_iter()
-                .map(|(id, _, _)| id)
-                .collect(),
-        ));
+        // Play can ask before Mods has ever opened. Bind the same folder for the names in
+        // the question, Decline's toggle and the build that Allow dispatches.
+        let selected = self.selected_instance().map(|i| i.home.clone());
+        self.pending_consent = selected.map(|home| self.mods.build_consent(home));
     }
 
     /// Cancel and Escape share the transition; neither can execute a pending action.
