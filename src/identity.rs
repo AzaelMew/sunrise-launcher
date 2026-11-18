@@ -15,7 +15,7 @@ pub const KEYCHAIN_SERVICE: &str = "net.playsunrise.launcher";
 pub const LOCATION_FOLDER: &str = "sunrise/location";
 pub const LAUNCHER_FOLDER: &str = "sunrise/launcher";
 pub const GAME_FOLDER: &str = "sunrise/game";
-pub const PUBLISHER: &str = "Sunrise";
+pub const PUBLISHER: &str = "sunrise-org";
 pub const UNINSTALL_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SunriseLauncher";
 pub const INSTALL_KEY: &str = "Software\\Sunrise\\Launcher";
