@@ -93,7 +93,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.decide.outputs.matrix) }}
-    runs-on: ${{ matrix.mac && 'macos-15' || matrix.os }}
+    runs-on: ${{ matrix.mac && 'macos-latest' || matrix.os }}
     timeout-minutes: 40
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
