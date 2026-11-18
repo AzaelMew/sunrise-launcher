@@ -157,11 +157,17 @@ impl Launcher {
         if self.mod_preview.active {
             return self.mod_preview.left_out.clone();
         }
-        self.selected_instance()
-            .and_then(|instance| self.version_of(instance))
-            .and_then(|version| self.native_build_of(version))
-            .map(|build| build.left_out)
-            .unwrap_or_default()
+        let Some(instance) = self.selected_instance() else {
+            return Vec::new();
+        };
+        let Some(version) = self.version_of(instance) else {
+            return Vec::new();
+        };
+        match self.native_build_of(version) {
+            Some(build) => build.left_out,
+            // A game that needed no build because every mod with native code was left out.
+            None => native_mods::kept_left_out(&instance.home, version),
+        }
     }
 
     /// The selected instance's build card: the build mode, and the build under way or its end.
@@ -329,7 +335,11 @@ impl Launcher {
             return state;
         }
         let version = self.version_of(instance).cloned();
-        let home = self.mods.home();
+        let home = if cfg!(feature = "redesign-preview") {
+            instance.home.clone()
+        } else {
+            self.mods.home()
+        };
         let profile = Profile::Optimized;
         let key = format!(
             "{}{profile:?}",

@@ -97,10 +97,38 @@ fn level_dat(path: &Path) -> Option<Tag> {
 }
 
 fn read(path: &Path) -> Option<World> {
-    let dat = path.join("level.dat");
-    let changed = fs::metadata(&dat).and_then(|m| m.modified()).ok()?;
-    let folder = path.file_name()?.to_string_lossy().into_owned();
-    let root = level_dat(&dat);
+    scanned_world(path).ok().flatten().map(|s| s.world)
+}
+
+/// A folder with either level file is a world. Use the same recovery order as the game;
+/// if neither is readable it must still be offered a backup.
+fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
+    let mut changed = None;
+    let mut root = None;
+    for file in ["level.dat", "level.dat_old"] {
+        let dat = path.join(file);
+        let meta = match fs::symlink_metadata(&dat) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        changed.get_or_insert_with(|| meta.modified().unwrap_or(UNIX_EPOCH));
+        if dat.is_file() {
+            root = level_dat(&dat).filter(|r| matches!(r.get("Data"), Some(Tag::Compound(_))));
+            if root.is_some() {
+                break;
+            }
+        }
+    }
+    let Some(changed) = changed else {
+        return Ok(None);
+    };
+    let folder = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let known = root.is_some();
     let data = root.as_ref().and_then(|r| r.get("Data"));
     let field = |key: &str| data.and_then(|d| d.get(key));
     let number = |tag: Option<&Tag>| match tag {
@@ -149,7 +177,7 @@ fn read(path: &Path) -> Option<World> {
             .and_then(|r| r.get("sunrise"))
             .and_then(|sunrise| sunrise.get("ContentModList")),
     ));
-    Some(World {
+    let world = World {
         name: text(field("LevelName"))
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(|| folder.clone()),
@@ -161,7 +189,61 @@ fn read(path: &Path) -> Option<World> {
         size: size(path),
         icon: icon.is_file().then_some(icon),
         mods,
-    })
+    };
+    Ok(Some(Scanned { world, known }))
+}
+
+/// A world in `saves/` and whether the list of its mods could be read. A world whose level.dat
+/// and level.dat_old both fail to read is *unknown*: it counts as holding every mod, never none.
+#[derive(Clone, Debug)]
+struct Scanned {
+    pub world: World,
+    pub known: bool,
+}
+
+/// Every world of `home`'s `saves/`, failing closed. A missing `saves/` is no worlds; any other
+/// failure to list the folder, an entry or a level file's metadata is an error, never "no
+/// worlds". Unlike [`list`], which skips what it can't read for the player's screen, this is for
+/// the changes that must not lose a world's mods.
+fn scan(home: &Path) -> Result<Vec<Scanned>, String> {
+    let saves = home.join("saves");
+    let entries = match fs::read_dir(&saves) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("{}: {e}", saves.display())),
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|e| format!("{}: {e}", saves.display()))?
+            .path();
+        if !path
+            .metadata()
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            .is_dir()
+        {
+            continue;
+        }
+        if let Some(world) = scanned_world(&path).map_err(|e| format!("{}: {e}", path.display()))? {
+            out.push(world);
+        }
+    }
+    Ok(out)
+}
+
+/// Saved worlds a change to these mods could affect. Unknown worlds require backup too.
+pub fn at_risk(home: &Path, ids: &[String]) -> Result<Vec<(World, Vec<String>, bool)>, String> {
+    Ok(scan(home)?
+        .into_iter()
+        .filter_map(|s| {
+            let used: Vec<_> = ids
+                .iter()
+                .filter(|id| !s.known || s.world.mods.contains(id))
+                .cloned()
+                .collect();
+            (!used.is_empty()).then_some((s.world, used, s.known))
+        })
+        .collect())
 }
 
 fn size(dir: &Path) -> u64 {
@@ -212,6 +294,7 @@ fn free_name(dir: &Path, base: &str, suffix: &str, first: u32) -> String {
 /// Zips the world into the game folder's `backups/`, as vanilla's Make Backup does. Returns the
 /// zip's path.
 pub fn backup(home: &Path, world: &World) -> Result<PathBuf, String> {
+    let _lock = lock_world(world)?;
     backup_at(home, world, chrono::Local::now())
 }
 
@@ -220,7 +303,6 @@ fn backup_at(
     world: &World,
     now: chrono::DateTime<chrono::Local>,
 ) -> Result<PathBuf, String> {
-    let _lock = lock_world(world)?;
     let dir = home.join("backups");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let prefix = format!("{}_{}", now.format("%Y-%m-%d_%H-%M-%S"), world.folder);
@@ -259,6 +341,88 @@ fn backup_at(
         let _ = fs::remove_file(&zip_path);
         format!("Could not back up {}: {e}", world.name)
     })
+}
+
+/// [`backup`], then reads the new archive back before it is trusted: every file of the world (but
+/// the lock) is in the zip at its size, and every entry is read to the end so a bad checksum or
+/// length shows now. A backup that fails the check is removed and its error returned.
+pub fn backup_verified(home: &Path, world: &World) -> Result<PathBuf, String> {
+    let _lock = lock_world(world)?;
+    let zip = backup_at(home, world, chrono::Local::now())?;
+    match verify_backup(&zip, world) {
+        Ok(()) => Ok(zip),
+        Err(e) => {
+            let _ = fs::remove_file(&zip);
+            Err(format!("The backup of {} is not sound: {e}", world.name))
+        }
+    }
+}
+
+/// Reads the backup back: every file of the world (but the lock) is in the zip at its size, and
+/// each zip entry is read to the end so a bad checksum or length is found now.
+pub fn verify_backup(zip: &Path, world: &World) -> Result<(), String> {
+    use crate::i18n::trf;
+    let file = fs::File::open(zip).map_err(|e| format!("{}: {e}", zip.display()))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip.display()))?;
+    let mut seen = std::collections::HashMap::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry
+            .name()
+            .map(|n| n.into_owned())
+            .map_err(|e| e.to_string())?;
+        let size = entry.size();
+        let copied = std::io::copy(&mut entry, &mut std::io::sink()).map_err(|e| {
+            trf(
+                "{name} in the backup is damaged: {error}",
+                &[("name", &name), ("error", &e.to_string())],
+            )
+        })?;
+        if copied != size {
+            return Err(trf(
+                "{name} in the backup has the wrong length",
+                &[("name", &name)],
+            ));
+        }
+        seen.insert(name, size);
+    }
+    let mut stack = vec![world.path.clone()];
+    while let Some(dir) = stack.pop() {
+        for e in fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+            let e = e.map_err(|e| e.to_string())?;
+            let path = e.path();
+            let meta = path
+                .metadata()
+                .map_err(|e| format!("{}: {e}", path.display()))?;
+            if e.file_type().map_err(|e| e.to_string())?.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.file_name() == Some("session.lock".as_ref()) {
+                continue;
+            }
+            let relative = path.strip_prefix(&world.path).unwrap_or(&path);
+            let mut name = world.folder.clone();
+            for part in relative.components() {
+                name.push('/');
+                name.push_str(&part.as_os_str().to_string_lossy());
+            }
+            match seen.get(&name) {
+                Some(size) if *size == meta.len() => {}
+                Some(_) => {
+                    return Err(trf(
+                        "{name} in the backup has another size than the file",
+                        &[("name", &name)],
+                    ))
+                }
+                None => return Err(trf("the backup lacks {name}", &[("name", &name)])),
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Copies the world into a new folder of the same `saves/`, named "<name> (1)", "<name> (2)"...

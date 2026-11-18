@@ -17,6 +17,8 @@ mod glass_server_dialog;
 #[path = "glass_servers.rs"]
 mod glass_servers;
 use glass_servers::glass_setting_row;
+#[path = "alt_hosting.rs"]
+mod alt_hosting;
 #[path = "servers_format.rs"]
 mod servers_format;
 use servers_format::{backup_label, bytes, uptime};
@@ -500,14 +502,18 @@ impl Launcher {
     /// Called with the launcher's other work: what the background sent, and the next status poll.
     pub(super) fn servers_tick(&mut self) -> bool {
         // The glass page shows how friends reach the server beside it, whatever the tab.
-        let overview = self.page == Page::Servers
+        // The new look's Hosting page is this page.
+        let hosting =
+            cfg!(feature = "redesign-preview") && self.alt.page == crate::alt::Page::Hosting;
+        let showing = self.page == Page::Servers || hosting;
+        let overview = showing
             && self.servers.open.is_some()
-            && (self.servers.tab == Tab::Overview || self.theme.glass);
+            && (self.servers.tab == Tab::Overview || (self.theme.glass && !hosting));
         let mut changed = self.internet_tick(overview);
         while let Ok(event) = self.servers.rx.try_recv() {
             changed |= self.servers_event(event);
         }
-        if self.page != Page::Servers || self.servers.polling || !self.servers.loaded {
+        if !showing || self.servers.polling || !self.servers.loaded {
             return changed;
         }
         let every = if self.servers.open.is_some() {
@@ -1103,7 +1109,11 @@ impl Launcher {
                 // The mockup's focus ring (`:focus-visible`, 2 px of the accent's soft shade) on a
                 // field of its own, drawn inside its edge: GPUI has no outline.
                 .when(
-                    focused && !invalid && !matches!(f, Field::Players | Field::Command),
+                    // The new look's fields mark focus on their own edge.
+                    focused
+                        && !invalid
+                        && !cfg!(feature = "redesign-preview")
+                        && !matches!(f, Field::Players | Field::Command),
                     |d| {
                         let small = matches!(
                             f,
@@ -3434,13 +3444,21 @@ mod tests {
             let (tx, rx) = std::sync::mpsc::channel();
             let dir = root.path().to_path_buf();
             let job = std::thread::spawn(move || run_managed_server(&tx, &dir, &[action], &|_| {}));
-            let message = rx.recv_timeout(Duration::from_secs(10)).unwrap();
-            let backend::Msg::JarConsent { jars, reply } = message else {
-                panic!("expected jar consent")
-            };
-            assert_eq!(jars.len(), 1);
-            assert_eq!(jars[0].id(), "fixture");
-            reply.send(false).unwrap();
+            let message = rx.recv_timeout(Duration::from_secs(10));
+            if cfg!(feature = "redesign-preview") {
+                // The preview has no Modrinth flow. It refuses the launch without prompting.
+                assert!(matches!(
+                    message,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
+                ));
+            } else {
+                let backend::Msg::JarConsent { jars, reply } = message.unwrap() else {
+                    panic!("expected jar consent")
+                };
+                assert_eq!(jars.len(), 1);
+                assert_eq!(jars[0].id(), "fixture");
+                reply.send(false).unwrap();
+            }
             assert!(job.join().unwrap().is_err());
             assert!(!root.path().join("ran").exists());
         }

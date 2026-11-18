@@ -177,6 +177,15 @@ impl Mods {
         self.chosen = sunrise::chosen(&home);
     }
 
+    /// Points the folder installs and toggles go into at `home`, the selected instance's folder,
+    /// without reading or writing anything: the alternative Mods screens (`alt_mods`) call it so
+    /// that a native-code consent answered later continues in the folder they show.
+    pub(super) fn follow_home(&mut self, home: Option<PathBuf>) {
+        if home.is_some() && self.home != home {
+            self.home = home;
+        }
+    }
+
     pub(super) fn home(&self) -> PathBuf {
         self.home.clone().unwrap_or_else(backend::game_home)
     }

@@ -217,7 +217,7 @@ impl Launcher {
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
-            self.client_error = Some(tr("Choose a version on the Versions page first.").into());
+            self.client_error = Some(tr("Install a Sunrise game build first.").into());
             return;
         };
         if let Some(why) = self.why_not_now(&tag) {
@@ -323,7 +323,7 @@ impl Launcher {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
             backend::complete_assets(&tag);
-            if let Some(auto) = auto {
+            if let Some(auto) = auto.filter(|_| !cfg!(feature = "redesign-preview")) {
                 backend::play_step("updating registry mods");
                 let lines = mods_page::auto_update(&[auto], auto_enabled);
                 if !lines.is_empty() {
@@ -449,6 +449,10 @@ impl Launcher {
     }
 
     pub(crate) fn cancel_sign_in(&mut self) {
+        if self.alt.after_sign_in.take().is_some() {
+            self.quick_play = None;
+            self.joining = None;
+        }
         if let Some(old) = self.sign_in.take() {
             old.cancel();
         }

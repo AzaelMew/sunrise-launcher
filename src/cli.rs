@@ -1443,13 +1443,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         trf("{error} Run `cargo sunrise-mod update --sunrise {commit}` in each mod's folder to pin it to this game, then build again.", &[("error", &error), ("commit", &base)])
                     } else { error }
                 })?;
-            println!(
-                "{}",
-                trf(
-                    "{build} built and selected for its instance.",
-                    &[("build", &built)]
-                )
-            );
+            println!("{built}");
         }
         Cmd::DeveloperInstall(args) => developer_builds::install(args, as_json)?,
         Cmd::Remove { tag } => {

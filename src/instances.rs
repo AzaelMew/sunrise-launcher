@@ -147,6 +147,64 @@ pub enum Channel {
     Nightly,
 }
 
+/// A build on the Stable channel; `week` is the Monday of its week when it stands for one.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StableBuild {
+    pub tag: String,
+    pub week: Option<String>,
+}
+
+/// The Stable channel's builds, newest first: the real (non-Nightly, non-pre-release) releases
+/// when any exist; until then the newest Nightly of each Monday to Sunday week. `releases` is
+/// newest first, as GitHub lists them.
+pub fn stable_builds(releases: &[backend::Release]) -> Vec<StableBuild> {
+    let real: Vec<_> = releases
+        .iter()
+        .filter(|r| {
+            r.nightly.is_none()
+                && r.asset.is_some()
+                && !r.prerelease
+                && backend::launcher_version(&r.tag).is_none()
+        })
+        .map(|r| StableBuild {
+            tag: r.tag.clone(),
+            week: None,
+        })
+        .collect();
+    if !real.is_empty() {
+        return real;
+    }
+    use chrono::Datelike;
+    // (monday, date, tag): the newest date of a week wins; the first listed on a tie.
+    let mut weeks: Vec<(String, String, String)> = Vec::new();
+    for r in releases
+        .iter()
+        .filter(|r| r.nightly.is_some() && r.asset.is_some())
+    {
+        let Some(date) = crate::nightly::date_of(&r.tag) else {
+            continue;
+        };
+        let Ok(day) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
+            continue;
+        };
+        let monday =
+            (day - chrono::Duration::days(day.weekday().num_days_from_monday() as i64)).to_string();
+        match weeks.iter_mut().find(|w| w.0 == monday) {
+            Some(w) if w.1.as_str() < date => *w = (monday, date.into(), r.tag.clone()),
+            Some(_) => {}
+            None => weeks.push((monday, date.into(), r.tag.clone())),
+        }
+    }
+    weeks.sort_by(|a, b| b.0.cmp(&a.0));
+    weeks
+        .into_iter()
+        .map(|(monday, _, tag)| StableBuild {
+            tag,
+            week: Some(monday),
+        })
+        .collect()
+}
+
 // An unknown channel must not invalidate unrelated instance metadata.
 fn saved_channel<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
@@ -351,7 +409,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     own.sort();
     // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
     // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
+    if !cfg!(feature = "redesign-preview") && game_home.join(OWN).is_dir() {
         let before = store.instances.len();
         store
             .instances
@@ -603,6 +661,9 @@ fn create_in(
     }
     crate::run_leases::publish(&dir).map_err(crate::native_mods::cache_error)?;
     let mut store = Store::load(data);
+    // A folder removed outside the launcher may still have metadata. A new folder
+    // never inherits its launch settings. Do not rewrite the old entry just by listing it.
+    store.instances.remove(&slug);
     let meta = store.instances.entry(slug.clone()).or_default();
     meta.name = (name != slug).then(|| name.to_string());
     meta.icon = from.and_then(|f| f.icon.clone());

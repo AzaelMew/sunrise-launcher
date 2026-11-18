@@ -44,12 +44,16 @@ pub fn face(skin_png: &[u8]) -> Option<Vec<[u8; 4]>> {
     if skin.width() < 64 || skin.height() < 32 {
         return None;
     }
+    // An old 64x32 skin saved without transparency has a solid block where its hat would be:
+    // the game draws no hat for it, so neither does this. A 64x64 skin's hat is drawn as saved.
+    let hatless =
+        skin.height() == 32 && (32..64).all(|x| (0..16).all(|y| skin.get_pixel(x, y).0[3] == 255));
     let mut out = Vec::with_capacity(64);
     for y in 0..8 {
         for x in 0..8 {
             let base = skin.get_pixel(8 + x, 8 + y).0;
             let hat = skin.get_pixel(40 + x, 8 + y).0;
-            out.push(if hat[3] > 0 { hat } else { base });
+            out.push(if hat[3] > 0 && !hatless { hat } else { base });
         }
     }
     Some(out)
@@ -209,6 +213,19 @@ fn profile_face_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_old_skin_saved_without_transparency_shows_its_face_not_a_solid_hat() {
+        // 64x32, every pixel opaque: a red face under a black block where the hat would be.
+        let mut skin = image::RgbaImage::from_pixel(64, 32, image::Rgba([0, 0, 0, 255]));
+        for (x, y) in (8..16).flat_map(|x| (8..16).map(move |y| (x, y))) {
+            skin.put_pixel(x, y, image::Rgba([200, 0, 0, 255]));
+        }
+        let mut png = Vec::new();
+        skin.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(face(&png).unwrap(), vec![[200, 0, 0, 255]; 64]);
+    }
 
     #[test]
     fn default_skins_follow_the_uuid_hash() {

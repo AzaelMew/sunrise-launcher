@@ -229,8 +229,9 @@ pub fn game_files_ready() -> bool {
 /// Whether an installed version can host: it ships `sunrise-server` and is prepared.
 pub fn can_host(tag: &str) -> Result<(), String> {
     if !backend::version_dir(tag).join(PROGRAM).is_file() {
-        return Err(format!(
-            "Sunrise {tag} has no server program. Install a newer version on the Versions page."
+        return Err(trf(
+            "Sunrise {tag} has no server program. Install a newer game build first.",
+            &[("tag", tag)],
         ));
     }
     if !backend::check_prepared(tag) {
@@ -351,12 +352,67 @@ fn point(link: &Path, target: &Path) -> std::io::Result<()> {
 
 /// `sunrise-server --dir <dir> <args>`.
 pub fn command(dir: &Path, args: &[&str]) -> Result<Command, String> {
+    supervisor_command(dir, args, None)
+}
+
+fn supervisor_command(
+    dir: &Path,
+    args: &[&str],
+    resources: Option<&Path>,
+) -> Result<Command, String> {
     let program = program().ok_or(
         "The server programs aren't set up yet: create a server, or press Prepare on its page.",
     )?;
+    if matches!(args.first(), Some(&"start" | &"restart" | &"run")) {
+        publish_host_runtime(dir, resources)?;
+    }
     let mut cmd = crate::process::command(program);
     cmd.arg("--dir").arg(dir).args(args);
     Ok(cmd)
+}
+
+/// The dedicated game starts directly, not through Play. Like Play it must be able to take
+/// read leases on its install, resources and working directory. Publish them at explicit start:
+/// this also covers older copies and new directories selected by a supervisor update.
+fn publish_host_runtime(dir: &Path, resources: Option<&Path>) -> Result<(), String> {
+    let root = runtime_root();
+    let release = root
+        .join("current")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let releases = backend::data_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .join("server-runtime/releases");
+    // We own the completion marker only in the launcher's copy, never in a custom runtime.
+    if release.parent() != Some(releases.as_path()) {
+        return Ok(());
+    }
+    // Managed Start already asked the supervisor for its engine command before jar consent.
+    // CLI starts use that same format-1 reply, never a guess based on the installed layout.
+    let reported;
+    let resources = match resources {
+        Some(path) => path,
+        None => {
+            let Some((_, path)) = engine_command(dir).map_err(|problem| problem.message)? else {
+                // Before engine-command the CLI forwarded these verbs directly. There is
+                // no authoritative resource path to publish for those supervisors.
+                return Ok(());
+            };
+            reported = path;
+            &reported
+        }
+    };
+    let _publication =
+        crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+    for unit in [release.as_path(), resources, dir] {
+        crate::run_leases::publish(unit).map_err(crate::native_mods::cache_error)?;
+    }
+    match fs::File::create_new(release.join(".installed")) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn supervisor_log(dir: &Path) -> PathBuf {
@@ -397,18 +453,22 @@ pub fn run_managed(
     line: &dyn Fn(String),
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
-    let supervisor = command(dir, args).map_err(Problem::plain)?;
-    let mut engine = engine_command(dir)?;
+    let (mut engine, resources) = engine_command(dir)?.ok_or_else(|| {
+        Problem::plain(tr(
+            "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
+        ))
+    })?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
+    let supervisor = supervisor_command(dir, args, Some(&resources)).map_err(Problem::plain)?;
     stream(dir, supervisor, line)
 }
 
 /// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).
 const ENGINE_COMMAND_FORMAT: u64 = 1;
 
-/// The engine `sunrise-server run` would start in `dir`, as the folder's own `sunrise-server` describes it.
-fn engine_command(dir: &Path) -> Result<Command, Problem> {
+/// The engine and resources the supervisor would use, or `None` for a pre-protocol supervisor.
+fn engine_command(dir: &Path) -> Result<Option<(Command, PathBuf)>, Problem> {
     let output = command(dir, &["engine-command", "--json"])
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
@@ -426,15 +486,13 @@ fn unrun(error: &std::io::Error) -> Problem {
 }
 
 /// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
-fn engine_from_reply(stdout: &[u8]) -> Result<Command, Problem> {
+fn engine_from_reply(stdout: &[u8]) -> Result<Option<(Command, PathBuf)>, Problem> {
     // A build from before `engine-command` answers with its usage, never with a JSON object, whatever its exit code.
     let Some(reply) = serde_json::from_slice::<serde_json::Value>(stdout)
         .ok()
         .filter(serde_json::Value::is_object)
     else {
-        return Err(Problem::plain(tr(
-            "This server's Sunrise build is too old to start from the launcher: update the server to a newer build.",
-        )));
+        return Ok(None);
     };
     if reply["format"]
         .as_u64()
@@ -468,7 +526,7 @@ fn engine_from_reply(stdout: &[u8]) -> Result<Command, Problem> {
             None => engine.env_remove(key),
         };
     }
-    Ok(engine)
+    Ok(Some((engine, PathBuf::from(text("resources")?))))
 }
 
 fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(), Problem> {
@@ -792,10 +850,10 @@ pub fn settings_args(spec: &NewServer, panel_port: u16) -> Vec<String> {
 /// set up, and no installed version (`tag`) to set them up from.
 pub fn create_blocked(tag: Option<&str>) -> Option<Problem> {
     let set_up = program().is_some() && game_files_ready();
-    (!set_up && tag.is_none()).then(|| Problem::plain(NEEDS_VERSION))
+    (!set_up && tag.is_none()).then(|| Problem::plain(tr(NEEDS_VERSION)))
 }
 
-const NEEDS_VERSION: &str = "Install a Sunrise version first (Versions page), then prepare it.";
+const NEEDS_VERSION: &str = "Install a Sunrise game build first, then prepare it.";
 
 /// Creates a server: its folder, the world (a copy when asked), `init` and the settings, then adds it to
 /// the list. `tag` is the installed version whose programs and game files it uses when none are set up.
@@ -807,7 +865,7 @@ pub fn create(spec: &NewServer, tag: Option<&str>, log: &dyn Fn(String)) -> Resu
         });
     }
     if program().is_none() || !game_files_ready() {
-        let tag = tag.ok_or_else(|| Problem::plain(NEEDS_VERSION))?;
+        let tag = tag.ok_or_else(|| Problem::plain(tr(NEEDS_VERSION)))?;
         log(format!("Setting up the server programs from Sunrise {tag}"));
         set_up(tag).map_err(|e| {
             if e.contains("prepared") {

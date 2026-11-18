@@ -35,7 +35,7 @@ mod isolate;
 mod picker;
 pub mod sdk_cache;
 
-pub use isolate::{LeftOut, Why};
+pub use isolate::{kept as kept_left_out, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::Consent;
 mod uses;
@@ -973,6 +973,36 @@ struct Built {
     left_out: Vec<LeftOut>,
 }
 
+/// The game version a completed client build checked. A plain fallback compiled nothing.
+#[derive(Debug)]
+pub enum ClientBuild {
+    Native(String),
+    Plain(String),
+}
+
+impl ClientBuild {
+    pub fn into_version(self) -> String {
+        match self {
+            Self::Native(version) | Self::Plain(version) => version,
+        }
+    }
+}
+
+impl std::fmt::Display for ClientBuild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Native(version) => trf(
+                "{build} built and selected for its instance.",
+                &[("build", version)],
+            ),
+            Self::Plain(version) => trf(
+                "Using plain {build}: all native mods were left out. Nothing was built.",
+                &[("build", version)],
+            ),
+        })
+    }
+}
+
 /// Why a native build or internals check stopped.
 #[derive(Debug)]
 pub enum Failed {
@@ -1147,6 +1177,10 @@ fn refused(refusal: sdk_cache::Refusal) -> String {
 /// when a world in `home` was saved with a mod of `left`, the build stops with
 /// [`Failed::Worlds`] naming them, unless the player chose `back_up`; then each of those worlds
 /// is backed up first, and a backup that fails stops the build with nothing switched off.
+/// The scan fails closed: a `saves/` that can't be listed stops the build, and a world whose
+/// `level.dat` and `level.dat_old` can't be read is unknown, so it counts as saved with every
+/// mod of `left` (named, then backed up on the player's choice) and is never taken for "no mods".
+/// Each backup is read back before anything is switched off.
 fn guard_worlds(
     home: &Path,
     left: &[LeftOut],
@@ -1155,8 +1189,12 @@ fn guard_worlds(
     progress: &impl Fn(Step),
 ) -> Result<(), Failed> {
     let ids: Vec<String> = left.iter().map(|l| l.id.clone()).collect();
-    let all = crate::worlds::list(home);
-    let at_stake = crate::worlds::saved_with(&all, &ids);
+    let at_stake = crate::worlds::at_risk(home, &ids).map_err(|error| {
+        Failed::Other(trf(
+            "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})",
+            &[("error", &error)],
+        ))
+    })?;
     if at_stake.is_empty() {
         return Ok(());
     }
@@ -1166,8 +1204,14 @@ fn guard_worlds(
             .filter_map(|l| {
                 let worlds: Vec<String> = at_stake
                     .iter()
-                    .filter(|(_, mods)| mods.contains(&l.id))
-                    .map(|(world, _)| world.name.clone())
+                    .filter(|(_, mods, _)| mods.contains(&l.id))
+                    .map(|(world, _, known)| match known {
+                        true => world.name.clone(),
+                        false => trf(
+                            "{name} (its list of mods can't be read)",
+                            &[("name", &world.name)],
+                        ),
+                    })
                     .collect();
                 (!worlds.is_empty()).then(|| match l.why {
                     isolate::Why::DidNotBuild => {
@@ -1182,17 +1226,17 @@ fn guard_worlds(
             text,
             worlds: at_stake
                 .iter()
-                .map(|(world, _)| world.name.clone())
+                .map(|(world, _, _)| world.name.clone())
                 .collect(),
             mods: left
                 .iter()
-                .filter(|l| at_stake.iter().any(|(_, mods)| mods.contains(&l.id)))
+                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
                 .map(|l| l.id.clone())
                 .collect(),
             unbuilt: left
                 .iter()
                 .filter(|l| matches!(l.why, isolate::Why::DidNotBuild))
-                .filter(|l| at_stake.iter().any(|(_, mods)| mods.contains(&l.id)))
+                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
                 .map(|l| l.id.clone())
                 .collect(),
             backups: home.join("backups"),
@@ -1200,8 +1244,8 @@ fn guard_worlds(
             base: String::new(),
         })));
     }
-    for (world, _) in &at_stake {
-        let made = crate::worlds::backup(home, world).map_err(|error| {
+    for (world, _, _) in &at_stake {
+        let made = crate::worlds::backup_verified(home, world).map_err(|error| {
             Failed::Other(trf(
                 "Backing up {world} failed, so nothing was switched off or updated: {error}",
                 &[("world", &world.name), ("error", &error)],
@@ -1431,7 +1475,7 @@ fn pipeline(
                 .filter_map(|(id, verdict)| {
                     let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
                     let why = isolate::Why::Unfit(fit::line(id, verdict, &shown));
-                    Some(LeftOut::new(bundle, why))
+                    Some(LeftOut::new(bundle, why).with_detail(fit::detail(verdict)))
                 })
                 .collect();
             let left = isolate::with_dependents(&unfit, &pairs);
@@ -1468,28 +1512,18 @@ fn pipeline(
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
     let blame = |e: String| -> Failed {
-        let failed = fitted.iter().find_map(|id| {
-            let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
-            e.contains(&build_log::failed(&compiling_mod(id)))
-                .then(|| LeftOut::new(bundle, isolate::Why::DidNotBuild))
-        });
-        let Some(left) = failed else {
+        let going = compile_omissions(&e, &fitted, &mods, &declared);
+        let Some(failed) = going.first() else {
             return Failed::Other(e);
         };
         if let Some(home) = worlds {
-            let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = mods
-                .iter()
-                .zip(&declared)
-                .map(|(b, d)| (b, d.as_slice()))
-                .collect();
-            let going = isolate::with_dependents(std::slice::from_ref(&left), &pairs);
             if let Err(stop) = guard_worlds(home, &going, &shown, back_up, progress) {
                 return stop;
             }
         }
         Failed::Mods {
-            error: format!("{}\n\n{e}", fit::did_not_build(&left.id)),
-            left: vec![left],
+            error: format!("{}\n\n{e}", fit::did_not_build(&failed.id)),
+            left: going,
             compiling: true,
         }
     };
@@ -1732,13 +1766,37 @@ fn pipeline(
     Ok(built)
 }
 
+/// The fitted mod identified by the compiler diagnostic, and every required dependent that
+/// would be missing its library. The same reasons guard worlds, drive retries and reach the player.
+fn compile_omissions(
+    error: &str,
+    fitted: &[String],
+    mods: &[Bundle],
+    declared: &[Vec<dependencies::Dependency>],
+) -> Vec<LeftOut> {
+    let Some(bundle) = fitted.iter().find_map(|id| {
+        mods.iter().find(|bundle| {
+            &bundle.manifest.id == id && error.contains(&build_log::failed(&compiling_mod(id)))
+        })
+    }) else {
+        return Vec::new();
+    };
+    let pairs = mods
+        .iter()
+        .zip(declared)
+        .map(|(b, d)| (b, d.as_slice()))
+        .collect::<Vec<_>>();
+    isolate::with_dependents(&[LeftOut::new(bundle, isolate::Why::DidNotBuild)], &pairs)
+}
+
 /// How many times a build compiles again without the mods the compiler's errors were traced to:
 /// each costs a compile, where a mod that doesn't apply costs only horizon-mixins' run.
 const COMPILE_RETRIES: usize = 3;
 
 /// Runs `pipeline` until it builds, each time without the mods that stopped it before (they
 /// are said with `progress` as they are left out, and those needing them once it built). The
-/// error, when it can't, starts with the mods already left out.
+/// error, when it can't, starts with the mods already left out; when leaving them out left
+/// nothing to build, it is [`Failed::Mods`] with all of them.
 fn isolated(
     mut pipeline: impl FnMut(&[LeftOut]) -> Result<Built, Failed>,
     progress: &impl Fn(Step),
@@ -1747,7 +1805,12 @@ fn isolated(
     let mut compiles = 0;
     let mut last = String::new();
     let said = |skip: &[LeftOut], error: String| {
-        let labels: Vec<String> = skip.iter().map(LeftOut::label).collect();
+        // A mod whose own refusal is the error isn't said a second time before it.
+        let labels: Vec<String> = skip
+            .iter()
+            .filter(|left| !matches!(&left.why, isolate::Why::Unfit(line) if error.contains(line)))
+            .map(LeftOut::label)
+            .collect();
         Failed::Other(match labels.is_empty() {
             true => error,
             false => format!("{}\n\n{error}", labels.join("\n")),
@@ -1784,7 +1847,15 @@ fn isolated(
             }
             // Nothing was there to build: said as such, not as an empty failure.
             Err(Failed::Nothing) if skip.is_empty() => return Err(Failed::Nothing),
-            Err(Failed::Nothing) => return Err(said(&skip, last)),
+            // Every mod with native code was left out: there is nothing to build, and the
+            // caller decides what that means (a client plays the game as it is).
+            Err(Failed::Nothing) => {
+                return Err(Failed::Mods {
+                    left: skip,
+                    error: last,
+                    compiling: false,
+                })
+            }
             Err(Failed::NoConsent) => return Err(Failed::NoConsent),
             Err(Failed::Worlds(stake)) => return Err(Failed::Worlds(stake)),
             Err(Failed::Other(error)) if error == CANCELLED => return Err(Failed::Other(error)),
@@ -1825,7 +1896,7 @@ pub fn build(
     back_up: bool,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
-) -> Result<String, Failed> {
+) -> Result<ClientBuild, Failed> {
     require_consent()?;
     build_log::clear_cancel();
     if let Some(error) = backend::native_mod_architecture_error() {
@@ -1855,8 +1926,34 @@ pub fn build(
                 )
             },
             &progress,
-        )
-        .map_err(|failed| match failed {
+        );
+        // Every mod with native code was left out: the game is the plain one, as it is. The
+        // instance plays it (following its channel when that is the build the channel gives),
+        // and keeps which mods wait and why.
+        if let Err(Failed::Mods { left, .. }) = &built {
+            check_cancelled()?;
+            let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
+            isolate::keep(&instance.home, &plain, left)?;
+            let installed = backend::installed();
+            let selected = backend::Settings::load()
+                .selected
+                .filter(|s| installed.contains(s));
+            let follows = follows_plain(instance.channel, &plain, selected.as_deref(), || {
+                instances::stable_builds(&backend::releases().ok()?)
+                    .into_iter()
+                    .find(|b| installed.contains(&b.tag))
+                    .map(|b| b.tag)
+            });
+            instances::edit(&instance.id, |meta| {
+                let unchanged = meta.version == instance.version
+                    && meta.channel.unwrap_or_default() == instance.channel;
+                if unchanged {
+                    meta.version = (!follows).then(|| plain.clone());
+                }
+            })?;
+            return Ok(ClientBuild::Plain(plain));
+        }
+        let built = built.map_err(|failed| match failed {
             // "Stay" keeps the build the instance plays now.
             Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
                 stay: playing(instance),
@@ -1866,6 +1963,7 @@ pub fn build(
             other => other,
         })?;
         check_cancelled()?;
+        isolate::forget(&instance.home);
         // A version or channel the player saved while this built wins: the build stays
         // available, the instance keeps their choice.
         instances::edit(&instance.id, |meta| {
@@ -1883,8 +1981,24 @@ pub fn build(
                 plan: built.plan,
             });
         }
-        Ok(built.version)
+        Ok(ClientBuild::Native(built.version))
     })
+}
+
+/// Clearing the pin must play the checked base both in the window and on the command line.
+/// Nightly follows the launcher's selection. Stable follows the newest installed Stable choice
+/// in the window; if that isn't known, pin rather than guess from an offline list.
+fn follows_plain(
+    channel: instances::Channel,
+    plain: &str,
+    selected: Option<&str>,
+    stable: impl FnOnce() -> Option<String>,
+) -> bool {
+    selected == Some(plain)
+        && match channel {
+            instances::Channel::Nightly => true,
+            instances::Channel::Stable => stable().as_deref() == Some(plain),
+        }
 }
 
 /// The release or Nightly `instance` plays now (the one a native build of it started from).
@@ -2249,6 +2363,7 @@ mod tests {
                             id: "broken".into(),
                             version: "1.0.0".into(),
                             why: isolate::Why::OtherVersion,
+                            detail: None,
                         }],
                         error: "compiler failure".into(),
                         compiling: true,
@@ -2292,11 +2407,14 @@ mod tests {
             Limits::default(),
         )
         .unwrap();
-        fs::write(world.join("level.dat"), bytes).unwrap();
+        // Only the recovery copy still records this mod. Opening the world without it loses content.
+        fs::write(world.join("level.dat_old"), bytes).unwrap();
+        fs::write(world.join("level.dat"), b"damaged").unwrap();
         let left = |why| LeftOut {
             id: "greeter".into(),
             version: "1.0.0".into(),
             why,
+            detail: None,
         };
         let build = "nightly-2026-11-20 (9a8b7c6)";
         // A mod that fit but didn't compile goes through the same rule as one that doesn't fit.
@@ -2359,9 +2477,172 @@ mod tests {
             id: "other".into(),
             version: "1.0.0".into(),
             why: isolate::Why::DidNotBuild,
+            detail: None,
         };
         assert!(guard_worlds(&home, &[other], build, false, &|_| {}).is_ok());
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn the_native_switch_backs_up_unknown_worlds_and_stops_if_the_scan_or_backup_fails() {
+        let _guard = scratch_state();
+        let home = dir("native-switch-worlds");
+        let saves = home.join("saves");
+        let world = saves.join("Uncertain");
+        let changed = [LeftOut {
+            id: "greeter".into(),
+            version: "1.0.0".into(),
+            why: isolate::Why::DidNotBuild,
+            detail: None,
+        }];
+        let switch = |allow| guard_worlds(&home, &changed, "nightly", allow, &|_| {});
+        fs::write(&saves, b"not a directory").unwrap();
+        assert!(matches!(switch(true), Err(Failed::Other(_))));
+        fs::remove_file(&saves).unwrap();
+        fs::create_dir_all(&world).unwrap();
+        fs::write(world.join("level.dat"), b"truncated").unwrap();
+        fs::write(world.join("level.dat_old"), b"also truncated").unwrap();
+        let Err(Failed::Worlds(stake)) = switch(false) else {
+            panic!("unknown is not an empty mod list")
+        };
+        assert_eq!(stake.worlds, ["Uncertain"]);
+        assert!(stake.text.contains("can't be read"));
+        assert!(!home.join("backups").exists());
+        let lock = fs::File::create(world.join("session.lock")).unwrap();
+        lock.try_lock().unwrap();
+        assert!(matches!(switch(true), Err(Failed::Other(_))));
+        lock.unlock().unwrap();
+        switch(true).unwrap();
+        let zip = fs::read_dir(home.join("backups"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut saved = zip::ZipArchive::new(fs::File::open(zip).unwrap()).unwrap();
+        assert!(saved.by_name("Uncertain/level.dat_old").is_ok());
+        drop(saved);
+        drop(lock);
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_stable_setup_cannot_unpin_to_a_different_or_unknown_build_after_a_plain_fallback() {
+        use instances::Channel::{Nightly, Stable};
+        let nightly = "nightly-2026-11-17-2d81263";
+        let stable = "v1.0.0";
+        let checked = |tag: &str| Some(tag.to_owned());
+        assert!(!follows_plain(Stable, nightly, Some(nightly), || checked(
+            stable
+        )));
+        assert!(!follows_plain(Stable, nightly, Some(nightly), || None));
+        assert!(follows_plain(Stable, stable, Some(stable), || checked(
+            stable
+        )));
+        // The CLI without an explicit version follows the launcher's selection.
+        assert!(!follows_plain(Stable, stable, Some(nightly), || checked(
+            stable
+        )));
+        assert!(follows_plain(Nightly, nightly, Some(nightly), || panic!(
+            "unneeded release lookup"
+        )));
+        assert!(!follows_plain(Nightly, nightly, None, || None));
+    }
+
+    #[test]
+    fn a_build_whose_every_mod_was_left_out_hands_them_back_instead_of_failing_in_words() {
+        let _guard = scratch_state();
+        let unfit = LeftOut {
+            id: "jei".into(),
+            version: "1.8.0".into(),
+            why: isolate::Why::Unfit("made for another build".into()),
+            detail: None,
+        };
+        let result = isolated(
+            |skip| match skip {
+                [] => Err(Failed::Mods {
+                    left: vec![unfit.clone()],
+                    error: "jei doesn't fit this game.".into(),
+                    compiling: false,
+                }),
+                _ => Err(Failed::Nothing),
+            },
+            &|_| {},
+        );
+        assert!(matches!(result, Err(Failed::Mods { left, .. }) if left == [unfit]));
+    }
+
+    #[test]
+    fn a_failed_native_library_records_and_reports_every_required_dependent_in_the_plain_game() {
+        let _guard = scratch_state();
+        let root = dir("plain-omissions");
+        let bundles: Vec<_> = [
+            ("lib", None),
+            ("addon", Some("lib")),
+            ("extra", Some("addon")),
+        ]
+        .into_iter()
+        .map(|(id, needs)| {
+            let folder = root.join(id);
+            write_bundle(&folder, id, "");
+            if let Some(needs) = needs {
+                let manifest = folder.join(NATIVE_MANIFEST);
+                let mut text = fs::read_to_string(&manifest).unwrap();
+                text += &format!("[dependencies]\n{needs} = '*'\n");
+                fs::write(manifest, text).unwrap();
+            }
+            bundle_in(&folder).unwrap().unwrap()
+        })
+        .collect();
+        let deps = bundles
+            .iter()
+            .map(|b| {
+                dependencies::from_manifest(
+                    &b.manifest.dependencies,
+                    sunrise_launcher_smod::manifest::Side::Client,
+                )
+            })
+            .collect::<Vec<_>>();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let stopped = isolated(
+            |skip| {
+                if !skip.is_empty() {
+                    return Err(Failed::Nothing);
+                }
+                let error = build_log::failed(&compiling_mod("lib"));
+                Err(Failed::Mods {
+                    left: compile_omissions(&error, &["lib".into()], &bundles, &deps),
+                    error,
+                    compiling: true,
+                })
+            },
+            &|step| {
+                if let Step::LeftOut(l) = step {
+                    seen.borrow_mut().push(l)
+                }
+            },
+        );
+        let Err(Failed::Mods { left, .. }) = stopped else {
+            panic!("expected a plain fallback")
+        };
+        assert_eq!(*seen.borrow(), left);
+        isolate::keep(&root, "nightly", &left).unwrap();
+        let kept = isolate::kept(&root, "nightly");
+        assert_eq!(
+            kept.iter()
+                .map(|l| (l.id.as_str(), l.why.clone()))
+                .collect::<Vec<_>>(),
+            [
+                ("lib", Why::DidNotBuild),
+                ("addon", Why::Needs("lib".into())),
+                ("extra", Why::Needs("addon".into()))
+            ]
+        );
+        assert_eq!(
+            ClientBuild::Plain("nightly".into()).to_string(),
+            "Using plain nightly: all native mods were left out. Nothing was built."
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2384,6 +2665,7 @@ mod tests {
                         id: format!("broken_{attempts}"),
                         version: "1.0.0".into(),
                         why: isolate::Why::OtherVersion,
+                        detail: None,
                     }],
                     error: "compiler failure".into(),
                     compiling: true,
