@@ -117,11 +117,16 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 11] = [
+const SETTINGS_ROWS: [(&str, Section); 16] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
     ("A second set of mods", Section::Game),
+    ("Theme", Section::Appearance),
+    ("Accent", Section::Appearance),
+    ("Home background", Section::Appearance),
+    ("Your themes", Section::Appearance),
+    ("Show the cat", Section::Appearance),
     ("Native code", Section::Mods),
     ("Game files and worlds", Section::Storage),
     ("World backups", Section::Storage),
@@ -921,7 +926,10 @@ mod tests {
     /// The rows named here must be the ones Settings draws.
     #[test]
     fn the_settings_rows_are_the_ones_settings_has() {
-        let source = include_str!("settings.rs");
+        let source = concat!(
+            include_str!("settings.rs"),
+            include_str!("settings/appearance.rs")
+        );
         for (title, _) in SETTINGS_ROWS {
             assert!(source.contains(&format!("tr(\"{title}\")")), "{title}");
         }
