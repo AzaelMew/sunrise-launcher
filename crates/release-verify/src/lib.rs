@@ -45,14 +45,12 @@ pub fn trusted_keys_for(repository: &str) -> Vec<PublicKey> {
     parse_keys(repository_keys(repository)).unwrap_or_default()
 }
 
-/// The keys a launcher release is signed with: [`REPOSITORY`]'s own, one key for both (owner decision, 2026-11-18).
-/// The game repository's release environment signs launcher releases; [`launcher_message`]'s prefix keeps the two kinds apart.
+/// The keys a launcher release is signed with: [`REPOSITORY`]'s, one key for both kinds, kept apart by [`launcher_message`]'s prefix.
 pub fn trusted_launcher_keys() -> Vec<PublicKey> {
     trusted_keys_for(REPOSITORY)
 }
 
-/// The version in a launcher release tag, which is exactly `vX.Y.Z` (decimal numbers, no leading zeros), or None.
-/// Discovery, download URLs and [`launcher_message`] all take a tag only through this.
+/// The version in a launcher release tag, exactly `vX.Y.Z` (no leading zeros), or None: discovery, URLs and signatures take tags only through this.
 pub fn launcher_version(tag: &str) -> Option<&str> {
     let version = tag.strip_prefix('v')?;
     let parts: Vec<&str> = version.split('.').collect();
@@ -182,8 +180,7 @@ pub fn verify(
     verify_message(tag, &message(tag, sums), sums, signature, keys)
 }
 
-/// [`verify`] for the launcher's own releases ([`launcher_message`]): `tag` must be a [`launcher_version`] tag, so
-/// nothing but `vX.Y.Z` comes before the newline that ends the signed tag.
+/// [`verify`] for the launcher's own releases ([`launcher_message`]), for a [`launcher_version`] tag only, so no newline enters the signed tag.
 pub fn verify_launcher(
     tag: &str,
     sums: &[u8],
