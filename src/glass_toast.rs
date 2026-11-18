@@ -6,17 +6,17 @@
 
 use super::*;
 
-use crate::{glass_ui, paint::palette};
+use crate::{glass_ui, motion, paint::palette};
 use gpui::rgb;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// How long a line stays (`setTimeout(…, 4200)`).
 const SHOWN: Duration = Duration::from_millis(4200);
 
 /// A line's pieces: the words, and a path or command (`true`) set in mono.
-type Parts = Vec<(String, bool)>;
+type Parts = Arc<[(String, bool)]>;
 
 /// The line showing: its pieces, when its 4.2 s started (moved on by the time it was held
 /// under the pointer), its number (a new one restarts them), and since when it's held.
@@ -29,12 +29,19 @@ struct Line {
 
 static LINE: Mutex<Option<Line>> = Mutex::new(None);
 
-fn say_parts(parts: Parts) {
+#[derive(Default)]
+pub(super) struct Presentation {
+    drawn: Option<(Parts, u64)>,
+    tween: Option<motion::Tween>,
+    live: bool,
+}
+
+fn say_parts(parts: Vec<(String, bool)>) {
     let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
     *line = Some(Line {
-        parts,
+        parts: parts.into(),
         since: Instant::now(),
         n,
         held: None,
@@ -121,8 +128,42 @@ impl Launcher {
         changed
     }
 
-    pub(super) fn toast(&self) -> Option<Div> {
-        let (parts, n) = current_parts()?;
+    pub(super) fn toast(&mut self, time: &motion::Frame, window: &Window) -> Option<Div> {
+        let current = current_parts();
+        self.toast_seen = current.as_ref().map(|(_, id)| *id);
+        let shown = &mut self.ui.toast;
+        if let Some(line) = current {
+            if shown.drawn.as_ref().is_none_or(|(_, old)| *old != line.1) {
+                shown.drawn = Some(line);
+                shown.tween = Some(motion::Tween::new(time.now, 0., 1., motion::FAST));
+            }
+            shown.live = true;
+        } else if shown.live {
+            shown.live = false;
+            let p = shown
+                .tween
+                .map_or(1., |tween| tween.value(time.now, time.enabled));
+            shown.tween = Some(motion::Tween::new(
+                time.now,
+                motion::arrival_opacity(p),
+                0.,
+                motion::FAST,
+            ));
+        }
+        let progress = time.sample(&mut shown.tween, window);
+        if !shown.live && progress.is_none() {
+            shown.drawn = None;
+            return None;
+        }
+        let live = shown.live;
+        let (alpha, lift) = if live {
+            let p = progress.unwrap_or(1.);
+            (motion::arrival_opacity(p), motion::LIFT * (1. - p))
+        } else {
+            (progress.unwrap_or(0.), 0.)
+        };
+        let (parts, n) = shown.drawn.as_ref()?;
+        let n = *n;
         let p = palette();
         let mut line = div()
             .flex()
@@ -130,12 +171,12 @@ impl Launcher {
             .items_baseline()
             .gap_x(px(5.))
             .min_w_0();
-        for (text, mono) in parts {
+        for (text, mono) in parts.iter() {
             line = line.child(
                 div()
                     .max_w_full()
                     .truncate()
-                    .when(mono, |d| d.font_family(sunrise_launcher_theme::MONO))
+                    .when(*mono, |d| d.font_family(sunrise_launcher_theme::MONO))
                     .child(text.trim().to_string()),
             );
         }
@@ -144,13 +185,13 @@ impl Launcher {
                 .absolute()
                 .left(px(tokens::FRAME_INSET))
                 .right(px(tokens::FRAME_INSET))
-                .bottom(px(tokens::FRAME_INSET))
+                .bottom(px(tokens::FRAME_INSET - lift))
                 .flex()
                 .justify_end()
                 .child(
                     div()
                         .id(ElementId::named_usize("toast", n as usize))
-                        .occlude()
+                        .opacity(alpha)
                         .flex()
                         .items_center()
                         .gap(px(10.))
@@ -166,14 +207,17 @@ impl Launcher {
                         .border_1()
                         .border_color(rgb(p.line))
                         .shadow_lg()
-                        .cursor_pointer()
-                        .on_hover(move |hovered, _, _| hold(n, *hovered))
-                        .on_click(move |_, window, _| {
-                            let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
-                            if line.as_ref().is_some_and(|line| line.n == n) {
-                                *line = None;
-                                window.refresh();
-                            }
+                        .when(live, |d| {
+                            d.occlude()
+                                .cursor_pointer()
+                                .on_hover(move |hovered, _, _| hold(n, *hovered))
+                                .on_click(move |_, window, _| {
+                                    let mut line = LINE.lock().unwrap_or_else(|e| e.into_inner());
+                                    if line.as_ref().is_some_and(|line| line.n == n) {
+                                        *line = None;
+                                        window.refresh();
+                                    }
+                                })
                         })
                         .child(glass_ui::icon("tick-02", 16., rgb(p.accent_ink).into()).flex_none())
                         .child(line),

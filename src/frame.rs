@@ -29,6 +29,8 @@ pub(super) struct State {
     pub sidebar_motion: Option<crate::motion::Tween>,
     painted_page: Option<Page>,
     page_motion: Option<crate::motion::Tween>,
+    pub toast: crate::glass_toast::Presentation,
+    pub status: crate::status_strip::Presentation,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
     pub mods: crate::mods::ModsState,
@@ -549,7 +551,7 @@ impl Launcher {
                 .child(content)
                 .into_any_element()
         };
-        let status = self.status_strip(cx);
+        let status = self.status_strip(&motion, window, cx);
         let pane = div()
             .relative()
             .flex_1()
@@ -654,7 +656,7 @@ impl Launcher {
             .collect();
         let top = self.modal(layers.pop(), window, cx);
         frame = frame
-            .children(self.toast())
+            .children(self.toast(&motion, window))
             .children(afterimage)
             .children(layers)
             .children(top);
