@@ -667,7 +667,11 @@ impl Storage {
         if clear.is_none() && !all {
             for entry in self.entries()? {
                 if let Err(error) = entry.access().and_then(|access| access.check()) {
-                    let bytes = allocated_bytes(&entry.path)?;
+                    // A refused unit already has its line.
+                    let bytes = match allocated_bytes(&entry.path) {
+                        Err(Error::Unsafe(_)) => 0,
+                        bytes => bytes?,
+                    };
                     if bytes > 0 {
                         report
                             .rows
@@ -704,16 +708,24 @@ impl Storage {
         retain: bool,
     ) -> Result<Report, Error> {
         // Validate every descendant before any deletion and deduplicate allocated blocks per row.
-        let mut rows = Vec::new();
-        for category in Category::ALL {
-            let bytes = allocated(&entries, category)?;
-            rows.push(Row {
+        let mut rows: Vec<_> = Category::ALL
+            .into_iter()
+            .map(|category| Row {
                 category,
-                bytes,
+                bytes: 0,
                 freed_bytes: 0,
-                remaining_bytes: bytes,
+                remaining_bytes: 0,
                 kept: Vec::new(),
-            });
+            })
+            .collect();
+        let entries = if retain {
+            refused(entries, &mut rows)?
+        } else {
+            entries
+        };
+        for row in &mut rows {
+            row.bytes = allocated(&entries, row.category)?;
+            row.remaining_bytes = row.bytes;
         }
         for entry in &entries {
             if all || clear == Some(entry.category) {
@@ -769,6 +781,28 @@ fn allocated(entries: &[Entry], category: Category) -> Result<u64, Error> {
         .try_fold(0u64, |bytes, entry| {
             Ok(bytes.saturating_add(walk(&entry.path, &mut seen)?))
         })
+}
+
+/// A unit holding a link or file the launcher does not expect is refused whole: it is neither
+/// counted nor cleared, and its row says so. The other units are not held up by it.
+fn refused(entries: Vec<Entry>, rows: &mut [Row]) -> Result<Vec<Entry>, Error> {
+    let mut sound = Vec::new();
+    for entry in entries {
+        match allocated_bytes(&entry.path) {
+            Ok(_) => sound.push(entry),
+            Err(error @ Error::Unsafe(_)) => rows
+                .iter_mut()
+                .find(|row| row.category == entry.category)
+                .unwrap()
+                .kept
+                .push(Kept {
+                    bytes: 0,
+                    reason: native_mods::cache_error(error),
+                }),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(sound)
 }
 
 fn old_logs(entries: &mut Vec<Entry>, home: &Root) -> Result<(), Error> {
@@ -980,6 +1014,39 @@ mod eviction_tests {
         assert_eq!(row.kept[0].bytes, bytes);
         assert!(!row.kept[0].reason.is_empty());
         assert!(file.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_unit_with_an_unexpected_link_is_refused_on_its_row_and_holds_up_no_other() {
+        let home = crate::storage::tests::Home::new();
+        let good = home.seed("rust/old/payload");
+        let bad = home.seed("cache/payload");
+        home.seed("worlds/keep");
+        std::os::unix::fs::symlink(home.0.join("worlds"), home.0.join("cache/link")).unwrap();
+        let storage = Storage::at(&home.0).unwrap();
+        let root = Root::open(&home.0).unwrap();
+        let entries = vec![
+            Entry::fixed(&root, Path::new("cache"), Category::OtherCaches).unwrap(),
+            Entry::fixed(&root, Path::new("rust/old"), Category::RustCompiler).unwrap(),
+        ];
+        let report = storage.apply_retaining(entries, None, true, true).unwrap();
+        let row = |category| {
+            report
+                .rows
+                .iter()
+                .find(|row| row.category == category)
+                .unwrap()
+        };
+        let refused = row(Category::OtherCaches);
+        assert_eq!((refused.bytes, refused.freed_bytes), (0, 0));
+        assert_eq!(refused.kept.len(), 1);
+        assert!(refused.kept[0].reason.contains("link"));
+        assert!(bad.exists());
+        assert!(home.0.join("worlds/keep").exists());
+        assert!(row(Category::RustCompiler).freed_bytes > 0);
+        assert!(row(Category::RustCompiler).kept.is_empty());
+        assert!(!good.exists());
     }
 
     #[cfg(target_os = "linux")]

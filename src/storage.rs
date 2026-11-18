@@ -1,7 +1,7 @@
 //! Disposable launcher storage. Player-owned files are never accepted as cleanup targets.
 use crate::cache_cleanup::{Access, Plan};
 pub use crate::native_cache::Error;
-use crate::native_cache::{checked, linked, Cache};
+use crate::native_cache::{checked, known_link, linked, Cache};
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
 use std::collections::HashSet;
@@ -259,7 +259,14 @@ fn walk(path: &Path, seen: &mut HashSet<(u64, u64)>) -> Result<u64, Error> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
         Err(error) => return Err(error.into()),
     };
-    if linked(&meta) || (!meta.is_file() && !meta.is_dir()) {
+    if linked(&meta) {
+        // A known link holds nothing of its own, and what it points at is not this cache's.
+        return match fs::read_link(path) {
+            Ok(target) if known_link(&target) => Ok(0),
+            _ => Err(Error::Unsafe(path.to_owned())),
+        };
+    }
+    if !meta.is_file() && !meta.is_dir() {
         return Err(Error::Unsafe(path.to_owned()));
     }
     let (id, bytes) = allocation(path, &meta)?;
