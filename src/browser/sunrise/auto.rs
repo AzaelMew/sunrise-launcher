@@ -378,9 +378,12 @@ pub fn update_to(
             &[("project", project)],
         ));
     }
-    let p = index
-        .project(project)
-        .ok_or_else(|| trf("{project} isn't in Sunrise's registry.", &[("project", project)]))?;
+    let p = index.project(project).ok_or_else(|| {
+        trf(
+            "{project} isn't in Sunrise's registry.",
+            &[("project", project)],
+        )
+    })?;
     let v = p
         .versions
         .iter()
