@@ -16,6 +16,10 @@ use sunrise_launcher::native_mods::{Consent, UpdateCheck};
 
 mod versions;
 
+/// More Tab stops than any page has: how far [`Launcher::modal`] looks for the next one inside
+/// the layer before it gives up.
+const TAB_STOPS: usize = 512;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Sheet {
     /// The game-build chooser, a popover over the bar's build chip.
@@ -30,6 +34,15 @@ pub(crate) enum Sheet {
     Versions,
 }
 
+/// The way out of a problem the play bar raised, as the Notice sheet's one action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WayOut {
+    /// The game's own files were not found: point Sunrise at the Minecraft folder.
+    MinecraftFolder,
+    /// The build this setup stays on can't be built for any more: follow its channel again.
+    Newest(instances::Channel),
+}
+
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
 struct Memo {
     key: String,
@@ -40,16 +53,19 @@ struct Memo {
 pub(crate) struct SheetsState {
     /// The explicit compatibility check's state; only a click on the Build sheet starts one.
     update: RefCell<Option<Memo>>,
-    /// Keyboard focus of the sheet on screen, so keys never reach the page under it.
+    /// Keyboard focus of the layer over the page, so keys never reach the page under it.
     focus: Option<FocusHandle>,
+    /// What had the keyboard when that layer opened: it gets it back when the layer closes.
+    opener: Option<FocusHandle>,
     registry: Option<(Consent, Sender<bool>)>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
     error: Option<String>,
     /// The Resolve sheet shows what the check said word for word.
     details: bool,
-    /// What the Notice sheet says.
+    /// What the Notice sheet says, and the way out it offers.
     notice: String,
+    way_out: Option<WayOut>,
     versions: versions::State,
 }
 
@@ -222,10 +238,11 @@ impl Launcher {
         self.ui.sheet = Some(sheet);
     }
 
-    /// Opens a problem's whole text as a sheet.
-    pub(crate) fn open_notice(&mut self, text: String) {
+    /// Opens a problem's whole text as a sheet, with the way out of it when there is one.
+    pub(crate) fn open_notice(&mut self, text: String, way_out: Option<WayOut>) {
         self.open_sheet(Sheet::Notice);
         self.ui.sheets.notice = text;
+        self.ui.sheets.way_out = way_out;
     }
 
     /// The worker asks before dependency build programs run. The sheet answers `reply`; losing the
@@ -372,42 +389,73 @@ impl Launcher {
         .detach();
     }
 
-    /// The sheet on screen, if any: a pending library question, a pending permission, then the
-    /// sheet asked for.
-    pub(crate) fn sheet(
+    /// The one focus rule for anything drawn over the page (a sheet, Host's Create, the
+    /// sign-in): `layer` takes the keyboard when it opens, Tab stays inside it, and when it
+    /// closes, by Escape or any other way, the keyboard goes back to what opened it. Escape
+    /// itself is the frame's, which knows what closing each layer means.
+    pub(crate) fn modal(
         &mut self,
+        layer: Option<Stateful<Div>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        self.versions_focus(window);
-        let sheet = self.live_sheet(cx)?;
-        // The sheet takes the keyboard: keys never reach the page under it.
-        let focus = match self.ui.sheets.focus.clone() {
-            Some(focus) => focus,
-            None => {
-                let focus = cx.focus_handle();
-                self.ui.sheets.focus = Some(focus.clone());
-                focus
+        let Some(layer) = layer else {
+            if let Some(opener) = self.ui.sheets.opener.take() {
+                // What opened it may have left the page since: then the frame has the keyboard.
+                let still_there = self.root_focus.contains(&opener, window);
+                window.focus(
+                    if still_there {
+                        &opener
+                    } else {
+                        &self.root_focus
+                    },
+                    cx,
+                );
             }
+            return None;
         };
+        let focus = self
+            .ui
+            .sheets
+            .focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
         if !focus.contains_focused(window, cx) {
+            if self.ui.sheets.opener.is_none() {
+                self.ui.sheets.opener = window.focused(cx);
+            }
             window.focus(&focus, cx);
         }
         Some(
-            sheet
+            layer
                 .track_focus(&focus)
-                .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                    if ev.keystroke.key == "escape" {
-                        this.close_sheet();
-                        cx.notify();
+                .on_key_down(move |ev: &KeyDownEvent, window, cx| {
+                    if ev.keystroke.key != "tab" {
+                        return;
+                    }
+                    // The next stop that is inside the layer; the page's own are passed over.
+                    for _ in 0..TAB_STOPS {
+                        if ev.keystroke.modifiers.shift {
+                            window.focus_prev(cx);
+                        } else {
+                            window.focus_next(cx);
+                        }
+                        if focus.contains_focused(window, cx) {
+                            break;
+                        }
+                    }
+                    if !focus.contains_focused(window, cx) {
+                        window.focus(&focus, cx);
                     }
                     cx.stop_propagation();
-                }))
+                })
                 .into_any_element(),
         )
     }
 
-    fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    /// The sheet on screen, if any: a pending library question, a pending permission, then the
+    /// sheet asked for.
+    pub(crate) fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
@@ -658,19 +706,54 @@ impl Launcher {
             .filter(|p| !p.trim().is_empty())
             .map(|p| div().text_size(px(13.5)).child(p.to_owned()))
             .collect();
+        let main = |label: SharedString| {
+            button("alt-notice-way-out", label)
+                .bg(rgb(TEXT))
+                .border_color(rgb(TEXT))
+                .text_color(rgb(BG))
+                .hover(|s| s.bg(gpui::white()))
+        };
+        let way_out = self.ui.sheets.way_out.map(|way| match way {
+            WayOut::MinecraftFolder => main(tr("Choose Minecraft folder").into()).on_click(
+                cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.close_sheet();
+                    this.choose_folder(cx);
+                    cx.notify();
+                }),
+            ),
+            // One press follows the channel again, and the build sheet opens on what that chose.
+            WayOut::Newest(channel) => main(match channel {
+                instances::Channel::Stable => tr("Use the newest Stable").into(),
+                instances::Channel::Nightly => tr("Use the newest Nightly").into(),
+            })
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.native_error = None;
+                this.pin_build(None, channel);
+                this.open_sheet(Sheet::Build);
+                cx.notify();
+            })),
+        });
         let body = div()
             .flex()
             .flex_col()
             .child(title(tr("What went wrong").into()))
             .child(div().flex().flex_col().gap(px(10.)).children(paragraphs))
-            .child(div().flex().justify_end().child(
-                button("alt-notice-close", tr("Close")).on_click(cx.listener(
-                    |this, _: &ClickEvent, _, cx| {
-                        this.close_sheet();
-                        cx.notify();
-                    },
-                )),
-            ));
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        button("alt-notice-close", tr("Close")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.close_sheet();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .children(way_out),
+            );
         frame("alt-notice", 560., body, cx)
     }
 

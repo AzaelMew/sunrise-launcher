@@ -1,8 +1,8 @@
-//! A native build under way, shown where the player is: the strip above the Mods lists and the
-//! play bar's line, which is on every page. Both draw the build's three stages and how far the
-//! current one is when the build says so; the build gives no time left, so none is shown.
+//! A native build under way, shown once: the play bar's line, which is on every page, draws the
+//! build's three stages and how far the current one is when the build says so, beside Stop. The
+//! build gives no time left, so none is shown. The strip above the Mods lists says how it ended.
 use super::*;
-use crate::frame::{button, CARD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Animation, AnimationExt as _};
 use native_mods::Stage;
 
@@ -85,7 +85,8 @@ impl Launcher {
         )
     }
 
-    /// Above the Mods lists: the selected setup's build while it runs, then how it ended.
+    /// Above the Mods lists: how the selected setup's build ended, and during a first build what
+    /// it downloads.
     pub(crate) fn build_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.build_mine() {
             return None;
@@ -110,67 +111,29 @@ impl Launcher {
                         })),
                 )
         };
-        let Some(step) = self.build_step() else {
+        if self.build_step().is_none() {
             // How it went. A failure is the play bar's to say, in one place.
             return self
                 .native_done
                 .clone()
                 .filter(|_| self.native_error.is_none())
                 .map(|done| said(done, cx));
-        };
-        Some(
+        }
+        // How far it is, and Stop, are the play bar's, on every page. Only what a first build
+        // brings with it is said here.
+        self.first_build.map(|bytes| {
             div()
-                .flex()
-                .flex_col()
-                .gap(px(8.))
                 .p(px(14.))
                 .rounded(px(12.))
                 .border_1()
                 .border_color(rgb(SOFT))
                 .bg(rgb(CARD))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.))
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .child(tr("Building your mods")),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(13.))
-                                        .text_color(rgb(MUTED))
-                                        .child(trf("{stage} · {step}", &[("stage", &self.build_stage()), ("step", &step)])),
-                                ),
-                        )
-                        .child(
-                            button("alt-build-stop", tr("Stop")).flex_none().on_click(
-                                cx.listener(|_, _: &ClickEvent, _, cx| {
-                                    native_mods::cancel();
-                                    cx.notify();
-                                }),
-                            ),
-                        ),
-                )
-                .child(self.build_bar())
-                .children(self.first_build.map(|bytes| {
-                    div()
-                        .text_size(px(12.))
-                        .text_color(rgb(MUTED))
-                        .child(trf(
-                            "The first build downloads the compiler ({size} MB), once. You can keep using the launcher; the play bar shows this build on every page.",
-                            &[("size", &bytes.div_ceil(1_000_000).to_string())],
-                        ))
-                })),
-        )
+                .text_size(px(13.))
+                .text_color(rgb(MUTED))
+                .child(trf(
+                    "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+                    &[("size", &bytes.div_ceil(1_000_000).to_string())],
+                ))
+        })
     }
 }

@@ -417,61 +417,61 @@ impl Launcher {
                             }))
                     })),
             );
-        let mut actions: Vec<AnyElement> = Vec::new();
-        if let Some(all) = more.filter(|_| self.native_step.is_none()) {
-            actions.push(gpui::IntoElement::into_any_element(
-                button("alt-problem-details", tr("Details…"))
-                    .flex_none()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_notice(all.clone());
-                        cx.notify();
-                    })),
-            ));
-        }
-        if status.is_some() && self.prepare_error.is_some() {
-            actions.push(gpui::IntoElement::into_any_element(
-                button("alt-choose-source", tr("Choose Minecraft folder"))
-                    .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
-            ));
-        } else if let Some(channel) = self.build_gone().filter(|_| !busy) {
-            // The build this setup stays on can't be built for any more: one press follows its
-            // channel again, and the build sheet opens on what that chose.
-            let label = match channel {
-                instances::Channel::Stable => tr("Use the newest Stable"),
-                _ => tr("Use the newest Nightly"),
+        // One action at most, and one name for it: "Fix…" opens the place where the problem
+        // can be dealt with, "Details…" a problem with nothing to do but read it.
+        let way_out = if status.is_none() {
+            None
+        } else if self.prepare_error.is_some() {
+            Some(crate::sheets::WayOut::MinecraftFolder)
+        } else {
+            self.build_gone()
+                .filter(|_| !busy)
+                .map(crate::sheets::WayOut::Newest)
+        };
+        let action = if self.native_step.is_some() {
+            Some(
+                button("alt-build-stop", tr("Stop")).on_click(cx.listener(|_, _, _, cx| {
+                    native_mods::cancel();
+                    cx.notify();
+                })),
+            )
+        } else if let Some(all) = status
+            .clone()
+            .filter(|_| way_out.is_some() || more.is_some())
+        {
+            let label = if way_out.is_some() {
+                tr("Fix…")
+            } else {
+                tr("Details…")
             };
-            actions.push(gpui::IntoElement::into_any_element(
-                button("alt-newest-build", label)
-                    .flex_none()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.native_error = None;
-                        this.pin_build(None, channel);
-                        this.open_sheet(Sheet::Build);
-                        cx.notify();
-                    })),
-            ));
+            Some(
+                button("alt-fix", label).on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_notice(all.clone(), way_out);
+                    cx.notify();
+                })),
+            )
         } else if hold.is_some() && !busy {
-            actions.push(gpui::IntoElement::into_any_element(
-                button("alt-resolve", tr("Choose…")).on_click(cx.listener(|this, _, _, cx| {
+            Some(
+                button("alt-fix", tr("Fix…")).on_click(cx.listener(|this, _, _, cx| {
                     this.open_sheet(Sheet::Resolve);
                     cx.notify();
                 })),
-            ));
-        } else if let Some(release) = update {
-            actions.push(gpui::IntoElement::into_any_element(
+            )
+        } else {
+            update.map(|release| {
                 button("alt-update", tr("Update game")).on_click(cx.listener(
                     move |this, _, _, cx| {
                         this.install_update_if_safe(&release);
                         cx.notify();
                     },
-                )),
-            ));
-        }
+                ))
+            })
+        };
         let enabled = !busy && self.location_error.is_none();
         let ink = rgb(0x221203);
         // The cat may sleep on Play only while Play is idle and the bar has nothing to say.
         let free = quiet && !busy && self.client.is_none() && self.location_error.is_none();
-        let (lane, on_play) = self.cat(actions.is_empty(), free, window, cx);
+        let (lane, on_play) = self.cat(action.is_none(), free, window, cx);
         let play = div()
             .id("alt-play")
             .tab_index(0)
@@ -505,7 +505,7 @@ impl Launcher {
                     cx.notify();
                 }))
             });
-        bar.child(lane).children(actions).child(
+        bar.child(lane).children(action).child(
             div()
                 .relative()
                 .flex_none()
@@ -730,15 +730,16 @@ impl Launcher {
             }
             frame = frame.child(choices);
         }
-        if page == Page::Hosting {
-            let create = self.hosting_create(cx);
-            frame = frame.children(create);
-        }
-        let sheet = self.sheet(window, cx);
-        frame = frame.children(sheet);
-        if self.owner_screen_open {
-            frame = frame.child(self.owner_screen(cx));
-        }
+        // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
+        self.versions_focus(window);
+        let create = (page == Page::Hosting)
+            .then(|| self.hosting_create(cx))
+            .flatten();
+        let sheet = self.live_sheet(cx);
+        let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
+        let mut layers: Vec<_> = [create, sheet, sign_in].into_iter().flatten().collect();
+        let top = self.modal(layers.pop(), window, cx);
+        frame = frame.children(layers).children(top);
         self.pictures.free_retired(window);
         div()
             .relative()

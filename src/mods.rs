@@ -613,7 +613,7 @@ impl Launcher {
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player
-    /// stays where they are: the strip above the list and the play bar show how far it is.
+    /// stays where they are: the play bar shows how far it is.
     fn build(&mut self) {
         self.build_native();
     }

@@ -157,7 +157,7 @@ impl Launcher {
     }
 
     /// Reads whether the field has the keyboard, before the sheet is drawn.
-    pub(super) fn versions_focus(&mut self, window: &Window) {
+    pub(crate) fn versions_focus(&mut self, window: &Window) {
         let v = &mut self.ui.sheets.versions;
         v.focused = v.focus.as_ref().is_some_and(|f| f.is_focused(window));
     }
