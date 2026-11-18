@@ -1,0 +1,11 @@
+version = 1
+name = "Tidepool"
+# background = "shore.webp"   # optional: one picture beside this file, shown behind Home
+
+[palette]
+card = "#1A3135"
+chrome = "#11262B"
+text = "#F0F8F4"
+muted = "#C3D7D2"
+background = "#102328"
+accent = "#8EDBCB"

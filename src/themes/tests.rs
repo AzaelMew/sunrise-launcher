@@ -134,16 +134,13 @@ fn a_background_is_a_picture_kept_once() {
     let jpg = picture("noon.jpg", 160, 90);
     let second = keep_background(&dir, &jpg).unwrap();
     assert!(second.ends_with(".jpg") && second != first, "{second}");
-    assert!(!dir.join(&first).exists(), "the older one goes");
+    assert!(dir.join(&first).exists(), "the older one stays");
     assert_eq!(background(&dir, Some(&second)), Some(dir.join(&second)));
-    assert_eq!(background(&dir, Some(&first)), None, "gone");
     assert_eq!(background(&dir, Some("../noon.jpg")), None);
     assert_eq!(background(&dir, None), None);
 
     let tiny = picture("tiny.png", 16, 16);
-    assert!(keep_background(&dir, &tiny)
-        .unwrap_err()
-        .contains("too small"));
+    assert!(keep_background(&dir, &tiny).unwrap_err().contains("16×16"));
     let text = root.join("notes.txt");
     std::fs::write(&text, "hi").unwrap();
     assert!(keep_background(&dir, &text)
@@ -153,7 +150,7 @@ fn a_background_is_a_picture_kept_once() {
     std::fs::write(&fake, "not a picture").unwrap();
     assert!(keep_background(&dir, &fake)
         .unwrap_err()
-        .contains("can read"));
+        .contains("PNG, JPEG or WebP"));
     assert!(
         dir.join(&second).exists(),
         "a refused file keeps the old one"
@@ -167,19 +164,27 @@ fn a_background_is_drawn_no_larger_than_the_gpu_holds_and_a_huge_one_is_refused(
     let _ = std::fs::remove_dir_all(&root);
     let dir = root.join("data");
     std::fs::create_dir_all(&dir).unwrap();
-    // Wider than any texture atlas, as a saved choice from before sizes were checked.
+    // Wider than any texture atlas, as a saved choice from before sizes were checked: past
+    // the pixel limits, so it is an error and Home shows what comes after it.
     let wide = dir.join("background-0123456789ab.png");
     image::GrayImage::new(20_000, 70).save(&wide).unwrap();
-    for limit in [1024, 8192, 16384] {
-        let drawn = load_background(&wide, limit).unwrap();
-        let most = BACKGROUND_SIDE.min(limit);
-        assert_eq!(drawn.width(), most, "at limit {limit}");
-        assert!(drawn.height() >= 1 && drawn.height() <= most);
+    assert!(background_picture(&dir, "background-0123456789ab.png").is_err());
+    // A picture within the limits is still never handed over larger than the GPU holds.
+    image::GrayImage::new(8000, 70)
+        .save(dir.join("background-wide.png"))
+        .unwrap();
+    for limit in [1024, 2048, 16384] {
+        let drawn = crate::theme_files::fitted(
+            background_picture(&dir, "background-wide.png").unwrap(),
+            limit,
+        );
+        assert_eq!(drawn.width(), limit.min(2560), "at limit {limit}");
+        assert!(drawn.height() >= 1);
     }
     // Not a picture: an error, for the caller to show its own scenery instead.
     std::fs::write(dir.join("background-broken.png"), "no").unwrap();
-    assert!(load_background(&dir.join("background-broken.png"), 8192).is_err());
-    assert!(load_background(&dir.join("background-missing.png"), 8192).is_err());
+    assert!(background_picture(&dir, "background-broken.png").is_err());
+    assert!(background_picture(&dir, "background-missing.png").is_err());
 
     // The importer measures pixels, not only bytes: a small file claiming 30000 × 30000.
     let claimed = root.join("claimed.png");
@@ -194,7 +199,7 @@ fn a_background_is_drawn_no_larger_than_the_gpu_holds_and_a_huge_one_is_refused(
     std::fs::write(&claimed, bytes).unwrap();
     assert!(keep_background(&dir, &claimed)
         .unwrap_err()
-        .contains("too large"));
+        .contains("30000×30000"));
     assert!(wide.exists(), "a refused file keeps the old one");
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -241,20 +246,111 @@ fn a_typed_colour_is_worn_as_is_and_survives_settings_json() {
 fn each_theme_brings_back_its_own_accent() {
     let mut kept = std::collections::BTreeMap::new();
     // No theme saved is Dawn; Sunrise's own sky is picked by name.
-    assert_eq!(starting_accent(Some(SUNRISE), &kept), Accent::VIOLET);
+    assert_eq!(starting_accent(Some(TWILIGHT), &kept), Accent::VIOLET);
     assert_eq!(starting_accent(None, &kept).rgb(), 0xb4552f);
     assert_eq!(starting_accent(Some("dawn"), &kept).rgb(), 0xb4552f);
     kept.insert("dawn".to_string(), Accent::TEAL);
-    kept.insert(SUNRISE.to_string(), Accent::PINK);
+    kept.insert(TWILIGHT.to_string(), Accent::PINK);
     assert_eq!(starting_accent(Some("dawn"), &kept), Accent::TEAL);
     assert_eq!(starting_accent(None, &kept), Accent::TEAL);
-    assert_eq!(starting_accent(Some(SUNRISE), &kept), Accent::PINK);
+    assert_eq!(starting_accent(Some(TWILIGHT), &kept), Accent::PINK);
     // A theme this launcher doesn't know is Sunrise's own.
-    assert_eq!(accent_key(Some("from_the_future")), SUNRISE);
+    assert_eq!(accent_key(Some("from_the_future")), TWILIGHT);
     assert_eq!(
         starting_accent(Some("from_the_future"), &kept),
         Accent::PINK
     );
     // The older themes keep their ids.
     assert!(theme(Some("first_light")).is_some() && theme(Some("nord")).is_some());
+}
+
+/// Choosing a picture never writes through what already has its name: a link there is refused
+/// and its target untouched, and the same picture chosen again keeps the copy as it is.
+#[cfg(unix)]
+#[test]
+fn a_kept_picture_is_never_written_through_a_link_or_over_the_copy_in_use() {
+    use std::os::unix::fs::MetadataExt as _;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("data");
+    let source = root.path().join("dusk.png");
+    image::RgbImage::new(160, 90).save(&source).unwrap();
+
+    let name = keep_background(&dir, &source).unwrap();
+    let kept = dir.join(&name);
+    let first = std::fs::metadata(&kept).unwrap();
+    // Chosen again: the copy in use is the same file, never emptied on the way.
+    assert_eq!(keep_background(&dir, &source).unwrap(), name);
+    let again = std::fs::metadata(&kept).unwrap();
+    assert_eq!((first.ino(), first.len()), (again.ino(), again.len()));
+    assert_eq!(
+        std::fs::read(&kept).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
+
+    // A link under the name leads to a file of the player's: refused, and that file is whole.
+    let theirs = root.path().join("diary.txt");
+    std::fs::write(&theirs, "mine").unwrap();
+    std::fs::remove_file(&kept).unwrap();
+    std::os::unix::fs::symlink(&theirs, &kept).unwrap();
+    assert!(keep_background(&dir, &source).is_err());
+    assert_eq!(std::fs::read_to_string(&theirs).unwrap(), "mine");
+    // So is a file with other bytes under the name.
+    std::fs::remove_file(&kept).unwrap();
+    std::fs::write(&kept, "not this picture").unwrap();
+    assert!(keep_background(&dir, &source).is_err());
+    assert_eq!(std::fs::read_to_string(&kept).unwrap(), "not this picture");
+    // Nothing of the launcher's is left half-made.
+    let left: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left, [name]);
+}
+
+/// What Home is given to show is bounded by what the file holds, not by its name: only a
+/// still PNG, JPEG or WebP within the pixel limits is kept, and a kept copy that isn't one
+/// is an error for Home, never a picture.
+#[test]
+fn only_a_bounded_still_picture_is_kept_or_shown() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("data");
+    let write = |name: &str, format: image::ImageFormat, w: u32, h: u32| {
+        let path = root.path().join(name);
+        let mut bytes = Vec::new();
+        image::RgbImage::new(w, h)
+            .write_to(&mut std::io::Cursor::new(&mut bytes), format)
+            .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        path
+    };
+    // An animation under a permitted name is refused by what it is.
+    let gif = write("party.png", image::ImageFormat::Gif, 160, 90);
+    assert!(keep_background(&dir, &gif)
+        .unwrap_err()
+        .contains("PNG, JPEG or WebP"));
+    // So is a picture past the pixel limits, however small its file.
+    let wide = write("wide.png", image::ImageFormat::Png, 9000, 64);
+    assert!(keep_background(&dir, &wide)
+        .unwrap_err()
+        .contains("9000×64"));
+    // And one whose header is fine but whose pixels are not there.
+    let whole = std::fs::read(write("cut.png", image::ImageFormat::Png, 320, 200)).unwrap();
+    let cut = root.path().join("cut.png");
+    std::fs::write(&cut, &whole[..whole.len() / 2]).unwrap();
+    assert!(keep_background(&dir, &cut).is_err());
+    assert!(!dir.exists() || std::fs::read_dir(&dir).unwrap().next().is_none());
+
+    // The kind kept is the kind held, whatever the name says.
+    let jpeg = write("dusk.png", image::ImageFormat::Jpeg, 3200, 200);
+    let name = keep_background(&dir, &jpeg).unwrap();
+    assert!(name.ends_with(".jpg"), "{name}");
+    // Home gets one still picture, scaled to what a window shows.
+    assert_eq!(background_picture(&dir, &name).unwrap().width(), 2560);
+
+    // A copy an older launcher kept, which can't be decoded: an error, not a picture.
+    std::fs::write(dir.join("background-old.png"), &whole[..whole.len() / 2]).unwrap();
+    assert!(background_picture(&dir, "background-old.png").is_err());
+    std::fs::write(dir.join("background-gif.png"), std::fs::read(&gif).unwrap()).unwrap();
+    assert!(background_picture(&dir, "background-gif.png").is_err());
+    assert!(background_picture(&dir, "background-gone.png").is_err());
 }

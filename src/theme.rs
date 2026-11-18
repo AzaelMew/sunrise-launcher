@@ -69,6 +69,9 @@ pub struct Theme {
     pub night: Night,
     /// The accent this look was built from, before the glass look's mixes.
     pub accent_choice: Accent,
+    /// A picture stands behind Home (the player's own, or their theme's): nothing is known
+    /// of its colours, so the plates over it are opaque.
+    pub photo: bool,
     pub dark: bool,
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink
     /// for white and light plates, `glass_ui::light`).
@@ -118,10 +121,21 @@ pub fn pinned_dark(choice: Appearance) -> Option<bool> {
 /// theme is one look: Sunrise's own is the night (an old light appearance became Taiga when the
 /// settings were read).
 pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
-    let mut theme = Theme::for_appearance(Appearance::Dark, settings.accent, system);
-    if let Some(picked) = themes::theme(settings.theme.as_deref()) {
-        theme = theme.with_launcher_theme(picked);
-    }
+    // What is painted, which is not always what is saved: a player's theme that is gone is
+    // Dawn until it is back, and one without an accent picked under it wears its file's.
+    let accent = sunrise_launcher::appearance::accent(settings);
+    let mut theme = Theme::for_appearance(Appearance::Dark, accent, system);
+    let mut photo = settings.background.is_some();
+    theme = match themes::resolve(settings.theme.as_deref()) {
+        themes::Resolved::Twilight => theme,
+        themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked),
+        themes::Resolved::Local(local) => {
+            photo |= local.picture.is_some();
+            theme.with_night(local.roles.night())
+        }
+        themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME),
+    };
+    theme.photo = photo && settings.scenery();
     // Performance mode keeps a painted sky's colours and drops what drifts over it.
     if settings.performance() {
         theme.night.art.mood = night::Mood::Plain;
@@ -140,10 +154,14 @@ impl Theme {
             self.night.sky = picked.sky;
             return self;
         };
-        // Sunrise's own pages, flat over the page colour, in the theme's colours: a theme never
-        // changes how a page is laid out or works, nor paints anything behind it.
+        self.with_night(*night)
+    }
+
+    /// Sunrise's own pages in `night`'s colours: a theme never changes how a page is laid out
+    /// or works.
+    pub fn with_night(self, night: Night) -> Self {
         let accent = self.accent_choice;
-        Self::from(accent.apply(night.blocks()), *night, accent).glass(accent)
+        Self::from(accent.apply(night.blocks()), night, accent).glass(accent)
     }
 
     /// The glass look with the player's Glass (how much white the plates take, 0 to 1) and Blur
@@ -242,6 +260,7 @@ impl Theme {
             on_face: c(p.on_face),
             night,
             accent_choice: accent,
+            photo: false,
             dark: p.dark,
             glass: false,
         }

@@ -4077,6 +4077,10 @@ pub struct Settings {
     /// Off by default, so the opening animation shows unless the player turns it off.
     #[serde(default)]
     pub skip_opening: bool,
+    /// Whether the corner cat shows (`cat`). Unset means yes; only a player who switched it off
+    /// has `false` here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cat: Option<bool>,
     /// Linux: whether the launcher keeps its entry in the applications menu (`desktop`). Unset
     /// means yes; removing the entry stores `false`, so it doesn't come back on the next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4125,7 +4129,7 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blur: Option<f32>,
     /// The launcher theme (`themes::theme`): its sky behind the light appearance. Unset is Dawn;
-    /// Sunrise's own sky is `themes::SUNRISE`.
+    /// the indigo one is `themes::TWILIGHT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
     /// The cheaper scene for older computers (a lower-resolution sky, a box blur, the scene
@@ -4149,7 +4153,7 @@ pub struct Settings {
     /// Managed cache limit in GiB (unset: 25; zero: no automatic cleanup). Player data isn't cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit_gib: Option<u64>,
-    /// The accent picked under each launcher theme, by its id (`themes::SUNRISE` for Sunrise's
+    /// The accent picked under each launcher theme, by its id (`themes::TWILIGHT` for Twilight's
     /// own), so going back to a theme brings back its colour. A launcher older than this map
     /// drops it when it saves: the themes then only start from their own accents again.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -4258,6 +4262,10 @@ impl Settings {
         }
         look_settings::settle(&mut settings);
         settings
+    }
+    /// Whether the corner cat shows.
+    pub fn show_cat(&self) -> bool {
+        self.cat.unwrap_or(true)
     }
     /// Whether the launcher keeps its entry in the applications menu (Linux).
     pub fn desktop_entry(&self) -> bool {
