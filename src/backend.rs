@@ -6811,7 +6811,7 @@ esac"#
             fs::create_dir_all(app.join("Contents/MacOS")).unwrap();
             fs::create_dir_all(app.join("Contents/Resources")).unwrap();
             let bin = app.join("Contents/MacOS").join(crate::identity::EXECUTABLE);
-            fs::copy("/usr/bin/true", &bin).unwrap();
+            fs::copy(std::env::current_exe().unwrap(), &bin).unwrap();
             fs::set_permissions(&bin, fs::Permissions::from_mode(0o755)).unwrap();
             fs::write(app.join("Contents/Resources/version"), version).unwrap();
             fs::write(
@@ -6850,7 +6850,7 @@ esac"#
             .join("Contents/MacOS")
             .join(crate::identity::EXECUTABLE);
         assert!(
-            Command::new(&bin).status().unwrap().success(),
+            Command::new(&bin).arg("--list").status().unwrap().success(),
             "still executable"
         );
         let valid = Command::new("codesign")
