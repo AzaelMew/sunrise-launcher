@@ -31,6 +31,12 @@ impl Launcher {
             .child(header)
             .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
+        {
+            page = page.child(self.alt_pack_tabs(cx));
+            if self.alt.mods.packs.scope != super::pack_discover::Scope::Mods {
+                return self.alt_pack_results(page, cx);
+            }
+        }
 
         let examples = self.alt.mods.examples;
         let (cards, categories): (Vec<Card>, Vec<String>) = match (&self.alt.mods.catalog, examples)
@@ -360,6 +366,7 @@ impl Launcher {
                                             .flex()
                                             .items_center()
                                             .gap(px(8.))
+                                            .child(tag(tr("Sunrise registry")))
                                             .child(tag(card_data.make.label()))
                                             .child(muted(model::downloads(card_data.downloads)))
                                             .children(

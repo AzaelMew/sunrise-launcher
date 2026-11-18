@@ -32,6 +32,7 @@ mod discover;
 mod examples;
 mod installed_view;
 mod model;
+mod pack_discover;
 #[cfg(feature = "redesign-preview")]
 mod packs;
 mod project;
@@ -83,6 +84,10 @@ enum Event {
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
+    /// A pack search's answer, by the number of the search that asked.
+    Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
+    /// A resource or data pack install ended: what it said.
+    PackDone(Result<String, String>),
     /// Worlds would be affected: nothing was changed, the player decides.
     Stake(PathBuf, actions::Action, Vec<(String, Vec<String>)>),
     /// The batch was refused before changing anything.
@@ -106,6 +111,8 @@ pub(crate) struct AltModsState {
     row_filter: model::RowFilter,
     #[cfg(feature = "redesign-preview")]
     collection: sunrise_launcher::packs::Kind,
+    /// Discover's resource and data pack scopes (`pack_discover`).
+    packs: pack_discover::PackState,
     selection: BTreeSet<String>,
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
@@ -140,6 +147,7 @@ impl Default for AltModsState {
             row_filter: model::RowFilter::default(),
             #[cfg(feature = "redesign-preview")]
             collection: sunrise_launcher::packs::Kind::Resource,
+            packs: Default::default(),
             selection: BTreeSet::new(),
             anchor: None,
             confirm: None,
@@ -195,6 +203,13 @@ impl Launcher {
         self.alt_mods_load_page(id, from);
     }
 
+    /// Home's "Data packs → Add" on a world: Discover for data packs, aimed at `world` of the
+    /// selected setup once it is checked, and a search. Changes no file.
+    #[allow(dead_code)] // Called by Home's world rows.
+    pub(super) fn alt_discover_for_world(&mut self, world: PathBuf) {
+        self.alt_pack_for_world(world);
+    }
+
     fn alt_mods_home(&self) -> PathBuf {
         self.selected_instance()
             .map(|i| i.home.clone())
@@ -218,6 +233,8 @@ impl Launcher {
                     }
                 }
                 Event::Progress(line, f) => m.busy = Some((line, f)),
+                Event::Packs(seq, result) => self.alt_pack_answer(seq, result),
+                Event::PackDone(result) => self.alt_pack_done(result),
                 Event::Stake(home, action, worlds) => {
                     m.busy = None;
                     // Only for the folder still shown: a worker's answer for another setup is dropped.
@@ -283,6 +300,7 @@ impl Launcher {
             m.anchor = None;
             m.errors.clear();
             m.notice = None;
+            self.alt_pack_setup_moved();
         }
         if self.alt.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
             let entries = installed::Installed::load(&home).entries;
@@ -547,6 +565,11 @@ impl Launcher {
         } else {
             placeholder
         };
+        let placeholder = match (installed, self.alt.mods.packs.scope) {
+            (false, pack_discover::Scope::Resource) => tr("Search Modrinth resource packs").into(),
+            (false, pack_discover::Scope::Data) => tr("Search Modrinth data packs").into(),
+            _ => placeholder,
+        };
         let edit = if installed {
             &self.alt.mods.have
         } else {
@@ -591,11 +614,15 @@ impl Launcher {
                 })
             })
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                let packs_scope = this.alt.mods.packs.scope != pack_discover::Scope::Mods;
                 let m = &mut this.alt.mods;
                 let edit = if installed { &mut m.have } else { &mut m.find };
                 match line_edit::handle(edit, ev, cx) {
                     Key::Escape => window.blur(cx),
                     Key::Pass => return,
+                    Key::Enter if !installed && packs_scope => {
+                        this.alt_pack_search();
+                    }
                     Key::Edited => {
                         let text = edit.text().to_owned();
                         if installed {
@@ -652,6 +679,9 @@ impl Launcher {
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.alt.page = page;
+                    if page == Page::Installed {
+                        this.alt_pack_scope(pack_discover::Scope::Mods);
+                    }
                     this.alt.mods.selection.clear();
                     this.alt.mods.confirm = None;
                     this.alt.mods.menu = None;

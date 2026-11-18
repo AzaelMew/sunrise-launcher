@@ -71,7 +71,7 @@ impl Launcher {
     }
 
     /// The gate every change passes: not an example, not locked, nothing else running.
-    fn alt_guard(&mut self) -> bool {
+    pub(super) fn alt_guard(&mut self) -> bool {
         let refusal = if self.alt.mods.examples {
             Some(tr("These are examples: nothing can be changed.").to_string())
         } else if let Some(why) = self.alt_mods_locked() {
@@ -396,7 +396,10 @@ fn verify_backup(zip: &std::path::Path, world: &worlds::World) -> Result<(), Str
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().map(|n| n.into_owned()).map_err(|e| e.to_string())?;
+        let name = entry
+            .name()
+            .map(|n| n.into_owned())
+            .map_err(|e| e.to_string())?;
         let size = entry.size();
         let copied = std::io::copy(&mut entry, &mut std::io::sink()).map_err(|e| {
             trf(
