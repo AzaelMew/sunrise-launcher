@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_hosted:
+        description: Run on GitHub's runners even while Dyna's pool is leased
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -19,8 +24,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Linux runs on Dyna's pool while its lease (DYNA_CI_POOL_UNTIL, Unix seconds) holds and SUNRISE_LAUNCHER_CI_RUNNER names it; a fork's pull request, or force_hosted, always on GitHub's.
+  route:
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pool.outputs.runner }}
+    steps:
+      - id: pool
+        env:
+          FORCE_HOSTED: ${{ github.event_name == 'workflow_dispatch' && inputs.force_hosted }}
+          LEASE: ${{ vars.DYNA_CI_POOL_UNTIL }}
+          POOL: ${{ vars.SUNRISE_LAUNCHER_CI_RUNNER }}
+          SERVED: >-
+            ${{ github.event_name != 'pull_request' ||
+            github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          runner=ubuntu-24.04
+          if [[ "$FORCE_HOSTED" != true && "$SERVED" == true && -n "$POOL" && "$LEASE" =~ ^[0-9]{1,12}$ ]] &&
+             [ "$LEASE" -gt "$(date +%s)" ]; then
+            runner=$POOL
+          fi
+          echo "runner=$runner" >> "$GITHUB_OUTPUT"
+
   check:
     name: check (${{ matrix.name }})
+    needs: route
     strategy:
       fail-fast: false
       matrix:
@@ -29,7 +57,7 @@ jobs:
           - { name: macos, os: macos-latest }
           # The launcher builds native mods for windows-gnu: registry_compile's tests emit metadata for it.
           - { name: windows, os: windows-latest, targets: x86_64-pc-windows-gnu }
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.name == 'linux' && needs.route.outputs.runner || matrix.os }}
     timeout-minutes: 60
     defaults:
       run:
@@ -38,8 +66,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # Dyna's runners carry these headers and Rust's caches already.
       - name: Linux headers GPUI links against
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: >-
           bash tools/ci/install_launcher_deps.sh libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev
           libfontconfig-dev libvulkan-dev libasound2-dev libudev-dev
@@ -48,6 +77,7 @@ jobs:
           components: rustfmt, clippy
           targets: ${{ matrix.targets }}
       - uses: Swatinem/rust-cache@v2
+        if: runner.environment == 'github-hosted'
         with:
           shared-key: ci-${{ matrix.name }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
