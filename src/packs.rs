@@ -170,8 +170,8 @@ pub fn stamp(home: &Path) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pictures {
     All,
-    /// Only of the packs turned on: a list that shows no other.
-    On,
+    /// Only list metadata. Home asks for artwork separately, for the rows near the view.
+    None,
 }
 
 /// The packs of `kind` in the game folder `home`, by name: turning one on or off leaves it where
@@ -282,7 +282,7 @@ fn read_named(
     let enabled = on.contains(&file)
         || (kind == Kind::Shader && shader_key(path).is_some_and(|k| on.contains(&k)));
     // A picture nobody will see is not read.
-    let pictured = pictures == Pictures::All || enabled;
+    let pictured = pictures == Pictures::All;
     let (title, description, icon) = match kind {
         Kind::Resource => {
             let [meta, icon] = entries(path, [Some("pack.mcmeta"), pictured.then_some("pack.png")]);
@@ -357,6 +357,16 @@ fn entries<const N: usize>(path: &Path, names: [Option<&str>; N]) -> [Option<Vec
 pub(crate) fn entry(path: &Path, name: &str) -> Option<Vec<u8>> {
     let [file] = entries(path, [Some(name)]);
     file
+}
+
+/// Read the image at the root of a pack, independently of listing its metadata.
+pub fn artwork(path: &Path, kind: Kind) -> Option<Vec<u8>> {
+    let name = match kind {
+        Kind::Resource => "pack.png",
+        Kind::Shader if sunrise_launcher_shader_api::package::is_pack(path) => "icon.png",
+        Kind::Shader => return None,
+    };
+    entry(path, name)
 }
 
 /// A text component as plain text: its strings, without `§` formatting codes.
@@ -509,7 +519,7 @@ pub fn set_enabled(home: &Path, pack: &Pack, on: bool) -> Result<(), String> {
 
 /// The pack a command names: its file name, or its title (any case).
 pub fn find(home: &Path, kind: Kind, query: &str) -> Result<Pack, String> {
-    let all = list(home, kind);
+    let all = list_with(home, kind, Pictures::None);
     all.iter()
         .find(|p| p.file == query)
         .or_else(|| all.iter().find(|p| p.title.eq_ignore_ascii_case(query)))

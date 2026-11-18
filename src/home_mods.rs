@@ -9,9 +9,9 @@ use super::*;
 use crate::frame::{button, Page, Reach as _};
 use crate::home::{card, heading, muted};
 use crate::paint::palette;
-use gpui::{rgb, ImageSource};
+use gpui::{rgb, ImageSource, RenderImage};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use sunrise_launcher::browser::{installed, mod_list, sunrise};
 use sunrise_launcher::packs::{self, Kind as PackKind};
 
@@ -70,8 +70,84 @@ impl Kind {
 pub(crate) enum Picture {
     /// A registry mod's icon, by the mod's project there: asked for when its row is drawn.
     Project(String),
-    /// The item's own picture, read with it.
+    /// The local mod's own picture, read with it.
     Image(Option<Arc<gpui::Image>>),
+    /// Pack artwork is read and decoded only when its row is first built.
+    Pack(Arc<PackPicture>),
+}
+
+pub(crate) struct PackPicture {
+    path: PathBuf,
+    kind: PackKind,
+    thumbnail: Mutex<Thumbnail>,
+}
+
+#[derive(Default)]
+enum Thumbnail {
+    #[default]
+    Unasked,
+    Loading,
+    Ready(Option<Arc<RenderImage>>),
+}
+
+impl PackPicture {
+    fn show(self: &Arc<Self>, cx: &mut Context<Launcher>) -> Option<Arc<RenderImage>> {
+        let mut thumbnail = self.thumbnail.lock().unwrap();
+        match &*thumbnail {
+            Thumbnail::Ready(image) => return image.clone(),
+            Thumbnail::Loading => return None,
+            Thumbnail::Unasked => *thumbnail = Thumbnail::Loading,
+        }
+        let (path, kind) = (self.path.clone(), self.kind);
+        let requested = Arc::downgrade(self);
+        let task = cx
+            .background_executor()
+            .spawn(async move { pack_thumbnail(packs::artwork(&path, kind)?) });
+        cx.spawn(async move |this, cx| {
+            let image = task.await;
+            let _ = this.update(cx, |_, cx| {
+                if let Some(requested) = requested.upgrade() {
+                    let has_picture = image.is_some();
+                    *requested.thumbnail.lock().unwrap() = Thumbnail::Ready(image);
+                    if has_picture {
+                        cx.notify();
+                    }
+                }
+            });
+        })
+        .detach();
+        None
+    }
+}
+
+/// Decode the source only here, with limits; GPUI gets a paint-ready square, never the source.
+fn pack_thumbnail(bytes: Vec<u8>) -> Option<Arc<RenderImage>> {
+    const SIDE: u32 = PICTURE as u32 * 2;
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    limits.max_alloc = Some(64 << 20);
+    reader.limits(limits);
+    let decoded = reader.decode().ok()?;
+    let edge = decoded.width().min(decoded.height());
+    // Crop before scaling so a very thin source can't create a huge intermediate image.
+    let mut rgba = decoded
+        .crop_imm(
+            (decoded.width() - edge) / 2,
+            (decoded.height() - edge) / 2,
+            edge,
+            edge,
+        )
+        .resize_exact(SIDE, SIDE, image::imageops::FilterType::Triangle)
+        .into_rgba8();
+    for p in rgba.pixels_mut() {
+        let [r, g, b, a] = p.0;
+        let premultiply = |v| (u16::from(v) * u16::from(a) / 255) as u8;
+        p.0 = [premultiply(b), premultiply(g), premultiply(r), a];
+    }
+    Some(Arc::new(RenderImage::new([image::Frame::new(rgba)])))
 }
 
 /// What a press on a row opens.
@@ -117,8 +193,8 @@ pub(crate) fn column(items: Vec<Item>) -> Option<Column> {
 
 /// Everything the profile in `home` has installed: its registry mods and the mod files put
 /// there by hand, by name, then its resource packs as the game stacks them, then its shader
-/// packs. Each is on or off; only a pack that is on has its picture read. Reads files: never
-/// called while drawing.
+/// packs. Each is on or off, with references to pack artwork, not the images. Reads files:
+/// never called while drawing.
 pub(crate) fn read(home: &Path) -> Vec<Item> {
     let image = |png: Vec<u8>| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png));
     let mut mods: Vec<Item> = installed::Installed::load(home)
@@ -162,13 +238,17 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {
         kind: Kind::of(pack.kind),
-        picture: Picture::Image(pack.icon.map(image)),
+        picture: Picture::Pack(Arc::new(PackPicture {
+            path: pack.path,
+            kind: pack.kind,
+            thumbnail: Mutex::default(),
+        })),
         open: Open::Pack(pack.kind, pack.file.clone()),
         on: pack.enabled,
         id: pack.file,
         name: pack.title,
     };
-    let mut resource = packs::list_with(home, PackKind::Resource, packs::Pictures::On);
+    let mut resource = packs::list_with(home, PackKind::Resource, packs::Pictures::None);
     let order = packs::resource_order(home);
     // Stable: the packs that are off stay by name after the stack.
     resource.sort_by_key(|p| {
@@ -177,7 +257,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
             .position(|file| *file == p.file)
             .unwrap_or(usize::MAX)
     });
-    let shader = packs::list_with(home, PackKind::Shader, packs::Pictures::On);
+    let shader = packs::list_with(home, PackKind::Shader, packs::Pictures::None);
     mods.into_iter()
         .chain(resource.into_iter().map(pack))
         .chain(shader.into_iter().map(pack))
@@ -235,19 +315,31 @@ impl Inventory {
     }
 
     /// A read for `home` ended: `None` when its files were as the kept list knows them.
-    fn took(&mut self, home: &Path, read: Option<(String, Vec<Item>)>) {
+    fn took(&mut self, home: &Path, read: Option<(String, Vec<Item>)>) -> Option<Arc<Vec<Item>>> {
         if self.home.as_deref() != Some(home) {
-            return;
+            return None;
         }
         self.reading = false;
         match read {
             Some((stamp, items)) => {
                 self.stamp = stamp;
-                self.items = Some(Arc::new(items));
+                self.items.replace(Arc::new(items))
             }
             // Nothing there and nothing known is still an answer: an empty profile.
             None => {
                 self.items.get_or_insert_default();
+                None
+            }
+        }
+    }
+}
+
+/// Release superseded pack thumbnails from the window's sprite atlas on its next frame.
+fn retire(items: &[Item], pictures: &mut crate::picture_cache::Pictures) {
+    for item in items {
+        if let Picture::Pack(art) = &item.picture {
+            if let Thumbnail::Ready(Some(image)) = &*art.thumbnail.lock().unwrap() {
+                pictures.retire(image.clone());
             }
         }
     }
@@ -336,7 +428,13 @@ impl Launcher {
     /// known yet or may have changed.
     fn home_inventory(&mut self, home: &Path, cx: &mut Context<Self>) -> Option<Arc<Vec<Item>>> {
         let home = home.to_path_buf();
-        let (items, read) = self.ui.home.mods.draw(&home, Instant::now());
+        let mods = &mut self.ui.home.mods;
+        if mods.home.as_deref() != Some(&home) {
+            if let Some(old) = mods.items.take() {
+                retire(&old, &mut self.pictures);
+            }
+        }
+        let (items, read) = mods.draw(&home, Instant::now());
         if let Some(known) = read {
             let at = home.clone();
             let task = cx
@@ -346,7 +444,9 @@ impl Launcher {
                 let read = task.await;
                 let _ = this.update(cx, |this, cx| {
                     let changed = read.is_some();
-                    this.ui.home.mods.took(&home, read);
+                    if let Some(old) = this.ui.home.mods.took(&home, read) {
+                        retire(&old, &mut this.pictures);
+                    }
                     if changed {
                         cx.notify();
                     }
@@ -448,6 +548,7 @@ impl Launcher {
                             PICTURE,
                         ),
                         Picture::Image(image) => tile(image.clone(), &item.id, &item.name, PICTURE),
+                        Picture::Pack(art) => tile(art.show(cx), &item.id, &item.name, PICTURE),
                     };
                     let open = item.open.clone();
                     rows = rows.child(
@@ -557,6 +658,30 @@ mod tests {
 
     fn names(column: &Column) -> Vec<&str> {
         column.shown.iter().map(|i| i.name.as_str()).collect()
+    }
+
+    #[test]
+    fn only_a_paint_sized_thumbnail_reaches_the_renderer() {
+        let png = |wide: u32, tall: u32| {
+            let mut bytes = Vec::new();
+            image::RgbaImage::from_pixel(wide, tall, image::Rgba([220, 80, 40, 255]))
+                .write_to(
+                    &mut std::io::Cursor::new(&mut bytes),
+                    image::ImageFormat::Png,
+                )
+                .unwrap();
+            assert!(
+                bytes.len() < 4 << 20,
+                "under the pack entry's compressed read cap"
+            );
+            bytes
+        };
+        let art = pack_thumbnail(png(1024, 64)).expect("an ordinary large PNG is resized");
+        assert_eq!((art.size(0).width.0, art.size(0).height.0), (80, 80));
+        assert!(
+            pack_thumbnail(png(4097, 1)).is_none(),
+            "reject over-limit dimensions"
+        );
     }
 
     #[test]

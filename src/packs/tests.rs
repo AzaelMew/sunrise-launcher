@@ -713,21 +713,16 @@ fn a_listing_reads_only_the_pictures_it_was_asked_for() {
             .collect()
     };
     let all = pictured(Pictures::All);
-    let on = pictured(Pictures::On);
-    let enabled: Vec<bool> = list(&home, Kind::Resource)
-        .iter()
-        .map(|p| p.enabled)
-        .collect();
-    assert_eq!(
-        on,
-        [
-            ("Folder Pack".into(), false),
-            ("Glass.zip".into(), true),
-            ("Zed.zip".into(), false)
-        ]
-    );
-    for ((all, on), enabled) in all.iter().zip(&on).zip(enabled) {
-        assert_eq!(all.0, on.0);
-        assert_eq!(on.1, all.1 && enabled, "{}", on.0);
+    let metadata_only = pictured(Pictures::None);
+    assert_eq!(all.len(), 3);
+    assert_eq!(metadata_only.len(), all.len());
+    assert!(all.iter().any(|(_, has_picture)| *has_picture));
+    for ((name, _), (also, has_picture)) in all.iter().zip(&metadata_only) {
+        assert_eq!(name, also);
+        assert!(!has_picture, "metadata listing read the picture for {name}");
     }
+    assert_eq!(
+        artwork(&home.join("resourcepacks/Folder Pack"), Kind::Resource).as_deref(),
+        Some(&b"png"[..]),
+    );
 }

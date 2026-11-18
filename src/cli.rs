@@ -2707,7 +2707,10 @@ fn game_packs(action: PacksCmd, as_json: bool) -> Result<(), String> {
                 Some(k) => vec![Kind::from(k)],
                 None => vec![Kind::Resource, Kind::Shader],
             };
-            let all: Vec<packs::Pack> = kinds.iter().flat_map(|k| packs::list(&home, *k)).collect();
+            let all: Vec<packs::Pack> = kinds
+                .iter()
+                .flat_map(|k| packs::list_with(&home, *k, packs::Pictures::None))
+                .collect();
             if as_json {
                 json(all.iter().map(value).collect());
             }
