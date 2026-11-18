@@ -294,7 +294,12 @@ impl Launcher {
                         && built.is_some()
                         && self
                             .selected_instance()
-                            .is_some_and(|i| Some(&i.id) == wanted.as_ref() && i.version == built);
+                            // The build the instance plays now: its own, or its channel's when
+                            // every mod was left out and it follows one.
+                            .is_some_and(|i| {
+                                Some(&i.id) == wanted.as_ref()
+                                    && self.version_of(i) == built.as_ref()
+                            });
                     if play_now {
                         self.play();
                     }
