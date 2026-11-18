@@ -24,7 +24,7 @@ A copy to start from is in [`themes/tidepool`](themes/tidepool/theme.toml).
 |---|---|
 | `version` | Required. The number `1`. |
 | `name` | Required. 1 to 64 characters of plain text on one line. |
-| `background` | Optional. The name of one PNG, JPEG or WebP picture in the same folder, shown behind Home. Without it, Home shows Dawn's scene. |
+| `background` | Optional. The name of one PNG, JPEG or still WebP picture in the same folder, shown behind Home. Without it, Home shows Dawn's scene. |
 | `[palette]` | Required, with at least one of the six colours below. A colour you leave out is Dawn's. |
 | `palette.background` | The page behind the scenery. |
 | `palette.card` | The tint of the panels on a page. |
@@ -44,7 +44,7 @@ A folder the launcher can't use is listed under the themes with the reason, and 
 - it has a key not in the table above (`opacity`, `accent_on`, a `[glass]` table…);
 - `version` isn't `1`, `name` is missing or not plain one-line text, or a colour isn't `"#RRGGBB"`;
 - `background` is anything but one file name: no folders, `..`, drive letters or addresses;
-- the picture is missing, isn't a PNG, JPEG or WebP by its contents, is over 40 MB, is under 64 or over 8192 pixels on a side, or is over 16 megapixels;
+- the picture is missing, isn't a PNG, JPEG or still WebP by its contents, is over 40 MB, is under 64 or over 8192 pixels on a side, or is over 16 megapixels;
 - the folder, `theme.toml` or the picture is a link;
 - `background`, `card` and `chrome` are so far apart that neither black nor white text reads on all of them. Make them all dark or all light.
 

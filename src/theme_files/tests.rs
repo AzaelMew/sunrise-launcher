@@ -318,6 +318,24 @@ fn a_bad_theme_is_listed_beside_the_good_ones_with_its_reason() {
 }
 
 #[test]
+fn webp_backgrounds_must_be_still_regardless_of_filename() {
+    // Two valid lossless 64×64 frames, solid red then blue.
+    let animated = include_bytes!("fixtures/two-colours.webp");
+    let reason = Reason::AnimatedWebP("shore.png".into());
+    assert_eq!(kind(animated, "shore.png"), Err(reason.clone()));
+    assert_eq!(still(animated, "shore.png"), Err(reason));
+
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::RgbImage::new(64, 64)
+        .write_to(&mut bytes, image::ImageFormat::WebP)
+        .unwrap();
+    assert_eq!(
+        still(bytes.get_ref(), "shore.png").unwrap().dimensions(),
+        (64, 64)
+    );
+}
+
+#[test]
 fn a_picture_is_checked_by_what_it_holds_and_how_big_it_is() {
     let root = tempfile::tempdir().unwrap();
     let with = TIDEPOOL.replace(

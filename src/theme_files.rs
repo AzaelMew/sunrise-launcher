@@ -154,6 +154,7 @@ pub enum Reason {
     PictureName,
     PictureMissing(String),
     PictureKind(String),
+    AnimatedWebP(String),
     PictureTooBig(String),
     PictureSize(String, u32, u32),
     Unreadable {
@@ -208,6 +209,10 @@ impl Reason {
             ),
             Reason::PictureKind(name) => trf(
                 "{name} isn't a PNG, JPEG or WebP picture.",
+                &[("name", name)],
+            ),
+            Reason::AnimatedWebP(name) => trf(
+                "{name} is an animated WebP. Choose a still picture for Home.",
                 &[("name", name)],
             ),
             Reason::PictureTooBig(name) => trf("{name} is over 40 MB.", &[("name", name)]),
@@ -487,9 +492,21 @@ pub fn kind(bytes: &[u8], name: &str) -> Result<image::ImageFormat, Reason> {
     let Some(kind) = kind else {
         return Err(Reason::PictureKind(name.to_string()));
     };
-    let (w, h) = image::ImageReader::with_format(std::io::Cursor::new(bytes), kind)
-        .into_dimensions()
-        .map_err(|_| Reason::PictureKind(name.to_string()))?;
+    let source = std::io::Cursor::new(bytes);
+    let unreadable = |_| Reason::PictureKind(name.to_string());
+    let (w, h) = if kind == image::ImageFormat::WebP {
+        use image::ImageDecoder as _;
+        let decoder = image::codecs::webp::WebPDecoder::new(source).map_err(unreadable)?;
+        // Home never needs WebP frame composition. Reject animations before any frame is read.
+        if decoder.has_animation() {
+            return Err(Reason::AnimatedWebP(name.to_string()));
+        }
+        decoder.dimensions()
+    } else {
+        image::ImageReader::with_format(source, kind)
+            .into_dimensions()
+            .map_err(unreadable)?
+    };
     let sides = MIN_SIDE..=MAX_SIDE;
     if !sides.contains(&w) || !sides.contains(&h) || u64::from(w) * u64::from(h) > MAX_PIXELS {
         return Err(Reason::PictureSize(name.to_string(), w, h));
