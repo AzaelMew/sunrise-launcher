@@ -25,19 +25,14 @@ use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
 
-/// The recent worlds shown.
-const WORLDS: usize = 6;
-/// The picture band of a world card, in points.
-const BAND: f32 = 150.;
-/// An icon is drawn at a whole multiple of its pixels up to about this wide, then cropped.
-const BAND_ART: f32 = 480.;
-/// One texture tile, in points (16 pixels at 8×).
-const TILE: f32 = 128.;
+/// A world's picture in a row: its 64 pixels, one to one.
+const WORLD_ICON: f32 = 64.;
+/// And as a tile: its 64 pixels, doubled.
+const WORLD_TILE: f32 = 128.;
+/// How much of a tile's data packs button shows while nothing points at the tile.
+const PACKS_AT_REST: f32 = 0.6;
 /// The icons of a world or a server are small: anything larger is not one.
 const MAX_PICTURE: u64 = 4 << 20;
-/// A world card is never narrower than this beside another, nor wider than this alone.
-const CARD_MIN: f32 = 190.;
-const CARD_MAX: f32 = 600.;
 /// The room between the header and the panel under it.
 const GAP: f32 = 20.;
 /// How far the header stands in from the panel's edge.
@@ -123,7 +118,7 @@ impl Launcher {
         let body = if first_start {
             self.welcome(cx)
         } else {
-            self.continue_playing(&instance, cx)
+            self.continue_playing(&instance, window, cx)
         };
         div()
             .id("alt-home")
@@ -430,8 +425,14 @@ impl Launcher {
     }
 
     /// The selected profile's recent worlds, or what to do when it has none.
-    fn continue_playing(&mut self, instance: &instances::Instance, cx: &mut Context<Self>) -> Div {
-        let list: Vec<World> = self.worlds.list.iter().take(WORLDS).cloned().collect();
+    fn continue_playing(
+        &mut self,
+        instance: &instances::Instance,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let list: Vec<World> = self.worlds.list.clone();
+        let tiles = self.settings.world_layout == backend::WorldLayout::Tiles;
         let top = div()
             .flex()
             .flex_col()
@@ -446,12 +447,19 @@ impl Launcher {
                 &[("profile", &instance.name)],
             )));
         let body = if !list.is_empty() {
-            let mut row = div().flex().flex_wrap().gap(px(12.));
-            for world in list.iter() {
-                let art = self.world_art(world);
-                row = row.child(self.world_card(world, art, cx));
+            if tiles {
+                let mut grid = div().flex().flex_wrap().gap(px(16.));
+                for world in list.iter() {
+                    grid = grid.child(self.world_tile(world, window, cx));
+                }
+                grid
+            } else {
+                let mut rows = div().flex().flex_col().gap(px(8.));
+                for world in list.iter() {
+                    rows = rows.child(self.world_row(world, cx));
+                }
+                rows
             }
-            row
         } else if !self.worlds.fresh {
             // Still being read: no "none yet" until that is known.
             div()
@@ -495,146 +503,193 @@ impl Launcher {
             .child(body)
     }
 
-    /// A world's picture: its own `icon.png`, drawn big and sharp; else `dirt.png` of the
-    /// player's own game files, under the theme's scrim; else plain charcoal.
-    fn world_art(&mut self, world: &World) -> Div {
-        let scale = self.scale;
-        let band = div()
-            .relative()
+    /// A world's picture, `side` points square: its own `icon.png` (64 pixels square, as the
+    /// game takes it) at a whole multiple of its pixels, so it stays sharp; else `dirt.png` of
+    /// the player's own game files; else a plain tile with the map glyph.
+    fn world_icon(&mut self, world: &World, side: f32) -> Div {
+        let tile = div()
+            .flex_none()
+            .size(px(side))
+            .rounded(px(tokens::R_CONTROL))
+            .overflow_hidden()
             .flex()
             .items_center()
             .justify_center()
-            .w_full()
-            .h(px(BAND))
-            .overflow_hidden()
-            .bg(rgb(palette().background));
+            .bg(rgb(palette().selected));
         let stamp = world
             .last_played
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        if let Some(icon) = world.icon.clone() {
+        let own = world.icon.clone().and_then(|icon| {
             let key = format!("alt-world:{}:{stamp}", icon.display());
-            let read = icon.clone();
-            let picture = self.icon_image(key, BAND_ART, true, move || {
-                std::fs::metadata(&read)
+            self.icon_image(key, side, true, move || {
+                std::fs::metadata(&icon)
                     .ok()
                     .filter(|m| m.len() <= MAX_PICTURE)
-                    .and_then(|_| std::fs::read(&read).ok())
-            });
-            if let Some(image) = picture {
-                let dim = image.size(0);
-                return band.child(
-                    gpui::img(image)
-                        .flex_none()
-                        .w(px(dim.width.0 as f32 / scale))
-                        .h(px(dim.height.0 as f32 / scale)),
-                );
-            }
-        }
+                    .and_then(|_| std::fs::read(&icon).ok())
+            })
+        });
         // Always dirt, from the player's own prepared files; none shipped.
-        let file = self
-            .game_resources()
-            .join("assets/minecraft/textures/block/dirt.png");
-        let key = format!("alt-dirt:{}", file.display());
-        let texture = self.icon_image(key, TILE, true, move || std::fs::read(file).ok());
-        match texture {
-            Some(image) => {
-                let dim = image.size(0);
-                let (w, h) = (dim.width.0 as f32 / scale, dim.height.0 as f32 / scale);
-                let mut tiles = div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .flex()
-                    .flex_wrap()
-                    .w(px(w * 8.));
-                for _ in 0..16 {
-                    tiles = tiles.child(gpui::img(image.clone()).flex_none().w(px(w)).h(px(h)));
-                }
-                band.child(tiles)
-                    .child(div().absolute().inset_0().bg(palette().scrim()))
-            }
-            // No dirt: plain charcoal a step above the card, no letter.
-            None => band.bg(rgb(palette().selected)),
+        let picture = own.or_else(|| {
+            let file = self
+                .game_resources()
+                .join("assets/minecraft/textures/block/dirt.png");
+            let key = format!("alt-dirt:{}", file.display());
+            self.icon_image(key, side, true, move || std::fs::read(file).ok())
+        });
+        match picture {
+            Some(image) => tile.child(gpui::img(image).size(px(side))),
+            None => tile.child(blocks::icon("map", side * 0.4, rgb(palette().muted).into())),
         }
     }
 
-    fn world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
-        let folder = world.folder.clone();
-        let packs = {
-            let path = world.path.clone();
-            Some(
-                button(format!("alt-world-packs-{}", world.folder), "")
-                    .size(px(36.))
-                    .px_0()
-                    .child(blocks::icon("archive", 17., rgb(palette().text).into()))
-                    .tooltip(crate::glass_ui::tip(tr("Data packs")))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.show_world_packs(path.clone());
-                        cx.notify();
-                    })),
-            )
-        };
-        // Icons, named by their tooltips: the card keeps its room for the world's name.
-        let play = crate::frame::button_base(format!("alt-world-{}", world.folder), "")
-            .size(px(36.))
-            .px_0()
-            .bg(rgb(palette().text))
-            .border_color(rgb(palette().text))
-            .hover(|s| s.bg(rgb(palette().accent_on)))
-            .child(blocks::icon("play", 17., rgb(palette().background).into()))
-            .tooltip(crate::glass_ui::tip(tr("Play this world")))
+    /// "Survival · Today".
+    fn world_facts(world: &World) -> String {
+        format!(
+            "{} · {}",
+            tr(world.mode),
+            sentence(&worlds_page::ago(world.last_played))
+        )
+    }
+
+    /// One world as a row: its picture, what it is, and its two buttons at the end.
+    fn world_row(&mut self, world: &World, cx: &mut Context<Self>) -> Div {
+        let (folder, path) = (world.folder.clone(), world.path.clone());
+        let packs = button(
+            format!("alt-world-packs-{}", world.folder),
+            tr("Data packs"),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            this.show_world_packs(path.clone());
+            cx.notify();
+        }));
+        let play = button(format!("alt-world-{}", world.folder), "")
+            .gap(px(6.))
+            .child(blocks::icon("play", 15., rgb(palette().text).into()))
+            .child(tr("Play"))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.play_to("--world", folder.clone());
                 cx.notify();
             }));
-        let facts = format!(
-            "{} · {}",
-            tr(world.mode),
-            sentence(&worlds_page::ago(world.last_played))
-        );
         card()
-            // Side by side while there is room, each as wide as its share; under each other
-            // in a narrow window. One world alone is not stretched across the page.
-            .flex_grow(1.)
-            .flex_basis(px(CARD_MIN))
-            .min_w(px(0.))
-            .max_w(px(CARD_MAX))
+            .flex_none()
             .flex()
-            .flex_col()
-            .child(art)
+            .items_center()
+            .gap(px(14.))
+            .p(px(8.))
+            .pr(px(14.))
+            .child(self.world_icon(world, WORLD_ICON))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(tokens::BODY))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .truncate()
+                            .child(world.name.clone()),
+                    )
+                    .child(muted(Self::world_facts(world))),
+            )
             .child(
                 div()
                     .flex()
-                    // A narrow card puts its buttons under the name rather than squeezing it.
-                    .flex_wrap()
+                    .flex_none()
+                    .gap(px(8.))
+                    .child(packs)
+                    .child(play),
+            )
+    }
+
+    /// One world as a tile: its picture, which plays it, with what it is under it. Its data
+    /// packs button sits on the picture, faint until the pointer is over the tile or the
+    /// keyboard is on the picture or on the button.
+    fn world_tile(&mut self, world: &World, window: &Window, cx: &mut Context<Self>) -> Div {
+        let (folder, path) = (world.folder.clone(), world.path.clone());
+        let focus = self
+            .worlds
+            .tile_focus
+            .entry(world.folder.clone())
+            .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let group = SharedString::from(format!("alt-world-tile-{}", world.folder));
+        let picture = div()
+            .id(format!("alt-world-{}", world.folder))
+            .track_focus(&focus)
+            .relative()
+            .cursor_pointer()
+            .rounded(px(tokens::R_CONTROL))
+            .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+            .seen()
+            .child(self.world_icon(world, WORLD_TILE))
+            // What a press does, said on the picture itself.
+            .child(
+                div()
+                    .absolute()
+                    .right(px(8.))
+                    .bottom(px(8.))
+                    .size(px(32.))
+                    .rounded(px(tokens::R_CONTROL))
+                    .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .p(px(14.))
+                    .justify_center()
+                    .bg(rgb(palette().text))
+                    .child(blocks::icon("play", 15., rgb(palette().background).into())),
+            )
+            .tooltip(crate::glass_ui::tip(trf(
+                "Play {world}",
+                &[("world", &world.name)],
+            )))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.play_to("--world", folder.clone());
+                cx.notify();
+            }));
+        let packs = crate::frame::button_base(format!("alt-world-packs-{}", world.folder), "")
+            .absolute()
+            .left(px(8.))
+            .bottom(px(8.))
+            .size(px(32.))
+            .px_0()
+            .bg(rgb(palette().raised))
+            .occlude()
+            .when(!focus.is_focused(window), |d| d.opacity(PACKS_AT_REST))
+            .group_hover(group.clone(), |s| s.opacity(1.))
+            .focus_visible(|s| s.opacity(1.).border_color(rgb(palette().focus)))
+            .child(blocks::icon("archive", 17., rgb(palette().text).into()))
+            .tooltip(crate::glass_ui::tip(tr("Data packs")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.show_world_packs(path.clone());
+                cx.notify();
+            }));
+        div()
+            .flex_none()
+            .w(px(WORLD_TILE))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(div().group(group).relative().child(picture).child(packs))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
                     .child(
+                        // A long name is cut at the picture's width: the tooltip has all of it.
                         div()
-                            .flex_1()
-                            .min_w(px(120.))
-                            .child(
-                                div()
-                                    .text_size(px(tokens::BODY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette().text))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(world.name.clone()),
-                            )
-                            .child(muted(facts)),
+                            .id(format!("alt-world-name-{}", world.folder))
+                            .text_size(px(tokens::BODY))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .truncate()
+                            .child(world.name.clone())
+                            .tooltip(crate::glass_ui::tip(world.name.clone())),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .gap(px(8.))
-                            .children(packs)
-                            .child(play),
-                    ),
+                    .child(muted(Self::world_facts(world))),
             )
     }
 

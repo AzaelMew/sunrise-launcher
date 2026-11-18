@@ -15,6 +15,7 @@ pub(super) fn settings_json(s: &backend::Settings) -> serde_json::Value {
         "proxy": s.proxy,
         "desktop_entry": s.desktop_entry.unwrap_or(true),
         "while_playing": s.while_playing.name(),
+        "world_layout": s.world_layout.name(),
         "language": s.language.map_or("system", |l| l.code()),
         "theme": sunrise_launcher::appearance::effective_id(s),
         "theme_choice": s.theme,

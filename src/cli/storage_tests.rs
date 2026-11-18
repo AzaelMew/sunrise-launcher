@@ -62,3 +62,20 @@ fn the_cat_is_on_until_the_player_switches_it_off() {
     assert!(set_setting(&mut settings, "cat", "maybe").is_err());
     assert!(Cli::try_parse_from(["sunrise-launcher", "settings", "cat", "off"]).is_ok());
 }
+
+#[test]
+fn the_worlds_setting_picks_rows_or_tiles() {
+    use backend::WorldLayout;
+    let mut settings = backend::Settings::default();
+    assert_eq!(settings_json(&settings)["world_layout"], "rows");
+    set_setting(&mut settings, "worlds", "tiles").unwrap();
+    assert_eq!(settings.world_layout, WorldLayout::Tiles);
+    assert_eq!(settings_json(&settings)["world_layout"], "tiles");
+    let loaded = backend::Settings::parse(&serde_json::to_string(&settings).unwrap());
+    assert_eq!(loaded.world_layout, WorldLayout::Tiles);
+    assert!(set_setting(&mut settings, "worlds", "grid").is_err());
+    assert_eq!(settings.world_layout, WorldLayout::Tiles);
+    set_setting(&mut settings, "worlds", "rows").unwrap();
+    assert_eq!(settings.world_layout, WorldLayout::Rows);
+    assert!(Cli::try_parse_from(["sunrise-launcher", "settings", "worlds", "tiles"]).is_ok());
+}
