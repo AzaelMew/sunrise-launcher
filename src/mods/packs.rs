@@ -89,9 +89,7 @@ impl Launcher {
             && !self.mutating()
             && self.ui.page == Page::Packs
             && self.ui.mods.shelf.kind() == Some(kind)
-            && self
-                .selected_instance()
-                .is_some_and(|i| i.java.is_none() && i.home == home)
+            && self.selected_instance().is_some_and(|i| i.home == home)
     }
 
     fn import_pack(&mut self, home: PathBuf, kind: Kind, cx: &mut Context<Self>) {

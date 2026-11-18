@@ -1,7 +1,6 @@
 //! Home's Mods tab (docs/design-system.md, "Night"; plan R0, screens 5 and 6): every mod of the
 //! selected instance, the browser's and those put in its folder by hand, with its version, where
-//! it comes from, an update when the browser found one, and a switch. A Java instance turns a mod
-//! off by renaming its jar (`.disabled`, as `java_instance` does); a Sunrise instance's mods are
+//! it comes from, an update when the browser found one, and a switch. An instance's mods are
 //! the registry's, switched as the game's Options > Mods does. Adding mods is the Mods page's.
 //!
 //! Each row shows the mod's own icon: Modrinth's for what the browser installed from it (the URLs

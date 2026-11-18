@@ -312,19 +312,14 @@ pub fn env_line(env: &BTreeMap<String, String>) -> String {
 
 /// The instance's variables for the game and the commands around it, named as Prism Launcher
 /// names them so its scripts carry over (<https://prismlauncher.org/wiki/help-pages/custom-commands/>):
-/// `INST_NAME`, `INST_ID`, `INST_DIR` and `INST_MC_DIR` (both the instance's game folder), and
-/// for a Java instance `INST_JAVA`, the `java` it runs on.
-pub fn instance_vars(name: &str, id: &str, dir: &std::path::Path, java: Option<&OsStr>) -> Vars {
-    let mut vars = vec![
+/// `INST_NAME`, `INST_ID`, `INST_DIR` and `INST_MC_DIR` (both the instance's game folder).
+pub fn instance_vars(name: &str, id: &str, dir: &std::path::Path) -> Vars {
+    vec![
         ("INST_NAME", OsString::from(name)),
         ("INST_ID", OsString::from(id)),
         ("INST_DIR", dir.as_os_str().to_owned()),
         ("INST_MC_DIR", dir.as_os_str().to_owned()),
-    ];
-    if let Some(java) = java {
-        vars.push(("INST_JAVA", java.to_owned()));
-    }
-    vars
+    ]
 }
 
 /// An instance's variables ([`instance_vars`]).

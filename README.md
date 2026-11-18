@@ -160,9 +160,6 @@ The opening, then Play ([clip](docs/opening.webm)):
   becomes a new instance, and only what an instance keeps is taken, inside its folder. A resource
   or shader pack goes into the selected instance, and a data pack is pointed at the world rows.
   Modrinth modpacks (`.mrpack`) and Java modpacks are not imported.
-- **Maximum memory** (Java instances): set the Java heap limit (`-Xmx`) with the slider or
-  a value such as `4096` or `4gb`. Leave the box empty to restore the default (4096 MB).
-  Find it on Home in the classic layout, or in the instance’s Edit dialog in the glass layout.
 - **Launch options**: Home's Instance row has **Launch…**: per instance, a shell command run in its
   folder before the game (the game starts only if it succeeds), a wrapper the game runs through
   (`nice -n 5`), and environment variables (`NAME=value OTHER="two words"`), kept in
@@ -237,11 +234,12 @@ The opening, then Play ([clip](docs/opening.webm)):
   step through) with **Copy** (the picture, to the clipboard), **Open**, **Show in folder** and
   **Delete** (to the trash, after a confirmation). From the command line:
   `sunrise-launcher screenshots [list|delete] [--instance <name>]`.
-- **Java** (for the Minecraft: Java Edition instances to come): the runtime a version's JSON asks for
-  (`javaVersion`: its major exactly, Java 8 before that field), found among Mojang's runtimes Sunrise
-  downloaded (`minecraft/runtime/` in its data folder, the one preparing uses) and the Java homes installed
-  on this computer, read from their `release` files without starting them; when none has that major,
-  Mojang's runtime is downloaded; an instance may name its own Java home instead.
+- **Java**: the runtime a version's JSON asks for (`javaVersion`: its major exactly), found among
+  Mojang's runtimes Sunrise downloaded (`minecraft/runtime/` in its data folder, the one preparing
+  uses) and the Java homes installed on this computer, read from their `release` files without
+  starting them; when none has that major, Mojang's runtime is downloaded. It is for preparing the
+  game from your own Minecraft, never to play it: Sunrise has no Minecraft: Java Edition launcher.
+  Instances an earlier launcher made for it are left on disk, not listed and not changed.
   `sunrise-launcher java [list|install]`.
 - **Multiplayer**: Home lists the selected instance's servers, the game's own Multiplayer list
   (`servers.dat`, each with the picture the game last saw). **Join** starts the game straight into
@@ -425,9 +423,6 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher account select <name>          play as this account
     sunrise-launcher instance [list]                the instances and their game folders (* = Play starts it)
     sunrise-launcher instance create <name> [--copy <instance>]   empty, or a copy of one's worlds, options and packs
-    sunrise-launcher instance create <name> --minecraft <1.21.4|latest|latest-snapshot>   a Minecraft: Java Edition instance
-    sunrise-launcher instance versions [--snapshots] [--old]   the Java Edition versions, from Mojang's list (kept for offline)
-    sunrise-launcher instance java <instance> [--home <dir>|--auto] [--memory <MiB>] [--args "<jvm args>"]
     sunrise-launcher instance rename|icon|group <instance> <value>  icon: a block or item name, #rrggbb or none
     sunrise-launcher instance select <instance>     make Play start it
     sunrise-launcher instance version <instance> <tag|latest>   keep it on one installed version, or follow updates

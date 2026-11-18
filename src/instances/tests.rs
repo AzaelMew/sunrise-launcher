@@ -138,8 +138,8 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     assert_eq!(all[1].home, home.join("sunrise-packs/cozy/home"));
 
     // Everything the player can do with instances, then not one byte of theirs has moved.
-    let empty = create_in(&home, &data, "Survival", None, None).unwrap();
-    let copy = create_in(&home, &data, "My copy", Some(&all[0]), None).unwrap();
+    let empty = create_in(&home, &data, "Survival", None).unwrap();
+    let copy = create_in(&home, &data, "My copy", Some(&all[0])).unwrap();
     edit_in(&home, &data, DEFAULT, |m| m.name = Some("Main".into())).unwrap();
     edit_in(&home, &data, "Cozy", |m| {
         m.icon = Some(Icon::Texture("diamond".into()));
@@ -185,25 +185,21 @@ fn names_stay_unique_and_packs_are_not_copied() {
     let root = scratch("names");
     let (home, data) = (root.join("sunrise"), root.join("launcher"));
     player_home(&home);
-    create_in(&home, &data, "Survival", None, None).unwrap();
+    create_in(&home, &data, "Survival", None).unwrap();
     assert_eq!(
-        create_in(&home, &data, "survival", None, None).unwrap_err(),
+        create_in(&home, &data, "survival", None).unwrap_err(),
         "There is already an instance called survival. Choose another name."
     );
-    assert_eq!(
-        name_taken_with_flag("survival"),
-        "There is already an instance called survival. Choose another name. (`--as NAME`)"
-    );
-    assert!(create_in(&home, &data, "  ", None, None).is_err());
+    assert!(create_in(&home, &data, "  ", None).is_err());
     // Another name with the same folder name gets the next free folder.
-    let second = create_in(&home, &data, "Survival!", None, None).unwrap();
+    let second = create_in(&home, &data, "Survival!", None).unwrap();
     assert_eq!(second.id, "survival-2");
     assert_eq!(second.name, "Survival!");
     assert!(edit_in(&home, &data, "survival-2", |m| m.name =
         Some("SURVIVAL".into()))
     .is_err());
     let port = find_in(&list_in(&home, &data), "pack:cozy").unwrap();
-    assert!(create_in(&home, &data, "Pack copy", Some(&port), None).is_err());
+    assert!(create_in(&home, &data, "Pack copy", Some(&port)).is_err());
     assert!(!home.join("instances/pack-copy").exists());
     // An empty group is no group.
     let grouped = edit_in(&home, &data, "Survival", |m| m.group = Some(" ".into())).unwrap();
@@ -278,7 +274,7 @@ fn an_instance_keeps_its_own_version_until_it_follows_updates_again() {
     let root = scratch("version");
     let (home, data) = (root.join("sunrise"), root.join("launcher"));
     player_home(&home);
-    create_in(&home, &data, "Old world", None, None).unwrap();
+    create_in(&home, &data, "Old world", None).unwrap();
     let pinned = edit_in(&home, &data, "Old world", |m| {
         m.version = Some("v0.1.0".into())
     })
@@ -330,52 +326,82 @@ fn play_time_reads_as_minutes_then_hours() {
     assert_eq!(t(140 * 3600 + 7 * 60), "140 h");
 }
 
-/// A Java instance: an empty folder of its own (the real game keeps its own options), its
-/// version in instances.json, kept by a copy, and refused by Play until the launcher starts
-/// the real game; Sunrise instances' entries stay as they were.
+/// An instance an earlier launcher made for Minecraft: Java Edition is not listed, and it is not
+/// touched: its folder and its whole record in instances.json come through listing, creating and
+/// editing other instances, and through a save, exactly as they were.
 #[test]
-fn a_java_instance_plays_one_minecraft_version_in_its_own_folder() {
+fn a_java_instance_survives_listing_and_saving_unchanged() {
     let root = scratch("java");
     let (home, data) = (root.join("sunrise"), root.join("launcher"));
-    player_home(&home);
-    let java = create_in(&home, &data, "Vanilla 1.21.4", None, Some("1.21.4")).unwrap();
-    assert_eq!(java.home, home.join(OWN).join("vanilla-1-21-4"));
-    assert_eq!(fs::read_dir(&java.home).unwrap().count(), 0);
-    assert_eq!(java.java.as_ref().unwrap().minecraft, "1.21.4");
-    let copy = create_in(&home, &data, "Second", Some(&java), None).unwrap();
-    assert_eq!(copy.java, java.java);
-    let sunrise = create_in(&home, &data, "Sunrise two", None, None).unwrap();
-    assert_eq!(sunrise.java, None);
-    let store = fs::read_to_string(data.join(FILE)).unwrap();
+    put(
+        &home.join("instances/vanilla/saves/World/level.dat"),
+        "world",
+    );
+    put(&home.join("instances/vanilla/mods/a.jar"), "jar");
+    put(&home.join("instances/vanilla/options.txt"), "fov:90\n");
+    put(&home.join("instances/back/saves/Other/level.dat"), "other");
+    let record = serde_json::json!({
+        "instances": {
+            "vanilla": {
+                "name": "Vanilla 1.21.4", "icon": {"colour": "#3fa7d6"}, "group": "Old",
+                "played_secs": 7200, "last_played": 1_700_000_000,
+                "launch": {"wrapper": "nice"},
+                "java": {
+                    "minecraft": "1.21.4", "home": "/opt/java", "memory_mb": 6144,
+                    "jvm_args": "-XX:+UseZGC", "window": [1280, 720],
+                    "loader": {"kind": "Fabric", "version": "0.16.9", "future": true}
+                }
+            },
+            "back": {
+                "name": "Back to Sunrise",
+                "java_kept": {"minecraft": "1.20.1", "memory_mb": 2048}
+            }
+        }
+    });
+    fs::create_dir_all(&data).unwrap();
+    let file = data.join("instances.json");
+    fs::write(&file, record.to_string()).unwrap();
+    let folders = files(&home.join("instances"));
+
+    // Listing skips the Java instance; one that only keeps Java settings aside is a Sunrise one.
+    let all = list_in(&home, &data);
+    let ids: Vec<&str> = all.iter().map(|i| i.id.as_str()).collect();
+    assert_eq!(ids, [DEFAULT, "back"]);
+
+    // Saving other instances rewrites the file: the Java record is the same value after it.
+    create_in(&home, &data, "Survival", None).unwrap();
+    edit_in(&home, &data, "back", |m| m.group = Some("Mine".into())).unwrap();
+    let after: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(
-        store.matches("\"minecraft\": \"1.21.4\"").count(),
-        2,
-        "{store}"
+        after["instances"]["vanilla"],
+        record["instances"]["vanilla"]
     );
-    let mut cmd = Command::new("game");
-    let refused = apply(&mut cmd, &java).unwrap_err();
-    assert!(
-        refused.contains("plays Minecraft 1.21.4 (Java Edition)"),
-        "{refused}"
+    assert_eq!(
+        after["instances"]["back"]["java_kept"],
+        record["instances"]["back"]["java_kept"]
     );
-    edit_in(&home, &data, &java.id, |m| {
-        m.java.as_mut().unwrap().memory_mb = Some(6144)
-    })
-    .unwrap();
-    let edited = find_in(&list_in(&home, &data), &java.id).unwrap();
-    assert_eq!(edited.java.unwrap().memory_mb, Some(6144));
+    assert_eq!(after["instances"]["back"]["group"], "Mine");
+    // The Java instance's folder, with its worlds and mods, is byte for byte as it was, and a new
+    // instance never takes its name or folder.
+    let now = files(&home.join("instances"));
+    for (path, bytes) in &folders {
+        assert_eq!(now.get(path), Some(bytes), "{} changed", path.display());
+    }
+    assert_eq!(
+        create_in(&home, &data, "Vanilla", None).unwrap().home,
+        home.join("instances/vanilla-2")
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 
-/// Delete moves an instance's folder to the Trash and forgets it; one deleted outside the
-/// launcher is forgotten when the list is next read (#sunrise-bugs: an instance that stayed).
 #[test]
 fn deleted_instances_go_to_the_trash_and_are_forgotten() {
     let root = scratch("delete");
     let (home, data, trash) = (root.join("home"), root.join("data"), root.join("trash"));
     player_home(&home);
     let to_trash = |p: &Path| crate::desktop_seams::to_folder(p, &trash);
-    let survival = create_in(&home, &data, "Survival", None, None).unwrap();
+    let survival = create_in(&home, &data, "Survival", None).unwrap();
     put(&survival.home.join("saves/Base/level.dat"), "base");
     edit_in(&home, &data, "Survival", |m| m.group = Some("Mine".into())).unwrap();
     let gone = delete_in(&home, &data, "Survival", &to_trash).unwrap();
@@ -392,12 +418,12 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
         .contains("can't be deleted"));
     assert!(home.join("saves/World/level.dat").is_file());
     // A folder removed by hand: its choices are dropped, a new one of that name starts clean.
-    create_in(&home, &data, "Skyblock", None, None).unwrap();
+    create_in(&home, &data, "Skyblock", None).unwrap();
     edit_in(&home, &data, "Skyblock", |m| m.group = Some("Old".into())).unwrap();
     fs::remove_dir_all(home.join(OWN).join("skyblock")).unwrap();
     assert!(find_in(&list_in(&home, &data), "Skyblock").is_err());
     assert!(!Store::load(&data).instances.contains_key("skyblock"));
-    let again = create_in(&home, &data, "Skyblock", None, None).unwrap();
+    let again = create_in(&home, &data, "Skyblock", None).unwrap();
     assert_eq!(again.group, None);
     fs::remove_dir_all(&root).unwrap();
 }
@@ -426,134 +452,6 @@ fn a_picture_is_kept_small_and_goes_to_the_trash() {
     // Nothing to remove is fine.
     set_picture(&home, None, &to_trash).unwrap();
     assert!(picture(b"not an image".to_vec()).is_err());
-    fs::remove_dir_all(&root).unwrap();
-}
-
-/// Edit switches what an instance plays (Sunrise, Vanilla, a loader, another Minecraft version):
-/// its folder, with its worlds, mods and options, stays byte for byte as it was, a Java
-/// instance's settings come back after a turn as Sunrise, and what can't keep working is named
-/// first. The game's home plays what it was made with.
-#[test]
-fn switching_what_an_instance_plays_keeps_its_worlds_mods_and_settings() {
-    use crate::loaders::{Kind as L, Loader};
-    let root = scratch("switch");
-    let (home, data) = (root.join("sunrise"), root.join("launcher"));
-    player_home(&home);
-    let made = create_in(&home, &data, "Mine", None, None).unwrap();
-    put(&made.home.join("saves/Base/level.dat"), "base");
-    put(&made.home.join("saves/Base/region/r.0.0.mca"), "region");
-    put(
-        &made
-            .home
-            .join(crate::browser::mod_list::MODS_DIR)
-            .join("minimap.smod"),
-        "content smod",
-    );
-    put(
-        &made
-            .home
-            .join(crate::native_mods::INSTALLED)
-            .join("treefall.smod"),
-        "native smod",
-    );
-    put(
-        &made
-            .home
-            .join(crate::native_mods::INSTALLED)
-            .join("obsolete.hnmod"),
-        "not a supported package",
-    );
-    put(&made.home.join("options.txt"), "fov:90");
-    edit_in(&home, &data, &made.id, |m| {
-        m.version = Some("nightly-2026-11-01-c9d474d".into())
-    })
-    .unwrap();
-    let before = files(&made.home);
-    let fabric = |v: &str| Plays::Java {
-        minecraft: v.into(),
-        loader: Some(Loader {
-            kind: L::Fabric,
-            version: "0.16.0".into(),
-        }),
-    };
-
-    // Sunrise to Fabric: both kinds of Sunrise mod stop loading; its world changes version.
-    let now = find_in(&list_in(&home, &data), &made.id).unwrap();
-    assert_eq!(
-        unkept(&now, &fabric("1.21.1"), "26.3"),
-        [
-            Unkept::Mods {
-                count: 2,
-                made_for: "Sunrise".into()
-            },
-            Unkept::Worlds {
-                count: 1,
-                from: "26.3".into(),
-                to: "1.21.1".into()
-            },
-        ]
-    );
-    let java = switch::switch_in(&home, &data, &made.id, fabric("1.21.1")).unwrap();
-    assert_eq!(java.java.as_ref().unwrap().minecraft, "1.21.1");
-    assert_eq!(java.version.as_deref(), Some("nightly-2026-11-01-c9d474d"));
-    edit_in(&home, &data, &made.id, |m| {
-        m.java.as_mut().unwrap().memory_mb = Some(6144);
-        m.java.as_mut().unwrap().jvm_args = "-XX:+UseZGC".into();
-    })
-    .unwrap();
-    put(&made.home.join("mods/sodium.jar"), "jar");
-    let with_jar = files(&made.home);
-
-    // Fabric to Quilt keeps Fabric's mods working; another Minecraft version may not.
-    let quilt = Plays::Java {
-        minecraft: "1.21.1".into(),
-        loader: Some(Loader {
-            kind: L::Quilt,
-            version: "0.27.0".into(),
-        }),
-    };
-    let java = find_in(&list_in(&home, &data), &made.id).unwrap();
-    assert_eq!(unkept(&java, &quilt, "26.3"), []);
-    assert_eq!(
-        unkept(&java, &fabric("1.20.1"), "26.3")[0],
-        Unkept::ModsVersion {
-            count: 1,
-            from: "1.21.1".into(),
-            to: "1.20.1".into()
-        }
-    );
-
-    // A turn as Sunrise, then Vanilla: the Java settings come back, nothing on disk moved.
-    switch::switch_in(&home, &data, &made.id, Plays::Sunrise).unwrap();
-    let sunrise = find_in(&list_in(&home, &data), &made.id).unwrap();
-    assert_eq!(sunrise.java, None);
-    let vanilla = Plays::Java {
-        minecraft: "1.21.4".into(),
-        loader: None,
-    };
-    let back = switch::switch_in(&home, &data, &made.id, vanilla).unwrap();
-    let back = back.java.unwrap();
-    assert_eq!(
-        (
-            back.minecraft.as_str(),
-            back.memory_mb,
-            back.jvm_args.as_str()
-        ),
-        ("1.21.4", Some(6144), "-XX:+UseZGC")
-    );
-    assert_eq!(back.loader, None);
-    assert_eq!(files(&made.home), with_jar);
-    assert_eq!(
-        with_jar.len(),
-        before.len() + 1,
-        "only the jar put there is new"
-    );
-
-    // The game's home can't switch, and is left as it was.
-    let home_files = files(&home.join("saves"));
-    let refused = switch::switch_in(&home, &data, DEFAULT, Plays::Sunrise).unwrap_err();
-    assert!(refused.contains("plays what it was made with"), "{refused}");
-    assert_eq!(files(&home.join("saves")), home_files);
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -587,7 +485,7 @@ fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
         Some("port:old-pack")
     );
 
-    let made = create_in(&home, &data, "Survival", None, None).unwrap();
+    let made = create_in(&home, &data, "Survival", None).unwrap();
     let all = list_in(&home, &data);
     assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
     assert_eq!(selection_in(&all, Some(DEFAULT)).unwrap().id, DEFAULT);
@@ -599,5 +497,33 @@ fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
         ported,
         "its files are untouched"
     );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// The same for a Java instance an earlier launcher made: it isn't listed, so a saved selection of
+/// it is retired and refused by name, not read as Sunrise.
+#[test]
+fn a_retired_java_selection_is_refused_by_name() {
+    let root = scratch("retired-java");
+    let (home, data) = (root.join("sunrise"), root.join("launcher"));
+    put(
+        &home.join("instances/vanilla/saves/World/level.dat"),
+        "world",
+    );
+    fs::create_dir_all(&data).unwrap();
+    fs::write(
+        data.join("instances.json"),
+        r#"{"instances":{"vanilla":{"name":"Vanilla 1.21.4","java":{"minecraft":"1.21.4"}}}}"#,
+    )
+    .unwrap();
+    let all = list_in(&home, &data);
+    assert!(all.iter().all(|i| i.id != "vanilla"));
+    let refused = selection_in(&all, Some("vanilla")).unwrap_err();
+    assert!(refused.contains("vanilla"), "{refused}");
+    assert_eq!(
+        retired_in(&all, Some("vanilla")).as_deref(),
+        Some("vanilla")
+    );
+    assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }

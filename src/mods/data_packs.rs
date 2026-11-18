@@ -285,7 +285,7 @@ impl Launcher {
         }
         let Some(home) = self
             .selected_instance()
-            .filter(|i| i.java.is_none() && self.location_error.is_none())
+            .filter(|_| self.location_error.is_none())
             .map(|i| i.home.clone())
         else {
             self.ui.mods.notice = Some(Err(tr("Select a Sunrise setup first.").to_string()));

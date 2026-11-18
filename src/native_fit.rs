@@ -69,12 +69,9 @@ fn cached(cache: &Known, key: &CacheKey) -> Option<Option<Plays>> {
         .map(|(_, plays)| plays.clone())
 }
 
-/// The Sunrise `instance` plays; None for a Java instance, when nothing is installed, or when
-/// its release doesn't say its build id.
+/// The Sunrise `instance` plays; None when nothing is installed, or when its release doesn't say
+/// its build id.
 pub fn plays(instance: &Instance) -> Option<Plays> {
-    if instance.java.is_some() {
-        return None;
-    }
     let version = instance.resolve_version(None).ok()?;
     // Read the build record before consulting the cache so a rebuild's answer follows it.
     let native_revision = native_mods::about(&version).map(|about| about.sunrise);

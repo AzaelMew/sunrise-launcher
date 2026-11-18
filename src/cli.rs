@@ -9,9 +9,7 @@ use sunrise_launcher::backend::{self, Release};
 use sunrise_launcher::github_mods;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::instances;
-use sunrise_launcher::loaders;
 use sunrise_launcher::native_mods;
-use sunrise_launcher::other_launchers;
 use sunrise_launcher::server_list;
 use sunrise_launcher::storage::{Category, Storage};
 #[derive(Clone, Debug)]
@@ -210,55 +208,6 @@ enum InstanceCmd {
         /// The instance to copy (its name or id)
         #[arg(long)]
         copy: Option<String>,
-        /// Make a Minecraft: Java Edition instance of this version (1.21.4, latest or
-        /// latest-snapshot) instead of a Sunrise one
-        #[arg(long, conflicts_with = "copy")]
-        minecraft: Option<String>,
-        /// With this mod loader: fabric, quilt, forge or neoforge
-        #[arg(long, requires = "minecraft")]
-        loader: Option<String>,
-        /// The loader's version (default: its newest stable one)
-        #[arg(long, requires = "loader")]
-        loader_version: Option<String>,
-    },
-    /// The versions of Minecraft: Java Edition a Java instance can play, the newest first
-    Versions {
-        /// Snapshots too
-        #[arg(long)]
-        snapshots: bool,
-        /// Old betas and alphas too
-        #[arg(long)]
-        old: bool,
-    },
-    /// A Java instance's Java: its own Java home or the automatic pick, memory and JVM arguments
-    Java {
-        instance: String,
-        /// A Java home to run it on
-        #[arg(long, conflicts_with = "auto")]
-        home: Option<PathBuf>,
-        /// Go back to the Java the version needs, picked or downloaded by the launcher
-        #[arg(long)]
-        auto: bool,
-        /// The most memory the game may use, in MiB
-        #[arg(long)]
-        memory: Option<u32>,
-        /// Extra JVM arguments (one string; "" clears them)
-        #[arg(long, allow_hyphen_values = true)]
-        args: Option<String>,
-        /// The game window's size, as 1280x720; "default" goes back to the game's own
-        #[arg(long)]
-        window: Option<String>,
-    },
-    /// A Java instance's mod loader: fabric, quilt, forge or neoforge, or none. --list shows its versions
-    Loader {
-        instance: String,
-        loader: String,
-        /// The loader's version (default: its newest stable one)
-        #[arg(long)]
-        version: Option<String>,
-        /// List the loader's versions for the instance's Minecraft instead
-        #[arg(long, conflicts_with = "version")]
-        list: bool,
     },
     /// Rename an instance (its folder stays)
     Rename { instance: String, name: String },
@@ -293,7 +242,7 @@ enum InstanceCmd {
     /// starts only if it succeeds), a wrapper it runs through (`nice -n 5`), environment
     /// variables ("NAME=value NAME2=value") and a shell command after it exits. An empty value
     /// clears one. The game and the commands also get INST_NAME, INST_ID, INST_DIR,
-    /// INST_MC_DIR and, for a Java instance, INST_JAVA. On Linux, also GameMode, MangoHud and
+    /// INST_MC_DIR. On Linux, also GameMode, MangoHud and
     /// the dedicated graphics card, when the computer has them
     Launch {
         instance: String,
@@ -332,31 +281,6 @@ enum InstanceCmd {
         /// The instance a pack goes into
         #[arg(long)]
         instance: Option<String>,
-    },
-    /// List the instances other launchers keep (Prism Launcher, MultiMC, the official
-    /// launcher, the CurseForge app, the Modrinth App), read without changing anything there
-    Others {
-        /// Look in this folder instead: a launcher's folder, a folder of instances (its
-        /// instances/, the CurseForge app's Instances) or one instance
-        #[arg(long)]
-        folder: Option<PathBuf>,
-    },
-    /// Copy another launcher's instance into a new Java instance: its Minecraft version and its
-    /// game folder (worlds, mods, packs, options); the other launcher's copy stays as it is
-    CopyFrom {
-        /// Its name, as `instance others` lists it
-        name: String,
-        /// Look in this folder instead: a launcher's folder, a folder of instances (its
-        /// instances/, the CurseForge app's Instances) or one instance
-        #[arg(long)]
-        folder: Option<PathBuf>,
-        /// The new instance's name (default: the same)
-        #[arg(long = "as")]
-        new_name: Option<String>,
-        /// The Minecraft version it plays, when its launcher doesn't say (the CurseForge app,
-        /// the Modrinth App)
-        #[arg(long)]
-        minecraft: Option<String>,
     },
 }
 
@@ -520,8 +444,7 @@ enum ModsCmd {
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Search for packs Sunrise loads, or for what a Java instance runs (made for its
-    /// Minecraft version and loader)
+    /// Search for packs Sunrise loads, or the registry's mods and modpacks
     Search {
         text: Vec<String>,
         #[arg(long, value_enum, default_value_t = KindArg::Resource)]
@@ -604,15 +527,14 @@ enum ModsCmd {
         instance: Option<String>,
     },
     /// Turn on a mod the browser installed (sunrise-mods.txt; the game's Mods screen has no
-    /// switch; in a Java instance, its file loses `.disabled`)
+    /// switch)
     Enable {
         project: String,
         /// The instance (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Turn off a mod the browser installed; it stays installed (in a Java instance, as
-    /// `<file>.disabled`)
+    /// Turn off a mod the browser installed; it stays installed
     Disable {
         project: String,
         /// The instance (default: the selected one)
@@ -705,8 +627,7 @@ enum Cmd {
         allow_jar_downloads: bool,
         #[arg(long, help = "Installed version to play (default: instance version)")]
         version: Option<String>,
-        /// The instance to play (its name or id; default: the selected one). A Java instance
-        /// starts its Minecraft: Java Edition, downloaded with its Java the first time
+        /// The instance to play (its name or id; default: the selected one)
         #[arg(long)]
         instance: Option<String>,
         /// Open or create this world (a folder under saves) at once
@@ -1437,39 +1358,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(&name)?,
                 None => instances::selection()?,
             };
-            if instance.java.is_some() {
-                if version.is_some()
-                    || world.is_some()
-                    || join.is_some()
-                    || creative
-                    || account.is_some()
-                {
-                    return Err(format!(
-                        "{} plays Minecraft: Java Edition: --version, --world, --creative, \
-                         --join and --account are for Sunrise instances.",
-                        instance.name
-                    ));
-                }
-                let server = server.map(|server| {
-                    let list = server_list::List::load(&instance.home);
-                    server_list::find(&list, &server).map_or(server, |(_, s)| s.ip)
-                });
-                let mut cmd =
-                    backend::java_game(&instance, server.as_deref(), &|line| eprintln!("{line}"))?;
-                if let Some(e) = account::take_unsaved() {
-                    eprintln!("{e}");
-                }
-                cmd.args(arg);
-                let vars = instance.vars(cmd.get_program());
-                cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-                let started = std::time::Instant::now();
-                let played = attached(sunrise_launcher::launch::wrap(cmd, &instance.launch));
-                if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
-                    eprintln!("Play time not saved: {e}");
-                }
-                after_exit(&instance, &vars);
-                return played;
-            }
             // Who plays this launch only.
             let who = match account {
                 Some(who) => Some(
@@ -1504,7 +1392,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             }
             cmd.args(arg);
             let started = std::time::Instant::now();
-            let vars = instance.vars(cmd.get_program());
+            let vars = instance.vars();
             cmd.envs(vars.iter().map(|(k, v)| (k, v)));
             sunrise_launcher::jars::prepare_launch(
                 &mut cmd,
@@ -2421,14 +2309,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         } => {
             let link = github_mods::parse(&url)?;
             let found = github_mods::resolve(&link, &github_mods::api)?;
-            github_native(
-                &home,
-                instance.java.is_some(),
-                &found,
-                mod_id.as_deref(),
-                all,
-                trust_native_code,
-            )?;
+            github_native(&home, &found, mod_id.as_deref(), all, trust_native_code)?;
         }
         ModsCmd::UpdateGithub {
             id,
@@ -2436,9 +2317,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             trust_native_code,
             ..
         } => {
-            if instance.java.is_some() {
-                return Err("Native mods from GitHub are for Sunrise instances.".into());
-            }
             let mut origins = github_mods::origins(&home);
             origins.retain(|o| id.as_deref().is_none_or(|i| o.id == i));
             if origins.is_empty() {
@@ -2460,7 +2338,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     o.label()
                 );
                 if !check {
-                    github_native(&home, false, &latest, Some(&o.id), false, trust_native_code)?;
+                    github_native(&home, &latest, Some(&o.id), false, trust_native_code)?;
                 }
             }
         }
@@ -2498,58 +2376,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     }
     Ok(())
 }
-/// The other launchers' instances in `folder`, else in their default folders.
-fn other_instances(folder: Option<&Path>) -> Result<Vec<other_launchers::Found>, String> {
-    use sunrise_launcher::sources::{Folders, Os};
-    Ok(match folder {
-        Some(dir) if !dir.is_dir() => return Err(format!("{} isn't a folder.", dir.display())),
-        Some(dir) => other_launchers::in_folder(dir, None),
-        None => {
-            let folders = Folders::current().ok_or("No home folder.")?;
-            other_launchers::scan(Os::current(), &folders)
-        }
-    })
-}
-/// Where `instance others` looked when it found nothing, and what it looks for.
-fn no_other_instances(folder: Option<&Path>) -> String {
-    use sunrise_launcher::sources::{Folders, Os};
-    match folder {
-        Some(dir) => format!(
-            "No other launcher's instance found in {}. Name a launcher's own folder (the \
-             official launcher's .minecraft, Prism Launcher, MultiMC, ATLauncher, the Modrinth \
-             App, the CurseForge app's minecraft folder), a folder of instances (instances, or \
-             the CurseForge app's Instances), or one instance's folder.",
-            dir.display()
-        ),
-        None => {
-            let looked: String = Folders::current()
-                .map(|f| other_launchers::scanned_folders(Os::current(), &f))
-                .unwrap_or_default()
-                .iter()
-                .map(|d| format!("\n    {}", d.display()))
-                .collect();
-            format!(
-                "No other launcher's instance found. Looked in:{looked}\nKeep yours somewhere \
-                 else? Name that folder with --folder."
-            )
-        }
-    }
-}
-fn other_plays(f: &other_launchers::Found) -> String {
-    match (&f.minecraft, &f.loader) {
-        (None, _) => "Minecraft version not recorded: copy-from --minecraft <version>".into(),
-        (Some(v), Some(l)) => format!("Minecraft {v} with {} {}", l.name, l.version),
-        (Some(v), None) => format!("Minecraft {v}"),
-    }
-}
-fn other_json(f: &other_launchers::Found) -> serde_json::Value {
-    serde_json::json!({
-        "launcher": f.launcher, "name": f.name, "minecraft": f.minecraft,
-        "loader": f.loader.as_ref().map(|l| l.name),
-        "loader_version": f.loader.as_ref().map(|l| &l.version),
-        "game": f.game, "shared": f.shared,
-    })
-}
 /// Runs the instance's post-exit command in this terminal, if it has one, and waits for it.
 fn after_exit(instance: &instances::Instance, vars: &[(&'static str, std::ffi::OsString)]) {
     let Some(mut cmd) =
@@ -2564,31 +2390,13 @@ fn after_exit(instance: &instances::Instance, vars: &[(&'static str, std::ffi::O
     }
 }
 
-/// `1280x720` (or `1280×720`), or `default` for none.
-fn parse_window(text: &str) -> Result<Option<(u32, u32)>, String> {
-    let text = text.trim();
-    if text.eq_ignore_ascii_case("default") {
-        return Ok(None);
-    }
-    let size = text
-        .split_once(['x', 'X', '×'])
-        .and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?)))
-        .filter(|&(w, h): &(u32, u32)| (1..=16384).contains(&w) && (1..=16384).contains(&h));
-    match size {
-        Some(size) => Ok(Some(size)),
-        None => Err(format!(
-            "{text:?} isn't a window size: 1280x720, or default."
-        )),
-    }
-}
-
 fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
     use instances::Icon;
     let value = |i: &instances::Instance, selected: bool| {
         serde_json::json!({
             "id": i.id, "name": i.name, "kind": format!("{:?}", i.kind).to_lowercase(),
             "home": i.home, "icon": i.icon, "group": i.group, "selected": selected,
-            "version": i.version, "version_label": i.version.as_deref().and_then(sunrise_launcher::developer_install::label), "java": i.java, "played_secs": i.played.as_secs(),
+            "version": i.version, "version_label": i.version.as_deref().and_then(sunrise_launcher::developer_install::label), "played_secs": i.played.as_secs(),
             "last_played_ms": i.last_played.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64),
         })
     };
@@ -2599,21 +2407,12 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             .as_ref()
             .map(|g| format!("  [{g}]"))
             .unwrap_or_default();
-        let pinned = match (&i.java, &i.version) {
-            (Some(java), _) => match &java.loader {
-                Some(l) => format!(
-                    "  Minecraft {} (Java Edition) with {} {}",
-                    java.minecraft,
-                    l.kind.name(),
-                    l.version
-                ),
-                None => format!("  Minecraft {} (Java Edition)", java.minecraft),
-            },
-            (None, Some(v)) => format!(
+        let pinned = match &i.version {
+            Some(v) => format!(
                 "  {}",
                 sunrise_launcher::developer_install::label(v).unwrap_or_else(|| v.clone())
             ),
-            (None, None) => String::new(),
+            None => String::new(),
         };
         let played = match i.last_played {
             Some(_) => format!("  {} played", instances::play_time(i.played)),
@@ -2643,105 +2442,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 all.iter().for_each(|i| line(i, i.id == selected));
             }
         }
-        InstanceCmd::Create {
-            name,
-            copy,
-            minecraft: None,
-            ..
-        } => changed(instances::create(&name, copy.as_deref())?),
-        InstanceCmd::Create {
-            name,
-            minecraft: Some(version),
-            loader,
-            loader_version,
-            ..
-        } => {
-            let versions = sunrise_launcher::minecraft_versions::load()?;
-            let id = &versions.find(&version)?.id;
-            // The loader first: a version it doesn't have makes no instance.
-            let loader = loader
-                .map(|kind| loaders::choose(&kind, id, loader_version.as_deref()))
-                .transpose()?;
-            let made = instances::create_java(&name, id)?;
-            match loader {
-                Some(loader) => changed(instances::edit(&made.id, |m| {
-                    m.java.get_or_insert_with(Default::default).loader = Some(loader)
-                })?),
-                None => changed(made),
-            }
-        }
-        InstanceCmd::Loader {
-            instance,
-            loader,
-            version,
-            list,
-        } => {
-            let Some(java) = instances::find(&instance)?.java else {
-                return Err(format!(
-                    "{instance} is a Sunrise instance: mod loaders are for Java instances."
-                ));
-            };
-            if list {
-                let kind = loaders::Kind::parse(&loader)?;
-                let listed = loaders::versions(kind, &java.minecraft, &backend::get_bytes)?;
-                if as_json {
-                    json(serde_json::json!(listed));
-                } else {
-                    for l in listed {
-                        println!("{}{}", l.version, if l.stable { "" } else { "  (beta)" });
-                    }
-                }
-                return Ok(());
-            }
-            let loader = match loader.trim() {
-                "none" => None,
-                kind => Some(loaders::choose(kind, &java.minecraft, version.as_deref())?),
-            };
-            changed(instances::edit(&instance, |m| {
-                m.java.get_or_insert_with(Default::default).loader = loader
-            })?)
-        }
-        InstanceCmd::Versions { snapshots, old } => {
-            let versions = sunrise_launcher::minecraft_versions::load()?;
-            let shown: Vec<_> = versions.of(snapshots, old).collect();
-            if as_json {
-                json(serde_json::json!(shown));
-            } else {
-                for v in shown {
-                    let date = v.released.get(..10).unwrap_or("");
-                    println!("{}  {date}  {:?}", v.id, v.kind);
-                }
-            }
-        }
-        InstanceCmd::Java {
-            instance,
-            home,
-            auto,
-            memory,
-            args,
-            window,
-        } => {
-            let window = window.as_deref().map(parse_window).transpose()?;
-            if instances::find(&instance)?.java.is_none() {
-                return Err(format!(
-                    "{instance} is a Sunrise instance: Sunrise is not a Java program."
-                ));
-            }
-            changed(instances::edit(&instance, |m| {
-                let java = m.java.get_or_insert_with(Default::default);
-                if auto {
-                    java.home = None;
-                }
-                java.home = home.or(java.home.take());
-                java.memory_mb = memory.or(java.memory_mb);
-                if let Some(args) = args {
-                    java.jvm_args = args.trim().to_string();
-                }
-                if let Some(window) = window {
-                    java.window = window;
-                }
-            })?)
-        }
+        InstanceCmd::Create { name, copy } => changed(instances::create(&name, copy.as_deref())?),
         InstanceCmd::Delete { instance } => {
             let gone = instances::delete(&instance)?;
             match as_json {
@@ -2883,63 +2584,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                     println!("{did}: {}", path.display());
                 }
             }
-        }
-        InstanceCmd::Others { folder } => {
-            let found = other_instances(folder.as_deref())?;
-            if as_json {
-                json(found.iter().map(other_json).collect());
-            } else if found.is_empty() {
-                println!("{}", no_other_instances(folder.as_deref()));
-            }
-            for f in found.iter().filter(|_| !as_json) {
-                println!(
-                    "{}  ({}, {})\n    {}",
-                    f.name,
-                    f.launcher,
-                    other_plays(f),
-                    f.game.display()
-                );
-            }
-        }
-        InstanceCmd::CopyFrom {
-            name,
-            folder,
-            new_name,
-            minecraft,
-        } => {
-            let found = other_instances(folder.as_deref())?;
-            let matching: Vec<_> = found.iter().filter(|f| f.name == name).collect();
-            let f = match matching[..] {
-                [one] => one,
-                [] => {
-                    return Err(format!(
-                        "No other launcher has an instance called {name}: \
-                         sunrise-launcher instance others"
-                    ));
-                }
-                _ => {
-                    return Err(format!(
-                        "More than one launcher has an instance called {name}: say which \
-                         with --folder."
-                    ));
-                }
-            };
-            let target = new_name.as_deref().unwrap_or(&f.name);
-            let made = other_launchers::import(f, target, minecraft.as_deref()).map_err(|e| {
-                if e == instances::name_taken(target.trim()) {
-                    instances::name_taken_with_flag(target.trim())
-                } else {
-                    e
-                }
-            })?;
-            let unsupported = other_launchers::loader(f).is_none();
-            if let Some(l) = f.loader.as_ref().filter(|_| unsupported && !as_json) {
-                println!(
-                    "{} {} isn't installed for it yet: its mods are copied and wait for it.",
-                    l.name, l.version
-                );
-            }
-            changed(made);
         }
         InstanceCmd::Import { file, instance } => {
             use sunrise_launcher::import::{self, Dropped};
@@ -3555,15 +3199,6 @@ mod tests {
     }
 
     #[test]
-    fn window_sizes() {
-        assert_eq!(parse_window("1280x720"), Ok(Some((1280, 720))));
-        assert_eq!(parse_window(" 1920 × 1080 "), Ok(Some((1920, 1080))));
-        assert_eq!(parse_window("Default"), Ok(None));
-        assert!(parse_window("0x720").is_err());
-        assert!(parse_window("big").is_err());
-    }
-
-    #[test]
     fn mods_commands_name_their_instance() {
         let parse = |args: &[&str]| {
             let cli = Cli::try_parse_from([&["sunrise-launcher", "mods"], args].concat()).unwrap();
@@ -3613,16 +3248,12 @@ mod tests {
                 ..
             })
         ));
-        // Search names one for a Java instance's version and loader; Check reads none: checks
-        // are shared.
         assert!(matches!(
             parse(&["search", "x", "--instance", "A"]),
             Some(ModsCmd::Search { instance: Some(i), .. }) if i == "A"
         ));
-        assert!(
-            Cli::try_parse_from(["sunrise-launcher", "mods", "check", "x", "--instance", "A"])
-                .is_err()
-        );
+        // The Java mod check is gone.
+        assert!(Cli::try_parse_from(["sunrise-launcher", "mods", "check", "x"]).is_err());
     }
 
     #[test]
