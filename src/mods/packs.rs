@@ -2,7 +2,7 @@
 //! file targets the collection that opened the dialog, even if another setup exists.
 use super::ui::{c, card, chip, dim, muted, primary, switch};
 use super::*;
-use crate::alt::{button, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{button, LINE, MUTED, SOFT, TEXT};
 use gpui::ExternalPaths;
 use std::path::Path;
 use sunrise_launcher::packs::{self, Kind};

@@ -13,7 +13,7 @@
 use super::pack_discover::check_world;
 use super::ui::{added_mark, c, card, checkbox, dim, muted, primary, tile};
 use super::*;
-use crate::alt::{button, CARD, LINE, SOFT, TEXT};
+use crate::frame::{button, CARD, LINE, SOFT, TEXT};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use sunrise_launcher::browser::{self, Project};
@@ -184,7 +184,7 @@ fn world_facts(world: &World) -> String {
     format!(
         "{} · {}",
         tr(world.mode),
-        crate::alt_home::sentence(&crate::worlds_page::ago(world.last_played))
+        crate::home::sentence(&crate::worlds_page::ago(world.last_played))
     )
 }
 
@@ -271,7 +271,7 @@ impl Launcher {
             .map(|(w, _)| w.path.clone())
             .collect();
         self.alt.mods.data.pick = Some(Pick { what, ticked });
-        self.open_alt_sheet(crate::alt_sheets::Sheet::Worlds);
+        self.open_alt_sheet(crate::sheets::Sheet::Worlds);
     }
 
     /// The picker's Add: everything is checked again, then done in a worker.
@@ -543,7 +543,7 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let heading = crate::alt_sheets::title(trf(
+        let heading = crate::sheets::title(trf(
             "Add {pack} to your worlds",
             &[("pack", pick.what.title())],
         ));
@@ -556,7 +556,7 @@ impl Launcher {
                     "This setup has no worlds yet. A data pack goes into a world: make one in the game, then add the pack here.",
                 )))
                 .child(div().flex().justify_end().child(close(tr("Close"))));
-            return Some(crate::alt_sheets::frame("alt-pick", 520., body, cx));
+            return Some(crate::sheets::frame("alt-pick", 520., body, cx));
         }
         let mut list = div()
             .flex()
@@ -647,7 +647,7 @@ impl Launcher {
                     .child(close(tr("Cancel")))
                     .children((free > 0).then_some(add)),
             );
-        Some(crate::alt_sheets::frame("alt-pick", 520., body, cx).text_color(c(TEXT)))
+        Some(crate::sheets::frame("alt-pick", 520., body, cx).text_color(c(TEXT)))
     }
 }
 

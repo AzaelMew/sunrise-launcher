@@ -2,7 +2,7 @@
 use super::model::{self, Make};
 use super::ui::*;
 use super::*;
-use crate::alt::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use sunrise_launcher::browser::images;
 
 /// A page's pictures: the first large, up to three small beside it. None when it has none.

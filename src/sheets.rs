@@ -7,7 +7,7 @@
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
 //! * **Build** edits the selected instance's pin and channel with `instances::edit`.
 use super::*;
-use crate::alt::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use native_consent::PendingConsent;
 use std::cell::RefCell;
@@ -24,7 +24,7 @@ pub(crate) enum Sheet {
     Resolve,
     /// A problem's whole text, opened from the play bar's one sentence.
     Notice,
-    /// The worlds a data pack goes into (`alt_mods::data_packs`).
+    /// The worlds a data pack goes into (`mods::data_packs`).
     Worlds,
     /// One build to keep, picked from all of them (`versions`).
     Versions,

@@ -15,7 +15,7 @@
 //! through the shared busy flag (`alt_mutating`).
 use super::ui::{added_mark, browse_card, c, card, chip, columns, dim, muted, tag};
 use super::*;
-use crate::alt::{button, TEXT};
+use crate::frame::{button, TEXT};
 use std::path::Path;
 use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query};
 use sunrise_launcher::worlds;
@@ -287,7 +287,7 @@ impl Launcher {
     /// Where data packs come from and how much of one Sunrise runs, said once for every card:
     /// the short of it, and the whole list behind a "?".
     fn data_pack_line(&self, cx: &mut Context<Self>) -> AnyElement {
-        use crate::alt::{CARD, GOLD, LINE, MUTED};
+        use crate::frame::{CARD, GOLD, LINE, MUTED};
         let (over, pinned) = self.alt.mods.packs.help;
         let help = div()
             .id("alt-data-help")
@@ -522,7 +522,7 @@ impl Launcher {
                 .track_scroll(&self.alt.mods.packs.scroll)
                 .child(body),
         )
-        .bg(c(crate::alt::BG))
+        .bg(c(crate::frame::BG))
         .into_any_element()
     }
 }

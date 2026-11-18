@@ -1,6 +1,6 @@
-//! Small pieces the three Mods screens share. Colours are the alternative look's (`crate::alt`).
+//! Small pieces the three Mods screens share. Colours are the alternative look's (`crate::frame`).
 use super::*;
-use crate::alt::{BG, CARD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{BG, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Hsla};
 use std::path::PathBuf;
 
@@ -30,7 +30,7 @@ pub(super) fn muted(text: impl Into<SharedString>) -> Div {
 
 /// The main action on a screen, in cream: gold is Play's alone.
 pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
-    crate::alt::button_base(id, label)
+    crate::frame::button_base(id, label)
         .bg(c(TEXT))
         .border_color(c(TEXT))
         .text_color(c(BG))

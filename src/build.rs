@@ -2,7 +2,7 @@
 //! play bar's line, which is on every page. Both draw the build's three stages and how far the
 //! current one is when the build says so; the build gives no time left, so none is shown.
 use super::*;
-use crate::alt::{button, CARD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{button, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Animation, AnimationExt as _};
 use native_mods::Stage;
 

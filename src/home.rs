@@ -20,7 +20,7 @@
 //!   a row opens the project page of the Mods screens (`alt_mods_show_project`).
 //! - signed out with no worlds, the top is the welcome banner (mock 10) in place of worlds.
 use super::*;
-use crate::alt::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use crate::worlds_page;
 use gpui::{rgb, rgba};
 use sunrise_launcher::browser::{self, Kind, Project, Query, SourceId};
@@ -885,8 +885,8 @@ impl Launcher {
                             .text_color(rgb(GOLD))
                             .child(tr("Privacy choices"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.alt_settings_open(crate::alt_settings::Section::Privacy);
-                                this.alt.page = crate::alt::Page::Settings;
+                                this.alt_settings_open(crate::settings::Section::Privacy);
+                                this.alt.page = crate::frame::Page::Settings;
                                 cx.notify();
                             })),
                     )
@@ -939,7 +939,7 @@ impl Launcher {
                     .text_color(rgb(GOLD))
                     .child(tr("Browse all mods"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.alt.page = crate::alt::Page::Discover;
+                        this.alt.page = crate::frame::Page::Discover;
                         cx.notify();
                     })),
             );
@@ -1060,5 +1060,5 @@ impl Launcher {
 }
 
 #[cfg(test)]
-#[path = "alt_home/tests.rs"]
+#[path = "home/tests.rs"]
 mod tests;

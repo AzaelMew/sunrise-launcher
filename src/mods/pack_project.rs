@@ -5,7 +5,7 @@
 use super::project::{about_link, about_row, back, gallery, prose};
 use super::ui::*;
 use super::*;
-use crate::alt::{MUTED, SOFT, TEXT};
+use crate::frame::{MUTED, SOFT, TEXT};
 use sunrise_launcher::browser::details::Details;
 use sunrise_launcher::browser::{self, images, Kind, Project, Version};
 

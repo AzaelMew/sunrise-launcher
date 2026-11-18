@@ -2,9 +2,9 @@
 //! address, players, settings, backups and log. Every action is the Servers page's own
 //! (`servers_page.rs`); only the drawing is new.
 use super::*;
-use crate::alt::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
-use crate::alt_mods::{chip, switch};
-use crate::alt_settings::{danger, group, hint, off, row, warning};
+use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::mods::{chip, switch};
+use crate::settings::{danger, group, hint, off, row, warning};
 use gpui::rgb;
 
 const OK: u32 = 0x7fd6a0;
@@ -273,7 +273,7 @@ impl Launcher {
             Fix::Prepare if !self.selected().is_some_and(|tag| backend::is_prepared(tag)) => {
                 self.servers.problem = None;
                 self.servers.create = None;
-                self.alt.page = crate::alt::Page::Home;
+                self.alt.page = crate::frame::Page::Home;
                 self.alt_play();
             }
             fix => self.fix(fix, cx),
@@ -1643,7 +1643,7 @@ impl Launcher {
             .items_center()
             .gap(px(10.))
             .child(
-                crate::alt_mods::checkbox("host-create-eula", eula).on_click(cx.listener(
+                crate::mods::checkbox("host-create-eula", eula).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         if let Some(c) = &mut this.servers.create {
                             c.eula = !c.eula;

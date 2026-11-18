@@ -2,8 +2,8 @@
 //! friends type, inviting one of them to this computer, and keeping shared friends to the
 //! server's port. Every action is `internet.rs`'s own; only the drawing is new.
 use super::*;
-use crate::alt::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
-use crate::alt_settings::{danger, hint, off, warning};
+use crate::frame::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::settings::{danger, hint, off, warning};
 use gpui::rgb;
 
 fn link(id: &'static str, name: &'static str, url: &'static str) -> Stateful<Div> {

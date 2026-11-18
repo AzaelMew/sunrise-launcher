@@ -1,8 +1,8 @@
 //! Settings for the whole launcher, one section at a time. The game build and its channel stay
 //! in the play bar, the one place that shows them.
 use super::*;
-use crate::alt::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
-use crate::alt_mods::{chip, switch};
+use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::mods::{chip, switch};
 use gpui::rgb;
 use storage::Category;
 use sunrise_launcher::telemetry;
@@ -1141,7 +1141,7 @@ impl Launcher {
         edited: fn(&mut Self),
         cx: &mut Context<Self>,
     ) -> Div {
-        let theme = crate::alt_mods::field_theme(self.theme);
+        let theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
         let field = div()
             .id(id)

@@ -18,7 +18,7 @@
 //! `sunrise-mods.txt` and file times. Nothing turns off or repairs a mod while drawing: taking
 //! down what the registry revoked is left to `before_play` and the row says so.
 use super::*;
-use crate::alt::Page;
+use crate::frame::Page;
 use crate::line_edit::{self, Key, LineEdit};
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -569,7 +569,7 @@ impl Launcher {
             let on = self
                 .selected_instance()
                 .and_then(|i| self.version_of(i))
-                .map(|tag| crate::alt_sheets::build_name(tag))
+                .map(|tag| crate::sheets::build_name(tag))
                 .unwrap_or_default();
             for row in rows.iter_mut().filter(|r| r.on) {
                 let Some(l) = left
@@ -590,7 +590,7 @@ impl Launcher {
                     on: on.clone(),
                     made_for: detail
                         .made_for
-                        .map(|tag| (crate::alt_sheets::build_name(&tag), tag))
+                        .map(|tag| (crate::sheets::build_name(&tag), tag))
                         .map(|(name, tag)| (tag, name)),
                     changes: detail.changes,
                 });
@@ -672,12 +672,12 @@ impl Launcher {
                         div()
                             .h(px(4.))
                             .rounded(px(2.))
-                            .bg(c(crate::alt::LINE))
+                            .bg(c(crate::frame::LINE))
                             .child(
                                 div()
                                     .h(px(4.))
                                     .rounded(px(2.))
-                                    .bg(c(crate::alt::TEXT))
+                                    .bg(c(crate::frame::TEXT))
                                     .w(relative(f.clamp(0.02, 1.))),
                             ),
                     ),
@@ -685,8 +685,8 @@ impl Launcher {
         }
         let notice = self.alt_notice()?;
         let (text, color) = match notice {
-            Ok(t) => (t, crate::alt::TEXT),
-            Err(t) => (t, crate::alt::GOLD),
+            Ok(t) => (t, crate::frame::TEXT),
+            Err(t) => (t, crate::frame::GOLD),
         };
         Some(
             div()
@@ -763,11 +763,11 @@ impl Launcher {
             .rounded(px(12.))
             .border_1()
             .border_color(if focused {
-                c(crate::alt::TEXT)
+                c(crate::frame::TEXT)
             } else {
-                c(crate::alt::LINE)
+                c(crate::frame::LINE)
             })
-            .bg(c(crate::alt::CARD))
+            .bg(c(crate::frame::CARD))
             .text_size(px(14.))
             .cursor_text()
             .child(line_edit::content_with(
@@ -831,7 +831,7 @@ impl Launcher {
                 .text_size(px(14.))
                 .cursor_pointer()
                 .when(on, |d| {
-                    d.bg(c(crate::alt::LINE)).font_weight(FontWeight::SEMIBOLD)
+                    d.bg(c(crate::frame::LINE)).font_weight(FontWeight::SEMIBOLD)
                 })
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -859,8 +859,8 @@ impl Launcher {
                     .p(px(3.))
                     .rounded(px(12.))
                     .border_1()
-                    .border_color(c(crate::alt::LINE))
-                    .bg(c(crate::alt::CARD))
+                    .border_color(c(crate::frame::LINE))
+                    .bg(c(crate::frame::CARD))
                     .child(seg(
                         "alt-mods-tab-discover",
                         "Discover",

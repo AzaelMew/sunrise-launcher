@@ -7,8 +7,7 @@ use super::*;
 use serde_json::Value;
 use sunrise_launcher::tailscale::{self, Api, Invite, Reach, State};
 
-#[path = "alt_hosting_share.rs"]
-mod alt_hosting_share;
+mod hosting_share;
 
 /// How often Tailscale's state is read while the panel shows.
 const POLL: Duration = Duration::from_secs(10);

@@ -1,7 +1,7 @@
 //! The launcher frame owns navigation and the single launch transaction. Backends still
 //! own the on-disk formats, Microsoft device flow, preparation and process lifecycle.
 use super::*;
-use crate::alt_sheets::Sheet;
+use crate::sheets::Sheet;
 use gpui::rgb;
 
 pub(super) const BG: u32 = 0x191617;
@@ -34,12 +34,12 @@ pub(super) enum Page {
 #[derive(Default)]
 pub(super) struct State {
     pub page: Page,
-    pub home: crate::alt_home::AltHomeState,
-    pub mods: crate::alt_mods::AltModsState,
+    pub home: crate::home::AltHomeState,
+    pub mods: crate::mods::AltModsState,
     pub sheet: Option<Sheet>,
-    pub sheets: crate::alt_sheets::AltSheetsState,
-    pub settings: crate::alt_settings::SettingsView,
-    pub cat: crate::alt_cat::CatState,
+    pub sheets: crate::sheets::AltSheetsState,
+    pub settings: crate::settings::SettingsView,
+    pub cat: crate::cat::CatState,
     pub picker: bool,
     pub after_install: Option<(String, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
@@ -213,7 +213,7 @@ impl Launcher {
         let build = match version {
             Some(t) if nightly(made_from.as_deref().unwrap_or(t)) => trf(
                 "Sunrise · {build}",
-                &[("build", &crate::alt_sheets::build_name(t))],
+                &[("build", &crate::sheets::build_name(t))],
             ),
             Some(t) => self.version_label(t),
             None => tr("Sunrise").into(),
@@ -290,7 +290,7 @@ impl Launcher {
                 update.as_ref().map(|r| {
                     trf(
                         "{build} is available",
-                        &[("build", &crate::alt_sheets::build_name(&r.tag))],
+                        &[("build", &crate::sheets::build_name(&r.tag))],
                     )
                 })
             });

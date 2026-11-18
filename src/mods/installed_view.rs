@@ -3,7 +3,7 @@
 use super::model::{self, Group, Make, Need, Row, Show};
 use super::ui::*;
 use super::*;
-use crate::alt::{BG, GOLD, MUTED, SOFT, TEXT};
+use crate::frame::{BG, GOLD, MUTED, SOFT, TEXT};
 use std::rc::Rc;
 use sunrise_launcher::browser::images;
 
@@ -93,7 +93,7 @@ impl Launcher {
                 .flex_none()
                 .w(px(1.))
                 .h(px(20.))
-                .bg(c(crate::alt::LINE)),
+                .bg(c(crate::frame::LINE)),
         );
         for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
             let n = count(&|r| r.make == Some(make));
@@ -126,7 +126,7 @@ impl Launcher {
         let busy = self.alt_mods_busy();
         let with_update = selected.iter().filter(|r| r.update.is_some()).count();
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
-            let b = crate::alt::button(id, label);
+            let b = crate::frame::button(id, label);
             let b = if danger { b.text_color(c(DANGER)) } else { b };
             if enabled && !busy {
                 b
@@ -276,12 +276,12 @@ impl Launcher {
                             div()
                                 .flex()
                                 .gap(px(10.))
-                                .child(crate::alt::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.alt.mods.confirm = None;
                                     cx.notify();
                                 })))
                                 .child(
-                                    crate::alt::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
+                                    crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
                                         .text_color(c(DANGER))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                             this.alt_run(actions::Action::Remove(items.clone()), false);
@@ -310,7 +310,7 @@ impl Launcher {
                             div()
                                 .flex()
                                 .gap(px(10.))
-                                .child(crate::alt::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.alt.mods.confirm = None;
                                     cx.notify();
                                 })))
@@ -351,7 +351,7 @@ impl Launcher {
                             div()
                                 .flex()
                                 .gap(px(10.))
-                                .child(crate::alt::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.alt.mods.confirm = None;
                                     cx.notify();
                                 })))
@@ -401,7 +401,7 @@ impl Launcher {
                             .child(format!("{title} · {count}")),
                     );
                 if g == Group::Updates {
-                    let b = crate::alt::button(
+                    let b = crate::frame::button(
                         "alt-update-all",
                         trf(
                             "Update {count} mods",
@@ -514,7 +514,7 @@ impl Launcher {
         };
         let mut notes: Vec<Div> = Vec::new();
         let act = |id: &'static str, label: &'static str, on: bool| {
-            let b = crate::alt::button((id, n), tr(label));
+            let b = crate::frame::button((id, n), tr(label));
             if on && !busy {
                 b
             } else {
@@ -707,7 +707,7 @@ impl Launcher {
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
     fn alt_unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
-        use crate::alt::{button, CARD, LINE, TEXT};
+        use crate::frame::{button, CARD, LINE, TEXT};
         let open = self.alt.mods.unfit_open.as_deref() == Some(r.id.as_str());
         let id = r.id.clone();
         let help = div()

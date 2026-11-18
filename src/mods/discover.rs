@@ -2,7 +2,7 @@
 use super::model::{self, Make, Sort};
 use super::ui::*;
 use super::*;
-use crate::alt::{BG, CARD, LINE, MUTED, TEXT};
+use crate::frame::{BG, CARD, LINE, MUTED, TEXT};
 use gpui::deferred;
 use sunrise_launcher::browser::details::category_label;
 use sunrise_launcher::browser::images;
@@ -48,7 +48,7 @@ impl Launcher {
                             )
                             .child(muted(e))
                             .child(
-                                crate::alt::button("alt-mods-retry", tr("Try again")).on_click(
+                                crate::frame::button("alt-mods-retry", tr("Try again")).on_click(
                                     cx.listener(|this, _: &ClickEvent, _, cx| {
                                         this.alt.mods.catalog = Catalog::Idle;
                                         cx.notify();
@@ -273,7 +273,7 @@ impl Launcher {
                     (_, true) => tr("Add…"),
                     _ => tr("Add"),
                 };
-                let b = crate::alt::button(("alt-add", n), label);
+                let b = crate::frame::button(("alt-add", n), label);
                 Some(match working {
                     true => dim(b).into_any_element(),
                     false => {
@@ -325,7 +325,7 @@ impl Launcher {
                 .gap(px(14.))
                 .child(grid)
                 .children((total > limit).then(|| {
-                    crate::alt::button(
+                    crate::frame::button(
                         "alt-show-more",
                         trf(
                             "Show more ({count} more)",

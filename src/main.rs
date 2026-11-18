@@ -12,13 +12,13 @@ mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
 pub(crate) use widgets::*;
-mod alt;
-mod alt_build;
-mod alt_cat;
-mod alt_home;
-mod alt_mods;
-mod alt_settings;
-mod alt_sheets;
+mod frame;
+mod build;
+mod cat;
+mod home;
+mod mods;
+mod settings;
+mod sheets;
 mod blocks;
 mod build_mode;
 mod cli;
@@ -181,7 +181,7 @@ enum Load<T> {
 const LOG_LINES: usize = 2000;
 
 struct Launcher {
-    alt: alt::State,
+    alt: frame::State,
     theme: Theme,
     page: Page,
     /// The page under the glass Settings dialog: the last one shown before it opened.
