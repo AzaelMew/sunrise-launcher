@@ -184,9 +184,25 @@ impl Launcher {
         d.busy = true;
         d.error = None;
         let task = cx.background_executor().spawn(async move {
-            let id = match editing {
-                Some(id) => id,
-                None => instances::create(&name, copy.as_deref())?.id,
+            let called = name.clone();
+            let choose = |m: &mut instances::Meta| {
+                m.name = Some(name);
+                m.group = group;
+                m.icon = icon;
+                if let Some(launch) = launch {
+                    m.launch = launch;
+                }
+                m.version = pin;
+                m.channel = Some(channel);
+            };
+            let Some(id) = editing else {
+                // A new profile is made whole or not at all: a failure leaves none to retry over.
+                return instances::create_with(
+                    &called,
+                    copy.as_deref(),
+                    picture.as_ref().map(Option::as_deref),
+                    choose,
+                );
             };
             // Finish fallible picture work before committing the edited metadata and commands.
             if let Some(png) = picture {
@@ -197,16 +213,7 @@ impl Launcher {
                     &sunrise_launcher::desktop_seams::to_trash,
                 )?;
             }
-            let instance = instances::edit(&id, |m| {
-                m.name = Some(name);
-                m.group = group;
-                m.icon = icon;
-                if let Some(launch) = launch {
-                    m.launch = launch;
-                }
-                m.version = pin;
-                m.channel = Some(channel);
-            })?;
+            let instance = instances::edit(&id, choose)?;
             Ok(instance)
         });
         cx.spawn(async move |this, cx| {

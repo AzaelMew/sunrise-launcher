@@ -11,6 +11,16 @@ fn scratch(name: &str) -> PathBuf {
     root
 }
 
+/// An instance with nothing chosen but its name and what it copies.
+fn create_in(
+    game_home: &Path,
+    data: &Path,
+    name: &str,
+    from: Option<&Instance>,
+) -> Result<Instance, String> {
+    create_whole_in(game_home, data, name, from, None, |_| {})
+}
+
 fn put(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
@@ -556,5 +566,52 @@ fn a_last_played_no_calendar_holds_reads_as_never_played() {
         let _: chrono::DateTime<chrono::Local> = kept.into();
     }
     assert_eq!(calendar_time(LATEST + Duration::from_secs(1)), None);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
+    let root = scratch("create-fails");
+    let (home, data) = (root.join("home"), root.join("data"));
+    player_home(&home);
+    let all = list_in(&home, &data);
+    let before = files(&home);
+    // The choices can't be saved: instances.json is a folder.
+    fs::create_dir_all(data.join(FILE)).unwrap();
+    for from in [None, Some(&all[0])] {
+        let failed = create_whole_in(&home, &data, "Skyblock", from, Some(Some(b"png")), |m| {
+            m.group = Some("Mine".into())
+        });
+        assert!(failed.is_err());
+        assert!(!home.join(OWN).join("skyblock").exists());
+        assert!(!home.join(STAGING).exists());
+        assert_eq!(files(&home), before, "nothing of the attempt stays");
+    }
+    fs::remove_dir(data.join(FILE)).unwrap();
+    assert_eq!(list_in(&home, &data).len(), all.len());
+
+    // The same name again, now whole: its folder, picture and every choice at once.
+    let made = create_whole_in(
+        &home,
+        &data,
+        "Skyblock",
+        Some(&all[0]),
+        Some(Some(b"png")),
+        |m| {
+            m.group = Some("Mine".into());
+            m.version = Some("nightly-2026-11-13-aaaaaaa".into());
+        },
+    )
+    .unwrap();
+    assert_eq!(made.id, "skyblock");
+    assert_eq!(made.group.as_deref(), Some("Mine"));
+    assert_eq!(made.version.as_deref(), Some("nightly-2026-11-13-aaaaaaa"));
+    assert_eq!(fs::read(made.home.join(PICTURE)).unwrap(), b"png");
+    assert!(made.home.join("saves/World/level.dat").is_file());
+    assert!(!home.join(STAGING).exists());
+    // A copy asked to have no picture doesn't keep the one it copied.
+    let plain = create_whole_in(&home, &data, "Plain", Some(&made), Some(None), |_| {}).unwrap();
+    assert!(!plain.home.join(PICTURE).exists());
+    assert!(made.home.join(PICTURE).is_file());
     fs::remove_dir_all(&root).unwrap();
 }
