@@ -7,6 +7,9 @@ use std::sync::Arc;
 use sunrise_launcher::themes;
 use sunrise_launcher_scenery::{coast, sky::Sky};
 
+/// How much of the page colour lies over a picture behind Home.
+const PICTURE_WASH: f32 = 0.12;
+
 #[derive(Default)]
 pub(super) struct Backdrop {
     coast: Option<Arc<RenderImage>>,
@@ -32,10 +35,12 @@ impl Backdrop {
                 HomePhoto::Personal(path) => img(path),
                 HomePhoto::Theme(decoded) => img(decoded),
             };
-            // Unplated titles have to read even on a white photo. Panels use opaque roles.
+            // A picture someone chose is there to be seen: only a thin wash of the page ties it
+            // to the theme. Nothing is written on it. Home sets its header on a plate when a
+            // picture is behind it, and the plates over a picture are opaque.
             return back
                 .child(picture.size_full().object_fit(ObjectFit::Cover))
-                .child(div().absolute().inset_0().bg(page.opacity(0.78)));
+                .child(div().absolute().inset_0().bg(page.opacity(PICTURE_WASH)));
         }
         // A player's theme, there or missing, stands in Dawn's scenery.
         let resolved = themes::resolve(settings.theme.as_deref());

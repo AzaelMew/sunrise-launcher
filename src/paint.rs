@@ -624,7 +624,14 @@ accent = "#101010""##,
         };
         let theme = from_settings(&pictured, WindowAppearance::Dark);
         assert!(theme.photo);
-        assert_eq!(Palette::of(&pictured, &theme).alpha, 1.);
+        let p = Palette::of(&pictured, &theme);
+        assert_eq!(p.alpha, 1.);
+        // Home's header stands on a card over a picture: nothing of the picture comes through
+        // it, so what the header says reads as it does on any card.
+        assert_eq!(p.card().a, 1.);
+        for ink in [p.text, p.muted, p.warning, p.accent_ink] {
+            assert!(contrast(ink, p.card_color) >= TEXT, "{ink:06x}");
+        }
         // With scenery off there is no picture to guard against, and no glass either.
         let off = Settings {
             scenery_on: Some(false),
