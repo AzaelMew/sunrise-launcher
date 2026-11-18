@@ -10,6 +10,9 @@ pub(super) const LINE: u32 = 0x453d3d;
 pub(super) const TEXT: u32 = 0xf3ede6;
 pub(super) const MUTED: u32 = 0xb2a69d;
 pub(super) const GOLD: u32 = 0xffb545;
+/// Card edges and row dividers; `LINE` is for controls.
+pub(super) const SOFT: u32 = 0x322c2d;
+pub(super) const BAD: u32 = 0xff7d63;
 const CHROME: u32 = 0x100e0f;
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
@@ -154,11 +157,24 @@ impl Launcher {
     fn alt_dock(&mut self, cx: &mut Context<Self>) -> Div {
         let active = self.selected_instance().cloned();
         let name = self.accounts.selected().map(|a| a.name.clone());
-        let signed_in = name.is_some() || sunrise_launcher::developer_offline::selected();
+        let signed_name = name.is_some();
+        let signed_in = signed_name || sunrise_launcher::developer_offline::selected();
         let version = active.as_ref().and_then(|i| self.version_of(i));
-        let build = version
-            .map(|t| self.version_label(t))
-            .unwrap_or_else(|| tr("Choose game build").into());
+        let build = match version {
+            Some(t) if sunrise_launcher::nightly::date_of(t).is_some() => trf(
+                "Sunrise · {build}",
+                &[("build", &crate::alt_sheets::build_name(t))],
+            ),
+            Some(t) => self.version_label(t),
+            None => tr("Sunrise").into(),
+        };
+        let follows = match &active {
+            _ if version.is_none() && !signed_in => tr("Installs after you sign in"),
+            _ if version.is_none() => tr("Not installed yet"),
+            Some(i) if i.version.is_some() => tr("Stays on this build"),
+            Some(i) if i.channel == instances::Channel::Stable => tr("Stable"),
+            _ => tr("Nightly"),
+        };
         let multiple = self
             .instances
             .list
@@ -204,7 +220,8 @@ impl Launcher {
         let update = self.updates.sunrise.clone().filter(|_| {
             active.as_ref().is_some_and(|i| {
                 i.java.is_none() && i.version.is_none() && i.channel == instances::Channel::Nightly
-            }) && !busy
+            }) && version.is_some()
+                && !busy
                 && self.client.is_none()
         });
         let mut bar = div()
@@ -215,12 +232,14 @@ impl Launcher {
             .flex_none()
             .px(px(16.))
             .bg(rgb(CHROME))
-            .child(
+            // Signed out, the Play slot is the sign-in: no empty account beside it.
+            .children(name.map(|name| {
                 div()
                     .id("alt-who")
                     .flex()
                     .items_center()
                     .gap(px(9.))
+                    .font_weight(FontWeight::SEMIBOLD)
                     .cursor_pointer()
                     .child(
                         div()
@@ -230,17 +249,14 @@ impl Launcher {
                             .items_center()
                             .justify_center()
                             .bg(rgb(0x45503c))
-                            .child(name.as_ref().and_then(|s| s.chars().next()).map_or_else(
-                                || "·".into(),
-                                |c| c.to_uppercase().collect::<String>(),
-                            )),
+                            .children(name.chars().next().map(|c| c.to_uppercase().to_string())),
                     )
-                    .child(name.unwrap_or_else(|| tr("No account").into()))
+                    .child(name)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.alt.page = Page::Settings;
                         cx.notify();
-                    })),
-            )
+                    }))
+            }))
             .when(multiple, |d| {
                 d.child(
                     button(
@@ -255,7 +271,9 @@ impl Launcher {
                     })),
                 )
             })
-            .child(div().h(px(30.)).w(px(1.)).bg(rgb(LINE)))
+            .when(signed_name || multiple, |d| {
+                d.child(div().h(px(30.)).w(px(1.)).bg(rgb(LINE)))
+            })
             .child(
                 div()
                     .id("alt-build")
@@ -274,7 +292,7 @@ impl Launcher {
                                 div()
                                     .text_size(px(11.))
                                     .text_color(rgb(MUTED))
-                                    .child(tr("Game build")),
+                                    .child(follows),
                             ),
                     )
                     .child(blocks::icon("chevron-down", 13., rgb(MUTED).into()))
@@ -295,7 +313,7 @@ impl Launcher {
                         update.as_ref().map(|r| {
                             trf(
                                 "{build} is available",
-                                &[("build", &self.version_label(&r.tag))],
+                                &[("build", &crate::alt_sheets::build_name(&r.tag))],
                             )
                         })
                     })),
@@ -468,7 +486,7 @@ impl Launcher {
             .rounded_l(px(18.))
             .bg(rgb(BG))
             .border_1()
-            .border_color(rgb(0x322c2d))
+            .border_color(rgb(SOFT))
             .overflow_hidden()
             .child(content);
         let mut frame = div()

@@ -9,7 +9,7 @@
 //!
 //! `SUNRISE_PREVIEW_EXAMPLES=resolve|consent` shows a labelled made-up sheet with no side effects.
 use super::*;
-use crate::alt::{button, BG, CARD, GOLD, LINE, MUTED, TEXT};
+use crate::alt::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use native_consent::PendingConsent;
 use std::cell::RefCell;
@@ -84,7 +84,7 @@ pub(crate) struct Held {
 }
 
 /// `Nov 17` for a dated build, else the tag.
-fn build_name(tag: &str) -> String {
+pub(crate) fn build_name(tag: &str) -> String {
     sunrise_launcher::nightly::date_of(tag)
         .map(sunrise_launcher::nightly::day)
         .unwrap_or_else(|| tag.to_owned())
@@ -232,7 +232,7 @@ fn row(label: &str, value: String) -> Div {
                 .text_color(rgb(MUTED))
                 .child(label.to_owned()),
         )
-        .child(div().flex_1().text_color(rgb(TEXT)).child(value))
+        .child(div().flex_1().min_w_0().text_color(rgb(TEXT)).child(value))
 }
 
 /// One outcome of the Resolve sheet: the same four rows each, and its own button.
@@ -260,9 +260,10 @@ fn column(
         .children(badge.map(|b| {
             div()
                 .absolute()
-                .top(px(-9.))
-                .left(px(16.))
+                .top(px(18.))
+                .right(px(16.))
                 .px(px(8.))
+                .py(px(2.))
                 .rounded(px(4.))
                 .bg(rgb(TEXT))
                 .text_color(rgb(BG))
@@ -531,7 +532,7 @@ impl Launcher {
         );
         let stay_col = column(
             trf("Stay on {build}", &[("build", &plays)]),
-            Some(tr("Safe · what you have now")),
+            Some(tr("Safe")),
             true,
             [
                 plays.clone(),
@@ -540,7 +541,7 @@ impl Launcher {
                 tr("Game updates wait until you update the mods or choose again").into(),
             ],
             Some(stay),
-            None,
+            Some(tr("This is what you have now.").into()),
         );
         let first = column(
             tr("Update the mods first").into(),
@@ -606,7 +607,7 @@ impl Launcher {
                     native_mods::fit::back_up_and_update(2)
                 },
             )
-            .text_color(gpui::red());
+            .text_color(rgb(BAD));
             let go = if sample {
                 go.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.close_alt_sheet();
@@ -735,7 +736,7 @@ impl Launcher {
             .children(
                 self.consent_error
                     .clone()
-                    .map(|e| div().text_color(gpui::red()).text_size(px(13.)).child(e)),
+                    .map(|e| div().text_color(rgb(BAD)).text_size(px(13.)).child(e)),
             )
             .child(consent_footer(
                 tr("This stays allowed on this computer until you take it back in Settings. Progress shows in the bar below."),
@@ -937,7 +938,7 @@ impl Launcher {
                 .gap(px(8.))
                 .pt(px(10.))
                 .border_t_1()
-                .border_color(rgb(LINE))
+                .border_color(rgb(SOFT))
                 .children(lines)
         };
         let check = |id: &'static str, label: &str, cx: &mut Context<Self>| {
@@ -973,7 +974,7 @@ impl Launcher {
             CheckState::Failed(_, error) => block(vec![
                 div()
                     .text_size(px(12.))
-                    .text_color(gpui::red())
+                    .text_color(rgb(BAD))
                     .child(error),
                 div().child(check("alt-check-again", "Check again", cx)),
             ]),
@@ -1198,6 +1199,8 @@ impl Launcher {
             .opacity(0.5)
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .flex_col()
                     .child(div().text_size(px(14.)).child(tr("Sunrise Extras")))
@@ -1211,6 +1214,7 @@ impl Launcher {
             .child(
                 div()
                     .mt(px(2.))
+                    .flex_none()
                     .w(px(34.))
                     .h(px(20.))
                     .rounded_full()
@@ -1236,7 +1240,7 @@ impl Launcher {
                     .sheets
                     .error
                     .clone()
-                    .map(|e| div().text_color(gpui::red()).text_size(px(12.)).child(e)),
+                    .map(|e| div().text_color(rgb(BAD)).text_size(px(12.)).child(e)),
             );
         // A popover over the bar's build chip: the scrim is clear.
         div()
@@ -1260,7 +1264,12 @@ impl Launcher {
             )
             .child(
                 body.absolute()
-                    .left(px(148.))
+                    // Under the build chip, which starts the bar when nobody is signed in.
+                    .left(px(if self.accounts.selected().is_some() {
+                        148.
+                    } else {
+                        16.
+                    }))
                     .bottom(px(78.))
                     .w(px(372.))
                     .p(px(14.))
@@ -1291,7 +1300,7 @@ fn fact(label: &str, value: String, rule: bool) -> Div {
         .px(px(16.))
         .py(px(10.))
         .text_size(px(13.))
-        .when(rule, |d| d.border_t_1().border_color(rgb(LINE)))
+        .when(rule, |d| d.border_t_1().border_color(rgb(SOFT)))
         .child(
             div()
                 .w(px(110.))
@@ -1299,7 +1308,7 @@ fn fact(label: &str, value: String, rule: bool) -> Div {
                 .text_color(rgb(MUTED))
                 .child(label.to_owned()),
         )
-        .child(div().flex_1().child(value))
+        .child(div().flex_1().min_w_0().child(value))
 }
 
 fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
