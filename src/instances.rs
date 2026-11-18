@@ -603,6 +603,9 @@ fn create_in(
     }
     crate::run_leases::publish(&dir).map_err(crate::native_mods::cache_error)?;
     let mut store = Store::load(data);
+    // A folder removed outside the launcher may still have metadata. A new folder
+    // never inherits its launch settings. Do not rewrite the old entry just by listing it.
+    store.instances.remove(&slug);
     let meta = store.instances.entry(slug.clone()).or_default();
     meta.name = (name != slug).then(|| name.to_string());
     meta.icon = from.and_then(|f| f.icon.clone());
