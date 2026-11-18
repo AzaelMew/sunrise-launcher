@@ -323,17 +323,29 @@ jobs:
           subject-checksums: dist/SHA256SUMS
           predicate-type: https://playsunrise.net/attestation/launcher-release/v1
           predicate-path: ${{ runner.temp }}/release-record.json
-      - name: Tag ${{ needs.decide.outputs.tag }} at the built commit, never an existing tag
+      # The tag comes only now, after every build and check passed: a failed build never uses up a version.
+      - name: Tag ${{ needs.decide.outputs.tag }} at the built commit, never another commit's tag
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.decide.outputs.tag }}
-        run: gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+        run: |
+          if ! gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null; then
+            # Re-running this run's failed jobs finds its own tag: the same commit goes on, any other is refused.
+            [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" == "$GITHUB_SHA" ]] ||
+              { echo "::error::$TAG exists at another commit: release the next version"; exit 1; }
+          fi
       - name: The unsigned draft
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.decide.outputs.tag }}
           VERSION: ${{ needs.decide.outputs.version }}
         run: |
+          set -euo pipefail
+          # A draft for this tag is an earlier attempt's, unsigned and unseen: it is replaced; a published release never is.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"" | while read -r id draft; do
+            [[ "$draft" == true ]] || { echo "::error::$TAG is already published"; exit 1; }
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
           gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --draft --title "$(cat notes/title.txt)" \
             --notes-file notes/body.md dist/*
           echo "Draft $TAG is up. Sign and publish it from the game repository: gh workflow run launcher-bridge.yml -R sunrise-org/sunrise --ref main -f version=$VERSION" >> "$GITHUB_STEP_SUMMARY"
