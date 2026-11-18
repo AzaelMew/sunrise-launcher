@@ -381,6 +381,8 @@ impl Launcher {
 
     pub(crate) fn launch_facts(&self) -> Facts {
         let active = self.selected_instance();
+        let launch = self.ui.home.mods.launch();
+        let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
         let follows_nightly =
             active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
         Facts {
@@ -400,14 +402,14 @@ impl Launcher {
             install_error: self.install_error.as_ref().map(|(_, e)| e.clone()),
             crash: self.crash.as_ref().map(|c| c.summary.clone()),
             build_gone: self.build_gone(),
-            held: self.held_update().map(|h| h.to),
+            held: held.map(|h| h.to),
             update: self
                 .updates
                 .sunrise
                 .as_ref()
                 .filter(|_| follows_nightly)
                 .map(|r| crate::sheets::build_name(&r.tag)),
-            mods_off: self.mods_not_on_build(),
+            mods_off: launch.map_or(0, |summary| summary.mods_off),
         }
     }
 

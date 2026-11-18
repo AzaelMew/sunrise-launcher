@@ -39,8 +39,9 @@ mod packs;
 mod project;
 mod search;
 mod ui;
+pub(crate) use search::Installed;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
+pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};
 
 use crate::paint::palette;
 use model::{Card, Row};
@@ -80,7 +81,7 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
-    /// Native files the browser didn't install: listed, never changed from here.
+    /// Mod files the browser didn't install: listed, never changed from here.
     local: Vec<model::Local>,
 }
 
@@ -161,6 +162,9 @@ pub(crate) struct ModsState {
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
     last_mods: Option<Page>,
     last_packs: Option<Page>,
+    /// The row another page opened Installed at, and whether it was scrolled to yet.
+    reveal: Option<search::Reveal>,
+    revealed: Rc<std::cell::Cell<bool>>,
 }
 
 impl Default for ModsState {
@@ -194,6 +198,8 @@ impl Default for ModsState {
             unfit_details: false,
             last_mods: None,
             last_packs: None,
+            reveal: None,
+            revealed: Default::default(),
         }
     }
 }
@@ -259,23 +265,17 @@ impl Launcher {
         }
     }
 
-    /// Reads the setup's mods for the play bar, when no Mods page has yet.
-    pub(crate) fn mods_read_once(&mut self) {
-        if self.ui.mods.snapshot.is_none() {
-            self.mods_refresh();
-        }
-    }
-
-    /// How many of the setup's mods the game it plays was made without.
-    pub(crate) fn mods_not_on_build(&self) -> usize {
-        model::not_on_build(&self.rows())
-    }
-
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
     pub(crate) fn show_installed_mods(&mut self) {
         self.leave_section(false);
         self.mods_refresh();
         self.choose_view(Page::Installed);
+    }
+
+    /// Mods › Discover itself, whatever Mods last showed.
+    pub(crate) fn show_discover(&mut self) {
+        self.leave_section(false);
+        self.choose_view(Page::Discover);
     }
 
     /// The rail's Mods: where the player last was this session, else Installed when this setup
@@ -336,6 +336,7 @@ impl Launcher {
         m.anchor = None;
         m.confirm = None;
         m.menu = None;
+        m.reveal = None;
         self.game_packs.confirm_remove = None;
         // Packs keeps the kind across the switch.
         match page {
@@ -454,13 +455,23 @@ impl Launcher {
         }
         if self.ui.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
             let entries = installed::Installed::load(&home).entries;
-            let local: Vec<model::Local> = native_status::untracked(&home)
-                .into_iter()
-                .map(|f| model::Local {
+            let local = |native: bool| {
+                move |f: native_status::Installed| model::Local {
                     id: f.id,
+                    name: f.name,
                     version: f.version,
                     github: f.origin.is_some(),
-                })
+                    native,
+                }
+            };
+            let local: Vec<model::Local> = native_status::untracked(&home)
+                .into_iter()
+                .map(local(true))
+                .chain(
+                    native_status::untracked_wasm(&home)
+                        .into_iter()
+                        .map(local(false)),
+                )
                 .collect();
             let mut enabled: HashSet<String> = entries
                 .iter()
@@ -493,15 +504,24 @@ impl Launcher {
             .as_ref()
             .is_some_and(|s| !s.entries.is_empty())
             || self.ui.page != Page::Installed;
-        if wants_index && matches!(self.ui.mods.catalog, Catalog::Idle) {
-            self.mods_load_catalog();
+        if wants_index {
+            self.ensure_mod_catalog();
         }
     }
 
-    fn mods_load_catalog(&mut self) {
+    pub(crate) fn ensure_mod_catalog(&mut self) {
+        if !matches!(self.ui.mods.catalog, Catalog::Idle) {
+            return;
+        }
         self.ui.mods.catalog = Catalog::Loading;
-        let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
+        let tx = self.ui.mods.tx.clone();
+        let version = self
+            .selected_instance()
+            .map(|i| self.version_of(i).cloned());
         std::thread::spawn(move || {
+            let game = version.map_or_else(sunrise_launcher::browser::game, |v| {
+                backend::played_version_id_by(v.as_deref())
+            });
             let result = sunrise::index().map(|index| {
                 let cards = model::cards(&index, &game);
                 let categories = model::categories(&cards);

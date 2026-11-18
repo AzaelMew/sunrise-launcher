@@ -10,9 +10,10 @@
 //! - worlds: `worlds::list` of the selected profile's `saves/` (`level.dat` and `icon.png`, read
 //!   only), newest first; Play starts the game straight into one (`quick_play`), and the box
 //!   opens its data packs;
-//! - a world without `icon.png` is drawn from `dirt.png` of the player's own prepared game
-//!   files (`backend::resources`, nothing is shipped), else a plain tile, no letter;
-//! - signed out with no worlds, the panel is the welcome in place of worlds.
+//! - the shared artwork worker reads and decodes world pictures in the background, for rows
+//!   and tile bands near the view; a world without `icon.png` uses `dirt.png` of the player's own
+//!   prepared game files (`backend::resources`, nothing is shipped), else a plain tile;
+//! - signed out with no worlds, the welcome stands where the worlds will be, beside the mods.
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
@@ -25,17 +26,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
 
-/// The recent worlds shown.
-const WORLDS: usize = 6;
-/// The picture band of a world card, in points.
-const BAND: f32 = 150.;
-/// An icon is drawn at a whole multiple of its pixels up to about this wide, then cropped.
-const BAND_ART: f32 = 480.;
-/// One texture tile, in points (16 pixels at 8×).
-const TILE: f32 = 128.;
-/// A world card is never narrower than this beside another, nor wider than this alone.
-const CARD_MIN: f32 = 190.;
-const CARD_MAX: f32 = 600.;
+/// A world's picture in a row.
+const WORLD_ICON: f32 = 40.;
+/// And as a tile: its 64 pixels, doubled.
+const WORLD_TILE: f32 = 128.;
+/// How much of a tile's data packs button shows while nothing points at the tile.
+const PACKS_AT_REST: f32 = 0.6;
 /// The room between the header and the panel under it.
 const GAP: f32 = 20.;
 /// How far the header stands in from the panel's edge.
@@ -45,9 +41,115 @@ const INSET: f32 = 32.;
 pub(crate) struct HomeState {
     /// Where the build picker was last drawn: the build chooser opens under it.
     picker: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
+    /// What the selected profile has installed, for the Mods column.
+    pub(crate) mods: crate::home_mods::Inventory,
+    /// Where the worlds and the Mods rows were last drawn: only those near the window's view
+    /// are built.
+    worlds_at: Near,
+    pub(crate) mods_at: Near,
+}
+
+/// A row of Home's lists, and the room to the next.
+pub(crate) const ROW: f32 = 52.;
+pub(crate) const ROW_GAP: f32 = 4.;
+/// A world's tile with its two lines, and the room between tiles.
+const TILE_TALL: f32 = 180.;
+const TILE_GAP: f32 = 16.;
+
+/// Which of `count` items to build, `across` to a band and the bands `pitch` apart, when the
+/// page shows the list from `from` to `to` (measured down from the list's top): the bands in
+/// view and a few on either side, so the next Tab stop and the next turn of the wheel are there.
+pub(crate) fn near(
+    count: usize,
+    across: usize,
+    pitch: f32,
+    (from, to): (f32, f32),
+) -> std::ops::Range<usize> {
+    const SPARE: f32 = 3.;
+    let band = |y: f32| (y / pitch).max(0.) as usize;
+    let first = band(from - SPARE * pitch) * across;
+    let last = band(to + SPARE * pitch + pitch) * across;
+    first.min(count)..last.min(count)
+}
+
+/// Where a long list of Home was last drawn. All of its items stay reachable (the list is as
+/// tall as all of them) while only those near the view are built.
+#[derive(Clone, Default)]
+pub(crate) struct Near(Rc<Cell<Option<Bounds<gpui::Pixels>>>>);
+
+impl Near {
+    /// How wide the list was last drawn.
+    fn width(&self) -> Option<f32> {
+        self.0.get().map(|at| f32::from(at.size.width))
+    }
+
+    /// The items to build of `count`, and the list they stand in: `items` is given the built
+    /// ones' place in `list`, between two blanks as tall as the ones left out.
+    pub(crate) fn list(
+        &self,
+        count: usize,
+        across: usize,
+        tall: f32,
+        gap: f32,
+    ) -> (std::ops::Range<usize>, impl FnOnce(Div) -> Div) {
+        let pitch = tall + gap;
+        let view = crate::frame::scrolls("home").bounds();
+        let built = match self.0.get() {
+            Some(at) => near(
+                count,
+                across,
+                pitch,
+                (
+                    f32::from(view.top() - at.top()),
+                    f32::from(view.bottom() - at.top()),
+                ),
+            ),
+            // Not drawn yet: a first screenful, measured by the next frame.
+            None => 0..count.min(across * 12),
+        };
+        let bands = |items: usize| items.div_ceil(across) as f32;
+        let blank =
+            |items: usize| (items > 0).then(|| div().flex_none().h(px(bands(items) * pitch - gap)));
+        let (above, below) = (blank(built.start), blank(count - built.end));
+        let at = self.0.clone();
+        let list = move |items: Div| {
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .gap(px(gap))
+                .children(above)
+                .child(items)
+                .children(below)
+                .child(
+                    gpui::canvas(
+                        move |bounds, window, cx| {
+                            if at.replace(Some(bounds)) != Some(bounds) {
+                                // The page moved: what is near is chosen again next frame.
+                                let window = window.window_handle();
+                                cx.defer(move |cx| {
+                                    window.update(cx, |_, window, _| window.refresh()).ok();
+                                });
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+        };
+        (built, list)
+    }
 }
 
 impl HomeState {
+    /// Whether Play and what it says show: false once Home is scrolled so far that the row
+    /// they stand in is more than half above the page's top edge. The status strip then says
+    /// it instead.
+    pub(crate) fn play_in_view(&self) -> bool {
+        play_shows(self.picker.get(), crate::frame::scrolls("home").bounds())
+    }
+
     /// Where the build chooser opens: the left edge and the top, in the window.
     pub(crate) fn chooser_at(&self) -> (f32, f32) {
         match self.picker.get() {
@@ -56,6 +158,12 @@ impl HomeState {
             None => (INSET, 96.),
         }
     }
+}
+
+/// Whether the play row, drawn at `row` (as tall as the build picker in it), shows in the page
+/// drawn at `view`. A Home not drawn yet shows it.
+fn play_shows(row: Option<Bounds<gpui::Pixels>>, view: Bounds<gpui::Pixels>) -> bool {
+    row.is_none_or(|row| row.center().y >= view.top())
 }
 
 pub(crate) fn sentence(text: &str) -> String {
@@ -108,6 +216,7 @@ pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
 
 impl Launcher {
     pub(crate) fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.refresh_home_inventory(cx);
         let Some(instance) = self.selected_instance().cloned() else {
             return div()
                 .p(px(32.))
@@ -117,12 +226,7 @@ impl Launcher {
         };
         self.load_worlds(instance.home.clone(), cx);
         let header = self.profile_header(&instance, window, cx);
-        let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
-        let body = if first_start {
-            self.welcome(cx)
-        } else {
-            self.continue_playing(&instance, cx)
-        };
+        let body = self.continue_playing(&instance, window, cx);
         div()
             .id("alt-home")
             .size_full()
@@ -226,7 +330,6 @@ impl Launcher {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        self.mods_read_once();
         let view = self.launch_facts().view();
         let idle = view.main == Main::Play;
         let busy = self.launch_busy();
@@ -427,29 +530,42 @@ impl Launcher {
             }))
     }
 
-    /// The selected profile's recent worlds, or what to do when it has none.
-    fn continue_playing(&mut self, instance: &instances::Instance, cx: &mut Context<Self>) -> Div {
-        let list: Vec<World> = self.worlds.list.iter().take(WORLDS).cloned().collect();
+    /// Home's lower panel: the selected profile's worlds (or what to do when it has none)
+    /// beside its mods.
+    fn continue_playing(
+        &mut self,
+        instance: &instances::Instance,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let list: Vec<World> = self.worlds.list.clone();
+        let tiles = self.settings.world_layout == backend::WorldLayout::Tiles;
         let top = div()
+            .h(px(tokens::CONTROL))
             .flex()
-            .flex_col()
-            .gap(px(6.))
-            .child(
-                heading(tr("Continue playing"))
-                    .text_size(px(tokens::TITLE - 4.))
-                    .font_weight(FontWeight::BOLD),
-            )
-            .child(muted(trf(
-                "Recent worlds in {profile}",
-                &[("profile", &instance.name)],
-            )));
+            .items_center()
+            .child(heading(tr("Continue playing")));
         let body = if !list.is_empty() {
-            let mut row = div().flex().flex_wrap().gap(px(12.));
-            for world in list.iter() {
-                let art = self.world_art(world);
-                row = row.child(self.world_card(world, art, cx));
+            let near = self.ui.home.worlds_at.clone();
+            if tiles {
+                // As many tiles to a band as the column is wide; the rest wrap under them.
+                let across = near.width().map_or(4, |wide| {
+                    ((wide + TILE_GAP) / (WORLD_TILE + TILE_GAP)).max(1.) as usize
+                });
+                let (built, place) = near.list(list.len(), across, TILE_TALL, TILE_GAP);
+                let mut grid = div().flex().flex_wrap().gap(px(TILE_GAP));
+                for world in &list[built] {
+                    grid = grid.child(self.world_tile(world, window, cx));
+                }
+                place(grid)
+            } else {
+                let (built, place) = near.list(list.len(), 1, ROW, ROW_GAP);
+                let mut rows = div().flex().flex_col().gap(px(ROW_GAP));
+                for world in &list[built] {
+                    rows = rows.child(self.world_row(world, window, cx));
+                }
+                place(rows)
             }
-            row
         } else if !self.worlds.fresh {
             // Still being read: no "none yet" until that is known.
             div()
@@ -484,150 +600,242 @@ impl Launcher {
                         }),
                 )
         };
-        div()
+        // The first start (signed out, nothing to continue) says welcome where the worlds will
+        // be; what the profile has installed stays beside it.
+        let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
+        let worlds = div().flex_1().min_w_0().flex().flex_col().gap(px(10.));
+        let worlds = if first_start {
+            worlds.child(self.welcome(cx))
+        } else {
+            worlds.child(top).child(body)
+        };
+        let mods = self.home_mods(&instance.home, cx).flex_1().min_w_0();
+        // Worlds, then what the profile plays with: side by side, or in that order down a
+        // narrow window.
+        let both = div()
             .flex_grow(1.)
             .flex()
-            .flex_col()
-            .gap(px(16.))
-            .child(top)
-            .child(body)
+            .gap(px(22.))
+            .child(worlds)
+            .child(mods);
+        if crate::home_mods::side_by_side(f32::from(window.viewport_size().width)) {
+            both
+        } else {
+            both.flex_col()
+        }
     }
 
-    /// A world's picture: its own `icon.png`, drawn big and sharp; else `dirt.png` of the
-    /// player's own game files, under the theme's scrim; else plain charcoal.
-    fn world_art(&mut self, world: &World) -> Div {
-        let scale = self.scale;
-        let band = div()
-            .relative()
+    /// A world's picture, `side` points square: its own `icon.png` (64 pixels square, as the
+    /// game takes it) at a whole multiple of its pixels, so it stays sharp; else `dirt.png` of
+    /// the player's own game files; else a plain tile with the map glyph.
+    fn world_icon(&mut self, world: &World, side: f32) -> Div {
+        let tile = div()
+            .flex_none()
+            .size(px(side))
+            .rounded(px(tokens::R_CONTROL))
+            .overflow_hidden()
             .flex()
             .items_center()
             .justify_center()
-            .w_full()
-            .h(px(BAND))
-            .overflow_hidden()
-            .bg(rgb(palette().background));
+            .bg(rgb(palette().selected));
         let stamp = world
             .last_played
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        if let Some(icon) = world.icon.clone() {
+        let own = world.icon.clone().and_then(|icon| {
             let key = format!("alt-world:{}:{stamp}", icon.display());
-            let read = icon.clone();
-            let picture = self.icon_image(key, BAND_ART, move || Some(read));
-            if let Some(image) = picture {
-                let dim = image.size(0);
-                return band.child(
-                    gpui::img(image)
-                        .flex_none()
-                        .w(px(dim.width.0 as f32 / scale))
-                        .h(px(dim.height.0 as f32 / scale)),
-                );
-            }
-        }
+            self.icon_image(key, side, move || Some(icon))
+        });
         // Always dirt, from the player's own prepared files; none shipped.
-        let file = self
-            .game_resources()
-            .join("assets/minecraft/textures/block/dirt.png");
-        let key = format!("alt-dirt:{}", file.display());
-        let texture = self.icon_image(key, TILE, move || Some(file));
-        match texture {
-            Some(image) => {
-                let dim = image.size(0);
-                let (w, h) = (dim.width.0 as f32 / scale, dim.height.0 as f32 / scale);
-                let mut tiles = div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .flex()
-                    .flex_wrap()
-                    .w(px(w * 8.));
-                for _ in 0..16 {
-                    tiles = tiles.child(gpui::img(image.clone()).flex_none().w(px(w)).h(px(h)));
-                }
-                band.child(tiles)
-                    .child(div().absolute().inset_0().bg(palette().scrim()))
-            }
-            // No dirt: plain charcoal a step above the card, no letter.
-            None => band.bg(rgb(palette().selected)),
+        let picture = own.or_else(|| {
+            let file = self
+                .game_resources()
+                .join("assets/minecraft/textures/block/dirt.png");
+            let key = format!("alt-dirt:{}", file.display());
+            self.icon_image(key, side, move || Some(file))
+        });
+        match picture {
+            Some(image) => tile.child(gpui::img(image).size(px(side))),
+            None => tile.child(blocks::icon("map", side * 0.4, rgb(palette().muted).into())),
         }
     }
 
-    fn world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
-        let folder = world.folder.clone();
-        let packs = {
-            let path = world.path.clone();
-            Some(
-                button(format!("alt-world-packs-{}", world.folder), "")
-                    .size(px(36.))
-                    .px_0()
-                    .child(blocks::icon("archive", 17., rgb(palette().text).into()))
-                    .tooltip(crate::glass_ui::tip(tr("Data packs")))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.show_world_packs(path.clone());
-                        cx.notify();
-                    })),
-            )
+    /// "Survival · Today".
+    fn world_facts(world: &World) -> String {
+        format!(
+            "{} · {}",
+            tr(world.mode),
+            sentence(&worlds_page::ago(world.last_played))
+        )
+    }
+
+    /// One world as a compact row: its picture, what it is, and its two small buttons, each
+    /// named by its tooltip. A name too long for the row is cut: it shows whole in a tooltip,
+    /// and in the row itself while the keyboard is on Play.
+    fn world_row(
+        &mut self,
+        world: &World,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let (folder, path) = (world.folder.clone(), world.path.clone());
+        let focus = self
+            .worlds
+            .tile_focus
+            .entry(world.folder.clone())
+            .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let on_play = focus.is_focused(window);
+        // The row's own id scopes these two: no world's button is another's.
+        let small = |id: &'static str, glyph: &'static str, says: &'static str| {
+            button(id, "")
+                .size(px(30.))
+                .px_0()
+                .child(blocks::icon(glyph, 14., rgb(palette().text).into()))
+                .tooltip(crate::glass_ui::tip(tr(says)))
         };
-        // Icons, named by their tooltips: the card keeps its room for the world's name.
-        let play = crate::frame::button_base(format!("alt-world-{}", world.folder), "")
-            .size(px(36.))
-            .px_0()
-            .bg(rgb(palette().text))
-            .border_color(rgb(palette().text))
-            .hover(|s| s.bg(rgb(palette().accent_on)))
-            .child(blocks::icon("play", 17., rgb(palette().background).into()))
-            .tooltip(crate::glass_ui::tip(tr("Play this world")))
+        let packs = small("alt-world-packs", "archive", "Data packs").on_click(cx.listener(
+            move |this, _: &ClickEvent, _, cx| {
+                this.show_world_packs(path.clone());
+                cx.notify();
+            },
+        ));
+        let play = small("alt-world-play", "play", "Play this world")
+            .track_focus(&focus)
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.play_to("--world", folder.clone());
                 cx.notify();
             }));
-        let facts = format!(
-            "{} · {}",
-            tr(world.mode),
-            sentence(&worlds_page::ago(world.last_played))
-        );
         card()
-            // Side by side while there is room, each as wide as its share; under each other
-            // in a narrow window. One world alone is not stretched across the page.
-            .flex_grow(1.)
-            .flex_basis(px(CARD_MIN))
-            .min_w(px(0.))
-            .max_w(px(CARD_MAX))
+            .id(SharedString::from(format!("alt-world:{}", world.folder)))
+            .flex_none()
+            .min_h(px(ROW))
             .flex()
-            .flex_col()
-            .child(art)
+            .items_center()
+            .gap(px(10.))
+            .p(px(5.))
+            .pr(px(8.))
+            .child(self.world_icon(world, WORLD_ICON))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .id("alt-world-name")
+                            .text_size(px(tokens::LABEL))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .when(!on_play, |d| d.truncate())
+                            .child(world.name.clone())
+                            .tooltip(crate::glass_ui::tip(world.name.clone())),
+                    )
+                    .child(muted(Self::world_facts(world))),
+            )
             .child(
                 div()
                     .flex()
-                    // A narrow card puts its buttons under the name rather than squeezing it.
-                    .flex_wrap()
+                    .flex_none()
+                    .gap(px(6.))
+                    .child(packs)
+                    .child(play),
+            )
+    }
+
+    /// One world as a tile: its picture, which plays it, with what it is under it. Its data
+    /// packs button sits on the picture, faint until the pointer is over the tile or the
+    /// keyboard is on the picture or on the button.
+    fn world_tile(
+        &mut self,
+        world: &World,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let (folder, path) = (world.folder.clone(), world.path.clone());
+        let focus = self
+            .worlds
+            .tile_focus
+            .entry(world.folder.clone())
+            .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let group = SharedString::from(format!("alt-world-tile-{}", world.folder));
+        let picture = div()
+            .id("alt-world-play")
+            .track_focus(&focus)
+            .relative()
+            .cursor_pointer()
+            .rounded(px(tokens::R_CONTROL))
+            .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+            .seen()
+            .child(self.world_icon(world, WORLD_TILE))
+            // What a press does, said on the picture itself.
+            .child(
+                div()
+                    .absolute()
+                    .right(px(8.))
+                    .bottom(px(8.))
+                    .size(px(32.))
+                    .rounded(px(tokens::R_CONTROL))
+                    .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .p(px(14.))
+                    .justify_center()
+                    .bg(rgb(palette().text))
+                    .child(blocks::icon("play", 15., rgb(palette().background).into())),
+            )
+            .tooltip(crate::glass_ui::tip(trf(
+                "Play {world}",
+                &[("world", &world.name)],
+            )))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.play_to("--world", folder.clone());
+                cx.notify();
+            }));
+        let packs = crate::frame::button_base("alt-world-packs", "")
+            .absolute()
+            .left(px(8.))
+            .bottom(px(8.))
+            .size(px(32.))
+            .px_0()
+            .bg(rgb(palette().raised))
+            .occlude()
+            .when(!focus.is_focused(window), |d| d.opacity(PACKS_AT_REST))
+            .group_hover(group.clone(), |s| s.opacity(1.))
+            .focus_visible(|s| s.opacity(1.).border_color(rgb(palette().focus)))
+            .child(blocks::icon("archive", 17., rgb(palette().text).into()))
+            .tooltip(crate::glass_ui::tip(tr("Data packs")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.show_world_packs(path.clone());
+                cx.notify();
+            }));
+        div()
+            // The tile's own id scopes what is in it: no world's control is another's.
+            .id(SharedString::from(format!("alt-world:{}", world.folder)))
+            .flex_none()
+            .w(px(WORLD_TILE))
+            .h(px(TILE_TALL))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(div().group(group).relative().child(picture).child(packs))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
                     .child(
+                        // A long name is cut at the picture's width: the tooltip has all of it.
                         div()
-                            .flex_1()
-                            .min_w(px(120.))
-                            .child(
-                                div()
-                                    .text_size(px(tokens::BODY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(palette().text))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .text_ellipsis()
-                                    .child(world.name.clone()),
-                            )
-                            .child(muted(facts)),
+                            .id("alt-world-name")
+                            .text_size(px(tokens::BODY))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(palette().text))
+                            .truncate()
+                            .child(world.name.clone())
+                            .tooltip(crate::glass_ui::tip(world.name.clone())),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .gap(px(8.))
-                            .children(packs)
-                            .child(play),
-                    ),
+                    .child(muted(Self::world_facts(world))),
             )
     }
 
@@ -645,8 +853,8 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(10.))
-            .px(px(12.))
-            .py(px(18.))
+            .pr(px(12.))
+            .py(px(8.))
             .child(
                 div()
                     .text_size(px(tokens::DISPLAY))

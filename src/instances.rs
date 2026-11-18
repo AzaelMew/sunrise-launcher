@@ -116,7 +116,16 @@ pub const MAX_ARTWORK: u64 = 8 << 20;
 /// [`MAX_ARTWORK`]: nothing larger is ever read into memory, whatever its length claims.
 pub fn read_artwork(path: &Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
-    let file = fs::File::open(path).ok()?;
+    let mut open = fs::OpenOptions::new();
+    open.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        // Never wait for a writer if an icon path names a pipe, even if it's replaced
+        // immediately before this open. This worker also serves the rest of the launcher.
+        open.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = open.open(path).ok()?;
     let meta = file.metadata().ok()?;
     if !meta.is_file() || meta.len() > MAX_ARTWORK {
         return None;

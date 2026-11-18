@@ -45,7 +45,7 @@ pub struct Pack {
     pub title: String,
     /// `pack.mcmeta`'s description as plain text; a shader pack's format.
     pub description: String,
-    /// `pack.png`, a resource pack's picture.
+    /// Its picture: a resource pack's `pack.png`, a Sunrise shader pack's `icon.png`.
     pub icon: Option<Vec<u8>>,
     pub enabled: bool,
 }
@@ -57,7 +57,7 @@ fn shader_key(path: &Path) -> Option<String> {
     let manifest = if path.is_dir() {
         sunrise_launcher_shader_api::Pack::read_manifest(path)
     } else {
-        let mut zip = crate::zip_intake::open(fs::File::open(path).ok()?).ok()?;
+        let mut zip = crate::zip_intake::open(regular(path)?).ok()?;
         sunrise_launcher_shader_api::Pack::read_zip_manifest(&mut zip)
     }
     .ok()?;
@@ -95,11 +95,7 @@ fn migrate_shader_values(home: &Path, pack: &Path, key: &str) -> std::io::Result
     if target.exists() {
         return Ok(());
     }
-    let previous = line_value(
-        &fs::read_to_string(home.join(GRAPHICS)).unwrap_or_default(),
-        "pickedShaderPack",
-    )
-    .filter(|picked| {
+    let previous = picked_shader(home).filter(|picked| {
         !picked.starts_with("sunrise:")
             && (shader_key(&dir.join(picked)).as_deref() == Some(key)
                 || (!dir.join(picked).exists()
@@ -138,15 +134,64 @@ fn migrate_shader_values(home: &Path, pack: &Path, key: &str) -> std::io::Result
     Ok(())
 }
 
+/// What [`list`] depends on, read without opening a pack: the two saved choices and each pack
+/// folder's entries with their sizes and times. A list is read again when this changes.
+pub fn stamp(home: &Path) -> String {
+    let saved = |file: &str, key: &str| {
+        line_value(
+            &fs::read_to_string(home.join(file)).unwrap_or_default(),
+            key,
+        )
+    };
+    let mut out = format!(
+        "{:?}\n{:?}\n",
+        saved(OPTIONS, "resourcePacks"),
+        saved(GRAPHICS, "pickedShaderPack")
+    );
+    for kind in [Kind::Resource, Kind::Shader] {
+        let mut entries: Vec<String> = fs::read_dir(home.join(kind.folder()))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| {
+                let meta = e.metadata().ok();
+                let time = meta.as_ref().and_then(|m| m.modified().ok());
+                format!("{:?} {:?} {time:?}", e.file_name(), meta.map(|m| m.len()))
+            })
+            .collect();
+        entries.sort();
+        out += &entries.join("\n");
+        out.push('\n');
+    }
+    out
+}
+
+/// Which packs' pictures a listing reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pictures {
+    All,
+    /// Only list metadata. Home asks for artwork separately, for the rows near the view.
+    None,
+}
+
 /// The packs of `kind` in the game folder `home`, by name: turning one on or off leaves it where
 /// it is.
 pub fn list(home: &Path, kind: Kind) -> Vec<Pack> {
+    list_with(home, kind, Pictures::All)
+}
+
+/// [`list`], reading the pictures of `pictures` only.
+pub fn list_with(home: &Path, kind: Kind, pictures: Pictures) -> Vec<Pack> {
     let on = enabled(home, kind);
     let mut packs: Vec<Pack> = fs::read_dir(home.join(kind.folder()))
         .into_iter()
         .flatten()
         .flatten()
-        .filter_map(|e| read(&e.path(), kind, &on))
+        .filter_map(|e| {
+            let path = e.path();
+            let file = path.file_name()?.to_str()?.to_string();
+            read_named(&path, file, kind, &on, pictures)
+        })
         .collect();
     packs.sort_by(|a, b| a.file.cmp(&b.file));
     let mut keys = std::collections::HashSet::new();
@@ -157,6 +202,29 @@ pub fn list(home: &Path, kind: Kind) -> Vec<Pack> {
     packs
 }
 
+/// The shader pack `sunrise-graphics.txt` picks: a Sunrise pack's `sunrise:<id>`, or the name of
+/// one file or folder in `shaderpacks/`. Anything else (a path, `..`, nothing) picks no pack, so
+/// what is read from that file never leads out of the pack folder.
+fn picked_shader(home: &Path) -> Option<String> {
+    let picked = line_value(
+        &fs::read_to_string(home.join(GRAPHICS)).unwrap_or_default(),
+        "pickedShaderPack",
+    )?;
+    let one_name = || {
+        let mut parts = Path::new(&picked).components();
+        matches!(
+            (parts.next(), parts.next()),
+            (Some(std::path::Component::Normal(name)), None) if name == picked.as_str()
+        )
+    };
+    let id = picked.strip_prefix("sunrise:");
+    match id {
+        Some(id) => !id.is_empty() && !id.contains(['/', '\\']),
+        None => one_name() && !picked.contains('\\'),
+    }
+    .then_some(picked)
+}
+
 /// The file names turned on, bottom first.
 fn enabled(home: &Path, kind: Kind) -> Vec<String> {
     match kind {
@@ -165,11 +233,7 @@ fn enabled(home: &Path, kind: Kind) -> Vec<String> {
             .filter_map(|id| id.strip_prefix("file/").map(str::to_string))
             .collect(),
         Kind::Shader => {
-            let picked = line_value(
-                &fs::read_to_string(home.join(GRAPHICS)).unwrap_or_default(),
-                "pickedShaderPack",
-            )
-            .filter(|v| !v.is_empty());
+            let picked = picked_shader(home);
             let dir = home.join(Kind::Shader.folder());
             picked
                 .map(|p| {
@@ -201,36 +265,43 @@ fn enabled(home: &Path, kind: Kind) -> Vec<String> {
     }
 }
 
-fn read(path: &Path, kind: Kind, on: &[String]) -> Option<Pack> {
-    let file = path.file_name()?.to_str()?.to_string();
-    read_named(path, file, kind, on)
-}
-
-/// `read`, for a pack at `path` that is shown under the name `file`: a copy not yet put in place.
-fn read_named(path: &Path, file: String, kind: Kind, on: &[String]) -> Option<Pack> {
+/// A pack at `path` that is shown under the name `file` (a copy not yet put in place has
+/// another).
+fn read_named(
+    path: &Path,
+    file: String,
+    kind: Kind,
+    on: &[String],
+    pictures: Pictures,
+) -> Option<Pack> {
     if file.starts_with('.') {
         return None;
     }
     let ext =
         |x: &str| path.is_file() && path.extension().is_some_and(|e| e.eq_ignore_ascii_case(x));
+    let enabled = on.contains(&file)
+        || (kind == Kind::Shader && shader_key(path).is_some_and(|k| on.contains(&k)));
+    // A picture nobody will see is not read.
+    let pictured = pictures == Pictures::All;
     let (title, description, icon) = match kind {
         Kind::Resource => {
-            let meta = entry(path, "pack.mcmeta")?;
-            let meta: serde_json::Value = serde_json::from_slice(&meta).ok()?;
-            (
-                file.clone(),
-                plain(&meta["pack"]["description"]),
-                entry(path, "pack.png"),
-            )
+            let [meta, icon] = entries(path, [Some("pack.mcmeta"), pictured.then_some("pack.png")]);
+            let meta: serde_json::Value = serde_json::from_slice(&meta?).ok()?;
+            (file.clone(), plain(&meta["pack"]["description"]), icon)
         }
         Kind::Shader if path.join(SHADER_MANIFEST).is_file() || ext(SHADER_PACKAGE) => {
-            let name = entry(path, SHADER_MANIFEST)
+            // A Sunrise shader pack's picture is its `icon.png`.
+            let [manifest, icon] = entries(
+                path,
+                [Some(SHADER_MANIFEST), pictured.then_some("icon.png")],
+            );
+            let name = manifest
                 .and_then(|t| toml::from_slice::<toml::Table>(&t).ok())
                 .and_then(|t| t.get("name")?.as_str().map(str::to_string));
             (
                 name.unwrap_or_else(|| file.clone()),
                 "Sunrise shader pack".into(),
-                None,
+                icon,
             )
         }
         Kind::Shader if ext("zip") || path.join("shaders").is_dir() => {
@@ -240,8 +311,7 @@ fn read_named(path: &Path, file: String, kind: Kind, on: &[String]) -> Option<Pa
     };
     Some(Pack {
         kind,
-        enabled: on.contains(&file)
-            || (kind == Kind::Shader && shader_key(path).is_some_and(|k| on.contains(&k))),
+        enabled,
         path: path.to_path_buf(),
         file,
         title,
@@ -250,21 +320,53 @@ fn read_named(path: &Path, file: String, kind: Kind, on: &[String]) -> Option<Pa
     })
 }
 
+/// `path` opened to read, when it is a regular file: a pipe or a device under a pack's name is
+/// never opened, so listing packs can't wait on one.
+fn regular(path: &Path) -> Option<fs::File> {
+    if !fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let file = fs::File::open(path).ok()?;
+    file.metadata().ok()?.is_file().then_some(file)
+}
+
+/// The files called `names` at the root of a pack folder or zip (a name not asked for is not
+/// read), each at most 4 MB, with the pack opened once. In a folder only a regular file that is itself in the folder is read: a
+/// link is not followed out of the pack.
+fn entries<const N: usize>(path: &Path, names: [Option<&str>; N]) -> [Option<Vec<u8>>; N] {
+    const MAX: u64 = 4 << 20;
+    let read = |from: &mut dyn Read| {
+        let mut out = Vec::new();
+        from.take(MAX).read_to_end(&mut out).ok()?;
+        Some(out)
+    };
+    if path.is_dir() {
+        return names.map(|name| {
+            let file = path.join(name?);
+            if !fs::symlink_metadata(&file).ok()?.is_file() {
+                return None;
+            }
+            read(&mut regular(&file)?)
+        });
+    }
+    let mut zip = regular(path).and_then(|file| crate::zip_intake::open(file).ok());
+    names.map(|name| read(&mut zip.as_mut()?.by_name(name?).ok()?))
+}
+
 /// A file at the root of a pack folder or zip, at most 4 MB.
 pub(crate) fn entry(path: &Path, name: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::new();
-    if path.is_dir() {
-        fs::File::open(path.join(name))
-            .ok()?
-            .take(4 << 20)
-            .read_to_end(&mut out)
-            .ok()?;
-    } else {
-        let mut zip = crate::zip_intake::open(fs::File::open(path).ok()?).ok()?;
-        let entry = zip.by_name(name).ok()?;
-        entry.take(4 << 20).read_to_end(&mut out).ok()?;
-    }
-    Some(out)
+    let [file] = entries(path, [Some(name)]);
+    file
+}
+
+/// Read the image at the root of a pack, independently of listing its metadata.
+pub fn artwork(path: &Path, kind: Kind) -> Option<Vec<u8>> {
+    let name = match kind {
+        Kind::Resource => "pack.png",
+        Kind::Shader if sunrise_launcher_shader_api::package::is_pack(path) => "icon.png",
+        Kind::Shader => return None,
+    };
+    entry(path, name)
 }
 
 /// A text component as plain text: its strings, without `§` formatting codes.
@@ -401,12 +503,7 @@ pub fn set_enabled(home: &Path, pack: &Pack, on: bool) -> Result<(), String> {
             )
         }
         Kind::Shader => {
-            if let Some(previous) = line_value(
-                &fs::read_to_string(home.join(GRAPHICS)).unwrap_or_default(),
-                "pickedShaderPack",
-            )
-            .filter(|p| !p.is_empty() && !p.starts_with("sunrise:"))
-            {
+            if let Some(previous) = picked_shader(home).filter(|p| !p.starts_with("sunrise:")) {
                 if let Some(key) = enabled(home, Kind::Shader).first() {
                     let path = home.join(Kind::Shader.folder()).join(previous);
                     migrate_shader_values(home, &path, key).map_err(|e| e.to_string())?;
@@ -422,7 +519,7 @@ pub fn set_enabled(home: &Path, pack: &Pack, on: bool) -> Result<(), String> {
 
 /// The pack a command names: its file name, or its title (any case).
 pub fn find(home: &Path, kind: Kind, query: &str) -> Result<Pack, String> {
-    let all = list(home, kind);
+    let all = list_with(home, kind, Pictures::None);
     all.iter()
         .find(|p| p.file == query)
         .or_else(|| all.iter().find(|p| p.title.eq_ignore_ascii_case(query)))
@@ -525,12 +622,18 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
             ],
         )
     })?;
-    read(&target, kind, &[]).ok_or_else(|| {
-        trf(
-            "{file} is not a pack the game reads",
-            &[("file", &target.display().to_string())],
-        )
-    })
+    let placed = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string);
+    placed
+        .and_then(|file| read_named(&target, file, kind, &[], Pictures::All))
+        .ok_or_else(|| {
+            trf(
+                "{file} is not a pack the game reads",
+                &[("file", &target.display().to_string())],
+            )
+        })
 }
 
 /// The Installed page's add: like `add`, for a file the person said is a `kind` pack. A file of
@@ -627,7 +730,7 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             .and_then(|n| n.to_str())
             .map(str::to_string);
         let mut pack = shown
-            .and_then(|shown| read_named(temp.path(), shown, kind, &[]))
+            .and_then(|shown| read_named(temp.path(), shown, kind, &[], Pictures::All))
             .ok_or_else(|| {
                 trf(
                     "{file} is not a pack the game reads",

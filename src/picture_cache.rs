@@ -20,6 +20,11 @@ pub(super) struct Pictures {
 }
 
 impl Pictures {
+    /// Reclaim a thumbnail's atlas allocation once the frame that drew it is gone.
+    pub(super) fn retire(&mut self, image: Arc<RenderImage>) {
+        self.retired.push(image);
+    }
+
     /// Frees the pictures dropped since the last frame where GPUI keeps them too.
     pub(super) fn free_retired(&mut self, window: &mut Window) {
         for image in self.retired.drain(..) {

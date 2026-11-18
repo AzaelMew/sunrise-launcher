@@ -773,6 +773,7 @@ enum Cmd {
     /// "default" goes back to the theme's), scenery on|off (whether anything is behind the
     /// pages), cache-limit-gib N (managed cache limit
     /// in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup)
+    #[command(after_help = tr("worlds rows|tiles: how Home lists the worlds under Continue playing."))]
     Settings {
         #[arg(value_parser = SETTING_KEYS)]
         key: Option<String>,
@@ -918,7 +919,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 17] = [
+const SETTING_KEYS: [&str; 18] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -930,6 +931,7 @@ const SETTING_KEYS: [&str; 17] = [
     "game-architecture",
     "proxy",
     "while-playing",
+    "worlds",
     "language",
     "theme",
     "accent",
@@ -982,6 +984,14 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
         "while-playing" => {
             s.while_playing = backend::WhilePlaying::parse(value)
                 .ok_or_else(|| format!("{value}: say stay, minimize or hide"))?
+        }
+        "worlds" => {
+            s.world_layout = backend::WorldLayout::parse(value).ok_or_else(|| {
+                trf(
+                    "{value}: say {one} or {other}",
+                    &[("value", value), ("one", "rows"), ("other", "tiles")],
+                )
+            })?
         }
         "theme" => sunrise_launcher::appearance::select_theme(s, value)?,
         "accent" => sunrise_launcher::appearance::type_accent(s, value)?,
@@ -2698,7 +2708,10 @@ fn game_packs(action: PacksCmd, as_json: bool) -> Result<(), String> {
                 Some(k) => vec![Kind::from(k)],
                 None => vec![Kind::Resource, Kind::Shader],
             };
-            let all: Vec<packs::Pack> = kinds.iter().flat_map(|k| packs::list(&home, *k)).collect();
+            let all: Vec<packs::Pack> = kinds
+                .iter()
+                .flat_map(|k| packs::list_with(&home, *k, packs::Pictures::None))
+                .collect();
             if as_json {
                 json(all.iter().map(value).collect());
             }

@@ -38,6 +38,10 @@ pub(crate) struct State {
     choices: Option<Vec<Choice>>,
     accent: line_edit::LineEdit,
     accent_focus: Option<FocusHandle>,
+    /// The keyboard's place on "Worlds on Home", and the search's request to be taken to it:
+    /// whether that was done yet.
+    worlds_focus: Option<FocusHandle>,
+    worlds_asked: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     /// What the last action could not do.
     error: Option<String>,
     /// What Reload found.
@@ -61,6 +65,8 @@ impl Default for State {
             choices: None,
             accent: line_edit::LineEdit::new(String::new(), 32, 18),
             accent_focus: None,
+            worlds_focus: None,
+            worlds_asked: None,
             error: None,
             note: None,
             behind: None,
@@ -69,6 +75,13 @@ impl Default for State {
             unshown: None,
             retired: Vec::new(),
         }
+    }
+}
+
+impl State {
+    /// The search opened "Worlds on Home": go to its control when the section is next drawn.
+    pub(crate) fn ask_for_worlds(&mut self) {
+        self.worlds_asked = Some(Default::default());
     }
 }
 
@@ -528,6 +541,50 @@ impl Launcher {
         }
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
+        let layout = self.settings.world_layout;
+        let layouts = [
+            (backend::WorldLayout::Rows, "Rows"),
+            (backend::WorldLayout::Tiles, "Tiles"),
+        ]
+        .into_iter()
+        .map(|(way, label)| {
+            let pick: crate::mods::Choose = std::rc::Rc::new(move |this, _| {
+                this.settings.world_layout = way;
+                this.save_settings();
+            });
+            (tr(label).into(), way == layout, pick)
+        })
+        .collect();
+        rows.push(row(
+            tr("Worlds on Home"),
+            tr(match layout {
+                backend::WorldLayout::Rows => "Continue playing lists one world a row.",
+                backend::WorldLayout::Tiles => {
+                    "Continue playing shows the worlds' pictures side by side, as many as fit across; the rest wrap under them."
+                }
+            }),
+            {
+                let state = &mut self.ui.settings.appearance;
+                let focus = state
+                    .worlds_focus
+                    .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+                    .clone();
+                // Opened from the search: the page scrolls here and the keyboard is on it.
+                let asked = state.worlds_asked.clone().map(|done| {
+                    crate::mods::reveal(
+                        crate::frame::scrolls("settings"),
+                        done,
+                        Some(focus.clone()),
+                    )
+                });
+                div().child(
+                    crate::mods::choices("alt-world-layout", layouts, cx)
+                        .track_focus(&focus)
+                        .gap(px(6.))
+                        .children(asked),
+                )
+            },
+        ));
         rows.push(
             self.wide_row(
                 tr("Your themes"),

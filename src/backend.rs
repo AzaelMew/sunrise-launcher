@@ -4016,6 +4016,34 @@ pub enum WhilePlaying {
     Hide,
 }
 
+/// How Home lists the worlds under Continue playing, as the player picks it in Settings.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorldLayout {
+    /// One world a row: its picture, its name and its buttons.
+    #[default]
+    Rows,
+    /// A grid of the worlds' pictures.
+    Tiles,
+}
+
+impl WorldLayout {
+    pub const ALL: [WorldLayout; 2] = [Self::Rows, Self::Tiles];
+
+    /// Its name in `settings.json` and on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rows => "rows",
+            Self::Tiles => "tiles",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        let name = name.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|l| l.name() == name)
+    }
+}
+
 impl WhilePlaying {
     pub const ALL: [WhilePlaying; 3] = [Self::Stay, Self::Minimize, Self::Hide];
 
@@ -4116,6 +4144,10 @@ pub struct Settings {
     /// What the window does while the game runs. Stays by default.
     #[serde(default)]
     pub while_playing: WhilePlaying,
+    /// How Home lists the worlds under Continue playing (`worlds`). Rows by default, and for
+    /// every settings file written before the choice existed.
+    #[serde(default)]
+    pub world_layout: WorldLayout,
     /// The accent colour on top of the appearance (`themes::Accent`). When absent from saved
     /// settings, parsing uses the theme's own accent.
     #[serde(default)]
@@ -4222,6 +4254,13 @@ impl Settings {
                 .is_some_and(|w| serde_json::from_value::<WhilePlaying>(w.clone()).is_err())
             {
                 fields.remove("while_playing");
+            }
+            // A layout from a newer launcher is rows.
+            if fields
+                .get("world_layout")
+                .is_some_and(|l| serde_json::from_value::<WorldLayout>(l.clone()).is_err())
+            {
+                fields.remove("world_layout");
             }
             if fields
                 .get("game_architecture")
@@ -5393,6 +5432,37 @@ pub fn {f}("
         assert_eq!(offered(before, &["v0.2.0"]), None);
         assert_eq!(offered(before, &["v0.2.12", "v0.2.0"]), None);
         assert_eq!(CHECK_EVERY.as_secs(), 30 * 60);
+    }
+
+    #[test]
+    fn worlds_are_rows_unless_tiles_are_picked() {
+        assert_eq!(Settings::default().world_layout, WorldLayout::Rows);
+        assert_eq!(Settings::parse("{}").world_layout, WorldLayout::Rows);
+        // A file from before the choice existed keeps everything else it says.
+        let old = Settings::parse(r#"{"while_playing": "hide", "game_args": "--x"}"#);
+        assert_eq!(
+            (old.world_layout, old.while_playing, old.game_args.as_str()),
+            (WorldLayout::Rows, WhilePlaying::Hide, "--x")
+        );
+        let tiles = Settings::parse(r#"{"world_layout": "tiles", "game_args": "--x"}"#);
+        assert_eq!(tiles.world_layout, WorldLayout::Tiles);
+        let saved = serde_json::to_string(&tiles).unwrap();
+        assert!(saved.contains(r#""world_layout":"tiles""#), "{saved}");
+        assert_eq!(Settings::parse(&saved).world_layout, WorldLayout::Tiles);
+        // A layout this launcher doesn't know, or one that isn't a name, loses only itself.
+        for text in [
+            r#"{"world_layout": "carousel", "game_args": "--x"}"#,
+            r#"{"world_layout": 3, "game_args": "--x"}"#,
+        ] {
+            let future = Settings::parse(text);
+            assert_eq!(
+                (future.world_layout, future.game_args.as_str()),
+                (WorldLayout::Rows, "--x"),
+                "{text}"
+            );
+        }
+        assert_eq!(WorldLayout::parse(" Tiles "), Some(WorldLayout::Tiles));
+        assert_eq!(WorldLayout::parse("grid"), None);
     }
 
     #[test]

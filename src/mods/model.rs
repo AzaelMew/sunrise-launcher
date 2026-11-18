@@ -439,14 +439,6 @@ pub(super) fn mark_left_out(
     }
 }
 
-/// How many rows the play bar counts as "not on this build": every mod the build left out,
-/// whatever the reason.
-pub(super) fn not_on_build(rows: &[Row]) -> usize {
-    rows.iter()
-        .filter(|r| r.unfit.is_some() || r.left_out.is_some())
-        .count()
-}
-
 impl Row {
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
@@ -486,13 +478,17 @@ pub(super) struct World<'a> {
     pub(super) local: &'a [Local],
 }
 
-/// A native `.smod` in the game folder that the registry browser didn't install (a local file or a
+/// A `.smod` in the game folder that the registry browser didn't install (a local file or a
 /// GitHub install): where it came from isn't verified, so it is listed and left alone.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Local {
     pub(super) id: String,
+    pub(super) name: String,
     pub(super) version: String,
     pub(super) github: bool,
+    /// Native code, which needs permission and a build; else a package of `sunrise-mods/`,
+    /// which runs as wasm or carries content only.
+    pub(super) native: bool,
 }
 
 /// The registry mods the browser installed, as rows. Packs, files of other sources and files
@@ -549,16 +545,16 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         .collect();
     out.extend(w.local.iter().map(|l| {
         let on = w.enabled.contains(&l.id);
-        let need = match on {
+        let need = match on && l.native {
             true if !w.native_allowed => Some(Need::Permission),
             true if w.unbuilt.contains(&l.id) => Some(Need::Build),
             _ => None,
         };
         Row {
             id: l.id.clone(),
-            title: l.id.clone(),
+            title: l.name.clone(),
             authors: String::new(),
-            make: Some(Make::Native),
+            make: l.native.then_some(Make::Native),
             version: l.version.clone(),
             on,
             need,

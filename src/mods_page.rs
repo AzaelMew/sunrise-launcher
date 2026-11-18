@@ -37,7 +37,7 @@ pub(super) struct Mods {
     /// Whether the start's auto-update ran: it waits for the release list.
     pub(super) auto_updated: bool,
     /// The game folder the browser installs into and lists: the selected instance's.
-    home: Option<PathBuf>,
+    home: ModsHome,
     /// Its worlds (folder, name), the last played first, and the one data packs go into.
     worlds: Vec<(PathBuf, String)>,
     world: Option<PathBuf>,
@@ -58,6 +58,33 @@ pub(super) struct Mods {
     pub(super) browse: super::mods_project::Browse,
     pub(super) tx: Sender<Event>,
     rx: Receiver<Event>,
+}
+
+/// The profile routed to the browser and its pending native-code actions. Kept separate from
+/// the page's window state so both use the same binding even before the page has opened.
+#[derive(Default)]
+struct ModsHome(Option<PathBuf>);
+
+impl ModsHome {
+    fn follow_home(&mut self, home: Option<PathBuf>) {
+        if home.is_some() && self.0 != home {
+            self.0 = home;
+        }
+    }
+
+    fn current(&self) -> PathBuf {
+        self.0.clone().unwrap_or_else(backend::game_home)
+    }
+
+    fn build_consent(&mut self, selected: PathBuf) -> PendingConsent {
+        self.follow_home(Some(selected));
+        PendingConsent::Build(
+            native_status::enabled(&self.current())
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect(),
+        )
+    }
 }
 
 impl Mods {
@@ -84,13 +111,15 @@ impl Mods {
     /// without reading or writing anything: the Mods screens (`mods`) call it so
     /// that a native-code consent answered later continues in the folder they show.
     pub(super) fn follow_home(&mut self, home: Option<PathBuf>) {
-        if home.is_some() && self.home != home {
-            self.home = home;
-        }
+        self.home.follow_home(home);
     }
 
     pub(super) fn home(&self) -> PathBuf {
-        self.home.clone().unwrap_or_else(backend::game_home)
+        self.home.current()
+    }
+
+    pub(super) fn build_consent(&mut self, selected: PathBuf) -> PendingConsent {
+        self.home.build_consent(selected)
     }
 
     pub(super) fn new(cx: &mut App) -> Self {
@@ -107,7 +136,7 @@ impl Mods {
             chosen: Default::default(),
             game_for: None,
             auto_updated: false,
-            home: None,
+            home: ModsHome::default(),
             worlds: Vec::new(),
             world: None,
             busy: None,
@@ -372,3 +401,6 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
     }
     lines
 }
+
+#[cfg(test)]
+mod tests;

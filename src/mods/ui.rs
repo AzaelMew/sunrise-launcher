@@ -316,3 +316,49 @@ pub(crate) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
     t.glass = false;
     t
 }
+
+/// For the row or control a page was opened at: once, the page `scroll` moves so it shows, and
+/// the keyboard is put on `focus` when it has one. Laid over the row, it takes no room.
+pub(crate) fn reveal(
+    scroll: gpui::ScrollHandle,
+    done: Rc<std::cell::Cell<bool>>,
+    focus: Option<FocusHandle>,
+) -> impl IntoElement {
+    const ROOM: f32 = 24.;
+    gpui::canvas(
+        move |row: Bounds<gpui::Pixels>, window, cx| {
+            if done.get() {
+                return;
+            }
+            // A frame being drawn can't ask for the next one itself: that is asked after it.
+            let again = |window: &mut Window, cx: &mut App| {
+                let window = window.window_handle();
+                cx.defer(move |cx| {
+                    window.update(cx, |_, window, _| window.refresh()).ok();
+                });
+            };
+            let view = scroll.bounds();
+            // The page is not laid out before its first frame: wait for the next.
+            if view.size.height <= px(0.) {
+                return again(window, cx);
+            }
+            done.set(true);
+            if let Some(focus) = &focus {
+                focus.focus(window, cx);
+            }
+            let lift = if row.top() < view.top() {
+                row.top() - view.top() - px(ROOM)
+            } else if row.bottom() > view.bottom() {
+                row.bottom() - view.bottom() + px(ROOM)
+            } else {
+                return;
+            };
+            let at = scroll.offset();
+            scroll.set_offset(gpui::point(at.x, at.y - lift));
+            again(window, cx);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}

@@ -37,6 +37,7 @@ mod glass_toast;
 mod glass_ui;
 mod glass_versions;
 mod home;
+mod home_mods;
 mod instance_icons;
 mod instance_mods;
 mod instances_page;

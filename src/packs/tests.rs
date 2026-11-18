@@ -618,3 +618,111 @@ fn pack_errors_are_not_built_with_format() {
         }
     }
 }
+
+#[test]
+fn a_saved_shader_choice_names_one_pack_in_the_folder_or_nothing() {
+    let home = scratch("picked");
+    let graphics = home.join(GRAPHICS);
+    for (saved, picked) in [
+        ("Warm.zip", Some("Warm.zip")),
+        ("sunrise:warm", Some("sunrise:warm")),
+        ("", None),
+        ("..", None),
+        ("../outside.zip", None),
+        ("/etc/passwd", None),
+        ("folder/inside.zip", None),
+        ("..\\outside.zip", None),
+        ("sunrise:", None),
+        ("sunrise:../warm", None),
+    ] {
+        fs::write(&graphics, format!("pickedShaderPack:{saved}\n")).unwrap();
+        assert_eq!(picked_shader(&home).as_deref(), picked, "{saved:?}");
+    }
+    // A choice that leads out of the folder turns nothing on, whatever lies there.
+    zip_file(&home.join("outside.zip"), &[("shaders/final.fsh", b"")]);
+    zip_file(
+        &home.join("shaderpacks/Plain.zip"),
+        &[("shaders/final.fsh", b"")],
+    );
+    fs::write(&graphics, "pickedShaderPack:../outside.zip\n").unwrap();
+    assert!(list(&home, Kind::Shader).iter().all(|p| !p.enabled));
+}
+
+#[test]
+fn a_folder_pack_is_read_only_from_regular_files_of_its_own() {
+    let home = scratch("regular");
+    let rp = home.join("resourcepacks");
+    let own = rp.join("Own");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(own.join("pack.mcmeta"), META).unwrap();
+    fs::write(own.join("pack.png"), b"png").unwrap();
+    // Its metadata is a folder, not a file: not a pack, and nothing is opened.
+    let odd = rp.join("Odd");
+    fs::create_dir_all(odd.join("pack.mcmeta")).unwrap();
+    assert_eq!(entry(&odd, "pack.mcmeta"), None);
+    // A folder under a zip's name is not opened as one.
+    fs::create_dir_all(rp.join("Folder.zip")).unwrap();
+    assert!(regular(&rp.join("Folder.zip")).is_none());
+    #[cfg(unix)]
+    {
+        // A link out of the pack is not followed.
+        fs::write(home.join("secret.png"), b"secret").unwrap();
+        fs::remove_file(own.join("pack.png")).unwrap();
+        std::os::unix::fs::symlink(home.join("secret.png"), own.join("pack.png")).unwrap();
+    }
+    let packs = list(&home, Kind::Resource);
+    assert_eq!(
+        packs.iter().map(|p| p.file.as_str()).collect::<Vec<_>>(),
+        ["Own"]
+    );
+    #[cfg(unix)]
+    assert_eq!(packs[0].icon, None);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pipe_in_a_packs_place_is_never_opened() {
+    let home = scratch("pipe");
+    let rp = home.join("resourcepacks");
+    let pack = rp.join("Piped");
+    fs::create_dir_all(&pack).unwrap();
+    let fifo = |path: &Path| {
+        let made = std::process::Command::new("mkfifo").arg(path).status();
+        made.is_ok_and(|s| s.success())
+    };
+    // Opening either to read would wait for a writer that never comes.
+    if !fifo(&pack.join("pack.mcmeta")) || !fifo(&rp.join("Pipe.zip")) {
+        return;
+    }
+    assert!(list(&home, Kind::Resource).is_empty());
+}
+
+#[test]
+fn a_listing_reads_only_the_pictures_it_was_asked_for() {
+    let home = home("pictures");
+    fs::write(
+        home.join("options.txt"),
+        "resourcePacks:[\"vanilla\",\"file/Glass.zip\"]\n",
+    )
+    .unwrap();
+    fs::write(home.join("resourcepacks/Folder Pack/pack.png"), b"png").unwrap();
+    let pictured = |pictures| -> Vec<(String, bool)> {
+        list_with(&home, Kind::Resource, pictures)
+            .into_iter()
+            .map(|p| (p.file, p.icon.is_some()))
+            .collect()
+    };
+    let all = pictured(Pictures::All);
+    let metadata_only = pictured(Pictures::None);
+    assert_eq!(all.len(), 3);
+    assert_eq!(metadata_only.len(), all.len());
+    assert!(all.iter().any(|(_, has_picture)| *has_picture));
+    for ((name, _), (also, has_picture)) in all.iter().zip(&metadata_only) {
+        assert_eq!(name, also);
+        assert!(!has_picture, "metadata listing read the picture for {name}");
+    }
+    assert_eq!(
+        artwork(&home.join("resourcepacks/Folder Pack"), Kind::Resource).as_deref(),
+        Some(&b"png"[..]),
+    );
+}

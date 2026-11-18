@@ -65,6 +65,8 @@ impl Group {
 pub(crate) enum Target {
     Page(Page),
     Section(Section),
+    /// Settings › Appearance, at the "Worlds on Home" choice.
+    WorldsOnHome,
     /// A profile, by its id.
     Profile(String),
     /// A world of the selected profile: Home, where it is played from.
@@ -118,7 +120,7 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 16] = [
+const SETTINGS_ROWS: [(&str, Section); 17] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
@@ -126,6 +128,7 @@ const SETTINGS_ROWS: [(&str, Section); 16] = [
     ("Theme", Section::Appearance),
     ("Accent", Section::Appearance),
     ("Home background", Section::Appearance),
+    ("Worlds on Home", Section::Appearance),
     ("Your themes", Section::Appearance),
     ("Show the cat", Section::Appearance),
     ("Native code", Section::Mods),
@@ -166,7 +169,10 @@ pub(crate) fn destinations() -> Vec<Entry> {
         group: Group::Settings,
         label: tr(title).to_string(),
         hint: under("Settings", section.label()),
-        target: Target::Section(section),
+        target: match title {
+            "Worlds on Home" => Target::WorldsOnHome,
+            _ => Target::Section(section),
+        },
         art: Art::Glyph("sliders"),
         quiet: true,
     }));
@@ -432,19 +438,20 @@ impl Launcher {
                 self.settings_open(section);
                 self.navigate(Page::Settings);
             }
+            Target::WorldsOnHome => {
+                self.settings_open(Section::Appearance);
+                self.ui.settings.appearance.ask_for_worlds();
+                self.navigate(Page::Settings);
+            }
             Target::Profile(id) => {
                 if let Some(profile) = self.instances.list.iter().find(|i| i.id == id).cloned() {
                     self.switch_profile(&profile, cx);
                 }
             }
             Target::World => self.navigate(Page::Home),
-            Target::Mod(title) => {
-                self.navigate(Page::Installed);
-                self.show_installed_mod(&title);
-            }
+            Target::Mod(title) => self.open_installed(crate::mods::Installed::ModNamed(title)),
             Target::Pack(kind, title) => {
-                self.navigate(Page::Packs);
-                self.show_installed_pack(kind, &title);
+                self.open_installed(crate::mods::Installed::PackNamed(kind, title))
             }
             Target::Search => {}
             Target::Sidebar => self.toggle_sidebar(),

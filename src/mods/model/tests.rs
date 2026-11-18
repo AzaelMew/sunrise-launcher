@@ -372,13 +372,24 @@ fn an_update_never_switches_a_turned_off_mod_on() {
 #[test]
 fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     let (idx, entries) = pack();
-    let on: HashSet<String> = ["mine", "zoom"].map(String::from).into();
+    let on: HashSet<String> = ["mine", "zoom", "by_hand"].map(String::from).into();
     let none = HashSet::new();
-    let local = [Local {
-        id: "mine".into(),
-        version: "0.3".into(),
-        github: false,
-    }];
+    let local = [
+        Local {
+            id: "mine".into(),
+            name: "mine".into(),
+            version: "0.3".into(),
+            github: false,
+            native: true,
+        },
+        Local {
+            id: "by_hand".into(),
+            name: "By Hand".into(),
+            version: "1.0".into(),
+            github: false,
+            native: false,
+        },
+    ];
     let w = World {
         local: &local,
         ..world(&idx, &on, &none, false)
@@ -391,6 +402,12 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
         Some(Need::Permission),
         "it can't run without permission, like any native mod"
     );
+    // A package of `sunrise-mods/` put there by hand is listed by its name and needs neither
+    // permission nor a build.
+    let wasm = r.iter().find(|r| r.id == "by_hand").expect("listed");
+    assert_eq!((wasm.title.as_str(), wasm.on), ("By Hand", true));
+    assert_eq!((wasm.make, &wasm.need), (None, &None));
+    assert!(wasm.local.is_some() && wasm.entry.is_none());
     assert!(plan_updates(&r, true)
         .included
         .iter()
@@ -465,8 +482,10 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     let none = HashSet::new();
     let local = ["lib", "addon", "old", "fine"].map(|id| Local {
         id: id.into(),
+        name: id.into(),
         version: "1.0".into(),
         github: false,
+        native: true,
     });
     let w = World {
         local: &local,
@@ -510,5 +529,4 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     );
     assert!(row("old").left_out.is_none());
     assert!(row("fine").unfit.is_none() && row("fine").left_out.is_none());
-    assert_eq!(not_on_build(&r), 3, "the play bar counts all of them");
 }

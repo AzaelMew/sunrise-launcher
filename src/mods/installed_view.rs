@@ -658,6 +658,17 @@ impl Launcher {
             .border_t_1()
             .border_color(c(palette().divider))
             .when(selected, |d| d.bg(c(palette().selected)))
+            // The mod another page opened Installed at.
+            .when(
+                self.ui.mods.reveal == Some(search::Reveal::Mod(r.id.clone())),
+                |d| {
+                    d.bg(c(palette().hover)).child(super::ui::reveal(
+                        crate::frame::scrolls("installed"),
+                        self.ui.mods.revealed.clone(),
+                        None,
+                    ))
+                },
+            )
             .child(match r.local {
                 Some(_) => div().flex_none().w(px(18.)),
                 None => div().flex_none().child(check),

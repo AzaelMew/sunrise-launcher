@@ -57,7 +57,7 @@ impl Launcher {
                 .resource
                 .sort_by_key(|(p, _)| rank.get(&p.file).copied().unwrap_or(usize::MAX));
         }
-        self.game_packs.shader = packs::list(&home, PackKind::Shader);
+        self.game_packs.shader = packs::list_with(&home, PackKind::Shader, packs::Pictures::None);
         self.game_packs.fresh = true;
     }
 }
