@@ -232,23 +232,12 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         let focused = self.ui.sheets.versions.focused;
-        let field = div()
+        let field = crate::frame::input(focused)
             .id("alt-versions-find")
             .track_focus(&focus)
             .seen()
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .flex()
-            .items_center()
-            .overflow_hidden()
-            .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(palette().field))
-            .border_1()
-            .border_color(rgb(if focused {
-                palette().focus
-            } else {
-                palette().line
-            }))
             .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content(

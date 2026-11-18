@@ -244,6 +244,23 @@ pub(super) fn button_base(
         .child(label.into())
 }
 
+/// Every text input's box: one fill, one faint outline, the focus colour while typed in, its
+/// text centred. The caller gives it its id, height and padding.
+pub(crate) fn input(focused: bool) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .overflow_hidden()
+        .rounded(px(tokens::R_CONTROL))
+        .bg(palette().input_fill())
+        .border_1()
+        .border_color(if focused {
+            rgb(palette().focus).into()
+        } else {
+            palette().input_edge()
+        })
+}
+
 impl Launcher {
     /// Also called for world and server destinations. Never send a destination through the
     /// legacy shortcuts, which skip some of the checks on the main Play action.

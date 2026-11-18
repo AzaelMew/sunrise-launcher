@@ -728,7 +728,7 @@ impl Launcher {
         } else {
             &self.ui.mods.find
         };
-        let field = div()
+        let field = crate::frame::input(focused)
             .id(if installed {
                 "alt-mods-have"
             } else {
@@ -740,17 +740,7 @@ impl Launcher {
             .min_w(px(120.))
             .h(px(tokens::ACTION))
             .px(px(16.))
-            .flex()
-            .items_center()
-            .overflow_hidden()
             .rounded(px(tokens::R_CARD))
-            .border_1()
-            .border_color(if focused {
-                c(palette().text)
-            } else {
-                c(palette().line)
-            })
-            .bg(palette().card())
             .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content_with(

@@ -52,7 +52,7 @@ impl Section {
     fn about(self) -> &'static str {
         match self {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
-            Section::Game => "How the game starts. Its build is chosen in the bar below.",
+            Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
@@ -475,7 +475,7 @@ impl Launcher {
         let asking = self.ui.settings.setup;
         let mut setup = row(
             tr("A second set of mods"),
-            tr("A setup keeps its own mods, worlds and servers. Switch between setups in the bar below."),
+            tr("A setup keeps its own mods, worlds and servers. Switch between setups in the sidebar."),
             div().child(
                 button("alt-create", tr(if asking { "Cancel" } else { "New setup…" })).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -500,9 +500,8 @@ impl Launcher {
                                     this.servers
                                         .text(servers_page::Field::InstanceName)
                                         .set(String::new());
-                                    this.ui.settings.note = Some(
-                                        tr("Setup created. Select it in the bar below.").into(),
-                                    );
+                                    this.ui.settings.note =
+                                        Some(tr("Setup created. Select it in the sidebar.").into());
                                 }
                                 Err(e) => this.ui.settings.note = Some(e),
                             };
@@ -1260,23 +1259,12 @@ impl Launcher {
     ) -> Div {
         let theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
-        let field = div()
+        let field = crate::frame::input(focused)
             .id(id)
             .track_focus(&focus)
             .seen()
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .flex()
-            .items_center()
-            .overflow_hidden()
-            .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(palette().field))
-            .border_1()
-            .border_color(rgb(if focused {
-                palette().focus
-            } else {
-                palette().line
-            }))
             .font_family(theme::MONO)
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().text))

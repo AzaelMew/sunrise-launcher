@@ -204,7 +204,7 @@ impl Launcher {
     fn servers(&mut self, cx: &mut Context<Self>) -> Div {
         let typed = entry(self.friend_code.text());
         let focused = self.friend_focused;
-        let field = div()
+        let field = crate::frame::input(focused)
             .id("alt-address")
             .track_focus(&self.friend_focus)
             .seen()
@@ -212,17 +212,6 @@ impl Launcher {
             .min_w(px(0.))
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .flex()
-            .items_center()
-            .overflow_hidden()
-            .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(palette().field))
-            .border_1()
-            .border_color(rgb(if focused {
-                palette().focus
-            } else {
-                palette().line
-            }))
             .text_size(px(tokens::BODY))
             .text_color(rgb(palette().text))
             .cursor_text()

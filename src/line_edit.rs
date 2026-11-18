@@ -520,6 +520,21 @@ pub(super) fn content_with(
     mask: bool,
     placeholder: gpui::SharedString,
 ) -> Div {
+    // The font's line box sits its capitals a pixel above the middle of a field: every input's
+    // text is set down by that much, placeholder and typed alike.
+    content_at(edit, t, focused, whole, mask, placeholder)
+        .relative()
+        .top(px(1.))
+}
+
+fn content_at(
+    edit: &LineEdit,
+    t: &theme::Theme,
+    focused: bool,
+    whole: bool,
+    mask: bool,
+    placeholder: gpui::SharedString,
+) -> Div {
     if edit.text.is_empty() && !focused {
         // The glass look's placeholders are white at 40 % (`.hzl input::placeholder`).
         return div().text_color(rgb(palette().muted)).child(placeholder);

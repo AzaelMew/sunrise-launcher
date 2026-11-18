@@ -289,6 +289,17 @@ impl Palette {
         Hsla::from(rgb(self.chrome)).opacity(self.alpha)
     }
 
+    /// A text input's fill, and the account chip's: the field colour, part see-through, so
+    /// the glass behind it shows.
+    pub(crate) fn input_fill(&self) -> Hsla {
+        Hsla::from(rgb(self.field)).opacity(0.55)
+    }
+
+    /// A resting input's outline: faint. The focus ring, not this line, marks the one in use.
+    pub(crate) fn input_edge(&self) -> Hsla {
+        Hsla::from(rgb(self.text)).opacity(0.14)
+    }
+
     /// What a dialog dims the launcher with.
     pub(crate) fn scrim(&self) -> Hsla {
         Hsla::from(rgb(SCRIM)).opacity(self.scrim_alpha)
