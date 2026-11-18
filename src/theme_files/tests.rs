@@ -476,3 +476,32 @@ fn a_linked_themes_folder_or_a_folder_swapped_for_a_link_is_never_read_through()
         Err(Reason::PictureMissing("shore.png".into()))
     );
 }
+
+/// A folder's name is kept as it was found, so a refused choice can name it; what goes to a
+/// terminal has its control characters written out, not sent.
+#[cfg(unix)]
+#[test]
+fn a_folder_named_with_control_characters_reaches_a_terminal_as_text() {
+    let root = tempfile::tempdir().unwrap();
+    let evil = "evil\u{1b}[2J\u{7}\r\u{202e}";
+    fs::create_dir_all(root.path().join(evil)).unwrap();
+    theme(root.path(), "tidepool", TIDEPOOL);
+    let found = scan(root.path());
+    assert!(matches!(&found[0], Entry::Bad { folder, reason: Reason::Slug } if folder == evil));
+    set_loaded(found);
+    let mut settings = crate::backend::Settings::parse("{}");
+    let said = crate::appearance::select_theme(&mut settings, "local:nope").unwrap_err();
+    assert!(said.contains(evil), "the message names the folder as found");
+    let shown = for_terminal(&said);
+    assert!(
+        !shown.chars().any(|c| c.is_control() || turns_text(c)),
+        "{shown:?}"
+    );
+    assert!(
+        shown.contains("evil\\u{1b}[2J\\u{7}\\u{d}\\u{202e}"),
+        "{shown}"
+    );
+    assert!(shown.contains("local:tidepool"), "the rest reads as before");
+    // Line breaks in a message stay line breaks.
+    assert_eq!(for_terminal("one\ntwo\ttab"), "one\ntwo\\u{9}tab");
+}

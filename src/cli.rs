@@ -1058,7 +1058,8 @@ pub fn run() -> Option<i32> {
     Some(match result {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("error: {e}");
+            // An error may name a file or folder as it was found: shown as text, never obeyed.
+            eprintln!("error: {}", sunrise_launcher::theme_files::for_terminal(&e));
             1
         }
     })

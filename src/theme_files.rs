@@ -228,6 +228,22 @@ impl Reason {
     }
 }
 
+/// `text` as a terminal may be given it. A folder's name and what a file says come from
+/// outside the launcher and are kept as they are, so that a wrong one can be named: before a
+/// terminal sees them, every control character but a line break, and every character that
+/// turns text around, is written out as its escape (`\u{1b}`) instead of being obeyed.
+pub fn for_terminal(text: &str) -> String {
+    let mut shown = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c != '\n' && (c.is_control() || turns_text(c)) {
+            shown.extend(c.escape_unicode());
+        } else {
+            shown.push(c);
+        }
+    }
+    shown
+}
+
 /// A folder under `themes/`: a theme, or why it isn't one.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Entry {
