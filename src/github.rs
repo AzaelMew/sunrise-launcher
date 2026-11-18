@@ -130,12 +130,13 @@ pub(crate) fn json_with(
 
 const RATE_LIMITED: &str = "GitHub's rate limit was reached for your network";
 
-/// The mirror's URL for an API URL it serves (Sunrise's own repository), or None.
+/// The mirror's URL for an API URL it serves (the game's repository and the launcher's), or None.
 fn mirror_url_with(url: &str, base: &str) -> Option<String> {
     let path = url.strip_prefix(API)?;
-    let repo = format!("/repos/{}/", backend::REPO);
-    (!base.is_empty() && path.starts_with(&repo))
-        .then(|| format!("{}{path}", base.trim_end_matches('/')))
+    let served = [backend::GAME_REPO, backend::LAUNCHER_REPO]
+        .iter()
+        .any(|repo| path.starts_with(&format!("/repos/{repo}/")));
+    (!base.is_empty() && served).then(|| format!("{}{path}", base.trim_end_matches('/')))
 }
 
 /// The mirror `SUNRISE_GITHUB_MIRROR` names, when there is one: what a child the launcher starts is told too.

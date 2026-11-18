@@ -1,5 +1,5 @@
 //! Linux: the launcher puts itself in the applications menu. It writes
-//! `applications/sunrise-launcher.desktop` (pointing at wherever the binary is now) and Sunrise's
+//! `applications/net.playsunrise.launcher.desktop` (pointing at wherever the binary is now) and Sunrise's
 //! icon into the `hicolor` theme, under `$XDG_DATA_HOME` (`~/.local/share` by default), so no root
 //! is needed; `sunrise.desktop` (hidden from menus) gives the game's window its icon on Wayland.
 //! A release build writes it when it starts only if there is no entry yet or the one there starts
@@ -53,17 +53,9 @@ const ICONS: [(&str, &[u8]); 9] = [
 ];
 
 const LAUNCHER_ENTRY: &str = crate::identity::DESKTOP_ENTRY;
-const GAME_ENTRY: &str = if cfg!(sunrise_fork_launcher) {
-    "net.playsunrise.game.desktop"
-} else {
-    "horizon.desktop"
-};
+const GAME_ENTRY: &str = "net.playsunrise.game.desktop";
 /// The icon's name in the icon theme and in both entries.
-const ICON: &str = if cfg!(sunrise_fork_launcher) {
-    "net.playsunrise.launcher"
-} else {
-    "horizon"
-};
+const ICON: &str = "net.playsunrise.launcher";
 const GAME_ENTRY_TEXT: &str = include_str!("../assets/linux/sunrise.desktop");
 
 /// `$XDG_DATA_HOME`, or `~/.local/share` when it is unset or not absolute (as the spec says).
@@ -105,17 +97,13 @@ pub fn launcher_entry(exe: &Path) -> String {
         exe.display(),
         minecraft = crate::backend::played_vanilla(),
     );
-    if cfg!(sunrise_fork_launcher) {
-        entry
-            .replace("Name=Sunrise\n", "Name=Sunrise Launcher\n")
-            .replace("Icon=sunrise\n", &format!("Icon={ICON}\n"))
-            .replace(
-                "StartupWMClass=sunrise-launcher\n",
-                &format!("StartupWMClass={}\n", crate::identity::APP_ID),
-            )
-    } else {
-        entry
-    }
+    entry
+        .replace("Name=Sunrise\n", "Name=Sunrise Launcher\n")
+        .replace("Icon=sunrise\n", &format!("Icon={ICON}\n"))
+        .replace(
+            "StartupWMClass=sunrise-launcher\n",
+            &format!("StartupWMClass={}\n", crate::identity::APP_ID),
+        )
 }
 
 /// Every file this module writes, with its contents, under `data`.
@@ -127,13 +115,9 @@ fn files(data: &Path, exe: &Path) -> Vec<(PathBuf, Vec<u8>)> {
         ),
         (
             data.join("applications").join(GAME_ENTRY),
-            if cfg!(sunrise_fork_launcher) {
-                GAME_ENTRY_TEXT
-                    .replace("Icon=sunrise", &format!("Icon={ICON}"))
-                    .into_bytes()
-            } else {
-                GAME_ENTRY_TEXT.as_bytes().to_vec()
-            },
+            GAME_ENTRY_TEXT
+                .replace("Icon=sunrise", &format!("Icon={ICON}"))
+                .into_bytes(),
         ),
     ];
     for (size, bytes) in ICONS {
@@ -289,11 +273,7 @@ mod tests {
         let entry = launcher_entry(Path::new("/home/a b/Sunrise \"x\"/sunrise-launcher"));
         assert!(entry.contains("Exec=\"/home/a b/Sunrise \\\"x\\\"/sunrise-launcher\"\n"));
         assert!(entry.contains("TryExec=/home/a b/Sunrise \"x\"/sunrise-launcher\n"));
-        assert!(entry.contains(if cfg!(sunrise_fork_launcher) {
-            "Icon=net.playsunrise.launcher\n"
-        } else {
-            "Icon=horizon\n"
-        }));
+        assert!(entry.contains("Icon=net.playsunrise.launcher\n"));
     }
 
     #[test]
@@ -302,18 +282,10 @@ mod tests {
         let _ = fs::remove_dir_all(&data);
         assert!(install_in(&data, Path::new("/opt/a/sunrise-launcher")).unwrap());
         assert!(!install_in(&data, Path::new("/opt/a/sunrise-launcher")).unwrap());
-        let png = data.join(if cfg!(sunrise_fork_launcher) {
-            "icons/hicolor/48x48/apps/net.playsunrise.launcher.png"
-        } else {
-            "icons/hicolor/48x48/apps/horizon.png"
-        });
+        let png = data.join("icons/hicolor/48x48/apps/net.playsunrise.launcher.png");
         assert!(fs::read(&png).unwrap().starts_with(b"\x89PNG"));
         assert!(data
-            .join(if cfg!(sunrise_fork_launcher) {
-                "icons/hicolor/scalable/apps/net.playsunrise.launcher.svg"
-            } else {
-                "icons/hicolor/scalable/apps/horizon.svg"
-            })
+            .join("icons/hicolor/scalable/apps/net.playsunrise.launcher.svg")
             .exists());
         assert!(install_in(&data, Path::new("/opt/b/sunrise-launcher")).unwrap());
         let entry = fs::read_to_string(data.join("applications").join(LAUNCHER_ENTRY)).unwrap();

@@ -57,7 +57,7 @@ pub(super) fn classify(
         return Ok(result);
     }
     let sdk_base = sdk_cache::Base::from_env();
-    let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::REPO);
+    let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO);
     let sdk = match sdk_cache::index(&sdk_base, &revision, &keys) {
         Ok(sdk) => sdk,
         Err(refusal) => {
@@ -173,7 +173,7 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
     let ids: Vec<&str> = found.iter().map(|b| b.manifest.id.as_str()).collect();
     let revision = build_revision(to, None)?;
     let sdk_base = sdk_cache::Base::from_env();
-    let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::REPO);
+    let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO);
     let sdk = sdk_cache::index(&sdk_base, &revision, &keys).map_err(|r| r.to_string())?;
     let checks = match &folder {
         Some(folder) => check_all(folder, &ids, &sdk, &sdk_base).map_err(|r| r.to_string())?,

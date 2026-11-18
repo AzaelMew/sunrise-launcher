@@ -6,51 +6,31 @@ pub const PLATFORMS: [(&str, &str, &str, &str); 5] = [
         "linux",
         "x86_64",
         "sunrise-linux-x86_64.tar.gz",
-        if cfg!(sunrise_fork_launcher) {
-            "sunrise-launcher-linux-x86_64.tar.gz"
-        } else {
-            "horizon-launcher-linux-x86_64.tar.gz"
-        },
+        "sunrise-launcher-linux-x86_64.tar.gz",
     ),
     (
         "macos",
         "aarch64",
         "sunrise-macos-arm64.zip",
-        if cfg!(sunrise_fork_launcher) {
-            "sunrise-launcher-macos-arm64.zip"
-        } else {
-            "horizon-launcher-macos-arm64.zip"
-        },
+        "sunrise-launcher-macos-arm64.zip",
     ),
     // Intel Macs (#1161).
     (
         "macos",
         "x86_64",
         "sunrise-macos-x64.zip",
-        if cfg!(sunrise_fork_launcher) {
-            "sunrise-launcher-macos-x64.zip"
-        } else {
-            "horizon-launcher-macos-x64.zip"
-        },
+        "sunrise-launcher-macos-x64.zip",
     ),
     (
         "windows",
         "x86_64",
         "sunrise-windows-x64.zip",
-        if cfg!(sunrise_fork_launcher) {
-            "sunrise-launcher-windows-x64.zip"
-        } else {
-            "horizon-launcher-windows-x64.zip"
-        },
+        "sunrise-launcher-windows-x64.zip",
     ),
     (
         "windows",
         "aarch64",
         "sunrise-windows-arm64.zip",
-        if cfg!(sunrise_fork_launcher) {
-            "sunrise-launcher-windows-arm64.zip"
-        } else {
-            "horizon-launcher-windows-arm64.zip"
-        },
+        "sunrise-launcher-windows-arm64.zip",
     ),
 ];

@@ -102,16 +102,12 @@ fn publish_games_before_older_launcher_fallback() {
                 assert_eq!(events.borrow().first(), Some(&"releases"));
                 events.borrow_mut().push("fallback");
                 if url.contains("matching-refs") {
-                    Ok(Some(
-                        serde_json::json!([{"ref": "refs/tags/launcher@99.0.0"}]),
-                    ))
+                    Ok(Some(serde_json::json!([{"ref": "refs/tags/v99.0.0"}])))
                 } else {
-                    Ok(Some(
-                        serde_json::json!({"tag_name": "launcher@99.0.0", "assets": [{
-                            "name": LAUNCHER_ASSET.unwrap_or("unsupported"),
-                            "browser_download_url": "u", "size": 1
-                        }]}),
-                    ))
+                    Ok(Some(serde_json::json!({"tag_name": "v99.0.0", "assets": [{
+                        "name": LAUNCHER_ASSET.unwrap_or("unsupported"),
+                        "browser_download_url": "u", "size": 1
+                    }]})))
                 }
             })
         },
@@ -164,9 +160,9 @@ fn empty_or_prebuilt_only_fork_has_no_game_or_launcher_update() {
                 Vec::new,
                 |list| {
                     launcher_releases_in_with(list, |url| {
-                        assert!(
-                            url.starts_with("https://api.github.com/repos/sunrise-org/sunrise/")
-                        );
+                        assert!(url.starts_with(
+                            "https://api.github.com/repos/sunrise-org/sunrise-launcher/"
+                        ));
                         Ok(missing.clone())
                     })
                 },
@@ -187,60 +183,41 @@ fn each_platform_download_is_bound_to_the_fork_not_the_provider_url() {
             "linux",
             "x86_64",
             "sunrise-linux-x86_64.tar.gz",
-            if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher-linux-x86_64.tar.gz"
-            } else {
-                "horizon-launcher-linux-x86_64.tar.gz"
-            },
+            "sunrise-launcher-linux-x86_64.tar.gz",
         ),
         (
             "windows",
             "x86_64",
             "sunrise-windows-x64.zip",
-            if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher-windows-x64.zip"
-            } else {
-                "horizon-launcher-windows-x64.zip"
-            },
+            "sunrise-launcher-windows-x64.zip",
         ),
         (
             "macos",
             "aarch64",
             "sunrise-macos-arm64.zip",
-            if cfg!(sunrise_fork_launcher) {
-                "sunrise-launcher-macos-arm64.zip"
-            } else {
-                "horizon-launcher-macos-arm64.zip"
-            },
+            "sunrise-launcher-macos-arm64.zip",
         ),
     ];
     let assets: Vec<_> = platforms.iter().flat_map(|(_, _, game, launcher)| [game, launcher])
         .map(|name| serde_json::json!({"name": name, "size": 9,
             "browser_download_url": "https://github.com/horizon-rust/horizon/releases/download/wrong/file"}))
         .collect();
-    let list = serde_json::json!([
-        {"tag_name": "v0.9.9", "assets": assets},
-        {"tag_name": "launcher@0.9.9", "assets": assets}
-    ]);
+    // The game's list is the game repository's, the launcher's is its own repository's.
+    let game_list = serde_json::json!([{"tag_name": "v2026.9.9", "assets": assets}]);
+    let launcher_list = serde_json::json!([{"tag_name": "v1.0.9", "assets": assets}]);
     for (os, arch, game, launcher) in platforms {
         let (game_asset, launcher_asset) = platform_assets(os, arch).unwrap();
-        for (asset, keep, expected, tag) in [
-            (game_asset, is_game_tag as fn(&str) -> bool, game, "v0.9.9"),
-            (
-                launcher_asset,
-                is_launcher_tag as fn(&str) -> bool,
-                launcher,
-                "launcher@0.9.9",
-            ),
+        let games = parse_releases(&game_list, Some(game_asset), is_game_tag);
+        let launchers = parse_launcher_releases(&launcher_list, Some(launcher_asset));
+        for (parsed, repository, tag, expected) in [
+            (games, "sunrise", "v2026.9.9", game),
+            (launchers, "sunrise-launcher", "v1.0.9", launcher),
         ] {
-            let parsed = parse_releases(&list, Some(asset), keep);
             assert_eq!(parsed.len(), 1);
             assert_eq!(
                 parsed[0].asset,
                 Some((
-                    format!(
-                        "https://github.com/sunrise-org/sunrise/releases/download/{tag}/{expected}"
-                    ),
+                    format!("https://github.com/sunrise-org/{repository}/releases/download/{tag}/{expected}"),
                     9
                 ))
             );

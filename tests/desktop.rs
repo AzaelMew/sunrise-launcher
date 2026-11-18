@@ -36,18 +36,10 @@ fn menu_registration_preserves_the_package_wrapper() {
     let _ = std::fs::remove_dir_all(&home);
     let entry = home
         .join("data/applications")
-        .join(if cfg!(sunrise_fork_launcher) {
-            "net.playsunrise.launcher.desktop"
-        } else {
-            "horizon-launcher.desktop"
-        });
+        .join("net.playsunrise.launcher.desktop");
     let other = home
         .join("data/applications")
-        .join(if cfg!(sunrise_fork_launcher) {
-            "horizon-launcher.desktop"
-        } else {
-            "net.playsunrise.launcher.desktop"
-        });
+        .join("horizon-launcher.desktop");
     std::fs::create_dir_all(other.parent().unwrap()).unwrap();
     std::fs::write(&other, "other launcher registration").unwrap();
 

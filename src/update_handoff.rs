@@ -255,7 +255,7 @@ mod tests {
     /// release or past it; a file without the tag line, from an older installer, still shows.
     #[test]
     fn a_failure_is_not_shown_once_its_release_is_in() {
-        let file = "launcher@0.2.41\nCould not replace the launcher: denied";
+        let file = "v0.2.41\nCould not replace the launcher: denied";
         assert_eq!(
             failure_to_show(file, "0.2.40").as_deref(),
             Some("Could not replace the launcher: denied")
@@ -266,12 +266,12 @@ mod tests {
             failure_to_show("Could not start it\nsecond line", "9.9.9").as_deref(),
             Some("Could not start it\nsecond line")
         );
-        assert_eq!(failure_to_show("launcher@0.2.41\n  ", "0.2.40"), None);
+        assert_eq!(failure_to_show("v0.2.41\n  ", "0.2.40"), None);
     }
 
     fn staged() -> Staged {
         Staged {
-            tag: "launcher@0.2.41".into(),
+            tag: "v0.2.41".into(),
             payload: PathBuf::from("/data/.launcher-update/1-ab/unpacked/Sunrise.app"),
             sha256: "abc".into(),
         }
@@ -320,13 +320,13 @@ mod tests {
     fn other_command_lines_are_not_the_installer() {
         let parse = |args: Vec<OsString>| parse(args, String::new());
         assert_eq!(parse(os(&["update"])), None);
-        assert_eq!(parse(os(&[COMMAND, "launcher@0.2.41"])), None);
+        assert_eq!(parse(os(&[COMMAND, "v0.2.41"])), None);
         assert_eq!(parse(os(&[COMMAND, "t", "/p", "--force"])), None);
         assert_eq!(parse(os(&[COMMAND, "t", "/p", RESTART, "x"])), None);
     }
 
     const OLD: Option<&str> = Some("0.2.40");
-    const TAG: &str = "launcher@0.2.41";
+    const TAG: &str = "v0.2.41";
     const NEW_LAUNCHER: &[u8] = b"the new launcher";
 
     /// A work folder under the temporary folder holding one stage: `sunrise-launcher` packed in a

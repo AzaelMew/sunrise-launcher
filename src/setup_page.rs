@@ -273,11 +273,7 @@ impl Setup {
             Stage::Welcome if self.mode == Mode::Install => {
                 body = body
                     .child(text(night::UI, c(n.ink_soft)).child(
-                        tr(if cfg!(sunrise_fork_launcher) {
-                            "Installs Sunrise Launcher for this account. No administrator needed."
-                        } else {
-                            "Installs Horizon Launcher for this account. No administrator needed."
-                        })
+                        tr("Installs Sunrise Launcher for this account. No administrator needed.")
                         .to_string(),
                     ))
                     .child(self.folder_row(cx))
@@ -306,11 +302,7 @@ impl Setup {
             Stage::Welcome => {
                 body = body
                     .child(text(night::UI, c(n.ink_soft)).child(
-                        tr(if cfg!(sunrise_fork_launcher) {
-                            "Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay."
-                        } else {
-                            "Removes Horizon Launcher from this computer. Your worlds and the game's folder stay."
-                        })
+                        tr("Removes Sunrise Launcher from this computer. Your worlds and the game's folder stay.")
                         .to_string(),
                     ))
                     .child(self.toggle(
@@ -349,18 +341,8 @@ impl Setup {
             }
             Stage::Done { left } => {
                 let said = match self.mode {
-                    Mode::Install => tr(if cfg!(sunrise_fork_launcher) {
-                        "Sunrise Launcher is installed."
-                    } else {
-                        "Horizon Launcher is installed."
-                    })
-                    .to_string(),
-                    Mode::Uninstall => tr(if cfg!(sunrise_fork_launcher) {
-                        "Sunrise Launcher was removed."
-                    } else {
-                        "Horizon Launcher was removed."
-                    })
-                    .to_string(),
+                    Mode::Install => tr("Sunrise Launcher is installed.").to_string(),
+                    Mode::Uninstall => tr("Sunrise Launcher was removed.").to_string(),
                 };
                 body = body.child(text(night::TITLE, c(n.ink)).child(said));
                 if !left.is_empty() {
@@ -383,11 +365,7 @@ impl Setup {
                         div().flex().items_center().justify_end().child(
                             crate::button(
                                 "launch",
-                                tr(if cfg!(sunrise_fork_launcher) {
-                                    "Launch Sunrise Launcher"
-                                } else {
-                                    "Launch Horizon"
-                                }),
+                                tr("Launch Sunrise Launcher"),
                                 Kind::Primary,
                                 &t,
                             )

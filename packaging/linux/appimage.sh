@@ -37,8 +37,8 @@ cp "$binary" "$appdir/usr/bin/sunrise-launcher"
 chmod 755 "$appdir/usr/bin/sunrise-launcher"
 
 # Both places: AppRun's, and the one desktop environments read once the image is unpacked.
-cp "$here/sunrise-launcher.desktop" "$appdir/sunrise-launcher.desktop"
-cp "$here/sunrise-launcher.desktop" "$appdir/usr/share/applications/sunrise-launcher.desktop"
+cp "$here/net.playsunrise.launcher.desktop" "$appdir/net.playsunrise.launcher.desktop"
+cp "$here/net.playsunrise.launcher.desktop" "$appdir/usr/share/applications/net.playsunrise.launcher.desktop"
 cp -R "$here/../icons/hicolor/." "$appdir/usr/share/icons/hicolor/"
 cp "$here/../icons/hicolor/512x512/apps/sunrise.png" "$appdir/sunrise.png"
 ln -s sunrise.png "$appdir/.DirIcon"
@@ -139,9 +139,9 @@ got=$("$out/$name" --appimage-extract-and-run --version)
 data=$work/data
 SUNRISE_LAUNCHER_HOME=$work/home XDG_DATA_HOME=$data \
   "$out/$name" --appimage-extract-and-run desktop-entry > /dev/null
-grep -Fq "Exec=\"$out/$name\"" "$data/applications/sunrise-launcher.desktop" || {
+grep -Fq "Exec=\"$out/$name\"" "$data/applications/net.playsunrise.launcher.desktop" || {
   echo "error: the menu entry does not start $out/$name" >&2
-  cat "$data/applications/sunrise-launcher.desktop" >&2
+  cat "$data/applications/net.playsunrise.launcher.desktop" >&2
   exit 1
 }
 
