@@ -771,7 +771,7 @@ enum Cmd {
     /// violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any
     /// hue; "theme" goes back to the theme's own), background PATH (your picture behind Home;
     /// "default" goes back to the theme's), scenery on|off (whether anything is behind the
-    /// pages), cache-limit-gib N (managed cache limit
+    /// pages), reduced-graphics on|off (no glass blur or decorative motion), cache-limit-gib N (managed cache limit
     /// in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup)
     #[command(after_help = tr("worlds rows|tiles: how Home lists the worlds under Continue playing."))]
     Settings {
@@ -919,7 +919,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 18] = [
+const SETTING_KEYS: [&str; 19] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -937,6 +937,7 @@ const SETTING_KEYS: [&str; 18] = [
     "accent",
     "background",
     "scenery",
+    "reduced-graphics",
     "cache-limit-gib",
 ];
 
@@ -1004,6 +1005,7 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
             )?,
         },
         "scenery" => s.scenery_on = Some(on_off(value)?),
+        "reduced-graphics" => s.reduced_graphics = Some(on_off(value)?),
         "language" => {
             use sunrise_launcher::i18n::Language;
             s.language = match value.trim() {
@@ -3177,6 +3179,41 @@ mod tests {
         );
         assert_eq!(shown["scenery"], true);
         assert!(shown["themes_dir"].as_str().unwrap().ends_with("themes"));
+    }
+
+    #[test]
+    fn reduced_graphics_cli_sets_and_reads_the_shared_choice() {
+        let mut settings = backend::Settings::parse(
+            r#"{"blur":8.5,"reduce_motion":false,"cat":true,
+                "scenery":false,"background":"background-0123456789ab.png"}"#,
+        );
+        assert_eq!(settings_json(&settings)["reduced_graphics"], false);
+        for (value, on) in [("on", true), ("off", false)] {
+            let cli =
+                Cli::try_parse_from(["sunrise-launcher", "settings", "reduced-graphics", value])
+                    .unwrap();
+            let Some(Cmd::Settings {
+                key: Some(key),
+                value: Some(value),
+            }) = cli.command
+            else {
+                panic!("expected settings key and value");
+            };
+            set_setting(&mut settings, &key, &value).unwrap();
+            let before = serde_json::to_value(&settings).unwrap();
+            assert!(set_setting(&mut settings, &key, "maybe").is_err());
+            assert_eq!(serde_json::to_value(&settings).unwrap(), before);
+            settings = backend::Settings::parse(&before.to_string());
+            assert_eq!(settings_json(&settings)["reduced_graphics"], on);
+            assert_eq!(settings.glass_blur(), if on { 0. } else { 8.5 });
+            assert_eq!(settings.reduce_motion, Some(false));
+            assert!(settings.show_cat());
+            assert!(!settings.scenery());
+            assert_eq!(
+                settings.background.as_deref(),
+                Some("background-0123456789ab.png")
+            );
+        }
     }
 
     #[test]
