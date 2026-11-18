@@ -43,7 +43,7 @@ mod search;
 mod ui;
 pub(crate) use search::Installed;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};
+pub(crate) use ui::{checkbox, choices, field_theme, reveal, switch, Choose};
 
 use crate::paint::palette;
 use model::{Card, Row};
