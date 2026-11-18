@@ -4236,6 +4236,13 @@ impl Settings {
                     fields.remove(key);
                 }
             }
+            // A sidebar choice that isn't yes or no starts collapsed, not a reason to lose the rest.
+            if fields
+                .get("sidebar_expanded")
+                .is_some_and(|v| !v.is_boolean())
+            {
+                fields.remove("sidebar_expanded");
+            }
             look_settings::tidy(fields);
             // A language this launcher doesn't have yet follows the system's.
             if fields.get("language").is_some_and(|l| {
@@ -5457,6 +5464,30 @@ pub fn {f}("
             ),
             (0.06, 24., "--x")
         );
+    }
+
+    #[test]
+    fn a_malformed_sidebar_choice_keeps_every_other_setting_through_a_save() {
+        for bad in ["null", "\"yes\"", "1", "[true]"] {
+            let saved = format!(
+                r#"{{"sidebar_expanded": {bad}, "instance": "skyblock", "ping_off": true,
+                    "selected": "nightly-2026-11-13-aaaaaaa", "game_args": "--x"}}"#
+            );
+            // What the sidebar's toggle does: load, flip, save, and what the next start reads.
+            let mut loaded = Settings::parse(&saved);
+            assert!(!loaded.sidebar_expanded, "{bad} starts collapsed");
+            loaded.sidebar_expanded = !loaded.sidebar_expanded;
+            let again = Settings::parse(&serde_json::to_string(&loaded).unwrap());
+            assert!(again.sidebar_expanded);
+            assert_eq!(again.instance.as_deref(), Some("skyblock"), "{bad}");
+            assert!(again.ping_off, "{bad} must not turn the ping back on");
+            assert_eq!(
+                again.selected.as_deref(),
+                Some("nightly-2026-11-13-aaaaaaa")
+            );
+            assert_eq!(again.game_args, "--x");
+        }
+        assert!(Settings::parse(r#"{"sidebar_expanded": true}"#).sidebar_expanded);
     }
 
     #[test]
