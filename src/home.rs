@@ -142,6 +142,13 @@ impl Near {
 }
 
 impl HomeState {
+    /// Whether Play and what it says show: false once Home is scrolled so far that the row
+    /// they stand in is more than half above the page's top edge. The status strip then says
+    /// it instead.
+    pub(crate) fn play_in_view(&self) -> bool {
+        play_shows(self.picker.get(), crate::frame::scrolls("home").bounds())
+    }
+
     /// Where the build chooser opens: the left edge and the top, in the window.
     pub(crate) fn chooser_at(&self) -> (f32, f32) {
         match self.picker.get() {
@@ -150,6 +157,12 @@ impl HomeState {
             None => (INSET, 96.),
         }
     }
+}
+
+/// Whether the play row, drawn at `row` (as tall as the build picker in it), shows in the page
+/// drawn at `view`. A Home not drawn yet shows it.
+fn play_shows(row: Option<Bounds<gpui::Pixels>>, view: Bounds<gpui::Pixels>) -> bool {
+    row.is_none_or(|row| row.center().y >= view.top())
 }
 
 pub(crate) fn sentence(text: &str) -> String {

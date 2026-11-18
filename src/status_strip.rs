@@ -1,6 +1,7 @@
-//! The status strip: on every page but Home, what Play is doing or what went wrong, with its
-//! one action. Home says the same beside Play itself, so the strip is not drawn there, and it
-//! is not drawn at all while there is nothing to tell (`launch_state::View::strip`).
+//! The status strip: what Play is doing or what went wrong, with its one action, on every page
+//! where Play itself is not in view. Home says the same beside Play, so the strip is drawn
+//! there only once Home is scrolled past Play (`HomeState::play_in_view`): never both at once.
+//! It is not drawn at all while there is nothing to tell (`launch_state::View::strip`).
 use super::*;
 use crate::frame::button;
 use crate::launch_state::{Act, Main, StripAct};
@@ -10,7 +11,8 @@ use gpui::rgb;
 impl Launcher {
     /// The strip, for the frame to place above the page: one row, as wide as it is given.
     pub(crate) fn status_strip(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        if self.ui.page == crate::frame::Page::Home {
+        let home = self.ui.page == crate::frame::Page::Home;
+        if home && self.ui.home.play_in_view() {
             return None;
         }
         let view = self.launch_facts().view();
@@ -71,6 +73,10 @@ impl Launcher {
                 .children(bar)
                 .child(
                     button(id, act.label()).on_click(cx.listener(move |this, _, _, cx| {
+                        if home && act == StripAct::Home {
+                            // Already there: back up to Play.
+                            crate::frame::scrolls("home").set_offset(gpui::Point::default());
+                        }
                         this.strip_act(&act);
                         cx.notify();
                     })),
