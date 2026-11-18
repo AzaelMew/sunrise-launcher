@@ -82,18 +82,21 @@ pub fn list(home: &Path) -> Vec<World> {
     worlds
 }
 
-/// level.dat: gzip, as vanilla writes it, or plain.
+/// level.dat: gzip, as vanilla writes it, or plain. Read with the limits the game reads a world's
+/// `.dat` files with ([`Limits::saved`]: its depth, no cap on the tag count, and a size bound), so
+/// a level.dat the game loads is never taken for an unreadable one.
 fn level_dat(path: &Path) -> Option<Tag> {
+    let limits = Limits::saved();
     let bytes = fs::read(path).ok()?;
     let mut raw = Vec::new();
     let raw = match flate2::read::GzDecoder::new(&bytes[..])
-        .take(64 << 20)
+        .take(limits.max_bytes as u64)
         .read_to_end(&mut raw)
     {
         Ok(_) => raw,
         Err(_) => bytes,
     };
-    Some(nbt::read_named(&raw, Limits::default()).ok()?.0.tag)
+    Some(nbt::read_named(&raw, limits).ok()?.0.tag)
 }
 
 fn read(path: &Path) -> Option<World> {
