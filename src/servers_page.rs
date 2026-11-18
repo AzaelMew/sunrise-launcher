@@ -1019,10 +1019,7 @@ impl Launcher {
                     !invalid
                         && matches!(
                             f,
-                            Field::InstanceName
-                                | Field::InstanceGroup
-                                | Field::Name
-                                | Field::Seed
+                            Field::InstanceName | Field::InstanceGroup | Field::Name | Field::Seed
                         ),
                     |d| {
                         d.h(px(48.))

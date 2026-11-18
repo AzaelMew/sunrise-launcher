@@ -19,7 +19,6 @@ pub(super) enum SheetTab {
     Hooks,
 }
 
-
 /// What the dialog would keep, as typed or picked.
 struct Draft {
     name: String,

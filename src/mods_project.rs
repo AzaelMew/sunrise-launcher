@@ -19,7 +19,8 @@ use std::sync::Arc;
 use sunrise_launcher::browser::{
     self,
     details::{Details, Filters},
-    images, java, Kind as PackKind, Project, SourceId, Version};
+    images, java, Kind as PackKind, Project, SourceId, Version,
+};
 
 /// The open project page.
 pub(super) struct Opened {

@@ -13,17 +13,10 @@ use gpui::RenderImage;
 
 use std::sync::Arc;
 
+#[derive(Default)]
 pub(super) struct Pictures {
     /// Gone from `made`; freed from the window's sprite atlas on the next frame.
     retired: Vec<Arc<RenderImage>>,
-}
-
-impl Default for Pictures {
-    fn default() -> Self {
-        Pictures {
-            retired: Vec::new(),
-        }
-    }
 }
 
 impl Pictures {

@@ -3,9 +3,9 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, clock, glass};
 #[cfg(windows)]
 use sunrise_launcher_scenery::coast;
+use sunrise_launcher_scenery::{art, clock, glass};
 mod blocks_settings;
 mod launcher_messages;
 mod launcher_play;
@@ -609,5 +609,5 @@ mod tests {
     }
 }
 
-mod worlds_page;
 mod native_build;
+mod worlds_page;

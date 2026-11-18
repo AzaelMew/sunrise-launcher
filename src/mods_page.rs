@@ -39,7 +39,7 @@ pub(super) enum Event {
 pub(super) enum Checking {
     Running,
     Done,
-    Failed
+    Failed,
 }
 
 pub(super) struct Mods {
@@ -156,7 +156,6 @@ impl Mods {
     pub(super) fn note_focus(&mut self, window: &Window) {
         self.focused = self.focus.is_focused(window);
     }
-
 }
 
 impl Launcher {
@@ -587,4 +586,3 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
     }
     lines
 }
-

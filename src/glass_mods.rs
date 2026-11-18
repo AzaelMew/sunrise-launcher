@@ -17,4 +17,3 @@
 //! project's page, its rating and why it runs or not (in the project's card); adding a native mod
 //! from GitHub, the instance's installed list and its native build, imported modpacks and the
 //! install's progress (cards under the two).
-

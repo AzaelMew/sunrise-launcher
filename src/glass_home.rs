@@ -8,4 +8,3 @@ pub(super) struct PickerState {
     /// The menu is open (the old look's; the glass look keeps versions in instance settings).
     pub(super) open: bool,
 }
-

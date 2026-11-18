@@ -36,7 +36,6 @@ pub(super) struct MemorySlider {
     shown: Option<String>,
 }
 
-
 impl Launcher {
     /// What the hook fields hold now, when the panel is open for `id`: the commands before and
     /// after the game, the wrapper and the variables, as typed.

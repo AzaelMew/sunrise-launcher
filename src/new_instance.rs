@@ -4,8 +4,6 @@
 //! needs it; the game itself comes with the first Play, for an account that owns it.
 use super::*;
 
-
-
 use sunrise_launcher::loaders::{self, Kind as Loader};
 use sunrise_launcher::minecraft_versions::Versions;
 
@@ -71,7 +69,6 @@ pub(super) enum VersionList {
     Failed(String),
 }
 
-
 /// Makes a Java instance: `name`, playing `minecraft`, with the loader version chosen for Modded
 /// (none: its newest stable one), asked of its service now, so a version it doesn't support
 /// says so here.
@@ -131,5 +128,4 @@ mod tests {
         choice.version = Some("1.20.1".into());
         assert_eq!(choice.minecraft(None).as_deref(), Some("1.20.1"));
     }
-
 }
