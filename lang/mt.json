@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "Diġà hemm profil imsejjaħ {name}. Agħżel isem ieħor.",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "Id-dejta tmexxiet. Il-folders l-antichi għadhom jużaw spazju fuq id-diska: {paths}. Ivverifika d-dinjiet u il-profili tiegħek qabel ma tneħħihom int stess.",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "Tmexxi d-dejta kollha tal-lanċjar, tal-logħba u tal-bini, inklużi s-settings, id-dinjiet, il-profili u l-verżjonijiet installati. Agħżel folder vojt bi spazju biżżejjed.",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "Id-dejta tmexxiet. Il-folders l-antichi għadhom jużaw spazju fuq id-diska: {paths}. Ivverifika d-dinjiet u il-profili tiegħek qabel ma tneħħihom int stess."
 }

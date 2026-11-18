@@ -33,7 +33,7 @@ fn open_error(error: &str) -> String {
 pub(super) fn startup_note() -> Option<String> {
     env_value("SUNRISE_RELOCATION_BACKUP").map(|paths| {
         trf(
-            "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.",
+            "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.",
             &[("paths", &paths)],
         )
     })

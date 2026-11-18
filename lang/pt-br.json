@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "Já existe um perfil chamado {name}. Escolha outro nome.",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "Dados movidos. As pastas antigas ainda ocupam espaço em disco: {paths}. Verifique seus mundos e perfis antes de excluir essas pastas manualmente.",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "Move todos os dados do launcher, do jogo e de compilação, incluindo configurações, mundos, perfis e versões instaladas. Escolha uma pasta vazia com espaço livre suficiente.",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "Dados movidos. As pastas antigas ainda ocupam espaço em disco: {paths}. Verifique seus mundos e perfis antes de excluir essas pastas manualmente."
 }

@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "已存在名为 {name} 的档案。请选择其他名称。",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "数据已迁移。旧文件夹仍占用磁盘空间：{paths}。请确认世界和档案正常后，再自行删除旧文件夹。",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "迁移所有启动器、游戏和构建数据，包括设置、世界、档案和已安装的版本。请选择一个有足够可用空间的空文件夹。",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "数据已迁移。旧文件夹仍占用磁盘空间：{paths}。请确认世界和档案正常后，再自行删除旧文件夹。"
 }

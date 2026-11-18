@@ -281,7 +281,7 @@ fn polish_entries_are_valid_and_keep_placeholders() {
 #[test]
 fn the_renamed_profile_sentences_kept_their_translations() {
     let taken = "There is already a profile called {name}. Choose another name.";
-    let moved = "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.";
+    let moved = "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.";
     let moves = "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.";
     for language in Language::ALL
         .into_iter()
@@ -307,4 +307,17 @@ fn the_renamed_profile_sentences_kept_their_translations() {
     );
     assert!(tr_in(Language::French, moved).contains("vos mondes et vos profils"));
     assert!(tr_in(Language::Polish, moved).contains("światy i profile"));
+    // Deletion applies to the old folders, never to the worlds and profiles just checked.
+    for (language, object) in [
+        (Language::English, "deleting the old folders"),
+        (Language::Italian, "eliminare le vecchie cartelle"),
+        (Language::Catalan, "eliminar les carpetes antigues"),
+        (Language::Venetian, "cavar łe cartełe vece"),
+    ] {
+        assert!(
+            tr_in(language, moved).contains(object),
+            "{}",
+            language.code()
+        );
+    }
 }

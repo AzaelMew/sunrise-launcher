@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "Aia kekahi polopaila i kapa ʻia ʻo {name}. E koho i kekahi inoa ʻē aʻe.",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "Ua neʻe ʻia ka ʻikepili. Hoʻohana mau nā waihona kahiko i ka wahi disk: {paths}. E hōʻoia i kāu mau honua a me nā polopaila ma mua o kou wehe ʻana iā lākou iā ʻoe iho.",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "Neʻe i ka ʻikepili a pau o ka mea hoʻolaha, ka pāʻani a me ke kūkulu, me nā hoʻonohonoho, nā honua, nā polopaila a me nā mana i hoʻokomo ʻia. E koho i kahi waihona hakahaka me ka wahi kaʻawale lawa.",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "Ua neʻe ʻia ka ʻikepili. Hoʻohana mau nā waihona kahiko i ka wahi disk: {paths}. E hōʻoia i kāu mau honua a me nā polopaila ma mua o kou wehe ʻana iā lākou iā ʻoe iho."
 }

@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "Đã có một hồ sơ tên {name}. Hãy chọn tên khác.",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "Đã chuyển dữ liệu. Các thư mục cũ vẫn chiếm dung lượng đĩa: {paths}. Hãy kiểm tra thế giới và hồ sơ của bạn trước khi tự xóa chúng.",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "Chuyển toàn bộ dữ liệu của trình khởi chạy, trò chơi và bản dựng, gồm cài đặt, thế giới, hồ sơ và các phiên bản đã cài. Hãy chọn một thư mục trống có đủ dung lượng.",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "Đã chuyển dữ liệu. Các thư mục cũ vẫn chiếm dung lượng đĩa: {paths}. Hãy kiểm tra thế giới và hồ sơ của bạn trước khi tự xóa chúng."
 }

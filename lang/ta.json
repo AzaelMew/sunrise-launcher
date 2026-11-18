@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "{name} என்ற பெயரில் ஏற்கனவே ஒரு சுயவிவரம் உள்ளது. வேறு பெயரைத் தேர்ந்தெடுக்கவும்.",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "தரவு நகர்த்தப்பட்டது. பழைய கோப்புறைகள் இன்னும் வட்டு இடத்தைப் பயன்படுத்துகின்றன: {paths}. அவற்றை நீங்களே அகற்றும் முன் உங்கள் உலகங்களையும் சுயவிவரங்களையும் சரிபார்க்கவும்.",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "அமைப்புகள், உலகங்கள், சுயவிவரங்கள் மற்றும் நிறுவப்பட்ட பதிப்புகள் உட்பட எல்லா துவக்கி, கேம் மற்றும் உருவாக்கத் தரவையும் நகர்த்துகிறது. போதுமான காலி இடமுள்ள காலியான கோப்புறையைத் தேர்ந்தெடுக்கவும்.",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "தரவு நகர்த்தப்பட்டது. பழைய கோப்புறைகள் இன்னும் வட்டு இடத்தைப் பயன்படுத்துகின்றன: {paths}. அவற்றை நீங்களே அகற்றும் முன் உங்கள் உலகங்களையும் சுயவிவரங்களையும் சரிபார்க்கவும்."
 }

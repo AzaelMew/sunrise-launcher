@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "{name} नाम का एक प्रोफ़ाइल पहले से है। दूसरा नाम चुनें।",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "डेटा स्थानांतरित हो गया है। पुराने फ़ोल्डर अब भी डिस्क पर जगह घेर रहे हैं: {paths}। पुराने फ़ोल्डर खुद हटाने से पहले जाँच लें कि आपकी दुनिया और प्रोफ़ाइल ठीक से काम कर रहे हैं।",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "सेटिंग्स, दुनिया, प्रोफ़ाइल और इंस्टॉल किए गए संस्करणों सहित लॉन्चर, गेम और बिल्ड का सारा डेटा स्थानांतरित करता है। पर्याप्त खाली जगह वाला एक खाली फ़ोल्डर चुनें।",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "डेटा स्थानांतरित हो गया है। पुराने फ़ोल्डर अब भी डिस्क पर जगह घेर रहे हैं: {paths}। पुराने फ़ोल्डर खुद हटाने से पहले जाँच लें कि आपकी दुनिया और प्रोफ़ाइल ठीक से काम कर रहे हैं।"
 }

@@ -1385,11 +1385,11 @@
   "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.": "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
   "This profile no longer exists. Choose another profile to play.": "This profile no longer exists. Choose another profile to play.",
   "There is already a profile called {name}. Choose another name.": "{name}이라는 프로필이 이미 있습니다. 다른 이름을 선택하세요.",
-  "Data moved. Old folders still use disk space: {paths}. Verify your worlds and profiles before removing them yourself.": "데이터가 이동되었습니다. 기존 폴더는 여전히 디스크 공간을 차지합니다: {paths}. 월드와 프로필이 정상적으로 작동하는지 확인한 후 기존 폴더를 직접 삭제하세요.",
   "Moves all launcher, game and build data, including settings, worlds, profiles and installed versions. Choose an empty folder with enough free space.": "설정, 월드, 프로필 및 설치된 버전을 포함한 모든 런처, 게임 및 빌드 데이터를 이동합니다. 여유 공간이 충분한 빈 폴더를 선택하세요.",
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-  "Profiles": "Profiles"
+  "Profiles": "Profiles",
+  "Data moved. Old folders still use disk space: {paths}. Check that your worlds and profiles work in the new location before deleting the old folders.": "데이터가 이동되었습니다. 기존 폴더는 여전히 디스크 공간을 차지합니다: {paths}. 월드와 프로필이 정상적으로 작동하는지 확인한 후 기존 폴더를 직접 삭제하세요."
 }
