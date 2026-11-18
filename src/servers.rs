@@ -354,9 +354,41 @@ pub fn command(dir: &Path, args: &[&str]) -> Result<Command, String> {
     let program = program().ok_or(
         "The server programs aren't set up yet: create a server, or press Prepare on its page.",
     )?;
+    if matches!(args.first(), Some(&"start" | &"restart" | &"run")) {
+        publish_host_runtime(dir)?;
+    }
     let mut cmd = crate::process::command(program);
     cmd.arg("--dir").arg(dir).args(args);
     Ok(cmd)
+}
+
+/// The dedicated game starts directly, not through Play. Like Play it must be able to take
+/// read leases on its install, resources and working directory. Publish them at explicit start:
+/// this also covers older copies and new directories selected by a supervisor update.
+fn publish_host_runtime(dir: &Path) -> Result<(), String> {
+    let root = runtime_root();
+    let release = root
+        .join("current")
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let releases = backend::data_dir()
+        .canonicalize()
+        .map_err(|e| e.to_string())?
+        .join("server-runtime/releases");
+    // We own the completion marker only in the launcher's copy, never in a custom runtime.
+    if release.parent() != Some(releases.as_path()) {
+        return Ok(());
+    }
+    let _publication =
+        crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+    for unit in [&release, &game_files(&root, "26.3"), dir] {
+        crate::run_leases::publish(unit).map_err(crate::native_mods::cache_error)?;
+    }
+    match fs::File::create_new(release.join(".installed")) {
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn supervisor_log(dir: &Path) -> PathBuf {
@@ -397,11 +429,10 @@ pub fn run_managed(
     line: &dyn Fn(String),
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
-    let supervisor = command(dir, args).map_err(Problem::plain)?;
     let mut engine = engine_command(dir)?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
-    stream(dir, supervisor, line)
+    run_streamed(dir, args, line)
 }
 
 /// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).

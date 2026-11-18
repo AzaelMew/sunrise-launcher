@@ -11,6 +11,8 @@ members = ["crates/addresses", "crates/bench", "crates/friends", "crates/smod", 
 default-members = [".", "crates/addresses", "crates/bench", "crates/friends", "crates/smod", "crates/mcp", "crates/nbt", "crates/release-verify", "crates/resolver", "crates/sdk", "crates/shader-api", "crates/system", "crates/telemetry", "crates/theme"]
 
 [features]
+# Standalone UX test binary. The normal launcher keeps its existing UI and startup policy.
+redesign-preview = []
 # GPUI Fast's frame profiler, for measuring animations: the frame-time overlay
 # (`SUNRISE_LAUNCHER_FRAME_OVERLAY`) and each frame's work in `sunrise-launcher benchmark`
 # (README, Performance log). Off in every published build.
