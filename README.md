@@ -37,18 +37,11 @@ warnings. macOS packages are **ad-hoc signed**, without an Apple Developer ID an
 **not notarized**. Gatekeeper may block them or say Apple cannot check them for
 malicious software. No OS trust bypass is implied by a checksum signature.
 
-Build identity defaults to `sunrise-org/sunrise`, consistently with Sunrise's release
-repository. Set `SUNRISE_LAUNCHER_REPOSITORY=horizon-rust/horizon` at build time to
-retain upstream identity. Other values fail the build. Stage packaging with
-`python3 tools/stage_launcher_packaging.py OUTPUT --repository REPOSITORY` using
-the same repository selection. The original packaging templates and icons are
-left unchanged. The workflow passes `github.repository` to the real build selector
-and generates the corresponding build matrix. Existing signing, signature
-verification and publication gates are retained: dry runs use an ephemeral key,
-while publication uses Sunrise's signing key and still requires separate
-approval.
-Sunrise's packages are Linux x86_64, Windows x64 and macOS Apple Silicon; macOS
-builds run on GitHub-hosted runners, never the upstream private runner.
+The launcher builds one identity, Sunrise Launcher's (`src/identity.rs`), and `packaging/` holds its
+installers' files as they ship. It downloads and checks the game from
+[sunrise-org/sunrise](https://github.com/sunrise-org/sunrise) and updates itself from this
+repository's releases, which are signed with this repository's own key, never the game's.
+Sunrise's packages are Linux x86_64, Windows x64 and macOS Apple Silicon.
 
 A small desktop app that installs Sunrise builds, prepares them from your own copy of
 Minecraft, and starts the client or a dedicated server. Built with [GPUI Fast](https://github.com/longbridge/gpui-fast),

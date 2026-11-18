@@ -53,9 +53,9 @@ pub(super) fn agent(url: &str) -> ureq::Agent {
         let builder = ureq::AgentBuilder::new()
             .user_agent(&format!(
                 "{} sunrise-launcher/{} (github.com/{})",
-                crate::backend::REPO,
+                crate::backend::GAME_REPO,
                 crate::backend::VERSION,
-                crate::backend::REPO
+                crate::backend::GAME_REPO
             ))
             .timeout_connect(std::time::Duration::from_secs(15))
             .timeout_read(std::time::Duration::from_secs(60));

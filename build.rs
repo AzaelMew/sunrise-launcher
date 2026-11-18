@@ -1,15 +1,6 @@
 //! Embeds Sunrise's icon (`assets/icons/sunrise.ico`) in the Windows executables, as icon
 //! resource 1: Explorer and the task bar show it, and the window takes it as its icon.
 fn main() {
-    println!("cargo:rerun-if-env-changed=SUNRISE_LAUNCHER_REPOSITORY");
-    println!("cargo:rustc-check-cfg=cfg(sunrise_fork_launcher)");
-    let repository = std::env::var("SUNRISE_LAUNCHER_REPOSITORY")
-        .unwrap_or_else(|_| "sunrise-org/sunrise".into());
-    match repository.as_str() {
-        "sunrise-org/sunrise" => println!("cargo:rustc-cfg=sunrise_fork_launcher"),
-        "horizon-rust/horizon" => {}
-        _ => panic!("unsupported launcher repository: {repository}"),
-    }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
@@ -47,12 +38,10 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut resource = winresource::WindowsResource::new();
         resource.set_icon(&ico);
-        if repository == "sunrise-org/sunrise" {
-            resource.set("FileDescription", "Sunrise Launcher");
-            resource.set("ProductName", "Sunrise Launcher");
-            resource.set("InternalName", "sunrise-launcher");
-            resource.set("OriginalFilename", "sunrise-launcher.exe");
-        }
+        resource.set("FileDescription", "Sunrise Launcher");
+        resource.set("ProductName", "Sunrise Launcher");
+        resource.set("InternalName", "sunrise-launcher");
+        resource.set("OriginalFilename", "sunrise-launcher.exe");
         if let Err(e) = resource.compile() {
             panic!("embedding {ico}: {e}");
         }

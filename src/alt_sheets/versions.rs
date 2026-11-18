@@ -99,9 +99,8 @@ fn lines(
         let hay = format!("{} {} {} {day}", b.tag, b.name, b.about).to_lowercase();
         words.iter().all(|w| hay.contains(w.as_str()))
     };
-    let game = |tag: &str| {
-        !native_mods::is_native(tag) && sunrise_launcher::backend::launcher_version(tag).is_none()
-    };
+    // Launcher releases come from their own repository and are never installed here, and `v2026.10.13` is also valid vX.Y.Z: only native builds are left out.
+    let game = |tag: &str| !native_mods::is_native(tag);
     let mut out = Vec::new();
     let mut have: Vec<&String> = installed.iter().filter(|t| game(t)).collect();
     have.sort_by(|a, b| {

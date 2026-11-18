@@ -134,13 +134,9 @@ mod tests {
         \"horizon-launcher-setup.exe\",\"77\",\"Console\",\"1\",\"9,000 K\"\r\n";
 
     fn tasklist() -> String {
-        if cfg!(sunrise_fork_launcher) {
-            TASKLIST
-                .replace("horizon-launcher", "sunrise-launcher")
-                .replace("Horizon-Launcher", "Sunrise-Launcher")
-        } else {
-            TASKLIST.into()
-        }
+        TASKLIST
+            .replace("horizon-launcher", "sunrise-launcher")
+            .replace("Horizon-Launcher", "Sunrise-Launcher")
     }
 
     #[test]
@@ -153,11 +149,7 @@ mod tests {
 
     #[test]
     fn another_identity_is_never_terminated() {
-        let other = if cfg!(sunrise_fork_launcher) {
-            "\"horizon-launcher.exe\",\"42\""
-        } else {
-            "\"sunrise-launcher.exe\",\"42\""
-        };
+        let other = "\"horizon-launcher.exe\",\"42\"";
         assert!(other_launcher_pids(other, 1).is_empty());
     }
 

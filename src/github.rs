@@ -76,7 +76,9 @@ pub(crate) fn json_with(
     mirror: impl Fn(&str) -> Answer,
 ) -> Result<Option<serde_json::Value>, String> {
     let file = cache.join(cache_name(url));
-    let kept = read_kept(&file, url);
+    // The launcher's own releases are kept only as GitHub answered them (with its ETag), never a mirror's copy.
+    let launcher = launcher_url(url);
+    let kept = read_kept(&file, url).filter(|k| !(launcher && k.etag.is_empty()));
     if let Some(k) = kept.as_ref() {
         // A copy saved "later" than now (the clock was set back) is not trusted as fresh.
         if now >= k.saved && now - k.saved < FRESH_SECS {
@@ -107,7 +109,9 @@ pub(crate) fn json_with(
     let from_mirror = match mirror_url_with(url, mirror_base) {
         Some(m) => match mirror(&m) {
             Answer::Fresh(body, _) => {
-                write_kept(&file, url, "", &body, now);
+                if !launcher {
+                    write_kept(&file, url, "", &body, now);
+                }
                 return Ok(Some(body));
             }
             Answer::NotFound => return Ok(None),
@@ -130,12 +134,20 @@ pub(crate) fn json_with(
 
 const RATE_LIMITED: &str = "GitHub's rate limit was reached for your network";
 
-/// The mirror's URL for an API URL it serves (Sunrise's own repository), or None.
+/// Whether `url` is an API address of the launcher's own repository.
+fn launcher_url(url: &str) -> bool {
+    url.strip_prefix(API)
+        .is_some_and(|path| path.starts_with(&format!("/repos/{}/", backend::LAUNCHER_REPO)))
+}
+
+/// The mirror's URL for an API URL it serves, or None: the game's repository, and the launcher's in a development build only.
 fn mirror_url_with(url: &str, base: &str) -> Option<String> {
     let path = url.strip_prefix(API)?;
-    let repo = format!("/repos/{}/", backend::REPO);
-    (!base.is_empty() && path.starts_with(&repo))
-        .then(|| format!("{}{path}", base.trim_end_matches('/')))
+    let launcher = cfg!(debug_assertions).then_some(backend::LAUNCHER_REPO);
+    let served = std::iter::once(backend::GAME_REPO)
+        .chain(launcher)
+        .any(|repo| path.starts_with(&format!("/repos/{repo}/")));
+    (!base.is_empty() && served).then(|| format!("{}{path}", base.trim_end_matches('/')))
 }
 
 /// The mirror `SUNRISE_GITHUB_MIRROR` names, when there is one: what a child the launcher starts is told too.

@@ -458,12 +458,7 @@ fn builds_are_launchers(builds: &Path, data: &Path, location: Option<&Roots>) ->
 pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<String>, String> {
     let dir = registered()
         .ok_or_else(|| {
-            crate::i18n::tr(if cfg!(sunrise_fork_launcher) {
-                "Sunrise Launcher is not installed for this account."
-            } else {
-                "Horizon Launcher is not installed for this account."
-            })
-            .to_string()
+            crate::i18n::tr("Sunrise Launcher is not installed for this account.").to_string()
         })?
         .dir;
     close_running_launchers(&progress);
@@ -640,23 +635,11 @@ mod tests {
     fn the_install_folder_is_always_ours() {
         assert_eq!(
             folder_for(Path::new(r"C:\Games")),
-            PathBuf::from(if cfg!(sunrise_fork_launcher) {
-                r"C:\Games\Sunrise Launcher"
-            } else {
-                r"C:\Games\Horizon Launcher"
-            })
+            PathBuf::from(r"C:\Games\Sunrise Launcher")
         );
         assert_eq!(
-            folder_for(Path::new(if cfg!(sunrise_fork_launcher) {
-                r"C:\Games\sunrise launcher"
-            } else {
-                r"C:\Games\horizon launcher"
-            })),
-            PathBuf::from(if cfg!(sunrise_fork_launcher) {
-                r"C:\Games\sunrise launcher"
-            } else {
-                r"C:\Games\horizon launcher"
-            })
+            folder_for(Path::new(r"C:\Games\sunrise launcher")),
+            PathBuf::from(r"C:\Games\sunrise launcher")
         );
     }
 

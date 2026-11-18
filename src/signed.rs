@@ -2,11 +2,21 @@
 //! SHA-256 matches the release's SHA256SUMS and that list is signed by one of the keys built in
 //! from crates/release-verify/keys/. Anything else is refused with a message saying why.
 
-use crate::backend::REPO;
+use crate::backend::{GAME_REPO, LAUNCHER_REPO};
 use sunrise_launcher_release_verify::{Channel, PublicKey, SIGNATURE, SIGNATURE_V2, SUMS};
 
-/// Where a release's attached file downloads from (GitHub's fixed address for it).
+/// Where a game release's attached file downloads from (GitHub's fixed address for it).
 pub fn asset_url(tag: &str, name: &str) -> String {
+    asset_url_in(GAME_REPO, tag, name)
+}
+
+/// Where this launcher's own release's attached file downloads from ([`LAUNCHER_REPO`]).
+pub fn launcher_asset_url(tag: &str, name: &str) -> String {
+    asset_url_in(LAUNCHER_REPO, tag, name)
+}
+
+/// Where a release's attached file in `repository` downloads from.
+fn asset_url_in(repository: &str, tag: &str, name: &str) -> String {
     // Metadata supplies path components, never URL syntax or another repository.
     let component = |text: &str| -> String {
         text.bytes()
@@ -19,7 +29,7 @@ pub fn asset_url(tag: &str, name: &str) -> String {
             .collect()
     };
     format!(
-        "https://github.com/{REPO}/releases/download/{}/{}",
+        "https://github.com/{repository}/releases/download/{}/{}",
         component(tag),
         component(name)
     )
@@ -37,6 +47,25 @@ pub fn digest(
     let signature = fetch(&asset_url(tag, SIGNATURE))?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     sunrise_launcher_release_verify::signed_digest(
+        tag,
+        asset,
+        sums.as_deref(),
+        signature.as_deref(),
+        keys,
+    )
+}
+
+/// The signed SHA-256 of `asset` in this launcher's own release `tag` ([`LAUNCHER_REPO`]), signed for the launcher's releases only ([`sunrise_launcher_release_verify::launcher_message`]), or why the update must be refused.
+pub fn launcher_digest(
+    tag: &str,
+    asset: &str,
+    keys: &[PublicKey],
+    fetch: impl Fn(&str) -> Result<Option<Vec<u8>>, String>,
+) -> Result<String, String> {
+    let sums = fetch(&asset_url_in(LAUNCHER_REPO, tag, SUMS))?;
+    let signature = fetch(&asset_url_in(LAUNCHER_REPO, tag, SIGNATURE))?
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    sunrise_launcher_release_verify::launcher_digest(
         tag,
         asset,
         sums.as_deref(),

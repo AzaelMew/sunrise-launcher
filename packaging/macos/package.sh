@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packages the macOS launcher: Sunrise.app (the binary, Info.plist, the icon), signed, then the
+# Packages the macOS launcher: Sunrise Launcher.app (the binary, Info.plist, the icon), signed, then the
 # two release assets, sunrise-launcher-macos-ARCH.zip (what the launcher updates itself from;
 # older launchers find the binary inside it) and sunrise-launcher-macos-ARCH.dmg (the installer:
 # the app and an Applications link over a background, to drag one onto the other). ARCH is the
@@ -29,7 +29,7 @@ esac
 [[ "$(lipo -archs "$binary")" == "$cpu" ]] || { echo "$binary is $(lipo -archs "$binary"), not $cpu" >&2; exit 1; }
 zip=sunrise-launcher-macos-$arch.zip
 dmg=$out/sunrise-launcher-macos-$arch.dmg
-app=$out/Sunrise.app
+app="$out/Sunrise Launcher.app"
 
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/LICENSES"
@@ -59,11 +59,11 @@ notarize=$([[ "$identity" != "-" && -n "${MACOS_NOTARY_PROFILE:-}" ]] && echo ye
 
 rm -f "$out/$zip" "$dmg"
 # No resource forks or extended attributes: they would land as ._ files inside the bundle.
-(cd "$out" && ditto -c -k --norsrc --noextattr --noqtn --keepParent Sunrise.app "$zip")
+(cd "$out" && ditto -c -k --norsrc --noextattr --noqtn --keepParent "Sunrise Launcher.app" "$zip")
 
 cat > "$out/dmg.json" <<JSON
 {
-  "title": "Sunrise",
+  "title": "Sunrise Launcher",
   "icon-size": 128,
   "background": "$here/background.png",
   "window": { "position": { "x": 200, "y": 160 }, "size": { "width": 660, "height": 420 } },
@@ -74,7 +74,7 @@ cat > "$out/dmg.json" <<JSON
   ]
 }
 JSON
-"${DMGBUILD:-dmgbuild}" -s "$out/dmg.json" Sunrise "$dmg"
+"${DMGBUILD:-dmgbuild}" -s "$out/dmg.json" "Sunrise Launcher" "$dmg"
 rm "$out/dmg.json"
 if [[ "$identity" != "-" ]]; then
   codesign --force --timestamp ${keychain[@]+"${keychain[@]}"} --sign "$identity" "$dmg"

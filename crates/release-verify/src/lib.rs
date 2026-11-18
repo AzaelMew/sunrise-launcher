@@ -45,6 +45,23 @@ pub fn trusted_keys_for(repository: &str) -> Vec<PublicKey> {
     parse_keys(repository_keys(repository)).unwrap_or_default()
 }
 
+/// The keys a launcher release is signed with: [`REPOSITORY`]'s, one key for both kinds, kept apart by [`launcher_message`]'s prefix.
+pub fn trusted_launcher_keys() -> Vec<PublicKey> {
+    trusted_keys_for(REPOSITORY)
+}
+
+/// The version in a launcher release tag, exactly `vX.Y.Z` (no leading zeros), or None: discovery, URLs and signatures take tags only through this.
+pub fn launcher_version(tag: &str) -> Option<&str> {
+    let version = tag.strip_prefix('v')?;
+    let parts: Vec<&str> = version.split('.').collect();
+    let number = |part: &&str| {
+        (1..=9).contains(&part.len())
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part.len() == 1 || !part.starts_with('0'))
+    };
+    (parts.len() == 3 && parts.iter().all(number)).then_some(version)
+}
+
 /// The environment variable that adds one more trusted SDK key: exactly one base64 Ed25519 public key, what
 /// `tools/ci/sign_release.sh` writes to `ephemeral.pub` under `EPHEMERAL=yes`. A value that is not exactly one
 /// key is reported on stderr and adds nothing.
@@ -113,7 +130,16 @@ pub fn parse_keys(text: &str) -> Result<Vec<PublicKey>, String> {
 /// What a signature covers: the tag, then the checksum list.
 pub fn message(tag: &str, sums: &[u8]) -> Vec<u8> {
     // The signed prefix stays "horizon release" through the rename: verifiers outside this repo check these bytes.
-    let mut message = format!("horizon release {tag}\n").into_bytes();
+    message_with("horizon release", tag, sums)
+}
+
+/// What a signature of the launcher's own release covers: its own prefix, so a game release's signature never passes for a launcher's, nor the reverse.
+pub fn launcher_message(tag: &str, sums: &[u8]) -> Vec<u8> {
+    message_with("sunrise-launcher release", tag, sums)
+}
+
+fn message_with(prefix: &str, tag: &str, sums: &[u8]) -> Vec<u8> {
+    let mut message = format!("{prefix} {tag}\n").into_bytes();
     message.extend_from_slice(sums);
     message
 }
@@ -151,20 +177,44 @@ pub fn verify(
     signature: &str,
     keys: &[PublicKey],
 ) -> Result<Vec<(String, String)>, String> {
+    verify_message(tag, &message(tag, sums), sums, signature, keys)
+}
+
+/// [`verify`] for the launcher's own releases ([`launcher_message`]), for a [`launcher_version`] tag only, so no newline enters the signed tag.
+pub fn verify_launcher(
+    tag: &str,
+    sums: &[u8],
+    signature: &str,
+    keys: &[PublicKey],
+) -> Result<Vec<(String, String)>, String> {
+    if launcher_version(tag).is_none() {
+        return Err(format!(
+            "{tag:?} is not a launcher release tag (vX.Y.Z), so it was not installed."
+        ));
+    }
+    verify_message(tag, &launcher_message(tag, sums), sums, signature, keys)
+}
+
+fn verify_message(
+    tag: &str,
+    message: &[u8],
+    sums: &[u8],
+    signature: &str,
+    keys: &[PublicKey],
+) -> Result<Vec<(String, String)>, String> {
     if keys.is_empty() {
         return Err(
             "This build has no release key built in, so it can't check downloads: none are installed."
                 .into(),
         );
     }
-    let message = message(tag, sums);
     let signed = signature
         .lines()
         .filter_map(|line| STANDARD.decode(line.trim()).ok())
         .any(|signature| {
             keys.iter().any(|key| {
                 UnparsedPublicKey::new(&ED25519, key)
-                    .verify(&message, &signature)
+                    .verify(message, &signature)
                     .is_ok()
             })
         });
@@ -423,6 +473,28 @@ fn digest_in(
         })
 }
 
+/// The signed SHA-256 of `asset` in the launcher's own release `tag`, or why the update must be refused.
+pub fn launcher_digest(
+    tag: &str,
+    asset: &str,
+    sums: Option<&[u8]>,
+    signature: Option<&str>,
+    keys: &[PublicKey],
+) -> Result<String, String> {
+    let (Some(sums), Some(signature)) = (sums, signature) else {
+        return Err(format!(
+            "{tag} is not signed, and this launcher installs only signed updates."
+        ));
+    };
+    verify_launcher(tag, sums, signature, keys)?
+        .into_iter()
+        .find(|(n, _)| n == asset)
+        .map(|(_, hex)| hex)
+        .ok_or_else(|| {
+            format!("{asset} is not in {tag}'s signed checksums, so it was not installed.")
+        })
+}
+
 /// Whether a downloaded file's SHA-256 (`got`) is the signed one.
 pub fn check(asset: &str, expected: &str, got: &str) -> Result<(), String> {
     if expected.eq_ignore_ascii_case(got) {
@@ -565,6 +637,71 @@ mod tests {
         assert!(!signed(&other));
         let for_the_channel = trusted.sign(tag, sums.as_bytes());
         assert!(verify("nightly", sums.as_bytes(), &for_the_channel, &keys).is_err());
+    }
+
+    #[test]
+    fn launcher_releases_trust_the_game_repositorys_key() {
+        assert_eq!(trusted_launcher_keys(), trusted_keys_for(REPOSITORY));
+        assert!(!trusted_launcher_keys().is_empty());
+    }
+
+    #[test]
+    fn only_an_exact_vxyz_tag_is_a_launcher_release() {
+        for tag in ["v1.1.0", "v0.0.1", "v10.20.300", "v1.0.999999999"] {
+            assert!(launcher_version(tag).is_some(), "{tag}");
+        }
+        for tag in [
+            "1.1.0",
+            "v1.1",
+            "v1.1.0.0",
+            "v1.1.0-rc1",
+            "v01.1.0",
+            "v1.1.0\n",
+            "v1.1.0 ",
+            "v1..0",
+            "v1.1.x",
+            "launcher@1.1.0",
+            "v1.1.1234567890",
+            "v1.1.0/../x",
+            "v",
+        ] {
+            assert!(launcher_version(tag).is_none(), "{tag:?}");
+        }
+        let (key, _) = SigningKey::generate().unwrap();
+        let keys = parse_keys(&key.public_base64()).unwrap();
+        let sums = sums_file(&[(
+            "sunrise-launcher-linux-x86_64.tar.gz".into(),
+            "ab".repeat(32),
+        )]);
+        // A tag carrying the newline that ends the signed tag is refused before any signature is checked.
+        let framed = "v1.1.0\nab";
+        let signature = key.sign_bytes(&launcher_message(framed, sums.as_bytes()));
+        assert!(verify_launcher(framed, sums.as_bytes(), &signature, &keys).is_err());
+    }
+
+    #[test]
+    fn a_launcher_signature_never_passes_for_a_game_release_nor_the_reverse() {
+        let (key, _) = SigningKey::generate().unwrap();
+        let keys = parse_keys(&key.public_base64()).unwrap();
+        let asset = "sunrise-launcher-linux-x86_64.tar.gz";
+        let sums = sums_file(&[(asset.into(), "ab".repeat(32))]);
+        let launcher = key.sign_bytes(&launcher_message("v1.1.0", sums.as_bytes()));
+        let game = key.sign("v1.1.0", sums.as_bytes());
+        assert!(verify_launcher("v1.1.0", sums.as_bytes(), &launcher, &keys).is_ok());
+        assert!(verify_launcher("v1.1.0", sums.as_bytes(), &game, &keys).is_err());
+        assert!(verify("v1.1.0", sums.as_bytes(), &launcher, &keys).is_err());
+        let digest = |keys: &[PublicKey]| {
+            launcher_digest(
+                "v1.1.0",
+                asset,
+                Some(sums.as_bytes()),
+                Some(&launcher),
+                keys,
+            )
+        };
+        assert_eq!(digest(&keys).unwrap(), "ab".repeat(32));
+        // No key built in for the launcher's repository yet: every update is refused.
+        assert!(digest(&[]).is_err());
     }
 
     /// Runs in both profiles (CI runs it with `--release` too): the variable's key is trusted for an SDK
