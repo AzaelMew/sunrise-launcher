@@ -34,6 +34,7 @@ pub(super) struct State {
     pub sheet: Option<Sheet>,
     pub sheets: crate::alt_sheets::AltSheetsState,
     pub settings: crate::alt_settings::SettingsView,
+    pub cat: crate::alt_cat::CatState,
     pub picker: bool,
     pub after_install: Option<(String, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
@@ -161,7 +162,7 @@ impl Launcher {
             || self.starting_client.is_some()
     }
 
-    fn alt_dock(&mut self, cx: &mut Context<Self>) -> Div {
+    fn alt_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let active = self.selected_instance().cloned();
         let name = self.accounts.selected().map(|a| a.name.clone());
         let signed_name = name.is_some();
@@ -349,7 +350,8 @@ impl Launcher {
         }
         let enabled = !busy && self.location_error.is_none();
         let ink = rgb(0x221203);
-        bar.child(
+        let cat = self.alt_cat(window, cx);
+        bar.children(cat).child(
             div()
                 .id("alt-play")
                 .tab_index(0)
@@ -536,7 +538,7 @@ impl Launcher {
             .children(titlebar::render(&self.theme, window))
             .children(self.settings_save_notice(cx))
             .child(div().flex().flex_1().min_h_0().child(rail).child(page_body))
-            .child(self.alt_dock(cx));
+            .child(self.alt_dock(window, cx));
         if self.alt.picker {
             let mut choices = div()
                 .absolute()
