@@ -1,4 +1,4 @@
-//! The launcher look's part of `settings.json`: the accent kept per theme and reduced motion,
+//! The launcher look's part of `settings.json`: the accent kept per theme, reduced motion and the cat,
 //! each dropped alone when it isn't one, an old light appearance moved to the Taiga theme, and
 //! the indigo theme once saved as "sunrise" read as Twilight.
 use super::{Appearance, Settings};
@@ -27,11 +27,14 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
             accents.entry(TWILIGHT).or_insert(kept);
         }
     }
-    if fields
-        .get("reduce_motion")
-        .is_some_and(|v| !v.is_boolean() && !v.is_null())
-    {
-        fields.remove("reduce_motion");
+    // A switch that isn't on or off is as if never set, not a reason to lose the rest.
+    for key in ["reduce_motion", "cat"] {
+        if fields
+            .get(key)
+            .is_some_and(|v| !v.is_boolean() && !v.is_null())
+        {
+            fields.remove(key);
+        }
     }
 }
 
@@ -120,5 +123,39 @@ mod tests {
         let both =
             Settings::parse(r##"{"theme_accents": {"sunrise": "pink", "twilight": "green"}}"##);
         assert_eq!(both.theme_accents["twilight"], Accent::GREEN);
+    }
+
+    /// A cat value that isn't on or off is dropped alone: the folder, the arguments and every
+    /// other choice are read, and are still there after the next save.
+    #[test]
+    fn a_cat_that_is_not_a_switch_loses_only_itself_through_a_load_and_a_save() {
+        let saved = r##"{"cat": "off", "minecraft_dir": "/games/minecraft", "game_args": "--x",
+            "theme": "nord", "accent": "teal", "keep_versions": 5}"##;
+        let mut s = Settings::parse(saved);
+        assert_eq!(s.cat, None);
+        assert!(s.show_cat(), "unset is the default: the cat shows");
+        assert_eq!(
+            s.minecraft_dir.as_deref(),
+            Some(std::path::Path::new("/games/minecraft"))
+        );
+        // The next edit writes everything that was read.
+        s.skip_opening = true;
+        let written = serde_json::to_string(&s).unwrap();
+        let again = Settings::parse(&written);
+        assert_eq!(
+            again.minecraft_dir.as_deref(),
+            Some(std::path::Path::new("/games/minecraft"))
+        );
+        assert_eq!(again.game_args, "--x");
+        assert_eq!(again.theme.as_deref(), Some("nord"));
+        assert_eq!(again.accent, crate::themes::Accent::parse("teal").unwrap());
+        assert_eq!(again.keep_versions, Some(5));
+        assert!(again.skip_opening);
+        // A real choice is kept as it is.
+        assert_eq!(Settings::parse(r#"{"cat": false}"#).cat, Some(false));
+        assert_eq!(
+            Settings::parse(r#"{"cat": null, "game_args": "--y"}"#).game_args,
+            "--y"
+        );
     }
 }
