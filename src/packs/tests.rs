@@ -679,7 +679,7 @@ fn a_folder_pack_is_read_only_from_regular_files_of_its_own() {
     assert_eq!(packs[0].icon, None);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn a_pipe_in_a_packs_place_is_never_opened() {
     let home = scratch("pipe");

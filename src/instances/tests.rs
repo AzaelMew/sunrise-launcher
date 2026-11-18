@@ -701,7 +701,7 @@ fn artwork_is_read_only_up_to_its_limit() {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn artwork_reader_does_not_wait_for_a_pipe_writer() {
     use std::os::unix::ffi::OsStrExt as _;
