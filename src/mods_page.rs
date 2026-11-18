@@ -25,7 +25,6 @@ pub(super) struct Mods {
     everything: bool,
     /// The Minecraft version Sunrise plays, read again with each search ([`browser::game`]).
     pub(super) game: String,
-    results: Vec<Project>,
     results_list: cull::Cull,
     installed_list: cull::Cull,
     pub(super) report_list: cull::Cull,
@@ -101,7 +100,6 @@ impl Mods {
             focused: false,
             everything: false,
             game: browser::game(),
-            results: Vec::new(),
             results_list: cull::Cull::default(),
             installed_list: cull::Cull::default(),
             report_list: cull::Cull::default(),
