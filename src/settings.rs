@@ -128,6 +128,23 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
         .child(below)
 }
 
+impl Launcher {
+    /// A [`row`] whose controls are wide: in a narrow window they would leave the words a
+    /// column a syllable wide, so there they go under the words.
+    fn wide_row(
+        &self,
+        title: impl Into<SharedString>,
+        about: impl Into<SharedString>,
+        actions: Div,
+    ) -> Div {
+        if self.window_width < 960. {
+            stacked(title, about, actions.flex().flex_wrap().gap(px(6.)))
+        } else {
+            row(title, about, actions)
+        }
+    }
+}
+
 pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.4).cursor_default().tab_stop(false)
 }
@@ -722,16 +739,11 @@ impl Launcher {
                 })),
             );
         }
-        let (title, about) = (
+        cache.push(self.wide_row(
             tr("Keep at most"),
             tr("Past this, the oldest downloads are cleared by themselves."),
-        );
-        // Five chips beside the words leave the words no room in a narrow window.
-        cache.push(if self.window_width < 960. {
-            stacked(title, about, limits.flex().flex_wrap().gap(px(6.)))
-        } else {
-            row(title, about, limits)
-        });
+            limits,
+        ));
         for (n, category) in Category::ALL.into_iter().enumerate() {
             let found = self
                 .storage_report
@@ -962,7 +974,7 @@ impl Launcher {
         };
         let confirm = self.collection.confirm_delete;
         let viewing = self.collection.view.is_some();
-        let mut yours = row(
+        let mut yours = self.wide_row(
             tr("Your data"),
             format!("{id} · {waiting}"),
             div()
