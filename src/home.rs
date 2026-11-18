@@ -12,7 +12,7 @@
 //!   opens its data packs;
 //! - a world without `icon.png` is drawn from `dirt.png` of the player's own prepared game
 //!   files (`backend::resources`, nothing is shipped), else a plain tile, no letter;
-//! - signed out with no worlds, the panel is the welcome in place of worlds.
+//! - signed out with no worlds, the welcome stands where the worlds will be, beside the mods.
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
@@ -211,12 +211,7 @@ impl Launcher {
         };
         self.load_worlds(instance.home.clone(), cx);
         let header = self.profile_header(&instance, window, cx);
-        let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
-        let body = if first_start {
-            self.welcome(cx)
-        } else {
-            self.continue_playing(&instance, window, cx)
-        };
+        let body = self.continue_playing(&instance, window, cx);
         div()
             .id("alt-home")
             .size_full()
@@ -591,14 +586,15 @@ impl Launcher {
                         }),
                 )
         };
-        let worlds = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(top)
-            .child(body);
+        // The first start (signed out, nothing to continue) says welcome where the worlds will
+        // be; what the profile has installed stays beside it.
+        let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
+        let worlds = div().flex_1().min_w_0().flex().flex_col().gap(px(10.));
+        let worlds = if first_start {
+            worlds.child(self.welcome(cx))
+        } else {
+            worlds.child(top).child(body)
+        };
         let mods = self.home_mods(&instance.home, cx).flex_1().min_w_0();
         // Worlds, then what the profile plays with: side by side, or in that order down a
         // narrow window.
@@ -825,8 +821,8 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(10.))
-            .px(px(12.))
-            .py(px(18.))
+            .pr(px(12.))
+            .py(px(8.))
             .child(
                 div()
                     .text_size(px(tokens::DISPLAY))
