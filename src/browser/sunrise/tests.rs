@@ -476,6 +476,21 @@ fn installs_combined_native_content_as_one_smod() {
     let bundle = index::native::Bundle::read(&home.join(&entry.file)).unwrap();
     assert_eq!(bundle.files["assets/coords_hud/sounds.json"], b"{}");
     assert_eq!(crate::native_status::enabled(&home).len(), 1);
+    // The installed file is the downloaded one, byte for byte, so the native-code question names
+    // it as the registry does: also once the registry lists a newer version before it.
+    let named = |index: &Index| crate::native_status::build_inputs(&home, Some(index));
+    let as_registry = [crate::native_status::BuildInput {
+        id: "coords_hud".into(),
+        file: "coords_hud.smod".into(),
+        registry: Some(index.projects[0].name.clone()),
+    }];
+    assert_eq!(named(&index), as_registry);
+    let mut later = index.clone();
+    let mut newer = later.projects[0].versions[0].clone();
+    newer.version = "0.2.0".into();
+    newer.file.sha256 = "0".repeat(64);
+    later.projects[0].versions.insert(0, newer);
+    assert_eq!(named(&later), as_registry);
     installed::remove(&home, "coords_hud").unwrap();
     assert!(!home.join(entry.file).exists());
     fs::remove_dir_all(home).unwrap();
