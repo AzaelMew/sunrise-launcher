@@ -414,13 +414,8 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     }
 }
 
-/// Copies a pack file into the right folder of `home`, under a name not taken yet. Returns it,
-/// turned off.
-pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
-    let kind = kind_of(file)?;
-    let dir = home.join(kind.folder());
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = file.file_name().ok_or("A pack file has a name")?;
+/// `name` in `dir`, or `stem (2).ext`, `stem (3).ext`, ... : the first path not taken.
+fn free_target(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
     let stem = Path::new(name)
         .file_stem()
         .unwrap_or(name)
@@ -429,16 +424,130 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
-    let target = (1..)
+    (1..)
         .map(|n| match n {
             1 => dir.join(name),
             n => dir.join(format!("{stem} ({n}){ext}")),
         })
         .find(|p| !p.exists())
-        .unwrap();
+        .unwrap()
+}
+
+/// Copies a pack file into the right folder of `home`, under a name not taken yet. Returns it,
+/// turned off.
+pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
+    let kind = kind_of(file)?;
+    let dir = home.join(kind.folder());
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let name = file.file_name().ok_or("A pack file has a name")?;
+    let target = free_target(&dir, name);
     fs::copy(file, &target).map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
     read(&target, kind, &[])
         .ok_or_else(|| format!("{} is not a pack the game reads", target.display()))
+}
+
+/// The Installed page's add: like `add`, for a file the person said is a `kind` pack. A file of
+/// another kind, or a `.sshader` that fails the shader package's own checks, is refused before
+/// anything is written. The copy goes through a hidden temporary file in the folder and is put
+/// in place only whole, never over a pack already there (a same name gets `(2)`), so an error
+/// leaves the folder as it was.
+#[cfg(feature = "redesign-preview")]
+pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
+    let name = file.file_name().ok_or("A pack file has a name")?;
+    let found = kind_of(file)?;
+    if found != kind {
+        return Err(format!(
+            "{} is a {} pack, not a {} pack.",
+            name.to_string_lossy(),
+            found.folder(),
+            kind.folder()
+        ));
+    }
+    if file
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case(SHADER_PACKAGE))
+    {
+        sunrise_launcher_shader_api::Pack::read(file)?;
+    }
+    let dir = home.join(kind.folder());
+    let made = !dir.exists();
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let put = || -> Result<PathBuf, String> {
+        let mut temp = tempfile::Builder::new()
+            .prefix(".sunrise-add-")
+            .tempfile_in(&dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?;
+        let mut source =
+            fs::File::open(file).map_err(|e| format!("Could not read {}: {e}", file.display()))?;
+        std::io::copy(&mut source, temp.as_file_mut())
+            .map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
+        let target = free_target(&dir, name);
+        temp.persist_noclobber(&target)
+            .map_err(|e| format!("Could not add {}: {}", target.display(), e.error))?;
+        Ok(target)
+    };
+    let target = put();
+    if target.is_err() && made {
+        let _ = fs::remove_dir(&dir);
+    }
+    let target = target?;
+    read(&target, kind, &[]).ok_or_else(|| {
+        let _ = fs::remove_file(&target);
+        format!("{} is not a pack the game reads", name.to_string_lossy())
+    })
+}
+
+/// The enabled resource packs the folder shows, as `resourcePacks` holds them: each one's index
+/// in the raw list (bottom first) and its file name. Builtins and references to packs that are
+/// not there are left out.
+#[cfg(feature = "redesign-preview")]
+fn visible_enabled(home: &Path) -> (Vec<String>, Vec<(usize, String)>) {
+    let raw = option_list(&fs::read_to_string(home.join(OPTIONS)).unwrap_or_default());
+    let shown: Vec<String> = list(home, Kind::Resource)
+        .into_iter()
+        .map(|p| p.file)
+        .collect();
+    let slots = raw
+        .iter()
+        .enumerate()
+        .filter_map(|(i, id)| Some((i, id.strip_prefix("file/")?.to_string())))
+        .filter(|(_, name)| shown.contains(name))
+        .collect();
+    (raw, slots)
+}
+
+/// The enabled resource packs the folder shows, highest priority (the game's top) first.
+#[cfg(feature = "redesign-preview")]
+pub fn resource_order(home: &Path) -> Vec<String> {
+    let (_, slots) = visible_enabled(home);
+    slots.into_iter().rev().map(|(_, name)| name).collect()
+}
+
+/// Swaps `file` with `neighbor`, two enabled resource packs next to each other in
+/// `resource_order`. Everything else in `resourcePacks` stays where it is, builtins and
+/// references to missing packs included. A pair that is not enabled, not adjacent (the list
+/// changed since the page read it), or a pack listed twice is refused and nothing is written.
+#[cfg(feature = "redesign-preview")]
+pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), String> {
+    let (mut raw, slots) = visible_enabled(home);
+    let at = |name: &str| {
+        let mut found = slots.iter().filter(|(_, n)| n == name).map(|(i, _)| *i);
+        (found.next(), found.next().is_some())
+    };
+    let stale = || format!("{file} and {neighbor} are not next to each other any more.");
+    let ((Some(a), false), (Some(b), false)) = (at(file), at(neighbor)) else {
+        return Err(stale());
+    };
+    let rank = |i: usize| slots.iter().position(|(s, _)| *s == i).unwrap();
+    if rank(a).abs_diff(rank(b)) != 1 {
+        return Err(stale());
+    }
+    raw.swap(a, b);
+    set_line(
+        &home.join(OPTIONS),
+        "resourcePacks",
+        &serde_json::to_string(&raw).unwrap(),
+    )
 }
 
 /// Turns the pack off and moves it to the system's trash.

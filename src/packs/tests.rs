@@ -293,3 +293,151 @@ fn invalid_native_manifest_does_not_hide_a_valid_duplicate() {
     );
     fs::remove_dir_all(home).unwrap();
 }
+
+#[cfg(feature = "redesign-preview")]
+fn tree(root: &Path) -> Vec<String> {
+    fn walk(dir: &Path, out: &mut Vec<String>) {
+        for e in fs::read_dir(dir).unwrap().flatten() {
+            out.push(e.path().to_string_lossy().into_owned());
+            if e.path().is_dir() {
+                walk(&e.path(), out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(root, &mut out);
+    out.sort();
+    out
+}
+
+#[cfg(feature = "redesign-preview")]
+#[test]
+fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
+    let home = home("add-local");
+    let drops = scratch("add-local-drops");
+    zip_file(&drops.join("Zed.zip"), &[("pack.mcmeta", META)]);
+    zip_file(&drops.join("Shiny.zip"), &[("shaders/composite.fsh", b"")]);
+    zip_file(
+        &drops.join("glow.sshader"),
+        &[
+            (SHADER_MANIFEST, SHADER_META.as_bytes()),
+            ("post.wgsl", b""),
+        ],
+    );
+    // A manifest naming a file the package lacks: the shader package's own check fails it.
+    zip_file(
+        &drops.join("hollow.sshader"),
+        &[(SHADER_MANIFEST, SHADER_META.as_bytes())],
+    );
+    fs::write(drops.join("broken.sshader"), b"PK").unwrap();
+    let options = fs::read_to_string(home.join(OPTIONS)).unwrap();
+    let graphics = fs::read_to_string(home.join(GRAPHICS)).unwrap();
+
+    let before = tree(&home);
+    for (kind, file) in [
+        (Kind::Shader, "Zed.zip"),
+        (Kind::Resource, "Shiny.zip"),
+        (Kind::Resource, "glow.sshader"),
+        (Kind::Shader, "hollow.sshader"),
+        (Kind::Shader, "broken.sshader"),
+        (Kind::Resource, "missing.zip"),
+    ] {
+        assert!(add_local(&home, kind, &drops.join(file)).is_err(), "{file}");
+        assert_eq!(tree(&home), before, "{file} left something behind");
+    }
+
+    let first = add_local(&home, Kind::Resource, &drops.join("Zed.zip")).unwrap();
+    assert_eq!(
+        (first.file.as_str(), first.enabled),
+        ("Zed (2).zip", false),
+        "the same name never replaces a pack"
+    );
+    let again = add_local(&home, Kind::Resource, &drops.join("Zed.zip")).unwrap();
+    assert_eq!(again.file, "Zed (3).zip");
+    assert_eq!(
+        fs::read(home.join("resourcepacks/Zed.zip")).unwrap(),
+        fs::read(drops.join("Zed.zip")).unwrap()
+    );
+    let glow = add_local(&home, Kind::Shader, &drops.join("glow.sshader")).unwrap();
+    assert!(!glow.enabled && home.join("shaderpacks/glow.sshader").is_file());
+    assert!(
+        tree(&home).iter().all(|p| !p.contains(".sunrise-add-")),
+        "no temporary file stays"
+    );
+    assert_eq!(fs::read_to_string(home.join(OPTIONS)).unwrap(), options);
+    assert_eq!(fs::read_to_string(home.join(GRAPHICS)).unwrap(), graphics);
+
+    let empty = scratch("add-local-empty");
+    assert!(add_local(&empty, Kind::Shader, &drops.join("Zed.zip")).is_err());
+    assert!(
+        fs::read_dir(&empty).unwrap().next().is_none(),
+        "a refused file makes no folder"
+    );
+    for dir in [home, drops, empty] {
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(feature = "redesign-preview")]
+#[test]
+fn resource_order_lists_enabled_packs_top_first_and_moves_adjacent_pairs() {
+    let home = home("order");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip", "C.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    let set = |list: &str| {
+        fs::write(
+            home.join(OPTIONS),
+            format!("version:4786\nresourcePacks:{list}\nlang:fr_ch\n"),
+        )
+        .unwrap()
+    };
+    let line = || {
+        line_value(
+            &fs::read_to_string(home.join(OPTIONS)).unwrap(),
+            "resourcePacks",
+        )
+        .unwrap()
+    };
+    set(
+        r#"["vanilla","file/A.zip","mod_resources","file/gone.zip","file/B.zip","file/C.zip","file/Glass.zip"]"#,
+    );
+    fs::remove_file(rp.join("Glass.zip")).unwrap();
+    assert_eq!(resource_order(&home), ["C.zip", "B.zip", "A.zip"]);
+
+    // Adjacent among the packs shown, in either direction; the rest keeps its place.
+    move_resource(&home, "A.zip", "B.zip").unwrap();
+    assert_eq!(
+        line(),
+        r#"["vanilla","file/B.zip","mod_resources","file/gone.zip","file/A.zip","file/C.zip","file/Glass.zip"]"#
+    );
+    assert_eq!(resource_order(&home), ["C.zip", "A.zip", "B.zip"]);
+    move_resource(&home, "C.zip", "A.zip").unwrap();
+    assert_eq!(resource_order(&home), ["A.zip", "C.zip", "B.zip"]);
+
+    // A stale page: not adjacent, not enabled, itself, unknown, or a pack listed twice.
+    let before = fs::read_to_string(home.join(OPTIONS)).unwrap();
+    for (a, b) in [
+        ("A.zip", "B.zip"),
+        ("A.zip", "A.zip"),
+        ("Folder Pack", "A.zip"),
+        ("gone.zip", "A.zip"),
+        ("nope.zip", "A.zip"),
+    ] {
+        assert!(move_resource(&home, a, b).is_err(), "{a} {b}");
+    }
+    set(r#"["file/A.zip","file/B.zip","file/A.zip"]"#);
+    let before_twice = fs::read_to_string(home.join(OPTIONS)).unwrap();
+    assert!(move_resource(&home, "A.zip", "B.zip").is_err());
+    assert_eq!(
+        fs::read_to_string(home.join(OPTIONS)).unwrap(),
+        before_twice
+    );
+    assert_ne!(before, before_twice);
+    fs::remove_file(home.join(OPTIONS)).unwrap();
+    assert!(resource_order(&home).is_empty());
+    assert!(move_resource(&home, "A.zip", "B.zip").is_err());
+    assert!(!home.join(OPTIONS).exists());
+    fs::remove_dir_all(&home).unwrap();
+}
