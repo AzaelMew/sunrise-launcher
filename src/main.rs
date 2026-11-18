@@ -71,6 +71,7 @@ mod profile_heads;
 mod rail;
 mod screenshots_page;
 mod scrollbar;
+mod selectable;
 mod servers_page;
 mod settings;
 #[cfg(windows)]

@@ -139,6 +139,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
     }
     flush(&mut blocks, &mut text, &mut spans, &mut item, None);
 
+    let blocks_drawn = std::cell::Cell::new(0u64);
     let styled = |text: String, spans: Spans| {
         let highlights = spans.into_iter().map(|(range, span)| {
             let style = match span {
@@ -163,7 +164,14 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
             };
             (range, style)
         });
-        StyledText::new(SharedString::from(text)).with_highlights(highlights.collect::<Vec<_>>())
+        let text = SharedString::from(text);
+        // Numbered, so two blocks with the same words are two selections.
+        let nth = blocks_drawn.get();
+        blocks_drawn.set(nth + 1);
+        crate::selectable::Selectable::styled(
+            gpui::ElementId::NamedInteger(text.clone(), nth),
+            StyledText::new(text).with_highlights(highlights.collect::<Vec<_>>()),
+        )
     };
     // The glass look sets notes as the mockup's: 14 px on 1.55 at 75 %, lists with square
     // bullets, 6 px apart.
@@ -220,7 +228,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
                 .text_size(px(12.))
                 .line_height(px(18.))
                 .text_color(t.ink)
-                .child(code.trim_end().to_string())
+                .child(crate::selectable::selectable(code.trim_end().to_string()))
                 .into_any_element(),
             Block::Rule => div().h(px(1.)).bg(t.rule).my(px(8.)).into_any_element(),
             Block::Table(rows) => {

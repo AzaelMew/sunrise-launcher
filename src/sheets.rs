@@ -161,11 +161,11 @@ fn card() -> Div {
         .bg(rgb(palette().background))
 }
 
-fn muted(text: impl IntoElement) -> Div {
+fn muted(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::LABEL))
         .text_color(rgb(palette().muted))
-        .child(text)
+        .child(crate::selectable::selectable(text))
 }
 
 fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
@@ -258,7 +258,7 @@ pub(crate) fn title(text: String) -> Div {
     div()
         .text_size(px(tokens::TITLE))
         .font_weight(FontWeight::BOLD)
-        .child(text)
+        .child(crate::selectable::selectable(text))
 }
 
 /// Moves the keyboard to the next Tab stop inside the layer that `focus` holds, or the one
