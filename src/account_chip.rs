@@ -119,10 +119,22 @@ impl Launcher {
     /// signed in.
     pub(crate) fn account_chip(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         if self.accounts.accounts.is_empty() {
-            return crate::microsoft::sign_in_button("account-sign-in", &self.theme)
-                .tab_index(0)
-                .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
-                .seen()
+            let p = palette();
+            return crate::frame::input(false)
+                .id("account-sign-in")
+                .flex_none()
+                .h(px(tokens::ACTION))
+                .px(px(12.))
+                .gap(px(8.))
+                .text_size(px(tokens::LABEL))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(p.chrome_text))
+                .whitespace_nowrap()
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(p.chrome_raised)))
+                .reach_edge()
+                .child(crate::microsoft::logo(18.))
+                .child(tr("Sign in with Microsoft"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.account_action(Action::Add);
                     cx.notify();
