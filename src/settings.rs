@@ -722,11 +722,16 @@ impl Launcher {
                 })),
             );
         }
-        cache.push(row(
+        let (title, about) = (
             tr("Keep at most"),
             tr("Past this, the oldest downloads are cleared by themselves."),
-            limits,
-        ));
+        );
+        // Five chips beside the words leave the words no room in a narrow window.
+        cache.push(if self.window_width < 960. {
+            stacked(title, about, limits.flex().flex_wrap().gap(px(6.)))
+        } else {
+            row(title, about, limits)
+        });
         for (n, category) in Category::ALL.into_iter().enumerate() {
             let found = self
                 .storage_report
