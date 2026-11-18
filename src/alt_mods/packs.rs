@@ -1,6 +1,6 @@
 //! The selected setup’s local collections. Reading a list never creates its folder. Choosing a
 //! file targets the collection that opened the dialog, even if another setup exists.
-use super::ui::{c, card, dim, muted, primary, switch};
+use super::ui::{c, card, chip, dim, muted, primary, switch};
 use super::*;
 use crate::alt::{button, LINE, MUTED, SOFT, TEXT};
 use gpui::ExternalPaths;
@@ -41,6 +41,7 @@ impl Launcher {
             .text_color(c(TEXT))
             .child(header)
             .children(self.alt_strip(cx))
+            .child(self.collection_tabs(cx))
             .child(self.installed_packs(kind, cx))
             .drag_over::<ExternalPaths>(|s, _, _, _| s.border_1().border_color(c(MUTED)))
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
@@ -51,7 +52,7 @@ impl Launcher {
     }
 
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
-        let mut tabs = div().flex().items_center().gap(px(8.));
+        let mut tabs = div().flex().flex_wrap().items_center().gap(px(8.));
         for (index, (kind, label)) in [
             (Kind::Resource, tr("Resource packs")),
             (Kind::Shader, tr("Shader packs")),
@@ -61,15 +62,18 @@ impl Launcher {
         {
             let chosen = self.alt.mods.collection == kind;
             tabs = tabs.child(
-                button(ElementId::named_usize("alt-collection", index), label)
-                    .when(chosen, |d| d.bg(c(LINE)).border_color(c(TEXT)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.alt.mods.collection != kind {
-                            this.alt.mods.collection = kind;
-                            this.reset_pack_view();
-                        }
-                        cx.notify();
-                    })),
+                chip(
+                    ElementId::named_usize("alt-collection", index),
+                    label,
+                    chosen,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.alt.mods.collection != kind {
+                        this.alt.mods.collection = kind;
+                        this.reset_pack_view();
+                    }
+                    cx.notify();
+                })),
             );
         }
         tabs
@@ -181,23 +185,20 @@ impl Launcher {
             return div();
         };
         let home = instance.home.clone();
-        let name = instance.name.clone();
         self.load_packs_list(home.clone());
         let editable = self.can_edit_packs(&home, kind);
         let query = self.alt.mods.have.text().trim().to_lowercase();
-        let (title, detail, empty) = match kind {
+        let (detail, empty) = match kind {
             Kind::Resource => (
-                tr("Resource packs"),
                 tr("Higher packs take priority. A pack you turn on goes to the top."),
-                tr("Drop a resource pack (.zip) here or choose Import from file."),
+                tr("Packs you add from Discover show up here. You can also drop a resource pack (.zip) on this page."),
             ),
             Kind::Shader => (
-                tr("Shader packs"),
                 tr("Choose one shader pack at a time, or leave them all off."),
-                tr("Drop a shader pack (.zip or .sshader) here or choose Import from file."),
+                tr("Packs you add from Discover show up here. You can also drop a shader pack (.zip or .sshader) on this page."),
             ),
         };
-        let add = primary("alt-pack-import", tr("Import from file…"));
+        let add = button("alt-pack-import", tr("Import from file…"));
         let add = if editable {
             let dest = home.clone();
             add.on_click(
@@ -223,26 +224,9 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(14.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(3.))
-                    .child(
-                        div()
-                            .text_size(px(19.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(trf(
-                                "{collection} · {setup}",
-                                &[("collection", title), ("setup", &name)],
-                            )),
-                    )
-                    .child(muted(detail)),
-            )
-            .child(open)
-            .child(add);
+            .child(div().flex_1().min_w_0().child(muted(detail)))
+            .child(open.flex_none())
+            .child(add.flex_none());
         let items: Vec<_> = match kind {
             Kind::Resource => self
                 .game_packs
@@ -399,15 +383,35 @@ impl Launcher {
             };
             list = list.child(row.child(remove).child(toggle));
         }
-        if shown == 0 {
+        if items.is_empty() {
+            let (none, find) = match kind {
+                Kind::Resource => (
+                    tr("No resource packs installed yet"),
+                    tr("Find resource packs in Discover"),
+                ),
+                Kind::Shader => (
+                    tr("No shader packs installed yet"),
+                    tr("Find shader packs in Discover"),
+                ),
+            };
             list = list.child(
-                muted(if items.is_empty() {
-                    empty
-                } else {
-                    tr("No packs match your search.")
-                })
-                .p(px(20.)),
+                div()
+                    .p(px(24.))
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(12.))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(none))
+                    .child(muted(empty))
+                    .child(primary("alt-packs-browse", find).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.alt_choose_view(Page::PackFind);
+                            cx.notify();
+                        },
+                    ))),
             );
+        } else if shown == 0 {
+            list = list.child(muted(tr("No packs match your search.")).p(px(20.)));
         }
         div()
             .flex_1()

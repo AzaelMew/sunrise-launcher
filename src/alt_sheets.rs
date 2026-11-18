@@ -22,6 +22,8 @@ pub(crate) enum Sheet {
     Build,
     /// Choose what to do with a held update.
     Resolve,
+    /// A problem's whole text, opened from the play bar's one sentence.
+    Notice,
 }
 
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
@@ -42,6 +44,10 @@ pub(crate) struct AltSheetsState {
     error: Option<String>,
     /// The Build chooser lists builds to keep.
     picking: bool,
+    /// The Resolve sheet shows what the check said word for word.
+    details: bool,
+    /// What the Notice sheet says.
+    notice: String,
     example_closed: bool,
 }
 
@@ -69,10 +75,11 @@ pub(crate) struct Held {
     pub(crate) to: String,
     /// The build played now.
     pub(crate) plays: String,
-    /// What the check said first: how many mods fit.
-    pub(crate) head: String,
-    /// One sentence per mod that does not fit, or per world at stake.
-    pub(crate) lines: Vec<String>,
+    /// The mods that don't work with it, by id.
+    pub(crate) mods: Vec<String>,
+    /// What the check or the stopped build said, word for word: for a mod's author, behind
+    /// "Details".
+    pub(crate) details: Vec<String>,
     /// Worlds that would lose a mod's content.
     pub(crate) worlds: Vec<String>,
     /// A mod the tool refuses on any build: there is nothing to update to.
@@ -85,6 +92,12 @@ pub(crate) struct Held {
 
 /// `Nov 17` for a dated build, else the tag.
 pub(crate) fn build_name(tag: &str) -> String {
+    // A game built with mods is named by the build it was made from.
+    if native_mods::is_native(tag) {
+        if let Some(base) = crate::glass_instance::native_base(tag) {
+            return build_name(&base);
+        }
+    }
     sunrise_launcher::nightly::date_of(tag)
         .map(sunrise_launcher::nightly::day)
         .unwrap_or_else(|| tag.to_owned())
@@ -96,13 +109,11 @@ impl Held {
         // does not otherwise; a refusal or a world at stake is a hold as well. A fit is an offer
         // (the old Build card's), not a hold.
         let held = check.blocked || !check.worlds.is_empty() || check.summary.contains('\n');
-        let mut parts = check.summary.lines().map(str::to_owned);
-        let head = parts.next().unwrap_or_default();
         held.then(|| Self {
             to: build_name(&check.to),
             plays: build_name(plays),
-            head,
-            lines: parts.collect(),
+            mods: check.off.iter().map(|(id, _)| id.clone()).collect(),
+            details: check.summary.lines().map(str::to_owned).collect(),
             worlds: check.worlds,
             blocked: check.blocked,
             base: check.to,
@@ -121,7 +132,8 @@ enum Example {
 fn example() -> Option<Example> {
     match std::env::var("SUNRISE_PREVIEW_EXAMPLES").as_deref() {
         Ok("consent") => Some(Example::Consent),
-        Ok("") | Err(_) => None,
+        // `build` is the build strip's example (`alt_build`).
+        Ok("" | "build") | Err(_) => None,
         Ok(_) => Some(Example::Resolve),
     }
 }
@@ -168,6 +180,7 @@ fn frame(id: &'static str, width: f32, body: Div, cx: &mut Context<Launcher>) ->
         .flex()
         .items_center()
         .justify_center()
+        .p(px(16.))
         .bg(gpui::black().opacity(0.55))
         .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
             cx.stop_propagation()
@@ -184,8 +197,12 @@ fn frame(id: &'static str, width: f32, body: Div, cx: &mut Context<Launcher>) ->
             }),
         )
         .child(
-            body.w(px(width))
+            // Never taller or wider than the window: a small one scrolls the sheet.
+            body.id((id, 1usize))
+                .w(px(width))
                 .max_w_full()
+                .max_h_full()
+                .overflow_y_scroll()
                 .p(px(28.))
                 .gap(px(16.))
                 .rounded(px(16.))
@@ -220,78 +237,19 @@ fn banner() -> Div {
         ))
 }
 
-fn row(label: &str, value: String) -> Div {
-    div()
-        .flex()
-        .gap(px(12.))
-        .text_size(px(13.))
-        .child(
-            div()
-                .w(px(56.))
-                .flex_none()
-                .text_color(rgb(MUTED))
-                .child(label.to_owned()),
-        )
-        .child(div().flex_1().min_w_0().text_color(rgb(TEXT)).child(value))
-}
-
-/// One outcome of the Resolve sheet: the same four rows each, and its own button.
-fn column(
-    title: String,
-    badge: Option<&str>,
-    safe: bool,
-    rows: [String; 4],
-    action: Option<Stateful<Div>>,
-    note: Option<String>,
-) -> Div {
-    let [game, mods, worlds, after] = rows;
-    div()
-        .relative()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(px(10.))
-        .p(px(16.))
-        .rounded(px(14.))
-        .border_1()
-        .border_color(rgb(if safe { TEXT } else { LINE }))
-        .bg(rgb(BG))
-        .children(badge.map(|b| {
-            div()
-                .absolute()
-                .top(px(18.))
-                .right(px(16.))
-                .px(px(8.))
-                .py(px(2.))
-                .rounded(px(4.))
-                .bg(rgb(TEXT))
-                .text_color(rgb(BG))
-                .text_size(px(10.))
-                .font_weight(FontWeight::BOLD)
-                .child(b.to_uppercase())
-        }))
-        .child(
-            div()
-                .text_size(px(17.))
-                .font_weight(FontWeight::BOLD)
-                .child(title),
-        )
-        .child(row(tr("Game"), game))
-        .child(row(tr("Mods"), mods))
-        .child(row(tr("Worlds"), worlds))
-        .child(row(tr("After"), after))
-        .child(div().flex_1())
-        .children(note.map(|n| muted(n).text_size(px(12.))))
-        .children(action)
-}
-
 impl Launcher {
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_alt_sheet(&mut self, sheet: Sheet) {
         self.alt.sheets.error = None;
         self.alt.sheets.picking = false;
+        self.alt.sheets.details = false;
         self.alt.sheet = Some(sheet);
+    }
+
+    /// Opens a problem's whole text as a sheet.
+    pub(crate) fn open_alt_notice(&mut self, text: String) {
+        self.open_alt_sheet(Sheet::Notice);
+        self.alt.sheets.notice = text;
     }
 
     /// The worker asks before dependency build programs run. The sheet answers `reply`; losing the
@@ -336,6 +294,12 @@ impl Launcher {
     /// sheet ([`Self::alt_check_native`]). It never runs a check itself, because a check stages
     /// files into the real build folder.
     pub(crate) fn alt_held_update(&self) -> Option<Held> {
+        // The labelled example is reached the way a real hold is: from the play bar.
+        self.alt_held_real()
+            .or_else(|| (example() == Some(Example::Resolve)).then(example_held))
+    }
+
+    fn alt_held_real(&self) -> Option<Held> {
         let instance = self.selected_instance()?;
         let plays = self.version_of(instance)?.clone();
         if let Some(stake) = self
@@ -346,8 +310,8 @@ impl Launcher {
             return Some(Held {
                 to: build_name(&stake.base),
                 plays: build_name(&plays),
-                head: String::new(),
-                lines: stake.text.split("\n\n").map(str::to_owned).collect(),
+                mods: stake.mods.clone(),
+                details: stake.text.split("\n\n").map(str::to_owned).collect(),
                 worlds: stake.worlds.clone(),
                 blocked: false,
                 base: stake.base.clone(),
@@ -480,16 +444,22 @@ impl Launcher {
         }
         match self.alt.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
+            Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Resolve) => match self.alt_held_update() {
-                Some(held) => Some(self.resolve_sheet(held, false, cx)),
+                Some(held) => {
+                    let sample = held.base == EXAMPLE_BASE;
+                    Some(self.resolve_sheet(held, sample, cx))
+                }
                 None => {
                     // Nothing is held any more (it was resolved elsewhere): close quietly.
                     self.alt.sheet = None;
                     None
                 }
             },
+            // The consent example has no entry point of its own; the held-update example is
+            // opened from the play bar like a real one, never by itself.
             None => match example().filter(|_| !self.alt.sheets.example_closed)? {
-                Example::Resolve => Some(self.resolve_sheet(example_held(), true, cx)),
+                Example::Resolve => None,
                 Example::Consent => Some(self.example_consent_sheet(cx)),
             },
         }
@@ -497,164 +467,242 @@ impl Launcher {
 
     // ---- Resolve ----
 
+    /// An update is out and some mods don't work with it yet: which, and the two ways on.
+    /// Staying is the default and what closing does; nothing here runs until a button is pressed.
     fn resolve_sheet(&mut self, held: Held, sample: bool, cx: &mut Context<Self>) -> Stateful<Div> {
         let Held {
             to,
             plays,
-            head,
-            lines,
+            mods,
+            details,
             worlds,
             blocked,
+            base,
             ..
-        } = held.clone();
-        let heading = if blocked {
-            trf("A mod blocks the update to {to}", &[("to", &to)])
-        } else {
-            trf("Some mods don't fit {to}", &[("to", &to)])
+        } = held;
+        let known = self.alt_mods_named(&mods);
+        let names: Vec<String> = known.iter().map(|(name, _)| name.clone()).collect();
+        let them = match names.as_slice() {
+            [one] => one.clone(),
+            _ => tr("them").to_string(),
         };
-        let what = div()
+        let heading = match (blocked, names.as_slice()) {
+            (true, _) => trf("{to} is out, but one of your mods stops it", &[("to", &to)]),
+            (false, [one]) => trf(
+                "{to} is out, but {mod} doesn't work with it yet",
+                &[("to", &to), ("mod", one)],
+            ),
+            (false, many) => trf(
+                "{to} is out, but {count} of your mods don't work with it yet",
+                &[("to", &to), ("count", &many.len().to_string())],
+            ),
+        };
+        let lead = if blocked {
+            trf(
+                "One of your mods can't be built for any game build. Remove it under Mods, or wait for its author. Until then you keep playing {plays}.",
+                &[("plays", &plays)],
+            )
+        } else {
+            trf(
+                "You can keep playing {plays} and wait, or update without {them}.",
+                &[("plays", &plays), ("them", &them)],
+            )
+        };
+
+        // The mods, each with what can be done about it right here.
+        let mut can_update = false;
+        let mut list = div()
             .flex()
             .flex_col()
-            .gap(px(6.))
-            .p(px(14.))
             .rounded(px(12.))
             .border_1()
             .border_color(rgb(LINE))
-            .bg(rgb(BG))
-            .children((!head.is_empty()).then(|| div().text_size(px(13.)).child(head)))
-            .children(lines.into_iter().map(muted));
-        let stay = button("alt-resolve-stay", native_mods::fit::stay(&plays)).on_click(
-            cx.listener(|this, _: &ClickEvent, _, cx| {
-                // Staying is what already happens: nothing is written.
-                this.close_alt_sheet();
-                cx.notify();
-            }),
-        );
-        let stay_col = column(
-            trf("Stay on {build}", &[("build", &plays)]),
-            Some(tr("Safe")),
-            true,
-            [
-                plays.clone(),
-                tr("As they are").into(),
-                tr("Unchanged").into(),
-                tr("Game updates wait until you update the mods or choose again").into(),
-            ],
-            Some(stay),
-            Some(tr("This is what you have now.").into()),
-        );
-        let first = column(
-            tr("Update the mods first").into(),
-            None,
-            false,
-            [
-                plays.clone(),
-                tr("Update any with a newer version in Mods").into(),
-                tr("Unchanged").into(),
-                tr("This is checked again and the update is offered once every mod fits").into(),
-            ],
-            None,
-            Some(tr("Done in Mods; nothing to press here.").into()),
-        );
-        let third = if blocked {
-            column(
-                tr("Update").into(),
-                None,
-                false,
-                [
-                    plays.clone(),
-                    tr("Refused on this build").into(),
-                    tr("Unchanged").into(),
-                    tr("Fix or remove that mod first").into(),
-                ],
-                None,
-                Some(tr("There is nothing to update to until then.").into()),
-            )
-        } else if worlds.is_empty() {
-            let go = button("alt-resolve-update", tr("Update game"));
-            let go = if sample {
-                go.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.close_alt_sheet();
-                    cx.notify();
-                }))
-            } else {
-                let base = held.base.clone();
-                go.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.close_alt_sheet();
-                    this.build_native_on(Some(base.clone()), false);
-                    cx.notify();
-                }))
+            .bg(rgb(BG));
+        for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
+            let about = match newer {
+                Some(version) => trf(
+                    "Version {version} is out. Update it, then check the game update again.",
+                    &[("version", version)],
+                ),
+                None => tr(
+                    "Needs an update from its author. There is no newer version yet; when there is, it shows here and under Mods.",
+                )
+                .to_string(),
             };
-            column(
-                tr("Update without them").into(),
-                None,
-                false,
-                [
-                    to.clone(),
-                    tr("The ones that don't fit are turned off, not removed").into(),
-                    tr("Unchanged: none use those mods").into(),
-                    tr("They can come back when their authors publish a version that fits").into(),
-                ],
-                Some(go),
-                None,
-            )
-        } else {
-            let go = button(
-                "alt-resolve-backup",
-                if worlds.len() == 1 {
-                    native_mods::fit::back_up_and_update(1)
-                } else {
-                    native_mods::fit::back_up_and_update(2)
-                },
-            )
-            .text_color(rgb(BAD));
-            let go = if sample {
-                go.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            let update = newer.as_ref().map(|_| {
+                can_update = true;
+                let id = id.clone();
+                button(
+                    ElementId::named_usize("alt-resolve-mod", n),
+                    trf("Update {mod}", &[("mod", name)]),
+                )
+                .bg(rgb(TEXT))
+                .border_color(rgb(TEXT))
+                .text_color(rgb(BG))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.close_alt_sheet();
+                    this.alt_update_mod(&id);
                     cx.notify();
                 }))
-            } else {
-                let base = held.base.clone();
-                go.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.close_alt_sheet();
-                    // The worker backs each world up and checks it before anything is turned off;
-                    // a backup that fails stops the build with nothing changed.
-                    this.build_native_on(Some(base.clone()), true);
-                    cx.notify();
-                }))
-            };
-            column(
-                tr("Back up and go on").into(),
-                None,
-                false,
-                [
-                    to.clone(),
-                    tr("The ones that don't fit are turned off, not removed").into(),
+            });
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .p(px(14.))
+                    .when(n > 0, |d| d.border_t_1().border_color(rgb(LINE)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone()))
+                            .child(muted(about)),
+                    )
+                    .children(update),
+            );
+        }
+
+        // What updating without them does, said before the button that does it.
+        let without = (!blocked).then(|| {
+            let kept = trf(
+                "Updating without {them} turns it off; it isn't removed, and you can turn it back on when it fits.",
+                &[("them", &them)],
+            );
+            match worlds.as_slice() {
+                [] => kept,
+                saved => format!(
+                    "{kept} {}",
                     trf(
-                        "{worlds} is backed up first. Opened without the mod, it loses what the mod stored, for good.",
-                        &[("worlds", &worlds.join(", "))],
-                    ),
-                    tr("If a backup can't be made and checked, nothing is changed").into(),
-                ],
-                Some(go),
-                None,
+                        "{worlds} is backed up first: opened without the mod, a world loses what the mod added to it, for good.",
+                        &[("worlds", &saved.join(", "))],
+                    )
+                ),
+            }
+        });
+
+        let stay = button(
+            "alt-resolve-stay",
+            trf("Stay on {build} for now", &[("build", &plays)]),
+        )
+        // Recommended, unless a mod can simply be updated.
+        .when(!can_update, |b| {
+            b.bg(rgb(TEXT)).border_color(rgb(TEXT)).text_color(rgb(BG))
+        })
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            // Staying is what already happens: nothing is written.
+            this.close_alt_sheet();
+            cx.notify();
+        }));
+        let go = (!blocked).then(|| {
+            let back_up = !worlds.is_empty();
+            button(
+                "alt-resolve-update",
+                trf("Update without {them}", &[("them", &them)]),
             )
-        };
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.close_alt_sheet();
+                if !sample {
+                    // With worlds at stake the worker backs each up and checks the backup before
+                    // anything is turned off; a backup that fails stops with nothing changed.
+                    this.build_native_on(Some(base.clone()), back_up);
+                }
+                cx.notify();
+            }))
+        });
+
+        let open = self.alt.sheets.details;
+        let more = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                div()
+                    .id("alt-resolve-details")
+                    .tab_index(0)
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(12.))
+                    .text_color(rgb(MUTED))
+                    .cursor_pointer()
+                    .child(blocks::icon(
+                        if open {
+                            "chevron-down"
+                        } else {
+                            "chevron-right"
+                        },
+                        11.,
+                        rgb(MUTED).into(),
+                    ))
+                    .child(tr("Details"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.alt.sheets.details = !this.alt.sheets.details;
+                        cx.notify();
+                    })),
+            )
+            .children(open.then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .p(px(12.))
+                    .rounded(px(8.))
+                    .bg(rgb(BG))
+                    .font_family(crate::theme::MONO)
+                    .text_size(px(11.5))
+                    .text_color(rgb(MUTED))
+                    .children(details)
+            }));
+
         let body = div()
             .flex()
             .flex_col()
             .children(sample.then(banner))
             .child(title(heading))
-            .child(muted(trf(
-                "You are still playing {plays}. The update to {to} is on hold until you pick one of these.",
-                &[("plays", &plays), ("to", &to)],
-            )))
-            .child(what)
-            .child(div().flex().gap(px(12.)).child(first).child(stay_col).child(third))
-            .child(muted(
-                tr("Closing this sheet is the same as staying. Nothing changes until you choose."),
+            .child(div().text_size(px(14.)).child(lead))
+            .children((!mods.is_empty()).then_some(list))
+            .children(without.map(muted))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(8.))
+                    .children(go)
+                    .child(stay),
+            )
+            .child(more);
+        frame("alt-resolve", 580., body, cx)
+    }
+
+    /// What went wrong, in full: each paragraph on its own, with one way out.
+    fn notice_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let paragraphs: Vec<Div> = self
+            .alt
+            .sheets
+            .notice
+            .split('\n')
+            .filter(|p| !p.trim().is_empty())
+            .map(|p| div().text_size(px(13.5)).child(p.to_owned()))
+            .collect();
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(title(tr("What went wrong").into()))
+            .child(div().flex().flex_col().gap(px(10.)).children(paragraphs))
+            .child(div().flex().justify_end().child(
+                button("alt-notice-close", tr("Close")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.close_alt_sheet();
+                        cx.notify();
+                    },
+                )),
             ));
-        frame("alt-resolve", 980., body, cx)
+        frame("alt-notice", 560., body, cx)
     }
 
     // ---- Consent ----
@@ -1015,7 +1063,7 @@ impl Launcher {
         })
     }
 
-    fn pin_alt_build(&mut self, version: Option<String>, channel: instances::Channel) {
+    pub(crate) fn pin_alt_build(&mut self, version: Option<String>, channel: instances::Channel) {
         let Some(instance) = self.selected_instance() else {
             return;
         };
@@ -1094,6 +1142,8 @@ impl Launcher {
                 )
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .flex()
                         .flex_col()
                         .child(div().text_size(px(14.)).child(head))
@@ -1263,7 +1313,11 @@ impl Launcher {
                 }),
             )
             .child(
-                body.absolute()
+                body.id("alt-build-body")
+                    .absolute()
+                    // Never taller than the room above the bar: a long list scrolls.
+                    .max_h(px((self.window_height - 94.).max(120.)))
+                    .overflow_y_scroll()
                     // Under the build chip, which starts the bar when nobody is signed in.
                     .left(px(if self.accounts.selected().is_some() {
                         148.
@@ -1322,17 +1376,20 @@ fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
 }
 
 /// `alt/06`'s case, for `SUNRISE_PREVIEW_EXAMPLES`.
+const EXAMPLE_BASE: &str = "example";
+
 fn example_held() -> Held {
     Held {
         to: "Nov 17".into(),
-        plays: "Nov 14".into(),
-        head: "Move to Nov 17? 1 of your 2 native mods fit it. (example)".into(),
-        lines: vec![
-            "JEI 1.8.0 does not: it was made for the Nov 14 game. It will be switched off until its author makes a version that fits. (example)".into(),
+        plays: "Nov 16".into(),
+        mods: vec!["JEI".into()],
+        details: vec![
+            "Move to Nov 17? 1 of your 2 native mods fit it. (example)".into(),
+            "JEI 1.8.0 does not: it was made for the Nov 16 game. It will be switched off until its author makes a version that fits. (example)".into(),
         ],
         worlds: vec!["Harbor at Low Tide".into()],
         blocked: false,
-        base: "example".into(),
+        base: EXAMPLE_BASE.into(),
         stopped: false,
     }
 }
@@ -1347,6 +1404,7 @@ mod tests {
             summary,
             worlds: worlds.iter().map(|w| w.to_string()).collect(),
             blocked,
+            off: Vec::new(),
         }
     }
 
@@ -1356,15 +1414,16 @@ mod tests {
         assert!(Held::of_check(check(fits, &[], false), "nightly-2026-11-14-0000000").is_none());
         let off = [("jei".to_string(), "made for another game".to_string())];
         let summary = native_mods::fit::update_summary("Nov 17", 2, &off);
-        let held = Held::of_check(check(summary, &[], false), "nightly-2026-11-14-0000000")
+        let mut misfit = check(summary, &[], false);
+        misfit.off = off.to_vec();
+        let held = Held::of_check(misfit, "nightly-2026-11-14-0000000")
             .expect("a mod that does not fit holds the update");
         assert_eq!(
             (held.to.as_str(), held.plays.as_str()),
             ("Nov 17", "Nov 14")
         );
-        assert_eq!(held.lines.len(), 1);
-        assert!(held.lines[0].starts_with("jei does not"));
-        assert!(!held.head.is_empty());
+        assert_eq!(held.mods, ["jei"]);
+        assert!(held.details[1].starts_with("jei does not"));
     }
 
     #[test]

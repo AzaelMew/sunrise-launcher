@@ -1,8 +1,9 @@
-//! Discover's resource packs and data packs, searched on Modrinth only and installed through the
-//! browser's checked path (`browser::installed`: checksum before anything is put in place).
+//! Packs › Discover: resource and data packs from Modrinth, shader packs from Sunrise's registry
+//! and Modrinth, installed through the browser's checked path (`browser::installed`: checksum
+//! before anything is put in place). Each card names its source.
 //!
-//! **Scope.** Only vanilla resource packs and data packs: no Java mods, modpacks or shader packs
-//! come from here, and a hit of any other kind or source is dropped ([`keep`]).
+//! **Scope.** Only packs of the chosen kind: no mods or modpacks come from here, and a hit of
+//! any other kind or source is dropped ([`keep`]).
 //!
 //! **Where a pack goes.** A resource pack goes into the selected setup's `resourcepacks/`. A data
 //! pack goes into one *explicit* world of the selected setup: the one Home's "Data packs" opened
@@ -13,9 +14,9 @@
 //! **Nothing else changes.** Installing never turns a pack on, starts the game or edits options;
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`alt_mutating`).
-use super::ui::{c, card, dim, muted, tag, tile};
+use super::ui::{added_mark, browse_card, c, card, chip, columns, dim, muted, tag};
 use super::*;
-use crate::alt::{button, LINE, MUTED, TEXT};
+use crate::alt::{button, TEXT};
 use std::path::Path;
 use sunrise_launcher::browser::{self, images, installed, Kind, Project, Query};
 use sunrise_launcher::worlds;
@@ -27,34 +28,30 @@ const TEXT_MAX: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub(super) enum Scope {
-    /// The Sunrise registry's mods (the existing Discover).
     #[default]
-    Mods,
     Resource,
-    Data,
     /// Iris-format zips from Modrinth and Sunrise's own `.sshader` packs from its registry.
     Shader,
+    Data,
 }
 
 impl Scope {
-    pub(super) const ALL: [Scope; 4] = [Scope::Mods, Scope::Resource, Scope::Data, Scope::Shader];
+    pub(super) const ALL: [Scope; 3] = [Scope::Resource, Scope::Shader, Scope::Data];
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            Scope::Mods => tr("Mods"),
             Scope::Resource => tr("Resource packs"),
             Scope::Data => tr("Data packs"),
             Scope::Shader => tr("Shader packs"),
         }
     }
 
-    /// The kind searched on Modrinth; none for the registry's mods.
-    fn kind(self) -> Option<Kind> {
+    /// The kind searched for.
+    fn kind(self) -> Kind {
         match self {
-            Scope::Mods => None,
-            Scope::Resource => Some(Kind::ResourcePack),
-            Scope::Data => Some(Kind::DataPack),
-            Scope::Shader => Some(Kind::Shader),
+            Scope::Resource => Kind::ResourcePack,
+            Scope::Data => Kind::DataPack,
+            Scope::Shader => Kind::Shader,
         }
     }
 }
@@ -88,7 +85,7 @@ pub(super) struct PackState {
 impl Default for PackState {
     fn default() -> Self {
         Self {
-            scope: Scope::Mods,
+            scope: Scope::Resource,
             results: Vec::new(),
             status: Status::Idle,
             seq: 0,
@@ -98,23 +95,21 @@ impl Default for PackState {
 }
 
 /// The restricted Modrinth query for `scope`: its one kind, what runs on `game`, a bounded text
-/// and page. None for the registry's mods, which don't use Modrinth.
-pub(super) fn query(scope: Scope, text: &str, game: &str) -> Option<Query> {
-    let mut q = Query::new(text, scope.kind()?);
+/// and page.
+pub(super) fn query(scope: Scope, text: &str, game: &str) -> Query {
+    let mut q = Query::new(text, scope.kind());
     q.text = q.text.chars().take(TEXT_MAX).collect();
     q.game = game.to_owned();
     q.everything = false;
     q.limit = LIMIT;
-    Some(q)
+    q
 }
 
 /// The hits a scope shows: Modrinth's, of the scope's kind only (a mod, modpack or other kind
 /// that a source answered anyway is dropped), each project once. Shader packs also come from
 /// Sunrise's registry (its own `.sshader` packs), and from there only.
 pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
-    let Some(kind) = scope.kind() else {
-        return Vec::new();
-    };
+    let kind = scope.kind();
     let mut seen = std::collections::HashSet::new();
     hits.into_iter()
         .filter(|p| p.kind == kind)
@@ -184,7 +179,7 @@ impl Launcher {
     /// [`Self::alt_discover_for_world`] sets one.
     pub(super) fn alt_pack_scope(&mut self, scope: Scope) {
         let p = &mut self.alt.mods.packs;
-        if p.scope == scope {
+        if p.scope == scope && !matches!(p.status, Status::Idle) {
             return;
         }
         p.scope = scope;
@@ -193,15 +188,13 @@ impl Launcher {
         p.status = Status::Idle;
         p.seq += 1;
         self.alt.mods.menu = None;
-        if scope != Scope::Mods {
-            self.alt_pack_search();
-        }
+        self.alt_pack_search();
     }
 
     /// The Home child's entry: Discover for data packs, aimed at `world` of the selected setup.
     /// Validates the world, then searches. Changes no file.
     pub(crate) fn alt_discover_for_world(&mut self, world: PathBuf) {
-        self.alt.page = Page::Discover;
+        self.alt.page = Page::PackFind;
         // Discard any prior setup's snapshot before recording this explicit world.
         self.alt_mods_refresh();
         self.alt.mods.menu = None;
@@ -232,9 +225,7 @@ impl Launcher {
         let text = self.alt.mods.find.text().to_owned();
         let game = self.mods_game();
         let p = &mut self.alt.mods.packs;
-        let Some(q) = query(p.scope, &text, &game) else {
-            return;
-        };
+        let q = query(p.scope, &text, &game);
         p.seq += 1;
         p.status = Status::Searching;
         let (seq, scope, tx) = (p.seq, p.scope, self.alt.mods.tx.clone());
@@ -297,7 +288,7 @@ impl Launcher {
             .packs
             .results
             .iter()
-            .find(|p| p.source == source && p.id == id && Some(p.kind) == scope.kind())
+            .find(|p| p.source == source && p.id == id && p.kind == scope.kind())
             .cloned()
         else {
             return;
@@ -342,28 +333,32 @@ impl Launcher {
         });
     }
 
-    /// Scope tabs above Discover's list; the packs' own list when a pack scope is open.
-    /// `page` is Discover's header and strip so far.
-    pub(super) fn alt_pack_tabs(&mut self, cx: &mut Context<Self>) -> Div {
-        let mut row = div().flex().items_center().gap(px(8.));
-        for (i, scope) in Scope::ALL.into_iter().enumerate() {
-            row = row.child(
+    /// Packs › Discover: the header Mods has, the three kinds, where they come from, the cards.
+    pub(super) fn alt_pack_find(
+        &mut self,
+        window: &mut Window,
+        focus: &FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if matches!(self.alt.mods.packs.status, Status::Idle) {
+            self.alt_pack_search();
+        }
+        let header = self.alt_mods_header(false, focus, window, cx);
+        let scope = self.alt.mods.packs.scope;
+        let mut kinds = div().flex().flex_wrap().items_center().gap(px(8.));
+        for (i, kind) in Scope::ALL.into_iter().enumerate() {
+            kinds = kinds.child(
                 chip(
                     ElementId::named_usize("alt-discover-scope", i),
-                    scope.label(),
-                    self.alt.mods.packs.scope == scope,
+                    kind.label(),
+                    scope == kind,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt_pack_scope(scope);
+                    this.alt_pack_scope(kind);
                     cx.notify();
                 })),
             );
         }
-        row
-    }
-
-    pub(super) fn alt_pack_results(&mut self, page: Div, cx: &mut Context<Self>) -> AnyElement {
-        let scope = self.alt.mods.packs.scope;
         let setup = self.pack_setup();
         let target = self
             .alt
@@ -372,17 +367,32 @@ impl Launcher {
             .target
             .clone()
             .filter(|t| setup.as_ref().is_some_and(|(i, h)| target_belongs(t, i, h)));
-        let mut page = page.child(muted(match scope {
-            Scope::Data => tr("From Modrinth. A data pack goes into one world, chosen under that world's Data packs on Home."),
-            Scope::Shader => tr("From Sunrise's registry and Modrinth, into the selected setup's shader packs."),
-            _ => tr("From Modrinth, into the selected setup's resource packs."),
-        }));
-        if scope == Scope::Data {
-            page = page.child(muted(match &target {
-                Some(t) => trf("Adding to the world {world}.", &[("world", &t.name)]),
-                None => tr("No world chosen: open a world's Data packs, then Add.").to_string(),
-            }));
-        }
+        let from: SharedString = match (scope, &target) {
+            (Scope::Data, Some(t)) => trf(
+                "From Modrinth, into the world {world}.",
+                &[("world", &t.name)],
+            )
+            .into(),
+            (Scope::Data, None) => tr(
+                "From Modrinth. A data pack goes into one world: open a world on Home, then its Data packs, then Add.",
+            )
+            .into(),
+            (Scope::Shader, _) => {
+                tr("From Sunrise's registry and Modrinth, into this setup's shader packs.").into()
+            }
+            (Scope::Resource, _) => tr("From Modrinth, into this setup's resource packs.").into(),
+        };
+        let page = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(24.))
+            .text_color(c(TEXT))
+            .child(header)
+            .children(self.alt_strip(cx))
+            .child(kinds)
+            .child(muted(from));
         let added: HashSet<(SourceId, String)> = self
             .alt
             .mods
@@ -398,12 +408,12 @@ impl Launcher {
         let working = self.alt.mods.busy.is_some();
         let results = self.alt.mods.packs.results.clone();
         let body: AnyElement = match &self.alt.mods.packs.status {
-            Status::Searching => muted(tr("Searching Modrinth…")).into_any_element(),
-            Status::Idle => muted(tr("Type a search and press Enter.")).into_any_element(),
+            Status::Searching | Status::Idle => muted(tr("Searching…")).into_any_element(),
             Status::Failed(e) => card()
                 .p(px(20.))
                 .flex()
                 .flex_col()
+                .items_start()
                 .gap(px(10.))
                 .child(
                     div()
@@ -425,24 +435,26 @@ impl Launcher {
             }
             Status::Done => {
                 let game = self.mods_game();
-                let mut list = div().flex().flex_col().gap(px(10.));
+                let mut grid = div()
+                    .grid()
+                    .grid_cols(columns(self.alt_content_width()))
+                    .gap(px(12.));
                 for (n, p) in results.iter().enumerate() {
                     let picture = p
                         .icon
                         .clone()
                         .and_then(|url| self.mods_image(&url, images::ICON));
                     let support = p.support(&game);
-                    let action: AnyElement = if added.contains(&(p.source, p.id.clone()))
-                        && p.kind != Kind::DataPack
-                    {
-                        muted(tr("Added")).into_any_element()
-                    } else if let Some(why) = support.reason().filter(|_| !support.installable()) {
-                        muted(why.to_owned()).into_any_element()
-                    } else if p.kind == Kind::DataPack && target.is_none() {
-                        muted(tr("Choose a world first")).into_any_element()
+                    let is_added =
+                        added.contains(&(p.source, p.id.clone())) && p.kind != Kind::DataPack;
+                    let no_world = p.kind == Kind::DataPack && target.is_none();
+                    let control = if is_added {
+                        Some(added_mark())
+                    } else if !support.installable() || no_world {
+                        None
                     } else {
                         let b = button(ElementId::named_usize("alt-pack-add", n), tr("Add"));
-                        if working {
+                        Some(if working {
                             dim(b).into_any_element()
                         } else {
                             let id = p.id.clone();
@@ -453,92 +465,39 @@ impl Launcher {
                                 cx.notify();
                             }))
                             .into_any_element()
-                        }
+                        })
                     };
-                    let kind_label = match p.kind {
-                        Kind::DataPack => tr("Data pack"),
-                        Kind::Shader => tr("Shader pack"),
-                        _ => tr("Resource pack"),
-                    };
-                    let source_label = match p.source {
+                    // How well it runs here, in the source's words; the world line above says
+                    // where a data pack would go.
+                    let note = support.reason().map(str::to_owned);
+                    let mut facts = vec![tag(match p.source {
                         SourceId::Sunrise => tr("Sunrise registry"),
                         other => other.label(),
-                    };
-                    // An Iris-format pack says how well it runs, in words.
-                    let iris = (p.source == SourceId::Modrinth && p.kind == Kind::Shader)
-                        .then(|| support.reason().map(str::to_owned))
-                        .flatten();
+                    })];
+                    if !matches!(support, browser::Support::Works) {
+                        facts.push(tag(support.label()));
+                    }
+                    facts.push(muted(model::downloads(p.downloads)));
                     let page_url = p.page.clone();
-                    list = list.child(
-                        div()
-                            .id(ElementId::named_usize("alt-pack-card", n))
-                            .flex()
-                            .gap(px(12.))
-                            .p(px(12.))
-                            .rounded(px(12.))
-                            .border_1()
-                            .border_color(c(LINE))
-                            .bg(c(crate::alt::CARD))
-                            .child(tile(picture, &p.title, 48.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_baseline()
-                                            .gap(px(8.))
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight::SEMIBOLD)
-                                                    .truncate()
-                                                    .child(p.title.clone()),
-                                            )
-                                            .child(
-                                                div()
-                                                    .text_size(px(12.))
-                                                    .text_color(c(MUTED))
-                                                    .truncate()
-                                                    .child(p.author.clone()),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .text_color(c(MUTED))
-                                            .truncate()
-                                            .child(p.summary.clone()),
-                                    )
-                                    .children(iris.map(muted))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .justify_between()
-                                            .gap(px(8.))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .items_center()
-                                                    .gap(px(8.))
-                                                    .child(tag(source_label))
-                                                    .child(tag(kind_label))
-                                                    .child(tag(support.label()))
-                                                    .child(muted(model::downloads(p.downloads))),
-                                            )
-                                            .child(action),
-                                    ),
-                            )
-                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    grid = grid.child(
+                        browse_card(
+                            ElementId::named_usize("alt-pack-card", n),
+                            picture,
+                            &p.title,
+                            &p.author,
+                            &p.summary,
+                            facts,
+                            control,
+                            note,
+                        )
+                        .on_click(cx.listener(
+                            move |_, _: &ClickEvent, _, cx| {
                                 Launcher::alt_open_url(&page_url, cx);
-                            })),
+                            },
+                        )),
                     );
                 }
-                list.into_any_element()
+                grid.into_any_element()
             }
         };
         page.child(
@@ -547,7 +506,6 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .text_color(c(TEXT))
                 .child(body),
         )
         .bg(c(crate::alt::BG))
@@ -595,13 +553,9 @@ fn install(
                 .iter()
                 .map(|e| format!("{} {}", e.title, e.number))
                 .collect();
-            let on = match project.kind {
-                Kind::Shader => tr("Packs → Shader packs"),
-                _ => tr("Packs → Resource packs"),
-            };
             Ok(trf(
-                "Installed {mods}, checksums checked. Turn it on under {where}.",
-                &[("mods", &names.join(", ")), ("where", on)],
+                "Installed {mods}, checksums checked. Turn it on under Installed.",
+                &[("mods", &names.join(", "))],
             ))
         }
         _ => Err(tr("Only resource, data and shader packs install from here.").to_string()),

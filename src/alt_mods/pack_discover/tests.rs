@@ -33,17 +33,13 @@ fn home(names: &[&str]) -> tempfile::TempDir {
 
 #[test]
 fn the_query_is_restricted_to_one_pack_kind_that_runs() {
-    assert!(query(Scope::Mods, "x", "1.21").is_none());
-    let q = query(Scope::Data, &"a".repeat(500), "1.21.4").unwrap();
+    let q = query(Scope::Data, &"a".repeat(500), "1.21.4");
     assert_eq!(q.kind, Kind::DataPack);
     assert_eq!(q.text.chars().count(), TEXT_MAX);
     assert!(!q.everything);
     assert_eq!(q.game, "1.21.4");
     assert_eq!((q.offset, q.limit), (0, LIMIT));
-    assert_eq!(
-        query(Scope::Resource, "", "g").unwrap().kind,
-        Kind::ResourcePack
-    );
+    assert_eq!(query(Scope::Resource, "", "g").kind, Kind::ResourcePack);
 }
 
 #[test]
@@ -63,7 +59,6 @@ fn a_scope_keeps_only_modrinth_hits_of_its_own_kind() {
     let ids = |v: Vec<Project>| v.into_iter().map(|p| p.id).collect::<Vec<_>>();
     assert_eq!(ids(keep(Scope::Resource, hits())), ["a"]);
     assert_eq!(ids(keep(Scope::Data, hits())), ["b"]);
-    assert!(keep(Scope::Mods, hits()).is_empty());
 }
 
 #[test]
@@ -192,5 +187,5 @@ fn shader_packs_come_from_modrinth_and_sunrises_registry_only() {
     // The registry's shader pack never shows under resource packs, nor Sunrise's under data.
     assert!(keep(Scope::Resource, hits.clone()).is_empty());
     assert!(keep(Scope::Data, hits).is_empty());
-    assert_eq!(query(Scope::Shader, "", "g").unwrap().kind, Kind::Shader);
+    assert_eq!(query(Scope::Shader, "", "g").kind, Kind::Shader);
 }

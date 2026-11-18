@@ -122,6 +122,124 @@ pub(super) fn tile(path: Option<PathBuf>, name: &str, side: f32) -> Div {
     }
 }
 
+/// How many cards fit side by side in a Discover list `width` wide: three on a roomy window,
+/// fewer as it narrows, so a card never gets narrower than its own text needs.
+pub(super) fn columns(width: f32) -> u16 {
+    (((width + 12.) / 332.).floor() as u16).clamp(1, 3)
+}
+
+/// One thing to add in a Discover list, for mods and packs alike: picture, name and author, one
+/// line of what it is, then its tags and numbers with the control beside them, and under them
+/// a sentence when there is something to say (why it can't be added, how well it runs). Every
+/// text shortens or wraps inside the card, whatever its width.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn browse_card(
+    id: impl Into<ElementId>,
+    picture: Option<PathBuf>,
+    name: &str,
+    author: &str,
+    summary: &str,
+    facts: Vec<Div>,
+    control: Option<AnyElement>,
+    note: Option<String>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .gap(px(12.))
+        .p(px(12.))
+        .min_w_0()
+        .overflow_hidden()
+        .rounded(px(12.))
+        .border_1()
+        .border_color(c(LINE))
+        .bg(c(CARD))
+        .cursor_pointer()
+        .hover(|s| s.border_color(c(MUTED)))
+        .child(tile(picture, name, 48.))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap(px(8.))
+                        .min_w_0()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .truncate()
+                                .child(name.to_owned()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .text_size(px(12.))
+                                .text_color(c(MUTED))
+                                .truncate()
+                                .child(author.to_owned()),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(c(MUTED))
+                        .line_clamp(2)
+                        .text_ellipsis()
+                        .child(summary.to_owned()),
+                )
+                // Cards in a row are as tall as the tallest: the last line sits at the bottom.
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .flex()
+                        .items_end()
+                        .gap(px(8.))
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_wrap()
+                                .items_center()
+                                .gap_x(px(8.))
+                                .gap_y(px(4.))
+                                .children(facts),
+                        )
+                        .children(control.map(|c| div().flex_none().child(c))),
+                )
+                // Two lines at most: the whole sentence is the tooltip.
+                .children(note.map(|note| {
+                    muted(note.clone())
+                        .id("note")
+                        .line_clamp(2)
+                        .text_ellipsis()
+                        .tooltip(crate::glass_ui::tip(note))
+                })),
+        )
+}
+
+/// "Added", where a card's control would be.
+pub(super) fn added_mark() -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(5.))
+        .text_size(px(13.))
+        .text_color(c(0x7fd6a0))
+        .child(blocks::icon("check", 12., c(0x7fd6a0)))
+        .child(tr("Added"))
+        .into_any_element()
+}
+
 pub(super) fn card() -> Div {
     div()
         .rounded(px(12.))

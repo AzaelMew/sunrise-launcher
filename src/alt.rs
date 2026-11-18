@@ -22,6 +22,8 @@ pub(super) enum Page {
     Discover,
     Installed,
     Packs,
+    /// Packs › Discover (`Packs` is its Installed).
+    PackFind,
     Project,
     Hosting,
     Settings,
@@ -40,6 +42,16 @@ pub(super) struct State {
     pub after_install: Option<(String, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
     pub after_sign_in: Option<String>,
+}
+
+/// The first sentence of `text`, or its first line when that is shorter: what the play bar
+/// has room to say.
+fn first_sentence(text: &str) -> &str {
+    let line = text.trim().lines().next().unwrap_or_default();
+    match line.find(". ") {
+        Some(end) => &line[..=end],
+        None => line,
+    }
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
@@ -155,6 +167,19 @@ impl Launcher {
         }
     }
 
+    /// The selected setup's channel, when its last build failed because the build it stays on
+    /// has no mod tools any more and another build is the way on (`sdk_cache::way_on`).
+    fn alt_build_gone(&self) -> Option<instances::Channel> {
+        let error = self.native_error.as_ref()?;
+        let instance = self.selected_instance()?;
+        let mine = self.native_for.as_deref() == Some(instance.id.as_str());
+        (mine
+            && instance.version.is_some()
+            && native_mods::sdk_cache::way_on(error)
+                == Some(native_mods::sdk_cache::WayOn::OtherBuild))
+        .then_some(instance.channel)
+    }
+
     pub(super) fn alt_launch_busy(&self) -> bool {
         self.alt_mutating()
             || self.installing.is_some()
@@ -169,8 +194,13 @@ impl Launcher {
         let signed_name = name.is_some();
         let signed_in = signed_name || sunrise_launcher::developer_offline::selected();
         let version = active.as_ref().and_then(|i| self.version_of(i));
+        // A game built with mods reads as the build it was made from, like any other.
+        let made_from = version
+            .filter(|t| native_mods::is_native(t))
+            .and_then(|t| crate::glass_instance::native_base(t));
+        let nightly = |t: &str| sunrise_launcher::nightly::date_of(t).is_some();
         let build = match version {
-            Some(t) if sunrise_launcher::nightly::date_of(t).is_some() => trf(
+            Some(t) if nightly(made_from.as_deref().unwrap_or(t)) => trf(
                 "Sunrise · {build}",
                 &[("build", &crate::alt_sheets::build_name(t))],
             ),
@@ -192,13 +222,21 @@ impl Launcher {
             .count()
             > 1
             || active.as_ref().is_some_and(|i| i.java.is_some());
-        let mut status = self
+        // A held update says so itself and its sheet carries the build's words: only then is
+        // the build's error left to it.
+        let held = self.alt_held_update().is_some();
+        let status = self
             .client_error
             .clone()
             .or_else(|| self.prepare_error.clone())
-            .or_else(|| self.native_error.clone())
+            .or_else(|| self.native_error.clone().filter(|_| !held))
             .or_else(|| self.install_error.as_ref().map(|(_, e)| e.clone()))
             .or_else(|| self.crash.as_ref().map(|c| c.summary.clone()));
+        // The bar says a problem in one sentence; the rest opens as a sheet.
+        let brief = status.as_deref().map(first_sentence);
+        let more = status
+            .clone()
+            .filter(|all| brief.is_some_and(|b| b.len() < all.trim().len()));
         let busy = self.alt_launch_busy();
         let label = if let Some((_, progress)) = &self.installing {
             trf(
@@ -208,8 +246,8 @@ impl Launcher {
         } else if self.preparing {
             tr("Preparing…").into()
         } else if let Some(step) = &self.native_step {
-            status = Some(step.clone());
-            tr("Building mods").into()
+            let _ = step;
+            tr("Building mods…").into()
         } else if self.starting_client.is_some() {
             tr("Starting…").into()
         } else if self.alt_mutating() {
@@ -318,19 +356,56 @@ impl Launcher {
                     .min_w_0()
                     .text_size(px(13.))
                     .text_color(rgb(MUTED))
-                    .children(status.clone().or(hold.clone()).or_else(|| {
-                        update.as_ref().map(|r| {
-                            trf(
-                                "{build} is available",
-                                &[("build", &crate::alt_sheets::build_name(&r.tag))],
-                            )
-                        })
+                    // Two lines fit the bar; a longer message is cut, never drawn outside it.
+                    .line_clamp(2)
+                    .text_ellipsis()
+                    .children(self.alt_build_line())
+                    .children(
+                        brief
+                            .map(str::to_owned)
+                            .filter(|_| self.native_step.is_none())
+                            .or(hold.clone())
+                            .or_else(|| {
+                                update.as_ref().map(|r| {
+                                    trf(
+                                        "{build} is available",
+                                        &[("build", &crate::alt_sheets::build_name(&r.tag))],
+                                    )
+                                })
+                            }),
+                    ),
+            );
+        if let Some(all) = more.filter(|_| self.native_step.is_none()) {
+            bar = bar.child(
+                button("alt-problem-details", tr("Details…"))
+                    .flex_none()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_alt_notice(all.clone());
+                        cx.notify();
                     })),
             );
+        }
         if status.is_some() && self.prepare_error.is_some() {
             bar = bar.child(
                 button("alt-choose-source", tr("Choose Minecraft folder"))
                     .on_click(cx.listener(|this, _, _, cx| this.choose_folder(cx))),
+            );
+        } else if let Some(channel) = self.alt_build_gone().filter(|_| !busy) {
+            // The build this setup stays on can't be built for any more: one press follows its
+            // channel again, and the build sheet opens on what that chose.
+            let label = match channel {
+                instances::Channel::Stable => tr("Use the newest Stable"),
+                _ => tr("Use the newest Nightly"),
+            };
+            bar = bar.child(
+                button("alt-newest-build", label)
+                    .flex_none()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.native_error = None;
+                        this.pin_alt_build(None, channel);
+                        this.open_alt_sheet(Sheet::Build);
+                        cx.notify();
+                    })),
             );
         } else if hold.is_some() && !busy {
             bar = bar.child(button("alt-resolve", tr("Choose…")).on_click(cx.listener(
@@ -418,7 +493,8 @@ impl Launcher {
         let page = self.alt.page;
         let rail_link = |p: Page, id: &'static str, label: &'static str, icon: &'static str| {
             let on = page == p
-                || (p == Page::Discover && matches!(page, Page::Installed | Page::Project));
+                || (p == Page::Discover && matches!(page, Page::Installed | Page::Project))
+                || (p == Page::Packs && page == Page::PackFind);
             div()
                 .id(id)
                 .tab_index(0)
@@ -452,10 +528,11 @@ impl Launcher {
                 ))
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if (this.alt.page == Page::Packs || p == Page::Packs) && this.alt.page != p {
-                        this.reset_pack_view();
+                    match p {
+                        Page::Discover => this.alt_open_mods(),
+                        Page::Packs => this.alt_open_packs(),
+                        _ => this.alt.page = p,
                     }
-                    this.alt.page = p;
                     this.alt.picker = false;
                     cx.notify();
                 }))

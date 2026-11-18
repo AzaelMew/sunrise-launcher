@@ -182,6 +182,18 @@ fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// A server's own picture, or its first letter when it has none.
+fn server_picture(icon: Option<std::sync::Arc<gpui::Image>>, name: &str) -> AnyElement {
+    match icon {
+        Some(image) => gpui::img(image)
+            .flex_none()
+            .size(px(36.))
+            .rounded(px(8.))
+            .into_any_element(),
+        None => tile(name, 36.).into_any_element(),
+    }
+}
+
 fn tile(label: &str, side: f32) -> Div {
     div()
         .flex()
@@ -243,10 +255,12 @@ impl Launcher {
             .gap(px(28.))
             .px(px(32.))
             .py(px(28.))
-            .child(worlds)
+            // Nothing here gives up height to fit: the page scrolls instead.
+            .child(worlds.flex_none())
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .gap(px(28.))
                     .items_start()
                     .child(div().flex_1().min_w(px(0.)).child(servers))
@@ -377,24 +391,32 @@ impl Launcher {
         let packs = {
             let (world, home) = (world.clone(), self.worlds.home.clone());
             Some(
-                button(
-                    format!("alt-world-packs-{}", world.folder),
-                    tr("Data packs"),
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if let Some(home) = home.clone() {
-                        this.alt.home.packs.open(home, Some(&world));
-                    }
-                    cx.notify();
-                })),
+                button(format!("alt-world-packs-{}", world.folder), "")
+                    .size(px(36.))
+                    .px_0()
+                    .child(blocks::icon("archive", 17., rgb(TEXT).into()))
+                    .tooltip(crate::glass_ui::tip(tr("Data packs")))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if let Some(home) = home.clone() {
+                            this.alt.home.packs.open(home, Some(&world));
+                        }
+                        cx.notify();
+                    })),
             )
         };
-        let play = button(format!("alt-world-{}", world.folder), tr("Play")).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
+        // Icons, named by their tooltips: the card keeps its room for the world's name.
+        let play = button(format!("alt-world-{}", world.folder), "")
+            .size(px(36.))
+            .px_0()
+            .bg(rgb(TEXT))
+            .border_color(rgb(TEXT))
+            .hover(|s| s.bg(rgb(0xffffff)))
+            .child(blocks::icon("play", 17., rgb(BG).into()))
+            .tooltip(crate::glass_ui::tip(tr("Play this world")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.alt_go("--world", folder.clone());
                 cx.notify();
-            },
-        ));
+            }));
         let facts = format!(
             "{} · {}",
             tr(world.mode),
@@ -409,13 +431,15 @@ impl Launcher {
             .child(
                 div()
                     .flex()
+                    // A narrow card puts its buttons under the name rather than squeezing it.
+                    .flex_wrap()
                     .items_center()
                     .gap(px(10.))
                     .p(px(14.))
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(0.))
+                            .min_w(px(120.))
                             .child(
                                 div()
                                     .text_size(px(15.))
@@ -428,8 +452,14 @@ impl Launcher {
                             )
                             .child(muted(facts)),
                     )
-                    .children(packs)
-                    .child(play),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .gap(px(8.))
+                            .children(packs)
+                            .child(play),
+                    ),
             )
     }
 
@@ -595,7 +625,12 @@ impl Launcher {
             .py(px(10.))
             .border_t_1()
             .border_color(rgb(SOFT))
-            .child(tile(server.name, 36.))
+            .child(server_picture(
+                server
+                    .address
+                    .and_then(|a| self.multiplayer.icons.get(a).cloned()),
+                server.name,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -631,18 +666,11 @@ impl Launcher {
                 .insert(address.to_string(), multiplayer_page::Reach::Asking);
             let task = cx
                 .background_executor()
-                .spawn(async move { sunrise_launcher::telemetry::server_players(address) });
+                .spawn(async move { sunrise_launcher::telemetry::server_status(address) });
             cx.spawn(async move |this, cx| {
                 let answer = task.await;
                 let _ = this.update(cx, |this, cx| {
-                    let reach = match answer {
-                        Some(p) => multiplayer_page::Reach::Online {
-                            players: p.online,
-                            max: p.max,
-                        },
-                        None => multiplayer_page::Reach::Offline,
-                    };
-                    this.multiplayer.reach.insert(address.to_string(), reach);
+                    this.server_answered(address.to_string(), answer);
                     cx.notify();
                 });
             })
@@ -713,14 +741,11 @@ impl Launcher {
                 },
             )),
         };
-        let picture = match icon {
-            Some(image) => gpui::img(image)
-                .flex_none()
-                .size(px(36.))
-                .rounded(px(8.))
-                .into_any_element(),
-            None => tile(&server.name, 36.).into_any_element(),
-        };
+        // The picture the game saved, else the one the server just sent.
+        let picture = server_picture(
+            icon.or_else(|| self.multiplayer.icons.get(&server.ip).cloned()),
+            &server.name,
+        );
         div()
             .flex()
             .items_center()

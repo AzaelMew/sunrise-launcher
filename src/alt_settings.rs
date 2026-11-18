@@ -775,40 +775,68 @@ impl Launcher {
 
     fn alt_settings_privacy(&mut self, cx: &mut Context<Self>) -> Div {
         let consent = self.collection.consent.clone();
-        let detail = |this: &Self,
-                      name: &'static str,
-                      summary: &'static str,
-                      full: &'static str,
-                      cx: &mut Context<Self>| {
-            let open = this.collection.sent_open.contains(&name);
-            div()
+        // A row: its name with a "?" that says exactly what is sent, a line on why, the switch.
+        let line = |this: &Self,
+                    name: &'static str,
+                    summary: &'static str,
+                    full: &'static str,
+                    toggle: Stateful<Div>,
+                    cx: &mut Context<Self>| {
+            let pinned = this.collection.sent_open.contains(&name);
+            let shown = pinned || this.collection.sent_hover == Some(name);
+            let help = div()
+                .id(name)
+                .tab_index(0)
+                .flex_none()
+                .size(px(16.))
+                .rounded_full()
+                .border_1()
+                .border_color(rgb(if pinned { TEXT } else { LINE }))
                 .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(hint(tr(summary)))
-                .child(
+                .items_center()
+                .justify_center()
+                .text_size(px(10.5))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(rgb(if pinned { TEXT } else { MUTED }))
+                .cursor_pointer()
+                .focus_visible(|s| s.border_color(rgb(GOLD)))
+                .child("?")
+                .on_hover(cx.listener(move |this, over: &bool, _, cx| {
+                    let hover = &mut this.collection.sent_hover;
+                    match *over {
+                        true => *hover = Some(name),
+                        false if *hover == Some(name) => *hover = None,
+                        false => {}
+                    }
+                    cx.notify();
+                }))
+                // A press pins it open, for keyboards and touch; another press closes it.
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let list = &mut this.collection.sent_open;
+                    match list.contains(&name) {
+                        true => list.clear(),
+                        false => *list = vec![name],
+                    }
+                    cx.notify();
+                }));
+            let said = shown.then(|| {
+                gpui::deferred(
                     div()
-                        .id(name)
-                        .text_size(px(12.5))
-                        .text_color(rgb(GOLD))
-                        .cursor_pointer()
-                        .child(tr(if open {
-                            "Hide what's sent"
-                        } else {
-                            "What's sent?"
-                        }))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            let list = &mut this.collection.sent_open;
-                            match list.iter().position(|n| *n == name) {
-                                Some(i) => drop(list.remove(i)),
-                                None => list.push(name),
-                            }
-                            cx.notify();
-                        })),
+                        .absolute()
+                        .top(px(24.))
+                        .left_0()
+                        .w(px(340.))
+                        .p(px(12.))
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(rgb(LINE))
+                        .bg(rgb(CARD))
+                        .shadow_lg()
+                        .occlude()
+                        .child(hint(tr(full))),
                 )
-                .children(open.then(|| hint(tr(full))))
-        };
-        let line = |title: &'static str, about: Div, toggle: Stateful<Div>| {
+                .with_priority(10)
+            });
             div()
                 .flex()
                 .items_start()
@@ -820,20 +848,25 @@ impl Launcher {
                         .flex()
                         .flex_col()
                         .gap(px(2.))
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(tr(title)))
-                        .child(about),
+                        .child(
+                            div()
+                                .relative()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(div().font_weight(FontWeight::SEMIBOLD).child(tr(name)))
+                                .child(help)
+                                .children(said),
+                        )
+                        .child(hint(tr(summary))),
                 )
                 .child(toggle)
         };
         let ping = line(
+            self,
             telemetry::PING_NAME,
-            detail(
-                self,
-                telemetry::PING_NAME,
-                telemetry::PING_SUMMARY,
-                telemetry::PING,
-                cx,
-            ),
+            telemetry::PING_SUMMARY,
+            telemetry::PING,
             switch("alt-ping", !self.settings.ping_off).on_click(cx.listener(
                 |this, _: &ClickEvent, _, cx| {
                     this.settings.ping_off = !this.settings.ping_off;
@@ -841,6 +874,7 @@ impl Launcher {
                     cx.notify();
                 },
             )),
+            cx,
         );
         let mut reports = Vec::new();
         for (n, &(kind, name, summary, what)) in telemetry::SWITCHES.iter().enumerate() {
@@ -857,7 +891,7 @@ impl Launcher {
                     cx.notify();
                 },
             ));
-            reports.push(line(name, detail(self, name, summary, what, cx), toggle));
+            reports.push(line(self, name, summary, what, toggle, cx));
         }
         let id = match consent.install_id.as_str() {
             "" => tr("No install ID: nothing has been collected.").to_string(),

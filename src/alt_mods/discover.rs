@@ -31,13 +31,6 @@ impl Launcher {
             .child(header)
             .children(self.alt.mods.examples.then(example_banner))
             .children(self.alt_strip(cx));
-        {
-            page = page.child(self.alt_pack_tabs(cx));
-            if self.alt.mods.packs.scope != super::pack_discover::Scope::Mods {
-                return self.alt_pack_results(page, cx);
-            }
-        }
-
         let examples = self.alt.mods.examples;
         let (cards, categories): (Vec<Card>, Vec<String>) = match (&self.alt.mods.catalog, examples)
         {
@@ -260,7 +253,10 @@ impl Launcher {
         );
 
         // The cards.
-        let mut grid = div().grid().grid_cols(3).gap(px(12.));
+        let mut grid = div()
+            .grid()
+            .grid_cols(columns(self.alt_content_width()))
+            .gap(px(12.));
         for (n, &i) in shown.iter().take(limit).enumerate() {
             let card_data = &cards[i];
             let id = card_data.id.clone();
@@ -271,18 +267,11 @@ impl Launcher {
                 .and_then(|url| self.mods_image(&url, images::ICON));
             let is_added = added.contains(&id);
             let working = adding.as_deref() == Some(id.as_str());
-            let action: AnyElement = if is_added {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(5.))
-                    .text_size(px(13.))
-                    .text_color(c(0x7fd6a0))
-                    .child(blocks::icon("check", 12., c(0x7fd6a0)))
-                    .child(tr("Added"))
-                    .into_any_element()
-            } else if let Some(why) = card_data.fit.reason() {
-                muted(why).into_any_element()
+            let note = card_data.fit.reason().filter(|_| !is_added);
+            let control = if is_added {
+                Some(added_mark())
+            } else if note.is_some() {
+                None
             } else {
                 let needs_ok = card_data.make == Make::Native && !native_allowed;
                 let label = match (
@@ -294,7 +283,7 @@ impl Launcher {
                     _ => tr("Add"),
                 };
                 let b = crate::alt::button(("alt-add", n), label);
-                match (card_data.example, working) {
+                Some(match (card_data.example, working) {
                     (true, _) | (_, true) => dim(b).into_any_element(),
                     _ => {
                         let id = id.clone();
@@ -305,82 +294,31 @@ impl Launcher {
                         }))
                         .into_any_element()
                     }
-                }
+                })
             };
+            let mut facts = vec![
+                tag(card_data.make.label()),
+                muted(model::downloads(card_data.downloads)),
+            ];
+            if card_data.builds_locally && card_data.fit.fits() {
+                facts.push(muted(tr("Builds on this computer")));
+            }
             let open = id.clone();
             grid = grid.child(
-                div()
-                    .id(("alt-card", n))
-                    .flex()
-                    .gap(px(12.))
-                    .p(px(12.))
-                    .min_w_0()
-                    .rounded(px(12.))
-                    .border_1()
-                    .border_color(c(LINE))
-                    .bg(c(CARD))
-                    .cursor_pointer()
-                    .hover(|s| s.border_color(c(MUTED)))
-                    .child(tile(picture, &card_data.name, 48.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_baseline()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .truncate()
-                                            .child(card_data.name.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(12.))
-                                            .text_color(c(MUTED))
-                                            .truncate()
-                                            .child(card_data.authors.clone()),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .text_color(c(MUTED))
-                                    .truncate()
-                                    .child(card_data.summary.clone()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(8.))
-                                            .child(tag(tr("Sunrise registry")))
-                                            .child(tag(card_data.make.label()))
-                                            .child(muted(model::downloads(card_data.downloads)))
-                                            .children(
-                                                (card_data.builds_locally && card_data.fit.fits())
-                                                    .then(|| muted(tr("· builds locally"))),
-                                            ),
-                                    )
-                                    .child(action),
-                            ),
-                    )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_mods_show_project(open.clone());
-                        cx.notify();
-                    })),
+                browse_card(
+                    ("alt-card", n),
+                    picture,
+                    &card_data.name,
+                    &card_data.authors,
+                    &card_data.summary,
+                    facts,
+                    control,
+                    note,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.alt_mods_show_project(open.clone());
+                    cx.notify();
+                })),
             );
         }
         let body = if shown.is_empty() {

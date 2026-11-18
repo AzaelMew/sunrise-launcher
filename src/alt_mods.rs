@@ -126,6 +126,9 @@ pub(crate) struct AltModsState {
     errors: HashMap<String, String>,
     /// How many cards Discover draws ("Show more" adds a page).
     limit: usize,
+    /// Discover or Installed, as the player last chose on Mods and on Packs this session.
+    last_mods: Option<Page>,
+    last_packs: Option<Page>,
 }
 
 impl Default for AltModsState {
@@ -155,6 +158,8 @@ impl Default for AltModsState {
             notice: None,
             errors: HashMap::new(),
             limit: 0,
+            last_mods: None,
+            last_packs: None,
         }
     }
 }
@@ -163,10 +168,10 @@ impl Launcher {
     /// The Mods screen for `self.alt.page`: Discover, Installed or a mod's page.
     pub(crate) fn alt_mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.alt_mods_drain();
+        self.alt_mods_refresh();
         if self.alt.page == Page::Packs {
             return self.pack_page(window, cx);
         }
-        self.alt_mods_refresh();
         let m = &mut self.alt.mods;
         let find_focus = m
             .find_focus
@@ -179,6 +184,7 @@ impl Launcher {
         match self.alt.page {
             Page::Project => self.alt_project(cx),
             Page::Installed => self.alt_installed(window, &have_focus, cx),
+            Page::PackFind => self.alt_pack_find(window, &find_focus, cx),
             _ => self.alt_discover(window, &find_focus, cx),
         }
     }
@@ -197,6 +203,110 @@ impl Launcher {
         };
         self.alt.page = Page::Project;
         self.alt_mods_load_page(id, from);
+    }
+
+    /// The installed mods `ids` as people read them: each one's name, and the newer version the
+    /// registry has for it when there is one. Reads what is already in memory.
+    pub(crate) fn alt_mods_named(&self, ids: &[String]) -> Vec<(String, Option<String>)> {
+        let rows = self.alt_rows();
+        ids.iter()
+            .map(|id| match rows.iter().find(|r| &r.id == id) {
+                Some(row) => (row.title.clone(), row.update.clone()),
+                None => (id.clone(), None),
+            })
+            .collect()
+    }
+
+    /// Updates the installed mod `id` to the newer version the registry has, as its row does.
+    pub(crate) fn alt_update_mod(&mut self, id: &str) {
+        if let Some(row) = self.alt_rows().into_iter().find(|r| r.id == id) {
+            self.alt_update_one(&row);
+        }
+    }
+
+    /// The rail's Mods: where the player last was this session, else Installed when this setup
+    /// has mods and Discover when it has none.
+    pub(super) fn alt_open_mods(&mut self) {
+        self.alt_leave_section(false);
+        self.alt.page = self.alt.mods.last_mods.unwrap_or_else(|| {
+            self.alt_mods_refresh();
+            match self.alt_rows().is_empty() {
+                true => Page::Discover,
+                false => Page::Installed,
+            }
+        });
+    }
+
+    /// The rail's Packs, by the same rule as [`Self::alt_open_mods`].
+    pub(super) fn alt_open_packs(&mut self) {
+        self.alt_leave_section(true);
+        self.alt.page = self.alt.mods.last_packs.unwrap_or_else(|| {
+            self.load_packs_list(self.alt_mods_home());
+            match self.game_packs.resource.is_empty() && self.game_packs.shader.is_empty() {
+                true => Page::PackFind,
+                false => Page::Packs,
+            }
+        });
+    }
+
+    /// Mods and Packs share their search fields: going from one to the other starts them empty.
+    fn alt_leave_section(&mut self, to_packs: bool) {
+        let in_packs = matches!(self.alt.page, Page::Packs | Page::PackFind);
+        let in_mods = matches!(
+            self.alt.page,
+            Page::Discover | Page::Installed | Page::Project
+        );
+        if (to_packs && in_packs) || (!to_packs && in_mods) {
+            return;
+        }
+        self.reset_pack_view();
+        let m = &mut self.alt.mods;
+        m.find.set(String::new());
+        m.filters.text.clear();
+        m.menu = None;
+        m.packs.target = None;
+    }
+
+    /// Discover or Installed, chosen on the header's switch: remembered for the session.
+    fn alt_choose_view(&mut self, page: Page) {
+        let m = &mut self.alt.mods;
+        match page {
+            Page::Discover | Page::Installed => m.last_mods = Some(page),
+            _ => m.last_packs = Some(page),
+        }
+        m.selection.clear();
+        m.anchor = None;
+        m.confirm = None;
+        m.menu = None;
+        self.game_packs.confirm_remove = None;
+        // Packs keeps the kind across the switch where both sides have it.
+        match page {
+            Page::PackFind => {
+                let scope = match self.alt.mods.collection {
+                    sunrise_launcher::packs::Kind::Resource => pack_discover::Scope::Resource,
+                    sunrise_launcher::packs::Kind::Shader => pack_discover::Scope::Shader,
+                };
+                if self.alt.mods.packs.scope != pack_discover::Scope::Data {
+                    self.alt_pack_scope(scope);
+                }
+            }
+            Page::Packs => match self.alt.mods.packs.scope {
+                pack_discover::Scope::Resource => {
+                    self.alt.mods.collection = sunrise_launcher::packs::Kind::Resource
+                }
+                pack_discover::Scope::Shader => {
+                    self.alt.mods.collection = sunrise_launcher::packs::Kind::Shader
+                }
+                pack_discover::Scope::Data => {}
+            },
+            _ => {}
+        }
+        self.alt.page = page;
+    }
+
+    /// The width a page's own content has: the window less the rail and the page's margins.
+    pub(super) fn alt_content_width(&self) -> f32 {
+        self.window_width - 72. - 2. - 48.
     }
 
     fn alt_mods_home(&self) -> PathBuf {
@@ -432,12 +542,10 @@ impl Launcher {
         self.alt.mods.busy.is_some() || self.mods.busy.is_some()
     }
 
-    /// Build… on a row: the one native build path, which asks for permission first.
+    /// Build… on a row: the one native build path, which asks for permission first. The player
+    /// stays where they are: the strip above the list and the play bar show how far it is.
     fn alt_build(&mut self) {
         self.build_native();
-        if self.native_step.is_some() {
-            self.alt.page = Page::Home;
-        }
     }
 
     /// Allow… on a row: the native-code question, with what it builds.
@@ -474,6 +582,12 @@ impl Launcher {
                 .as_ref()
                 .map(|(_, line, f)| (line.clone(), *f))
         });
+        // A build is of mods: its strip is Mods' own. The play bar shows it on every page.
+        if !matches!(self.alt.page, Page::Packs | Page::PackFind) {
+            if let Some(build) = self.alt_build_strip(cx) {
+                return Some(build);
+            }
+        }
         if let Some((line, f)) = busy {
             return Some(
                 div()
@@ -490,7 +604,7 @@ impl Launcher {
                                 div()
                                     .h(px(4.))
                                     .rounded(px(2.))
-                                    .bg(c(crate::alt::GOLD))
+                                    .bg(c(crate::alt::TEXT))
                                     .w(relative(f.clamp(0.02, 1.))),
                             ),
                     ),
@@ -531,34 +645,21 @@ impl Launcher {
         use ui::{c, field_theme};
         let t = field_theme(self.theme);
         let focused = focus.is_focused(window);
-        let count = match &self.alt.mods.catalog {
-            Catalog::Ready(cards, _) => cards.len(),
-            _ => 0,
-        };
-        let placeholder: SharedString = match (installed, count) {
-            (true, _) => tr("Search your mods by name, author or id").into(),
-            (false, 0) => tr("Search the Sunrise registry").into(),
-            (false, 1) => tr("Search the one mod in the Sunrise registry").into(),
-            (false, n) => trf(
-                "Search {count} mods in the Sunrise registry",
-                &[("count", &n.to_string())],
-            )
-            .into(),
-        };
-        let placeholder = if self.alt.page == Page::Packs {
-            match self.alt.mods.collection {
-                sunrise_launcher::packs::Kind::Resource => tr("Search your resource packs").into(),
-                sunrise_launcher::packs::Kind::Shader => tr("Search your shader packs").into(),
-            }
-        } else {
-            placeholder
-        };
-        let placeholder = match (installed, self.alt.mods.packs.scope) {
-            (false, pack_discover::Scope::Resource) => tr("Search Modrinth resource packs").into(),
-            (false, pack_discover::Scope::Shader) => tr("Search shader packs").into(),
-            (false, pack_discover::Scope::Data) => tr("Search Modrinth data packs").into(),
-            _ => placeholder,
-        };
+        let packs = matches!(self.alt.page, Page::Packs | Page::PackFind);
+        let placeholder: SharedString = match (packs, installed) {
+            (false, false) => tr("Search mods"),
+            (false, true) => tr("Search your mods"),
+            (true, false) => match self.alt.mods.packs.scope {
+                pack_discover::Scope::Resource => tr("Search resource packs"),
+                pack_discover::Scope::Shader => tr("Search shader packs"),
+                pack_discover::Scope::Data => tr("Search data packs"),
+            },
+            (true, true) => match self.alt.mods.collection {
+                sunrise_launcher::packs::Kind::Resource => tr("Search your resource packs"),
+                sunrise_launcher::packs::Kind::Shader => tr("Search your shader packs"),
+            },
+        }
+        .into();
         let edit = if installed {
             &self.alt.mods.have
         } else {
@@ -572,6 +673,7 @@ impl Launcher {
             })
             .track_focus(focus)
             .flex_1()
+            .min_w(px(120.))
             .h(px(44.))
             .px(px(16.))
             .flex()
@@ -603,7 +705,7 @@ impl Launcher {
                 })
             })
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
-                let packs_scope = this.alt.mods.packs.scope != pack_discover::Scope::Mods;
+                let packs_scope = this.alt.page == Page::PackFind;
                 let m = &mut this.alt.mods;
                 let edit = if installed { &mut m.have } else { &mut m.find };
                 match line_edit::handle(edit, ev, cx) {
@@ -633,20 +735,6 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.alt.mods.find)
         };
-        if self.alt.page == Page::Packs {
-            return div()
-                .flex()
-                .items_center()
-                .gap(px(20.))
-                .child(
-                    div()
-                        .text_size(px(28.))
-                        .font_weight(FontWeight::BOLD)
-                        .child(tr("Packs")),
-                )
-                .child(self.collection_tabs(cx))
-                .child(field);
-        }
         let seg = |id: &'static str,
                    label: &'static str,
                    on: bool,
@@ -666,13 +754,9 @@ impl Launcher {
                 })
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.alt.page = page;
-                    if page == Page::Installed {
-                        this.alt_pack_scope(pack_discover::Scope::Mods);
+                    if this.alt.page != page {
+                        this.alt_choose_view(page);
                     }
-                    this.alt.mods.selection.clear();
-                    this.alt.mods.confirm = None;
-                    this.alt.mods.menu = None;
                     cx.notify();
                 }))
         };
@@ -682,13 +766,15 @@ impl Launcher {
             .gap(px(20.))
             .child(
                 div()
+                    .flex_none()
                     .text_size(px(28.))
                     .font_weight(FontWeight::BOLD)
-                    .child(tr("Mods")),
+                    .child(if packs { tr("Packs") } else { tr("Mods") }),
             )
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .p(px(3.))
                     .rounded(px(12.))
                     .border_1()
@@ -698,14 +784,18 @@ impl Launcher {
                         "alt-mods-tab-discover",
                         "Discover",
                         !installed,
-                        Page::Discover,
+                        if packs {
+                            Page::PackFind
+                        } else {
+                            Page::Discover
+                        },
                         cx,
                     ))
                     .child(seg(
                         "alt-mods-tab-installed",
                         "Installed",
                         installed,
-                        Page::Installed,
+                        if packs { Page::Packs } else { Page::Installed },
                         cx,
                     )),
             )

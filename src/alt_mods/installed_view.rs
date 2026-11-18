@@ -3,7 +3,7 @@
 use super::model::{self, Group, Make, Need, Row, Show};
 use super::ui::*;
 use super::*;
-use crate::alt::{BG, CARD, GOLD, MUTED, SOFT, TEXT};
+use crate::alt::{BG, GOLD, MUTED, SOFT, TEXT};
 use std::rc::Rc;
 use sunrise_launcher::browser::images;
 
@@ -41,9 +41,9 @@ impl Launcher {
                         .gap(px(12.))
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("No mods installed yet")))
                         .child(muted(tr("Mods you add from Discover show up here, with their updates and a switch for each.")))
-                        .child(primary("alt-installed-browse", tr("Find mods")).on_click(cx.listener(
+                        .child(primary("alt-installed-browse", tr("Find mods in Discover")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
-                                this.alt.page = Page::Discover;
+                                this.alt_choose_view(Page::Discover);
                                 cx.notify();
                             },
                         ))),
@@ -65,50 +65,45 @@ impl Launcher {
             .filter(|r| r.local.is_none() && self.alt.mods.selection.contains(&r.id))
             .collect();
 
-        // ---- left column: what to show
+        // ---- what to show: the same row of chips Discover filters with
         let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
-        let show_row = |id: &'static str,
-                        label: &'static str,
-                        n: usize,
-                        which: Show,
-                        cx: &mut Context<Self>| {
+        let counted = |label: &str, n: usize| format!("{label} · {n}");
+        let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
+        for (i, (label, n, which)) in [
+            (tr("All"), rows.len(), Show::All),
+            (tr("Turned on"), count(&|r| r.on), Show::On),
+            (tr("Turned off"), count(&|r| !r.on), Show::Off),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            chips = chips.child(
+                chip(("alt-show", i), counted(label, n), filter.show == which).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let m = &mut this.alt.mods;
+                        m.row_filter.show = which;
+                        m.selection.clear();
+                        m.anchor = None;
+                        cx.notify();
+                    }),
+                ),
+            );
+        }
+        chips = chips.child(
             div()
-                .id(id)
-                .flex()
-                .items_center()
-                .justify_between()
-                .px(px(12.))
-                .h(px(34.))
-                .rounded(px(8.))
-                .text_size(px(14.))
-                .cursor_pointer()
-                .when(filter.show == which, |d| {
-                    d.bg(c(CARD)).font_weight(FontWeight::SEMIBOLD)
-                })
-                .child(tr(label))
-                .child(div().text_color(c(MUTED)).child(n.to_string()))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let m = &mut this.alt.mods;
-                    m.row_filter.show = which;
-                    m.selection.clear();
-                    m.anchor = None;
-                    cx.notify();
-                }))
-        };
-        let kind_row = |id: &'static str, make: Make, n: usize, cx: &mut Context<Self>| {
-            let on = filter.makes.contains(&make);
-            div()
-                .id(id)
-                .flex()
-                .items_center()
-                .gap(px(10.))
-                .px(px(12.))
-                .h(px(32.))
-                .text_size(px(14.))
-                .cursor_pointer()
-                .child(checkbox((id, 1usize), on))
-                .child(div().flex_1().child(make.label()))
-                .child(div().text_color(c(MUTED)).child(n.to_string()))
+                .flex_none()
+                .w(px(1.))
+                .h(px(20.))
+                .bg(c(crate::alt::LINE)),
+        );
+        for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
+            let n = count(&|r| r.make == Some(make));
+            chips = chips.child(
+                chip(
+                    ("alt-kind", i),
+                    counted(make.label(), n),
+                    filter.makes.contains(&make),
+                )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.alt.mods;
                     if !m.row_filter.makes.remove(&make) {
@@ -117,64 +112,10 @@ impl Launcher {
                     m.selection.clear();
                     m.anchor = None;
                     cx.notify();
-                }))
-        };
-        let left = div()
-            .w(px(180.))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(c(MUTED))
-                    .px(px(12.))
-                    .pb(px(4.))
-                    .child(tr("SHOW")),
-            )
-            .child(show_row(
-                "alt-show-all",
-                "All mods",
-                rows.len(),
-                Show::All,
-                cx,
-            ))
-            .child(show_row(
-                "alt-show-on",
-                "Turned on",
-                count(&|r| r.on),
-                Show::On,
-                cx,
-            ))
-            .child(show_row(
-                "alt-show-off",
-                "Turned off",
-                count(&|r| !r.on),
-                Show::Off,
-                cx,
-            ))
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(c(MUTED))
-                    .px(px(12.))
-                    .pt(px(16.))
-                    .pb(px(4.))
-                    .child(tr("KIND")),
-            )
-            .child(kind_row(
-                "alt-kind-native",
-                Make::Native,
-                count(&|r| r.make == Some(Make::Native)),
-                cx,
-            ))
-            .child(kind_row(
-                "alt-kind-content",
-                Make::Content,
-                count(&|r| r.make == Some(Make::Content)),
-                cx,
-            ));
+                })),
+            );
+        }
+        page = page.child(chips);
 
         // ---- toolbar: select-all and the bulk actions, naming their scope
         let selected_here = shown_ids
@@ -515,15 +456,7 @@ impl Launcher {
                     &[("count", &hidden.to_string())],
                 )))
             }));
-        page = page.child(
-            div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .gap(px(20.))
-                .child(left)
-                .child(right),
-        );
+        page = page.child(right);
         page.into_any_element()
     }
 
@@ -572,8 +505,18 @@ impl Launcher {
         };
 
         // What the row says on the right: one verdict, with its one action.
-        let say =
-            |text: String, color: u32| div().text_size(px(13.)).text_color(c(color)).child(text);
+        // Roomy, the row is one line of columns; narrow, what it says moves under the name and
+        // wraps there, so nothing is pushed out of the row.
+        let wide = self.alt_content_width() >= 860.;
+        let say = move |text: String, color: u32| {
+            div()
+                .min_w_0()
+                .text_size(px(13.))
+                .text_color(c(color))
+                .when(wide, |d| d.truncate())
+                .child(text)
+        };
+        let mut notes: Vec<Div> = Vec::new();
         let act = |id: &'static str, label: &'static str, on: bool| {
             let b = crate::alt::button((id, n), tr(label));
             if on && real && !busy {
@@ -582,9 +525,9 @@ impl Launcher {
                 dim(b)
             }
         };
-        let mut verdict = div().flex().items_center().gap(px(12.));
+        let mut verdict = div().flex().flex_none().items_center().gap(px(12.));
         if let Some(local) = &r.local {
-            verdict = verdict.child(say(
+            notes.push(say(
                 match local.github {
                     true => tr("From GitHub, not the registry: read-only here").to_string(),
                     false => tr("A local file, not from the registry: read-only here").to_string(),
@@ -593,56 +536,58 @@ impl Launcher {
             ));
         }
         if let Some(why) = error {
-            verdict = verdict.child(say(why, GOLD));
+            notes.push(say(why, GOLD));
         }
         match &r.need {
             Some(Need::TakenDown(why)) => {
-                verdict = verdict.child(say(trf("Taken down: {reason}", &[("reason", why)]), GOLD));
+                notes.push(say(trf("Taken down: {reason}", &[("reason", why)]), GOLD));
             }
             Some(Need::Build) => {
-                let b = act("alt-row-build", "Build…", true);
-                verdict = verdict
-                    .child(say(tr("Not built for this computer yet").to_string(), GOLD))
-                    .child(if real && !busy {
-                        b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_build();
-                            cx.notify();
-                        }))
-                    } else {
-                        b
-                    });
+                let building = self.native_step.is_some();
+                let b = act(
+                    "alt-row-build",
+                    if building { "Building…" } else { "Build…" },
+                    true,
+                );
+                notes.push(say(tr("Not built for this computer yet").to_string(), GOLD));
+                verdict = verdict.child(if real && !busy && !building {
+                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.alt_build();
+                        cx.notify();
+                    }))
+                } else {
+                    b
+                });
             }
             Some(Need::Permission) => {
                 let b = act("alt-row-allow", "Allow…", true);
-                verdict = verdict
-                    .child(say(
-                        tr("Needs your permission to run native code").to_string(),
-                        GOLD,
-                    ))
-                    .child(if real && !busy {
-                        b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.alt_allow();
-                            cx.notify();
-                        }))
-                    } else {
-                        b
-                    });
+                notes.push(say(
+                    tr("Needs your permission to run native code").to_string(),
+                    GOLD,
+                ));
+                verdict = verdict.child(if real && !busy {
+                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.alt_allow();
+                        cx.notify();
+                    }))
+                } else {
+                    b
+                });
             }
             None => {}
         }
         if let Some(to) = &r.update {
             let b = act("alt-row-update", "Update", true);
             let row = r.clone();
-            verdict = verdict
-                .child(say(format!("→ {to}"), BLUE))
-                .child(if real && !busy {
-                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.alt_update_one(&row);
-                        cx.notify();
-                    }))
-                } else {
-                    b
-                });
+            notes.push(say(format!("→ {to}"), BLUE));
+            verdict = verdict.child(if real && !busy {
+                b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.alt_update_one(&row);
+                    cx.notify();
+                }))
+            } else {
+                b
+            });
         }
         let sw = {
             let s = ui::switch(("alt-row-switch", n), r.on);
@@ -659,19 +604,21 @@ impl Launcher {
         let title = {
             let d = div()
                 .id(("alt-row-title", n))
-                .flex_1()
                 .min_w_0()
                 .flex()
                 .items_baseline()
                 .gap(px(8.))
                 .child(
                     div()
+                        .min_w_0()
                         .font_weight(FontWeight::SEMIBOLD)
                         .truncate()
                         .child(r.title.clone()),
                 )
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .text_size(px(12.))
                         .text_color(c(MUTED))
                         .truncate()
@@ -688,13 +635,14 @@ impl Launcher {
                 None => d,
             }
         };
-        div()
+        let kind = r.make.map_or("", Make::label);
+        let row = div()
             .id(("alt-row", n))
             .flex()
             .items_center()
             .gap(px(12.))
             .px(px(14.))
-            .h(px(52.))
+            .min_h(px(52.))
             .border_t_1()
             .border_color(c(SOFT))
             .when(selected, |d| d.bg(c(0x2a2724)))
@@ -702,25 +650,58 @@ impl Launcher {
                 Some(_) => div().flex_none().w(px(18.)),
                 None => div().flex_none().child(check),
             })
-            .child(tile(picture, &r.title, 32.))
-            .child(title)
-            .child(
+            .child(tile(picture, &r.title, 32.));
+        let row = if wide {
+            row.child(title.flex_1().min_w(px(140.)))
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_none()
+                        .text_size(px(13.))
+                        .text_color(c(MUTED))
+                        .child(kind),
+                )
+                .child(
+                    div()
+                        .w(px(64.))
+                        .flex_none()
+                        .text_size(px(13.))
+                        .font_family(crate::theme::MONO)
+                        .child(r.version.clone()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .flex_shrink(1.)
+                        .min_w_0()
+                        .children(notes),
+                )
+        } else {
+            row.child(
                 div()
-                    .w(px(64.))
-                    .flex_none()
-                    .text_size(px(13.))
-                    .text_color(c(MUTED))
-                    .child(r.make.map_or("", Make::label)),
+                    .flex_1()
+                    .min_w_0()
+                    .py(px(8.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(title)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_baseline()
+                            .gap_x(px(10.))
+                            .child(muted(match kind {
+                                "" => r.version.clone(),
+                                kind => format!("{kind} · {}", r.version),
+                            }))
+                            .children(notes),
+                    ),
             )
-            .child(
-                div()
-                    .w(px(64.))
-                    .flex_none()
-                    .text_size(px(13.))
-                    .font_family(crate::theme::MONO)
-                    .child(r.version.clone()),
-            )
-            .child(verdict)
-            .child(sw)
+        };
+        row.child(verdict).child(sw)
     }
 }

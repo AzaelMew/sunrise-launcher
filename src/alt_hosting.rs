@@ -729,7 +729,7 @@ impl Launcher {
             .track_scroll(&self.servers.console_scroll.handle)
             .h(px(220.))
             .px(px(16.))
-            .py(px(10.))
+            .pb(px(10.))
             .overflow_y_scroll()
             .font_family(theme::MONO)
             .text_size(px(12.))
@@ -771,7 +771,13 @@ impl Launcher {
         };
         card()
             .overflow_hidden()
-            .child(div().px(px(16.)).pt(px(14.)).child(label("Console")))
+            .child(
+                div()
+                    .px(px(16.))
+                    .pt(px(14.))
+                    .pb(px(10.))
+                    .child(label("Console")),
+            )
             .child(log)
             .child(
                 div()

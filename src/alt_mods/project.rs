@@ -88,6 +88,8 @@ impl Launcher {
             .child(tile(picture, &p.name, 64.))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .flex_col()
                     .gap(px(6.))
@@ -100,8 +102,10 @@ impl Launcher {
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .items_center()
-                            .gap(px(8.))
+                            .gap_x(px(8.))
+                            .gap_y(px(4.))
                             .child(muted(credit))
                             .child(tag(p.make.label()))
                             .children(p.categories.first().map(|k| {
