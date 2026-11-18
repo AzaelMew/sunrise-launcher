@@ -89,7 +89,7 @@ fn place(chip: Option<Bounds<Pixels>>, window_width: f32) -> (f32, f32) {
             f32::from(chip.bottom()) + GAP,
             (window_width - f32::from(chip.right())).max(EDGE),
         ),
-        None => (tokens::BAR, EDGE),
+        None => (tokens::FRAME_INSET + tokens::HEADER + GAP, EDGE),
     }
 }
 
@@ -446,6 +446,9 @@ mod tests {
         // A chip against the window's edge: the menu keeps its margin.
         let flush = Bounds::new(gpui::point(px(628.), px(0.)), gpui::size(px(172.), px(44.)));
         assert_eq!(place(Some(flush), 800.), (50., EDGE));
-        assert_eq!(place(None, 800.), (tokens::BAR, EDGE));
+        assert_eq!(
+            place(None, 800.),
+            (tokens::FRAME_INSET + tokens::HEADER + GAP, EDGE)
+        );
     }
 }

@@ -324,38 +324,12 @@ impl Launcher {
         }
     }
 
-    /// The selected setup's channel, when its last build failed because the build it stays on
-    /// has no mod tools any more and another build is the way on (`sdk_cache::way_on`).
-    pub(super) fn build_gone(&self) -> Option<instances::Channel> {
-        let error = self.native_error.as_ref()?;
-        let instance = self.selected_instance()?;
-        let mine = self.native_for.as_deref() == Some(instance.id.as_str());
-        (mine
-            && instance.version.is_some()
-            && native_mods::sdk_cache::way_on(error)
-                == Some(native_mods::sdk_cache::WayOn::OtherBuild))
-        .then_some(instance.channel)
-    }
-
     pub(super) fn launch_busy(&self) -> bool {
         self.mutating()
             || self.installing.is_some()
             || self.preparing
             || self.native_step.is_some()
             || self.starting_client.is_some()
-    }
-
-    pub(super) fn install_update_if_safe(&mut self, release: &Release) {
-        let Some(instance) = self.selected_instance() else {
-            return;
-        };
-        if self.native_state_of(instance) != native_status::State::NoMods {
-            // Never overwrite a working native build while staging its candidate.
-            self.instance_install = Some(release.tag.clone());
-            self.install(release);
-        } else {
-            self.install_update();
-        }
     }
 
     pub(super) fn navigate(&mut self, page: Page) {
@@ -446,7 +420,7 @@ impl Launcher {
             .items_center()
             .justify_between()
             .px(px(10.))
-            .h(px(54.))
+            .h(px(tokens::HEADER))
             .rounded(px(tokens::R_PANEL))
             .border_1()
             .border_color(rgb(p.divider))
@@ -482,7 +456,7 @@ impl Launcher {
                 let body = if page == Page::Hosting {
                     self.hosting(cx)
                 } else {
-                    self.home(window, cx)
+                    self.join(cx)
                 };
                 let mut tabs = div().flex().px(px(22.)).pt(px(12.)).gap(px(6.));
                 for (dest, id, label) in [
@@ -509,6 +483,7 @@ impl Launcher {
             }
             _ => self.mods(window, cx),
         };
+        let status = self.status_strip(cx);
         let pane = div()
             .relative()
             .flex_1()
@@ -523,6 +498,7 @@ impl Launcher {
                     .border_color(rgb(palette().divider))
             })
             .overflow_hidden()
+            .children(status)
             .child(content);
         let mut frame = div()
             .id("launcher-frame")
@@ -577,7 +553,7 @@ impl Launcher {
                     .flex()
                     .flex_1()
                     .min_h_0()
-                    .p(px(12.))
+                    .p(px(tokens::FRAME_INSET))
                     .gap(px(12.))
                     .child(rail)
                     .child(

@@ -23,6 +23,8 @@ pub(crate) const HEADING: f32 = 18.;
 pub(crate) const TITLE: f32 = 24.;
 /// A page's title.
 pub(crate) const DISPLAY: f32 = 28.;
+/// The selected profile's name on Home.
+pub(crate) const HERO: f32 = 40.;
 
 // ---- corner radii
 
@@ -45,8 +47,9 @@ pub(crate) const CONTROL: f32 = 32.;
 pub(crate) const FIELD: f32 = 36.;
 /// A page's or a sheet's main action.
 pub(crate) const ACTION: f32 = 44.;
-/// The rail's width.
-pub(crate) const RAIL: f32 = 72.;
-/// The play bar's height, and Play's inside it.
-pub(crate) const BAR: f32 = 72.;
+/// The height of the frame's tab and account row.
+pub(crate) const HEADER: f32 = 54.;
+/// The equal inset of the sidebar and content from the window edges.
+pub(crate) const FRAME_INSET: f32 = 12.;
+/// Play, and the build picker beside it.
 pub(crate) const PLAY: f32 = 50.;
