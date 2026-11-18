@@ -65,7 +65,7 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
     let mut card = div()
         .flex()
         .flex_col()
-        .rounded(px(12.))
+        .rounded(px(tokens::R_CARD))
         .border_1()
         .border_color(rgb(SOFT))
         .bg(rgb(CARD));
@@ -82,7 +82,7 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
 pub(crate) fn hint(text: impl Into<SharedString>) -> Div {
     div()
         .text_color(rgb(MUTED))
-        .text_size(px(12.5))
+        .text_size(px(tokens::SMALL))
         .child(text.into())
 }
 
@@ -136,7 +136,7 @@ pub(crate) fn danger(b: Stateful<Div>) -> Stateful<Div> {
 
 pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(12.5))
+        .text_size(px(tokens::SMALL))
         .text_color(rgb(BAD))
         .child(text.into())
 }
@@ -153,11 +153,11 @@ impl Launcher {
                 div()
                     .id(ElementId::named_usize("alt-settings-nav", n))
                     .tab_index(0)
-                    .h(px(36.))
+                    .h(px(tokens::FIELD))
                     .px(px(12.))
                     .flex()
                     .items_center()
-                    .rounded(px(9.))
+                    .rounded(px(tokens::R_CONTROL))
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(if on { TEXT } else { MUTED }))
@@ -192,7 +192,7 @@ impl Launcher {
                     .gap(px(2.))
                     .child(
                         div()
-                            .text_size(px(17.))
+                            .text_size(px(tokens::HEADING))
                             .font_weight(FontWeight::BOLD)
                             .child(tr(section.label())),
                     )
@@ -212,7 +212,7 @@ impl Launcher {
             .gap(px(20.))
             .child(
                 div()
-                    .text_size(px(26.))
+                    .text_size(px(tokens::DISPLAY))
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Settings")),
             )
@@ -317,10 +317,14 @@ impl Launcher {
                     .items_center()
                     .gap(px(12.))
                     .child(
-                        div().flex_none().rounded(px(8.)).overflow_hidden().child(
-                            self.profile_heads
-                                .draw(Some(&a.uuid), 36., self.scale, &theme),
-                        ),
+                        div()
+                            .flex_none()
+                            .rounded(px(tokens::R_CONTROL))
+                            .overflow_hidden()
+                            .child(
+                                self.profile_heads
+                                    .draw(Some(&a.uuid), 36., self.scale, &theme),
+                            ),
                     )
                     .child(
                         div()
@@ -813,7 +817,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_size(px(10.5))
+                .text_size(px(tokens::CAPTION))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(rgb(if pinned { TEXT } else { MUTED }))
                 .cursor_pointer()
@@ -845,7 +849,7 @@ impl Launcher {
                             div()
                                 .w(px(340.))
                                 .p(px(12.))
-                                .rounded(px(10.))
+                                .rounded(px(tokens::R_CONTROL))
                                 .border_1()
                                 .border_color(rgb(LINE))
                                 .bg(rgb(CARD))
@@ -1003,12 +1007,12 @@ impl Launcher {
                         .max_h(px(220.))
                         .overflow_y_scroll()
                         .p(px(12.))
-                        .rounded(px(8.))
+                        .rounded(px(tokens::R_CONTROL))
                         .bg(rgb(BG))
                         .border_1()
                         .border_color(rgb(SOFT))
                         .font_family(theme::MONO)
-                        .text_size(px(12.))
+                        .text_size(px(tokens::SMALL))
                         .text_color(rgb(MUTED))
                         .children(json.lines().map(|l| div().child(l.to_string()))),
                 );
@@ -1143,17 +1147,17 @@ impl Launcher {
         let field = div()
             .id(id)
             .track_focus(&focus)
-            .h(px(38.))
+            .h(px(tokens::FIELD))
             .px(px(12.))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(8.))
+            .rounded(px(tokens::R_CONTROL))
             .bg(rgb(BG))
             .border_1()
             .border_color(rgb(if focused { GOLD } else { LINE }))
             .font_family(theme::MONO)
-            .text_size(px(13.))
+            .text_size(px(tokens::LABEL))
             .text_color(rgb(TEXT))
             .cursor_text()
             .child(line_edit::content(

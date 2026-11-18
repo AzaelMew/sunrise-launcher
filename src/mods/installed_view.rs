@@ -199,7 +199,7 @@ impl Launcher {
                     true,
                 );
                 bar = bar
-                    .child(div().text_size(px(13.)).child(trf(
+                    .child(div().text_size(px(tokens::LABEL)).child(trf(
                         "{count} selected of {shown} shown",
                         &[
                             ("count", &n_sel.to_string()),
@@ -266,12 +266,12 @@ impl Launcher {
                     let items = chosen.clone();
                     panel
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Remove {count} mods?", &[("count", &chosen.len().to_string())])))
-                        .child(div().text_size(px(13.)).child(match more {
+                        .child(div().text_size(px(tokens::LABEL)).child(match more {
                             0 => names,
                             n => trf("{names} and {more} more", &[("names", &names), ("more", &n.to_string())]),
                         }))
                         .children(dependents.into_iter().map(|(who, needed)| {
-                            div().text_size(px(13.)).text_color(c(GOLD)).child(trf(
+                            div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(trf(
                                 "{who} needs {needed}: it may stop working.",
                                 &[("who", &who), ("needed", &needed.join(", "))],
                             ))
@@ -304,9 +304,9 @@ impl Launcher {
                             &[("count", &n.to_string())],
                         )))
                         .children(worlds.iter().map(|(world, mods)| {
-                            div().text_size(px(13.)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
+                            div().text_size(px(tokens::LABEL)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
                         }))
-                        .child(div().text_size(px(13.)).text_color(c(GOLD)).child(trf(
+                        .child(div().text_size(px(tokens::LABEL)).text_color(c(GOLD)).child(trf(
                             "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
                             &[("what", action.consequence())],
                         )))
@@ -331,7 +331,7 @@ impl Launcher {
                     panel
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Update {count} mods?", &[("count", &included.len().to_string())])))
                         .children(included.iter().take(14).map(|i| {
-                            div().text_size(px(13.)).child(trf(
+                            div().text_size(px(tokens::LABEL)).child(trf(
                                 "{title} {from} → {to}{native}",
                                 &[
                                     ("title", &i.title),
@@ -344,12 +344,12 @@ impl Launcher {
                         .children((included.len() > 14).then(|| muted(trf("and {count} more", &[("count", &(included.len() - 14).to_string())]))))
                         .children((!plan.skipped.is_empty()).then(|| {
                             div().flex().flex_col().gap(px(2.)).child(muted(tr("Left out:"))).children(plan.skipped.iter().map(|(t, why)| {
-                                div().text_size(px(12.)).text_color(c(GOLD)).child(trf("{title}: {why}", &[("title", t), ("why", why)]))
+                                div().text_size(px(tokens::SMALL)).text_color(c(GOLD)).child(trf("{title}: {why}", &[("title", t), ("why", why)]))
                             }))
                         }))
                         .child(muted(tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off.")))
                         .children((natives > 0).then(|| {
-                            div().text_size(px(12.)).text_color(c(GOLD)).child(trf(
+                            div().text_size(px(tokens::SMALL)).text_color(c(GOLD)).child(trf(
                                 "{count} of these run native code. A new build is made only when you Play or choose Build…, after the usual checks.",
                                 &[("count", &natives.to_string())],
                             ))
@@ -399,12 +399,17 @@ impl Launcher {
                     .items_center()
                     .justify_between()
                     .px(px(14.))
-                    .h(px(38.))
+                    .h(px(tokens::FIELD))
                     .bg(c(BG))
-                    .child(div().text_size(px(11.)).text_color(c(MUTED)).child(trf(
-                        "{title} · {count}",
-                        &[("title", title), ("count", &count.to_string())],
-                    )));
+                    .child(
+                        div()
+                            .text_size(px(tokens::CAPTION))
+                            .text_color(c(MUTED))
+                            .child(trf(
+                                "{title} · {count}",
+                                &[("title", title), ("count", &count.to_string())],
+                            )),
+                    );
                 if g == Group::Updates {
                     let b = crate::frame::button(
                         "alt-update-all",
@@ -512,7 +517,7 @@ impl Launcher {
         let say = move |text: String, color: u32| {
             div()
                 .min_w_0()
-                .text_size(px(13.))
+                .text_size(px(tokens::LABEL))
                 .text_color(c(color))
                 .when(wide, |d| d.truncate())
                 .child(text)
@@ -620,7 +625,7 @@ impl Launcher {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(12.))
+                        .text_size(px(tokens::SMALL))
                         .text_color(c(MUTED))
                         .truncate()
                         .child(r.authors.clone()),
@@ -658,7 +663,7 @@ impl Launcher {
                     div()
                         .w(px(64.))
                         .flex_none()
-                        .text_size(px(13.))
+                        .text_size(px(tokens::LABEL))
                         .text_color(c(MUTED))
                         .child(kind),
                 )
@@ -666,7 +671,7 @@ impl Launcher {
                     div()
                         .w(px(64.))
                         .flex_none()
-                        .text_size(px(13.))
+                        .text_size(px(tokens::LABEL))
                         .font_family(crate::theme::MONO)
                         .child(r.version.clone()),
                 )
@@ -729,7 +734,7 @@ impl Launcher {
             .flex()
             .items_center()
             .justify_center()
-            .text_size(px(10.5))
+            .text_size(px(tokens::CAPTION))
             .font_weight(FontWeight::SEMIBOLD)
             .text_color(c(if open { TEXT } else { MUTED }))
             .cursor_pointer()
@@ -776,7 +781,7 @@ impl Launcher {
                             .flex()
                             .items_center()
                             .gap(px(6.))
-                            .text_size(px(12.))
+                            .text_size(px(tokens::SMALL))
                             .text_color(c(MUTED))
                             .cursor_pointer()
                             .child(blocks::icon(
@@ -798,7 +803,7 @@ impl Launcher {
                             .gap(px(4.))
                             .children(unfit.changes.iter().map(|change| {
                                 div()
-                                    .text_size(px(12.))
+                                    .text_size(px(tokens::SMALL))
                                     .text_color(c(MUTED))
                                     .child(format!("• {change}"))
                             }))
@@ -843,13 +848,13 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    .rounded(px(10.))
+                    .rounded(px(tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(LINE))
                     .bg(c(CARD))
                     .shadow_lg()
                     .occlude()
-                    .child(div().text_size(px(13.)).child(sentence))
+                    .child(div().text_size(px(tokens::LABEL)).child(sentence))
                     .children(technical)
                     .children(action.map(|a| div().flex().justify_end().child(a)));
             gpui::deferred(

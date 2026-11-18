@@ -551,7 +551,7 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .child(heading)
-                .child(div().text_size(px(13.5)).child(tr(
+                .child(div().text_size(px(tokens::LABEL)).child(tr(
                     "A data pack goes into a world, and this setup has none yet. Make one in the game first.",
                 )))
                 .child(div().flex().justify_end().child(close(tr("Close"))));
@@ -560,7 +560,7 @@ impl Launcher {
         let mut list = div()
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(px(tokens::R_CARD))
             .border_1()
             .border_color(c(LINE))
             .overflow_hidden();
@@ -636,7 +636,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .child(heading)
-            .child(div().text_size(px(13.5)).child(say))
+            .child(div().text_size(px(tokens::LABEL)).child(say))
             .child(list)
             .child(
                 div()

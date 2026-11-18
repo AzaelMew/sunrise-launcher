@@ -31,10 +31,10 @@ impl Launcher {
             let track = div()
                 .flex_1()
                 .h(px(4.))
-                .rounded(px(2.))
+                .rounded(px(tokens::R_BAR))
                 .bg(rgb(LINE))
                 .overflow_hidden();
-            let fill = div().h(px(4.)).rounded(px(2.)).bg(rgb(TEXT));
+            let fill = div().h(px(4.)).rounded(px(tokens::R_BAR)).bg(rgb(TEXT));
             bar = bar.child(match now {
                 Some(p) if stage < p.stage => track.child(fill.w_full()),
                 Some(p) if stage == p.stage => match p.fraction {
@@ -96,12 +96,18 @@ impl Launcher {
                 .flex()
                 .items_start()
                 .gap(px(12.))
-                .child(div().flex_1().min_w_0().text_size(px(13.)).child(text))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(tokens::LABEL))
+                        .child(text),
+                )
                 .child(
                     div()
                         .id("alt-build-dismiss")
                         .flex_none()
-                        .text_size(px(12.))
+                        .text_size(px(tokens::SMALL))
                         .text_color(rgb(MUTED))
                         .cursor_pointer()
                         .child(tr("Dismiss"))
@@ -124,11 +130,11 @@ impl Launcher {
         self.first_build.map(|bytes| {
             div()
                 .p(px(14.))
-                .rounded(px(12.))
+                .rounded(px(tokens::R_CARD))
                 .border_1()
                 .border_color(rgb(SOFT))
                 .bg(rgb(CARD))
-                .text_size(px(13.))
+                .text_size(px(tokens::LABEL))
                 .text_color(rgb(MUTED))
                 .child(trf(
                     "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",

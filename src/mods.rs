@@ -667,16 +667,16 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .child(div().text_size(px(13.)).child(line))
+                    .child(div().text_size(px(tokens::LABEL)).child(line))
                     .child(
                         div()
                             .h(px(4.))
-                            .rounded(px(2.))
+                            .rounded(px(tokens::R_BAR))
                             .bg(c(crate::frame::LINE))
                             .child(
                                 div()
                                     .h(px(4.))
-                                    .rounded(px(2.))
+                                    .rounded(px(tokens::R_BAR))
                                     .bg(c(crate::frame::TEXT))
                                     .w(relative(f.clamp(0.02, 1.))),
                             ),
@@ -698,7 +698,7 @@ impl Launcher {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .text_size(px(13.))
+                        .text_size(px(tokens::LABEL))
                         .text_color(c(color))
                         .child(text),
                 )
@@ -755,12 +755,12 @@ impl Launcher {
             .track_focus(focus)
             .flex_1()
             .min_w(px(120.))
-            .h(px(44.))
+            .h(px(tokens::ACTION))
             .px(px(16.))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(12.))
+            .rounded(px(tokens::R_CARD))
             .border_1()
             .border_color(if focused {
                 c(crate::frame::TEXT)
@@ -768,7 +768,7 @@ impl Launcher {
                 c(crate::frame::LINE)
             })
             .bg(c(crate::frame::CARD))
-            .text_size(px(14.))
+            .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content_with(
                 edit,
@@ -824,11 +824,11 @@ impl Launcher {
             div()
                 .id(id)
                 .px(px(18.))
-                .h(px(36.))
+                .h(px(tokens::FIELD))
                 .flex()
                 .items_center()
-                .rounded(px(9.))
-                .text_size(px(14.))
+                .rounded(px(tokens::R_CONTROL))
+                .text_size(px(tokens::BODY))
                 .cursor_pointer()
                 .when(on, |d| {
                     d.bg(c(crate::frame::LINE))
@@ -849,7 +849,7 @@ impl Launcher {
             .child(
                 div()
                     .flex_none()
-                    .text_size(px(28.))
+                    .text_size(px(tokens::DISPLAY))
                     .font_weight(FontWeight::BOLD)
                     .child(if packs { tr("Packs") } else { tr("Mods") }),
             )
@@ -858,7 +858,7 @@ impl Launcher {
                     .flex()
                     .flex_none()
                     .p(px(3.))
-                    .rounded(px(12.))
+                    .rounded(px(tokens::R_CARD))
                     .border_1()
                     .border_color(c(crate::frame::LINE))
                     .bg(c(crate::frame::CARD))

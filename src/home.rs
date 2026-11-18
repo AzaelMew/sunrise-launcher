@@ -200,13 +200,13 @@ fn card() -> Div {
         .bg(rgb(CARD))
         .border_1()
         .border_color(rgb(SOFT))
-        .rounded(px(12.))
+        .rounded(px(tokens::R_CARD))
         .overflow_hidden()
 }
 
 fn heading(label: &str) -> Div {
     div()
-        .text_size(px(17.))
+        .text_size(px(tokens::HEADING))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(TEXT))
         .child(label.to_string())
@@ -214,7 +214,7 @@ fn heading(label: &str) -> Div {
 
 fn muted(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(12.5))
+        .text_size(px(tokens::SMALL))
         .text_color(rgb(MUTED))
         .overflow_hidden()
         .whitespace_nowrap()
@@ -247,7 +247,7 @@ fn server_picture(
         (Some(image), _) => gpui::img(image)
             .flex_none()
             .size(px(36.))
-            .rounded(px(8.))
+            .rounded(px(tokens::R_CONTROL))
             .into_any_element(),
         (None, Some(Badge::Horizon)) => horizon_mark(36.).into_any_element(),
         (None, Some(Badge::Sunrise)) => crate::mark(36.).into_any_element(),
@@ -268,7 +268,7 @@ fn tile(label: &str, side: f32) -> Div {
         .items_center()
         .justify_center()
         .size(px(side))
-        .rounded(px(8.))
+        .rounded(px(tokens::R_CONTROL))
         .bg(gpui::hsla(hue, 0.28, 0.24, 1.))
         .text_size(px(side * 0.45))
         .font_weight(FontWeight::SEMIBOLD)
@@ -474,7 +474,7 @@ impl Launcher {
                             .min_w(px(120.))
                             .child(
                                 div()
-                                    .text_size(px(15.))
+                                    .text_size(px(tokens::BODY))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(rgb(TEXT))
                                     .overflow_hidden()
@@ -503,16 +503,16 @@ impl Launcher {
             .track_focus(&self.friend_focus)
             .flex_1()
             .min_w(px(0.))
-            .h(px(38.))
+            .h(px(tokens::FIELD))
             .px(px(12.))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(8.))
+            .rounded(px(tokens::R_CONTROL))
             .bg(rgb(BG))
             .border_1()
             .border_color(rgb(if focused { GOLD } else { LINE }))
-            .text_size(px(14.))
+            .text_size(px(tokens::BODY))
             .text_color(rgb(TEXT))
             .cursor_text()
             .child(line_edit::content(
@@ -564,7 +564,7 @@ impl Launcher {
                 div()
                     .px(px(14.))
                     .py(px(8.))
-                    .text_size(px(12.5))
+                    .text_size(px(tokens::SMALL))
                     .text_color(rgb(GOLD))
                     .child(e),
             );
@@ -574,7 +574,7 @@ impl Launcher {
                 div()
                     .px(px(14.))
                     .py(px(8.))
-                    .text_size(px(12.5))
+                    .text_size(px(tokens::SMALL))
                     .text_color(rgb(MUTED))
                     .child(tr("That isn't an address or an invite code.")),
             );
@@ -671,7 +671,7 @@ impl Launcher {
                     .min_w(px(0.))
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(TEXT))
                             .child(tr(server.name)),
@@ -788,7 +788,7 @@ impl Launcher {
                     .min_w(px(0.))
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(TEXT))
                             .overflow_hidden()
@@ -862,24 +862,24 @@ impl Launcher {
             .py(px(40.))
                     .child(
                         div()
-                            .text_size(px(30.))
+                            .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(TEXT))
                             .child(tr("Welcome to Sunrise")),
                     )
                     .child(
-                        div().text_size(px(15.)).text_color(rgb(TEXT)).child(tr(
+                        div().text_size(px(tokens::BODY)).text_color(rgb(TEXT)).child(tr(
                             "Sign in with the Microsoft account that owns Minecraft: Java Edition. Sunrise then installs itself and you can play.",
                         )),
                     )
-                    .child(div().text_size(px(12.5)).text_color(rgb(MUTED)).child(tr(
+                    .child(div().text_size(px(tokens::SMALL)).text_color(rgb(MUTED)).child(tr(
                         "While you play, Sunrise counts you as playing once a minute. Nothing else is sent.",
                     )))
                     .child(
                         div()
                             .id("alt-privacy")
                             .cursor_pointer()
-                            .text_size(px(13.))
+                            .text_size(px(tokens::LABEL))
                             .text_color(rgb(GOLD))
                             .child(tr("Privacy choices"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -933,7 +933,7 @@ impl Launcher {
                 div()
                     .id("alt-browse-mods")
                     .cursor_pointer()
-                    .text_size(px(13.))
+                    .text_size(px(tokens::LABEL))
                     .text_color(rgb(GOLD))
                     .child(tr("Browse all mods"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -1036,7 +1036,7 @@ impl Launcher {
                     .cursor_pointer()
                     .child(
                         div()
-                            .text_size(px(14.))
+                            .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(TEXT))
                             .overflow_hidden()

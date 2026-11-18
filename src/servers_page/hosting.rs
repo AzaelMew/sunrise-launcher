@@ -11,14 +11,14 @@ const OK: u32 = 0x7fd6a0;
 
 fn title(text: impl Into<SharedString>) -> Div {
     div()
-        .text_size(px(26.))
+        .text_size(px(tokens::DISPLAY))
         .font_weight(FontWeight::BOLD)
         .child(text.into())
 }
 
 fn label(text: &'static str) -> Div {
     div()
-        .text_size(px(11.))
+        .text_size(px(tokens::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(MUTED))
         .child(tr(text).to_uppercase())
@@ -28,7 +28,7 @@ fn card() -> Div {
     div()
         .flex()
         .flex_col()
-        .rounded(px(12.))
+        .rounded(px(tokens::R_CARD))
         .border_1()
         .border_color(rgb(SOFT))
         .bg(rgb(CARD))
@@ -43,7 +43,7 @@ fn dot(color: u32) -> Div {
     div()
         .flex_none()
         .size(px(8.))
-        .rounded(px(4.))
+        .rounded(px(tokens::R_SMALL))
         .bg(rgb(color))
 }
 
@@ -98,9 +98,9 @@ impl Launcher {
         let focused = self.servers.has_focus(f);
         let invalid = self.servers.invalid.is_some_and(|(g, _)| g == f);
         self.field(f, placeholder, width, cx)
-            .h(px(36.))
+            .h(px(tokens::FIELD))
             .px(px(12.))
-            .rounded(px(8.))
+            .rounded(px(tokens::R_CONTROL))
             .border_1()
             .border_color(rgb(if invalid {
                 BAD
@@ -110,7 +110,7 @@ impl Launcher {
                 LINE
             }))
             .bg(rgb(BG))
-            .text_size(px(13.))
+            .text_size(px(tokens::LABEL))
             .text_color(rgb(TEXT))
     }
 
@@ -457,7 +457,12 @@ impl Launcher {
                     )
                     .child(panel)
                     .child(restart)
-                    .child(start.h(px(38.)).min_w(px(96.)).text_size(px(14.))),
+                    .child(
+                        start
+                            .h(px(tokens::FIELD))
+                            .min_w(px(96.))
+                            .text_size(px(tokens::BODY)),
+                    ),
             );
         let mut page = div();
         if self.servers.list.len() > 1 {
@@ -468,7 +473,7 @@ impl Launcher {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .text_size(px(13.))
+                        .text_size(px(tokens::LABEL))
                         .text_color(rgb(MUTED))
                         .cursor_pointer()
                         .child("‹")
@@ -587,7 +592,7 @@ impl Launcher {
                             .flex_1()
                             .min_w_0()
                             .font_family(theme::MONO)
-                            .text_size(px(18.))
+                            .text_size(px(tokens::HEADING))
                             .child(address),
                     )
                     .child(self.host_button(
@@ -618,7 +623,7 @@ impl Launcher {
                 .gap(px(2.))
                 .child(
                     div()
-                        .text_size(px(18.))
+                        .text_size(px(tokens::HEADING))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(value),
                 )
@@ -726,7 +731,7 @@ impl Launcher {
             .pb(px(10.))
             .overflow_y_scroll()
             .font_family(theme::MONO)
-            .text_size(px(12.))
+            .text_size(px(tokens::SMALL))
             .line_height(px(18.))
             .text_color(rgb(MUTED))
             .when(lines.is_empty(), |d| {
@@ -745,20 +750,20 @@ impl Launcher {
                 cx,
             )
             .flex_1()
-            .h(px(36.))
+            .h(px(tokens::FIELD))
             .px(px(0.))
             .border_0()
             .bg(rgb(CARD))
             .font_family(theme::MONO)
-            .text_size(px(12.))
+            .text_size(px(tokens::SMALL))
             .text_color(rgb(TEXT))
             .into_any_element()
         } else {
             div()
-                .h(px(36.))
+                .h(px(tokens::FIELD))
                 .flex()
                 .items_center()
-                .text_size(px(12.))
+                .text_size(px(tokens::SMALL))
                 .text_color(rgb(MUTED))
                 .child(tr("Start the server to type commands"))
                 .into_any_element()
@@ -1533,15 +1538,15 @@ impl Launcher {
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .h(px(32.))
+                        .h(px(tokens::CONTROL))
                         .px(px(10.))
-                        .rounded(px(8.))
+                        .rounded(px(tokens::R_CONTROL))
                         .cursor_pointer()
                         .when(chosen, |d| d.bg(rgb(BG)))
                         .child(
                             div()
                                 .size(px(12.))
-                                .rounded(px(6.))
+                                .rounded(px(tokens::R_SMALL))
                                 .border_1()
                                 .border_color(rgb(if chosen { TEXT } else { MUTED }))
                                 .when(chosen, |d| d.bg(rgb(TEXT))),
@@ -1602,12 +1607,12 @@ impl Launcher {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .h(px(32.))
+                        .h(px(tokens::CONTROL))
                         .px(px(12.))
-                        .rounded(px(16.))
+                        .rounded(px(tokens::R_PANEL))
                         .border_1()
                         .border_color(rgb(LINE))
-                        .text_size(px(13.))
+                        .text_size(px(tokens::LABEL))
                         .cursor_pointer()
                         .child(friend)
                         .child(div().text_color(rgb(MUTED)).child("×"))
@@ -1675,7 +1680,7 @@ impl Launcher {
                     .gap(px(4.))
                     .child(
                         div()
-                            .text_size(px(22.))
+                            .text_size(px(tokens::TITLE))
                             .font_weight(FontWeight::BOLD)
                             .child(tr("Create a server")),
                     )
@@ -1784,7 +1789,7 @@ impl Launcher {
                         .w(px(620.))
                         .max_w_full()
                         .max_h_full()
-                        .rounded(px(16.))
+                        .rounded(px(tokens::R_PANEL))
                         .border_color(rgb(LINE))
                         .overflow_hidden()
                         .child(body)

@@ -144,14 +144,17 @@ fn card() -> Div {
     div()
         .flex()
         .flex_col()
-        .rounded(px(14.))
+        .rounded(px(tokens::R_CARD))
         .border_1()
         .border_color(rgb(LINE))
         .bg(rgb(BG))
 }
 
 fn muted(text: impl IntoElement) -> Div {
-    div().text_size(px(13.)).text_color(rgb(MUTED)).child(text)
+    div()
+        .text_size(px(tokens::LABEL))
+        .text_color(rgb(MUTED))
+        .child(text)
 }
 
 fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
@@ -164,12 +167,17 @@ fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
         .child(
             div()
                 .size(px(16.))
-                .rounded(px(4.))
+                .rounded(px(tokens::R_SMALL))
                 .border_1()
                 .border_color(rgb(MUTED))
                 .when(on, |d| d.bg(rgb(GOLD))),
         )
-        .child(div().text_size(px(14.)).text_color(rgb(TEXT)).child(label))
+        .child(
+            div()
+                .text_size(px(tokens::BODY))
+                .text_color(rgb(TEXT))
+                .child(label),
+        )
 }
 
 /// The scrim and the sheet's frame. A press outside closes the sheet; inside, nothing does.
@@ -212,7 +220,7 @@ pub(crate) fn frame(
                 .overflow_y_scroll()
                 .p(px(28.))
                 .gap(px(16.))
-                .rounded(px(16.))
+                .rounded(px(tokens::R_PANEL))
                 .border_1()
                 .border_color(rgb(LINE))
                 .bg(rgb(CARD))
@@ -225,7 +233,7 @@ pub(crate) fn frame(
 
 pub(crate) fn title(text: String) -> Div {
     div()
-        .text_size(px(24.))
+        .text_size(px(tokens::TITLE))
         .font_weight(FontWeight::BOLD)
         .child(text)
 }
@@ -534,7 +542,7 @@ impl Launcher {
         let mut list = div()
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(px(tokens::R_CARD))
             .border_1()
             .border_color(rgb(LINE))
             .bg(rgb(BG));
@@ -644,7 +652,7 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .text_size(px(12.))
+                    .text_size(px(tokens::SMALL))
                     .text_color(rgb(MUTED))
                     .cursor_pointer()
                     .child(blocks::icon(
@@ -668,10 +676,10 @@ impl Launcher {
                     .flex_col()
                     .gap(px(6.))
                     .p(px(12.))
-                    .rounded(px(8.))
+                    .rounded(px(tokens::R_CONTROL))
                     .bg(rgb(BG))
                     .font_family(crate::theme::MONO)
-                    .text_size(px(11.5))
+                    .text_size(px(tokens::CAPTION))
                     .text_color(rgb(MUTED))
                     .children(details)
             }));
@@ -680,7 +688,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .child(title(heading))
-            .child(div().text_size(px(14.)).child(lead))
+            .child(div().text_size(px(tokens::BODY)).child(lead))
             .children((!mods.is_empty()).then_some(list))
             .children(without.map(muted))
             .child(
@@ -704,7 +712,7 @@ impl Launcher {
             .notice
             .split('\n')
             .filter(|p| !p.trim().is_empty())
-            .map(|p| div().text_size(px(13.5)).child(p.to_owned()))
+            .map(|p| div().text_size(px(tokens::LABEL)).child(p.to_owned()))
             .collect();
         let main = |label: SharedString| {
             button("alt-notice-way-out", label)
@@ -836,7 +844,7 @@ impl Launcher {
             .children(
                 self.consent_error
                     .clone()
-                    .map(|e| div().text_color(rgb(BAD)).text_size(px(13.)).child(e)),
+                    .map(|e| div().text_color(rgb(BAD)).text_size(px(tokens::LABEL)).child(e)),
             )
             .child(consent_footer(
                 tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows in the bar below."),
@@ -996,13 +1004,13 @@ impl Launcher {
                 "A newer build, {to}, is installed. Native mods need your permission before they can be checked against it.",
                 &[("to", &build_name(&to))],
             ))
-            .text_size(px(12.))]),
+            .text_size(px(tokens::SMALL))]),
             CheckState::Idle(to) => block(vec![
                 muted(trf(
                     "A newer build, {to}, is installed. Your native mods have not been checked against it.",
                     &[("to", &build_name(&to))],
                 ))
-                .text_size(px(12.)),
+                .text_size(px(tokens::SMALL)),
                 div().child(check(
                     "alt-check",
                     "Check native mod compatibility",
@@ -1013,10 +1021,10 @@ impl Launcher {
                 "Checking your native mods against {to}…",
                 &[("to", &build_name(&to))],
             ))
-            .text_size(px(12.))]),
+            .text_size(px(tokens::SMALL))]),
             CheckState::Failed(_, error) => block(vec![
                 div()
-                    .text_size(px(12.))
+                    .text_size(px(tokens::SMALL))
                     .text_color(rgb(BAD))
                     .child(error),
                 div().child(check("alt-check-again", "Check again", cx)),
@@ -1027,7 +1035,7 @@ impl Launcher {
                         "The update to {to} is on hold: some mods don't fit.",
                         &[("to", &build_name(&done.to))],
                     ))
-                    .text_size(px(12.)),
+                    .text_size(px(tokens::SMALL)),
                     div().child(
                         button("alt-check-resolve", tr("Resolve…")).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
@@ -1040,7 +1048,7 @@ impl Launcher {
                 None => {
                     let base = done.to.clone();
                     block(vec![
-                        muted(done.summary.clone()).text_size(px(12.)),
+                        muted(done.summary.clone()).text_size(px(tokens::SMALL)),
                         div().child(
                             button(
                                 "alt-check-build",
@@ -1111,7 +1119,7 @@ impl Launcher {
                 .flex()
                 .gap(px(12.))
                 .p(px(10.))
-                .rounded(px(8.))
+                .rounded(px(tokens::R_CONTROL))
                 .cursor_pointer()
                 .when(on, |d| d.bg(rgb(BG)))
                 .child(
@@ -1130,8 +1138,8 @@ impl Launcher {
                         .min_w_0()
                         .flex()
                         .flex_col()
-                        .child(div().text_size(px(14.)).child(head))
-                        .child(muted(sub).text_size(px(12.))),
+                        .child(div().text_size(px(tokens::BODY)).child(head))
+                        .child(muted(sub).text_size(px(tokens::SMALL))),
                 )
         };
         // Three choices, however many builds there are: the two that follow, and one build
@@ -1195,7 +1203,7 @@ impl Launcher {
                 muted(tr(
                     "Your native mods are made for the build you play. Another build needs them checked first.",
                 ))
-                .text_size(px(12.))
+                .text_size(px(tokens::SMALL))
                 .px(px(10.))
             })
         });
@@ -1211,12 +1219,12 @@ impl Launcher {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .child(div().text_size(px(14.)).child(tr("Sunrise Extras")))
+                    .child(div().text_size(px(tokens::BODY)).child(tr("Sunrise Extras")))
                     .child(
                         muted(tr(
                             "Sunrise’s additions on top of vanilla. This switch arrives with the build that supports it.",
                         ))
-                        .text_size(px(12.)),
+                        .text_size(px(tokens::SMALL)),
                     ),
             )
             .child(
@@ -1235,7 +1243,7 @@ impl Launcher {
             .gap(px(10.))
             .child(
                 div()
-                    .text_size(px(11.))
+                    .text_size(px(tokens::CAPTION))
                     .text_color(rgb(MUTED))
                     .child(tr("GAME BUILD")),
             )
@@ -1243,13 +1251,12 @@ impl Launcher {
             .children(native)
             .child(div().h(px(1.)).bg(rgb(LINE)))
             .child(extras)
-            .children(
-                self.ui
-                    .sheets
-                    .error
-                    .clone()
-                    .map(|e| div().text_color(rgb(BAD)).text_size(px(12.)).child(e)),
-            );
+            .children(self.ui.sheets.error.clone().map(|e| {
+                div()
+                    .text_color(rgb(BAD))
+                    .text_size(px(tokens::SMALL))
+                    .child(e)
+            }));
         // A popover over the bar's build chip: the scrim is clear.
         div()
             .id("alt-build")
@@ -1285,7 +1292,7 @@ impl Launcher {
                     .bottom(px(78.))
                     .w(px(372.))
                     .p(px(14.))
-                    .rounded(px(14.))
+                    .rounded(px(tokens::R_CARD))
                     .border_1()
                     .border_color(rgb(LINE))
                     .bg(rgb(CARD))
@@ -1311,7 +1318,7 @@ fn fact(label: &str, value: String, rule: bool) -> Div {
         .gap(px(16.))
         .px(px(16.))
         .py(px(10.))
-        .text_size(px(13.))
+        .text_size(px(tokens::LABEL))
         .when(rule, |d| d.border_t_1().border_color(rgb(SOFT)))
         .child(
             div()

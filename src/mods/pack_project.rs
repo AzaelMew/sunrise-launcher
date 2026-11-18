@@ -160,7 +160,7 @@ impl Launcher {
                     .gap(px(6.))
                     .child(
                         div()
-                            .text_size(px(30.))
+                            .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
                             .child(p.title.clone()),
                     )
@@ -189,7 +189,7 @@ impl Launcher {
             });
         let action: AnyElement = if added {
             div()
-                .h(px(44.))
+                .h(px(tokens::ACTION))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -201,7 +201,9 @@ impl Launcher {
             } else {
                 tr("Add to my game")
             };
-            let b = primary("alt-pack-page-add", label).w_full().h(px(44.));
+            let b = primary("alt-pack-page-add", label)
+                .w_full()
+                .h(px(tokens::ACTION));
             if !support.installable() || self.ui.mods.busy.is_some() {
                 dim(b).into_any_element()
             } else {
@@ -244,7 +246,7 @@ impl Launcher {
                     .flex_col()
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(tokens::CAPTION))
                             .text_color(c(MUTED))
                             .pb(px(6.))
                             .child(tr("ABOUT")),
@@ -282,14 +284,14 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .gap(px(6.))
-                .child(div().text_size(px(13.5)).child(p.summary.clone()))
+                .child(div().text_size(px(tokens::LABEL)).child(p.summary.clone()))
                 .child(muted(trf(
                     "The rest of this page couldn't be read: {why}",
                     &[("why", why)],
                 )))
                 .into_any_element(),
             Some(Ok(page)) if page.0.body.trim().is_empty() => div()
-                .text_size(px(13.5))
+                .text_size(px(tokens::LABEL))
                 .child(p.summary.clone())
                 .into_any_element(),
             Some(Ok(page)) => prose(self.theme, &without_pictures(&page.0.body)),
@@ -303,7 +305,7 @@ impl Launcher {
                     .px(px(14.))
                     .py(px(10.))
                     .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
-                    .text_size(px(13.))
+                    .text_size(px(tokens::LABEL))
                     .child(
                         div()
                             .w(px(110.))
@@ -347,7 +349,7 @@ impl Launcher {
             main = main
                 .child(
                     div()
-                        .text_size(px(18.))
+                        .text_size(px(tokens::HEADING))
                         .font_weight(FontWeight::BOLD)
                         .child(tr("Versions")),
                 )

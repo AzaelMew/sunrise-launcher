@@ -271,7 +271,7 @@ impl Launcher {
             let image = div()
                 .size(px(36.))
                 .flex_none()
-                .rounded(px(6.))
+                .rounded(px(tokens::R_SMALL))
                 .bg(c(LINE))
                 .overflow_hidden()
                 .flex()

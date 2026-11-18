@@ -190,16 +190,16 @@ impl Launcher {
         let field = div()
             .id("alt-versions-find")
             .track_focus(&focus)
-            .h(px(38.))
+            .h(px(tokens::FIELD))
             .px(px(12.))
             .flex()
             .items_center()
             .overflow_hidden()
-            .rounded(px(8.))
+            .rounded(px(tokens::R_CONTROL))
             .bg(rgb(BG))
             .border_1()
             .border_color(rgb(if focused { GOLD } else { LINE }))
-            .text_size(px(14.))
+            .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content(
                 &self.ui.sheets.versions.find,
@@ -240,7 +240,7 @@ impl Launcher {
                             .flex()
                             .items_end()
                             .pb(px(6.))
-                            .text_size(px(11.))
+                            .text_size(px(tokens::CAPTION))
                             .text_color(rgb(MUTED))
                             .child(text.to_uppercase()),
                         Line::Build(b) => {
@@ -256,7 +256,7 @@ impl Launcher {
                                 .flex()
                                 .items_center()
                                 .gap(px(12.))
-                                .rounded(px(8.))
+                                .rounded(px(tokens::R_CONTROL))
                                 .when(on, |d| d.bg(rgb(BG)))
                                 .child(
                                     div()
@@ -267,22 +267,29 @@ impl Launcher {
                                         .border_color(rgb(if on { TEXT } else { MUTED }))
                                         .when(on, |d| d.bg(rgb(TEXT))),
                                 )
-                                .child(div().flex_none().text_size(px(14.)).child(b.name.clone()))
+                                .child(
+                                    div()
+                                        .flex_none()
+                                        .text_size(px(tokens::BODY))
+                                        .child(b.name.clone()),
+                                )
                                 .child(
                                     muted(b.about.clone())
                                         .flex_1()
                                         .min_w_0()
                                         .truncate()
-                                        .text_size(px(12.)),
+                                        .text_size(px(tokens::SMALL)),
                                 )
                                 .children(playing.then(|| {
-                                    muted(tr("Playing now")).flex_none().text_size(px(12.))
+                                    muted(tr("Playing now"))
+                                        .flex_none()
+                                        .text_size(px(tokens::SMALL))
                                 }))
-                                .children(
-                                    (b.installed && !playing).then(|| {
-                                        muted(tr("Installed")).flex_none().text_size(px(12.))
-                                    }),
-                                )
+                                .children((b.installed && !playing).then(|| {
+                                    muted(tr("Installed"))
+                                        .flex_none()
+                                        .text_size(px(tokens::SMALL))
+                                }))
                                 .when(blocked, |d| d.opacity(0.45))
                                 .when(!blocked, |d| {
                                     d.cursor_pointer().hover(|s| s.bg(rgb(BG))).on_click(
@@ -339,7 +346,7 @@ impl Launcher {
                 .child(muted(tr(
                     "Your native mods are made for the build you play. Another build needs them checked first.",
                 ))
-                .text_size(px(12.)))
+                .text_size(px(tokens::SMALL)))
                 .children(self.native_check_block(cx))
         });
         let body = div()
@@ -350,20 +357,19 @@ impl Launcher {
             .children(native)
             .child(
                 div()
-                    .rounded(px(12.))
+                    .rounded(px(tokens::R_CARD))
                     .border_1()
                     .border_color(rgb(LINE))
                     .p(px(4.))
                     .child(rows)
                     .children(nothing),
             )
-            .children(
-                self.ui
-                    .sheets
-                    .error
-                    .clone()
-                    .map(|e| div().text_color(rgb(BAD)).text_size(px(12.)).child(e)),
-            )
+            .children(self.ui.sheets.error.clone().map(|e| {
+                div()
+                    .text_color(rgb(BAD))
+                    .text_size(px(tokens::SMALL))
+                    .child(e)
+            }))
             .child(
                 div()
                     .flex()

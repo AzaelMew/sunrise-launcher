@@ -12,7 +12,7 @@ pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
     }
     let pic = |path: Option<PathBuf>| match path {
         Some(path) => div()
-            .rounded(px(10.))
+            .rounded(px(tokens::R_CONTROL))
             .overflow_hidden()
             // Filled edge to edge: a picture of another shape is cropped, never boxed.
             .child(
@@ -20,7 +20,7 @@ pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
                     .size_full()
                     .object_fit(gpui::ObjectFit::Cover),
             ),
-        None => div().rounded(px(10.)).bg(c(CARD)),
+        None => div().rounded(px(tokens::R_CONTROL)).bg(c(CARD)),
     };
     let mut shots = shots.into_iter();
     Some(
@@ -61,7 +61,7 @@ pub(super) fn back(label: &'static str) -> Stateful<Div> {
         .flex()
         .items_center()
         .gap(px(8.))
-        .text_size(px(13.))
+        .text_size(px(tokens::LABEL))
         .text_color(c(MUTED))
         .cursor_pointer()
         .child("‹")
@@ -75,7 +75,7 @@ pub(super) fn about_row(key: &'static str, value: String) -> Div {
         .justify_between()
         .gap(px(12.))
         .py(px(5.))
-        .text_size(px(13.))
+        .text_size(px(tokens::LABEL))
         .child(div().flex_none().text_color(c(MUTED)).child(key))
         .child(div().min_w_0().truncate().child(value))
 }
@@ -87,7 +87,7 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
         .flex()
         .justify_between()
         .py(px(5.))
-        .text_size(px(13.))
+        .text_size(px(tokens::LABEL))
         .cursor_pointer()
         .child(div().text_color(c(MUTED)).child(key))
         .child(div().text_color(c(GOLD)).child(tr("Open ↗")))
@@ -171,7 +171,7 @@ impl Launcher {
                     .gap(px(6.))
                     .child(
                         div()
-                            .text_size(px(30.))
+                            .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
                             .child(p.name.clone()),
                     )
@@ -188,10 +188,10 @@ impl Launcher {
                                 div()
                                     .flex_none()
                                     .px(px(6.))
-                                    .rounded(px(5.))
+                                    .rounded(px(tokens::R_SMALL))
                                     .border_1()
                                     .border_color(c(LINE))
-                                    .text_size(px(11.))
+                                    .text_size(px(tokens::CAPTION))
                                     .text_color(c(MUTED))
                                     .child(sunrise_launcher::browser::details::category_label(k))
                             }))
@@ -199,10 +199,10 @@ impl Launcher {
                                 div()
                                     .flex_none()
                                     .px(px(6.))
-                                    .rounded(px(5.))
+                                    .rounded(px(tokens::R_SMALL))
                                     .border_1()
                                     .border_color(c(LINE))
-                                    .text_size(px(11.))
+                                    .text_size(px(tokens::CAPTION))
                                     .text_color(c(MUTED))
                                     .child(p.side),
                             ),
@@ -225,7 +225,7 @@ impl Launcher {
                 .px(px(14.))
                 .py(px(10.))
                 .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
-                .text_size(px(13.))
+                .text_size(px(tokens::LABEL))
                 .child(
                     div()
                         .w(px(70.))
@@ -254,7 +254,7 @@ impl Launcher {
         let native = p.make == Make::Native;
         let action: AnyElement = match (&installed_here, &p.fit, &p.will_install) {
             (Some(n), ..) => div()
-                .h(px(44.))
+                .h(px(tokens::ACTION))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -266,7 +266,9 @@ impl Launcher {
                     (true, false) => tr("Add to my game…"),
                     _ => tr("Add to my game"),
                 };
-                let b = primary("alt-project-add", label).w_full().h(px(44.));
+                let b = primary("alt-project-add", label)
+                    .w_full()
+                    .h(px(tokens::ACTION));
                 if busy {
                     dim(b).into_any_element()
                 } else {
@@ -285,7 +287,7 @@ impl Launcher {
                 .gap(px(6.))
                 .child(dim(primary("alt-project-add", tr("Add to my game"))
                     .w_full()
-                    .h(px(44.))))
+                    .h(px(tokens::ACTION))))
                 .child(muted(fit.reason().unwrap_or_else(|| {
                     tr("No version fits this build.").to_string()
                 })))
@@ -318,7 +320,7 @@ impl Launcher {
                         .flex_col()
                         .child(
                             div()
-                                .text_size(px(13.))
+                                .text_size(px(tokens::LABEL))
                                 .font_weight(FontWeight::SEMIBOLD)
                                 .child(title),
                         )
@@ -327,7 +329,7 @@ impl Launcher {
         };
         let mut what = div().flex().flex_col().child(
             div()
-                .text_size(px(11.))
+                .text_size(px(tokens::CAPTION))
                 .text_color(c(MUTED))
                 .pb(px(6.))
                 .child(tr("WHAT THIS CHANGES")),
@@ -359,9 +361,12 @@ impl Launcher {
                     .flex_col()
                     .gap(px(10.))
                     .child(action)
-                    .children(
-                        facts_line.map(|l| div().text_size(px(12.)).text_color(c(MUTED)).child(l)),
-                    )
+                    .children(facts_line.map(|l| {
+                        div()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(c(MUTED))
+                            .child(l)
+                    }))
                     .child(what)
                     .children(p.trust.iter().map(|line| muted(line.clone()))),
             )
@@ -374,7 +379,7 @@ impl Launcher {
                     .flex_col()
                     .child(
                         div()
-                            .text_size(px(11.))
+                            .text_size(px(tokens::CAPTION))
                             .text_color(c(MUTED))
                             .pb(px(6.))
                             .child(tr("ABOUT")),
@@ -400,7 +405,7 @@ impl Launcher {
             .child(about)
             .child(
                 div()
-                    .text_size(px(18.))
+                    .text_size(px(tokens::HEADING))
                     .font_weight(FontWeight::BOLD)
                     .child(tr("Versions")),
             )

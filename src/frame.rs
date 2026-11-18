@@ -62,13 +62,13 @@ pub(super) fn button_base(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(9.))
+        .rounded(px(tokens::R_CONTROL))
         .border_1()
         .border_color(rgb(LINE))
         .px(px(12.))
-        .h(px(32.))
+        .h(px(tokens::CONTROL))
         .text_color(rgb(TEXT))
-        .text_size(px(13.))
+        .text_size(px(tokens::LABEL))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
         .focus_visible(|s| s.border_color(rgb(GOLD)))
@@ -312,7 +312,7 @@ impl Launcher {
                         div()
                             .flex_none()
                             .size(px(32.))
-                            .rounded(px(9.))
+                            .rounded(px(tokens::R_CONTROL))
                             .overflow_hidden()
                             .flex()
                             .items_center()
@@ -365,7 +365,7 @@ impl Launcher {
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(build))
                             .child(
                                 div()
-                                    .text_size(px(11.))
+                                    .text_size(px(tokens::CAPTION))
                                     .text_color(rgb(MUTED))
                                     .child(follows),
                             ),
@@ -382,7 +382,7 @@ impl Launcher {
                 div()
                     // As wide as what it says: the rest of the bar is the cat's.
                     .min_w_0()
-                    .text_size(px(13.))
+                    .text_size(px(tokens::LABEL))
                     .text_color(rgb(MUTED))
                     // Two lines fit the bar; a longer message is cut, never drawn outside it.
                     .line_clamp(2)
@@ -476,7 +476,7 @@ impl Launcher {
             .min_w(px(160.))
             .px(px(20.))
             .font_weight(FontWeight::BOLD)
-            .text_size(px(16.))
+            .text_size(px(tokens::LEAD))
             .text_color(ink)
             .bg(if signed_in { rgb(GOLD) } else { rgb(TEXT) })
             .when(signed_in && !busy && self.client.is_none(), |d| {
@@ -549,7 +549,7 @@ impl Launcher {
                 .tab_index(0)
                 .w(px(56.))
                 .h(px(56.))
-                .rounded(px(12.))
+                .rounded(px(tokens::R_CARD))
                 .relative()
                 .flex()
                 .flex_col()
@@ -557,7 +557,7 @@ impl Launcher {
                 .justify_center()
                 .gap(px(3.))
                 .cursor_pointer()
-                .text_size(px(11.))
+                .text_size(px(tokens::CAPTION))
                 .text_color(rgb(if on { TEXT } else { MUTED }))
                 .font_weight(FontWeight::SEMIBOLD)
                 .when(on, |d| {
@@ -640,7 +640,7 @@ impl Launcher {
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded_l(px(18.))
+            .rounded_l(px(tokens::R_PANEL))
             .bg(rgb(BG))
             .border_1()
             .border_color(rgb(SOFT))
@@ -656,7 +656,7 @@ impl Launcher {
             .bg(rgb(CHROME))
             .text_color(rgb(TEXT))
             .font_family("Figtree")
-            .text_size(px(14.))
+            .text_size(px(tokens::BODY))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 match ev.keystroke.key.as_str() {
                     "tab" => {
@@ -690,7 +690,7 @@ impl Launcher {
                 .absolute()
                 .bottom(px(68.))
                 .left(px(12.))
-                .rounded(px(12.))
+                .rounded(px(tokens::R_CARD))
                 .p(px(8.))
                 .flex()
                 .flex_col()
