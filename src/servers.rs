@@ -352,11 +352,19 @@ fn point(link: &Path, target: &Path) -> std::io::Result<()> {
 
 /// `sunrise-server --dir <dir> <args>`.
 pub fn command(dir: &Path, args: &[&str]) -> Result<Command, String> {
+    supervisor_command(dir, args, None)
+}
+
+fn supervisor_command(
+    dir: &Path,
+    args: &[&str],
+    resources: Option<&Path>,
+) -> Result<Command, String> {
     let program = program().ok_or(
         "The server programs aren't set up yet: create a server, or press Prepare on its page.",
     )?;
     if matches!(args.first(), Some(&"start" | &"restart" | &"run")) {
-        publish_host_runtime(dir)?;
+        publish_host_runtime(dir, resources)?;
     }
     let mut cmd = crate::process::command(program);
     cmd.arg("--dir").arg(dir).args(args);
@@ -366,7 +374,7 @@ pub fn command(dir: &Path, args: &[&str]) -> Result<Command, String> {
 /// The dedicated game starts directly, not through Play. Like Play it must be able to take
 /// read leases on its install, resources and working directory. Publish them at explicit start:
 /// this also covers older copies and new directories selected by a supervisor update.
-fn publish_host_runtime(dir: &Path) -> Result<(), String> {
+fn publish_host_runtime(dir: &Path, resources: Option<&Path>) -> Result<(), String> {
     let root = runtime_root();
     let release = root
         .join("current")
@@ -380,9 +388,19 @@ fn publish_host_runtime(dir: &Path) -> Result<(), String> {
     if release.parent() != Some(releases.as_path()) {
         return Ok(());
     }
+    // Managed Start already asked the supervisor for its engine command before jar consent.
+    // CLI starts use that same format-1 reply, never a guess based on the installed layout.
+    let reported;
+    let resources = match resources {
+        Some(path) => path,
+        None => {
+            (_, reported) = engine_command(dir).map_err(|problem| problem.message)?;
+            &reported
+        }
+    };
     let _publication =
         crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
-    for unit in [&release, &game_files(&root, "26.3"), dir] {
+    for unit in [release.as_path(), resources, dir] {
         crate::run_leases::publish(unit).map_err(crate::native_mods::cache_error)?;
     }
     match fs::File::create_new(release.join(".installed")) {
@@ -430,17 +448,18 @@ pub fn run_managed(
     line: &dyn Fn(String),
     permission: crate::jars::Permission<'_>,
 ) -> Result<(), Problem> {
-    let mut engine = engine_command(dir)?;
+    let (mut engine, resources) = engine_command(dir)?;
     crate::jars::prepare_launch(&mut engine, &crate::launch::Launch::default(), permission)
         .map_err(|error| Problem::plain(error.to_string()))?;
-    run_streamed(dir, args, line)
+    let supervisor = supervisor_command(dir, args, Some(&resources)).map_err(Problem::plain)?;
+    stream(dir, supervisor, line)
 }
 
 /// The `format` of `sunrise-server engine-command --json` this launcher reads (docs/api/engine-command.md).
 const ENGINE_COMMAND_FORMAT: u64 = 1;
 
 /// The engine `sunrise-server run` would start in `dir`, as the folder's own `sunrise-server` describes it.
-fn engine_command(dir: &Path) -> Result<Command, Problem> {
+fn engine_command(dir: &Path) -> Result<(Command, PathBuf), Problem> {
     let output = command(dir, &["engine-command", "--json"])
         .map_err(Problem::plain)?
         .stdin(Stdio::null())
@@ -458,7 +477,7 @@ fn unrun(error: &std::io::Error) -> Problem {
 }
 
 /// [`engine_command`]'s reply as a command, or the problem it names: missing game files are [`Fix::Prepare`].
-fn engine_from_reply(stdout: &[u8]) -> Result<Command, Problem> {
+fn engine_from_reply(stdout: &[u8]) -> Result<(Command, PathBuf), Problem> {
     // A build from before `engine-command` answers with its usage, never with a JSON object, whatever its exit code.
     let Some(reply) = serde_json::from_slice::<serde_json::Value>(stdout)
         .ok()
@@ -500,7 +519,7 @@ fn engine_from_reply(stdout: &[u8]) -> Result<Command, Problem> {
             None => engine.env_remove(key),
         };
     }
-    Ok(engine)
+    Ok((engine, PathBuf::from(text("resources")?)))
 }
 
 fn stream(dir: &Path, mut command: Command, line: &dyn Fn(String)) -> Result<(), Problem> {
