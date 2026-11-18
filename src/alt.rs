@@ -24,6 +24,8 @@ pub(super) enum Page {
     Packs,
     /// Packs › Discover (`Packs` is its Installed).
     PackFind,
+    /// A pack's page, opened from Packs › Discover.
+    PackProject,
     Project,
     Hosting,
     Settings,
@@ -192,6 +194,15 @@ impl Launcher {
         let active = self.selected_instance().cloned();
         let name = self.accounts.selected().map(|a| a.name.clone());
         let signed_name = name.is_some();
+        // The player's own face, hat layer and all, once it is read; their letter until then.
+        let head = self
+            .accounts
+            .selected()
+            .filter(|a| self.profile_heads.has(&a.uuid))
+            .map(|a| {
+                self.profile_heads
+                    .draw(Some(&a.uuid), 32., self.scale, &self.theme)
+            });
         let signed_in = signed_name || sunrise_launcher::developer_offline::selected();
         let version = active.as_ref().and_then(|i| self.version_of(i));
         // A game built with mods reads as the build it was made from, like any other.
@@ -290,13 +301,21 @@ impl Launcher {
                     .cursor_pointer()
                     .child(
                         div()
+                            .flex_none()
                             .size(px(32.))
                             .rounded(px(9.))
+                            .overflow_hidden()
                             .flex()
                             .items_center()
                             .justify_center()
                             .bg(rgb(0x45503c))
-                            .children(name.chars().next().map(|c| c.to_uppercase().to_string())),
+                            .children(head.is_none().then(|| {
+                                name.chars()
+                                    .next()
+                                    .map(|c| c.to_uppercase().to_string())
+                                    .unwrap_or_default()
+                            }))
+                            .children(head),
                     )
                     .child(name)
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -494,7 +513,7 @@ impl Launcher {
         let rail_link = |p: Page, id: &'static str, label: &'static str, icon: &'static str| {
             let on = page == p
                 || (p == Page::Discover && matches!(page, Page::Installed | Page::Project))
-                || (p == Page::Packs && page == Page::PackFind);
+                || (p == Page::Packs && matches!(page, Page::PackFind | Page::PackProject));
             div()
                 .id(id)
                 .tab_index(0)
