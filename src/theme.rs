@@ -137,7 +137,7 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     };
     theme.photo = photo && settings.scenery();
     // Performance mode keeps a painted sky's colours and drops what drifts over it.
-    if settings.performance() {
+    if settings.reduced_graphics() {
         theme.night.art.mood = night::Mood::Plain;
     }
     theme.with_glass(settings.glass_tint(), settings.glass_blur())

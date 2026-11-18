@@ -125,7 +125,7 @@ impl Inputs {
             night: theme.night,
             accent: theme.accent_choice.rgb(),
             tint: settings.glass_tint(),
-            scenery: settings.scenery() && !theme.photo && !settings.performance(),
+            scenery: settings.scenery() && !theme.photo && !settings.reduced_graphics(),
         }
     }
 }

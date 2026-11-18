@@ -1,5 +1,5 @@
-//! The launcher look's part of `settings.json`: the accent kept per theme, reduced motion and the cat,
-//! each dropped alone when it isn't one, an old light appearance moved to the Taiga theme, and
+//! The launcher look's part of `settings.json`: the accent kept per theme and the appearance
+//! switches, each dropped alone when invalid, an old light appearance moved to Taiga, and
 //! the indigo theme once saved as "sunrise" read as Twilight.
 use super::{Appearance, Settings};
 use serde_json::{Map, Value};
@@ -28,7 +28,7 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
         }
     }
     // A switch that isn't on or off is as if never set, not a reason to lose the rest.
-    for key in ["reduce_motion", "cat"] {
+    for key in ["performance", "reduce_motion", "cat"] {
         if fields
             .get(key)
             .is_some_and(|v| !v.is_boolean() && !v.is_null())
@@ -104,6 +104,25 @@ mod tests {
         assert_eq!(s.reduce_motion, Some(true));
         let saved = serde_json::to_string(&Settings::default()).unwrap();
         assert!(!saved.contains("theme_accents") && !saved.contains("reduce_motion"));
+    }
+
+    #[test]
+    fn reduced_graphics_round_trips_the_old_performance_key() {
+        for (text, expected) in [
+            (r#"{"performance":true,"game_args":"--x"}"#, Some(true)),
+            (r#"{"performance":false,"game_args":"--x"}"#, Some(false)),
+            (r#"{"performance":null,"game_args":"--x"}"#, None),
+            (r#"{"performance":"fast","game_args":"--x"}"#, None),
+            (r#"{"game_args":"--x"}"#, None),
+        ] {
+            let s = Settings::parse(text);
+            assert_eq!(s.reduced_graphics, expected, "{text}");
+            assert_eq!(s.reduced_graphics(), expected.unwrap_or(false));
+            assert_eq!(s.game_args, "--x");
+            let saved = serde_json::to_value(&s).unwrap();
+            assert_eq!(saved.get("performance").and_then(|v| v.as_bool()), expected);
+            assert!(!saved.as_object().unwrap().contains_key("reduced_graphics"));
+        }
     }
 
     /// Sunrise now names the orange theme. A player who chose the indigo one while it was
