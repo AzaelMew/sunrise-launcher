@@ -10,6 +10,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use crate::paint::palette;
 use std::sync::Arc;
 use sunrise_launcher_theme::glass::{fill, ink, radius, Glass};
 
@@ -515,12 +516,12 @@ impl Render for Tip {
             .px(px(10.))
             .py(px(6.))
             .rounded(px(rad(radius::CONTROL)))
-            .bg(rgb(look().base))
+            .bg(rgb(palette().raised))
             .border_1()
-            .border_color(white(0.12))
+            .border_color(rgb(palette().line))
             .font_family(sunrise_launcher_theme::glass::FONT)
             .text_size(px(13.))
-            .text_color(white(ink::FULL))
+            .text_color(rgb(palette().text))
             .child(self.0.clone())
     }
 }

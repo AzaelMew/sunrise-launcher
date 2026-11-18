@@ -20,8 +20,9 @@
 //!   a row opens the project page of the Mods screens (`mods_show_project`).
 //! - signed out with no worlds, the top is the welcome banner (mock 10) in place of worlds.
 use super::*;
+use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::frame::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use crate::worlds_page;
 use gpui::{rgb, rgba};
 use sunrise_launcher::browser::{self, Kind, Project, Query, SourceId};
@@ -198,9 +199,9 @@ pub(crate) fn sentence(text: &str) -> String {
 
 fn card() -> Div {
     div()
-        .bg(rgb(CARD))
+        .bg(palette().card())
         .border_1()
-        .border_color(rgb(SOFT))
+        .border_color(rgb(palette().divider))
         .rounded(px(tokens::R_CARD))
         .overflow_hidden()
 }
@@ -209,14 +210,14 @@ fn heading(label: &str) -> Div {
     div()
         .text_size(px(tokens::HEADING))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(TEXT))
+        .text_color(rgb(palette().text))
         .child(label.to_string())
 }
 
 fn muted(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::SMALL))
-        .text_color(rgb(MUTED))
+        .text_color(rgb(palette().muted))
         .overflow_hidden()
         .whitespace_nowrap()
         .text_ellipsis()
@@ -282,7 +283,7 @@ impl Launcher {
         let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
             return div()
                 .p(px(32.))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(palette().muted))
                 .child(tr("Getting ready…"))
                 .into_any_element();
         };
@@ -306,7 +307,7 @@ impl Launcher {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("home"))
-            .bg(rgb(BG))
+            .bg(rgb(palette().background))
             .flex()
             .flex_col()
             .gap(px(28.))
@@ -370,7 +371,7 @@ impl Launcher {
             .w_full()
             .h(px(BAND))
             .overflow_hidden()
-            .bg(rgb(BG));
+            .bg(rgb(palette().background));
         let stamp = world
             .last_played
             .duration_since(std::time::UNIX_EPOCH)
@@ -418,7 +419,7 @@ impl Launcher {
                     .child(div().absolute().inset_0().bg(rgba(0x0000_0073)))
             }
             // No dirt: plain charcoal a step above the card, no letter.
-            None => band.bg(rgb(0x2b2627)),
+            None => band.bg(rgb(palette().selected)),
         }
     }
 
@@ -430,7 +431,7 @@ impl Launcher {
                 button(format!("alt-world-packs-{}", world.folder), "")
                     .size(px(36.))
                     .px_0()
-                    .child(blocks::icon("archive", 17., rgb(TEXT).into()))
+                    .child(blocks::icon("archive", 17., rgb(palette().text).into()))
                     .tooltip(crate::glass_ui::tip(tr("Data packs")))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.show_world_packs(path.clone());
@@ -442,10 +443,10 @@ impl Launcher {
         let play = button(format!("alt-world-{}", world.folder), "")
             .size(px(36.))
             .px_0()
-            .bg(rgb(TEXT))
-            .border_color(rgb(TEXT))
-            .hover(|s| s.bg(rgb(0xffffff)))
-            .child(blocks::icon("play", 17., rgb(BG).into()))
+            .bg(rgb(palette().text))
+            .border_color(rgb(palette().text))
+            .hover(|s| s.bg(rgb(palette().accent_on)))
+            .child(blocks::icon("play", 17., rgb(palette().background).into()))
             .tooltip(crate::glass_ui::tip(tr("Play this world")))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.play_to("--world", folder.clone());
@@ -478,7 +479,7 @@ impl Launcher {
                                 div()
                                     .text_size(px(tokens::BODY))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(TEXT))
+                                    .text_color(rgb(palette().text))
                                     .overflow_hidden()
                                     .whitespace_nowrap()
                                     .text_ellipsis()
@@ -512,11 +513,15 @@ impl Launcher {
             .items_center()
             .overflow_hidden()
             .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(BG))
+            .bg(rgb(palette().field))
             .border_1()
-            .border_color(rgb(if focused { GOLD } else { LINE }))
+            .border_color(rgb(if focused {
+                palette().focus
+            } else {
+                palette().line
+            }))
             .text_size(px(tokens::BODY))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
             .cursor_text()
             .child(line_edit::content(
                 &self.friend_code,
@@ -568,7 +573,7 @@ impl Launcher {
                     .px(px(14.))
                     .py(px(8.))
                     .text_size(px(tokens::SMALL))
-                    .text_color(rgb(GOLD))
+                    .text_color(rgb(palette().warning))
                     .child(e),
             );
         }
@@ -578,7 +583,7 @@ impl Launcher {
                     .px(px(14.))
                     .py(px(8.))
                     .text_size(px(tokens::SMALL))
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(palette().muted))
                     .child(tr("That isn't an address or an invite code.")),
             );
         }
@@ -659,7 +664,7 @@ impl Launcher {
             .px(px(14.))
             .py(px(10.))
             .border_t_1()
-            .border_color(rgb(SOFT))
+            .border_color(rgb(palette().divider))
             // The picture the server sends wins; until it does, the bundled one.
             .child(server_picture(
                 server
@@ -676,7 +681,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT))
+                            .text_color(rgb(palette().text))
                             .child(tr(server.name)),
                     )
                     .child(muted(line)),
@@ -783,7 +788,7 @@ impl Launcher {
             .px(px(14.))
             .py(px(10.))
             .border_t_1()
-            .border_color(rgb(SOFT))
+            .border_color(rgb(palette().divider))
             .child(picture)
             .child(
                 div()
@@ -793,7 +798,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT))
+                            .text_color(rgb(palette().text))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
@@ -867,15 +872,15 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::DISPLAY))
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(TEXT))
+                            .text_color(rgb(palette().text))
                             .child(tr("Welcome to Sunrise")),
                     )
                     .child(
-                        div().text_size(px(tokens::BODY)).text_color(rgb(TEXT)).child(tr(
+                        div().text_size(px(tokens::BODY)).text_color(rgb(palette().text)).child(tr(
                             "Sign in with the Microsoft account that owns Minecraft: Java Edition. Sunrise then installs itself and you can play.",
                         )),
                     )
-                    .child(div().text_size(px(tokens::SMALL)).text_color(rgb(MUTED)).child(tr(
+                    .child(div().text_size(px(tokens::SMALL)).text_color(rgb(palette().muted)).child(tr(
                         "While you play, Sunrise counts you as playing once a minute. Nothing else is sent.",
                     )))
                     .child(
@@ -884,7 +889,7 @@ impl Launcher {
 .reach()
                             .cursor_pointer()
                             .text_size(px(tokens::LABEL))
-                            .text_color(rgb(GOLD))
+                            .text_color(rgb(palette().accent_ink))
                             .child(tr("Privacy choices"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.settings_open(crate::settings::Section::Privacy);
@@ -937,7 +942,7 @@ impl Launcher {
                     .reach()
                     .cursor_pointer()
                     .text_size(px(tokens::LABEL))
-                    .text_color(rgb(GOLD))
+                    .text_color(rgb(palette().accent_ink))
                     .child(tr("Browse all mods"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.ui.page = crate::frame::Page::Discover;
@@ -988,7 +993,7 @@ impl Launcher {
         };
         let note = self.mods.message.clone().map(|m| match m {
             Ok(text) => muted(text),
-            Err(text) => muted(text).text_color(rgb(GOLD)),
+            Err(text) => muted(text).text_color(rgb(palette().warning)),
         });
         div()
             .flex()
@@ -1029,7 +1034,9 @@ impl Launcher {
             .gap(px(12.))
             .px(px(14.))
             .py(px(10.))
-            .when(i > 0, |d| d.border_t_1().border_color(rgb(SOFT)))
+            .when(i > 0, |d| {
+                d.border_t_1().border_color(rgb(palette().divider))
+            })
             .child(icon)
             .child(
                 div()
@@ -1042,7 +1049,7 @@ impl Launcher {
                         div()
                             .text_size(px(tokens::BODY))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(TEXT))
+                            .text_color(rgb(palette().text))
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()

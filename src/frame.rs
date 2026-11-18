@@ -1,10 +1,11 @@
 //! The launcher frame owns navigation and the single launch transaction. Backends still
 //! own the on-disk formats, Microsoft device flow, preparation and process lifecycle.
 use super::*;
+use crate::paint::palette;
 use crate::sheets::Sheet;
 use gpui::rgb;
 
-pub(super) use crate::tokens::{BAD, BG, CARD, CHROME, GOLD, LINE, MUTED, SOFT, TEXT};
+pub(super) use crate::tokens::{CHROME, GOLD, LINE, MUTED, TEXT};
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Page {
@@ -60,7 +61,7 @@ pub(super) fn focus_ring(color: u32) -> Vec<gpui::BoxShadow> {
 }
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
-    button_base(id, label).hover(|s| s.bg(rgb(0x393233)))
+    button_base(id, label).hover(|s| s.bg(rgb(palette().hover)))
 }
 
 /// What makes a clickable thing that is not a button reachable by keyboard: a Tab stop that shows
@@ -83,7 +84,7 @@ impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
                 s.shadow(vec![gpui::BoxShadow {
                     inset: true,
                     spread_radius: px(1.),
-                    ..focus_ring(GOLD).remove(0)
+                    ..focus_ring(palette().focus).remove(0)
                 }])
             })
             .seen()
@@ -91,7 +92,7 @@ impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
 
     fn reach_edge(self) -> Self {
         self.tab_index(0)
-            .focus_visible(|s| s.border_color(rgb(GOLD)))
+            .focus_visible(|s| s.border_color(rgb(palette().focus)))
             .seen()
     }
 
@@ -220,11 +221,11 @@ fn scroll_to_show(bounds: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut Ap
 /// A sheet's or a page's main action: cream, like Play signed out.
 pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     button_base(id, label)
-        .bg(rgb(TEXT))
-        .border_color(rgb(TEXT))
-        .text_color(rgb(BG))
-        .hover(|s| s.bg(gpui::white()))
-        .focus_visible(|s| s.shadow(focus_ring(GOLD)))
+        .bg(rgb(palette().text))
+        .border_color(rgb(palette().text))
+        .text_color(rgb(palette().background))
+        .hover(|s| s.bg(rgb(palette().accent_on)))
+        .focus_visible(|s| s.shadow(focus_ring(palette().focus)))
 }
 
 pub(super) fn button_base(
@@ -240,14 +241,14 @@ pub(super) fn button_base(
         .justify_center()
         .rounded(px(tokens::R_CONTROL))
         .border_1()
-        .border_color(rgb(LINE))
+        .border_color(rgb(palette().line))
         .px(px(12.))
         .h(px(tokens::CONTROL))
-        .text_color(rgb(TEXT))
+        .text_color(rgb(palette().text))
         .text_size(px(tokens::LABEL))
         .font_weight(FontWeight::SEMIBOLD)
         .cursor_pointer()
-        .focus_visible(|s| s.border_color(rgb(GOLD)))
+        .focus_visible(|s| s.border_color(rgb(palette().focus)))
         .seen()
         .child(label.into())
 }
@@ -706,6 +707,7 @@ impl Launcher {
         self.scale = window.scale_factor();
         self.scale_factor = self.scale;
         self.window_long_side = self.window_width.max(self.window_height);
+        crate::paint::begin(&self.settings, &self.theme);
         scrolls_begin();
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
@@ -727,7 +729,7 @@ impl Launcher {
                 .rounded(px(tokens::R_CARD))
                 .border_1()
                 .border_color(gpui::transparent_black())
-                .focus_visible(|s| s.border_color(rgb(GOLD)))
+                .focus_visible(|s| s.border_color(rgb(palette().focus)))
                 .relative()
                 .flex()
                 .flex_col()
@@ -736,22 +738,31 @@ impl Launcher {
                 .gap(px(3.))
                 .cursor_pointer()
                 .text_size(px(tokens::CAPTION))
-                .text_color(rgb(if on { TEXT } else { MUTED }))
+                .text_color(rgb(if on {
+                    palette().chrome_text
+                } else {
+                    palette().chrome_muted
+                }))
                 .font_weight(FontWeight::SEMIBOLD)
                 .when(on, |d| {
-                    d.bg(rgb(CARD)).child(
+                    d.bg(rgb(palette().chrome_raised)).child(
                         div()
                             .absolute()
                             .left(px(-8.))
                             .h(px(26.))
                             .w(px(3.))
-                            .bg(rgb(GOLD)),
+                            .bg(rgb(palette().accent)),
                     )
                 })
                 .child(blocks::icon(
                     icon,
                     20.,
-                    rgb(if on { TEXT } else { MUTED }).into(),
+                    rgb(if on {
+                        palette().chrome_text
+                    } else {
+                        palette().chrome_muted
+                    })
+                    .into(),
                 ))
                 .child(label.to_string())
                 .on_click(cx.listener(move |this, _, _, cx| {
@@ -813,9 +824,9 @@ impl Launcher {
             .flex()
             .flex_col()
             .rounded_l(px(tokens::R_PANEL))
-            .bg(rgb(BG))
+            .bg(rgb(palette().background))
             .border_1()
-            .border_color(rgb(SOFT))
+            .border_color(rgb(palette().divider))
             .overflow_hidden()
             .child(content);
         let mut frame = div()
@@ -825,8 +836,8 @@ impl Launcher {
             .flex()
             .flex_col()
             .size_full()
-            .bg(rgb(CHROME))
-            .text_color(rgb(TEXT))
+            .bg(rgb(palette().chrome))
+            .text_color(rgb(palette().text))
             .font_family("Figtree")
             .text_size(px(tokens::BODY))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
@@ -867,9 +878,9 @@ impl Launcher {
                 .flex()
                 .flex_col()
                 .gap(px(4.))
-                .bg(rgb(CARD))
+                .bg(rgb(palette().raised))
                 .border_1()
-                .border_color(rgb(LINE));
+                .border_color(rgb(palette().line));
             for (n, item) in self.instances.list.iter().cloned().enumerate() {
                 choices = choices.child(
                     button(ElementId::named_usize("alt-pick", n), item.name.clone()).on_click(

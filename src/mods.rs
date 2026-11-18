@@ -41,6 +41,7 @@ mod ui;
 use std::rc::Rc;
 pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
 
+use crate::paint::palette;
 use model::{Card, Row};
 
 enum Menu {
@@ -651,12 +652,12 @@ impl Launcher {
                         div()
                             .h(px(4.))
                             .rounded(px(tokens::R_BAR))
-                            .bg(c(crate::frame::LINE))
+                            .bg(c(palette().line))
                             .child(
                                 div()
                                     .h(px(4.))
                                     .rounded(px(tokens::R_BAR))
-                                    .bg(c(crate::frame::TEXT))
+                                    .bg(c(palette().text))
                                     .w(relative(f.clamp(0.02, 1.))),
                             ),
                     ),
@@ -664,8 +665,8 @@ impl Launcher {
         }
         let notice = self.notice()?;
         let (text, color) = match notice {
-            Ok(t) => (t, crate::frame::TEXT),
-            Err(t) => (t, crate::frame::GOLD),
+            Ok(t) => (t, palette().text),
+            Err(t) => (t, palette().warning),
         };
         Some(
             div()
@@ -744,11 +745,11 @@ impl Launcher {
             .rounded(px(tokens::R_CARD))
             .border_1()
             .border_color(if focused {
-                c(crate::frame::TEXT)
+                c(palette().text)
             } else {
-                c(crate::frame::LINE)
+                c(palette().line)
             })
-            .bg(c(crate::frame::CARD))
+            .bg(palette().card())
             .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content_with(
@@ -812,8 +813,7 @@ impl Launcher {
                 .text_size(px(tokens::BODY))
                 .cursor_pointer()
                 .when(on, |d| {
-                    d.bg(c(crate::frame::LINE))
-                        .font_weight(FontWeight::SEMIBOLD)
+                    d.bg(c(palette().line)).font_weight(FontWeight::SEMIBOLD)
                 })
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -840,7 +840,7 @@ impl Launcher {
                     .id("alt-mods-tabs")
                     .tab_index(0)
                     .seen()
-                    .focus_visible(|s| s.border_color(c(tokens::GOLD)))
+                    .focus_visible(|s| s.border_color(c(palette().focus)))
                     .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
                         if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
                             return;
@@ -859,8 +859,8 @@ impl Launcher {
                     .p(px(3.))
                     .rounded(px(tokens::R_CARD))
                     .border_1()
-                    .border_color(c(crate::frame::LINE))
-                    .bg(c(crate::frame::CARD))
+                    .border_color(c(palette().line))
+                    .bg(palette().card())
                     .child(seg(
                         "alt-mods-tab-discover",
                         "Discover",

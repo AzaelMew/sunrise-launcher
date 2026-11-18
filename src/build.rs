@@ -3,7 +3,7 @@
 //! build gives no time left, so none is shown. The strip above the Mods lists says how it ended.
 use super::*;
 use crate::frame::Reach as _;
-use crate::frame::{CARD, LINE, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use gpui::{rgb, Animation, AnimationExt as _};
 use native_mods::Stage;
 
@@ -33,9 +33,12 @@ impl Launcher {
                 .flex_1()
                 .h(px(4.))
                 .rounded(px(tokens::R_BAR))
-                .bg(rgb(LINE))
+                .bg(rgb(palette().line))
                 .overflow_hidden();
-            let fill = div().h(px(4.)).rounded(px(tokens::R_BAR)).bg(rgb(TEXT));
+            let fill = div()
+                .h(px(4.))
+                .rounded(px(tokens::R_BAR))
+                .bg(rgb(palette().text));
             bar = bar.child(match now {
                 Some(p) if stage < p.stage => track.child(fill.w_full()),
                 Some(p) if stage == p.stage => match p.fraction {
@@ -110,7 +113,7 @@ impl Launcher {
                         .reach()
                         .flex_none()
                         .text_size(px(tokens::SMALL))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .cursor_pointer()
                         .child(tr("Dismiss"))
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -134,10 +137,10 @@ impl Launcher {
                 .p(px(14.))
                 .rounded(px(tokens::R_CARD))
                 .border_1()
-                .border_color(rgb(SOFT))
-                .bg(rgb(CARD))
+                .border_color(rgb(palette().divider))
+                .bg(palette().card())
                 .text_size(px(tokens::LABEL))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(palette().muted))
                 .child(trf(
                     "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
                     &[("size", &bytes.div_ceil(1_000_000).to_string())],

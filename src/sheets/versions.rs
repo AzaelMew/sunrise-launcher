@@ -6,6 +6,7 @@
 //! changes the setup (`pin_build`), and Play installs a build that isn't here yet.
 use super::*;
 use crate::line_edit::{self, LineEdit};
+use crate::paint::palette;
 use std::rc::Rc;
 use sunrise_launcher::backend::Release;
 
@@ -220,9 +221,13 @@ impl Launcher {
             .items_center()
             .overflow_hidden()
             .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(BG))
+            .bg(rgb(palette().field))
             .border_1()
-            .border_color(rgb(if focused { GOLD } else { LINE }))
+            .border_color(rgb(if focused {
+                palette().focus
+            } else {
+                palette().line
+            }))
             .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content(
@@ -266,7 +271,7 @@ impl Launcher {
                             .items_end()
                             .pb(px(6.))
                             .text_size(px(tokens::CAPTION))
-                            .text_color(rgb(MUTED))
+                            .text_color(rgb(palette().muted))
                             .child(text.to_uppercase()),
                         Line::Build(b) => {
                             let on = chosen.as_deref() == Some(b.tag.as_str());
@@ -290,15 +295,19 @@ impl Launcher {
                                 .items_center()
                                 .gap(px(12.))
                                 .rounded(px(tokens::R_CONTROL))
-                                .when(on, |d| d.bg(rgb(BG)))
+                                .when(on, |d| d.bg(rgb(palette().selected)))
                                 .child(
                                     div()
                                         .size(px(14.))
                                         .flex_none()
                                         .rounded_full()
                                         .border_1()
-                                        .border_color(rgb(if on { TEXT } else { MUTED }))
-                                        .when(on, |d| d.bg(rgb(TEXT))),
+                                        .border_color(rgb(if on {
+                                            palette().text
+                                        } else {
+                                            palette().muted
+                                        }))
+                                        .when(on, |d| d.bg(rgb(palette().text))),
                                 )
                                 .child(
                                     div()
@@ -328,7 +337,7 @@ impl Launcher {
                                     d.track_focus(&handle)
                                         .reach()
                                         .cursor_pointer()
-                                        .hover(|s| s.bg(rgb(BG)))
+                                        .hover(|s| s.bg(rgb(palette().hover)))
                                         .on_click(cx.listener(
                                             move |this, _: &ClickEvent, _, cx| {
                                                 this.ui.sheets.versions.pick = Some(tag.clone());
@@ -362,10 +371,10 @@ impl Launcher {
             },
         ));
         let keep = button("alt-versions-keep", tr("Keep this build"))
-            .bg(rgb(TEXT))
-            .border_color(rgb(TEXT))
-            .text_color(rgb(BG))
-            .hover(|s| s.bg(rgb(0xffffff)));
+            .bg(rgb(palette().text))
+            .border_color(rgb(palette().text))
+            .text_color(rgb(palette().background))
+            .hover(|s| s.bg(rgb(palette().accent_on)));
         let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
             Some(tag) => keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.pin_build(Some(tag.clone()), channel);
@@ -426,14 +435,14 @@ impl Launcher {
                 div()
                     .rounded(px(tokens::R_CARD))
                     .border_1()
-                    .border_color(rgb(LINE))
+                    .border_color(rgb(palette().line))
                     .p(px(4.))
                     .child(rows)
                     .children(nothing),
             )
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
-                    .text_color(rgb(BAD))
+                    .text_color(rgb(palette().danger))
                     .text_size(px(tokens::SMALL))
                     .child(e)
             }))

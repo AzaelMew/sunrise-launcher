@@ -2,13 +2,12 @@
 //! address, players, settings, backups and log. Every action is the Servers page's own
 //! (`servers_page.rs`); only the drawing is new.
 use super::*;
-use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::button;
 use crate::mods::{choices, switch, Choose};
+use crate::paint::palette;
 use crate::settings::{danger, group, hint, off, row, warning};
 use gpui::rgb;
 use std::rc::Rc;
-
-const OK: u32 = 0x7fd6a0;
 
 fn title(text: impl Into<SharedString>) -> Div {
     div()
@@ -26,7 +25,7 @@ fn caption(text: &str) -> Div {
     div()
         .text_size(px(tokens::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(MUTED))
+        .text_color(rgb(palette().muted))
         .child(text.to_uppercase())
 }
 
@@ -36,13 +35,15 @@ fn card() -> Div {
         .flex_col()
         .rounded(px(tokens::R_CARD))
         .border_1()
-        .border_color(rgb(SOFT))
-        .bg(rgb(CARD))
+        .border_color(rgb(palette().divider))
+        .bg(palette().card())
 }
 
 /// The main action of the page, in cream.
 fn primary(b: Stateful<Div>) -> Stateful<Div> {
-    b.bg(rgb(TEXT)).border_color(rgb(TEXT)).text_color(rgb(BG))
+    b.bg(rgb(palette().text))
+        .border_color(rgb(palette().text))
+        .text_color(rgb(palette().background))
 }
 
 fn dot(color: u32) -> Div {
@@ -88,10 +89,10 @@ fn chip_group(
 
 fn phase_color(status: &Status) -> u32 {
     match status.phase.as_str() {
-        "running" if status.crashes > 0 => GOLD,
-        "running" => OK,
-        "stopped" => LINE,
-        _ => GOLD,
+        "running" if status.crashes > 0 => palette().warning,
+        "running" => palette().success,
+        "stopped" => palette().line,
+        _ => palette().warning,
     }
 }
 
@@ -112,15 +113,15 @@ impl Launcher {
             .rounded(px(tokens::R_CONTROL))
             .border_1()
             .border_color(rgb(if invalid {
-                BAD
+                palette().danger
             } else if focused {
-                GOLD
+                palette().focus
             } else {
-                LINE
+                palette().line
             }))
-            .bg(rgb(BG))
+            .bg(rgb(palette().field))
             .text_size(px(tokens::LABEL))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
     }
 
     fn host_button(
@@ -233,7 +234,7 @@ impl Launcher {
             .track_scroll(&crate::frame::scrolls("host"))
             .px(px(32.))
             .py(px(24.))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
             .child(body.max_w(px(1180.)).flex().flex_col().gap(px(18.)))
             .into_any_element()
     }
@@ -262,7 +263,7 @@ impl Launcher {
             cx,
             |this, _| this.servers.problem = None,
         ));
-        Some(notice(BAD, p.message, actions))
+        Some(notice(palette().danger, p.message, actions))
     }
 
     /// The Servers page's fixes; preparing the game files is Play's work in this look.
@@ -473,7 +474,7 @@ impl Launcher {
                         .items_center()
                         .gap(px(8.))
                         .text_size(px(tokens::LABEL))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .cursor_pointer()
                         .child("‹")
                         .child(tr("All servers"))
@@ -504,11 +505,15 @@ impl Launcher {
         }
         if let Some(doing) = &self.servers.busy {
             let last = self.servers.job_log.back().cloned().unwrap_or_default();
-            page = page.child(notice(GOLD, format!("{}… {last}", tr(doing)), div()));
+            page = page.child(notice(
+                palette().warning,
+                format!("{}… {last}", tr(doing)),
+                div(),
+            ));
         }
         page = page.children(self.host_problem(cx));
         if let Some(note) = self.servers.note.clone() {
-            page = page.child(notice(OK, note, div()));
+            page = page.child(notice(palette().success, note, div()));
         }
         if running && !self.servers.restart_needed.is_empty() {
             let names: Vec<String> = self
@@ -518,7 +523,7 @@ impl Launcher {
                 .map(|k| tr(setting_name(k)).to_string())
                 .collect();
             page = page.child(notice(
-                GOLD,
+                palette().warning,
                 trf(
                     "Saved. Restart to apply: {settings}.",
                     &[("settings", &names.join(", "))],
@@ -718,7 +723,9 @@ impl Launcher {
             .iter()
             .map(|l| {
                 div()
-                    .when(l.starts_with("> "), |d| d.text_color(rgb(GOLD)))
+                    .when(l.starts_with("> "), |d| {
+                        d.text_color(rgb(palette().accent_ink))
+                    })
                     .child(l.clone())
             })
             .collect();
@@ -732,7 +739,7 @@ impl Launcher {
             .font_family(theme::MONO)
             .text_size(px(tokens::SMALL))
             .line_height(px(18.))
-            .text_color(rgb(MUTED))
+            .text_color(rgb(palette().muted))
             .when(lines.is_empty(), |d| {
                 d.child(tr(if running {
                     "Waiting for the server's log…"
@@ -752,10 +759,10 @@ impl Launcher {
             .h(px(tokens::FIELD))
             .px(px(0.))
             .border_0()
-            .bg(rgb(CARD))
+            .bg(palette().card())
             .font_family(theme::MONO)
             .text_size(px(tokens::SMALL))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
             .into_any_element()
         } else {
             div()
@@ -763,7 +770,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .text_size(px(tokens::SMALL))
-                .text_color(rgb(MUTED))
+                .text_color(rgb(palette().muted))
                 .child(tr("Start the server to type commands"))
                 .into_any_element()
         };
@@ -784,8 +791,8 @@ impl Launcher {
                     .gap(px(10.))
                     .px(px(16.))
                     .border_t_1()
-                    .border_color(rgb(SOFT))
-                    .child(div().text_color(rgb(GOLD)).child("›"))
+                    .border_color(rgb(palette().divider))
+                    .child(div().text_color(rgb(palette().accent_ink)).child("›"))
                     .child(input),
             )
     }
@@ -1531,7 +1538,7 @@ impl Launcher {
                         .seen()
                         .border_1()
                         .border_color(gpui::transparent_black())
-                        .focus_visible(|s| s.border_color(rgb(GOLD)))
+                        .focus_visible(|s| s.border_color(rgb(palette().focus)))
                         .flex()
                         .items_center()
                         .gap(px(10.))
@@ -1539,14 +1546,18 @@ impl Launcher {
                         .px(px(10.))
                         .rounded(px(tokens::R_CONTROL))
                         .cursor_pointer()
-                        .when(chosen, |d| d.bg(rgb(BG)))
+                        .when(chosen, |d| d.bg(rgb(palette().selected)))
                         .child(
                             div()
                                 .size(px(12.))
                                 .rounded(px(tokens::R_SMALL))
                                 .border_1()
-                                .border_color(rgb(if chosen { TEXT } else { MUTED }))
-                                .when(chosen, |d| d.bg(rgb(TEXT))),
+                                .border_color(rgb(if chosen {
+                                    palette().text
+                                } else {
+                                    palette().muted
+                                }))
+                                .when(chosen, |d| d.bg(rgb(palette().text))),
                         )
                         .child(name)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -1609,11 +1620,11 @@ impl Launcher {
                         .px(px(12.))
                         .rounded(px(tokens::R_PANEL))
                         .border_1()
-                        .border_color(rgb(LINE))
+                        .border_color(rgb(palette().line))
                         .text_size(px(tokens::LABEL))
                         .cursor_pointer()
                         .child(friend)
-                        .child(div().text_color(rgb(MUTED)).child("×"))
+                        .child(div().text_color(rgb(palette().muted)).child("×"))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(c) = &mut this.servers.create {
                                 if i < c.friends.len() {
@@ -1652,7 +1663,7 @@ impl Launcher {
             )
             .child(
                 div()
-                    .when(eula_missing, |d| d.text_color(rgb(BAD)))
+                    .when(eula_missing, |d| d.text_color(rgb(palette().danger)))
                     .child(tr("I agree to the Minecraft EULA")),
             )
             .child(
@@ -1664,8 +1675,8 @@ impl Launcher {
                     .rounded(px(tokens::R_SMALL))
                     .border_1()
                     .border_color(gpui::transparent_black())
-                    .focus_visible(|s| s.border_color(rgb(GOLD)))
-                    .text_color(rgb(GOLD))
+                    .focus_visible(|s| s.border_color(rgb(palette().focus)))
+                    .text_color(rgb(palette().accent_ink))
                     .cursor_pointer()
                     .child(tr("Read it"))
                     .on_click(|_, _, cx| cx.open_url(servers::EULA_URL)),
@@ -1756,7 +1767,7 @@ impl Launcher {
             .px(px(28.))
             .py(px(16.))
             .border_t_1()
-            .border_color(rgb(SOFT))
+            .border_color(rgb(palette().divider))
             .child(said.flex_1().min_w_0())
             .children(prepare)
             .child(self.host_button(
@@ -1786,8 +1797,8 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .p(px(24.))
-                .bg(gpui::black().opacity(0.55))
-                .text_color(rgb(TEXT))
+                .bg(palette().scrim())
+                .text_color(rgb(palette().text))
                 .on_scroll(|_, _, cx| cx.stop_propagation())
                 .child(
                     card()
@@ -1795,7 +1806,7 @@ impl Launcher {
                         .max_w_full()
                         .max_h_full()
                         .rounded(px(tokens::R_PANEL))
-                        .border_color(rgb(LINE))
+                        .border_color(rgb(palette().line))
                         .overflow_hidden()
                         .child(body)
                         .child(foot),
