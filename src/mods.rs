@@ -266,7 +266,7 @@ impl Launcher {
 
     /// How many of the setup's mods the game it plays was made without.
     pub(crate) fn mods_not_on_build(&self) -> usize {
-        self.rows().iter().filter(|r| r.unfit.is_some()).count()
+        model::not_on_build(&self.rows())
     }
 
     /// The play bar's quiet line about them: Mods › Installed, where each says why.
@@ -573,30 +573,7 @@ impl Launcher {
                 .and_then(|i| self.version_of(i))
                 .map(|tag| crate::sheets::build_name(tag))
                 .unwrap_or_default();
-            for row in rows.iter_mut().filter(|r| r.on) {
-                let Some(l) = left
-                    .iter()
-                    .find(|l| l.id == row.id && l.version == row.version)
-                    .filter(|l| {
-                        matches!(
-                            l.why,
-                            native_mods::Why::Unfit(_) | native_mods::Why::OtherVersion
-                        )
-                    })
-                else {
-                    continue;
-                };
-                let detail = l.detail.clone().unwrap_or_default();
-                row.need = None;
-                row.unfit = Some(model::Unfit {
-                    on: on.clone(),
-                    made_for: detail
-                        .made_for
-                        .map(|tag| (crate::sheets::build_name(&tag), tag))
-                        .map(|(name, tag)| (tag, name)),
-                    changes: detail.changes,
-                });
-            }
+            model::mark_left_out(&mut rows, &left, &on, crate::sheets::build_name);
             // A row that no longer needs the player moves out of that group.
             model::sort(&mut rows);
         }

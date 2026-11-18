@@ -545,6 +545,9 @@ impl Launcher {
         if let Some(why) = error {
             notes.push(say(why, GOLD));
         }
+        if let Some(why) = &r.left_out {
+            notes.push(say(why.clone(), GOLD));
+        }
         match &r.need {
             Some(Need::TakenDown(why)) => {
                 notes.push(say(trf("Taken down: {reason}", &[("reason", why)]), GOLD));

@@ -456,3 +456,59 @@ fn counts_read_short() {
     assert!(downloads(12_400).starts_with("12.4k"));
     assert!(downloads(7).starts_with("7 "));
 }
+
+#[test]
+fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
+    use native_mods::{Detail, LeftOut, Why};
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["lib", "addon", "old", "fine"].map(String::from).into();
+    let none = HashSet::new();
+    let local = ["lib", "addon", "old", "fine"].map(|id| Local {
+        id: id.into(),
+        version: "1.0".into(),
+        github: false,
+    });
+    let w = World {
+        local: &local,
+        native_allowed: true,
+        ..world(&idx, &on, &none, false)
+    };
+    let mut r = rows(&entries, &w);
+    let left = |id: &str, why| LeftOut {
+        id: id.into(),
+        version: "1.0".into(),
+        why,
+        detail: None,
+    };
+    let list = [
+        left("lib", Why::DidNotBuild),
+        left("addon", Why::Needs("lib".into())),
+        LeftOut {
+            detail: Some(Detail {
+                made_for: Some("nightly-2026-11-16-abc".into()),
+                changes: vec!["a hook moved".into()],
+            }),
+            ..left("old", Why::Unfit("made for Nov 16".into()))
+        },
+    ];
+    mark_left_out(&mut r, &list, "Nov 17", |tag| format!("name of {tag}"));
+    let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
+    assert!(row("lib").left_out.as_deref().unwrap().contains("lib"));
+    assert!(row("addon")
+        .left_out
+        .as_deref()
+        .unwrap()
+        .contains("needs lib"));
+    assert!(row("lib").unfit.is_none() && row("lib").need.is_none());
+    let old = row("old").unfit.as_ref().unwrap();
+    assert_eq!(
+        old.made_for,
+        Some((
+            "nightly-2026-11-16-abc".into(),
+            "name of nightly-2026-11-16-abc".into()
+        ))
+    );
+    assert!(row("old").left_out.is_none());
+    assert!(row("fine").unfit.is_none() && row("fine").left_out.is_none());
+    assert_eq!(not_on_build(&r), 3, "the play bar counts all of them");
+}

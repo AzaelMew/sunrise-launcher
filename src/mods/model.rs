@@ -3,6 +3,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
+use sunrise_launcher::native_mods;
 use sunrise_launcher_smod::index::{self, Index};
 use sunrise_launcher_smod::manifest::Side;
 
@@ -389,6 +390,9 @@ pub(super) struct Row {
     pub(super) entry: Option<Entry>,
     /// It can't run on the game this setup plays: the build left it out.
     pub(super) unfit: Option<Unfit>,
+    /// The build left it out for another reason (it didn't build, it needs a mod that was left
+    /// out, it clashes with another): what the player reads, in a sentence.
+    pub(super) left_out: Option<String>,
 }
 
 /// Why a mod is not on the game build its setup plays, in parts the row says in its own words.
@@ -400,6 +404,47 @@ pub(super) struct Unfit {
     pub(super) made_for: Option<(String, String)>,
     /// Each thing the game changed that it uses, for its author.
     pub(super) changes: Vec<String>,
+}
+
+/// Marks the rows of mods the last build left out: those the game was made without (another
+/// version, or not fit for it) get their [`Unfit`] words, every other reason (it didn't build,
+/// it needs a mod that was left out, it clashes) its sentence. A row left out has nothing to
+/// build, so it no longer asks for a build. `on` is the build played, `name` how a build tag is
+/// read by people.
+pub(super) fn mark_left_out(
+    rows: &mut [Row],
+    left: &[native_mods::LeftOut],
+    on: &str,
+    name: impl Fn(&str) -> String,
+) {
+    for row in rows.iter_mut().filter(|r| r.on) {
+        let Some(l) = left
+            .iter()
+            .find(|l| l.id == row.id && l.version == row.version)
+        else {
+            continue;
+        };
+        row.need = None;
+        match l.why {
+            native_mods::Why::Unfit(_) | native_mods::Why::OtherVersion => {
+                let detail = l.detail.clone().unwrap_or_default();
+                row.unfit = Some(Unfit {
+                    on: on.to_owned(),
+                    made_for: detail.made_for.map(|tag| (tag.clone(), name(&tag))),
+                    changes: detail.changes,
+                });
+            }
+            _ => row.left_out = Some(l.label()),
+        }
+    }
+}
+
+/// How many rows the play bar counts as "not on this build": every mod the build left out,
+/// whatever the reason.
+pub(super) fn not_on_build(rows: &[Row]) -> usize {
+    rows.iter()
+        .filter(|r| r.unfit.is_some() || r.left_out.is_some())
+        .count()
 }
 
 impl Row {
@@ -498,6 +543,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 icon: p.and_then(|p| p.icon.clone()),
                 entry: Some(e.clone()),
                 unfit: None,
+                left_out: None,
             })
         })
         .collect();
@@ -523,6 +569,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             icon: None,
             entry: None,
             unfit: None,
+            left_out: None,
         }
     }));
     sort(&mut out);
