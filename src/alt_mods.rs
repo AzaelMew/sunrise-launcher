@@ -34,7 +34,7 @@ mod installed_view;
 mod model;
 mod project;
 mod ui;
-pub(crate) use ui::switch;
+pub(crate) use ui::{chip, field_theme, switch};
 
 use model::{Card, Row};
 

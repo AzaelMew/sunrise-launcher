@@ -311,7 +311,7 @@ impl Launcher {
 
     /// Counts the switched-on native mods and the instances holding them, on a worker, then
     /// asks before Turn off.
-    fn storage_count_native(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn storage_count_native(&mut self, cx: &mut Context<Self>) {
         let visit = self.storage_visit;
         self.storage_counting = Some(visit);
         self.storage_revoke_error = None;
@@ -341,7 +341,7 @@ impl Launcher {
     /// Takes the permission back (saved first: nothing changes if it can't be), then switches
     /// every native mod off, on a worker; a build card still open is cleared, so its buttons ask
     /// again rather than fail.
-    fn turn_off_native_mods(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn turn_off_native_mods(&mut self, cx: &mut Context<Self>) {
         self.storage_revoke = None;
         if let Err(error) = self.settings.revoke_native_mods() {
             self.storage_revoke_error = Some(error);
@@ -430,7 +430,7 @@ impl Launcher {
     }
 }
 
-fn category_label(category: Category) -> &'static str {
+pub(crate) fn category_label(category: Category) -> &'static str {
     match category {
         Category::BuildFiles => "Build files",
         Category::PrebuiltGames => "Prebuilt games",
@@ -441,7 +441,7 @@ fn category_label(category: Category) -> &'static str {
 }
 
 /// What a row holds, and that clearing it costs only a download or a rebuild.
-fn category_about(category: Category) -> &'static str {
+pub(crate) fn category_about(category: Category) -> &'static str {
     match category {
         Category::BuildFiles => "What building native mods leaves behind: made again when needed.",
         Category::PrebuiltGames => {

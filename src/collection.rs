@@ -20,7 +20,7 @@ pub(crate) struct Collection {
     pub note: Option<String>,
     pub confirm_delete: bool,
     /// The switches (by name) whose "What's sent?" is open, on the question and in Settings.
-    sent_open: Vec<&'static str>,
+    pub(crate) sent_open: Vec<&'static str>,
 }
 
 impl Collection {
@@ -139,7 +139,7 @@ impl Launcher {
         self.opening.is_none() && self.collection.consent.needs_asking()
     }
 
-    fn answer_consent(&mut self, choices: Choices) {
+    pub(crate) fn answer_consent(&mut self, choices: Choices) {
         match telemetry::answer(choices) {
             Ok(consent) => self.collection.consent = consent,
             Err(e) => {
@@ -165,7 +165,7 @@ impl Launcher {
         false
     }
 
-    fn toggle_view(&mut self) {
+    pub(crate) fn toggle_view(&mut self) {
         self.collection.view = match self.collection.view {
             Some(_) => None,
             None => Some(telemetry::preview()),

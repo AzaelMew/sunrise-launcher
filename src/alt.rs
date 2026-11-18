@@ -466,7 +466,7 @@ impl Launcher {
                 "sliders",
             ));
         let content = match page {
-            Page::Settings => self.alt_settings(cx),
+            Page::Settings => self.alt_settings(window, cx),
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
                 .p(px(24.))
                 .child(tr(

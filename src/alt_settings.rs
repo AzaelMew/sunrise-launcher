@@ -1,257 +1,205 @@
-//! Machine-wide settings. Per-setup game choices live in the dock instead.
+//! Settings for the whole launcher, one section at a time. The game build and its channel stay
+//! in the play bar, the one place that shows them.
 use super::*;
-use crate::alt::{button, CARD, GOLD, LINE, MUTED, TEXT};
+use crate::alt::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::alt_mods::{chip, switch};
 use gpui::rgb;
+use storage::Category;
+use sunrise_launcher::telemetry;
+use sunrise_launcher_telemetry::Choices;
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+pub(super) enum Section {
+    #[default]
+    Account,
+    Game,
+    Mods,
+    Storage,
+    Privacy,
+    Launcher,
+}
+
+impl Section {
+    const ALL: [Section; 6] = [
+        Section::Account,
+        Section::Game,
+        Section::Mods,
+        Section::Storage,
+        Section::Privacy,
+        Section::Launcher,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Section::Account => "Account",
+            Section::Game => "Game",
+            Section::Mods => "Mods",
+            Section::Storage => "Storage",
+            Section::Privacy => "Privacy",
+            Section::Launcher => "Launcher",
+        }
+    }
+
+    fn about(self) -> &'static str {
+        match self {
+            Section::Account => "Who plays, and the Microsoft accounts signed in here.",
+            Section::Game => "How the game starts. Its build is chosen in the bar below.",
+            Section::Mods => "What mods with native code may do on this computer.",
+            Section::Storage => "Where your files are, and the space downloads take.",
+            Section::Privacy => "What Sunrise sends, and what it never does.",
+            Section::Launcher => "Language, network and this version.",
+        }
+    }
+}
 
 #[derive(Default)]
 pub(super) struct SettingsView {
-    account: bool,
-    pub(super) privacy: bool,
+    pub(super) section: Section,
     languages: bool,
     setup: bool,
-    storage: bool,
     note: Option<String>,
 }
 
-fn section(label: &'static str, body: Div) -> Div {
-    div()
+/// A card of rows with a rule between them.
+fn group(rows: Vec<Div>) -> Div {
+    let mut card = div()
         .flex()
-        .items_start()
-        .gap(px(20.))
-        .py(px(15.))
-        .border_b_1()
-        .border_color(rgb(crate::alt::SOFT))
-        .child(
-            div()
-                .w(px(116.))
-                .flex_none()
-                .font_weight(FontWeight::BOLD)
-                .text_size(px(17.))
-                .child(tr(label)),
-        )
-        .child(body.flex().flex_col().gap(px(12.)).flex_1().min_w_0())
+        .flex_col()
+        .rounded(px(12.))
+        .border_1()
+        .border_color(rgb(SOFT))
+        .bg(rgb(CARD));
+    for (i, row) in rows.into_iter().enumerate() {
+        card = card.child(
+            row.px(px(16.))
+                .py(px(14.))
+                .when(i > 0, |d| d.border_t_1().border_color(rgb(SOFT))),
+        );
+    }
+    card
 }
 
-fn row(title: impl Into<SharedString>, hint: impl Into<SharedString>, actions: Div) -> Div {
-    let hint = hint.into();
+fn hint(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_color(rgb(MUTED))
+        .text_size(px(12.5))
+        .child(text.into())
+}
+
+fn row(title: impl Into<SharedString>, about: impl Into<SharedString>, actions: Div) -> Div {
+    let about = about.into();
     div()
         .flex()
         .items_center()
-        .gap(px(12.))
+        .gap(px(16.))
         .child(
             div()
                 .flex_1()
                 .min_w_0()
                 .flex()
                 .flex_col()
+                .gap(px(2.))
                 .child(div().font_weight(FontWeight::SEMIBOLD).child(title.into()))
-                .when(!hint.is_empty(), |d| {
-                    d.child(div().text_color(rgb(MUTED)).text_size(px(12.)).child(hint))
-                }),
+                .when(!about.is_empty(), |d| d.child(hint(about))),
         )
-        .child(actions.flex().items_center().gap(px(6.)))
+        .child(actions.flex_none().flex().items_center().gap(px(6.)))
+}
+
+/// A row whose control needs the full width: the words above, the control below.
+fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below: Div) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(10.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(title.into()))
+                .child(hint(about)),
+        )
+        .child(below)
+}
+
+fn off(b: Stateful<Div>) -> Stateful<Div> {
+    b.opacity(0.4).cursor_default()
+}
+
+fn danger(b: Stateful<Div>) -> Stateful<Div> {
+    b.text_color(rgb(BAD))
+}
+
+fn warning(text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(12.5))
+        .text_color(rgb(BAD))
+        .child(text.into())
 }
 
 impl Launcher {
-    pub(super) fn alt_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let st = &self.alt.settings;
-        let (show_account, show_privacy, show_languages, show_setup, show_storage) =
-            (st.account, st.privacy, st.languages, st.setup, st.storage);
-        let account = self
-            .accounts
-            .selected()
-            .map(|a| a.name.clone())
-            .unwrap_or_else(|| tr("Not signed in").into());
-        let mut accounts = div().child(row(
-            account,
-            tr("Microsoft account"),
-            div()
-                .child(
-                    button(
-                        "alt-manage-accounts",
-                        tr(if show_account {
-                            "Done"
-                        } else {
-                            "Manage accounts"
-                        }),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.alt.settings.account = !this.alt.settings.account;
+    pub(super) fn alt_settings(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.args_focused = self.args_focus.is_focused(window);
+        self.proxy_focused = self.proxy_focus.is_focused(window);
+        let section = self.alt.settings.section;
+        let mut nav = div().flex().flex_col().gap(px(2.)).w(px(180.)).flex_none();
+        for (n, s) in Section::ALL.into_iter().enumerate() {
+            let on = s == section;
+            nav = nav.child(
+                div()
+                    .id(ElementId::named_usize("alt-settings-nav", n))
+                    .tab_index(0)
+                    .h(px(36.))
+                    .px(px(12.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(9.))
+                    .cursor_pointer()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(rgb(if on { TEXT } else { MUTED }))
+                    .when(on, |d| d.bg(rgb(CARD)))
+                    .hover(|d| d.text_color(rgb(TEXT)))
+                    .child(tr(s.label()))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.alt_settings_open(s);
                         cx.notify();
                     })),
-                )
-                .child(
-                    button("alt-add-account", tr("Sign in")).on_click(cx.listener(
-                        |this, _, _, cx| {
-                            this.sign_in_to_play();
-                            cx.notify();
-                        },
-                    )),
-                ),
-        ));
-        if show_account {
-            let (list, _) = self.microsoft_rows(cx);
-            accounts = accounts.child(list);
+            );
         }
-        let mut look = div().child(row(
-            tr("Language"),
-            "",
-            div().child(
-                button(
-                    "alt-language",
-                    self.settings.language.map_or(tr("System"), |l| l.name()),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.alt.settings.languages = !this.alt.settings.languages;
-                    cx.notify();
-                })),
-            ),
-        ));
-        if show_languages {
-            let mut options = div()
-                .id("alt-languages")
-                .max_h(px(180.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_wrap()
-                .gap(px(4.));
-            for (n, language) in std::iter::once(None)
-                .chain(i18n::Language::ALL.map(Some))
-                .enumerate()
-            {
-                options = options.child(
-                    button(
-                        ElementId::named_usize("alt-lang", n),
-                        language.map_or(tr("System"), |l| l.name()),
+        let body = match section {
+            Section::Account => self.alt_settings_account(cx),
+            Section::Game => self.alt_settings_game(cx),
+            Section::Mods => self.alt_settings_mods(cx),
+            Section::Storage => self.alt_settings_storage(cx),
+            Section::Privacy => self.alt_settings_privacy(cx),
+            Section::Launcher => self.alt_settings_launcher(cx),
+        };
+        let pane = div()
+            .flex_1()
+            .min_w_0()
+            .max_w(px(760.))
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(17.))
+                            .font_weight(FontWeight::BOLD)
+                            .child(tr(section.label())),
                     )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.settings.language = language;
-                        i18n::set(this.settings.language());
-                        this.save_settings();
-                        this.alt.settings.languages = false;
-                        cx.notify();
-                    })),
-                );
-            }
-            look = look.child(options);
-        }
-        let mut privacy = div();
-        if !show_privacy {
-            privacy = privacy.child(row(
-                tr("Count me as playing"),
-                tr("Once a minute while the game runs: build, system, LAN status and a random number."),
-                div().child(
-                    crate::alt_mods::switch("alt-ping", !self.settings.ping_off).on_click(
-                        cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.settings.ping_off = !this.settings.ping_off;
-                            this.save_settings();
-                            cx.notify();
-                        }),
-                    ),
-                ),
-            ));
-        }
-        privacy = privacy.child(row(
-            tr("Reports and permissions"),
-            tr("Choose which reports, if any, to send."),
-            div().child(
-                button(
-                    "alt-privacy",
-                    tr(if show_privacy {
-                        "Hide details"
-                    } else {
-                        "Privacy choices"
-                    }),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.alt.settings.privacy = !this.alt.settings.privacy;
-                    cx.notify();
-                })),
-            ),
-        ));
-        if show_privacy {
-            privacy = privacy.child(self.collection_section(cx));
-        }
-        let dir = backend::game_home();
-        let mut storage = div()
-            .child(row(
-                tr("Game files and worlds"),
-                short(&dir),
-                div().child(
-                    button("alt-open-game", tr("Open folder"))
-                        .on_click(move |_, _, cx| glass_toast::open(cx, &dir)),
-                ),
-            ))
-            .child(row(
-                tr("Downloads kept for reuse"),
-                trf(
-                    "Cache limit: {limit} GiB",
-                    &[(
-                        "limit",
-                        &self.settings.cache_limit_gib.unwrap_or(25).to_string(),
-                    )],
-                ),
-                div().child(
-                    button(
-                        "alt-storage",
-                        tr(if show_storage { "Done" } else { "Manage…" }),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.alt.settings.storage = !this.alt.settings.storage;
-                        if this.alt.settings.storage {
-                            this.refresh_storage(None, false);
-                        }
-                        cx.notify();
-                    })),
-                ),
-            ));
-        if show_storage {
-            storage = storage.child(self.glass_storage(cx));
-        }
-        let mut launcher = div()
-            .child(row(
-                trf("Version {version}", &[("version", backend::VERSION)]),
-                tr("Design preview · self-update is off"),
-                div().text_color(rgb(MUTED)).child(tr("Local build")),
-            ))
-            .child(row(
-                tr("A second set of mods"),
-                tr("Keep different mods for different worlds or servers."),
-                div().child(
-                    button(
-                        "alt-create",
-                        tr(if show_setup { "Cancel" } else { "New setup…" }),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.alt.settings.setup = !this.alt.settings.setup;
-                        this.alt.settings.note = None;
-                        cx.notify();
-                    })),
-                ),
-            ));
-        if show_setup {
-            let input = self.field(servers_page::Field::InstanceName, "Setup name", 250., cx);
-            launcher = launcher.child(div().flex().items_center().gap(px(8.)).child(input).child(
-                button("alt-create-empty", tr("Create empty setup")).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        let name = this.servers.value(servers_page::Field::InstanceName).trim();
-                        match instances::create(name, None) {
-                            Ok(_) => {
-                                this.reload_instances();
-                                this.alt.settings.setup = false;
-                                this.servers
-                                    .text(servers_page::Field::InstanceName)
-                                    .set(String::new());
-                                this.alt.settings.note =
-                                    Some(tr("Setup created. Select it in the play bar.").into());
-                            }
-                            Err(e) => this.alt.settings.note = Some(e),
-                        };
-                        cx.notify();
-                    },
-                )),
-            ));
-        }
+                    .child(hint(tr(section.about()))),
+            )
+            .children(self.location_error.clone().map(warning))
+            .child(body);
         div()
             .id("alt-settings-scroll")
             .size_full()
@@ -259,37 +207,900 @@ impl Launcher {
             .px(px(32.))
             .py(px(24.))
             .text_color(rgb(TEXT))
+            .flex()
+            .flex_col()
+            .gap(px(20.))
             .child(
                 div()
-                    .max_w(px(960.))
+                    .text_size(px(26.))
+                    .font_weight(FontWeight::BOLD)
+                    .child(tr("Settings")),
+            )
+            .child(
+                div()
                     .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .mb(px(6.))
-                            .text_size(px(26.))
-                            .font_weight(FontWeight::BOLD)
-                            .child(tr("Settings")),
-                    )
-                    .children(
-                        self.location_error
-                            .as_ref()
-                            .map(|e| div().text_color(rgb(GOLD)).child(e.clone())),
-                    )
-                    .child(section("Account", accounts))
-                    .child(section("Look", look))
-                    .child(section("Privacy", privacy))
-                    .child(section("Storage", storage))
-                    .child(section("Launcher", launcher))
-                    .children(self.alt.settings.note.as_ref().map(|s| {
-                        div()
-                            .bg(rgb(CARD))
-                            .border_1()
-                            .border_color(rgb(LINE))
-                            .p(px(10.))
-                            .child(s.clone())
-                    })),
+                    .items_start()
+                    .gap(px(28.))
+                    .child(nav)
+                    .child(pane),
             )
             .into_any_element()
+    }
+
+    /// Opens a section, leaving no question from another one standing.
+    pub(super) fn alt_settings_open(&mut self, section: Section) {
+        let view = &mut self.alt.settings;
+        view.section = section;
+        view.languages = false;
+        view.setup = false;
+        view.note = None;
+        self.storage_revoke = None;
+        self.storage_confirm = None;
+        self.collection.confirm_delete = false;
+        if section == Section::Storage {
+            self.refresh_storage(None, false);
+        }
+    }
+
+    fn alt_settings_account(&mut self, cx: &mut Context<Self>) -> Div {
+        let theme = self.theme;
+        let selected = self.accounts.selected.clone();
+        let mut rows = Vec::new();
+        for (i, a) in self.accounts.accounts.clone().into_iter().enumerate() {
+            let plays = selected.as_ref() == Some(&a.uuid);
+            let status = self.auth_status.get(&a.uuid);
+            let needs_sign_in =
+                status.is_some_and(|s| s.state == account::session::State::SignInRequired);
+            let progress = self.auth_progress.get(&a.uuid).map(|phase| phase.label());
+            let busy = self.auth_busy.contains_key(&a.uuid);
+            let said = match (progress, status) {
+                (Some(doing), _) => tr(doing).to_string(),
+                (None, Some(s)) if needs_sign_in => tr(&s.message).to_string(),
+                _ if plays => tr("Plays when you press Play").to_string(),
+                _ => tr("Signed in").to_string(),
+            };
+            let mut actions = div();
+            if needs_sign_in {
+                let uuid = a.uuid.clone();
+                let again = button(
+                    ElementId::named_usize("alt-account-again", i),
+                    tr("Sign in again"),
+                );
+                actions = actions.child(if busy {
+                    off(again)
+                } else {
+                    again.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.re_sign_in(&uuid);
+                        cx.notify();
+                    }))
+                });
+            } else if !plays {
+                let uuid = a.uuid.clone();
+                actions = actions.child(
+                    button(ElementId::named_usize("alt-account-play", i), tr("Play as")).on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.play_as(&uuid);
+                            cx.notify();
+                        }),
+                    ),
+                );
+            }
+            let uuid = a.uuid.clone();
+            let out = button(ElementId::named_usize("alt-account-out", i), tr("Sign out"));
+            actions = actions.child(if busy {
+                off(out)
+            } else {
+                out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let Some(generation) = this.begin_auth_job(&uuid) else {
+                        return;
+                    };
+                    let (tx, uuid) = (this.tx.clone(), uuid.clone());
+                    std::thread::spawn(move || {
+                        let mut accounts = Accounts::load();
+                        let _ = tx.send(Msg::AccountProgress(
+                            uuid.clone(),
+                            generation,
+                            account::session::Phase::SigningOut,
+                        ));
+                        let result = accounts
+                            .remove(account::store(), &uuid)
+                            .and_then(|()| accounts.save())
+                            .map(|()| accounts.has_owner(account::store()));
+                        let _ = tx.send(Msg::AccountRemoved(uuid, generation, result));
+                    });
+                    cx.notify();
+                }))
+            });
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div().flex_none().rounded(px(8.)).overflow_hidden().child(
+                            self.profile_heads
+                                .draw(Some(&a.uuid), 36., self.scale, &theme),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(a.name.clone()),
+                            )
+                            .child(if needs_sign_in {
+                                warning(said)
+                            } else {
+                                hint(said)
+                            }),
+                    )
+                    .child(actions.flex_none().flex().items_center().gap(px(6.))),
+            );
+        }
+        let none = rows.is_empty();
+        rows.push(row(
+            tr(if none {
+                "Not signed in"
+            } else {
+                "Another account"
+            }),
+            tr("Sign in with the Microsoft account that owns Minecraft: Java Edition."),
+            div().child(
+                button("alt-add-account", tr("Sign in with Microsoft")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.sign_in_to_play();
+                        cx.notify();
+                    },
+                )),
+            ),
+        ));
+        group(rows)
+    }
+
+    fn alt_settings_game(&mut self, cx: &mut Context<Self>) -> Div {
+        use backend::WhilePlaying;
+        let current = self.settings.while_playing.here();
+        let mut ways = vec![
+            (WhilePlaying::Stay, "Stay open"),
+            (WhilePlaying::Minimize, "Minimise"),
+        ];
+        if cfg!(target_os = "macos") {
+            ways.push((WhilePlaying::Hide, "Hide"));
+        }
+        let mut picker = div();
+        for (n, (way, label)) in ways.into_iter().enumerate() {
+            picker = picker.child(
+                chip(
+                    ElementId::named_usize("alt-while-playing", n),
+                    tr(label),
+                    way == current,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.settings.while_playing = way;
+                    this.save_settings();
+                    cx.notify();
+                })),
+            );
+        }
+        let while_playing = row(
+            tr("While you play"),
+            tr(match current {
+                WhilePlaying::Stay => "The launcher stays open beside the game.",
+                WhilePlaying::Minimize => {
+                    "The launcher goes down when the game starts, and comes back when it closes."
+                }
+                WhilePlaying::Hide => {
+                    "The launcher hides when the game starts, and comes back when it closes."
+                }
+            }),
+            picker,
+        );
+        let minecraft = self.settings.minecraft_dir.as_deref().map_or_else(
+            || {
+                tr("Not found yet. Sunrise reads the game's own files from your Minecraft folder.")
+                    .to_string()
+            },
+            short,
+        );
+        let source = row(
+            tr("Minecraft folder"),
+            minecraft,
+            div().child(
+                button("alt-minecraft-folder", tr("Choose…"))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.choose_folder(cx))),
+            ),
+        );
+        let args = self.alt_settings_field(
+            "alt-game-args",
+            self.args_focus.clone(),
+            self.args_focused,
+            &self.args_input,
+            "For example --server-thread",
+            |this| &mut this.args_input,
+            |this| {
+                this.settings.game_args = this.args_input.text().to_string();
+                this.save_settings();
+            },
+            cx,
+        );
+        let args = stacked(
+            tr("Game arguments"),
+            tr("Extra arguments for the game, passed through as they are. They apply the next time it starts."),
+            args,
+        );
+        let prune = row(
+            tr("Remove old game builds"),
+            tr("After an update, builds nothing uses any more are deleted."),
+            div().child(
+                switch("alt-prune", self.settings.auto_prune()).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.settings.prune_old_versions = Some(!this.settings.auto_prune());
+                        this.save_settings();
+                        cx.notify();
+                    },
+                )),
+            ),
+        );
+        let asking = self.alt.settings.setup;
+        let mut setup = row(
+            tr("A second set of mods"),
+            tr("A setup keeps its own mods, worlds and servers. Switch between setups in the bar below."),
+            div().child(
+                button("alt-create", tr(if asking { "Cancel" } else { "New setup…" })).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.alt.settings.setup = !this.alt.settings.setup;
+                        this.alt.settings.note = None;
+                        cx.notify();
+                    }),
+                ),
+            ),
+        );
+        if asking {
+            let input = self.field(servers_page::Field::InstanceName, "Setup name", 250., cx);
+            setup = div().flex().flex_col().gap(px(12.)).child(setup).child(
+                div().flex().items_center().gap(px(8.)).child(input).child(
+                    button("alt-create-empty", tr("Create setup")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            let name = this.servers.value(servers_page::Field::InstanceName).trim();
+                            match instances::create(name, None) {
+                                Ok(_) => {
+                                    this.reload_instances();
+                                    this.alt.settings.setup = false;
+                                    this.servers
+                                        .text(servers_page::Field::InstanceName)
+                                        .set(String::new());
+                                    this.alt.settings.note = Some(
+                                        tr("Setup created. Select it in the bar below.").into(),
+                                    );
+                                }
+                                Err(e) => this.alt.settings.note = Some(e),
+                            };
+                            cx.notify();
+                        },
+                    )),
+                ),
+            );
+        }
+        if let Some(note) = self.alt.settings.note.clone() {
+            setup = div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(setup)
+                .child(hint(note));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(group(vec![while_playing, args]))
+            .child(group(vec![source, prune]))
+            .child(group(vec![setup]))
+    }
+
+    fn alt_settings_mods(&mut self, cx: &mut Context<Self>) -> Div {
+        let allowed = self.settings.native_mods_allowed_at.is_some();
+        let (about, actions) = match (allowed, self.storage_revoke) {
+            (false, _) => (
+                tr("Not allowed. Sunrise asks the first time a mod needs it, and builds or runs nothing before you answer.").to_string(),
+                div(),
+            ),
+            (true, None) => (
+                tr("Allowed. Mods with native code run inside the game with the same access to your computer as the game has.").to_string(),
+                div().child(match self.storage_counting {
+                    Some(_) => off(button("alt-native-revoke", tr("Counting your mods…"))),
+                    None => button("alt-native-revoke", tr("Take back…"))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.storage_count_native(cx))),
+                }),
+            ),
+            (true, Some((mods, setups))) => (
+                match (mods, setups) {
+                    (0, _) => tr("No mod with native code is turned on. Sunrise will ask again before the next one.").to_string(),
+                    (1, _) => tr("This also turns off your one mod with native code. Turn it back on in Mods; Sunrise asks again then.").to_string(),
+                    (_, 1) => trf(
+                        "This also turns off {mods} mods with native code. Turn them back on in Mods; Sunrise asks again then.",
+                        &[("mods", &mods.to_string())],
+                    ),
+                    _ => trf(
+                        "This also turns off {mods} mods with native code in {setups} setups. Turn them back on in each setup's Mods; Sunrise asks again then.",
+                        &[("mods", &mods.to_string()), ("setups", &setups.to_string())],
+                    ),
+                },
+                div()
+                    .child(
+                        button("alt-native-keep", tr("Keep it")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.storage_revoke = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(danger(button("alt-native-revoke-yes", tr("Take it back"))).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| this.turn_off_native_mods(cx)),
+                    )),
+            ),
+        };
+        let mut native = row(tr("Native code"), about, actions);
+        if let Some(error) = self.storage_revoke_error.clone() {
+            native = div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(native)
+                .child(warning(error));
+        }
+        group(vec![native])
+    }
+
+    fn alt_settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
+        let game = backend::game_home();
+        let backups = self
+            .selected_instance()
+            .map_or_else(|| game.clone(), |i| i.home.clone())
+            .join("backups");
+        let has_backups = backups.is_dir();
+        let files = row(
+            tr("Game files and worlds"),
+            short(&game),
+            div().child({
+                let dir = game.clone();
+                button("alt-open-game", tr("Open folder"))
+                    .on_click(move |_, _, cx| glass_toast::open(cx, &dir))
+            }),
+        );
+        let open_backups = button("alt-open-backups", tr("Open folder"));
+        let kept = row(
+            tr("World backups"),
+            if has_backups {
+                short(&backups)
+            } else {
+                tr("None yet. Sunrise backs a world up before a change to your mods could cost it something.").to_string()
+            },
+            div().child(if has_backups {
+                open_backups.on_click(move |_, _, cx| glass_toast::open(cx, &backups))
+            } else {
+                off(open_backups)
+            }),
+        );
+
+        let busy = self.storage_pending;
+        let total = self
+            .storage_report
+            .as_ref()
+            .map(|report| report.rows.iter().map(|r| r.remaining_bytes).sum::<u64>());
+        let nothing = busy || total == Some(0);
+        let clear_all = button("alt-storage-clear-all", tr("Clear all…"));
+        let mut cache = vec![row(
+            tr("Downloads kept for reuse"),
+            trf(
+                "{size}. Files Sunrise can fetch or make again; your worlds, mods and settings are never part of it.",
+                &[(
+                    "size",
+                    &total.map_or_else(|| tr("Counting…").to_string(), storage::format_bytes),
+                )],
+            ),
+            div()
+                .child(
+                    button("alt-storage-recount", tr("Recount")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.refresh_storage(None, false);
+                            cx.notify();
+                        },
+                    )),
+                )
+                .child(if nothing {
+                    off(clear_all)
+                } else {
+                    clear_all.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.storage_confirm = Some(None);
+                        cx.notify();
+                    }))
+                }),
+        )];
+        if let Some(asked) = self.storage_confirm {
+            let bytes: u64 = self
+                .storage_report
+                .iter()
+                .flat_map(|report| &report.rows)
+                .filter(|r| asked.is_none_or(|category| r.category == category))
+                .map(|r| r.remaining_bytes)
+                .sum();
+            let size = storage::format_bytes(bytes);
+            let question = match asked {
+                None => trf(
+                    "Clear everything kept for reuse? Up to {size} is freed. Files a game or build is using stay.",
+                    &[("size", &size)],
+                ),
+                Some(category) => trf(
+                    "Clear {category}? Up to {size} is freed. Files a game or build is using stay.",
+                    &[
+                        ("category", tr(glass_storage::category_label(category))),
+                        ("size", &size),
+                    ],
+                ),
+            };
+            cache.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(16.))
+                    .child(div().flex_1().min_w_0().child(question))
+                    .child(button("alt-storage-keep", tr("Keep")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.storage_confirm = None;
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        danger(button("alt-storage-clear-yes", tr("Clear"))).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                if let Some(clear) = this.storage_confirm.take() {
+                                    this.refresh_storage(clear, clear.is_none());
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    ),
+            );
+        }
+        let limit = self.settings.cache_limit_gib.unwrap_or(25);
+        let mut limits = div();
+        for (n, (value, label)) in [
+            (10u64, "10 GB"),
+            (25, "25 GB"),
+            (50, "50 GB"),
+            (100, "100 GB"),
+            (0, "No limit"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            limits = limits.child(
+                chip(
+                    ElementId::named_usize("alt-storage-limit", n),
+                    tr(label),
+                    value == limit,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.settings.cache_limit_gib = Some(value);
+                    if let Err(error) = this.settings.save() {
+                        this.storage_error = Some(error);
+                    }
+                    cx.notify();
+                })),
+            );
+        }
+        cache.push(row(
+            tr("Keep at most"),
+            tr("Past this, the oldest downloads are cleared by themselves."),
+            limits,
+        ));
+        for (n, category) in Category::ALL.into_iter().enumerate() {
+            let found = self
+                .storage_report
+                .as_ref()
+                .and_then(|report| report.rows.iter().find(|r| r.category == category));
+            let size = found.map_or_else(
+                || tr("Counting…").to_string(),
+                |r| storage::format_bytes(r.remaining_bytes),
+            );
+            let empty = busy || found.is_none_or(|r| r.remaining_bytes == 0);
+            let clear = button(ElementId::named_usize("alt-storage-clear", n), tr("Clear…"));
+            let mut line = row(
+                trf(
+                    "{category} · {size}",
+                    &[
+                        ("category", tr(glass_storage::category_label(category))),
+                        ("size", &size),
+                    ],
+                ),
+                tr(glass_storage::category_about(category)),
+                div().child(if empty {
+                    off(clear)
+                } else {
+                    clear.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.storage_confirm = Some(Some(category));
+                        cx.notify();
+                    }))
+                }),
+            );
+            let kept: Vec<Div> = found
+                .iter()
+                .flat_map(|r| &r.kept)
+                .map(|k| {
+                    hint(trf(
+                        "Space it couldn't free: {bytes}. {reason}",
+                        &[
+                            ("bytes", &storage::format_bytes(k.bytes)),
+                            ("reason", &k.reason),
+                        ],
+                    ))
+                })
+                .collect();
+            if !kept.is_empty() {
+                line = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(line)
+                    .children(kept);
+            }
+            cache.push(line);
+        }
+        let notes = [
+            self.client
+                .is_some()
+                .then(|| hint(tr("A game is running. Files it may use are kept."))),
+            busy.then(|| hint(tr("Counting, or clearing…"))),
+            self.storage_error.clone().map(warning),
+        ];
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(group(vec![files, kept]))
+            .child(group(cache))
+            .children(notes.into_iter().flatten())
+    }
+
+    fn alt_settings_privacy(&mut self, cx: &mut Context<Self>) -> Div {
+        let consent = self.collection.consent.clone();
+        let detail = |this: &Self,
+                      name: &'static str,
+                      summary: &'static str,
+                      full: &'static str,
+                      cx: &mut Context<Self>| {
+            let open = this.collection.sent_open.contains(&name);
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(hint(tr(summary)))
+                .child(
+                    div()
+                        .id(name)
+                        .text_size(px(12.5))
+                        .text_color(rgb(GOLD))
+                        .cursor_pointer()
+                        .child(tr(if open {
+                            "Hide what's sent"
+                        } else {
+                            "What's sent?"
+                        }))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let list = &mut this.collection.sent_open;
+                            match list.iter().position(|n| *n == name) {
+                                Some(i) => drop(list.remove(i)),
+                                None => list.push(name),
+                            }
+                            cx.notify();
+                        })),
+                )
+                .children(open.then(|| hint(tr(full))))
+        };
+        let line = |title: &'static str, about: Div, toggle: Stateful<Div>| {
+            div()
+                .flex()
+                .items_start()
+                .gap(px(16.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(tr(title)))
+                        .child(about),
+                )
+                .child(toggle)
+        };
+        let ping = line(
+            telemetry::PING_NAME,
+            detail(
+                self,
+                telemetry::PING_NAME,
+                telemetry::PING_SUMMARY,
+                telemetry::PING,
+                cx,
+            ),
+            switch("alt-ping", !self.settings.ping_off).on_click(cx.listener(
+                |this, _: &ClickEvent, _, cx| {
+                    this.settings.ping_off = !this.settings.ping_off;
+                    this.save_settings();
+                    cx.notify();
+                },
+            )),
+        );
+        let mut reports = Vec::new();
+        for (n, &(kind, name, summary, what)) in telemetry::SWITCHES.iter().enumerate() {
+            let on = !consent.needs_asking() && consent.choices.allows(kind);
+            let toggle = switch(ElementId::named_usize("alt-report", n), on).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    let mut choices = if this.collection.consent.needs_asking() {
+                        Choices::NONE
+                    } else {
+                        this.collection.consent.choices
+                    };
+                    choices.set(kind, !on);
+                    this.answer_consent(choices);
+                    cx.notify();
+                },
+            ));
+            reports.push(line(name, detail(self, name, summary, what, cx), toggle));
+        }
+        let id = match consent.install_id.as_str() {
+            "" => tr("No install ID: nothing has been collected.").to_string(),
+            id => trf(
+                "Install ID {prefix}…{suffix}",
+                &[("prefix", &id[..4]), ("suffix", &id[id.len() - 4..])],
+            ),
+        };
+        let waiting = if sunrise_launcher_telemetry::endpoint().is_some() {
+            let count = sunrise_launcher_telemetry::outbox::pending(&telemetry::home()).len();
+            trf(
+                "{count} waiting to be sent",
+                &[("count", &count.to_string())],
+            )
+        } else {
+            tr("Sending is turned off on this computer").to_string()
+        };
+        let confirm = self.collection.confirm_delete;
+        let viewing = self.collection.view.is_some();
+        let mut yours = row(
+            tr("Your data"),
+            format!("{id} · {waiting}"),
+            div()
+                .child(
+                    button(
+                        "alt-data-view",
+                        tr(if viewing {
+                            "Hide"
+                        } else {
+                            "See what would be sent"
+                        }),
+                    )
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.toggle_view();
+                        cx.notify();
+                    })),
+                )
+                .child(
+                    danger(button(
+                        "alt-data-delete",
+                        tr(if confirm {
+                            "Delete everything?"
+                        } else {
+                            "Delete my data"
+                        }),
+                    ))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        if this.collection.confirm_delete {
+                            this.collection.note = Some(match telemetry::delete_my_data() {
+                                Ok(done) => done,
+                                Err(e) => e,
+                            });
+                            this.collection.consent = telemetry::consent();
+                            this.collection.view = None;
+                        }
+                        this.collection.confirm_delete = !this.collection.confirm_delete;
+                        cx.notify();
+                    })),
+                ),
+        );
+        if let Some((what, json)) = self.collection.view.clone() {
+            yours = div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .child(yours)
+                .child(hint(what))
+                .child(
+                    div()
+                        .id("alt-data-json")
+                        .max_h(px(220.))
+                        .overflow_y_scroll()
+                        .p(px(12.))
+                        .rounded(px(8.))
+                        .bg(rgb(BG))
+                        .border_1()
+                        .border_color(rgb(SOFT))
+                        .font_family(theme::MONO)
+                        .text_size(px(12.))
+                        .text_color(rgb(MUTED))
+                        .children(json.lines().map(|l| div().child(l.to_string()))),
+                );
+        }
+        if let Some(note) = self.collection.note.clone() {
+            yours = div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(yours)
+                .child(hint(note));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(group(vec![ping]))
+            .child(hint(tr("These reports are off until you turn them on.")))
+            .child(group(reports))
+            .child(group(vec![yours]))
+            .child(hint(tr(telemetry::NEVER)))
+    }
+
+    fn alt_settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
+        let picking = self.alt.settings.languages;
+        let mut language = row(
+            tr("Language"),
+            "",
+            div().child(
+                button(
+                    "alt-language",
+                    self.settings
+                        .language
+                        .map_or(tr("Same as the system"), |l| l.name()),
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.alt.settings.languages = !this.alt.settings.languages;
+                    cx.notify();
+                })),
+            ),
+        );
+        if picking {
+            let mut options = div()
+                .id("alt-languages")
+                .max_h(px(190.))
+                .overflow_y_scroll()
+                .flex()
+                .flex_wrap()
+                .gap(px(6.));
+            for (n, choice) in std::iter::once(None)
+                .chain(i18n::Language::ALL.map(Some))
+                .enumerate()
+            {
+                options = options.child(
+                    chip(
+                        ElementId::named_usize("alt-lang", n),
+                        choice.map_or(tr("Same as the system"), |l| l.name()),
+                        choice == self.settings.language,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.settings.language = choice;
+                            i18n::set(this.settings.language());
+                            this.save_settings();
+                            this.alt.settings.languages = false;
+                            cx.notify();
+                        },
+                    )),
+                );
+            }
+            language = div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(language)
+                .child(options);
+        }
+        let refused = (!self.proxy_focused)
+            .then(|| sunrise_launcher::proxy::refuse(self.proxy_input.text()))
+            .flatten();
+        let field = self.alt_settings_field(
+            "alt-proxy",
+            self.proxy_focus.clone(),
+            self.proxy_focused,
+            &self.proxy_input,
+            "For example http://127.0.0.1:7890",
+            |this| &mut this.proxy_input,
+            |this| this.save_proxy(),
+            cx,
+        );
+        let mut proxy = stacked(
+            tr("Proxy"),
+            tr("Downloads, sign-ins and updates go through it. Empty means none; HTTPS_PROXY then applies if the launcher was started with one."),
+            field,
+        );
+        if let Some(why) = refused {
+            proxy = proxy.child(warning(why));
+        }
+        let version = row(
+            trf(
+                "Sunrise Launcher {version}",
+                &[("version", backend::VERSION)],
+            ),
+            tr("A design preview. It doesn't update itself."),
+            div(),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(group(vec![language]))
+            .child(group(vec![proxy]))
+            .child(group(vec![version]))
+    }
+
+    /// One line of text in this look, saved as it is typed.
+    #[allow(clippy::too_many_arguments)]
+    fn alt_settings_field(
+        &self,
+        id: &'static str,
+        focus: FocusHandle,
+        focused: bool,
+        input: &line_edit::LineEdit,
+        placeholder: &'static str,
+        get: fn(&mut Self) -> &mut line_edit::LineEdit,
+        edited: fn(&mut Self),
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = crate::alt_mods::field_theme(self.theme);
+        let to_focus = focus.clone();
+        let field = div()
+            .id(id)
+            .track_focus(&focus)
+            .h(px(38.))
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .overflow_hidden()
+            .rounded(px(8.))
+            .bg(rgb(BG))
+            .border_1()
+            .border_color(rgb(if focused { GOLD } else { LINE }))
+            .font_family(theme::MONO)
+            .text_size(px(13.))
+            .text_color(rgb(TEXT))
+            .cursor_text()
+            .child(line_edit::content(
+                input,
+                &theme,
+                focused,
+                false,
+                false,
+                placeholder,
+            ))
+            .on_click(cx.listener(move |_, _: &ClickEvent, window, cx| {
+                window.focus(&to_focus, cx);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                match line_edit::handle(get(this), ev, cx) {
+                    line_edit::Key::Pass => return,
+                    line_edit::Key::Escape => window.blur(cx),
+                    line_edit::Key::Edited => edited(this),
+                    _ => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        div().child(line_edit::mouse(field, cx, get))
     }
 }

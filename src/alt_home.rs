@@ -780,7 +780,7 @@ impl Launcher {
                             .text_color(rgb(GOLD))
                             .child(tr("Privacy choices"))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.alt.settings.privacy = true;
+                                this.alt_settings_open(crate::alt_settings::Section::Privacy);
                                 this.alt.page = crate::alt::Page::Settings;
                                 cx.notify();
                             })),

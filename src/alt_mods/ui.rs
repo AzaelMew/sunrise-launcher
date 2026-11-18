@@ -42,7 +42,7 @@ pub(super) fn dim(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.45).cursor_default()
 }
 
-pub(super) fn chip(
+pub(crate) fn chip(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     on: bool,
@@ -131,7 +131,7 @@ pub(super) fn card() -> Div {
 }
 
 /// The theme the shared text field draws with, in this look's colours.
-pub(super) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
+pub(crate) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
     t.ink = c(TEXT);
     t.muted = c(MUTED);
     t.glass = false;
