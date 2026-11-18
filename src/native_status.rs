@@ -260,6 +260,8 @@ pub fn declared_internals(manifest: &sunrise_launcher_smod::Manifest) -> Vec<Str
 pub struct Installed {
     pub file: String,
     pub id: String,
+    /// The name its manifest gives it; its ID when the manifest can't be read.
+    pub name: String,
     pub version: String,
     pub internals: Vec<String>,
     pub origin: Option<crate::github_mods::Origin>,
@@ -269,11 +271,37 @@ pub struct Installed {
 
 /// Discover the actual files, not just GitHub sidecars. Registry files already have a row.
 pub fn untracked(home: &Path) -> Vec<Installed> {
+    untracked_in(home, native_mods::INSTALLED, hmods(home), true)
+}
+
+/// The packages put in `sunrise-mods/` by hand: mods that run as wasm or carry content only,
+/// which the registry browser has no record of. One that can't be read is not a mod the game
+/// loads and is left out, as is one whose ID the registry's mods or the native files have.
+pub fn untracked_wasm(home: &Path) -> Vec<Installed> {
     let tracked = crate::browser::installed::Installed::load(home);
-    hmods(home)
+    let mut taken: std::collections::HashSet<String> = tracked
+        .entries
+        .iter()
+        .filter_map(|e| crate::browser::sunrise::mod_id(e).map(str::to_owned))
+        .chain(hmods(home).iter().map(|path| stem(path)))
+        .collect();
+    let dir = sunrise_launcher_smod::mod_list::DIR;
+    let mut found = untracked_in(home, dir, wasm_hmods(home), false);
+    found.retain(|package| package.icon.is_ok() && taken.insert(package.id.clone()));
+    found
+}
+
+fn untracked_in(
+    home: &Path,
+    dir: &str,
+    paths: Vec<std::path::PathBuf>,
+    native: bool,
+) -> Vec<Installed> {
+    let tracked = crate::browser::installed::Installed::load(home);
+    paths
         .into_iter()
         .filter_map(|path| {
-            let file = format!("{}/{}", native_mods::INSTALLED, path.file_name()?.to_str()?);
+            let file = format!("{dir}/{}", path.file_name()?.to_str()?);
             if !path.is_file() || tracked.entries.iter().any(|e| e.file == file) {
                 return None;
             }
@@ -282,7 +310,10 @@ pub fn untracked(home: &Path) -> Vec<Installed> {
                 .as_ref()
                 .map(|p| (p.manifest.id.clone(), p.manifest.version.clone()))
                 .unwrap_or_else(|_| (stem(&path), String::new()));
-            let origin = (path.file_stem()?.to_str()? == id)
+            let name = package
+                .as_ref()
+                .map_or_else(|_| id.clone(), |p| p.manifest.name.clone());
+            let origin = (native && path.file_stem()?.to_str()? == id)
                 .then(|| crate::github_mods::origin(home, &id))
                 .flatten();
             let internals = package
@@ -292,6 +323,7 @@ pub fn untracked(home: &Path) -> Vec<Installed> {
             Some(Installed {
                 file,
                 id,
+                name,
                 version,
                 internals,
                 origin,
@@ -560,6 +592,35 @@ mod tests {
             fs::write(folder.join("test.smod"), bytes).unwrap();
             mod_list::set_enabled(home.path(), "wasm_test", true).unwrap();
             assert_eq!(enabled(home.path()).len(), usize::from(inject));
+            // Put there by hand: listed by its own ID and name, and not among the native files.
+            let local: Vec<_> = untracked_wasm(home.path())
+                .into_iter()
+                .map(|p| (p.file, p.id, p.name))
+                .collect();
+            assert_eq!(
+                local,
+                [(
+                    "sunrise-mods/test.smod".into(),
+                    "wasm_test".into(),
+                    "Wasm test".into()
+                )]
+            );
+            assert!(untracked(home.path()).is_empty());
+            // Once the registry's record names the file, it is the registry's mod.
+            let record = home.path().join("mod-browser.json");
+            fs::write(
+                &record,
+                serde_json::json!({"entries": [{
+                    "source": "sunrise", "project": "wasm-test", "slug": "wasm-test",
+                    "title": "Wasm test", "kind": "mod", "version": "1.0.0", "number": "1.0.0",
+                    "file": "sunrise-mods/test.smod", "checksum": "", "page": "",
+                    "dependency": false,
+                }]})
+                .to_string(),
+            )
+            .unwrap();
+            assert!(untracked_wasm(home.path()).is_empty());
+            fs::remove_file(record).unwrap();
             if inject {
                 let staged = native_mods::stage_installed(home.path(), home.path().join("staged"))
                     .unwrap()

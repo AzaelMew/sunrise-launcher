@@ -128,13 +128,24 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
             })
         })
         .collect();
-    mods.extend(native_status::untracked(home).into_iter().map(|file| Item {
-        on: mod_list::is_enabled(home, &file.id),
-        name: file.id.clone(),
-        kind: Kind::Mod,
-        picture: Picture::Image(None),
-        open: Open::Installed(file.id.clone()),
-        id: file.id,
+    // The files put there by hand, native and not: the game plays with them too.
+    let by_hand = native_status::untracked(home)
+        .into_iter()
+        .chain(native_status::untracked_wasm(home));
+    mods.extend(by_hand.map(|file| {
+        Item {
+            on: mod_list::is_enabled(home, &file.id),
+            name: file.name,
+            kind: Kind::Mod,
+            picture: Picture::Image(
+                file.icon
+                    .ok()
+                    .flatten()
+                    .map(|icon| image(icon.bytes().to_vec())),
+            ),
+            open: Open::Installed(file.id.clone()),
+            id: file.id,
+        }
     }));
     mods.sort_by_key(|item| item.name.to_lowercase());
     let pack = |pack: packs::Pack| Item {

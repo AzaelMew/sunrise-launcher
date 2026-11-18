@@ -80,7 +80,7 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
-    /// Native files the browser didn't install: listed, never changed from here.
+    /// Mod files the browser didn't install: listed, never changed from here.
     local: Vec<model::Local>,
 }
 
@@ -454,13 +454,23 @@ impl Launcher {
         }
         if self.ui.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
             let entries = installed::Installed::load(&home).entries;
-            let local: Vec<model::Local> = native_status::untracked(&home)
-                .into_iter()
-                .map(|f| model::Local {
+            let local = |native: bool| {
+                move |f: native_status::Installed| model::Local {
                     id: f.id,
+                    name: f.name,
                     version: f.version,
                     github: f.origin.is_some(),
-                })
+                    native,
+                }
+            };
+            let local: Vec<model::Local> = native_status::untracked(&home)
+                .into_iter()
+                .map(local(true))
+                .chain(
+                    native_status::untracked_wasm(&home)
+                        .into_iter()
+                        .map(local(false)),
+                )
                 .collect();
             let mut enabled: HashSet<String> = entries
                 .iter()
