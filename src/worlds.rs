@@ -155,7 +155,11 @@ fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
         _ => "Survival",
     };
     let last_played = match number(field("LastPlayed")) {
-        millis if millis > 0 => UNIX_EPOCH + Duration::from_millis(millis as u64),
+        // A time no calendar holds is no time: the folder's own stands in, as for a world
+        // that names none.
+        millis if millis > 0 => {
+            crate::instances::calendar_time(Duration::from_millis(millis as u64)).unwrap_or(changed)
+        }
         _ => changed,
     };
     let icon = path.join("icon.png");

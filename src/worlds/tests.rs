@@ -259,3 +259,21 @@ fn a_level_dat_the_game_loads_is_read_past_the_default_tag_cap() {
     assert_eq!(read(&dir).unwrap().name, "Named");
     fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn a_world_played_at_no_date_falls_back_to_its_folders_time() {
+    let home = scratch("far-future");
+    world(
+        &home,
+        "Far",
+        vec![
+            ("LevelName", name("Far")),
+            ("LastPlayed", Tag::Long(i64::MAX)),
+        ],
+    );
+    let listed = list(&home);
+    // Drawn as a date on Home and in search: the conversion must hold.
+    let when: chrono::DateTime<chrono::Local> = listed[0].last_played.into();
+    assert!(when <= chrono::Local::now() + chrono::Duration::days(1));
+    fs::remove_dir_all(&home).unwrap();
+}

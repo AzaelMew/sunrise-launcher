@@ -329,6 +329,18 @@ impl Instance {
     }
 }
 
+/// The last second of the year 9999: the latest time a saved file is believed about.
+const LATEST: Duration = Duration::from_secs(253_402_300_799);
+
+/// A time read from a saved file (`since_epoch` after 1970), or None for one no calendar holds:
+/// seconds that fit a `SystemTime` can still be past any date, and drawing one as a date panics.
+/// Read as "never", like a file that names no time.
+pub fn calendar_time(since_epoch: Duration) -> Option<SystemTime> {
+    (since_epoch <= LATEST)
+        .then(|| UNIX_EPOCH.checked_add(since_epoch))
+        .flatten()
+}
+
 /// The instances, by the default game home and the launcher's data folder: Sunrise first, then
 /// by group and name.
 pub fn list() -> Vec<Instance> {
@@ -392,7 +404,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
                 played: Duration::from_secs(meta.played_secs),
                 last_played: meta
                     .last_played
-                    .map(|s| UNIX_EPOCH + Duration::from_secs(s)),
+                    .and_then(|s| calendar_time(Duration::from_secs(s))),
                 launch: meta.launch,
                 id,
                 kind,

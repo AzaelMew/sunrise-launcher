@@ -527,3 +527,34 @@ fn a_retired_java_selection_is_refused_by_name() {
     assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_last_played_no_calendar_holds_reads_as_never_played() {
+    let root = scratch("far-future");
+    let (home, data) = (root.join("home"), root.join("data"));
+    fs::create_dir_all(home.join(OWN).join("far")).unwrap();
+    fs::create_dir_all(home.join(OWN).join("near")).unwrap();
+    // Both fit a u64 of seconds; only one is a date.
+    put(
+        &data.join(FILE),
+        &format!(
+            r#"{{"instances": {{
+                "sunrise": {{"last_played": {}, "played_secs": 60}},
+                "far": {{"last_played": 9223372036854775807, "name": "Far"}},
+                "near": {{"last_played": 1763424000, "name": "Near"}}}}}}"#,
+            u64::MAX
+        ),
+    );
+    let all = list_in(&home, &data);
+    let played = |id: &str| all.iter().find(|i| i.id == id).unwrap().last_played;
+    assert_eq!(played("sunrise"), None);
+    assert_eq!(played("far"), None);
+    let near = played("near").unwrap();
+    assert_eq!(near, UNIX_EPOCH + Duration::from_secs(1_763_424_000));
+    // What Home does with one: every time kept converts to a local date without a panic.
+    for kept in [near, calendar_time(LATEST).unwrap()] {
+        let _: chrono::DateTime<chrono::Local> = kept.into();
+    }
+    assert_eq!(calendar_time(LATEST + Duration::from_secs(1)), None);
+    fs::remove_dir_all(&root).unwrap();
+}
