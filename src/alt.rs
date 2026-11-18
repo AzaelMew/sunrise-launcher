@@ -21,6 +21,11 @@ pub(super) enum Page {
     Home,
     Discover,
     Installed,
+    Packs,
+    /// Packs › Discover (`Packs` is its Installed).
+    PackFind,
+    /// A pack's page, opened from Packs › Discover.
+    PackProject,
     Project,
 }
 
@@ -520,7 +525,8 @@ impl Launcher {
         let page = self.alt.page;
         let rail_link = |p: Page, id: &'static str, label: &'static str, icon: &'static str| {
             let on = page == p
-                || (p == Page::Discover && matches!(page, Page::Installed | Page::Project));
+                || (p == Page::Discover && matches!(page, Page::Installed | Page::Project))
+                || (p == Page::Packs && matches!(page, Page::PackFind | Page::PackProject));
             div()
                 .id(id)
                 .tab_index(0)
@@ -556,6 +562,7 @@ impl Launcher {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     match p {
                         Page::Discover => this.alt_open_mods(),
+                        Page::Packs => this.alt_open_packs(),
                         _ => this.alt.page = p,
                     }
                     this.alt.picker = false;
@@ -573,6 +580,7 @@ impl Launcher {
             .child(div().mb(px(12.)).child(crate::mark(36.)))
             .child(rail_link(Page::Home, "alt-nav-home", "Home", "home"))
             .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"))
+            .child(rail_link(Page::Packs, "alt-nav-packs", "Packs", "archive"))
             .child(div().flex_1());
         let content = match page {
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()

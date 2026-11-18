@@ -433,15 +433,7 @@ impl Launcher {
                     .child(blocks::icon("archive", 17., rgb(TEXT).into()))
                     .tooltip(crate::glass_ui::tip(tr("Data packs")))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        let files = sunrise_launcher::datapacks::list(&path)
-                            .into_iter()
-                            .map(|p| p.file)
-                            .collect::<Vec<_>>();
-                        this.open_alt_notice(if files.is_empty() {
-                            tr("No data packs").into()
-                        } else {
-                            files.join("\n")
-                        });
+                        this.alt_show_world_packs(path.clone());
                         cx.notify();
                     })),
             )

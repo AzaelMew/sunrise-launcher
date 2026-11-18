@@ -26,6 +26,8 @@ pub(crate) enum Sheet {
     Resolve,
     /// A problem's whole text, opened from the play bar's one sentence.
     Notice,
+    /// The worlds a data pack goes into (`alt_mods::data_packs`).
+    Worlds,
     /// One build to keep, picked from all of them (`versions`).
     Versions,
 }
@@ -453,6 +455,13 @@ impl Launcher {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
+            Some(Sheet::Worlds) => {
+                let sheet = self.alt_world_pick_sheet(cx);
+                if sheet.is_none() {
+                    self.alt.sheet = None;
+                }
+                sheet
+            }
             Some(Sheet::Resolve) => match self.alt_held_update() {
                 Some(held) => {
                     let sample = held.base == EXAMPLE_BASE;

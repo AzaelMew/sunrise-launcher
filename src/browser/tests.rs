@@ -79,6 +79,47 @@ fn picks_the_newest_version_that_runs() {
 }
 
 #[test]
+fn iris_format_shader_packs_are_labelled_and_only_their_zip_is_picked() {
+    let hit = json!({"project_id": "s", "project_type": "shader", "slug": "bsl",
+        "versions": [GAME], "categories": ["iris", "optifine", "vanilla"]});
+    let p = modrinth::parse_hit(&hit).unwrap();
+    assert_eq!((p.kind, p.source), (Kind::Shader, SourceId::Modrinth));
+    assert_eq!(
+        p.support(GAME),
+        Support::Partial("Iris-format pack: most work, some effects may not".into())
+    );
+    // Another loader's pack doesn't run; Sunrise's own are Works on their build, unchanged.
+    assert!(!support(Kind::Shader, &v(&[GAME]), &v(&["optifine"]), GAME).installable());
+    assert_eq!(
+        support(Kind::Shader, &v(&[GAME]), &v(&[sunrise::LOADER]), GAME),
+        Support::Works
+    );
+
+    let mut jar = version("jar", &[GAME], &["iris"]);
+    jar.files[0].name = "pack.jar".into();
+    let versions = [
+        jar,
+        version("other", &[GAME], &["optifine"]),
+        version("old", &["1.21.4"], &["iris"]),
+        version("pack", &[GAME], &["iris"]),
+    ];
+    assert_eq!(
+        pick(Kind::Shader, &versions, false, GAME).unwrap().id,
+        "pack"
+    );
+    assert!(pick(Kind::Shader, &versions[..3], false, GAME).is_none());
+    assert_eq!(
+        pick(Kind::Shader, &versions[..3], true, GAME).unwrap().id,
+        "old"
+    );
+
+    let facets = modrinth::facets(&Query::new("", Kind::Shader));
+    assert!(facets.contains("project_type:shader"), "{facets}");
+    assert!(facets.contains("categories:iris"), "{facets}");
+    assert!(facets.contains(&format!("versions:{}", Query::new("", Kind::Shader).game)));
+}
+
+#[test]
 fn data_packs_are_their_own_kind() {
     // Most data packs on Modrinth also ship a mod build; only the data pack files are picked.
     let versions = [
@@ -251,11 +292,9 @@ fn modrinth_answers() {
     assert_eq!(sodium.kind, Kind::Mod);
     assert_eq!(sodium.page, "https://modrinth.com/mod/sodium");
     assert!(matches!(sodium.support(GAME), Support::Partial(_)));
-    // Data packs, plugins and shader packs are not.
-    for project_type in ["plugin", "shader"] {
-        let hit = json!({"project_id": "x", "project_type": project_type, "slug": "p"});
-        assert!(modrinth::parse_hit(&hit).is_none(), "{project_type}");
-    }
+    // Plugins are not.
+    let plugin = json!({"project_id": "x", "project_type": "plugin", "slug": "p"});
+    assert!(modrinth::parse_hit(&plugin).is_none());
 
     let project = json!({
         "id": "HVnmMxH1", "project_type": "resourcepack", "slug": "fresh-animations",
