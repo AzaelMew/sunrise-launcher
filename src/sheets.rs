@@ -729,13 +729,7 @@ impl Launcher {
             .filter(|p| !p.trim().is_empty())
             .map(|p| div().text_size(px(tokens::LABEL)).child(p.to_owned()))
             .collect();
-        let main = |label: SharedString| {
-            button("alt-notice-way-out", label)
-                .bg(rgb(TEXT))
-                .border_color(rgb(TEXT))
-                .text_color(rgb(BG))
-                .hover(|s| s.bg(gpui::white()))
-        };
+        let main = |label: SharedString| crate::frame::primary("alt-notice-way-out", label);
         let way_out = self.ui.sheets.way_out.map(|way| match way {
             WayOut::MinecraftFolder => main(tr("Choose Minecraft folder").into()).on_click(
                 cx.listener(|this, _: &ClickEvent, _, cx| {

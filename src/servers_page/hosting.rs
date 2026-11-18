@@ -60,21 +60,56 @@ fn notice(color: u32, text: impl Into<SharedString>, actions: Div) -> Div {
         .child(actions.flex_none().flex().items_center().gap(px(6.)))
 }
 
-/// A click that changes the Create dialog's answers with `f`.
-fn set_create(
+/// One choice among `options`, as chips. The group is one Tab stop with the ring around it, and
+/// the arrow keys move the choice within it.
+fn chip_group(
+    id: &'static str,
+    options: &[(&'static str, &'static str)],
+    current: &str,
     cx: &mut Context<Launcher>,
-    f: fn(&mut Create, &'static str),
-    value: &'static str,
-) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    let this = cx.entity().downgrade();
-    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-        let _ = this.update(cx, |this, cx| {
-            if let Some(c) = &mut this.servers.create {
-                f(c, value);
-            }
-            cx.notify();
-        });
+    set: impl Fn(&mut Launcher, &'static str) + Clone + 'static,
+) -> Div {
+    let values: Vec<&'static str> = options.iter().map(|(value, _)| *value).collect();
+    let at = values.iter().position(|v| *v == current).unwrap_or(0);
+    let mut chips = div()
+        .id(id)
+        .tab_index(0)
+        .flex()
+        .flex_wrap()
+        .gap(px(6.))
+        // Room for the ring, taken back so the chips stay where they were.
+        .p(px(3.))
+        .m(px(-4.))
+        .rounded(px(tokens::R_PANEL + 4.))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(|s| s.border_color(rgb(GOLD)));
+    for &(value, name) in options {
+        let set = set.clone();
+        chips = chips.child(
+            chip(
+                SharedString::from(format!("{id}-{value}")),
+                tr(name),
+                value == current,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                set(this, value);
+                cx.notify();
+            })),
+        );
     }
+    div().flex().child(
+        chips.on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+            let step = match ev.keystroke.key.as_str() {
+                "left" | "up" => values.len() - 1,
+                "right" | "down" => 1,
+                _ => return,
+            };
+            set(this, values[(at + step) % values.len()]);
+            cx.stop_propagation();
+            cx.notify();
+        })),
+    )
 }
 
 fn phase_color(status: &Status) -> u32 {
@@ -174,21 +209,9 @@ impl Launcher {
     ) -> Div {
         let (section, field) = key.split_once('.').unwrap_or_default();
         let current = self.servers.shown(section, field);
-        let mut chips = div();
-        for &(value, name) in options {
-            chips = chips.child(
-                chip(
-                    SharedString::from(format!("{key}-{value}")),
-                    tr(name),
-                    value == current,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_setting(key, value.to_string());
-                    cx.notify();
-                })),
-            );
-        }
-        chips
+        chip_group(key, options, &current, cx, move |this, value| {
+            this.set_setting(key, value.to_string())
+        })
     }
 
     /// Escape closes the Create dialog, or takes back a delete that was being confirmed.
@@ -1491,18 +1514,11 @@ impl Launcher {
                       current: &str,
                       f: fn(&mut Create, &'static str),
                       cx: &mut Context<Self>| {
-            let mut chips = div().flex().flex_wrap().gap(px(6.));
-            for &(value, name) in options {
-                chips = chips.child(
-                    chip(
-                        SharedString::from(format!("{id}-{value}")),
-                        tr(name),
-                        value == current,
-                    )
-                    .on_click(set_create(cx, f, value)),
-                );
-            }
-            chips
+            chip_group(id, options, current, cx, move |this, value| {
+                if let Some(c) = &mut this.servers.create {
+                    f(c, value);
+                }
+            })
         };
         let part = |name: &'static str, control: Div| {
             div()
@@ -1535,6 +1551,10 @@ impl Launcher {
                 list = list.child(
                     div()
                         .id(ElementId::named_usize("host-create-copy", i))
+                        .tab_index(0)
+                        .border_1()
+                        .border_color(gpui::transparent_black())
+                        .focus_visible(|s| s.border_color(rgb(GOLD)))
                         .flex()
                         .items_center()
                         .gap(px(10.))
@@ -1660,6 +1680,12 @@ impl Launcher {
             .child(
                 div()
                     .id("host-create-eula-read")
+                    .tab_index(0)
+                    .px(px(4.))
+                    .rounded(px(tokens::R_SMALL))
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .focus_visible(|s| s.border_color(rgb(GOLD)))
                     .text_color(rgb(GOLD))
                     .cursor_pointer()
                     .child(tr("Read it"))

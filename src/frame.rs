@@ -49,7 +49,7 @@ fn first_sentence(text: &str) -> &str {
 
 /// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
 /// gold. Behind a see-through control it would show as a fill: give that one an edge instead.
-fn focus_ring(color: u32) -> Vec<gpui::BoxShadow> {
+pub(super) fn focus_ring(color: u32) -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow {
         color: rgb(color).into(),
         offset: gpui::point(px(0.), px(0.)),
@@ -61,6 +61,16 @@ fn focus_ring(color: u32) -> Vec<gpui::BoxShadow> {
 
 pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     button_base(id, label).hover(|s| s.bg(rgb(0x393233)))
+}
+
+/// A sheet's or a page's main action: cream, like Play signed out.
+pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button_base(id, label)
+        .bg(rgb(TEXT))
+        .border_color(rgb(TEXT))
+        .text_color(rgb(BG))
+        .hover(|s| s.bg(gpui::white()))
+        .focus_visible(|s| s.shadow(focus_ring(GOLD)))
 }
 
 pub(super) fn button_base(

@@ -29,13 +29,7 @@ pub(super) fn muted(text: impl Into<SharedString>) -> Div {
 }
 
 /// The main action on a screen, in cream: gold is Play's alone.
-pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
-    crate::frame::button_base(id, label)
-        .bg(c(TEXT))
-        .border_color(c(TEXT))
-        .text_color(c(BG))
-        .hover(|s| s.bg(c(0xffffff)))
-}
+pub(super) use crate::frame::primary;
 
 /// A control that can't be used now: drawn dim, with no handler.
 pub(super) fn dim(b: Stateful<Div>) -> Stateful<Div> {
@@ -88,10 +82,12 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
+        .tab_index(0)
         .size(px(18.))
         .rounded(px(tokens::R_SMALL))
         .border_1()
         .border_color(if on { c(TEXT) } else { c(MUTED) })
+        .focus_visible(|s| s.border_color(c(tokens::GOLD)))
         .bg(if on { c(TEXT) } else { c(BG) })
         .flex()
         .items_center()
