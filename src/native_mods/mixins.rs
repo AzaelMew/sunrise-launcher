@@ -47,12 +47,17 @@ fn resolve(
             match by_build.entry(&native.sunrise) {
                 std::collections::hash_map::Entry::Occupied(pin) => Ok(pin.get().clone()),
                 std::collections::hash_map::Entry::Vacant(entry) => {
-                    let pin = sdk_revision(entry.key()).map_err(|e| {
-                        format!(
-                            "{}: could not resolve [native] mixins: {e}",
-                            bundle.manifest.id
-                        )
-                    })?;
+                    // The game's mirrored index reader only parses the revision. Before
+                    // inheriting it here, require the same exact SHA as for an explicit pin.
+                    let pin = sdk_revision(entry.key())
+                        .and_then(|rev| {
+                            if super::bundle::is_revision(&rev) {
+                                Ok(rev)
+                            } else {
+                                Err(format!("sdk.json mixins.rev {rev:?} is not a 40-digit lowercase hex commit"))
+                            }
+                        })
+                        .map_err(|e| format!("{}: could not resolve [native] mixins: {e}", bundle.manifest.id))?;
                     Ok(entry.insert(pin).clone())
                 }
             }

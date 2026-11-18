@@ -270,8 +270,6 @@ pub enum Refusal {
     Build { expected: String, found: String },
     /// The package layout is one this reader does not know.
     PackageFormat(u64),
-    /// The index's horizon-mixins revision is not an exact commit.
-    MixinsRev(String),
     /// An asset names a kind this reader does not know.
     Kind { asset: String, kind: String },
     /// An asset names a codec this reader does not know.
@@ -327,10 +325,6 @@ impl fmt::Display for Refusal {
             Self::PackageFormat(format) => write!(
                 f,
                 "{INDEX} has package format {format}; this program reads format {PACKAGE_FORMAT}. Update it to use this SDK"
-            ),
-            Self::MixinsRev(rev) => write!(
-                f,
-                "{INDEX}: mixins.rev {rev:?} is not a 40-digit lowercase hex commit"
             ),
             Self::Kind { asset, kind } => write!(f, "{asset}: unknown asset kind {kind:?}"),
             Self::Codec { asset, codec } => write!(f, "{asset}: unknown codec {codec:?}"),
@@ -446,10 +440,6 @@ impl Index {
         }
         if written.package_format != u64::from(PACKAGE_FORMAT) {
             return Err(Refusal::PackageFormat(written.package_format));
-        }
-        let rev = &written.mixins.rev;
-        if rev.len() != 40 || !rev.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
-            return Err(Refusal::MixinsRev(written.mixins.rev));
         }
         let mut assets = BTreeMap::new();
         for (name, asset) in written.assets {

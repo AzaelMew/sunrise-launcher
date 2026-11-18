@@ -69,6 +69,24 @@ fn only_omitted_pins_look_up_their_own_sdk() {
 }
 
 #[test]
+fn an_inherited_revision_must_be_an_exact_commit() {
+    let scratch = tempfile::tempdir().unwrap();
+    let package = project(&scratch.path().join("implicit"), "implicit", BUILD, None);
+    for rev in [
+        String::new(),
+        "f".repeat(39),
+        "F".repeat(40),
+        "g".repeat(40),
+    ] {
+        let err = resolve(std::slice::from_ref(&package), |_| Ok(rev.clone())).unwrap_err();
+        assert!(
+            err.contains("implicit") && err.contains("mixins.rev"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
 fn the_resolved_pin_is_passed_to_older_tools_and_changes_the_key() {
     let scratch = tempfile::tempdir().unwrap();
     let project = project(
