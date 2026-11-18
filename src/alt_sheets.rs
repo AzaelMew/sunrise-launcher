@@ -1348,11 +1348,18 @@ fn fact(label: &str, value: String, rule: bool) -> Div {
 fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
     div()
         .flex()
-        .items_center()
-        .justify_between()
-        .gap(px(16.))
-        .child(muted(note.to_owned()).flex_1())
-        .child(div().flex().gap(px(10.)).child(cancel).child(go))
+        .flex_col()
+        .gap(px(12.))
+        .child(muted(note.to_owned()))
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .justify_end()
+                .gap(px(10.))
+                .child(cancel)
+                .child(go),
+        )
 }
 
 /// `alt/06`'s case, for `SUNRISE_PREVIEW_EXAMPLES`.
