@@ -127,7 +127,7 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     let mut theme = Theme::for_appearance(Appearance::Dark, accent, system);
     let mut photo = settings.background.is_some();
     theme = match themes::resolve(settings.theme.as_deref()) {
-        themes::Resolved::Sunrise => theme,
+        themes::Resolved::Twilight => theme,
         themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked),
         themes::Resolved::Local(local) => {
             photo |= local.picture.is_some();

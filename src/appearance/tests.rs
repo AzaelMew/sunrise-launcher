@@ -44,14 +44,14 @@ fn every_built_in_theme_can_be_chosen_and_brings_its_own_accent() {
         assert_eq!(settings.accent, theme.accent.accent(), "{}", theme.id);
     }
     assert_eq!(themes::THEMES.len(), 10);
-    // Sunrise's own stays the violet one, and an id from another launcher falls to it.
-    select_theme(&mut settings, "sunrise").unwrap();
+    // Twilight is the violet one, and an id from another launcher falls to it.
+    select_theme(&mut settings, "twilight").unwrap();
     assert_eq!(
         (effective_id(&settings).as_str(), settings.accent),
-        ("sunrise", Accent::VIOLET)
+        ("twilight", Accent::VIOLET)
     );
     let old = Settings::parse(r#"{"theme": "moonbase"}"#);
-    assert_eq!(effective_id(&old), "sunrise");
+    assert_eq!(effective_id(&old), "twilight");
     assert_eq!(saved(&old)["theme"], "moonbase");
     select_theme(&mut settings, "default").unwrap();
     assert_eq!(
@@ -81,7 +81,7 @@ fn a_choice_that_is_not_there_changes_nothing_and_lists_what_is() {
     ] {
         let said = select_theme(&mut settings, wrong).unwrap_err();
         assert_eq!(saved(&settings), before, "{wrong}");
-        for id in ["sunrise", "dawn", "nord", "taiga", "local:tidepool"] {
+        for id in ["twilight", "dawn", "nord", "taiga", "local:tidepool"] {
             assert!(said.contains(id), "{wrong}: {said}");
         }
         assert!(
@@ -167,7 +167,7 @@ fn a_players_theme_follows_its_file_until_an_accent_is_picked_under_it() {
     assert_eq!(accent(&settings), Accent::RED, "a pick is the player's");
     reset_accent(&mut settings).unwrap();
     assert_eq!(accent(&settings).rgb(), 0x112233);
-    assert!(!settings.theme_accents.contains_key("sunrise"));
+    assert!(!settings.theme_accents.contains_key("twilight"));
 }
 
 #[test]

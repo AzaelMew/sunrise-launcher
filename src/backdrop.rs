@@ -38,14 +38,24 @@ impl Backdrop {
                 .child(div().absolute().inset_0().bg(page.opacity(0.78)));
         }
         // A player's theme, there or missing, stands in Dawn's scenery.
-        let scene = match themes::resolve(settings.theme.as_deref()) {
+        let resolved = themes::resolve(settings.theme.as_deref());
+        let own = matches!(resolved, themes::Resolved::Local(_));
+        let scene = match resolved {
             themes::Resolved::Builtin(t) => Some(t.id),
             themes::Resolved::Local(_) | themes::Resolved::Missing => Some(themes::DAWN_THEME.id),
-            themes::Resolved::Sunrise => None,
+            themes::Resolved::Twilight => None,
         };
         match scene {
             Some(id) if id == themes::DAWN_THEME.id => {
-                back.child(img("dawn.webp").size_full().object_fit(ObjectFit::Cover))
+                let dawn = back.child(img("dawn.webp").size_full().object_fit(ObjectFit::Cover));
+                if own {
+                    // Dawn's scene was painted for Dawn's inks. Under a player's colours it is
+                    // washed with their page, as a picture is, so their unplated titles read
+                    // whether the theme is dark or light.
+                    dawn.child(div().absolute().inset_0().bg(page.opacity(0.78)))
+                } else {
+                    dawn
+                }
             }
             None => back.child(
                 img(self.coast.get_or_insert_with(coast::poster).clone())
