@@ -5,15 +5,8 @@
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
 
-use new_instance::{ VersionList};
-
-
-use sunrise_launcher::instances::{ stable_builds, Channel, StableBuild};
-use sunrise_launcher::loaders::Kind as Loader;
-use sunrise_launcher_theme::glass::{fill, ink, radius};
-
-
-use sunrise_launcher::instances::Channel;
+use new_instance::VersionList;
+use sunrise_launcher::instances::{stable_builds, Channel, StableBuild};
 
 impl Launcher {
     /// The Minecraft version a Java instance plays (or will), once Mojang's list says.
