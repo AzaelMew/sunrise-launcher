@@ -386,7 +386,11 @@ pub fn trust_and_capabilities(
             );
         }
     }
-    if let Some(v) = p.versions.first().filter(|_| p.kind == index::Kind::Mod) {
+    // What Install installs ([`newest`]), so the page describes that version.
+    if let Some(v) = index
+        .installable(p, game)
+        .filter(|_| p.kind == index::Kind::Mod)
+    {
         lines.extend(
             v.capabilities
                 .known()
@@ -883,20 +887,22 @@ fn fetch_datapack_from(
     Ok((path, v.version.clone()))
 }
 
-/// A project's newest version for the Minecraft version `game` that wasn't taken down.
+/// A project's newest version for the Minecraft version `game` that this build can install
+/// ([`Index::installable`]: not taken down, no capability it doesn't know).
 fn newest<'a>(
     index: &Index,
     p: &'a index::Project,
     game: &str,
 ) -> Result<&'a index::Version, String> {
-    let mut taken_down = None;
-    for v in p.versions.iter().filter(|v| v.game == game) {
-        if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
-            taken_down.get_or_insert(r);
-        } else {
-            return Ok(v);
-        }
+    if let Some(v) = index.installable(p, game) {
+        return Ok(v);
     }
+    // Any version for `game` taken down says why, even one this build couldn't install anyway.
+    let taken_down = p
+        .versions
+        .iter()
+        .filter(|v| v.game == game)
+        .find_map(|v| index.revoked(&p.id, &v.file.sha256));
     Err(match taken_down {
         Some(r) => format!("{} was taken down: {}", p.name, r.reason),
         None => format!("{} has no version for {game} to install.", p.name),
