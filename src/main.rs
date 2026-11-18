@@ -28,6 +28,7 @@ mod developer_play;
 mod frame;
 mod game_tools;
 mod github_mods_page;
+mod glass_contract;
 mod glass_instance;
 mod glass_sheet;
 mod glass_storage;

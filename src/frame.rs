@@ -358,15 +358,6 @@ impl Launcher {
         let active = self.selected_instance().cloned();
         let name = self.accounts.selected().map(|a| a.name.clone());
         let signed_name = name.is_some();
-        // The player's own face, hat layer and all, once it is read; their letter until then.
-        let head = self
-            .accounts
-            .selected()
-            .filter(|a| self.profile_heads.has(&a.uuid))
-            .map(|a| {
-                self.profile_heads
-                    .draw(Some(&a.uuid), 32., self.scale, &self.theme)
-            });
         let signed_in = signed_name || sunrise_launcher::developer_offline::selected();
         let version = active.as_ref().and_then(|i| self.version_of(i));
         // A game built with mods reads as the build it was made from, like any other.
@@ -466,40 +457,6 @@ impl Launcher {
             .flex_none()
             .px(px(16.))
             .bg(rgb(CHROME))
-            // Signed out, the Play slot is the sign-in: no empty account beside it.
-            .children(name.map(|name| {
-                div()
-                    .id("alt-who")
-                    .reach()
-                    .flex()
-                    .items_center()
-                    .gap(px(9.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .cursor_pointer()
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(32.))
-                            .rounded(px(tokens::R_CONTROL))
-                            .overflow_hidden()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(rgb(0x45503c))
-                            .children(head.is_none().then(|| {
-                                name.chars()
-                                    .next()
-                                    .map(|c| c.to_uppercase().to_string())
-                                    .unwrap_or_default()
-                            }))
-                            .children(head),
-                    )
-                    .child(name)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.ui.page = Page::Settings;
-                        cx.notify();
-                    }))
-            }))
             .when(multiple, |d| {
                 d.child(
                     button(
@@ -866,6 +823,18 @@ impl Launcher {
             }))
             .children(titlebar::render(&self.theme, window))
             .children(self.settings_save_notice(cx))
+            // A stand-in for the glass top bar: the account chip, top right.
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_end()
+                    .h(px(64.))
+                    .px(px(26.))
+                    .bg(palette().chrome_plate())
+                    .child(self.account_chip(cx)),
+            )
             .child(div().flex().flex_1().min_h_0().child(rail).child(page_body))
             .child(self.dock(window, cx));
         if self.ui.picker {

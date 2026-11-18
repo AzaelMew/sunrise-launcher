@@ -77,11 +77,6 @@ impl Heads {
         }
     }
 
-    /// Whether `uuid`'s face is in memory: a caller with its own placeholder asks first.
-    pub fn has(&self, uuid: &str) -> bool {
-        self.0.get(uuid).is_some_and(|head| head.face.is_some())
-    }
-
     pub fn draw(&self, uuid: Option<&str>, size: f32, scale: f32, t: &Theme) -> Div {
         let image = uuid.and_then(|uuid| self.0.get(uuid)).and_then(|head| {
             let face = head.face.as_ref()?;
