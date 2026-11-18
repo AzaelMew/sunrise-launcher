@@ -98,26 +98,15 @@ The opening, then Play ([clip](docs/opening.webm)):
   starts the game. With no install on the computer the Play page offers the download alone and the
   Minecraft folder row says none is needed. Without an owner,
   the Play page asks to sign in first. `sunrise-launcher prepare --download`.
-- **Mods**: tabs for Mods, Modpacks, Resource packs, Shader packs and Data packs. Mods, Modpacks,
-  Resource packs and Data packs (into the world picked there) search Sunrise's own registry, with
-  its categories as filters, or Modrinth (CurseForge support is coming soon); Shader packs search
-  the registry. A Java
-  instance's files come from Modrinth for its version and loader; on a Sunrise instance, Modrinth's
-  Java mods are listed too, each marked Works, Partly or Doesn't run in Sunrise. Install puts a file in
-  the game folder only after its SHA-512 matches, and a
-  modpack goes to the Modpacks page; installed packs show their source and checksum, with Update,
-  **Update all** and Remove ([docs/mod-browser.md](../docs/mod-browser.md)).
-- **Modpacks**: import a Java modpack (a Modrinth `.mrpack`, a CurseForge zip, or a Prism,
-  MultiMC or CurseForge instance folder; the page lists the ones other launchers keep on this
-  computer, each a click away) and see its coverage report: per mod, ported, partial,
-  not yet or not needed, with the reason ([docs/modpacks.md](../docs/modpacks.md)). **Port**
-  gets the jars of what this computer can port today (content mods with data and assets only)
-  the player's own way: copied from a folder they have, or downloaded from the pack's own links
-  or the same file on Modrinth's CDN, hash checked; files only CurseForge has come from your
-  installed instance (CurseForge downloads are coming soon). It carries them over for the selected version, and
-  **Play** starts the game as the pack's own profile (`ports/<pack>/home/` in the game's home:
-  its own saves and options) with those mods. Nothing is uploaded or shared: mod jars and ports
-  stay on this computer.
+- **Mods**: tabs for Mods, Modpacks, Resource packs, Shader packs and Data packs. Mods and
+  Modpacks come from Sunrise's own registry, with its categories as filters, and say whether they
+  are signed and what they may do. Resource packs, data packs (into the world picked there) and
+  Iris-format shader packs are searched on Modrinth too; Sunrise's own shader packs are in its
+  registry. Modrinth is searched for those packs only: Java mods and Java modpacks are not
+  offered. Install puts a file in the game folder only after its checksum matches; installed
+  packs show their source and checksum, with Update, **Update all** and Remove
+  ([docs/mod-browser.md](../docs/mod-browser.md)). A modpack from the registry is installed as an
+  instance of its own and played from its profile (`sunrise-launcher modpack list|play|remove`).
 - **Servers**: host a world for friends with buttons. **Create a server** asks for a name, a world
   (a new one, with an optional seed, or a copy of one of your single-player worlds), the game mode,
   difficulty, most players, who can join (friends only, the default, or anyone with the address)
@@ -148,7 +137,7 @@ The opening, then Play ([clip](docs/opening.webm)):
   port (Remove the limit undoes it); custom access controls are never rewritten, the page gives
   the rule to add instead. Sunrise never turns on Funnel.
 - **Instances**: separate game folders, each with its own worlds, options and packs. The game's
-  folder stays the first one, "Sunrise", exactly where it was; imported and registry modpacks are
+  folder stays the first one, "Sunrise", exactly where it was; registry modpacks are
   instances too, in their own folders as before; new ones go to `instances/<name>/` in the game's
   folder, empty but for the player's options and name, or a copy of another instance (never its
   sign-in sessions, logs or data collection state). Names, icons (a block or item texture from the
@@ -161,23 +150,16 @@ The opening, then Play ([clip](docs/opening.webm)):
   instance plays the launcher's version, which follows updates, unless the Play page's version
   picker keeps it on another installed one (to keep an old world on the version it was made
   with); picking the version marked "auto-update" lets it follow again.
-- **Export**: Home's Instance row has **Export…**: the selected instance (or a port) as a `.mrpack`
-  (Modrinth's modpack format: resource packs the browser installed from Modrinth are listed by
-  their download, the rest is in `overrides/`) or a `.zip` of the game folder's layout, with the
-  worlds switched on. It is written to `exports/` in the launcher's data folder (**Show in
-  folder**). Only settings (options.txt, sunrise-*.txt, servers.dat), resource and shader packs,
+- **Export**: the selected instance as a `.zip` of the game folder's layout, with the worlds
+  switched on. Only settings (options.txt, sunrise-*.txt, servers.dat), resource and shader packs,
   `sunrise-mods/` and `config/` go in: never logs, screenshots, backups, caches or account files;
   a world goes without `playerdata/`, `stats/` and `advancements/`, and its level.dat without the
-  player's UUID. `sunrise-launcher instance export [<instance>] [--format mrpack|zip] [--world
-  <w>]… [--out <file>]`.
-- **Import by dropping a file**: a file dropped anywhere on the window is imported for what it is
-  (`sunrise_launcher::import`). A shared instance (a `.mrpack` that needs no mod loader, such as
-  Export writes, or a game folder `.zip`) becomes a new instance, opened on Home. Its `.mrpack`
-  downloads come from Modrinth with their SHA-512 checked, and only what an instance keeps is
-  taken, inside its folder. A Java modpack goes to the Modpacks import, and a resource or shader
-  pack into the selected instance. A data pack is pointed at the world rows, and the Packs section
-  and the world rows keep taking their own drops. A note in the corner says what happened.
-  `sunrise-launcher instance import <file>`.
+  player's UUID. `sunrise-launcher instance export [<instance>] [--world <w>]… [--out <file>]`.
+- **Import**: `sunrise-launcher instance import <file>` imports a file for what it is
+  (`sunrise_launcher::import`). A shared instance (a game folder `.zip`, such as Export writes)
+  becomes a new instance, and only what an instance keeps is taken, inside its folder. A resource
+  or shader pack goes into the selected instance, and a data pack is pointed at the world rows.
+  Modrinth modpacks (`.mrpack`) and Java modpacks are not imported.
 - **Maximum memory** (Java instances): set the Java heap limit (`-Xmx`) with the slider or
   a value such as `4096` or `4gb`. Leave the box empty to restore the default (4096 MB).
   Find it on Home in the classic layout, or in the instance’s Edit dialog in the glass layout.
@@ -317,11 +299,11 @@ page `servers.json` (the list), `servers/<name>/` (the servers created there) an
   unreachable), Settings' Proxy takes the `http://host:port` or `socks5://host:port` address your
   proxy app listens on, and
   every download goes through it: Sunrise's releases and the launcher's own update, Minecraft's
-  files and Java from Mojang, Modrinth, CurseForge, Sunrise's mod registry, pictures, Microsoft
-  sign-in, and the jars a modpack import fetches. It is kept as `proxy` in `settings.json`, and
+  files and Java from Mojang, Modrinth, Sunrise's mod registry, pictures, Microsoft
+  sign-in, and the original jars a Sunrise mod asks for. It is kept as `proxy` in `settings.json`, and
   `sunrise-launcher settings proxy http://127.0.0.1:7890` sets it too ("default" removes it).
   Without one, `HTTPS_PROXY` and `HTTP_PROXY` are used when the launcher is started with them, and
-  `NO_PROXY` names the hosts to reach directly, a modpack import's jars included. A server on this
+  `NO_PROXY` names the hosts to reach directly, the jars a Sunrise mod asks for included. A server on this
   computer never goes through it.
 - **Links**: the Discord invite and the website come from `launcher/links.json` on main
   (`{"discord": "...", "website": "..."}`), so they change without a launcher release. Offline,
@@ -459,14 +441,12 @@ and don't set `%ERRORLEVEL%` / `$LASTEXITCODE`. Scripts that need the exit code 
     sunrise-launcher java install <21|java-runtime-delta>   downloads Mojang's runtime, each file sha1-checked
     sunrise-launcher multiplayer [list] [--instance <name>]   the servers in an instance's Multiplayer list
     sunrise-launcher multiplayer add <address> [--name <name>] | remove <server>
-    sunrise-launcher modpack [list]                 the imported packs and their coverage
-    sunrise-launcher modpack import <pack>          a .mrpack, CurseForge zip or instance folder
-    sunrise-launcher modpack port <pack> [--from <dir>] [--version <tag>]   get the jars and carry them over
+    sunrise-launcher modpack [list]                 the installed Sunrise modpacks
     sunrise-launcher modpack play <pack> [--version <tag>]                 play it as its own profile
     sunrise-launcher modpack remove <pack>
     sunrise-launcher mods [list]                    what the mod browser installed (docs/mod-browser.md)
-    sunrise-launcher mods search <text> [--kind resource|shader|modpack] [--everything] [--source modrinth]
-    sunrise-launcher mods install <id or slug>      checksum checked, with what it needs; a modpack is imported
+    sunrise-launcher mods search <text> [--kind resource|shader|datapack|mod|modpack] [--everything] [--source modrinth]
+    sunrise-launcher mods install <id or slug>      checksum checked, with what it needs; a Sunrise modpack is installed as an instance
     sunrise-launcher mods update [<pack>] [--check]
     sunrise-launcher mods remove <pack>
     sunrise-launcher servers [list]                 the servers hosted from the launcher, and whether they run
@@ -500,7 +480,7 @@ for Claude Code:
 
 (with the full path to the binary if it is not on your `PATH`). Every CLI command is a tool of the
 same name and arguments, generated from the CLI's definition (`src/cli_tools.rs`): `versions`,
-`install`, `remove`, `prepare`, `settings`, `mods_search`, `mods_install`, `modpack_import`,
+`install`, `remove`, `prepare`, `settings`, `mods_search`, `mods_install`, `modpack_play`,
 `servers_create`, `data_status`... A call runs that command with `--json` and returns its
 output. Tools that delete something (`remove`, `mods_remove`, `modpack_remove`,
 `servers_forget`, `account_sign_out`, `data_delete`) need `confirm: true`. The session runs a few

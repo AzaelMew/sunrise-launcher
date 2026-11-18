@@ -14,13 +14,12 @@ the MCP server is off.
 | --- | --- |
 | Commands | 46: versions, installs, play, the server, notes, links, accounts, settings, logs, updates, data collection, modpacks, mods, hosted servers, MCP, benchmark |
 | MCP tools | 43, plus the game's tools as `game_<tool>` ([agent-control.md](agent-control.md)) |
-| Modpack formats it imports | 3: a Modrinth `.mrpack`, a CurseForge zip, an instance folder |
 
 ## Guide
 
 1. `sunrise-launcher versions`, `sunrise-launcher install latest`, `sunrise-launcher play`.
-2. Modpacks: `sunrise-launcher modpack import <file>`, then `modpack port` and `modpack play`
-   ([modpacks.md](../modpacks.md)).
+2. Modpacks from Sunrise's registry: `sunrise-launcher mods install <modpack> --source sunrise`,
+   then `modpack play`.
 3. For an agent: point its MCP client at `sunrise-launcher mcp`.
 
 ## Reference
