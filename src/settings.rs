@@ -316,6 +316,10 @@ impl Launcher {
                 off(out)
             } else {
                 out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if this.account_locked() {
+                        this.say_account_locked();
+                        return;
+                    }
                     let Some(generation) = this.begin_auth_job(&uuid) else {
                         return;
                     };

@@ -2364,6 +2364,38 @@ fn a_launch_as_another_account_leaves_the_selected_one() {
     assert_eq!(accounts.selected.as_deref(), Some(UUID));
 }
 
+#[test]
+fn play_starts_as_the_account_it_was_pressed_for_whoever_is_selected_since() {
+    let store = MemoryStore::default();
+    // Notch pressed Play. While the game installed, the switcher moved to Alex, who is listed
+    // but has no tokens in the keychain.
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    let alex = "0f22b7ed5e3d4a2c9bfe2f6f8f1f6a01";
+    accounts.accounts.push(Account {
+        uuid: alex.into(),
+        name: "Alex".into(),
+        skin: None,
+        cape: None,
+    });
+    accounts.selected = Some(alex.into());
+    // Reading whoever is selected at sign-in, as Play did, answers for Alex.
+    let mut as_selected = accounts.clone();
+    assert!(
+        launch_for_game(&offline(), Some("test-client"), &store, &mut as_selected).is_err(),
+        "the selected account is Alex, who can't play"
+    );
+    // The accepted account plays, and the switcher's choice stays.
+    let pass =
+        launch_accepted(&offline(), Some("test-client"), &store, &mut accounts, UUID).unwrap();
+    assert!(pass.offline.is_some());
+    assert_eq!(accounts.selected.as_deref(), Some(alex));
+    // Signed out before the game started: nobody plays in its place.
+    accounts.remove(&store, UUID).unwrap();
+    let gone = launch_accepted(&offline(), Some("test-client"), &store, &mut accounts, UUID);
+    assert!(gone.unwrap_err().keyring.unwrap().contains("signed out"));
+    assert_eq!(accounts.selected.as_deref(), Some(alex));
+}
+
 /// A launch loads the accounts, asks the services for a while, then saves: a sign-in or sign-out
 /// made meanwhile stays, and only the names and skins it renewed are written.
 #[test]

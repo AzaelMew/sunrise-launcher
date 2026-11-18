@@ -2393,6 +2393,48 @@ pub fn session_for_game(game_home: &Path) -> Result<GameSession, NoOwner> {
     Ok(session_file(game_home, pass))
 }
 
+/// [`session_for_game`] for the account that was selected when Play was accepted, `accepted`:
+/// installing, preparing and building can take minutes, and whoever is selected when they end
+/// must not be the one who plays. Which account is selected now is not touched. An account
+/// signed out meanwhile doesn't play, and no session file is written for it.
+pub fn session_for_game_accepted(game_home: &Path, accepted: &str) -> Result<GameSession, NoOwner> {
+    let mut accounts = Accounts::load();
+    let pass = launch_accepted(
+        &Endpoints::live(),
+        client_id().as_deref(),
+        store(),
+        &mut accounts,
+        accepted,
+    )?;
+    if let Err(e) = accounts.save_renewed() {
+        eprintln!("Sunrise: the accounts are not saved: {e}");
+    }
+    Ok(session_file(game_home, pass))
+}
+
+fn launch_accepted(
+    ep: &Endpoints,
+    client_id: Option<&str>,
+    store: &dyn SecretStore,
+    accounts: &mut Accounts,
+    accepted: &str,
+) -> Result<Launch, NoOwner> {
+    if !accounts.accounts.iter().any(|a| a.uuid == accepted) {
+        return Err(NoOwner {
+            keyring: Some(
+                crate::i18n::tr(
+                    "The account Play was pressed for was signed out before the game started. Press Play again.",
+                )
+                .into(),
+            ),
+        });
+    }
+    let chosen = accounts.selected.replace(accepted.to_owned());
+    let pass = launch_for_game(ep, client_id, store, accounts);
+    accounts.selected = chosen;
+    pass
+}
+
 /// [`session_for_game`] for one launch as `who` (`play --account`, a signed-in account): who
 /// plays changes for this launch only, so several games can play as several accounts at once
 /// (#4952). What the services renewed (tokens, names, skins) is still kept; which account

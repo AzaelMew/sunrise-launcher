@@ -205,6 +205,8 @@ impl Launcher {
         // session arrives.
         self.starting_client = Some(tag.clone());
         self.starting_instance = instance_id.clone();
+        let accepted = self.accounts.selected().map(|a| a.uuid.clone());
+        self.starting_account = accepted.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
         let auto = self
@@ -234,7 +236,11 @@ impl Launcher {
             let session = if sunrise_launcher::developer_offline::enabled(&tag) {
                 Ok(None)
             } else {
-                account::session_for_game(&backend::game_home()).map(Some)
+                match &accepted {
+                    Some(uuid) => account::session_for_game_accepted(&backend::game_home(), uuid),
+                    None => account::session_for_game(&backend::game_home()),
+                }
+                .map(Some)
             };
             backend::play_step("starting the game");
             let _ = tx.send(Msg::Session(session));
@@ -300,8 +306,28 @@ impl Launcher {
         }
     }
 
+    /// Whether who plays is settled for now: from an accepted Play until the game has started
+    /// (installing, preparing, building, signing in), the account can't be switched, signed out
+    /// or joined by a new one. The start reads the accepted account either way
+    /// (`starting_account`); this keeps the chip showing the account that is about to play.
+    pub(crate) fn account_locked(&self) -> bool {
+        self.launch_busy()
+            || self.ui.after_install.is_some()
+            || self.play_when_prepared.is_some()
+            || self.play_after_build.is_some()
+    }
+
+    /// Says why a locked account action did nothing.
+    pub(crate) fn say_account_locked(&self) {
+        crate::glass_toast::say(tr("Wait for the game to start before changing accounts."));
+    }
+
     /// Generic Add account and targeted re-sign-in share the launcher-owned device-code flow.
     pub(crate) fn start_sign_in(&mut self) {
+        if self.account_locked() {
+            self.say_account_locked();
+            return;
+        }
         self.begin_sign_in(None);
     }
 

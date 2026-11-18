@@ -9,6 +9,7 @@ impl Launcher {
         self.load_auth_statuses(false);
         if let Some(tag) = self.starting_client.take() {
             let instance_id = self.starting_instance.take();
+            let accepted = self.starting_account.take();
             let mut cmd = backend::client_command(&tag);
             let pass = match session {
                 Ok(pass) => pass,
@@ -45,6 +46,19 @@ impl Launcher {
                 self.client_error = Some(tr(sunrise_launcher::developer_offline::NOTICE).into());
             }
             self.accounts = Accounts::load();
+            // Signed out while its session was read: the start is called off, and the session
+            // written for it goes.
+            if accepted.is_some_and(|uuid| !self.accounts.accounts.iter().any(|a| a.uuid == uuid)) {
+                self.client_error = Some(
+                    tr("The account Play was pressed for was signed out before the game started. Press Play again.")
+                        .into(),
+                );
+                self.starting_pack = None;
+                self.joining = None;
+                self.quick_play = None;
+                account::discard_unread_sessions();
+                return;
+            }
             // A pack's Play button plays that pack; Play plays the selected instance.
             let (profile, run) = match self.starting_pack.take() {
                 Some(work) => {

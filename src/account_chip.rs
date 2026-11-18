@@ -198,6 +198,11 @@ impl Launcher {
 
     /// Does what a row of the menu says.
     pub(crate) fn account_action(&mut self, action: Action) {
+        // Who plays is settled while a game starts: the menu stays, and says so.
+        if matches!(action, Action::PlayAs(_) | Action::Add) && self.account_locked() {
+            self.say_account_locked();
+            return;
+        }
         self.ui.sheet = sheet_after(&action);
         match action {
             Action::PlayAs(uuid) => self.play_as(&uuid),
