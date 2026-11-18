@@ -1335,5 +1335,18 @@
   "up to date": "napapanahon",
   "the update failed: {error}": "nabigo ang pag-update: {error}",
   "Update this launcher with your package manager.": "I-update ang launcher na ito gamit ang iyong package manager.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Isara ang launcher na ito, ilipat ito sa {folder}, at buksan doon para i-enable ang mga update."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Isara ang launcher na ito, ilipat ito sa {folder}, at buksan doon para i-enable ang mga update.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Folder ng data",
+  "Move…": "Ilipat…",
+  "Move and restart": "Ilipat at i-restart",
+  "Choose data folder": "Pumili ng folder ng data",
+  "Choose an empty folder for Sunrise's data.": "Pumili ng walang lamang folder para sa data ng Sunrise.",
+  "Could not choose data folder: {error}": "Hindi mapili ang folder ng data: {error}",
+  "Could not start data move: {error}": "Hindi masimulan ang paglipat ng data: {error}",
+  "Move all data to {path}?": "Ilipat lahat ng data sa {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Inililipat ang lahat ng data ng launcher, laro at build, kasama ang mga setting, mundo, instance at naka-install na bersyon. Pumili ng walang lamang folder na may sapat na libreng space.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Magsasara ang launcher habang kinokopya at bineberipika ang iyong data, pagkatapos ay muling bubukas. Pinapanatili ang mga lumang folder at gumagamit pa rin ng disk space hanggang ma-verify mo ang paglipat at maalis mo mismo ang mga ito.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Itinatakda ng SUNRISE_LAUNCHER_HOME o SUNRISE_HOME ang mga folder ng data. Alisin ang mga environment override na ito at i-restart ang launcher bago ilipat ang data dito.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Isara ang laro at mga server, at hintayin matapos ang mga download, build, import at sign-in bago ilipat ang data."
 }

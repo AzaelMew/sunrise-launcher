@@ -1335,5 +1335,18 @@
   "up to date": "күнгө чейин",
   "the update failed: {error}": "жаңыртуу ишке ашкан жок: {error}",
   "Update this launcher with your package manager.": "Бул ишке киргизгичти пакет менеджериңиз аркылуу жаңыртыңыз.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Бул ишке киргизгичти жабыңыз, аны {folder} папкасына жылдырыңыз жана жаңыртууларды иштетүү үчүн аны ошол жерден ачыңыз."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Бул ишке киргизгичти жабыңыз, аны {folder} папкасына жылдырыңыз жана жаңыртууларды иштетүү үчүн аны ошол жерден ачыңыз.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Маалымат папкасы",
+  "Move…": "Жылдыруу…",
+  "Move and restart": "Жылдыруу жана кайра баштоо",
+  "Choose data folder": "Маалымат папкасын тандоо",
+  "Choose an empty folder for Sunrise's data.": "Sunriseдун маалыматтары үчүн бош папканы тандаңыз.",
+  "Could not choose data folder: {error}": "Маалымат папкасын тандоо мүмкүн болбоду: {error}",
+  "Could not start data move: {error}": "Маалыматты жылдырууну баштоо мүмкүн болбоду: {error}",
+  "Move all data to {path}?": "Бардык маалыматты {path} жерге жылдырасызбы?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Орнотууларды, дүйнөлөрдү, инстанцияларды жана орнотулган версияларды кошуп, ишке киргизгичтин, оюндун жана куруунун бардык маалыматын жылдырат. Жетиштүү бош орду бар бош папканы тандаңыз.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Маалыматыңыз көчүрүлүп, текшерилип жатканда ишке киргизгич жабылат, андан кийин кайра ачылат. Жылдырууну текшерип, аларды өзүңүз алып салганга чейин эски папкалар сакталып, диск мейкинин ээлей берет.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Маалымат папкалары SUNRISE_LAUNCHER_HOME же SUNRISE_HOME аркылуу коюлган. Бул чөйрөнүн алмаштырууларын алып салып, маалыматты бул жерге жылдыруудан мурун ишке киргизгичти кайра баштаңыз.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Маалыматты жылдыруудан мурун оюнду жана серверлерди жабыңыз, жүктөөлөр, куруулар, импорттоолор жана кирүү бүтүшүн күтүңүз."
 }

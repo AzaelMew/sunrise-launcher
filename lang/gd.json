@@ -1335,5 +1335,18 @@
   "up to date": "suas chun latha",
   "the update failed: {error}": "dh'fhàillig an t-ùrachadh: {error}",
   "Update this launcher with your package manager.": "Ùraich an lannsair seo le do mhanaidsear phacaidean.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Dùin an lannsair seo, gluais e gu {folder}, agus fosgail an sin e gus ùrachaidhean a chomasachadh."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Dùin an lannsair seo, gluais e gu {folder}, agus fosgail an sin e gus ùrachaidhean a chomasachadh.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Pasgan dàta",
+  "Move…": "Gluais…",
+  "Move and restart": "Gluais agus ath-thòisich",
+  "Choose data folder": "Tagh pasgan dàta",
+  "Choose an empty folder for Sunrise's data.": "Tagh pasgan falamh airson dàta Sunrise.",
+  "Could not choose data folder: {error}": "Cha b' urrainn dhuinn pasgan dàta a thaghadh: {error}",
+  "Could not start data move: {error}": "Cha b' urrainn dhuinn gluasad dàta a thòiseachadh: {error}",
+  "Move all data to {path}?": "Gluais an dàta gu lèir gu {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Gluaisidh e dàta lannsair, geama agus togail gu lèir, a' gabhail a-steach roghainnean, saoghail, eisimpleirean agus dreachan stàlaichte. Tagh pasgan falamh le rùm saor gu leòr.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Dùinidh an lannsair fhad 's a thèid do dhàta a lethbhreacadh agus a dhearbhadh, agus an uairsin fosglaidh e a-rithist. Thèid seann phasganan a chumail agus bidh iad fhathast a' cleachdadh rùm diosg gus an dearbh thu an gluasad agus gun toir thu air falbh iad fhèin.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Tha pasganan dàta air an suidheachadh le SUNRISE_LAUNCHER_HOME no SUNRISE_HOME. Thoir air falbh na tar-ghnèithean àrainneachd seo agus ath-thòisich an lannsair mus gluais thu dàta an seo.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Dùin an geama agus na frithealaichean, agus feitheamh gus an crìochnaich luchdachadh sìos, togalaichean, in-mhalairt agus clàradh a-steach mus gluais thu dàta."
 }

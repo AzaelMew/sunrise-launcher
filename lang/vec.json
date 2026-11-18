@@ -1335,5 +1335,18 @@
   "up to date": "ajornà",
   "the update failed: {error}": "l'ajornamento no xe stà: {error}",
   "Update this launcher with your package manager.": "Ajorna sto lansador co el to gestor de pacheti.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sara sto lansador, spostalo in {folder} e verxilo là par inpisar i ajornamenti."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sara sto lansador, spostalo in {folder} e verxilo là par inpisar i ajornamenti.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Cartela dati",
+  "Move…": "Sposta…",
+  "Move and restart": "Sposta e riavvia",
+  "Choose data folder": "Sièłi ła carteła dei dati",
+  "Choose an empty folder for Sunrise's data.": "Sièłi na carteła voda par i dati de Sunrise.",
+  "Could not choose data folder: {error}": "No se xe riusìi a siegłier ła carteła dei dati: {error}",
+  "Could not start data move: {error}": "No se xe riusìi a scominsiar el spostamento dei dati: {error}",
+  "Move all data to {path}?": "Spostar tuti i dati in {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "El sposta tuti i dati del lansador, del zogo e de łe costrusion, con drento inpostasion, mondi, istanse e version instałae. Sièłi na carteła voda co spasio łìbaro che basta.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "El lansador el se sara intanto che i to dati i vien copiai e verificai, e dopo el se verxe da novo. Łe cartełe vece łe resta e łe dopara isteso spasio su disco fin che te verifichi el spostamento e te łe cava da to posta.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Łe cartełe dei dati łe xe impostae da SUNRISE_LAUNCHER_HOME o SUNRISE_HOME. Cava ste sostitusion de anbiente e riavvia el lansador prima de spostar i dati qua.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Sara el zogo e i server, e speta che i scaricamenti, łe costrusion, łe inportasion e l'aceso i sia finii prima de spostar i dati."
 }

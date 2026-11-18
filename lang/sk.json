@@ -1335,5 +1335,18 @@
   "up to date": "aktuálne",
   "the update failed: {error}": "aktualizácia zlyhala: {error}",
   "Update this launcher with your package manager.": "Aktualizujte tento spúšťač pomocou správcu balíkov.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zatvorte tento spúšťač, presuňte ho do {folder} a otvorte ho tam, aby sa zapli aktualizácie."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zatvorte tento spúšťač, presuňte ho do {folder} a otvorte ho tam, aby sa zapli aktualizácie.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Priečinok s údajmi",
+  "Move…": "Presunúť…",
+  "Move and restart": "Presunúť a reštartovať",
+  "Choose data folder": "Vybrať priečinok s údajmi",
+  "Choose an empty folder for Sunrise's data.": "Vyberte prázdny priečinok pre údaje Sunrisea.",
+  "Could not choose data folder: {error}": "Nepodarilo sa vybrať priečinok s údajmi: {error}",
+  "Could not start data move: {error}": "Nepodarilo sa spustiť presun údajov: {error}",
+  "Move all data to {path}?": "Presunúť všetky údaje do {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Presunie všetky údaje spúšťača, hry a zostáv vrátane nastavení, svetov, inštancií a nainštalovaných verzií. Vyberte prázdny priečinok s dostatkom voľného miesta.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Spúšťač sa počas kopírovania a overovania údajov zatvorí a potom znova otvorí. Staré priečinky zostanú a stále zaberajú miesto na disku, kým presun neoveríte a neodstránite ich sami.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Priečinky s údajmi určujú SUNRISE_LAUNCHER_HOME alebo SUNRISE_HOME. Odstráňte tieto prepisy prostredia a pred presunom údajov sem reštartujte spúšťač.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Zatvorte hru a servery a pred presunom údajov počkajte, kým sa dokončia sťahovania, zostavovania, importy a prihlasovanie."
 }

@@ -1,5 +1,7 @@
 //! Settings' two-step data move. Only the separate worker copies data, after this process exits.
 use super::*;
+use crate::frame::button;
+use crate::settings::{hint, off, row, warning};
 
 fn env_value(key: &str) -> Option<String> {
     std::env::var_os(key)
@@ -21,6 +23,13 @@ pub(super) fn startup_error() -> Option<String> {
         })
 }
 
+fn open_error(error: &str) -> String {
+    trf(
+        "Could not open the data folder: {error}",
+        &[("error", error)],
+    )
+}
+
 pub(super) fn startup_note() -> Option<String> {
     env_value("SUNRISE_RELOCATION_BACKUP").map(|paths| {
         trf(
@@ -28,4 +37,241 @@ pub(super) fn startup_note() -> Option<String> {
             &[("paths", &paths)],
         )
     })
+}
+
+fn environment_blocked() -> bool {
+    ["SUNRISE_LAUNCHER_HOME", "SUNRISE_HOME"]
+        .iter()
+        .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()))
+}
+
+impl Launcher {
+    fn location_busy(&self) -> bool {
+        self.installing.is_some()
+            || !self.removing.is_empty()
+            || self.importing_build
+            || self.native_step.is_some()
+            || self.preparing
+            || self.client.is_some()
+            || self.starting_client.is_some()
+            || self.starting_pack.is_some()
+            || self.pack_busy
+            || self.mods.busy.is_some()
+            || !self.auth_busy.is_empty()
+            || (self.sign_in.is_some() && !matches!(self.sign_in_state, Some(SignInState::Done(_))))
+            || matches!(self.self_update, SelfUpdate::Downloading(..))
+            || self.servers.location_busy()
+            || self.github.busy()
+            || self.instances.dialog.as_ref().is_some_and(|d| d.busy)
+            || self.internet.location_busy()
+    }
+
+    fn location_blocked(&self) -> Option<String> {
+        if environment_blocked() {
+            Some(tr("Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.").into())
+        } else if self.location_busy() {
+            Some(tr("Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.").into())
+        } else {
+            None
+        }
+    }
+
+    fn choose_location(&mut self, cx: &mut Context<Self>) {
+        self.location_error = self.location_blocked();
+        if self.location_error.is_some() {
+            cx.notify();
+            return;
+        }
+        self.location_target = None;
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("Choose data folder").into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = match paths.await {
+                Ok(Ok(paths)) => Ok(paths.and_then(|mut paths| paths.pop())),
+                Ok(Err(error)) => Err(error.to_string()),
+                Err(error) => Err(error.to_string()),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.location_error = this.location_blocked();
+                if this.location_error.is_none() {
+                    match result {
+                        Ok(Some(path)) => match std::fs::read_dir(&path) {
+                            Ok(mut entries) => match entries.next() {
+                                None => this.location_target = Some(path),
+                                Some(Ok(_)) => {
+                                    this.location_error = Some(
+                                        tr("Choose an empty folder for Sunrise's data.").into(),
+                                    );
+                                }
+                                Some(Err(error)) => this.location_picker_error(error.to_string()),
+                            },
+                            Err(error) => this.location_picker_error(error.to_string()),
+                        },
+                        Ok(None) => {}
+                        Err(error) => this.location_picker_error(error),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Try the configured folder again. A success restarts the launcher, because paths already
+    /// resolved to the fallback folders cannot be swapped under a running window.
+    fn retry_location(&mut self, cx: &mut Context<Self>) {
+        match sunrise_launcher::data_location::retry() {
+            Ok(()) => {
+                self.location_error = Some(backend::restart());
+            }
+            Err(error) => self.location_error = Some(open_error(&error)),
+        }
+        cx.notify();
+    }
+
+    /// Keep the default folders: the pointer is kept beside the old one as `location.json.old`,
+    /// and nothing in the moved folders is deleted.
+    fn use_default_location(&mut self, cx: &mut Context<Self>) {
+        match sunrise_launcher::data_location::use_default_folder() {
+            Ok(()) => {
+                self.location_error = Some(backend::restart());
+            }
+            Err(error) => self.location_error = Some(open_error(&error)),
+        }
+        cx.notify();
+    }
+
+    fn location_picker_error(&mut self, error: String) {
+        self.location_error = Some(trf(
+            "Could not choose data folder: {error}",
+            &[("error", &error)],
+        ));
+    }
+
+    fn confirm_location(&mut self, cx: &mut Context<Self>) {
+        self.location_error = self.location_blocked();
+        if self.location_error.is_some() {
+            cx.notify();
+            return;
+        }
+        if self.settings_save_error.is_some() && !self.save_settings() {
+            cx.notify();
+            return;
+        }
+        let Some(target) = self.location_target.as_ref() else {
+            return;
+        };
+        let result = std::env::current_exe().and_then(|exe| {
+            sunrise_launcher::process::command(exe)
+                .arg("--relocate-data")
+                .arg(target)
+                .arg("--restart")
+                .spawn()
+        });
+        match result {
+            Ok(_) => {
+                // No installer while the worker copies the data folder its stage is in.
+                sunrise_launcher::update_handoff::forget();
+                cx.quit()
+            }
+            Err(error) => {
+                self.location_error = Some(trf(
+                    "Could not start data move: {error}",
+                    &[("error", &error.to_string())],
+                ));
+                cx.notify();
+            }
+        }
+    }
+
+    /// Where the data lives: the folder, Open and Move…, the way to recover when it can't be
+    /// opened (Retry, Use the default folder), and the move's confirmation.
+    pub(super) fn location_row(&self, cx: &mut Context<Self>) -> Div {
+        let blocked = self.location_blocked();
+        let move_button = button("alt-move-data", tr("Move…"));
+        let move_button = if blocked.is_some() {
+            off(move_button)
+        } else {
+            move_button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.choose_location(cx);
+            }))
+        };
+        let mut body = div().flex().flex_col().gap(px(10.)).child(row(
+            tr("Data folder"),
+            short(&backend::data_dir()),
+            div()
+                .child(
+                    button("alt-open-data", tr("Open folder"))
+                        .on_click(|_, _, cx| crate::glass_toast::open(cx, &backend::data_dir())),
+                )
+                .child(move_button),
+        ));
+        body = body
+            .child(hint(tr(
+                "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.",
+            )))
+            .child(hint(tr(
+                "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.",
+            )))
+            .children(blocked.map(warning))
+            .children(self.location_note.clone().map(hint))
+            .children(self.location_error.clone().map(warning));
+        if sunrise_launcher::data_location::startup_error().is_some() {
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(8.))
+                    .child(button("alt-retry-data-location", tr("Retry")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| this.retry_location(cx)),
+                    ))
+                    .child(
+                        button(
+                            "alt-use-default-data-location",
+                            tr("Use the default folder"),
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.use_default_location(cx);
+                            },
+                        )),
+                    ),
+            );
+        }
+        if let Some(target) = &self.location_target {
+            let confirm = button("alt-confirm-move-data", tr("Move and restart"));
+            let confirm = if self.location_blocked().is_some() {
+                off(confirm)
+            } else {
+                confirm.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.confirm_location(cx);
+                }))
+            };
+            body = body.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(div().child(trf(
+                        "Move all data to {path}?",
+                        &[("path", &target.display().to_string())],
+                    )))
+                    .child(div().flex().gap(px(8.)).child(confirm).child(
+                        button("alt-cancel-move-data", tr("Cancel")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.location_target = None;
+                                this.location_error = None;
+                                cx.notify();
+                            },
+                        )),
+                    )),
+            );
+        }
+        body
+    }
 }

@@ -1335,5 +1335,18 @@
   "up to date": "kusesimweni",
   "the update failed: {error}": "isibuyekezo sihlulekile: {error}",
   "Update this launcher with your package manager.": "Buyekeza lesi siqalisi ngomphathi wamaphakethe wakho.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Vala lesi siqalisi, sihambise ku-{folder}, bese usivula lapho ukuze uvule izibuyekezo."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Vala lesi siqalisi, sihambise ku-{folder}, bese usivula lapho ukuze uvule izibuyekezo.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Ifolda yedatha",
+  "Move…": "Hambisa...",
+  "Move and restart": "Hambisa bese uqala kabusha",
+  "Choose data folder": "Khetha ifolda yedatha",
+  "Choose an empty folder for Sunrise's data.": "Khetha ifolda engenalutho yedatha ye-Sunrise.",
+  "Could not choose data folder: {error}": "Ayikwazanga ukukhetha ifolda yedatha: {error}",
+  "Could not start data move: {error}": "Ayikwazanga ukuqala ukuhambisa idatha: {error}",
+  "Move all data to {path}?": "Hambisa yonke idatha ku-{path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Hambisa yonke idatha yesiqalisi, yegeyimu neyokwakha, kuhlanganise nezilungiselelo, imihlaba, amasibonelo nezinguqulo ezifakiwe. Khetha ifolda engenalutho enesikhala esanele esikhululekile.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Isiqalisi siyavalwa ngenkathi idatha yakho ikopishwa futhi iqinisekiswa, bese sivulwa futhi. Amafolda amadala agcinwa futhi asasebenzisa isikhala sediski kuze kube yilapho uqinisekisa ukuhambisa futhi uwakhipha ngokwakho.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Amafolda edatha asethwa yi-SUNRISE_LAUNCHER_HOME noma i-SUNRISE_HOME. Susa lokhu kushintshwa kwemvelo bese uqala kabusha isiqalisi ngaphambi kokuhambisa idatha lapha.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Vala igeyimu namaseva, futhi linda ukulanda, ukwakha, ukungenisa nokungena ngemvume kuqede ngaphambi kokuhambisa idatha."
 }

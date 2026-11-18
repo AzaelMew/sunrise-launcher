@@ -1335,5 +1335,18 @@
   "up to date": "արդի",
   "the update failed: {error}": "թարմացումը ձախողվեց՝ {error}",
   "Update this launcher with your package manager.": "Թարմացրեք այս գործարկիչը ձեր փաթեթների կառավարիչով։",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Փակեք այս գործարկիչը, տեղափոխեք այն {folder} և բացեք այնտեղ՝ թարմացումները միացնելու համար։"
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Փակեք այս գործարկիչը, տեղափոխեք այն {folder} և բացեք այնտեղ՝ թարմացումները միացնելու համար։",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Տվյալների թղթապանակ",
+  "Move…": "Տեղափոխել…",
+  "Move and restart": "Տեղափոխել և վերագործարկել",
+  "Choose data folder": "Ընտրեք տվյալների թղթապանակը",
+  "Choose an empty folder for Sunrise's data.": "Ընտրեք դատարկ թղթապանակ Sunrise-ի տվյալների համար։",
+  "Could not choose data folder: {error}": "Չհաջողվեց ընտրել տվյալների թղթապանակը՝ {error}",
+  "Could not start data move: {error}": "Չհաջողվեց սկսել տվյալների տեղափոխումը՝ {error}",
+  "Move all data to {path}?": "Տեղափոխե՞լ բոլոր տվյալները {path}",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Տեղափոխում է գործարկիչի, խաղի և կառուցումների բոլոր տվյալները, ներառյալ կարգավորումները, աշխարհները, օրինակները և տեղադրված տարբերակները։ Ընտրեք դատարկ թղթապանակ՝ բավարար ազատ տարածքով։",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Գործարկիչը փակվում է, մինչ ձեր տվյալները պատճենվում և ստուգվում են, ապա նորից բացվում։ Հին թղթապանակները պահվում են և դեռ զբաղեցնում են սկավառակի տարածք, մինչև դուք ստուգեք տեղափոխումը և ինքներդ հեռացնեք դրանք։",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Տվյալների թղթապանակները սահմանվում են SUNRISE_LAUNCHER_HOME կամ SUNRISE_HOME փոփոխականներով։ Հեռացրեք այս միջավայրի վերագրանցումները և վերագործարկեք գործարկիչը, նախքան տվյալներն այստեղ տեղափոխելը։",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Փակեք խաղը և սերվերները, և սպասեք, մինչև ավարտվեն ներբեռնումները, կառուցումները, ներմուծումները և մուտքը, նախքան տվյալները տեղափոխելը։"
 }

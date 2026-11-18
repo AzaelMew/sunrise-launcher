@@ -32,6 +32,10 @@ pub(super) struct Github {
 }
 
 impl Github {
+    pub(super) fn busy(&self) -> bool {
+        matches!(self.stage, Stage::Working)
+    }
+
     pub(super) fn new() -> Self {
         let (tx, rx) = crate::wake::channel();
         Self {

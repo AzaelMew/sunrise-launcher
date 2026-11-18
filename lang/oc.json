@@ -1335,5 +1335,18 @@
   "up to date": "a jorn",
   "the update failed: {error}": "la mesa a jorn a fracassat : {error}",
   "Update this launcher with your package manager.": "Metètz a jorn aqueste lançaire amb vòstre gestionari de paquets.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Barratz aqueste lançaire, desplaçatz-lo a {folder}, e dobritz-lo aquí per activar las mesas a jorn."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Barratz aqueste lançaire, desplaçatz-lo a {folder}, e dobritz-lo aquí per activar las mesas a jorn.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Dossièr de donadas",
+  "Move…": "Desplaçar…",
+  "Move and restart": "Desplaçar e reaviar",
+  "Choose data folder": "Causissètz lo dorsièr de donadas",
+  "Choose an empty folder for Sunrise's data.": "Causissètz un dorsièr vuèg per las donadas d'Sunrise.",
+  "Could not choose data folder: {error}": "Poguèt pas causir lo dorsièr de donadas : {error}",
+  "Could not start data move: {error}": "Poguèt pas començar lo desplaçament de las donadas : {error}",
+  "Move all data to {path}?": "Desplaçar totas las donadas a {path} ?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Desplaça totas las donadas del lançaire, del jòc e de las compilacions, amb los paramètres, los monds, las instàncias e las versions installadas. Causissètz un dorsièr vuèg amb pro d'espaci liure.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Lo lançaire se barra del temps que vòstras donadas son copiadas e verificadas, puèi se dòbrís tornarmai. Los dorsièrs ancians son gardats e utilizan encara d'espaci de disc fins que verificatz lo desplaçament e los levatz vos-meteis.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Los dorsièrs de donadas son definits per SUNRISE_LAUNCHER_HOME o SUNRISE_HOME. Levatz aquestas substitucions d'environament e reaviatz lo lançaire abans de desplaçar las donadas aicí.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Barratz lo jòc e los servidors, e esperatz que los telecargaments, las compilacions, los importes e la connexion sián acabats abans de desplaçar las donadas."
 }

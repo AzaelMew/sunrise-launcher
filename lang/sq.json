@@ -1335,5 +1335,18 @@
   "up to date": "të përditësuar",
   "the update failed: {error}": "përditësimi dështoi: {error}",
   "Update this launcher with your package manager.": "Përditësoni këtë lëshues me menaxherin e paketave tuaj.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Mbyllni këtë lëshues, zhvendoseni në {folder} dhe hapeni atje për të aktivizuar përditësimet."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Mbyllni këtë lëshues, zhvendoseni në {folder} dhe hapeni atje për të aktivizuar përditësimet.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Dosja e të dhënave",
+  "Move…": "Zhvendos…",
+  "Move and restart": "Zhvendos dhe rinis",
+  "Choose data folder": "Zgjidhni dosjen e të dhënave",
+  "Choose an empty folder for Sunrise's data.": "Zgjidhni një dosje bosh për të dhënat e Sunrise.",
+  "Could not choose data folder: {error}": "Nuk u arrit të zgjidhej dosja e të dhënave: {error}",
+  "Could not start data move: {error}": "Nuk u arrit të nisej zhvendosja e të dhënave: {error}",
+  "Move all data to {path}?": "Të zhvendosen të gjitha të dhënat në {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Zhvendos të gjitha të dhënat e lëshuesit, lojës dhe ndërtimeve, përfshirë cilësimet, botët, instancat dhe versionet e instaluara. Zgjidhni një dosje bosh me hapësirë të mjaftueshme të lirë.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Lëshuesi mbyllet ndërsa të dhënat tuaja kopjohen dhe verifikohen, pastaj rihapet. Dosjet e vjetra mbahen dhe ende përdorin hapësirë disku derisa të verifikoni zhvendosjen dhe t'i hiqni vetë.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Dosjet e të dhënave përcaktohen nga SUNRISE_LAUNCHER_HOME ose SUNRISE_HOME. Hiqni këto anulime të mjedisit dhe rinisni lëshuesin përpara se të zhvendosni të dhënat këtu.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Mbyllni lojën dhe serverët dhe prisni të përfundojnë shkarkimet, ndërtimet, importet dhe identifikimi përpara se të zhvendosni të dhënat."
 }

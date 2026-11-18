@@ -1335,5 +1335,18 @@
   "up to date": "ajakohane",
   "the update failed: {error}": "värskendamine ebaõnnestus: {error}",
   "Update this launcher with your package manager.": "Värskendage seda käivitajat oma paketihalduriga.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sulgege see käivitaja, liigutage see kausta {folder} ja avage see seal, et värskendused sisse lülitada."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sulgege see käivitaja, liigutage see kausta {folder} ja avage see seal, et värskendused sisse lülitada.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Andmekaust",
+  "Move…": "Liiguta…",
+  "Move and restart": "Liiguta ja taaskäivita",
+  "Choose data folder": "Vali andmekaust",
+  "Choose an empty folder for Sunrise's data.": "Valige tühi kaust Sunrisei andmete jaoks.",
+  "Could not choose data folder: {error}": "Andmekausta ei saanud valida: {error}",
+  "Could not start data move: {error}": "Andmete liigutamist ei saanud alustada: {error}",
+  "Move all data to {path}?": "Kas liigutada kõik andmed asukohta {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Liigutab kõik käivitaja, mängu ja ehituste andmed, sealhulgas seaded, maailmad, eksemplarid ja installitud versioonid. Valige tühi kaust, kus on piisavalt vaba ruumi.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Käivitaja sulgub andmete kopeerimise ja kontrollimise ajaks ning avaneb seejärel uuesti. Vanad kaustad jäävad alles ja kasutavad kettaruumi, kuni olete liigutamise üle kontrollinud ja need ise eemaldate.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Andmekaustad on määratud muutujatega SUNRISE_LAUNCHER_HOME või SUNRISE_HOME. Enne andmete siia liigutamist eemaldage need keskkonnamuutujate alistused ja taaskäivitage käivitaja.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Sulgege mäng ja serverid ning oodake, kuni allalaadimised, ehitamised, importimised ja sisselogimine lõpevad, enne kui andmeid liigutate."
 }

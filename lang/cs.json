@@ -1335,5 +1335,18 @@
   "up to date": "aktuální",
   "the update failed: {error}": "aktualizace se nezdařila: {error}",
   "Update this launcher with your package manager.": "Aktualizujte tento launcher pomocí správce balíčků.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pro zapnutí aktualizací zavřete tento launcher, přesuňte jej do {folder} a tam jej znovu otevřete."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pro zapnutí aktualizací zavřete tento launcher, přesuňte jej do {folder} a tam jej znovu otevřete.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Složka dat",
+  "Move…": "Přesunout…",
+  "Move and restart": "Přesunout a restartovat",
+  "Choose data folder": "Vybrat složku s daty",
+  "Choose an empty folder for Sunrise's data.": "Vyberte prázdnou složku pro data Sunriseu.",
+  "Could not choose data folder: {error}": "Složku s daty se nepodařilo vybrat: {error}",
+  "Could not start data move: {error}": "Přesun dat se nepodařilo zahájit: {error}",
+  "Move all data to {path}?": "Přesunout všechna data do {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Přesune veškerá data launcheru, hry a sestavení, včetně nastavení, světů, instancí a nainstalovaných verzí. Vyberte prázdnou složku s dostatkem volného místa.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Během kopírování a ověřování dat se launcher zavře a poté znovu otevře. Původní složky zůstanou zachovány a budou zabírat místo na disku, dokud přesun neověříte a nesmažete je ručně.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datové složky jsou určeny proměnnými SUNRISE_LAUNCHER_HOME nebo SUNRISE_HOME. Před přesunem dat sem odstraňte tato přepsání prostředí a restartujte launcher.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Před přesunem dat zavřete hru i servery a počkejte na dokončení stahování, sestavování, importů a přihlášení."
 }

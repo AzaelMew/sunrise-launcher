@@ -1335,5 +1335,18 @@
   "up to date": "al dia",
   "the update failed: {error}": "l'actualització ha fallat: {error}",
   "Update this launcher with your package manager.": "Actualitza aquest llançador amb el teu gestor de paquets.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Tanca aquest llançador, mou-lo a {folder} i obre'l allà per habilitar les actualitzacions."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Tanca aquest llançador, mou-lo a {folder} i obre'l allà per habilitar les actualitzacions.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Carpeta de dades",
+  "Move…": "Mou…",
+  "Move and restart": "Mou i reinicia",
+  "Choose data folder": "Tria la carpeta de dades",
+  "Choose an empty folder for Sunrise's data.": "Tria una carpeta buida per a les dades de Sunrise.",
+  "Could not choose data folder: {error}": "No s'ha pogut triar la carpeta de dades: {error}",
+  "Could not start data move: {error}": "No s'ha pogut iniciar el trasllat de dades: {error}",
+  "Move all data to {path}?": "Vols moure totes les dades a {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Mou totes les dades del llançador, del joc i de les compilacions, incloent-hi la configuració, els mons, les instàncies i les versions instal·lades. Tria una carpeta buida amb prou espai lliure.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "El llançador es tanca mentre es copien i es verifiquen les teves dades, i després es torna a obrir. Les carpetes antigues es conserven i encara ocupen espai fins que verifiquis el trasllat i les eliminis tu mateix.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Les carpetes de dades les defineixen SUNRISE_LAUNCHER_HOME o SUNRISE_HOME. Elimina aquestes variables d'entorn i reinicia el llançador abans de moure les dades aquí.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Tanca el joc i els servidors, i espera que acabin les baixades, les compilacions, les importacions i l'inici de sessió abans de moure les dades."
 }

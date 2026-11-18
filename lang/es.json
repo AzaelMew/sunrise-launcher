@@ -1335,5 +1335,18 @@
   "up to date": "actualizado",
   "the update failed: {error}": "la actualización falló: {error}",
   "Update this launcher with your package manager.": "Actualiza este lanzador con tu gestor de paquetes.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Cierra este lanzador, muévelo a {folder} y ábrelo allí para permitir las actualizaciones."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Cierra este lanzador, muévelo a {folder} y ábrelo allí para permitir las actualizaciones.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Carpeta de datos",
+  "Move…": "Mover…",
+  "Move and restart": "Mover y reiniciar",
+  "Choose data folder": "Elegir carpeta de datos",
+  "Choose an empty folder for Sunrise's data.": "Elige una carpeta vacía para los datos de Sunrise.",
+  "Could not choose data folder: {error}": "No se pudo elegir la carpeta de datos: {error}",
+  "Could not start data move: {error}": "No se pudo iniciar el traslado de datos: {error}",
+  "Move all data to {path}?": "¿Mover todos los datos a {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Mueve todos los datos del lanzador, del juego y de compilación, incluidos los ajustes, mundos, instancias y versiones instaladas. Elige una carpeta vacía con suficiente espacio libre.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "El lanzador se cierra mientras se copian y verifican tus datos y después vuelve a abrirse. Las carpetas antiguas se conservan y siguen ocupando espacio en disco hasta que compruebes el traslado y las elimines manualmente.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Las carpetas de datos están definidas por SUNRISE_LAUNCHER_HOME o SUNRISE_HOME. Elimina estas variables de entorno y reinicia el lanzador antes de mover los datos desde aquí.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Cierra el juego y los servidores y espera a que terminen las descargas, compilaciones, importaciones y el inicio de sesión antes de mover los datos."
 }

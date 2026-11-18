@@ -267,6 +267,8 @@ struct Launcher {
     native_log: native_log_page::NativeLog,
     location_error: Option<String>,
     location_note: Option<String>,
+    /// The empty folder picked for a data move, until it is confirmed or cancelled.
+    location_target: Option<std::path::PathBuf>,
     settings: Settings,
     /// The last failed settings write, kept across page changes until a save succeeds.
     settings_save_error: Option<String>,

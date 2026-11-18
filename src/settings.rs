@@ -21,6 +21,12 @@ pub(super) enum Section {
     Launcher,
 }
 
+/// The Settings section the window opens on, when what the last start left needs one: a data
+/// folder that did not open or a move that failed or finished (Storage has its recoveries).
+pub(super) fn startup_section(location_error: bool, location_note: bool) -> Option<Section> {
+    (location_error || location_note).then_some(Section::Storage)
+}
+
 impl Section {
     const ALL: [Section; 6] = [
         Section::Account,
@@ -810,6 +816,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(14.))
+            .child(group(vec![self.location_row(cx)]))
             .child(group(vec![files, kept]))
             .child(group(cache))
             .children(notes.into_iter().flatten())
@@ -1286,5 +1293,17 @@ impl Launcher {
                 cx.notify();
             }));
         div().child(line_edit::mouse(field, cx, get))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_data_folder_problem_opens_settings_on_storage() {
+        assert!(startup_section(true, false) == Some(Section::Storage));
+        assert!(startup_section(false, true) == Some(Section::Storage));
+        assert!(startup_section(false, false).is_none());
     }
 }

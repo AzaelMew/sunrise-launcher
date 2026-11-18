@@ -1335,5 +1335,18 @@
   "up to date": "אַרויף צו טאָג",
   "the update failed: {error}": "דער דערהייַנטיקן איז ניט אַנדערש: {error}",
   "Update this launcher with your package manager.": "דערהייַנטיקט דעם לאָנטשער מיט אײַער פּאַקעט־מאַנעדזשער.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "פֿאַרמאַכט דעם לאָנטשער, פֿירט אים צו {folder}, און עפֿנט אים דאָרט צו ערמעגלעכן דערהייַנטיקונגען."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "פֿאַרמאַכט דעם לאָנטשער, פֿירט אים צו {folder}, און עפֿנט אים דאָרט צו ערמעגלעכן דערהייַנטיקונגען.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "דאַטאַ טעקע",
+  "Move…": "אַריבערפֿירן…",
+  "Move and restart": "אַריבערפֿירן און ריסטאַרטן",
+  "Choose data folder": "קלייבט דאַטן־טעקע",
+  "Choose an empty folder for Sunrise's data.": "קלייבט אַ ליידיקע טעקע פֿאַר Sunrise'ס דאַטן.",
+  "Could not choose data folder: {error}": "מען האָט נישט געקענט קלייבן אַ דאַטן־טעקע: {error}",
+  "Could not start data move: {error}": "מען האָט נישט געקענט אָנהייבן דאָס פֿירן פֿון דאַטן: {error}",
+  "Move all data to {path}?": "אַריבערפֿירן אַלע דאַטן צו {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "פֿירט אַריבער אַלע לאָנטשער-, שפּיל- און בויען־דאַטן, אַרײַנגערעכנט סעטטינגס, וועלטן, אינסטאַנצן און אינסטאַלירטע ווערסיעס. קלייבט אַ ליידיקע טעקע מיט גענוג פֿרײַען פּלאַץ.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "דער לאָנטשער פֿאַרמאַכט זיך בשעת אײַער דאַטן ווערן קאָפּירט און באַשטעטיקט, און דערנאָך עפֿנט ער זיך ווידער. אַלטע טעקעס ווערן געהאַלטן און ניצן נאָך דיסק־פּלאַץ ביז איר באַשטעטיקט דאָס פֿירן און נעמט זיי אַראָפּ אַליין.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "דאַטן־טעקעס ווערן באַשטימט דורך SUNRISE_LAUNCHER_HOME אָדער SUNRISE_HOME. אַראָפּנעמט די סוויווע־איבערשרייבונגען און ריסטאַרט דעם לאָנטשער איידער איר פֿירט אַהער דאַטן.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "פֿאַרמאַכט די שפּיל און סערווערס, און וואַרט ביז אַראָפּלאָדונגען, בויען, אימפּאָרטן און אַריינלאָגירן ענדיקן זיך, איידער איר פֿירט דאַטן."
 }

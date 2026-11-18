@@ -1335,5 +1335,18 @@
   "up to date": "ĝisdatigita",
   "the update failed: {error}": "la ĝisdatigo malsukcesis: {error}",
   "Update this launcher with your package manager.": "Ĝisdatigu ĉi tiun lanĉilon per via paka administrilo.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Fermu ĉi tiun lanĉilon, movu ĝin al {folder} kaj malfermu ĝin tie por ebligi ĝisdatigojn."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Fermu ĉi tiun lanĉilon, movu ĝin al {folder} kaj malfermu ĝin tie por ebligi ĝisdatigojn.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Dosierujo de datumoj",
+  "Move…": "Movi…",
+  "Move and restart": "Movi kaj rekomenci",
+  "Choose data folder": "Elektu dosierujon de datumoj",
+  "Choose an empty folder for Sunrise's data.": "Elektu malplenan dosierujon por la datumoj de Sunrise.",
+  "Could not choose data folder: {error}": "Ne eblis elekti dosierujon de datumoj: {error}",
+  "Could not start data move: {error}": "Ne eblis komenci la movon de datumoj: {error}",
+  "Move all data to {path}?": "Ĉu movi ĉiujn datumojn al {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Movas ĉiujn datumojn de la lanĉilo, la ludo kaj la konstruoj, inkluzive agordojn, mondojn, instancojn kaj instalitajn versiojn. Elektu malplenan dosierujon kun sufiĉe da libera spaco.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "La lanĉilo fermiĝas dum viaj datumoj estas kopiataj kaj kontrolataj, poste remalfermiĝas. Malnovaj dosierujoj restas kaj ankoraŭ uzas diskan spacon, ĝis vi kontrolos la movon kaj forigos ilin mem.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Dosierujoj de datumoj estas starigitaj de SUNRISE_LAUNCHER_HOME aŭ SUNRISE_HOME. Forigu ĉi tiujn anstataŭigojn de la medio kaj rekomencu la lanĉilon antaŭ ol movi datumojn ĉi tien.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Fermu la ludon kaj servilojn, kaj atendu, ke elŝutoj, konstruoj, importoj kaj ensaluto finiĝu antaŭ ol movi datumojn."
 }

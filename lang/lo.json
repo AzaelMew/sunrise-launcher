@@ -1335,5 +1335,18 @@
   "up to date": "ເຖິງວັນທີ",
   "the update failed: {error}": "ການອັບເດດລົ້ມເຫລວ: {error}",
   "Update this launcher with your package manager.": "ອັບເດດຕົວເປີດນີ້ດ້ວຍຕົວຈັດການແພັກເກດຂອງທ່ານ.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ປິດຕົວເປີດນີ້, ຍ້າຍມັນໄປໃສ່ {folder}, ແລ້ວເປີດມັນຢູ່ຫັ້ນເພື່ອເປີດໃຊ້ການອັບເດດ."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ປິດຕົວເປີດນີ້, ຍ້າຍມັນໄປໃສ່ {folder}, ແລ້ວເປີດມັນຢູ່ຫັ້ນເພື່ອເປີດໃຊ້ການອັບເດດ.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "ໂຟນເດີຂໍ້ມູນ",
+  "Move…": "ຍ້າຍ…",
+  "Move and restart": "ຍ້າຍ ແລະ ຣີສະຕາດ",
+  "Choose data folder": "ເລືອກໂຟນເດີຂໍ້ມູນ",
+  "Choose an empty folder for Sunrise's data.": "ເລືອກໂຟນເດີຫວ່າງເປົ່າສຳລັບຂໍ້ມູນຂອງ Sunrise.",
+  "Could not choose data folder: {error}": "ເລືອກໂຟນເດີຂໍ້ມູນບໍ່ໄດ້: {error}",
+  "Could not start data move: {error}": "ເລີ່ມການຍ້າຍຂໍ້ມູນບໍ່ໄດ້: {error}",
+  "Move all data to {path}?": "ຍ້າຍຂໍ້ມູນທັງໝົດໄປ {path} ບໍ?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "ຍ້າຍຂໍ້ມູນຂອງຕົວເປີດ, ເກມ ແລະ ການກໍ່ສ້າງທັງໝົດ, ລວມທັງການຕັ້ງຄ່າ, ໂລກ, ອິນສະແຕນ ແລະ ເວີຊັນທີ່ຕິດຕັ້ງແລ້ວ. ເລືອກໂຟນເດີຫວ່າງເປົ່າທີ່ມີພື້ນທີ່ຫວ່າງພຽງພໍ.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "ຕົວເປີດຈະປິດລົງໃນຂະນະທີ່ຂໍ້ມູນຂອງທ່ານຖືກສຳເນົາ ແລະ ກວດສອບ, ແລ້ວຈະເປີດຄືນ. ໂຟນເດີເກົ່າຖືກເກັບໄວ້ ແລະ ຍັງໃຊ້ພື້ນທີ່ດິສ ຈົນກວ່າທ່ານຈະກວດສອບການຍ້າຍ ແລະ ລຶບພວກມັນເອງ.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "ໂຟນເດີຂໍ້ມູນຖືກກຳນົດໂດຍ SUNRISE_LAUNCHER_HOME ຫຼື SUNRISE_HOME. ເອົາການກຳນົດສະພາບແວດລ້ອມເຫຼົ່ານີ້ອອກ ແລະ ຣີສະຕາດຕົວເປີດກ່ອນຍ້າຍຂໍ້ມູນມາທີ່ນີ້.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ປິດເກມ ແລະ ເຊີບເວີ, ແລະ ລໍຖ້າໃຫ້ການດາວໂຫຼດ, ການກໍ່ສ້າງ, ການນຳເຂົ້າ ແລະ ການເຂົ້າສູ່ລະບົບສຳເລັດກ່ອນຍ້າຍຂໍ້ມູນ."
 }

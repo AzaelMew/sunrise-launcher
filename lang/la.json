@@ -1335,5 +1335,18 @@
   "up to date": "usque ad diem",
   "the update failed: {error}": "defecit in update:{error}",
   "Update this launcher with your package manager.": "Hunc launcher administratore fasciculorum renova.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Claude hunc launcher, transfer eum in {folder}, et ibi aperi ut renovationes patere possint."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Claude hunc launcher, transfer eum in {folder}, et ibi aperi ut renovationes patere possint.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Fasciculus datorum",
+  "Move…": "Transfer…",
+  "Move and restart": "Transfer et incipe iterum",
+  "Choose data folder": "Elige fasciculum datorum",
+  "Choose an empty folder for Sunrise's data.": "Elige fasciculum vacuum pro datis Sunriseis.",
+  "Could not choose data folder: {error}": "Fasciculus datorum eligi non potuit: {error}",
+  "Could not start data move: {error}": "Translatio datorum inchoari non potuit: {error}",
+  "Move all data to {path}?": "Omnia data in {path} transferre?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Omnia data launcheris, ludi et aedificationis transfert, inter quae occasus, mundi, instantiae et versiones institutae. Elige fasciculum vacuum satis spatii liberi habentem.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Launcher clauditur dum data tua exemplantur et comprobantur, deinde iterum aperitur. Fasciculi veteres servantur et locum disci adhuc occupant, donec translationem comprobes et eos ipse tollas.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Fasciculi datorum ab SUNRISE_LAUNCHER_HOME aut SUNRISE_HOME constituuntur. Tolle has substitutiones ambientis et launcher iterum incipe, antequam data huc transferas.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Claude ludum et servitores, et exspecta dum deprompta, aedificationes, importationes et inscriptio finiantur, antequam data transferas."
 }

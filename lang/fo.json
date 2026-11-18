@@ -1335,5 +1335,18 @@
   "up to date": "dagført",
   "the update failed: {error}": "dagføringin miseydnaðist: {error}",
   "Update this launcher with your package manager.": "Dagfør henda sjósetaran við pakkastjóranum tínum.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Lat henda sjósetaran aftur, flyt hann til {folder}, og opna hann har fyri at gera dagføringar virknar."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Lat henda sjósetaran aftur, flyt hann til {folder}, og opna hann har fyri at gera dagføringar virknar.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Dátumappa",
+  "Move…": "Flyt...",
+  "Move and restart": "Flyt og endurbyrja",
+  "Choose data folder": "Vel dátumappu",
+  "Choose an empty folder for Sunrise's data.": "Vel eina tóma mappu til dáta hjá Sunrise.",
+  "Could not choose data folder: {error}": "Kundi ikki velja dátumappu: {error}",
+  "Could not start data move: {error}": "Kundi ikki byrja dátuflutningin: {error}",
+  "Move all data to {path}?": "Flyt øll dáta til {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Flytur øll dáta hjá sjósetaranum, spælinum og byggingini, harímillum innstillingar, heimar, instansur og uppsettar útgávur. Vel eina tóma mappu við nóg nógvum leysum plássi.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Sjósetarin lat aftur, meðan tín dáta verður avritað og váttað, og opnar so aftur. Gomlu mappurnar verða goymdar og brúka framvegis diskpláss, til tú váttar flutningin og strikar tær sjálvur.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Dátumappurnar verða settar av SUNRISE_LAUNCHER_HOME ella SUNRISE_HOME. Strika hesar umhvørvisyvirskriftirnar og endurbyrja sjósetaran, áðrenn tú flytur dáta higar.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Lat spælið og ambætararnar aftur, og bíða, til niðurtøkur, byggingar, innflutningar og innritan eru liðug, áðrenn tú flytur dáta."
 }

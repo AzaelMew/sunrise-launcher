@@ -1335,5 +1335,18 @@
   "up to date": "à jour",
   "the update failed: {error}": "la mise à jour a échoué : {error}",
   "Update this launcher with your package manager.": "Mettez ce lanceur à jour avec votre gestionnaire de paquets.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Fermez ce lanceur, déplacez-le vers {folder}, puis ouvrez-le depuis ce dossier pour activer les mises à jour."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Fermez ce lanceur, déplacez-le vers {folder}, puis ouvrez-le depuis ce dossier pour activer les mises à jour.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Dossier des données",
+  "Move…": "Déplacer…",
+  "Move and restart": "Déplacer et redémarrer",
+  "Choose data folder": "Choisir le dossier des données",
+  "Choose an empty folder for Sunrise's data.": "Choisissez un dossier vide pour les données d'Sunrise.",
+  "Could not choose data folder: {error}": "Impossible de choisir le dossier des données : {error}",
+  "Could not start data move: {error}": "Impossible de démarrer le déplacement des données : {error}",
+  "Move all data to {path}?": "Déplacer toutes les données vers {path} ?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Déplace toutes les données du launcher, du jeu et de compilation, y compris les paramètres, les mondes, les instances et les versions installées. Choisissez un dossier vide avec suffisamment d'espace libre.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Le launcher se ferme pendant la copie et la vérification des données, puis se rouvre. Les anciens dossiers sont conservés et occupent encore de l'espace disque jusqu'à ce que vous vérifiiez le déplacement et les supprimiez vous-même.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Les dossiers de données sont définis par SUNRISE_LAUNCHER_HOME ou SUNRISE_HOME. Supprimez ces variables d'environnement et redémarrez le launcher avant de déplacer les données ici.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Fermez le jeu et les serveurs, puis attendez la fin des téléchargements, des compilations, des imports et de la connexion au compte avant de déplacer les données."
 }

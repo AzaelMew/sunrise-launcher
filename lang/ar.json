@@ -1335,5 +1335,18 @@
   "up to date": "محدث",
   "the update failed: {error}": "فشل التحديث: {error}",
   "Update this launcher with your package manager.": "حدّث هذا المشغّل باستخدام مدير الحزم.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "أغلق هذا المشغّل، وانقله إلى {folder}، ثم افتحه من هناك لتمكين التحديثات."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "أغلق هذا المشغّل، وانقله إلى {folder}، ثم افتحه من هناك لتمكين التحديثات.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "مجلد البيانات",
+  "Move…": "نقل…",
+  "Move and restart": "نقل وإعادة التشغيل",
+  "Choose data folder": "اختيار مجلد البيانات",
+  "Choose an empty folder for Sunrise's data.": "اختر مجلدًا فارغًا لبيانات هورايزون.",
+  "Could not choose data folder: {error}": "تعذر اختيار مجلد البيانات: {error}",
+  "Could not start data move: {error}": "تعذر بدء نقل البيانات: {error}",
+  "Move all data to {path}?": "نقل جميع البيانات إلى {path}؟",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "ينقل جميع بيانات المشغل واللعبة والبناء، بما في ذلك الإعدادات والعوالم ونسخ اللعبة والإصدارات المثبتة. اختر مجلدًا فارغًا تتوفر فيه مساحة كافية.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "يُغلق المشغل أثناء نسخ بياناتك والتحقق منها، ثم يُفتح مجددًا. يُحتفظ بالمجلدات القديمة وتظل تشغل مساحة على القرص حتى تتحقق من نجاح النقل وتحذفها بنفسك.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "تُحدَّد مجلدات البيانات بواسطة SUNRISE_LAUNCHER_HOME أو SUNRISE_HOME. أزل إعدادات متغيرات البيئة هذه وأعد تشغيل المشغل قبل نقل البيانات من هنا.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "أغلق اللعبة وأوقف الخوادم، وانتظر اكتمال التنزيلات وعمليات البناء والاستيراد وتسجيل الدخول قبل نقل البيانات."
 }

@@ -1343,5 +1343,18 @@
   "up to date": "ล่าสุดแล้ว",
   "the update failed: {error}": "อัปเดตไม่สำเร็จ: {error}",
   "Update this launcher with your package manager.": "อัปเดตลันเชอร์นี้ด้วยตัวจัดการแพ็กเกจ",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ปิดลันเชอร์นี้ ย้ายไปไว้ที่ {folder} แล้วเปิดจากที่นั่นเพื่อให้อัปเดตได้"
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ปิดลันเชอร์นี้ ย้ายไปไว้ที่ {folder} แล้วเปิดจากที่นั่นเพื่อให้อัปเดตได้",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "โฟลเดอร์ข้อมูล (Data Folder)",
+  "Move…": "ย้าย…",
+  "Move and restart": "ย้ายแล้วรีสตาร์ท",
+  "Choose data folder": "เลือกโฟลเดอร์ข้อมูล",
+  "Choose an empty folder for Sunrise's data.": "เลือกโฟลเดอร์ว่างสำหรับเก็บข้อมูลของ Sunrise",
+  "Could not choose data folder: {error}": "เลือกโฟลเดอร์ข้อมูลไม่ได้: {error}",
+  "Could not start data move: {error}": "เริ่มย้ายข้อมูลไม่ได้: {error}",
+  "Move all data to {path}?": "ย้ายข้อมูลทั้งหมดไปที่ {path} ไหม?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "ย้ายข้อมูลทั้งหมดของลันเชอร์ เกม และบิลด์ รวมถึงการตั้งค่า โลก อินสแตนซ์ และเวอร์ชันที่ติดตั้ง เลือกโฟลเดอร์ว่างที่มีพื้นที่เหลือพอ",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "ลันเชอร์จะปิดระหว่างคัดลอกและตรวจสอบข้อมูล แล้วเปิดขึ้นมาใหม่ โฟลเดอร์เก่าจะถูกเก็บไว้และยังใช้พื้นที่ดิสก์ จน��ว่าคุณจะตรวจดูผลการย้ายและลบเอง",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "โฟลเดอร์ข้อมูลถูกกำหนดโดย SUNRISE_LAUNCHER_HOME หรือ SUNRISE_HOME ลบตัวแปรสภาพแวดล้อมเหล่านี้แล้วรีสตาร์ทลันเชอร์ก่อนย้ายข้อมูลมาที่นี่",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ปิดเกมและเซิร์ฟเวอร์ แล้วรอให้การดาวน์โหลด การบิลด์ การนำเข้า และการลงชื่อเข้าใช้เสร็จก่อนย้ายข้อมูล"
 }

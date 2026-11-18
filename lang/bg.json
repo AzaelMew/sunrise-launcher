@@ -1335,5 +1335,18 @@
   "up to date": "актуален",
   "the update failed: {error}": "актуализацията е неуспешна: {error}",
   "Update this launcher with your package manager.": "Актуализирайте този стартер с вашия мениджър на пакети.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Затворете този стартер, преместете го в {folder} и го отворете там, за да включите актуализациите."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Затворете този стартер, преместете го в {folder} и го отворете там, за да включите актуализациите.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Папка с данни",
+  "Move…": "Преместване…",
+  "Move and restart": "Преместване и рестартиране",
+  "Choose data folder": "Изберете папка за данни",
+  "Choose an empty folder for Sunrise's data.": "Изберете празна папка за данните на Sunrise.",
+  "Could not choose data folder: {error}": "Папката за данни не можа да бъде избрана: {error}",
+  "Could not start data move: {error}": "Преместването на данни не можа да започне: {error}",
+  "Move all data to {path}?": "Да се преместят ли всички данни в {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Премества всички данни на стартера, играта и компилациите, включително настройки, светове, инстанции и инсталирани версии. Изберете празна папка с достатъчно свободно място.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Стартерът се затваря, докато данните ви се копират и проверяват, след което се отваря отново. Старите папки се запазват и все още заемат място на диска, докато не проверите преместването и не ги премахнете сами.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Папките с данни се задават от SUNRISE_LAUNCHER_HOME или SUNRISE_HOME. Премахнете тези променливи на средата и рестартирайте стартера, преди да преместите данни тук.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Затворете играта и сървърите и изчакайте изтеглянията, компилациите, импортите и влизането да завършат, преди да местите данни."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "у актуальным стане",
   "the update failed: {error}": "абнаўленне не атрымалася: {error}",
   "Update this launcher with your package manager.": "Абнавіце гэты лаўнчар праз свой пакетны менеджар.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Закрыйце гэты лаўнчар, перамясціце яго ў {folder} і запусціце адтуль, каб уключыць абнаўленні."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Закрыйце гэты лаўнчар, перамясціце яго ў {folder} і запусціце адтуль, каб уключыць абнаўленні.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Тэчка даных",
+  "Move…": "Перамясціць…",
+  "Move and restart": "Перамясціць і перазапусціць",
+  "Choose data folder": "Выбраць тэчку даных",
+  "Choose an empty folder for Sunrise's data.": "Выберыце пустую тэчку для даных Sunrise.",
+  "Could not choose data folder: {error}": "Не ўдалося выбраць тэчку даных: {error}",
+  "Could not start data move: {error}": "Не ўдалося пачаць перанос даных: {error}",
+  "Move all data to {path}?": "Перамясціць усе даныя ў {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Перамяшчае ўсе даныя лаўнчара, гульні і зборак, уключаючы налады, светы, экземпляры і ўсталяваныя версіі. Выберыце пустую тэчку з дастатковай колькасцю вольнага месца.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Лаўнчар закрыецца на час капіявання і праверкі даных, а затым адкрыецца зноў. Старыя тэчкі захаваюцца і будуць займаць месца на дыску, пакуль вы самі іх не выдаліце.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Тэчкі даных задаюцца праз SUNRISE_LAUNCHER_HOME або SUNRISE_HOME. Выдаліце гэтыя зменныя асяроддзя і перазапусціце лаўнчар перад пераносам даных.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Закрыйце гульню і серверы ды дачакайцеся завяршэння спампоўванняў, зборак, імпарту і ўваходу, перш чым перамяшчаць даныя."
 }

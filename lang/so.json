@@ -1335,5 +1335,18 @@
   "up to date": "ilaa hadda",
   "the update failed: {error}": "Cusboonaysiinta ayaa fashilantay: {error}",
   "Update this launcher with your package manager.": "Ku cusboonaysii furahan maareeyaha xirmooyinkaaga.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Xir furahan, u rar {folder}, oo halkaas ka fur si cusboonaysiinta u shaqeyso."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Xir furahan, u rar {folder}, oo halkaas ka fur si cusboonaysiinta u shaqeyso.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Galka xogta",
+  "Move…": "Rar…",
+  "Move and restart": "Rar oo dib u bilow",
+  "Choose data folder": "Dooro folder-ka xogta",
+  "Choose an empty folder for Sunrise's data.": "Dooro folder madhan oo loogu talagalay xogta Sunrise.",
+  "Could not choose data folder: {error}": "Lama dooran karin folder-ka xogta: {error}",
+  "Could not start data move: {error}": "Lama bilaabi karin raridda xogta: {error}",
+  "Move all data to {path}?": "Xogta oo dhan u rar {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Wuxuu raraa xogta furaha, ciyaarta iyo dhismaha oo dhan, oo ay ku jiraan dejinta, adduunyada, nuqullada iyo noocyada la rakibay. Dooro folder madhan oo leh boos bannaan ku filan.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Furaha wuu xirmayaa inta xogtaada la nuqulayo oo la hubinayo, ka dibna wuu dib u furmayaa. Folder-yada duugga ah waa la hayaa oo wali waxay isticmaalaan booska diskiga ilaa aad hubiso raridda oo adigu ka saarto.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Folder-yada xogta waxaa dejiya SUNRISE_LAUNCHER_HOME ama SUNRISE_HOME. Ka saar beddelkadan deegaanka oo dib u bilow furaha ka hor intaadan xogta halkan u rarin.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Xir ciyaarta iyo server-yada, oo sug ilaa soo dejinta, dhismaha, imports iyo galitaanka ay dhammaadaan ka hor intaadan xogta rarin."
 }

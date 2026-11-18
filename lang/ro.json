@@ -1335,5 +1335,18 @@
   "up to date": "la zi",
   "the update failed: {error}": "actualizarea a eșuat: {error}",
   "Update this launcher with your package manager.": "Actualizați acest lansator cu managerul de pachete.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Închideți acest lansator, mutați-l în {folder} și deschideți-l acolo pentru a activa actualizările."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Închideți acest lansator, mutați-l în {folder} și deschideți-l acolo pentru a activa actualizările.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Dosar de date",
+  "Move…": "Mută…",
+  "Move and restart": "Mută și repornește",
+  "Choose data folder": "Alege folderul de date",
+  "Choose an empty folder for Sunrise's data.": "Alegeți un folder gol pentru datele Sunrise.",
+  "Could not choose data folder: {error}": "Nu s-a putut alege folderul de date: {error}",
+  "Could not start data move: {error}": "Nu s-a putut porni mutarea datelor: {error}",
+  "Move all data to {path}?": "Mutați toate datele în {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Mută toate datele lansatorului, jocului și compilărilor, inclusiv setările, lumile, instanțele și versiunile instalate. Alegeți un folder gol cu suficient spațiu liber.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Lansatorul se închide cât timp datele sunt copiate și verificate, apoi se redeschide. Folderele vechi sunt păstrate și ocupă încă spațiu pe disc până când verificați mutarea și le eliminați singur.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Folderele de date sunt stabilite de SUNRISE_LAUNCHER_HOME sau SUNRISE_HOME. Eliminați aceste suprascrieri de mediu și reporniți lansatorul înainte de a muta datele aici.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Închideți jocul și serverele și așteptați ca descărcările, compilările, importurile și conectarea să se termine înainte de a muta datele."
 }

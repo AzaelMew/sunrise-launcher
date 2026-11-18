@@ -1335,5 +1335,18 @@
   "up to date": "terkini",
   "the update failed: {error}": "kemas kini gagal: {error}",
   "Update this launcher with your package manager.": "Kemas kini pelancar ini dengan pengurus pakej anda.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Tutup pelancar ini, pindahkannya ke {folder} dan bukanya di sana untuk mendayakan kemas kini."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Tutup pelancar ini, pindahkannya ke {folder} dan bukanya di sana untuk mendayakan kemas kini.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Folder data",
+  "Move…": "Pindah…",
+  "Move and restart": "Pindah dan mulakan semula",
+  "Choose data folder": "Pilih folder data",
+  "Choose an empty folder for Sunrise's data.": "Pilih folder kosong untuk data Sunrise.",
+  "Could not choose data folder: {error}": "Tidak dapat memilih folder data: {error}",
+  "Could not start data move: {error}": "Tidak dapat memulakan pemindahan data: {error}",
+  "Move all data to {path}?": "Pindahkan semua data ke {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Memindahkan semua data pelancar, permainan dan binaan, termasuk tetapan, dunia, instans dan versi yang dipasang. Pilih folder kosong dengan ruang kosong yang mencukupi.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Pelancar ditutup semasa data anda disalin dan disahkan, kemudian dibuka semula. Folder lama dikekalkan dan masih menggunakan ruang cakera sehingga anda mengesahkan pemindahan itu dan membuangnya sendiri.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Folder data ditetapkan oleh SUNRISE_LAUNCHER_HOME atau SUNRISE_HOME. Buang penggantian persekitaran ini dan mulakan semula pelancar sebelum memindahkan data ke sini.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Tutup permainan dan pelayan, dan tunggu muat turun, binaan, import dan log masuk selesai sebelum memindahkan data."
 }

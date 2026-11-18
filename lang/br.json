@@ -1335,5 +1335,18 @@
   "up to date": "hizivaet",
   "the update failed: {error}": "c'hwitet en deus an hizivadenn : {error}",
   "Update this launcher with your package manager.": "Hizivait al lañser-mañ gant ho merour pakadoù.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Serrit al lañser-mañ, dilec'hit anezhañ da {folder}, ha digorit anezhañ eno evit gweredekaat an hizivadennoù."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Serrit al lañser-mañ, dilec'hit anezhañ da {folder}, ha digorit anezhañ eno evit gweredekaat an hizivadennoù.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Teuliad roadennoù",
+  "Move…": "Dilec'hiañ…",
+  "Move and restart": "Dilec'hiañ hag adloc'hañ",
+  "Choose data folder": "Dibab an teuliad roadennoù",
+  "Choose an empty folder for Sunrise's data.": "Dibabit un teuliad goullo evit roadennoù Sunrise.",
+  "Could not choose data folder: {error}": "N'haller ket dibab an teuliad roadennoù: {error}",
+  "Could not start data move: {error}": "N'haller ket kregiñ gant dilec'hiadur ar roadennoù: {error}",
+  "Move all data to {path}?": "Dilec'hiañ an holl roadennoù da {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Dilec'hiañ a ra an holl roadennoù lañser, c'hoari ha sevel, en o zouez an arventennoù, ar bedoù, an ensavadurioù hag ar stummoù staliet. Dibabit un teuliad goullo gant egor dieub a-walc'h.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Serriñ a ra al lañser e-pad ma vez eilet ha gwiriet ho roadennoù, ha digeriñ en-dro goude-se. Miret e vez ar teuliadoù kozh hag e implijont egor-disk c'hoazh betek ma wiriot an dilec'hiadur hag o lemel hoc'h-unan.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Ar teuliadoù roadennoù a vez termenet gant SUNRISE_LAUNCHER_HOME pe SUNRISE_HOME. Lemel an dreistskrivañ endro-se ha adloc'hañ al lañser a-raok dilec'hiañ roadennoù amañ.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Serrit ar c'hoari hag ar servijerioù, ha gortozit ma vo echu ar pellgargadennoù, ar seveloù, an enporzhiadennoù hag an enskrivadur a-raok dilec'hiañ ar roadennoù."
 }

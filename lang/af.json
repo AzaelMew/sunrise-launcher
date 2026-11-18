@@ -1335,5 +1335,18 @@
   "up to date": "op datum",
   "the update failed: {error}": "die opdatering het misluk: {error}",
   "Update this launcher with your package manager.": "Dateer hierdie lanseerder op met jou pakketbestuurder.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Maak hierdie lanseerder toe, skuif dit na {folder} en maak dit daar oop om opdaterings te aktiveer."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Maak hierdie lanseerder toe, skuif dit na {folder} en maak dit daar oop om opdaterings te aktiveer.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Data-lêergids",
+  "Move…": "Skuif…",
+  "Move and restart": "Skuif en herbegin",
+  "Choose data folder": "Kies datavouer",
+  "Choose an empty folder for Sunrise's data.": "Kies 'n leë vouer vir Sunrise se data.",
+  "Could not choose data folder: {error}": "Kon nie die datavouer kies nie: {error}",
+  "Could not start data move: {error}": "Kon nie die dataskuif begin nie: {error}",
+  "Move all data to {path}?": "Skuif alle data na {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Skuif alle lanseerder-, speletjie- en boudata, insluitend instellings, wêrelde, instansies en geïnstalleerde weergawes. Kies 'n leë vouer met genoeg vrye spasie.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Die lanseerder sluit terwyl jou data gekopieer en gekontroleer word, en maak dan weer oop. Ou vouers word gehou en gebruik steeds skyfspasie totdat jy die skuif kontroleer en hulle self verwyder.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datavouers word deur SUNRISE_LAUNCHER_HOME of SUNRISE_HOME bepaal. Verwyder hierdie omgewingsoorskrywings en herbegin die lanseerder voordat jy data hierheen skuif.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Maak die speletjie en bedieners toe, en wag tot aflaaie, bousels, invoere en aanmelding klaar is voordat jy data skuif."
 }

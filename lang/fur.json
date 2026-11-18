@@ -1335,5 +1335,18 @@
   "up to date": "a zornade",
   "the update failed: {error}": "l'agjiornament al è falit: {error}",
   "Update this launcher with your package manager.": "Agjiornâ chest lançadôr cul to gjestôr di pachets.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sierâ chest lançadôr, spostâlu in {folder} e vierzilu li par abilitâ i agjiornaments."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sierâ chest lançadôr, spostâlu in {folder} e vierzilu li par abilitâ i agjiornaments.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Cjarte dai dâts",
+  "Move…": "Spostâ...",
+  "Move and restart": "Spostâ e riavviâ",
+  "Choose data folder": "Sielzi la cjarte dai dâts",
+  "Choose an empty folder for Sunrise's data.": "Sielzi une cjarte vueide pai dâts di Sunrise.",
+  "Could not choose data folder: {error}": "No si è rivât a sielzi la cjarte dai dâts: {error}",
+  "Could not start data move: {error}": "No si è rivât a scomençâ il spostament dai dâts: {error}",
+  "Move all data to {path}?": "Spostâ ducj i dâts in {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Al sposte ducj i dâts dal lançadôr, dal zûc e des compilazions, includudis lis impostazions, i monts, i esemplis e lis versions instaladis. Sielzi une cjarte vueide cun avonde spazi libar.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Il lançadôr al si siere intant che i tiei dâts a son copiâts e verificâts, daspò al torne a vierzisi. Lis vecjis cjartis a restin e a doprin ancjemò spazi sul disc fin che tu verifichis il spostament e tu lis rimuvis.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Lis cjartis dai dâts a son metudis di SUNRISE_LAUNCHER_HOME o SUNRISE_HOME. Rimovi chestis impostazions dal ambient e riavviâ il lançadôr prime di spostâ i dâts culì.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Sierâ il zûc e i servidôrs, e spietâ che i scaricaments, lis compilazions, i imports e l'acès a finissin prime di spostâ i dâts."
 }

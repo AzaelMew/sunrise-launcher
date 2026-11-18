@@ -1335,5 +1335,18 @@
   "up to date": "cập nhật",
   "the update failed: {error}": "cập nhật không thành công: {error}",
   "Update this launcher with your package manager.": "Cập nhật trình khởi chạy này bằng trình quản lý gói.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Đóng trình khởi chạy này, chuyển vào {folder}, rồi mở từ đó để bật cập nhật."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Đóng trình khởi chạy này, chuyển vào {folder}, rồi mở từ đó để bật cập nhật.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Thư mục dữ liệu",
+  "Move…": "Chuyển…",
+  "Move and restart": "Chuyển và khởi động lại",
+  "Choose data folder": "Chọn thư mục dữ liệu",
+  "Choose an empty folder for Sunrise's data.": "Hãy chọn một thư mục trống cho dữ liệu của Sunrise.",
+  "Could not choose data folder: {error}": "Không thể chọn thư mục dữ liệu: {error}",
+  "Could not start data move: {error}": "Không thể bắt đầu chuyển dữ liệu: {error}",
+  "Move all data to {path}?": "Chuyển toàn bộ dữ liệu đến {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Chuyển toàn bộ dữ liệu của trình khởi chạy, trò chơi và bản dựng, gồm cài đặt, thế giới, bản cài đặt và các phiên bản đã cài. Hãy chọn một thư mục trống có đủ dung lượng.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Trình khởi chạy sẽ đóng trong khi dữ liệu của bạn được sao chép và xác minh, rồi mở lại. Các thư mục cũ được giữ lại và vẫn chiếm dung lượng cho đến khi bạn xác minh việc chuyển và tự xóa chúng.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Thư mục dữ liệu được đặt bởi SUNRISE_LAUNCHER_HOME hoặc SUNRISE_HOME. Hãy bỏ các ghi đè biến môi trường này và khởi động lại trình khởi chạy trước khi chuyển dữ liệu đến đây.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Hãy đóng trò chơi và các máy chủ, rồi chờ tải xuống, xây dựng, nhập và đăng nhập hoàn tất trước khi chuyển dữ liệu."
 }

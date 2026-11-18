@@ -1335,5 +1335,18 @@
   "up to date": "soke lati ọjọ",
   "the update failed: {error}": "imudojuiwọn naa kuna: {error}",
   "Update this launcher with your package manager.": "Ṣe àtúnṣe ìfilọ́lẹ̀ yìí pẹ̀lú olùṣàkóso àkójọ rẹ.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pa ìfilọ́lẹ̀ yìí, gbé e lọ sí {folder}, kí o sì ṣí i níbẹ̀ láti mú àwọn àtúnṣe ṣiṣẹ́."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pa ìfilọ́lẹ̀ yìí, gbé e lọ sí {folder}, kí o sì ṣí i níbẹ̀ láti mú àwọn àtúnṣe ṣiṣẹ́.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Data folda",
+  "Move…": "Gbé…",
+  "Move and restart": "Gbé kí o sì tun bẹ̀rẹ̀",
+  "Choose data folder": "Yan folda dátà",
+  "Choose an empty folder for Sunrise's data.": "Yan folda òfo fún dátà Sunrise.",
+  "Could not choose data folder: {error}": "Kò lè yan folda dátà: {error}",
+  "Could not start data move: {error}": "Kò lè bẹ̀rẹ̀ gbígbé dátà: {error}",
+  "Move all data to {path}?": "Gbé gbogbo dátà lọ sí {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Ó ń gbé gbogbo dátà ìfilọ́lẹ̀, ere àti ìkọ́lé, pẹ̀lú àwọn ètò, agbaye, apẹẹrẹ àti àwọn ẹ̀yà tí a fi sori ẹrọ. Yan folda òfo tí ó ní ààyè tó fẹ́.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Ìfilọ́lẹ̀ yóò pa nígbà tí a ń dà àti ṣàyẹ̀wò dátà rẹ, lẹ́yìn náà yóò tún ṣí. A pa àwọn folda àtijọ́ mọ́, wọ́n sì ṣì ń lo ààyè diskì títí ìwọ yóò fi ṣàyẹ̀wò gbígbé náà kí o sì yọ wọ́n kúrò fúnra rẹ.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "SUNRISE_LAUNCHER_HOME tàbí SUNRISE_HOME ni ó ń ṣètò àwọn folda dátà. Yọ àwọn àṣẹ àyíká wọ̀nyí kúrò, kí o sì tun ìfilọ́lẹ̀ bẹ̀rẹ̀ kí o tó gbé dátà síbí.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Pa ere àti àwọn olupin, kí o sì dúró kí àwọn ìgbàlódé, ìkọ́lé, ìgbéwọlé àti ìwọlé parí kí o tó gbé dátà."
 }

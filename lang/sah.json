@@ -1335,5 +1335,18 @@
   "up to date": "билиҥҥэ диэри",
   "the update failed: {error}": "саҥардыы табыллыбата: {error}",
   "Update this launcher with your package manager.": "Бу лаунчеры пакет менеджерыҥ көмөтүнэн саҥарт.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Бу лаунчеры сап, {folder} диэки көһөр уонна онно арый — саҥардыылар холбонуохтара."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Бу лаунчеры сап, {folder} диэки көһөр уонна онно арый — саҥардыылар холбонуохтара.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Даннайдар папкалара",
+  "Move…": "Көһөр…",
+  "Move and restart": "Көһөр уонна хаттаан саҕалаа",
+  "Choose data folder": "Дааннай папкатын тал",
+  "Choose an empty folder for Sunrise's data.": "Sunrise дааннайдарыгар кураанах папканы тал.",
+  "Could not choose data folder: {error}": "Дааннай папкатын талын кыаҕа суох буолла: {error}",
+  "Could not start data move: {error}": "Дааннайдары көһөрүүнү саҕалыыр кыаҕа суох буолла: {error}",
+  "Move all data to {path}?": "Бары дааннайдары {path} диэки көһөрөбүн ду?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Настройкалары, аан дойдулары, инстанциялары уонна туруоруллубут версиялары кытта, лаунчер, оонньуу уонна тутуу бары дааннайдарын көһөрөр. Тиэтэйэр миэстэлээх кураанах папканы тал.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Дааннайдарыҥ көһөрүллэн бэрэбиэркэлэнэрин тухары лаунчер сабыллар, онтон хаттаан аһыллар. Эргэ папкалар хаалаллар уонна көһөрүүнү бэрэбиэркэлээн бэйэҥ соттооргор диэри диискэ сирин туталлар.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Дааннай папкалара SUNRISE_LAUNCHER_HOME эбэтэр SUNRISE_HOME көмөтүнэн олохтоммуттар. Дааннайдары манна көһөрүөҥ иннинэ бу айылҕа уларытыыларын сот уонна лаунчеры хаттаан саҕалаа.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Дааннайдары көһөрүөҥ иннинэ оонньууну уонна сервердэри сап, скачиваниелар, тутуулар, импорттар уонна киирии бүтүүллэрин кэтэс."
 }

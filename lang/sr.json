@@ -1335,5 +1335,18 @@
   "up to date": "ажурно",
   "the update failed: {error}": "ажурирање није успело: {error}",
   "Update this launcher with your package manager.": "Ажурирајте овај покретач помоћу свог менаџера пакета.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Затворите овај покретач, преместите га у {folder} и отворите га тамо да бисте омогућили ажурирања."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Затворите овај покретач, преместите га у {folder} и отворите га тамо да бисте омогућили ажурирања.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Фасцикла са подацима",
+  "Move…": "Премести…",
+  "Move and restart": "Премести и поново покрени",
+  "Choose data folder": "Изаберите фасциклу података",
+  "Choose an empty folder for Sunrise's data.": "Изаберите празну фасциклу за Sunrise-ове податке.",
+  "Could not choose data folder: {error}": "Није могуће изабрати фасциклу података: {error}",
+  "Could not start data move: {error}": "Није могуће започети премештање података: {error}",
+  "Move all data to {path}?": "Преместити све податке у {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Премешта све податке покретача, игре и изградње, укључујући подешавања, светове, инстанце и инсталиране верзије. Изаберите празну фасциклу са довољно слободног простора.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Покретач се затвара док се ваши подаци копирају и проверавају, а затим се поново отвара. Старе фасцикле се чувају и још заузимају простор на диску док не проверите премештање и сами их не уклоните.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Фасцикле података задају SUNRISE_LAUNCHER_HOME или SUNRISE_HOME. Уклоните ове променљиве окружења и поново покрените покретач пре премештања података овде.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Затворите игру и сервере и сачекајте да се заврше преузимања, изградње, увози и пријава пре премештања података."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "تازہ ترین",
   "the update failed: {error}": "اپ ڈیٹ ناکام ہو گیا: {error}",
   "Update this launcher with your package manager.": "اس لانچر کو اپنے پیکج مینیجر سے اپ ڈیٹ کریں۔",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "اس لانچر کو بند کریں، اسے {folder} میں منتقل کریں، اور اپ ڈیٹس فعال کرنے کے لیے اسے وہاں سے کھولیں۔"
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "اس لانچر کو بند کریں، اسے {folder} میں منتقل کریں، اور اپ ڈیٹس فعال کرنے کے لیے اسے وہاں سے کھولیں۔",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "ڈیٹا فولڈر",
+  "Move…": "منتقل کریں…",
+  "Move and restart": "منتقل کریں اور دوبارہ شروع کریں",
+  "Choose data folder": "ڈیٹا فولڈر منتخب کریں",
+  "Choose an empty folder for Sunrise's data.": "Sunrise کے ڈیٹا کے لیے ایک خالی فولڈر منتخب کریں۔",
+  "Could not choose data folder: {error}": "ڈیٹا فولڈر منتخب نہیں ہو سکا: {error}",
+  "Could not start data move: {error}": "ڈیٹا کی منتقلی شروع نہیں ہو سکی: {error}",
+  "Move all data to {path}?": "تمام ڈیٹا {path} میں منتقل کریں؟",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "لانچر، گیم اور تعمیر کا تمام ڈیٹا منتقل کرتا ہے، بشمول ترتیبات، دنیائیں، مثالیں اور انسٹال شدہ ورژن۔ کافی خالی جگہ والا خالی فولڈر منتخب کریں۔",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "آپ کا ڈیٹا کاپی اور جانچے جانے کے دوران لانچر بند ہو جاتا ہے، پھر دوبارہ کھلتا ہے۔ پرانے فولڈر رکھے جاتے ہیں اور جب تک آپ منتقلی کی جانچ کر کے خود انہیں نہ ہٹائیں، ڈسک کی جگہ استعمال کرتے رہتے ہیں۔",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "ڈیٹا فولڈر SUNRISE_LAUNCHER_HOME یا SUNRISE_HOME سے مقرر ہیں۔ ڈیٹا یہاں منتقل کرنے سے پہلے یہ ماحولیاتی اوور رائیڈز ہٹائیں اور لانچر دوبارہ شروع کریں۔",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ڈیٹا منتقل کرنے سے پہلے گیم اور سرورز بند کریں، اور ڈاؤن لوڈز، تعمیرات، درآمدات اور سائن ان کے مکمل ہونے کا انتظار کریں۔"
 }

@@ -1335,5 +1335,18 @@
   "up to date": "шинэчлэгдсэн",
   "the update failed: {error}": "шинэчлэлт амжилтгүй болсон: {error}",
   "Update this launcher with your package manager.": "Энэ эхлүүлэгчийг багц менежерээрээ шинэчилнэ үү.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Энэ эхлүүлэгчийг хааж, {folder} руу зөөгөөд, тэндээс нээвэл шинэчлэлт идэвхжинэ."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Энэ эхлүүлэгчийг хааж, {folder} руу зөөгөөд, тэндээс нээвэл шинэчлэлт идэвхжинэ.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Өгөгдлийн хавтас",
+  "Move…": "Зөөх…",
+  "Move and restart": "Зөөж дахин эхлүүлэх",
+  "Choose data folder": "Өгөгдлийн хавтас сонгох",
+  "Choose an empty folder for Sunrise's data.": "Sunrise-ийн өгөгдөлд зориулж хоосон хавтас сонгоно уу.",
+  "Could not choose data folder: {error}": "Өгөгдлийн хавтас сонгож чадсангүй: {error}",
+  "Could not start data move: {error}": "Өгөгдөл зөөхийг эхлүүлж чадсангүй: {error}",
+  "Move all data to {path}?": "Бүх өгөгдлийг {path} руу зөөх үү?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Тохиргоо, дэлхий, инстанс, суулгасан хувилбаруудыг оролцуулан эхлүүлэгч, тоглоом, бүтээлтийн бүх өгөгдлийг зөөнө. Хангалттай сул зайтай хоосон хавтас сонгоно уу.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Өгөгдлийг хуулж шалгах хугацаанд эхлүүлэгч хаагдаад дараа нь дахин нээгдэнэ. Зөөлтийг шалгаж, өөрөө устгах хүртэл хуучин хавтсууд хадгалагдаж, дискний зайг ашигласнаар байна.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Өгөгдлийн хавтсыг SUNRISE_LAUNCHER_HOME эсвэл SUNRISE_HOME тодорхойлдог. Өгөгдлийг энд зөөхөөс өмнө эдгээр орчны хувьсагчийн тохиргоог хасч, эхлүүлэгчийг дахин эхлүүлнэ үү.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Өгөгдөл зөөхөөс өмнө тоглоом болон серверүүдийг хааж, татах, бүтээх, импортлох, нэвтрэх үйлдлүүд дуусахыг хүлээнэ үү."
 }

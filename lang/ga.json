@@ -1335,5 +1335,18 @@
   "up to date": "suas chun dáta",
   "the update failed: {error}": "theip ar an nuashonrú: {error}",
   "Update this launcher with your package manager.": "Nuashonraigh an tosaitheoir seo le do bhainisteoir pacáistí.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Dún an tosaitheoir seo, bog go {folder} é, agus oscail ansin é chun nuashonruithe a chumasú."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Dún an tosaitheoir seo, bog go {folder} é, agus oscail ansin é chun nuashonruithe a chumasú.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Fillteán sonraí",
+  "Move…": "Bog…",
+  "Move and restart": "Bog agus atosaigh",
+  "Choose data folder": "Roghnaigh fillteán sonraí",
+  "Choose an empty folder for Sunrise's data.": "Roghnaigh fillteán folamh do shonraí Sunrise.",
+  "Could not choose data folder: {error}": "Níorbh fhéidir fillteán sonraí a roghnú: {error}",
+  "Could not start data move: {error}": "Níorbh fhéidir bogadh sonraí a thosú: {error}",
+  "Move all data to {path}?": "Bog gach sonra go {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Bogann sé seo gach sonra tosaitheora, cluiche agus tógála, lena n-áirítear socruithe, domhain, cásanna agus leaganacha suiteáilte. Roghnaigh fillteán folamh a bhfuil go leor spáis shaor ann.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Dúnann an tosaitheoir agus do chuid sonraí á gcóipeáil agus á ndeimhniú, ansin osclaíonn sé arís. Coinnítear seanfhillteáin agus úsáideann siad spás diosca go dtí go ndeimhníonn tú an bogadh agus go mbaineann tú féin iad.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Socraítear fillteáin sonraí le SUNRISE_LAUNCHER_HOME nó SUNRISE_HOME. Bain na sáruithe timpeallachta seo agus atosaigh an tosaitheoir sula mbogann tú sonraí anseo.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Dún an cluiche agus na freastalaithe, agus fan go gcríochnóidh íoslódálacha, tógálacha, iompórtálacha agus síniú isteach sula mbogann tú sonraí."
 }

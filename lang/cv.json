@@ -1335,5 +1335,18 @@
   "up to date": "ҫӗнӗ",
   "the update failed: {error}": "ҫӗнетӳ ӑнӑҫсӑр пулнӑ: {error}",
   "Update this launcher with your package manager.": "Ку лаунчера сирӗн пакет менеджерӗпе ҫӗнетӗр.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Ку лаунчера хупӑр, ӑна {folder} патне куҫарӑр тата ҫӗнетӳсене ҫутатма унта уҫӑр."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Ку лаунчера хупӑр, ӑна {folder} патне куҫарӑр тата ҫӗнетӳсене ҫутатма унта уҫӑр.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Даннӑйсен папки",
+  "Move…": "Куҫар…",
+  "Move and restart": "Куҫар тата ҫӗнӗрен пуҫла",
+  "Choose data folder": "Даннӑйсен папкине суйлӑр",
+  "Choose an empty folder for Sunrise's data.": "Sunrise даннӑйӗсем валли пушӑ папка суйлӑр.",
+  "Could not choose data folder: {error}": "Даннӑйсен папкине суйлама май килмерӗ: {error}",
+  "Could not start data move: {error}": "Даннӑйсене куҫарма пуҫлама май килмерӗ: {error}",
+  "Move all data to {path}?": "Пур даннӑйсене те {path} патне куҫарас-и?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Пур лаунчер, вӑйӑ тата пухӑм даннӑйисене, ҫав шутра настройкӑсене, тӗнчесене, инстанцисене тата вырнаҫтарнӑ версисене куҫарать. Ирӗклӗ вырӑн ҫителӗклӗ пушӑ папка суйлӑр.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Сирӗн даннӑйсене копиленӗ тата тӗрӗсленӗ чухне лаунчер хупать, кайран ҫӗнӗрен уҫӑлать. Кивӗ папкӑсене упраҫҫӗ те эсир куҫарнине тӗрӗслесе вӗсене хӑвӑр кӑларса пӑрахнӑччен диске вырӑн йышӑнаҫҫӗ-ха.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Даннӑйсен папкисене SUNRISE_LAUNCHER_HOME е SUNRISE_HOME палӑртать. Кунта даннӑйсене куҫарма умӗн ҫак орта ҫавӑрнисене кӑларса пӑрахӑр тата лаунчера ҫӗнӗрен пуҫлӑр.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Даннӑйсене куҫарма умӗн вӑййа тата серверсене хупӑр, скачать туни, пухни, импорт тата кӗни вӗҫленнине кӗтӗр."
 }

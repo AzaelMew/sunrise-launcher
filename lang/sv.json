@@ -1335,5 +1335,18 @@
   "up to date": "uppdaterad",
   "the update failed: {error}": "uppdateringen misslyckades: {error}",
   "Update this launcher with your package manager.": "Uppdatera den här launchern med din pakethanterare.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Stäng den här launchern, flytta den till {folder} och öppna den där för att aktivera uppdateringar."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Stäng den här launchern, flytta den till {folder} och öppna den där för att aktivera uppdateringar.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Datamapp",
+  "Move…": "Flytta…",
+  "Move and restart": "Flytta och starta om",
+  "Choose data folder": "Välj datamapp",
+  "Choose an empty folder for Sunrise's data.": "Välj en tom mapp för Sunrises data.",
+  "Could not choose data folder: {error}": "Kunde inte välja datamapp: {error}",
+  "Could not start data move: {error}": "Kunde inte starta dataflytten: {error}",
+  "Move all data to {path}?": "Flytta all data till {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Flyttar all data för launchern, spelet och byggen, inklusive inställningar, världar, instanser och installerade versioner. Välj en tom mapp med tillräckligt med ledigt utrymme.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Launchern stängs medan dina data kopieras och verifieras och öppnas sedan igen. Gamla mappar behålls och använder fortfarande diskutrymme tills du verifierar flytten och tar bort dem själv.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datamappar styrs av SUNRISE_LAUNCHER_HOME eller SUNRISE_HOME. Ta bort dessa miljövariabler och starta om launchern innan du flyttar data hit.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Stäng spelet och servrarna och vänta tills nedladdningar, byggen, importer och inloggning är klara innan du flyttar data."
 }

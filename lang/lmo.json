@@ -1335,5 +1335,18 @@
   "up to date": "al dì d'incœu",
   "the update failed: {error}": "l'aggiornament l'è fallì: {error}",
   "Update this launcher with your package manager.": "Aggiorna chestu lanciador cunt el tò gestor de pachett.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Serra chestu lanciador, spustel in {folder} e dervil lì per abilità i aggiornament."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Serra chestu lanciador, spustel in {folder} e dervil lì per abilità i aggiornament.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Cartella di dati",
+  "Move…": "Spusta...",
+  "Move and restart": "Spusta e riavvia",
+  "Choose data folder": "Scegli la cartella di dati",
+  "Choose an empty folder for Sunrise's data.": "Scegli una cartella vœuja per i dati de Sunrise.",
+  "Could not choose data folder: {error}": "Minga stà possibil scegli la cartella di dati: {error}",
+  "Could not start data move: {error}": "Minga stà possibil inizià el spustament di dati: {error}",
+  "Move all data to {path}?": "Spustà tüt i dati in {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "El spusta tüt i dati del lanciador, del giœugh e de la costruziun, cumpres i impostaziun, i mund, i istanz e i versiun instalad. Scegli una cartella vœuja cunt assee spazi liber.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "El lanciador el se sara menter i tò dati hinn copià e verificà, e dopu el se derva ancamò. I vegg cartell restan e duperan ancamò spazi sül disc fin che te verifichet el spustament e i cavet via te istess.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "I cartell di dati hinn impostà de SUNRISE_LAUNCHER_HOME o SUNRISE_HOME. Cavà via chesti override de ambient e riavvià el lanciador prima de spustà i dati chi.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Serra el giœugh e i server, e spetta che i scaricament, i costruziun, i importaziun e l'access finissen prima de spustà i dati."
 }

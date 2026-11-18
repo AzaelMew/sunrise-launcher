@@ -1335,5 +1335,18 @@
   "up to date": "dolzarb",
   "the update failed: {error}": "yangilash muvaffaqiyatsiz tugadi: {error}",
   "Update this launcher with your package manager.": "Bu launcher'ni paket menejeringiz bilan yangilang.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Yangilanishlarni yoqish uchun bu launcher'ni yoping, uni {folder} ga ko'chiring va o'sha yerdan oching."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Yangilanishlarni yoqish uchun bu launcher'ni yoping, uni {folder} ga ko'chiring va o'sha yerdan oching.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Ma'lumotlar papkasi",
+  "Move…": "Ko'chirish…",
+  "Move and restart": "Ko'chirish va qayta ishga tushirish",
+  "Choose data folder": "Ma'lumotlar papkasini tanlang",
+  "Choose an empty folder for Sunrise's data.": "Sunrise ma'lumotlari uchun bo'sh papkani tanlang.",
+  "Could not choose data folder: {error}": "Ma'lumotlar papkasini tanlab bo'lmadi: {error}",
+  "Could not start data move: {error}": "Ma'lumotlarni ko'chirishni boshlab bo'lmadi: {error}",
+  "Move all data to {path}?": "Barcha ma'lumotlar {path} ga ko'chirilsinmi?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Sozlamalar, dunyolar, nusxalar va o'rnatilgan versiyalar bilan birga barcha launcher, o'yin va qurilish ma'lumotlarini ko'chiradi. Yetarli bo'sh joyga ega bo'sh papkani tanlang.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Launcher ma'lumotlaringiz nusxalanib tekshirilguncha yopiladi, so'ng qayta ochiladi. Eski papkalar saqlanadi va siz ko'chirishni tekshirib, ularni o'zingiz olib tashlamaguningizcha disk joyini egallaydi.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Ma'lumotlar papkalari SUNRISE_LAUNCHER_HOME yoki SUNRISE_HOME tomonidan belgilangan. Ma'lumotlarni bu yerga ko'chirishdan oldin bu muhit bekor qilishlarini olib tashlang va launcher'ni qayta ishga tushiring.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Ma'lumotlarni ko'chirishdan oldin o'yin va serverlarni yoping, yuklab olishlar, qurilishlar, importlar va tizimga kirish tugashini kuting."
 }

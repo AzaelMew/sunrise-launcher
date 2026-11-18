@@ -1335,5 +1335,18 @@
   "up to date": "இன்றுவரை",
   "the update failed: {error}": "மேம்படுத்தல் தோல்வியடைந்தது: {error}",
   "Update this launcher with your package manager.": "இந்தத் துவக்கியை உங்கள் தொகுப்பு மேலாளர் மூலம் புதுப்பிக்கவும்.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "இந்தத் துவக்கியை மூடி, அதை {folder} க்கு நகர்த்தி, புதுப்பிப்புகளை இயக்க அங்கே திறக்கவும்."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "இந்தத் துவக்கியை மூடி, அதை {folder} க்கு நகர்த்தி, புதுப்பிப்புகளை இயக்க அங்கே திறக்கவும்.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "தரவு கோப்புறை",
+  "Move…": "நகர்த்து…",
+  "Move and restart": "நகர்த்தி மீண்டும் தொடங்கு",
+  "Choose data folder": "தரவு கோப்புறையைத் தேர்ந்தெடு",
+  "Choose an empty folder for Sunrise's data.": "Sunrise இன் தரவுக்கு காலியான கோப்புறையைத் தேர்ந்தெடுக்கவும்.",
+  "Could not choose data folder: {error}": "தரவு கோப்புறையைத் தேர்ந்தெடுக்க முடியவில்லை: {error}",
+  "Could not start data move: {error}": "தரவு நகர்த்தலைத் தொடங்க முடியவில்லை: {error}",
+  "Move all data to {path}?": "எல்லா தரவையும் {path} க்கு நகர்த்தவா?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "அமைப்புகள், உலகங்கள், நிகழ்வுகள் மற்றும் நிறுவப்பட்ட பதிப்புகள் உட்பட எல்லா துவக்கி, கேம் மற்றும் உருவாக்கத் தரவையும் நகர்த்துகிறது. போதுமான காலி இடமுள்ள காலியான கோப்புறையைத் தேர்ந்தெடுக்கவும்.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "உங்கள் தரவு நகலெடுக்கப்பட்டு சரிபார்க்கப்படும் போது துவக்கி மூடப்பட்டு, பின்னர் மீண்டும் திறக்கும். நீங்கள் நகர்த்தலைச் சரிபார்த்து அவற்றை நீங்களே அகற்றும் வரை பழைய கோப்புறைகள் வைக்கப்பட்டு இன்னும் வட்டு இடத்தைப் பயன்படுத்தும்.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "தரவு கோப்புறைகள் SUNRISE_LAUNCHER_HOME அல்லது SUNRISE_HOME மூலம் அமைக்கப்படுகின்றன. தரவை இங்கே நகர்த்தும் முன் இந்த சூழல் மேலெழுதல்களை அகற்றி துவக்கியை மீண்டும் தொடங்கவும்.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "தரவை நகர்த்தும் முன் விளையாட்டையும் சேவையகங்களையும் மூடி, பதிவிறக்கங்கள், உருவாக்கங்கள், இறக்குமதிகள் மற்றும் உள்நுழைவு முடியும் வரை காத்திருக்கவும்."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "ruo taa",
   "the update failed: {error}": "Mmelite ahụ dara: {error}",
   "Update this launcher with your package manager.": "Melite onye nrụpụta a site na njikwa ngwungwu gị.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Mechie onye nrụpụta a, kwaga ya na {folder}, wee mepee ya ebe ahụ iji mee ka mmelite rụọ ọrụ."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Mechie onye nrụpụta a, kwaga ya na {folder}, wee mepee ya ebe ahụ iji mee ka mmelite rụọ ọrụ.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "nchekwa data",
+  "Move…": "Kwaga…",
+  "Move and restart": "Kwaga ma malitegharịa",
+  "Choose data folder": "Họrọ folda data",
+  "Choose an empty folder for Sunrise's data.": "Họrọ folda tọgbọrọ chakoo maka data Sunrise.",
+  "Could not choose data folder: {error}": "Enweghị ike ịhọrọ folda data: {error}",
+  "Could not start data move: {error}": "Enweghị ike ịmalite ịkwaga data: {error}",
+  "Move all data to {path}?": "Kwaga data niile na {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Ọ na-akwaga data niile nke onye nrụpụta, egwuregwu na ihe owuwu, gụnyere ntọala, ụwa, ihe atụ na ụdị arụnyere. Họrọ folda tọgbọrọ chakoo nwere ohere zuru ezu.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Onye nrụpụta na-emechi ka a na-eṅomi data gị ma na-enyocha ya, wee mepee ọzọ. A na-edebe folda ochie ma ha ka na-eji ohere diski ruo mgbe ị nyochara nkwagharị ahụ ma wepụ ha n'onwe gị.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "A na-edozi folda data site na SUNRISE_LAUNCHER_HOME ma ọ bụ SUNRISE_HOME. Wepụ mgbanwe gburugburu ndị a ma malitegharịa onye nrụpụta tupu ị kwaga data ebe a.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Mechie egwuregwu na sava, chere ka nbudata, ihe owuwu, mbubata na nbanye gwuchaa tupu ị kwaga data."
 }

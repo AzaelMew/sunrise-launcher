@@ -1335,5 +1335,18 @@
   "up to date": "bu günə qədər",
   "the update failed: {error}": "yeniləmə uğursuz oldu: {error}",
   "Update this launcher with your package manager.": "Bu başlatıcını paket menecerinizlə yeniləyin.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Bu başlatıcını bağlayın, onu {folder} ünvanına köçürün və yeniləmələri aktivləşdirmək üçün orada açın."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Bu başlatıcını bağlayın, onu {folder} ünvanına köçürün və yeniləmələri aktivləşdirmək üçün orada açın.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Məlumat qovluğu",
+  "Move…": "Köçür…",
+  "Move and restart": "Köçür və yenidən başlat",
+  "Choose data folder": "Məlumat qovluğunu seçin",
+  "Choose an empty folder for Sunrise's data.": "Sunrise-un məlumatları üçün boş qovluq seçin.",
+  "Could not choose data folder: {error}": "Məlumat qovluğunu seçmək mümkün olmadı: {error}",
+  "Could not start data move: {error}": "Məlumat köçürməsini başlatmaq mümkün olmadı: {error}",
+  "Move all data to {path}?": "Bütün məlumatlar {path} ünvanına köçürülsün?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Parametrlər, dünyalar, nüsxələr və quraşdırılmış versiyalar daxil olmaqla bütün başlatıcı, oyun və quruluş məlumatlarını köçürür. Kifayət qədər boş sahəsi olan boş qovluq seçin.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Məlumatlarınız kopyalanıb yoxlanılarkən başlatıcı bağlanır, sonra yenidən açılır. Köhnə qovluqlar saxlanılır və siz köçürməni yoxlayıb onları özünüz silənə qədər disk sahəsi tutmağa davam edir.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Məlumat qovluqları SUNRISE_LAUNCHER_HOME və ya SUNRISE_HOME ilə müəyyən edilir. Məlumatları buraya köçürməzdən əvvəl bu mühit dəyişənlərini silin və başlatıcını yenidən başladın.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Məlumatları köçürməzdən əvvəl oyunu və serverləri bağlayın, endirmələrin, quruluşların, idxalların və girişin bitməsini gözləyin."
 }

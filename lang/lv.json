@@ -1335,5 +1335,18 @@
   "up to date": "aktuāls",
   "the update failed: {error}": "atjaunināšana neizdevās: {error}",
   "Update this launcher with your package manager.": "Atjauniniet šo palaišanas programmu ar savu pakotņu pārvaldnieku.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Aizveriet šo palaišanas programmu, pārvietojiet to uz {folder} un atveriet to tur, lai iespējotu atjauninājumus."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Aizveriet šo palaišanas programmu, pārvietojiet to uz {folder} un atveriet to tur, lai iespējotu atjauninājumus.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Datu mape",
+  "Move…": "Pārvietot…",
+  "Move and restart": "Pārvietot un restartēt",
+  "Choose data folder": "Izvēlēties datu mapi",
+  "Choose an empty folder for Sunrise's data.": "Izvēlieties tukšu mapi Sunrise datiem.",
+  "Could not choose data folder: {error}": "Neizdevās izvēlēties datu mapi: {error}",
+  "Could not start data move: {error}": "Neizdevās sākt datu pārvietošanu: {error}",
+  "Move all data to {path}?": "Pārvietot visus datus uz {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Pārvieto visus palaišanas programmas, spēles un būvēšanas datus, tostarp iestatījumus, pasaules, instances un instalētās versijas. Izvēlieties tukšu mapi ar pietiekami daudz brīvas vietas.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Kamēr dati tiek kopēti un pārbaudīti, palaišanas programma aizveras un pēc tam atveras vēlreiz. Vecās mapes tiek saglabātas un joprojām aizņem diska vietu, līdz jūs pārbaudāt pārvietošanu un dzēšat tās paši.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datu mapes nosaka SUNRISE_LAUNCHER_HOME vai SUNRISE_HOME. Noņemiet šos vides pārrakstus un restartējiet palaišanas programmu pirms datu pārvietošanas uz šejieni.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Aizveriet spēli un serverus un pirms datu pārvietošanas nogaidiet, līdz beidzas lejupielādes, būvēšana, importēšana un pierakstīšanās."
 }

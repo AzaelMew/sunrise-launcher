@@ -116,6 +116,7 @@ impl Launcher {
             // The first draw takes the launcher theme from Settings.
             location_error: location_page::startup_error(),
             location_note: location_page::startup_note(),
+            location_target: None,
             args_input: line_edit::LineEdit::new(settings.game_args.clone(), 1024, 38),
             args_focused: false,
             args_focus: cx.focus_handle().tab_index(0).tab_stop(true),
@@ -206,8 +207,13 @@ impl Launcher {
             side_servers: sunrise_launcher::servers::list(),
             scale: window.scale_factor(),
         };
-        if this.location_error.is_some() || this.location_note.is_some() {
-            this.page = Page::Settings;
+        // A data folder that did not open, or a move that failed or finished, is dealt with in
+        // Settings › Storage, where its message and the recoveries are.
+        if let Some(section) =
+            settings::startup_section(this.location_error.is_some(), this.location_note.is_some())
+        {
+            this.ui.page = frame::Page::Settings;
+            this.ui.settings.section = section;
         }
         this.reload_instances();
         if this.bench.is_some() {

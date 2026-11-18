@@ -1335,5 +1335,18 @@
   "up to date": "актуально",
   "the update failed: {error}": "обновление не удалось: {error}",
   "Update this launcher with your package manager.": "Обновите этот лаунчер через менеджер пакетов.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Закройте этот лаунчер, переместите его в {folder} и откройте оттуда, чтобы включить обновления."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Закройте этот лаунчер, переместите его в {folder} и откройте оттуда, чтобы включить обновления.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Папка данных",
+  "Move…": "Перенести…",
+  "Move and restart": "Перенести и перезапустить",
+  "Choose data folder": "Выбрать папку данных",
+  "Choose an empty folder for Sunrise's data.": "Выберите пустую папку для данных Sunrise.",
+  "Could not choose data folder: {error}": "Не удалось выбрать папку данных: {error}",
+  "Could not start data move: {error}": "Не удалось начать перенос данных: {error}",
+  "Move all data to {path}?": "Перенести все данные в {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Переносит все данные лаунчера, игры и компиляции, включая настройки, миры, сборки и установленные версии. Выберите пустую папку с достаточным количеством свободного места.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Лаунчер закроется на время копирования и проверки данных, а затем откроется снова. Старые папки сохранятся и будут занимать место на диске, пока вы не проверите результат переноса и не удалите их вручную.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Папки данных заданы переменными SUNRISE_LAUNCHER_HOME или SUNRISE_HOME. Удалите эти переменные окружения и перезапустите лаунчер, прежде чем переносить данные здесь.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Перед переносом данных закройте игру и серверы и дождитесь завершения загрузок, компиляции, импорта и входа в аккаунт."
 }

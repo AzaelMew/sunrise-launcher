@@ -1335,5 +1335,18 @@
   "up to date": "do datuma",
   "the update failed: {error}": "posodobitev ni uspela: {error}",
   "Update this launcher with your package manager.": "Ta zaganjalnik posodobite s svojim upraviteljem paketov.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zaprite ta zaganjalnik, ga premaknite v {folder} in ga tam odprite, da omogočite posodobitve."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zaprite ta zaganjalnik, ga premaknite v {folder} in ga tam odprite, da omogočite posodobitve.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Podatkovna mapa",
+  "Move…": "Premakni ...",
+  "Move and restart": "Premakni in znova zaženi",
+  "Choose data folder": "Izberite podatkovno mapo",
+  "Choose an empty folder for Sunrise's data.": "Izberite prazno mapo za Sunriseove podatke.",
+  "Could not choose data folder: {error}": "Podatkovne mape ni bilo mogoče izbrati: {error}",
+  "Could not start data move: {error}": "Premikanja podatkov ni bilo mogoče začeti: {error}",
+  "Move all data to {path}?": "Premakniti vse podatke v {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Premakne vse podatke zaganjalnika, igre in gradnje, vključno z nastavitvami, svetovi, primerki in nameščenimi različicami. Izberite prazno mapo z dovolj prostega prostora.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Zaganjalnik se med kopiranjem in preverjanjem podatkov zapre, nato pa se znova odpre. Stare mape se ohranijo in še vedno zasedajo prostor na disku, dokler ne preverite premika in jih odstranite sami.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Podatkovne mape določata SUNRISE_LAUNCHER_HOME ali SUNRISE_HOME. Odstranite ti spremenljivki okolja in znova zaženite zaganjalnik, preden podatke premaknete sem.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Pred premikanjem podatkov zaprite igro in strežnike ter počakajte, da se končajo prenosi, gradnje, uvozi in prijava."
 }

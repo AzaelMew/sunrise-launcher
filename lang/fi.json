@@ -1335,5 +1335,18 @@
   "up to date": "ajan tasalla",
   "the update failed: {error}": "päivitys epäonnistui: {error}",
   "Update this launcher with your package manager.": "Päivitä tämä käynnistysohjelma paketinhallinnallasi.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sulje tämä käynnistysohjelma, siirrä se kansioon {folder} ja avaa se siellä, jotta päivitykset toimivat."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sulje tämä käynnistysohjelma, siirrä se kansioon {folder} ja avaa se siellä, jotta päivitykset toimivat.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Datakansio",
+  "Move…": "Siirrä…",
+  "Move and restart": "Siirrä ja käynnistä uudelleen",
+  "Choose data folder": "Valitse datakansio",
+  "Choose an empty folder for Sunrise's data.": "Valitse tyhjä kansio Sunrisein datalle.",
+  "Could not choose data folder: {error}": "Datakansion valinta ei onnistunut: {error}",
+  "Could not start data move: {error}": "Datan siirtoa ei voitu aloittaa: {error}",
+  "Move all data to {path}?": "Siirretäänkö kaikki data kohteeseen {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Siirtää kaiken käynnistysohjelman, pelin ja käännösten datan, mukaan lukien asetukset, maailmat, instanssit ja asennetut versiot. Valitse tyhjä kansio, jossa on riittävästi vapaata tilaa.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Käynnistysohjelma sulkeutuu, kun datasi kopioidaan ja tarkistetaan, ja avautuu sitten uudelleen. Vanhat kansiot säilytetään ja vievät levytilaa, kunnes tarkistat siirron ja poistat ne itse.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datakansiot määritetään ympäristömuuttujilla SUNRISE_LAUNCHER_HOME tai SUNRISE_HOME. Poista nämä ympäristöohitukset ja käynnistä käynnistysohjelma uudelleen ennen kuin siirrät dataa tänne.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Sulje peli ja palvelimet sekä odota, että lataukset, käännökset, tuonnit ja sisäänkirjautuminen päättyvät, ennen kuin siirrät dataa."
 }

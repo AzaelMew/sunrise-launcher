@@ -1335,5 +1335,18 @@
   "up to date": "uppfærð",
   "the update failed: {error}": "uppfærslan mistókst: {error}",
   "Update this launcher with your package manager.": "Uppfærðu þetta ræsiforrit með pakkastjóranum þínum.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Lokaðu þessu ræsiforriti, færðu það í {folder} og opnaðu það þar til að virkja uppfærslur."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Lokaðu þessu ræsiforriti, færðu það í {folder} og opnaðu það þar til að virkja uppfærslur.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Gagnamöppu",
+  "Move…": "Færa…",
+  "Move and restart": "Færa og endurræsa",
+  "Choose data folder": "Veldu gagnamöppu",
+  "Choose an empty folder for Sunrise's data.": "Veldu tóma möppu fyrir gögn Sunrise.",
+  "Could not choose data folder: {error}": "Gat ekki valið gagnamöppu: {error}",
+  "Could not start data move: {error}": "Gat ekki hafið flutning gagna: {error}",
+  "Move all data to {path}?": "Færa öll gögn í {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Færir öll gögn ræsiforritsins, leiksins og smíða, þar á meðal stillingar, heima, tilvik og uppsettar útgáfur. Veldu tóma möppu með nægu lausu plássi.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Ræsiforritið lokast meðan gögnin þín eru afrituð og staðfest og opnast svo aftur. Gömlu möppurnar eru geymdar og nota diskpláss þar til þú staðfestir flutninginn og fjarlægir þær sjálfur.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Gagnamöppur eru stilltar af SUNRISE_LAUNCHER_HOME eða SUNRISE_HOME. Fjarlægðu þessar umhverfisbreytur og endurræstu ræsiforritið áður en gögn eru færð hingað.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Lokaðu leiknum og netþjónunum og bíddu eftir að niðurhöl, smíðar, innflutningur og innskráning klárist áður en gögn eru færð."
 }

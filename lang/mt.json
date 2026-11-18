@@ -1335,5 +1335,18 @@
   "up to date": "aġġornata",
   "the update failed: {error}": "l-aġġornament falla: {error}",
   "Update this launcher with your package manager.": "Aġġorna dan il-lanċjar bil-maniġer tal-pakketti tiegħek.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Agħlaq dan il-lanċjar, mexxih għal {folder}, u iftaħu hemm biex tixgħel l-aġġornamenti."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Agħlaq dan il-lanċjar, mexxih għal {folder}, u iftaħu hemm biex tixgħel l-aġġornamenti.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Fowlder tad-dejta",
+  "Move…": "Mexxi…",
+  "Move and restart": "Mexxi u erġa' ibda",
+  "Choose data folder": "Agħżel il-folder tad-dejta",
+  "Choose an empty folder for Sunrise's data.": "Agħżel folder vojt għad-dejta ta' Sunrise.",
+  "Could not choose data folder: {error}": "Ma setax jintgħażel il-folder tad-dejta: {error}",
+  "Could not start data move: {error}": "Ma setax jinbeda t-tmexxija tad-dejta: {error}",
+  "Move all data to {path}?": "Tmexxi d-dejta kollha għal {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Tmexxi d-dejta kollha tal-lanċjar, tal-logħba u tal-bini, inklużi s-settings, id-dinjiet, l-istanzi u l-verżjonijiet installati. Agħżel folder vojt bi spazju biżżejjed.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Il-lanċjar jingħalaq waqt li d-dejta tiegħek tiġi kkupjata u vverifikata, imbagħad jerġa' jiftaħ. Il-folders l-antichi jinżammu u għadhom jużaw spazju fuq id-diska sakemm tivverifika t-tmexxija u tneħħihom int stess.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Il-folders tad-dejta huma stabbiliti minn SUNRISE_LAUNCHER_HOME jew SUNRISE_HOME. Neħħi dawn l-overrides tal-ambjent u erġa' ibda l-lanċjar qabel ma tmexxi d-dejta hawn.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Agħlaq il-logħba u s-servers, u stenna li jitlestew it-tniżżil, il-bini, l-importazzjonijiet u d-dħul qabel ma tmexxi d-dejta."
 }

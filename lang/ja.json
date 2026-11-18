@@ -1335,5 +1335,18 @@
   "up to date": "最新",
   "the update failed: {error}": "アップデートに失敗しました: {error}",
   "Update this launcher with your package manager.": "パッケージマネージャーでこのランチャーを更新してください。",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "このランチャーを閉じて {folder} に移動し、そこから開くと更新できるようになります。"
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "このランチャーを閉じて {folder} に移動し、そこから開くと更新できるようになります。",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "データフォルダー",
+  "Move…": "移動…",
+  "Move and restart": "移動して再起動",
+  "Choose data folder": "データフォルダーを選択",
+  "Choose an empty folder for Sunrise's data.": "Sunrise のデータ用に空のフォルダーを選択してください。",
+  "Could not choose data folder: {error}": "データフォルダーを選択できませんでした: {error}",
+  "Could not start data move: {error}": "データの移動を開始できませんでした: {error}",
+  "Move all data to {path}?": "すべてのデータを {path} に移動しますか？",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "設定、ワールド、インスタンス、インストール済みバージョンを含む、ランチャー、ゲーム、ビルドのすべてのデータを移動します。十分な空き容量のある空のフォルダーを選択してください。",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "データのコピーと検証中はランチャーが終了し、完了後に再び起動します。元のフォルダーは保持され、移動結果を確認して手動で削除するまでディスク容量を使用し続けます。",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "データフォルダーは SUNRISE_LAUNCHER_HOME または SUNRISE_HOME で指定されています。ここでデータを移動するには、これらの環境変数の設定を解除し、ランチャーを再起動してください。",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "データを移動する前に、ゲームとサーバーを終了し、ダウンロード、ビルド、インポート、サインインの完了を待ってください。"
 }

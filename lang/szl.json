@@ -1335,5 +1335,18 @@
   "up to date": "aktualny",
   "the update failed: {error}": "aktualizacyjo niy zadziałała: {error}",
   "Update this launcher with your package manager.": "Aktualizuj tyn launcher swojim menedżerym pakietōw.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zamknij tyn launcher, przenieś go do {folder} i ôtwōrz go tam, coby włōnczyć aktualizacyje."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zamknij tyn launcher, przenieś go do {folder} i ôtwōrz go tam, coby włōnczyć aktualizacyje.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Folder danych",
+  "Move…": "Przenieś…",
+  "Move and restart": "Przenieś i restartuj",
+  "Choose data folder": "Ôbiyraj folder danych",
+  "Choose an empty folder for Sunrise's data.": "Ôbiyraj prōżny folder na dane Sunrise.",
+  "Could not choose data folder: {error}": "Niy idzie wybrać folderu danych: {error}",
+  "Could not start data move: {error}": "Niy idzie zaczōnć przenosynio danych: {error}",
+  "Move all data to {path}?": "Przenieś wszyske dane do {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Przenosi wszyske dane lauchera, gry i buildōw, w tym ustawiynia, światy, instancyje i zainstalowane wersyje. Ôbiyraj prōżny folder z dosyć miyjsca na dysku.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Launcher sie zamyko, kej twoje dane sōm kopiowane i sprawdzane, a potym ôtwiyro sie zaś. Stare foldery ôstowajōm i durch używajōm miyjsca na dysku, aże sprawdzisz przenosynie i je sōm usuniesz.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Foldery danych sōm ustawiōne bez SUNRISE_LAUNCHER_HOME abo SUNRISE_HOME. Usuń te zmienne środowiska i restartuj launcher, nim przeniesiesz tu dane.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Zamknij gra i serwery i poczeko, aże pobiyrania, budowanie, importy i zalogowanie sie skōńczōm, nim przeniesiesz dane."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "güncel",
   "the update failed: {error}": "güncelleme başarısız oldu: {error}",
   "Update this launcher with your package manager.": "Bu başlatıcıyı paket yöneticinizle güncelleyin.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Bu başlatıcıyı kapatın, {folder} konumuna taşıyın ve güncellemeleri etkinleştirmek için oradan açın."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Bu başlatıcıyı kapatın, {folder} konumuna taşıyın ve güncellemeleri etkinleştirmek için oradan açın.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Veri klasörü",
+  "Move…": "Taşı…",
+  "Move and restart": "Taşı ve yeniden başlat",
+  "Choose data folder": "Veri klasörünü seç",
+  "Choose an empty folder for Sunrise's data.": "Sunrise verileri için boş bir klasör seçin.",
+  "Could not choose data folder: {error}": "Veri klasörü seçilemedi: {error}",
+  "Could not start data move: {error}": "Veri taşıma işlemi başlatılamadı: {error}",
+  "Move all data to {path}?": "Tüm veriler {path} konumuna taşınsın mı?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Ayarlar, dünyalar, örnekler ve yüklü sürümler dahil tüm başlatıcı, oyun ve derleme verilerini taşır. Yeterli boş alana sahip boş bir klasör seçin.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Verileriniz kopyalanıp doğrulanırken başlatıcı kapanır, ardından yeniden açılır. Eski klasörler korunur; taşıma sonucunu kontrol edip bu klasörleri kendiniz silene kadar disk alanı kullanmaya devam ederler.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Veri klasörleri SUNRISE_LAUNCHER_HOME veya SUNRISE_HOME tarafından belirleniyor. Verileri buradan taşımadan önce bu ortam değişkenlerini kaldırıp başlatıcıyı yeniden başlatın.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Verileri taşımadan önce oyunu ve sunucuları kapatın; indirmelerin, derlemelerin, içe aktarmaların ve oturum açma işleminin tamamlanmasını bekleyin."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "i kēia lā",
   "the update failed: {error}": "ʻaʻole i hāʻawi ʻia ka mea hou: {error}",
   "Update this launcher with your package manager.": "Hōʻano hou i kēia mea hoʻolaha me kāu mea hoʻokele pūʻolo.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pani i kēia mea hoʻolaha, neʻe iā ia i {folder}, a wehe ma laila e hiki ai nā hōʻano hou."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pani i kēia mea hoʻolaha, neʻe iā ia i {folder}, a wehe ma laila e hiki ai nā hōʻano hou.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "waihona ʻikepili",
+  "Move…": "Neʻe…",
+  "Move and restart": "Neʻe a hoʻomaka hou",
+  "Choose data folder": "E koho i ka waihona ʻikepili",
+  "Choose an empty folder for Sunrise's data.": "E koho i kahi waihona hakahaka no ka ʻikepili o Sunrise.",
+  "Could not choose data folder: {error}": "ʻAʻole hiki ke koho i ka waihona ʻikepili: {error}",
+  "Could not start data move: {error}": "ʻAʻole hiki ke hoʻomaka i ka neʻe ʻana o ka ʻikepili: {error}",
+  "Move all data to {path}?": "E neʻe i ka ʻikepili a pau i {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Neʻe i ka ʻikepili a pau o ka mea hoʻolaha, ka pāʻani a me ke kūkulu, me nā hoʻonohonoho, nā honua, nā laʻana a me nā mana i hoʻokomo ʻia. E koho i kahi waihona hakahaka me ka wahi kaʻawale lawa.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Pani ka mea hoʻolaha i ka wā e kope ʻia a hōʻoia ʻia kāu ʻikepili, a laila wehe hou. Mālama ʻia nā waihona kahiko a hoʻohana mau i ka wahi disk a hōʻoia ʻoe i ka neʻe ʻana a wehe iā lākou iā ʻoe iho.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Hoʻonohonoho ʻia nā waihona ʻikepili e SUNRISE_LAUNCHER_HOME a i ʻole SUNRISE_HOME. Wehe i kēia mau hoʻololi kaiapuni a hoʻomaka hou i ka mea hoʻolaha ma mua o ka neʻe ʻana i ka ʻikepili ma ʻaneʻi.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Pani i ka pāʻani a me nā kikowaena, a kali a pau nā hoʻoiho, nā kūkulu, nā lawe ʻana mai a me ke kau inoa ma mua o ka neʻe ʻana i ka ʻikepili."
 }

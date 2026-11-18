@@ -1335,5 +1335,18 @@
   "up to date": "by de tiid",
   "the update failed: {error}": "de fernijing mislearre: {error}",
   "Update this launcher with your package manager.": "Wurkje dizze launcher by fia jo pakketbehearder.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Slút dizze launcher, ferpleats him nei {folder} en iepenje him dêr om updates mooglik te meitsjen."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Slút dizze launcher, ferpleats him nei {folder} en iepenje him dêr om updates mooglik te meitsjen.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Data map",
+  "Move…": "Ferpleatse…",
+  "Move and restart": "Ferpleatse en opnij starte",
+  "Choose data folder": "Kies gegevensmap",
+  "Choose an empty folder for Sunrise's data.": "Kies in lege map foar de gegevens fan Sunrise.",
+  "Could not choose data folder: {error}": "Koe gjin gegevensmap kieze: {error}",
+  "Could not start data move: {error}": "Koe it ferpleatsen fan gegevens net starte: {error}",
+  "Move all data to {path}?": "Alle gegevens ferpleatse nei {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Ferpleatst alle gegevens fan launcher, spultsje en bou, ynklusyf ynstellings, wrâlden, eksimplaren en ynstallearre ferzjes. Kies in lege map mei genôch frije romte.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "De launcher slút wylst jo gegevens kopiearre en ferifisearre wurde, en iepenet dêrnei wer. Alde mappen wurde bewarre en brûke noch skiifromte oant jo de ferpleatsing ferifisearje en se sels fuortsmite.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Gegevensmappen wurde ynsteld troch SUNRISE_LAUNCHER_HOME of SUNRISE_HOME. Smyt dizze miljeu-oerskriuwings fuort en start de launcher opnij foardat jo gegevens hjirhinne ferpleatse.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Slút it spultsje en de tsjinners, en wachtsje oant downloads, bouwen, ymporten en oanmelden klear binne foardat jo gegevens ferpleatse."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "به روز",
   "the update failed: {error}": "به روز رسانی انجام نشد: {error}",
   "Update this launcher with your package manager.": "این لانچر را با مدیر بسته خود به‌روزرسانی کنید.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "این لانچر را ببندید، آن را به {folder} منتقل کنید و برای فعال شدن به‌روزرسانی‌ها از همان‌جا بازش کنید."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "این لانچر را ببندید، آن را به {folder} منتقل کنید و برای فعال شدن به‌روزرسانی‌ها از همان‌جا بازش کنید.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "پوشه داده",
+  "Move…": "انتقال…",
+  "Move and restart": "انتقال و راه‌اندازی مجدد",
+  "Choose data folder": "انتخاب پوشه داده",
+  "Choose an empty folder for Sunrise's data.": "یک پوشه خالی برای داده‌های هورایزن انتخاب کنید.",
+  "Could not choose data folder: {error}": "پوشه داده انتخاب نشد: {error}",
+  "Could not start data move: {error}": "جابه‌جایی داده شروع نشد: {error}",
+  "Move all data to {path}?": "همه داده‌ها به {path} منتقل شوند؟",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "همه داده‌های لانچر، بازی و ساخت را جابه‌جا می‌کند، از جمله تنظیمات، دنیاها، نمونه‌ها و نسخه‌های نصب‌شده. پوشه‌ای خالی با فضای آزاد کافی انتخاب کنید.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "لانچر هنگام کپی و بررسی داده‌های شما بسته می‌شود و سپس دوباره باز می‌شود. پوشه‌های قدیمی نگه داشته می‌شوند و تا وقتی انتقال را بررسی کنید و خودتان آن‌ها را حذف کنید، از فضای دیسک استفاده می‌کنند.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "پوشه‌های داده با SUNRISE_LAUNCHER_HOME یا SUNRISE_HOME تعیین می‌شوند. این بازنویسی‌های محیطی را بردارید و پیش از انتقال داده‌ها به اینجا، لانچر را دوباره راه‌اندازی کنید.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "بازی و سرورها را ببندید و پیش از جابه‌جایی داده‌ها، منتظر تمام شدن دانلودها، ساخت‌ها، وارد کردن‌ها و ورود به حساب بمانید."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "yn gyfoes",
   "the update failed: {error}": "methodd y diweddariad: {error}",
   "Update this launcher with your package manager.": "Diweddarwch y lansiwr hwn gyda'ch rheolwr pecynnau.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Caewch y lansiwr hwn, symudwch ef i {folder}, ac agorwch ef yno i alluogi diweddariadau."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Caewch y lansiwr hwn, symudwch ef i {folder}, ac agorwch ef yno i alluogi diweddariadau.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Ffolder data",
+  "Move…": "Symud…",
+  "Move and restart": "Symud ac ailgychwyn",
+  "Choose data folder": "Dewiswch ffolder data",
+  "Choose an empty folder for Sunrise's data.": "Dewiswch ffolder wag ar gyfer data Sunrise.",
+  "Could not choose data folder: {error}": "Methu dewis ffolder data: {error}",
+  "Could not start data move: {error}": "Methu dechrau symud data: {error}",
+  "Move all data to {path}?": "Symud yr holl ddata i {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Mae'n symud holl ddata'r lansiwr, y gêm a'r adeiladau, gan gynnwys gosodiadau, bydoedd, enghreifftiau a fersiynau sydd wedi'u gosod. Dewiswch ffolder wag sydd â digon o le rhydd.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Mae'r lansiwr yn cau wrth i'ch data gael ei gopïo a'i wirio, yna'n ailagor. Cedwir yr hen ffolderi ac maent yn dal i ddefnyddio lle ar y disg nes i chi wirio'r symudiad a'u tynnu eich hun.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Mae ffolderi data yn cael eu gosod gan SUNRISE_LAUNCHER_HOME neu SUNRISE_HOME. Tynnwch y gosodiadau amgylchedd hyn ac ailgychwynnwch y lansiwr cyn symud data yma.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Caewch y gêm a'r gweinyddwyr, ac arhoswch i'r lawrlwythiadau, yr adeiladau, y mewnforion a'r mewngofnodi orffen cyn symud data."
 }

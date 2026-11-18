@@ -1335,5 +1335,18 @@
   "up to date": "бүгенге көнгә кадәр",
   "the update failed: {error}": "яңарту уңышсыз: {error}",
   "Update this launcher with your package manager.": "Бу эшләткечне пакет менеджерыгыз белән яңартыгыз.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Яңартуларны кабызу өчен, бу эшләткечне ябыгыз, аны {folder} папкасына күчерегез һәм шунда ачыгыз."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Яңартуларны кабызу өчен, бу эшләткечне ябыгыз, аны {folder} папкасына күчерегез һәм шунда ачыгыз.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Мәгълүмат папкасы",
+  "Move…": "Күчерү…",
+  "Move and restart": "Күчер һәм яңадан җибәр",
+  "Choose data folder": "Мәгълүмат папкасын сайлагыз",
+  "Choose an empty folder for Sunrise's data.": "Sunrise мәгълүматлары өчен буш папка сайлагыз.",
+  "Could not choose data folder: {error}": "Мәгълүмат папкасын сайлап булмады: {error}",
+  "Could not start data move: {error}": "Мәгълүматларны күчерүне башлап булмады: {error}",
+  "Move all data to {path}?": "Барлык мәгълүматларны {path} папкасына күчерергәме?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Көйләүләр, дөньялар, инстанцияләр һәм урнаштырылган версияләр кертеп, барлык эшләткеч, уен һәм төзелеш мәгълүматларын күчерә. Буш урыны җитәрлек булган буш папка сайлагыз.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Мәгълүматларыгыз күчерелгәндә һәм тикшерелгәндә эшләткеч ябыла, аннары яңадан ачыла. Күчерүне үзегез тикшереп, иске папкаларны бетергәнче алар саклана һәм һаман диск урынын били.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Мәгълүмат папкалары SUNRISE_LAUNCHER_HOME яки SUNRISE_HOME белән билгеләнгән. Мәгълүматларны монда күчерү алдыннан бу мохит үзгәртүләрен бетерлегез һәм эшләткечне яңадан җибәрегез.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Мәгълүматларны күчерү алдыннан уенны һәм серверларны ябыгыз, йөкләүләр, төзелешләр, импортлар һәм керү тәмамлануын көтегез."
 }

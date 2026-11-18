@@ -1335,5 +1335,18 @@
   "up to date": "ao día",
   "the update failed: {error}": "fallou a actualización: {error}",
   "Update this launcher with your package manager.": "Actualiza este lanzador co teu xestor de paquetes.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pecha este lanzador, móveo a {folder} e ábreo alí para activar as actualizacións."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pecha este lanzador, móveo a {folder} e ábreo alí para activar as actualizacións.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Cartafol de datos",
+  "Move…": "Mover…",
+  "Move and restart": "Mover e reiniciar",
+  "Choose data folder": "Escoller cartafol de datos",
+  "Choose an empty folder for Sunrise's data.": "Escolle un cartafol baleiro para os datos de Sunrise.",
+  "Could not choose data folder: {error}": "Non se puido escoller o cartafol de datos: {error}",
+  "Could not start data move: {error}": "Non se puido iniciar o traslado de datos: {error}",
+  "Move all data to {path}?": "Mover todos os datos a {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Move todos os datos do lanzador, do xogo e das compilacións, incluídos a configuración, os mundos, as instancias e as versións instaladas. Escolle un cartafol baleiro con espazo libre suficiente.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "O lanzador péchase mentres se copian e verifican os teus datos e despois volve abrirse. Os cartafoles antigos consérvanse e seguen usando espazo en disco ata que verifiques o traslado e os elimines ti mesmo.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Os cartafoles de datos están definidos por SUNRISE_LAUNCHER_HOME ou SUNRISE_HOME. Elimina estas substitucións de contorno e reinicia o lanzador antes de mover os datos aquí.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Pecha o xogo e os servidores, e agarda a que rematen as descargas, compilacións, importacións e o inicio de sesión antes de mover os datos."
 }

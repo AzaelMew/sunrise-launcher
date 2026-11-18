@@ -1335,5 +1335,18 @@
   "up to date": "ಇಲ್ಲಿಯವರೆಗೆ",
   "the update failed: {error}": "ನವೀಕರಣ ವಿಫಲವಾಗಿದೆ: {error}",
   "Update this launcher with your package manager.": "ನಿಮ್ಮ ಪ್ಯಾಕೇಜ್ ಮ್ಯಾನೇಜರ್‌ನಿಂದ ಈ ಲಾಂಚರ್ ಅನ್ನು ನವೀಕರಿಸಿ.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ಈ ಲಾಂಚರ್ ಅನ್ನು ಮುಚ್ಚಿ, ಅದನ್ನು {folder} ಗೆ ಸರಿಸಿ ಮತ್ತು ನವೀಕರಣಗಳನ್ನು ಸಕ್ರಿಯಗೊಳಿಸಲು ಅಲ್ಲಿಂದ ತೆರೆಯಿರಿ."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ಈ ಲಾಂಚರ್ ಅನ್ನು ಮುಚ್ಚಿ, ಅದನ್ನು {folder} ಗೆ ಸರಿಸಿ ಮತ್ತು ನವೀಕರಣಗಳನ್ನು ಸಕ್ರಿಯಗೊಳಿಸಲು ಅಲ್ಲಿಂದ ತೆರೆಯಿರಿ.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "ಡೇಟಾ ಫೋಲ್ಡರ್",
+  "Move…": "ಸರಿಸಿ...",
+  "Move and restart": "ಸರಿಸಿ ಮತ್ತು ಮರುಪ್ರಾರಂಭಿಸಿ",
+  "Choose data folder": "ಡೇಟಾ ಫೋಲ್ಡರ್ ಆರಿಸಿ",
+  "Choose an empty folder for Sunrise's data.": "Sunrise ನ ಡೇಟಾಗೆ ಖಾಲಿ ಫೋಲ್ಡರ್ ಆರಿಸಿ.",
+  "Could not choose data folder: {error}": "ಡೇಟಾ ಫೋಲ್ಡರ್ ಆರಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ: {error}",
+  "Could not start data move: {error}": "ಡೇಟಾ ಸರಿಸುವಿಕೆ ಪ್ರಾರಂಭಿಸಲು ಸಾಧ್ಯವಾಗಲಿಲ್ಲ: {error}",
+  "Move all data to {path}?": "ಎಲ್ಲಾ ಡೇಟಾವನ್ನು {path} ಗೆ ಸರಿಸುವುದೇ?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "ಸೆಟ್ಟಿಂಗ್‌ಗಳು, ಪ್ರಪಂಚಗಳು, ನಿದರ್ಶನಗಳು ಮತ್ತು ಸ್ಥಾಪಿತ ಆವೃತ್ತಿಗಳು ಸೇರಿದಂತೆ ಎಲ್ಲಾ ಲಾಂಚರ್, ಆಟ ಮತ್ತು ಬಿಲ್ಡ್ ಡೇಟಾವನ್ನು ಸರಿಸುತ್ತದೆ. ಸಾಕಷ್ಟು ಖಾಲಿ ಸ್ಥಳವಿರುವ ಖಾಲಿ ಫೋಲ್ಡರ್ ಆರಿಸಿ.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "ನಿಮ್ಮ ಡೇಟಾವನ್ನು ನಕಲಿಸಿ ಪರಿಶೀಲಿಸುವಾಗ ಲಾಂಚರ್ ಮುಚ್ಚುತ್ತದೆ, ನಂತರ ಮತ್ತೆ ತೆರೆಯುತ್ತದೆ. ನೀವು ಸರಿಸುವಿಕೆಯನ್ನು ಪರಿಶೀಲಿಸಿ ಅವನ್ನು ನೀವೇ ತೆಗೆದುಹಾಕುವವರೆಗೆ ಹಳೆಯ ಫೋಲ್ಡರ್‌ಗಳನ್ನು ಇಟ್ಟುಕೊಳ್ಳಲಾಗುತ್ತದೆ ಮತ್ತು ಅವು ಇನ್ನೂ ಡಿಸ್ಕ್ ಸ್ಥಳವನ್ನು ಬಳಸುತ್ತವೆ.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "ಡೇಟಾ ಫೋಲ್ಡರ್‌ಗಳನ್ನು SUNRISE_LAUNCHER_HOME ಅಥವಾ SUNRISE_HOME ನಿರ್ಧರಿಸುತ್ತವೆ. ಡೇಟಾವನ್ನು ಇಲ್ಲಿಗೆ ಸರಿಸುವ ಮೊದಲು ಈ ಪರಿಸರ ಬದಲಾವಣೆಗಳನ್ನು ತೆಗೆದುಹಾಕಿ ಮತ್ತು ಲಾಂಚರ್ ಅನ್ನು ಮರುಪ್ರಾರಂಭಿಸಿ.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ಡೇಟಾ ಸರಿಸುವ ಮೊದಲು ಆಟ ಮತ್ತು ಸರ್ವರ್‌ಗಳನ್ನು ಮುಚ್ಚಿ, ಮತ್ತು ಡೌನ್‌ಲೋಡ್‌ಗಳು, ಬಿಲ್ಡ್‌ಗಳು, ಆಮದುಗಳು ಮತ್ತು ಸೈನ್-ಇನ್ ಮುಗಿಯುವವರೆಗೆ ಕಾಯಿರಿ."
 }

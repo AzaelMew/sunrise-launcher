@@ -1335,5 +1335,18 @@
   "up to date": "განახლებული",
   "the update failed: {error}": "განახლება ვერ მოხერხდა: {error}",
   "Update this launcher with your package manager.": "განაახლეთ ეს გამშვები თქვენი პაკეტების მენეჯერით.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "დახურეთ ეს გამშვები, გადაიტანეთ {folder}-ში და გახსენით იქ, რომ განახლებები ჩაირთოს."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "დახურეთ ეს გამშვები, გადაიტანეთ {folder}-ში და გახსენით იქ, რომ განახლებები ჩაირთოს.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "მონაცემთა საქაღალდე",
+  "Move…": "გადატანა…",
+  "Move and restart": "გადატანა და გადატვირთვა",
+  "Choose data folder": "აირჩიეთ მონაცემების საქაღალდე",
+  "Choose an empty folder for Sunrise's data.": "აირჩიეთ ცარიელი საქაღალდე Sunrise-ის მონაცემებისთვის.",
+  "Could not choose data folder: {error}": "მონაცემების საქაღალდის არჩევა ვერ მოხერხდა: {error}",
+  "Could not start data move: {error}": "მონაცემების გადატანის დაწყება ვერ მოხერხდა: {error}",
+  "Move all data to {path}?": "გადავიტანო ყველა მონაცემი {path}-ში?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "გადააქვს გამშვების, თამაშისა და აწყობის ყველა მონაცემი, მათ შორის პარამეტრები, სამყაროები, ეგზემპლარები და დაინსტალირებული ვერსიები. აირჩიეთ ცარიელი საქაღალდე საკმარისი თავისუფალი ადგილით.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "გამშვები იხურება, სანამ თქვენი მონაცემები დაკოპირდება და შემოწმდება, შემდეგ კვლავ იხსნება. ძველი საქაღალდეები ინახება და კვლავ იკავებს დისკის ადგილს, სანამ გადატანას არ გადაამოწმებთ და მათ თავად არ წაშლით.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "მონაცემების საქაღალდეები მითითებულია SUNRISE_LAUNCHER_HOME ან SUNRISE_HOME-ით. წაშალეთ ეს გარემოს გადაფარვები და გადატვირთეთ გამშვები, სანამ მონაცემებს აქ გადაიტანთ.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "დახურეთ თამაში და სერვერები და დაელოდეთ ჩამოტვირთვების, აწყობის, იმპორტისა და შესვლის დასრულებას, სანამ მონაცემებს გადაიტანთ."
 }

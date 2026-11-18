@@ -1335,5 +1335,18 @@
   "up to date": "заманса",
   "the update failed: {error}": "Яңыртыу уңышһыҙлыҡҡа осраны: {error}",
   "Update this launcher with your package manager.": "Был лаунчерҙы пакет менеджерығыҙ менән яңыртығыҙ.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Был лаунчерҙы ябығыҙ, уны {folder} папкаһына күсерегеҙ һәм яңыртыуҙарҙы ҡабыҙыу өсөн шунда асығыҙ."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Был лаунчерҙы ябығыҙ, уны {folder} папкаһына күсерегеҙ һәм яңыртыуҙарҙы ҡабыҙыу өсөн шунда асығыҙ.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Мәғлүмәттәр папкаһы",
+  "Move…": "Күсерергә…",
+  "Move and restart": "Күсерергә һәм ҡабаттан эшләтергә",
+  "Choose data folder": "Мәғлүмәт папкаһын һайлау",
+  "Choose an empty folder for Sunrise's data.": "Sunrise-дың мәғлүмәттәре өсөн буш папка һайлағыҙ.",
+  "Could not choose data folder: {error}": "Мәғлүмәт папкаһын һайлап булманы: {error}",
+  "Could not start data move: {error}": "Мәғлүмәттәрҙе күсереүҙе башлап булманы: {error}",
+  "Move all data to {path}?": "Бөтә мәғлүмәттәрҙе {path} папкаһына күсерергәме?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Көйләүҙәр, донъялар, инстанциялар һәм ҡуйылған версиялар ҙа инә — лаунчер, уйын һәм төҙөү мәғлүмәттәренең барыһын да күсерә. Етерлек буш урыны булған буш папка һайлағыҙ.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Мәғлүмәттәрегеҙ күсерелгән һәм тикшерелгән ваҡытта лаунчер ябыла, һуңынан ҡабат асыла. Иҫке папкалар һаҡлана һәм һеҙ күсереүҙе тикшереп, уларҙы үҙегеҙ юйғансы диск урынын биләй.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Мәғлүмәт папкалары SUNRISE_LAUNCHER_HOME йәки SUNRISE_HOME менән билдәләнгән. Мәғлүмәттәрҙе бында күсерер алдынан был мөхит үҙгәртеүҙәрен бөтөрөгөҙ һәм лаунчерҙы ҡабаттан эшләтегеҙ.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Мәғлүмәттәрҙе күсерер алдынан уйынды һәм серверҙарҙы ябығыҙ, скачать итеү, төҙөү, импортлау һәм инеү тамамланыуын көтөгөҙ."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "ažurno",
   "the update failed: {error}": "ažuriranje nije uspjelo: {error}",
   "Update this launcher with your package manager.": "Ažurirajte ovaj pokretač pomoću svog upravitelja paketa.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zatvorite ovaj pokretač, premjestite ga u {folder} i otvorite ga tamo da biste omogućili ažuriranja."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zatvorite ovaj pokretač, premjestite ga u {folder} i otvorite ga tamo da biste omogućili ažuriranja.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Mapa podataka",
+  "Move…": "Premjesti…",
+  "Move and restart": "Premjesti i ponovo pokreni",
+  "Choose data folder": "Odaberite folder podataka",
+  "Choose an empty folder for Sunrise's data.": "Odaberite prazan folder za Sunriseove podatke.",
+  "Could not choose data folder: {error}": "Nije moguće odabrati folder podataka: {error}",
+  "Could not start data move: {error}": "Nije moguće pokrenuti premještanje podataka: {error}",
+  "Move all data to {path}?": "Premjestiti sve podatke u {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Premješta sve podatke pokretača, igre i izgradnje, uključujući postavke, svjetove, instance i instalirane verzije. Odaberite prazan folder s dovoljno slobodnog prostora.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Pokretač se zatvara dok se vaši podaci kopiraju i provjeravaju, a zatim se ponovo otvara. Stari folderi se čuvaju i dalje zauzimaju prostor na disku dok ne provjerite premještanje i sami ih ne uklonite.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Foldere podataka postavljaju SUNRISE_LAUNCHER_HOME ili SUNRISE_HOME. Uklonite ta poništavanja okruženja i ponovo pokrenite pokretač prije premještanja podataka ovdje.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Zatvorite igru i servere i sačekajte da se preuzimanja, izgradnje, uvozi i prijava završe prije premještanja podataka."
 }

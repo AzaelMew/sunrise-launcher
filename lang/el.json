@@ -1335,5 +1335,18 @@
   "up to date": "ενημερωμένο",
   "the update failed: {error}": "η ενημέρωση απέτυχε: {error}",
   "Update this launcher with your package manager.": "Ενημερώστε αυτό το πρόγραμμα εκκίνησης με τον διαχειριστή πακέτων σας.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Κλείστε αυτό το πρόγραμμα εκκίνησης, μετακινήστε το στο {folder} και ανοίξτε το εκεί για να ενεργοποιήσετε τις ενημερώσεις."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Κλείστε αυτό το πρόγραμμα εκκίνησης, μετακινήστε το στο {folder} και ανοίξτε το εκεί για να ενεργοποιήσετε τις ενημερώσεις.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Φάκελος δεδομένων",
+  "Move…": "Μετακίνηση…",
+  "Move and restart": "Μετακίνηση και επανεκκίνηση",
+  "Choose data folder": "Επιλογή φακέλου δεδομένων",
+  "Choose an empty folder for Sunrise's data.": "Επιλέξτε έναν άδειο φάκελο για τα δεδομένα του Sunrise.",
+  "Could not choose data folder: {error}": "Δεν ήταν δυνατή η επιλογή φακέλου δεδομένων: {error}",
+  "Could not start data move: {error}": "Δεν ήταν δυνατή η έναρξη της μετακίνησης δεδομένων: {error}",
+  "Move all data to {path}?": "Μετακίνηση όλων των δεδομένων στο {path};",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Μετακινεί όλα τα δεδομένα του προγράμματος εκκίνησης, του παιχνιδιού και των κατασκευών, μαζί με ρυθμίσεις, κόσμους, περιπτώσεις και εγκατεστημένες εκδόσεις. Επιλέξτε έναν άδειο φάκελο με αρκετό ελεύθερο χώρο.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Το πρόγραμμα εκκίνησης κλείνει όσο αντιγράφονται και επαληθεύονται τα δεδομένα σας και μετά ανοίγει ξανά. Οι παλιοί φάκελοι διατηρούνται και καταλαμβάνουν χώρο μέχρι να επαληθεύσετε τη μετακίνηση και να τους αφαιρέσετε μόνοι σας.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Οι φάκελοι δεδομένων ορίζονται από τα SUNRISE_LAUNCHER_HOME ή SUNRISE_HOME. Αφαιρέστε αυτές τις παρακάμψεις περιβάλλοντος και επανεκκινήστε το πρόγραμμα εκκίνησης πριν μετακινήσετε δεδομένα εδώ.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Κλείστε το παιχνίδι και τους διακομιστές και περιμένετε να ολοκληρωθούν οι λήψεις, οι κατασκευές, οι εισαγωγές και η σύνδεση πριν μετακινήσετε δεδομένα."
 }

@@ -1335,5 +1335,18 @@
   "up to date": "naprakész",
   "the update failed: {error}": "a frissítés nem sikerült: {error}",
   "Update this launcher with your package manager.": "Frissítse ezt az indítót a csomagkezelőjével.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zárja be ezt az indítót, helyezze át a(z) {folder} mappába, és nyissa meg ott a frissítések engedélyezéséhez."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zárja be ezt az indítót, helyezze át a(z) {folder} mappába, és nyissa meg ott a frissítések engedélyezéséhez.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Adatmappa",
+  "Move…": "Áthelyezés…",
+  "Move and restart": "Áthelyezés és újraindítás",
+  "Choose data folder": "Adatmappa kiválasztása",
+  "Choose an empty folder for Sunrise's data.": "Válasszon egy üres mappát a Sunrise adataihoz.",
+  "Could not choose data folder: {error}": "Nem sikerült kiválasztani az adatmappát: {error}",
+  "Could not start data move: {error}": "Nem sikerült elindítani az adatok áthelyezését: {error}",
+  "Move all data to {path}?": "Minden adat áthelyezése ide: {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Az indító, a játék és a felépítés minden adatát áthelyezi, beleértve a beállításokat, világokat, példányokat és telepített verziókat. Válasszon egy üres mappát elegendő szabad hellyel.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Az indító bezárul, míg az adatok másolása és ellenőrzése tart, majd újra megnyílik. A régi mappák megmaradnak, és még lemezterületet foglalnak, míg nem ellenőrzi az áthelyezést, és saját kezűleg el nem távolítja őket.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Az adatmappákat a SUNRISE_LAUNCHER_HOME vagy a SUNRISE_HOME állítja be. Távolítsa el ezeket a környezeti felülírásokat, és indítsa újra az indítót, mielőtt ide helyezi az adatokat.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Zárja be a játékot és a szervereket, és várja meg, míg a letöltések, felépítések, importálások és a bejelentkezés befejeződnek, mielőtt áthelyezi az adatokat."
 }

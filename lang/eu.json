@@ -1335,5 +1335,18 @@
   "up to date": "eguneratuta",
   "the update failed: {error}": "eguneratzeak huts egin du: {error}",
   "Update this launcher with your package manager.": "Eguneratu abiarazle hau zure pakete-kudeatzailearekin.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Itxi abiarazle hau, eraman {folder} karpetara eta ireki han eguneraketak gaitzeko."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Itxi abiarazle hau, eraman {folder} karpetara eta ireki han eguneraketak gaitzeko.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "Datuen karpeta",
+  "Move…": "Mugitu…",
+  "Move and restart": "Mugitu eta berrabiarazi",
+  "Choose data folder": "Aukeratu datu-karpeta",
+  "Choose an empty folder for Sunrise's data.": "Aukeratu karpeta huts bat Sunrise-en datuetarako.",
+  "Could not choose data folder: {error}": "Ezin izan da datu-karpeta aukeratu: {error}",
+  "Could not start data move: {error}": "Ezin izan da datuen mugimendua hasi: {error}",
+  "Move all data to {path}?": "Datu guztiak {path} helbidera mugitu?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Abiarazlearen, jokoaren eta eraikuntzaren datu guztiak mugitzen ditu, ezarpenak, munduak, instantziak eta instalatutako bertsioak barne. Aukeratu leku libre nahikoa duen karpeta huts bat.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Abiarazlea itxi egiten da zure datuak kopiatu eta egiaztatzen diren bitartean, eta gero berriro irekitzen da. Karpeta zaharrak gordeta geratzen dira eta disko-lekua erabiltzen jarraitzen dute mugimendua egiaztatu eta zuk zeuk kendu arte.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datu-karpetak SUNRISE_LAUNCHER_HOME edo SUNRISE_HOME-k ezartzen ditu. Kendu ingurune-gainidazketa hauek eta berrabiarazi abiarazlea datuak hona mugitu aurretik.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Itxi jokoa eta zerbitzariak, eta itxaron deskargak, eraikuntzak, inportazioak eta saio-hasiera amaitzeko datuak mugitu aurretik."
 }

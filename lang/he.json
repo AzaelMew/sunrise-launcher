@@ -1335,5 +1335,18 @@
   "up to date": "מעודכן",
   "the update failed: {error}": "העדכון נכשל: {error}",
   "Update this launcher with your package manager.": "עדכן את המשגר הזה עם מנהל החבילות שלך.",
-  "Close this launcher, move it to {folder}, and open it there to enable updates.": "סגור את המשגר הזה, העבר אותו אל {folder} ופתח אותו משם כדי לאפשר עדכונים."
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "סגור את המשגר הזה, העבר אותו אל {folder} ופתח אותו משם כדי לאפשר עדכונים.",
+  "Use the default folder": "Use the default folder",
+  "Data folder": "תיקיית נתונים",
+  "Move…": "העבר…",
+  "Move and restart": "העבר והפעל מחדש",
+  "Choose data folder": "בחר תיקיית נתונים",
+  "Choose an empty folder for Sunrise's data.": "בחר תיקייה ריקה לנתונים של Sunrise.",
+  "Could not choose data folder: {error}": "לא ניתן היה לבחור תיקיית נתונים: {error}",
+  "Could not start data move: {error}": "לא ניתן היה להתחיל את העברת הנתונים: {error}",
+  "Move all data to {path}?": "להעביר את כל הנתונים אל {path}?",
+  "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "מעביר את כל נתוני המשגר, המשחק והבנייה, כולל הגדרות, עולמות, מופעים וגרסאות מותקנות. בחר תיקייה ריקה עם מספיק מקום פנוי.",
+  "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "המשגר נסגר בזמן שהנתונים מועתקים ומאומתים, ואז נפתח מחדש. התיקיות הישנות נשמרות ועדיין תופסות מקום בדיסק עד שתאמת את ההעברה ותסיר אותן בעצמך.",
+  "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "תיקיות הנתונים מוגדרות על ידי SUNRISE_LAUNCHER_HOME או SUNRISE_HOME. הסר את דריסות הסביבה האלה והפעל מחדש את המשגר לפני העברת נתונים לכאן.",
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "סגור את המשחק והשרתים, והמתן לכך שהורדות, בניות, ייבוא והתחברות יסתיימו לפני העברת נתונים."
 }
