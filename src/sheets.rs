@@ -289,9 +289,13 @@ impl Launcher {
 
     /// A shortcut must not steal focus or dispatch an action behind a consent or modal.
     pub(crate) fn layer_open(&self) -> bool {
-        self.ui.sheets.layered
-            || self.ui.sheet.is_some()
-            || self.ui.sheets.registry.is_some()
+        self.ui.sheets.layered || self.ui.sheet.is_some() || self.blocking_dialog()
+    }
+
+    /// These dialogs can arrive over an already-open search. Its shortcut must not cancel
+    /// another dialog's answer merely because the search is still underneath it.
+    pub(crate) fn blocking_dialog(&self) -> bool {
+        self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()

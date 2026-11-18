@@ -353,7 +353,7 @@ impl Launcher {
     /// Ctrl+K: opens the search, or closes it when it is open. It stays shut, and says so by
     /// returning false, while anything else is over the page.
     pub(crate) fn toggle_search(&mut self) -> bool {
-        if self.ui.sheet == Some(Sheet::Search) {
+        if self.ui.sheet == Some(Sheet::Search) && !self.blocking_dialog() {
             self.close_sheet();
             return true;
         }
