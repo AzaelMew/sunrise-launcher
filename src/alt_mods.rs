@@ -81,7 +81,7 @@ enum Event {
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
     /// Worlds would be affected: nothing was changed, the player decides.
-    Stake(actions::Action, Vec<(String, Vec<String>)>),
+    Stake(PathBuf, actions::Action, Vec<(String, Vec<String>)>),
     /// The batch was refused before changing anything.
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
@@ -105,6 +105,8 @@ pub(crate) struct AltModsState {
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
     confirm: Option<Confirm>,
+    /// The folder the open confirmation was made for.
+    reviewed_home: Option<PathBuf>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
     /// My own batch (update or remove): its line and fraction.
@@ -134,6 +136,7 @@ impl Default for AltModsState {
             selection: BTreeSet::new(),
             anchor: None,
             confirm: None,
+            reviewed_home: None,
             snapshot: None,
             open: None,
             busy: None,
@@ -204,9 +207,13 @@ impl Launcher {
                     }
                 }
                 Event::Progress(line, f) => m.busy = Some((line, f)),
-                Event::Stake(action, worlds) => {
+                Event::Stake(home, action, worlds) => {
                     m.busy = None;
-                    m.confirm = Some(Confirm::Stake(action, worlds));
+                    // Only for the folder still shown: a worker's answer for another setup is dropped.
+                    if m.snapshot.as_ref().is_some_and(|s| s.home == home) {
+                        m.reviewed_home = Some(home);
+                        m.confirm = Some(Confirm::Stake(action, worlds));
+                    }
                 }
                 Event::Refused(why) => {
                     m.busy = None;
@@ -250,6 +257,22 @@ impl Launcher {
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
         let key = native_status::fingerprint(&home, None);
+        let moved = self
+            .alt
+            .mods
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| s.home != home);
+        if moved {
+            // Another setup: nothing reviewed or selected for the old one carries over.
+            let m = &mut self.alt.mods;
+            m.confirm = None;
+            m.reviewed_home = None;
+            m.selection.clear();
+            m.anchor = None;
+            m.errors.clear();
+            m.notice = None;
+        }
         if self.alt.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
             let entries = installed::Installed::load(&home).entries;
             let local: Vec<model::Local> = native_status::untracked(&home)
