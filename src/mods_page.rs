@@ -26,24 +26,14 @@ const PAGE: usize = 20;
 mod glass_mods;
 
 pub(super) enum Event {
-    /// A search's answer, for the search it was (stale answers are dropped) at that offset.
-    Found(u64, usize, Result<Vec<Project>, String>),
     Progress(String, f32),
     Done(Result<String, String>, bool),
-    /// Newer versions of what the browser installed, looked for on one build (`checked_for`).
-    Updates(u64, HashMap<(SourceId, String), String>),
     /// A Java mod's check (its jar read, or why it couldn't be), for the Minecraft version it picked the jar for.
     Checked((SourceId, String), String, Result<Box<Check>, String>),
-    /// What a Sunrise registry project says before install: signed or not, what it may do.
-    About(HashMap<String, Vec<String>>),
-    /// Registry files taken down that the launcher turned off.
-    TakenDown(Vec<String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(Vec<String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
-    /// The palette's registry mods for its search of that number.
-    Palette(u64, Vec<Project>),
 }
 
 /// Where a Java mod's check is.
@@ -260,39 +250,6 @@ impl Launcher {
             changed = true;
             let m = &mut self.mods;
             match event {
-                Event::Palette(search, found) => {
-                    if let Some(p) = self.palette.as_mut().filter(|p| p.search == search) {
-                        p.mods = found;
-                    }
-                }
-                Event::Found(search, offset, result) if search == m.search => {
-                    m.searching = false;
-                    m.refreshing = false;
-                    m.searched = true;
-                    match result {
-                        Ok(found) => {
-                            m.more = found.len() == PAGE;
-                            m.results.truncate(offset);
-                            if offset == 0 {
-                                m.results_list.reset();
-                            }
-                            m.results.extend(found.iter().cloned());
-                            m.error = None;
-                            to_check.extend(found);
-                        }
-                        Err(e) => {
-                            if offset == 0 {
-                                m.results.clear();
-                                m.more = false;
-                                m.results_list.reset();
-                            }
-                            m.error_sunrise =
-                                m.source == SourceId::Sunrise && m.java_for(m.kind).is_none();
-                            m.error = Some(e);
-                        }
-                    }
-                }
-                Event::Found(..) => {}
                 Event::Progress(line, f) => {
                     if let Some(busy) = &mut m.busy {
                         busy.1 = line;
@@ -312,10 +269,6 @@ impl Launcher {
                         // The Modpacks page reads its list again.
                         self.packs_loaded = None;
                     }
-                }
-                // A look for an earlier build than the instance's now is dropped.
-                Event::Updates(request, found) => {
-                    offer_updates(&mut m.updates, m.updates_asked, request, found)
                 }
                 // A check for another Minecraft version than the page's (the instance moved) is dropped.
                 Event::Checked(key, game, result) if game == m.game => {
@@ -337,22 +290,12 @@ impl Launcher {
                     }
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::About(about) => {
-                    // Rows grow by a line: measure them again (`cull`).
-                    m.about.extend(about);
-                    m.results_list.reset();
-                }
                 Event::AutoUpdated(lines) => {
                     if !lines.is_empty() {
                         m.message = Some(Ok(lines.join("\n")));
                         m.reload_installed();
                         m.installed_list.reset();
                     }
-                }
-                Event::TakenDown(lines) => {
-                    m.message = Some(Ok(lines.join("\n")));
-                    m.reload_installed();
-                    m.installed_list.reset();
                 }
             }
         }

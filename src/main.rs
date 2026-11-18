@@ -33,7 +33,6 @@ mod github_mods_page;
 mod glass_home;
 mod glass_instance;
 mod glass_instance_java;
-mod glass_palette;
 mod glass_sheet;
 mod glass_storage;
 mod glass_toast;
@@ -312,8 +311,6 @@ struct Launcher {
     /// Its Friends over the internet panel (`internet.rs`).
     internet: internet::Internet,
     /// The window's own focus, so Tab reaches the controls when nothing else has the keyboard.
-    /// The palette (⌘K), while open (`glass_palette`).
-    palette: Option<glass_palette::Palette>,
     /// The toast last drawn (`glass_toast`), by its number.
     toast_seen: Option<u64>,
     root_focus: FocusHandle,
@@ -383,8 +380,6 @@ struct Launcher {
     prepare_started: Option<Instant>,
     /// The download under way as first seen (when, files done), for the time left.
     download_seen: Option<(Instant, usize)>,
-    /// Home's Play or folder menu, while open (glass look).
-    home_menu: glass_home::HomeMenu,
     /// A Home list row's ⋯ menu, while open, and whether its Delete… was clicked once.
     list_menu: Option<(SharedString, bool)>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).

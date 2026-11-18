@@ -9,11 +9,3 @@ pub(super) struct PickerState {
     pub(super) open: bool,
 }
 
-/// Which of Home's menus is open.
-#[derive(Clone, Copy, PartialEq, Default)]
-pub(super) enum HomeMenu {
-    #[default]
-    None,
-    Play,
-    Folder,
-}

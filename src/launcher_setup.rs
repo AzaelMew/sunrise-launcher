@@ -146,7 +146,6 @@ impl Launcher {
             servers: servers_page::Servers::new(),
             internet: internet::Internet::new(),
             root_focus: cx.focus_handle(),
-            palette: None,
             toast_seen: None,
             accounts: Accounts::load(),
             auth_status: HashMap::new(),
@@ -185,7 +184,6 @@ impl Launcher {
             install_started: None,
             prepare_started: None,
             download_seen: None,
-            home_menu: Default::default(),
             list_menu: None,
             instance_mods: Default::default(),
             play_pressed: None,
@@ -200,7 +198,7 @@ impl Launcher {
             found_scanning: false,
             starting_pack: None,
             mods: mods_page::Mods::new(cx),
-            github: github_mods_page::Github::new(cx),
+            github: github_mods_page::Github::new(),
             instances: instances_page::Instances::default(),
             worlds: worlds_page::Worlds::default(),
             multiplayer: multiplayer_page::Multiplayer::default(),
@@ -355,7 +353,6 @@ impl Launcher {
             || self.account_menu
             || self.version_menu
             || self.row_menu.open.is_some()
-            || self.home_menu != glass_home::HomeMenu::None
             || self.list_menu.is_some();
         self.picker.open = false;
         self.language_menu = false;
@@ -363,7 +360,6 @@ impl Launcher {
         self.account_menu = false;
         self.version_menu = false;
         self.row_menu.open = None;
-        self.home_menu = glass_home::HomeMenu::None;
         self.list_menu = None;
         open
     }

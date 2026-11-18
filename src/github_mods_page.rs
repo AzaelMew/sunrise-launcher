@@ -8,48 +8,38 @@ use std::path::{Path, PathBuf};
 use sunrise_launcher::github_mods::{self, Packed, Resolved};
 
 enum Event {
-    /// A link (or an update check for a mod id) resolved.
-    Resolved(Result<Resolved, String>, Option<String>),
     /// The mods of a source, fetched and checked, when there is a choice to make.
-    Fetched(Resolved, Result<Vec<Packed>, String>),
+    Fetched(Result<Vec<Packed>, String>),
     Installed(Result<String, String>),
 }
 
 enum Stage {
     Idle,
-    Working(String),
-    /// The warning and the source link, before anything is downloaded. `only`: the mod an update
-    /// is for.
-    Review(Resolved, Option<String>),
-    Pick(Resolved, Vec<Packed>),
+    Working,
+    /// The source holds several mods and nothing was asked for by name.
+    Pick,
 }
 
 pub(super) struct Github {
     text: LineEdit,
-    focus: FocusHandle,
-    focused: bool,
     stage: Stage,
     message: Option<Result<String, String>>,
     /// The mods installed from GitHub in `home`, and what the last update check found for each.
     home: Option<PathBuf>,
     newer: std::collections::HashMap<String, Resolved>,
-    confirm_remove: Option<String>,
     tx: Sender<Event>,
     rx: Receiver<Event>,
 }
 
 impl Github {
-    pub(super) fn new(cx: &mut App) -> Self {
+    pub(super) fn new() -> Self {
         let (tx, rx) = crate::wake::channel();
         Self {
             text: LineEdit::new(String::new(), 300, 40),
-            focus: cx.focus_handle().tab_index(0).tab_stop(true),
-            focused: false,
             stage: Stage::Idle,
             message: None,
             home: None,
             newer: Default::default(),
-            confirm_remove: None,
             tx,
             rx,
         }
@@ -88,25 +78,8 @@ impl Launcher {
         while let Ok(event) = self.github.rx.try_recv() {
             changed = true;
             match event {
-                Event::Resolved(Err(e), _) => {
-                    self.github.stage = Stage::Idle;
-                    self.github.message = Some(Err(e));
-                }
-                Event::Resolved(Ok(found), None) => self.github.stage = Stage::Review(found, None),
-                Event::Resolved(Ok(found), Some(id)) => {
-                    self.github.stage = Stage::Idle;
-                    let have = github_mods::origin(&self.mods.home(), &id);
-                    if have
-                        .as_ref()
-                        .is_some_and(|o| github_mods::is_update(o, &found))
-                    {
-                        self.github.newer.insert(id, found);
-                    } else {
-                        self.github.message = Some(Ok(trf("{id} is up to date.", &[("id", &id)])));
-                    }
-                }
-                Event::Fetched(found, Ok(mods)) => self.github.stage = Stage::Pick(found, mods),
-                Event::Fetched(_, Err(e)) => {
+                Event::Fetched(Ok(_)) => self.github.stage = Stage::Pick,
+                Event::Fetched(Err(e)) => {
                     self.github.stage = Stage::Idle;
                     self.github.message = Some(Err(e));
                 }
@@ -132,8 +105,7 @@ impl Launcher {
             self.pending_consent = Some(PendingConsent::Github(found, only));
             return;
         }
-        self.github.stage =
-            Stage::Working(trf("Downloading {source}…", &[("source", &found.label())]));
+        self.github.stage = Stage::Working;
         let tx = self.github.tx.clone();
         let home = self.mods.home();
         std::thread::spawn(move || {
@@ -144,7 +116,7 @@ impl Launcher {
                     github_mods::discard(&found);
                     Event::Installed(done)
                 }
-                other => Event::Fetched(found, other),
+                other => Event::Fetched(other),
             };
             let _ = tx.send(result);
         });
