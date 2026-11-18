@@ -274,7 +274,15 @@ impl Launcher {
             .child(top)
             .child(list)
             .child(foot);
-        Some(crate::sheets::frame("build-window", 600., body, cx))
+        Some(crate::sheets::frame(
+            self.ui
+                .sheets
+                .visual(crate::sheets::Layer::Sheet(crate::sheets::Sheet::ModBuild)),
+            "build-window",
+            600.,
+            body,
+            cx,
+        ))
     }
 
     /// One mod's line: its picture, its name and version, and where it stands.

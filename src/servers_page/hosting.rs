@@ -1787,6 +1787,7 @@ impl Launcher {
                 cx,
                 |this, _| this.create_server(),
             )));
+        let visual = self.ui.sheets.visual(crate::sheets::Layer::Host);
         Some(
             div()
                 .id("host-create")
@@ -1797,11 +1798,12 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .p(px(24.))
-                .bg(palette().scrim())
+                .bg(visual.scrim(palette().scrim()))
                 .text_color(rgb(palette().text))
                 .on_scroll(|_, _, cx| cx.stop_propagation())
                 .child(
-                    card()
+                    visual
+                        .card(card())
                         .w(px(620.))
                         .max_w_full()
                         .max_h_full()

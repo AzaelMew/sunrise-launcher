@@ -9,6 +9,7 @@
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
+use crate::motion::{self, Frame, Tween};
 use crate::paint::palette;
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use native_consent::PendingConsent;
@@ -42,6 +43,72 @@ pub(crate) enum Sheet {
     ModBuild,
 }
 
+/// Identity of the frontmost layer, not its contents. Updating a build or turning a
+/// gallery page doesn't open a new layer.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Layer {
+    Sheet(Sheet),
+    Host,
+    Profile,
+    SignIn,
+    Registry,
+    Consent,
+}
+
+impl Layer {
+    fn rises(self) -> bool {
+        matches!(
+            self,
+            Self::Host
+                | Self::Profile
+                | Self::Sheet(
+                    Sheet::Resolve
+                        | Sheet::Notice
+                        | Sheet::Worlds
+                        | Sheet::Versions
+                        | Sheet::Picture
+                        | Sheet::ModBuild
+                )
+        )
+    }
+
+    fn leaves_scrim(self) -> bool {
+        self.rises() && self != Self::Sheet(Sheet::ModBuild)
+    }
+}
+
+/// The same presentation sample for an ordinary card and its scrim. Input belongs to the
+/// full-size layer, never to the fading scrim behind it.
+#[derive(Clone, Copy)]
+pub(crate) struct Visual {
+    kind: Layer,
+    progress: f32,
+}
+
+impl Visual {
+    pub(crate) fn scrim(self, tint: gpui::Hsla) -> gpui::Hsla {
+        tint.opacity(self.progress)
+    }
+
+    pub(crate) fn card<T: Styled>(self, card: T) -> T {
+        if self.kind.rises() && self.progress < 1. {
+            card.relative()
+                .top(px(motion::LIFT * (1. - self.progress)))
+                .opacity(motion::arrival_opacity(self.progress))
+        } else {
+            card
+        }
+    }
+}
+
+#[derive(Default)]
+struct Presentation {
+    stack: [Option<Layer>; 5],
+    entering: Option<Tween>,
+    scrim_exit: Option<Tween>,
+    progress: f32,
+}
+
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WayOut {
@@ -70,6 +137,7 @@ pub(crate) struct SheetsState {
     /// the next layer, even when the page hands the keyboard to one of that layer's fields.
     before: Option<FocusHandle>,
     pub(super) layered: bool,
+    presentation: Presentation,
     registry: Option<(Consent, Sender<bool>)>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
@@ -80,6 +148,19 @@ pub(crate) struct SheetsState {
     notice: String,
     way_out: Option<WayOut>,
     versions: versions::State,
+}
+
+impl SheetsState {
+    pub(crate) fn visual(&self, kind: Layer) -> Visual {
+        Visual {
+            kind,
+            progress: if self.presentation.stack.iter().flatten().next_back() == Some(&kind) {
+                self.presentation.progress
+            } else {
+                1.
+            },
+        }
+    }
 }
 
 /// The explicit native-mod check against the newer installed build.
@@ -196,15 +277,17 @@ fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
 
 /// The scrim and the sheet's frame. A press outside closes the sheet; inside, nothing does.
 pub(crate) fn frame(
+    visual: Visual,
     id: &'static str,
     width: f32,
     body: Div,
     cx: &mut Context<Launcher>,
 ) -> Stateful<Div> {
-    modal_frame(id, width, body, cx, Launcher::close_sheet)
+    modal_frame(visual, id, width, body, cx, Launcher::close_sheet)
 }
 
 pub(crate) fn modal_frame(
+    visual: Visual,
     id: &'static str,
     width: f32,
     body: Div,
@@ -220,7 +303,7 @@ pub(crate) fn modal_frame(
         .items_center()
         .justify_center()
         .p(px(16.))
-        .bg(palette().scrim())
+        .bg(visual.scrim(palette().scrim()))
         .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
             cx.stop_propagation()
         })
@@ -237,7 +320,9 @@ pub(crate) fn modal_frame(
         )
         .child(
             // Never taller or wider than the window: a small one scrolls the sheet.
-            body.id((id, 1usize))
+            visual
+                .card(body)
+                .id((id, 1usize))
                 .w(px(width))
                 .max_w_full()
                 .max_h_full()
@@ -473,6 +558,55 @@ impl Launcher {
             });
         })
         .detach();
+    }
+
+    /// Samples the frontmost layer before assembling its body. Lower layers never replay
+    /// when a question or another overlay covers them.
+    pub(super) fn layer_motion(
+        &mut self,
+        page_changed: bool,
+        time: &Frame,
+        window: &Window,
+    ) -> Option<Div> {
+        let stack = [
+            (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
+                .then_some(Layer::Host),
+            self.instances.dialog.is_some().then_some(Layer::Profile),
+            self.ui.sheet.map(Layer::Sheet),
+            if self.ui.sheets.registry.is_some() {
+                Some(Layer::Registry)
+            } else {
+                self.pending_consent.is_some().then_some(Layer::Consent)
+            },
+            self.owner_screen_open.then_some(Layer::SignIn),
+        ];
+        let layer = stack.iter().flatten().next_back().copied();
+        let p = &mut self.ui.sheets.presentation;
+        let prior = p.stack.iter().flatten().next_back().copied();
+        if layer != prior {
+            p.scrim_exit = (layer.is_none() && prior.is_some_and(Layer::leaves_scrim)).then(|| {
+                Tween::new(
+                    time.now,
+                    p.entering.map_or(1., |t| t.value(time.now, time.enabled)),
+                    0.,
+                    motion::FAST,
+                )
+            });
+            p.entering = layer
+                .filter(|kind| !p.stack.contains(&Some(*kind)))
+                .map(|_| Tween::new(time.now, 0., 1., motion::STANDARD));
+        }
+        p.stack = stack;
+        if page_changed {
+            p.scrim_exit = None;
+        }
+        p.progress = time.sample(&mut p.entering, window).unwrap_or(1.);
+        time.sample(&mut p.scrim_exit, window).map(|alpha| {
+            div()
+                .absolute()
+                .inset_0()
+                .bg(palette().scrim().opacity(alpha))
+        })
     }
 
     /// Reads what has the keyboard, before this frame moves it: see [`Self::modal`].
@@ -791,7 +925,13 @@ impl Launcher {
                     .child(stay),
             )
             .child(more);
-        frame("alt-resolve", 580., body, cx)
+        frame(
+            self.ui.sheets.visual(Layer::Sheet(Sheet::Resolve)),
+            "alt-resolve",
+            580.,
+            body,
+            cx,
+        )
     }
 
     /// What went wrong, in full: each paragraph on its own, with one way out.
@@ -848,7 +988,13 @@ impl Launcher {
                     )
                     .children(way_out),
             );
-        frame("alt-notice", 560., body, cx)
+        frame(
+            self.ui.sheets.visual(Layer::Sheet(Sheet::Notice)),
+            "alt-notice",
+            560.,
+            body,
+            cx,
+        )
     }
 
     // ---- Consent ----
@@ -946,7 +1092,13 @@ impl Launcher {
                 )),
                 allow,
             ));
-        frame("alt-consent", 760., body, cx)
+        frame(
+            self.ui.sheets.visual(Layer::Consent),
+            "alt-consent",
+            760.,
+            body,
+            cx,
+        )
     }
 
     /// Allow: persist the permission, then run the one pending action. The old overlay's match.
@@ -1054,7 +1206,13 @@ impl Launcher {
                 )),
                 go,
             ));
-        frame("alt-libraries", 760., body, cx)
+        frame(
+            self.ui.sheets.visual(Layer::Registry),
+            "alt-libraries",
+            760.,
+            body,
+            cx,
+        )
     }
 
     // ---- Game build ----

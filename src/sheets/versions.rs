@@ -193,7 +193,15 @@ impl Launcher {
 
     pub(super) fn versions_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let body = self.versions_content(true, cx);
-        frame("alt-versions", 560., body, cx)
+        frame(
+            self.ui
+                .sheets
+                .visual(super::Layer::Sheet(super::Sheet::Versions)),
+            "alt-versions",
+            560.,
+            body,
+            cx,
+        )
     }
 
     pub(crate) fn versions_page(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {

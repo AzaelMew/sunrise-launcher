@@ -288,6 +288,7 @@ impl Launcher {
                     ),
             );
         Some(crate::sheets::modal_frame(
+            self.ui.sheets.visual(crate::sheets::Layer::Profile),
             "new-profile",
             680.,
             body,

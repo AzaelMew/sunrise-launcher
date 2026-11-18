@@ -485,12 +485,12 @@ impl Launcher {
             .unwrap_or_else(|| u8::from(self.settings.sidebar_expanded).into());
         let rail = self.sidebar(expansion, cx);
         let header = self.header(expansion, cx);
-        if self
+        let page_changed = self
             .ui
             .painted_page
             .replace(page)
-            .is_some_and(|last| last != page)
-        {
+            .is_some_and(|last| last != page);
+        if page_changed {
             self.ui.page_motion = Some(crate::motion::Tween::new(
                 motion.now,
                 0.,
@@ -640,6 +640,7 @@ impl Launcher {
                     ),
             );
         // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
+        let scrim_exit = self.layer_motion(page_changed, &motion, window);
         self.versions_focus(window);
         let create = (page == Page::Hosting)
             .then(|| self.hosting_create(cx))
@@ -652,7 +653,11 @@ impl Launcher {
             .flatten()
             .collect();
         let top = self.modal(layers.pop(), window, cx);
-        frame = frame.children(self.toast()).children(layers).children(top);
+        frame = frame
+            .children(self.toast())
+            .children(scrim_exit)
+            .children(layers)
+            .children(top);
         self.pictures.free_retired(window);
         // A picture, the player's or their theme's, stands behind Home only.
         let photo = (page == Page::Home)

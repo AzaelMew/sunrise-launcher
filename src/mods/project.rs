@@ -148,6 +148,9 @@ impl Launcher {
                 cx.notify();
             }));
         Some(crate::sheets::frame(
+            self.ui
+                .sheets
+                .visual(crate::sheets::Layer::Sheet(crate::sheets::Sheet::Picture)),
             "gallery-full",
             self.window_width - 48.,
             body,

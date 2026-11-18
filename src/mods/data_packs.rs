@@ -534,6 +534,10 @@ impl Launcher {
 
     /// The world picker: every world of the setup with a box, and one Add for all ticked.
     pub(crate) fn world_pick_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let visual = self
+            .ui
+            .sheets
+            .visual(crate::sheets::Layer::Sheet(crate::sheets::Sheet::Worlds));
         self.data_list(cx);
         let d = &self.ui.mods.data;
         let pick = d.pick.as_ref()?;
@@ -557,7 +561,7 @@ impl Launcher {
                     "A data pack goes into a world, and this profile has none yet. Make one in the game first.",
                 ))))
                 .child(div().flex().justify_end().child(close(tr("Close"))));
-            return Some(crate::sheets::frame("alt-pick", 520., body, cx));
+            return Some(crate::sheets::frame(visual, "alt-pick", 520., body, cx));
         }
         let mut list = div()
             .flex()
@@ -652,7 +656,7 @@ impl Launcher {
                     .child(close(tr("Cancel")))
                     .children((free > 0).then_some(add)),
             );
-        Some(crate::sheets::frame("alt-pick", 520., body, cx).text_color(c(palette().text)))
+        Some(crate::sheets::frame(visual, "alt-pick", 520., body, cx).text_color(c(palette().text)))
     }
 }
 

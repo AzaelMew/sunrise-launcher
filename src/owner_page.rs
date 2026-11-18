@@ -252,7 +252,11 @@ impl Launcher {
             .items_center()
             .justify_center()
             .p(px(16.))
-            .bg(palette().scrim())
+            .bg(self
+                .ui
+                .sheets
+                .visual(crate::sheets::Layer::SignIn)
+                .scrim(palette().scrim()))
             .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(card)
     }
@@ -500,12 +504,11 @@ impl Launcher {
             .occlude()
             .child(ui::scrim_backdrop())
             .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full()
-                    .bg(ui::scrim()),
+                div().absolute().top_0().left_0().size_full().bg(self
+                    .ui
+                    .sheets
+                    .visual(crate::sheets::Layer::SignIn)
+                    .scrim(ui::scrim())),
             )
             .child(card)
     }
