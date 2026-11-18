@@ -31,5 +31,5 @@ Run the check locally from the launcher repository root:
 ```sh
 game=$(mktemp -d)
 tools/ci/game_at.sh "$(cat tools/ci/sunrise-commit)" "$game"
-SUNRISE_GAME_DIR="$game" python3 -m unittest tools/tests/test_game_copies.py
+SUNRISE_GAME_DIR="$game" python3 -m unittest tools/game_copies/test_game_copies.py
 ```

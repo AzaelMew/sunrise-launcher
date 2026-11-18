@@ -16,7 +16,7 @@ export GIT_TERMINAL_PROMPT=0
 git init --quiet -- "$dir"
 git -C "$dir" remote add origin https://github.com/sunrise-org/sunrise
 git -C "$dir" fetch --quiet --no-tags --depth 1 --filter=blob:none origin "$sha"
-python3 "$launcher/tools/tests/test_game_copies.py" --paths |
+python3 "$launcher/tools/game_copies/test_game_copies.py" --paths |
     sed 's|^|/|' |
     git -C "$dir" sparse-checkout set --no-cone --stdin
 git -C "$dir" checkout --quiet --detach FETCH_HEAD
