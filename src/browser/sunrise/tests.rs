@@ -418,6 +418,23 @@ fn screenshots_are_the_gallery_from_the_registry_only() {
 }
 
 #[test]
+fn a_registry_icon_with_a_version_query_and_five_screenshots_are_all_fetchable() {
+    let site = "https://sunrise-org.github.io/sunrise-mods";
+    let mut p = sample().projects[0].clone();
+    p.icon = Some(format!("{site}/icons/jei.png?v=845e5188457e"));
+    p.screenshots = (1..=5)
+        .map(|n| format!("{site}/screenshots/jei/{n}-shot.jpg"))
+        .collect();
+    let hit = project_of(&sample(), &p, GAME).unwrap();
+    let icon = hit.icon.unwrap();
+    assert!(icon.starts_with(sunrise_launcher_addresses::MOD_IMAGES));
+    assert_eq!(super::super::images::refuse(&icon), None);
+    let gallery = gallery_of(&p);
+    assert_eq!(gallery.len(), 5);
+    assert_eq!(gallery[4].url, format!("{site}/screenshots/jei/5-shot.jpg"));
+}
+
+#[test]
 fn installs_combined_native_content_as_one_smod() {
     use std::io::Write;
     let home = scratch("native-content-install");
