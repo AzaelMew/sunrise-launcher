@@ -61,7 +61,6 @@ pub(super) enum Loaded {
         sunrise_launcher::porter::Verdict,
     ),
     Image((String, u32), Option<PathBuf>),
-    Tags((SourceId, PackKind), Result<Tags, String>),
 }
 
 /// Images fetched at once.
@@ -100,10 +99,6 @@ impl Launcher {
                     b.images.insert(key, path);
                 }
             }
-            Loaded::Tags(key, Ok(tags)) => {
-                b.tags.insert(key, tags);
-            }
-            Loaded::Tags(_, Err(_)) => {}
         }
     }
 

@@ -15,7 +15,6 @@ pub(super) struct InstanceMods {
     /// Only the rows near the view are built (a modpack has hundreds), measured again when the
     /// shown list changes (its length and the filter).
     pub(super) cull: cull::Cull,
-    pub(super) shown: (usize, String),
 }
 
 impl InstanceMods {

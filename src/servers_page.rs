@@ -60,15 +60,9 @@ pub(super) enum Field {
     /// The instance dialog's (`instances_page.rs`).
     InstanceName,
     InstanceGroup,
-    /// Its search in Mojang's versions (`new_instance.rs`).
-    InstanceVersion,
-    /// Home's Mods tab's filter (`instance_mods.rs`).
-    InstanceModsFilter,
     /// Home's Multiplayer section's (`multiplayer_page.rs`).
     ServerName,
     ServerAddress,
-    /// Home's Console's search (`console_page.rs`).
-    ConsoleSearch,
     /// The Launch panel's (`launch_page.rs`).
     PreLaunch,
     Wrapper,
@@ -1022,9 +1016,7 @@ impl Launcher {
                 .when(
                     matches!(
                         f,
-                        Field::InstanceModsFilter
-                            | Field::ConsoleSearch
-                            | Field::Motd
+                        Field::Motd
                             | Field::Port
                             | Field::Token
                             | Field::AddPlayer
@@ -1044,7 +1036,6 @@ impl Launcher {
                             f,
                             Field::InstanceName
                                 | Field::InstanceGroup
-                                | Field::InstanceVersion
                                 | Field::Name
                                 | Field::Seed
                         ),
@@ -1177,9 +1168,6 @@ impl Launcher {
             Field::Email => self.invite_friend(),
             Field::InstanceName
             | Field::InstanceGroup
-            | Field::InstanceVersion
-            | Field::InstanceModsFilter
-            | Field::ConsoleSearch
             | Field::JavaArgs
             | Field::WindowWidth
             | Field::WindowHeight

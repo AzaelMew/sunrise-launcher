@@ -17,7 +17,6 @@ pub(super) enum SheetTab {
     Installation,
     Launch,
     Hooks,
-    Storage,
 }
 
 
