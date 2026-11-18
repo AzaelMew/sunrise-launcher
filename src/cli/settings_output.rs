@@ -1,18 +1,24 @@
 use super::*;
 
 pub(super) fn settings_json(s: &backend::Settings) -> serde_json::Value {
-    settings_json_in(
+    let background =
+        sunrise_launcher::themes::background(&backend::data_dir(), s.background.as_deref());
+    settings_json_with_paths(
         s,
-        &backend::data_dir(),
         &sunrise_launcher::theme_files::dir(),
+        background.as_deref(),
     )
 }
 
-/// The settings as the command prints them, with the look's folders under `data` and `themes`.
+/// The settings as the command prints them, with the themes folder and resolved background.
 /// A folder goes out as the text a player would read: a path that isn't Unicode (any path is
 /// allowed on Unix) is shown with its odd bytes replaced, never a reason to fail after a
 /// setting was already saved.
-fn settings_json_in(s: &backend::Settings, data: &Path, themes: &Path) -> serde_json::Value {
+fn settings_json_with_paths(
+    s: &backend::Settings,
+    themes: &Path,
+    background: Option<&Path>,
+) -> serde_json::Value {
     serde_json::json!({
         "selected_version": backend::resolve_version(None).ok(),
         "game_architecture": s.game_architecture.name(),
@@ -33,8 +39,7 @@ fn settings_json_in(s: &backend::Settings, data: &Path, themes: &Path) -> serde_
         "accent": sunrise_launcher::appearance::accent(s).name(),
         "scenery": s.scenery(),
         "themes_dir": themes.display().to_string(),
-        "background": sunrise_launcher::themes::background(data, s.background.as_deref())
-            .map(|kept| kept.display().to_string()),
+        "background": background.map(|kept| kept.display().to_string()),
         "cache_limit_gib": s.cache_limit_gib.unwrap_or(sunrise_launcher::storage::policy::DEFAULT_LIMIT_GIB),
         "no_ai": backend::no_ai(),
     })
@@ -49,25 +54,18 @@ mod tests {
     /// with a kept picture in it, and nothing panics.
     #[test]
     fn folders_that_are_not_unicode_are_reported_not_a_panic() {
-        let root = tempfile::tempdir().unwrap();
-        let data = root
-            .path()
-            .join(std::ffi::OsStr::from_bytes(b"launcher-\xff\xfe"));
-        std::fs::create_dir_all(&data).unwrap();
-        std::fs::write(data.join("background-0123456789ab.png"), b"kept").unwrap();
-        let s = backend::Settings::parse(r#"{"background": "background-0123456789ab.png"}"#);
-        let shown = settings_json_in(&s, &data, &data.join("themes"));
-        let themes = shown["themes_dir"].as_str().unwrap();
-        assert!(
-            themes.contains("launcher-") && themes.ends_with("themes"),
-            "{themes}"
+        // Format paths in memory: some Unix file systems cannot store non-UTF-8 names.
+        let data = Path::new(std::ffi::OsStr::from_bytes(b"launcher-\xff\xfe"));
+        let themes = data.join("themes");
+        let background = data.join("background-0123456789ab.png");
+        let s = backend::Settings::parse("{}");
+        let shown = settings_json_with_paths(&s, &themes, Some(&background));
+        assert_eq!(shown["themes_dir"], "launcher-��/themes");
+        assert_eq!(
+            shown["background"],
+            "launcher-��/background-0123456789ab.png"
         );
-        assert!(shown["background"]
-            .as_str()
-            .unwrap()
-            .ends_with("background-0123456789ab.png"));
-        // With no kept picture the field is null, as before.
-        let none = settings_json_in(&backend::Settings::parse("{}"), &data, &data.join("themes"));
+        let none = settings_json_with_paths(&s, &themes, None);
         assert!(none["background"].is_null());
     }
 }
