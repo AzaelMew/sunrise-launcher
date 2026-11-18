@@ -20,7 +20,6 @@ use sunrise_launcher::porter::Check;
 
 /// Java mods checked at once.
 const CHECKING: usize = 2;
-const PAGE: usize = 20;
 
 #[path = "glass_mods.rs"]
 mod glass_mods;
@@ -233,10 +232,6 @@ impl Mods {
         self.focused = self.focus.is_focused(window);
     }
 
-    /// The Java instance `kind` goes into as files, when one is selected.
-    pub(super) fn java_for(&self, kind: PackKind) -> Option<&Target> {
-        self.java.as_ref().filter(|t| t.takes(kind))
-    }
 }
 
 impl Launcher {
@@ -668,18 +663,6 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
     lines
 }
 
-/// Takes the update offers of look `request` when it is the latest asked for (`latest`): an earlier one (another instance's list, another build) that answers late changes nothing.
-fn offer_updates(
-    offers: &mut HashMap<(SourceId, String), String>,
-    latest: u64,
-    request: u64,
-    found: HashMap<(SourceId, String), String>,
-) {
-    if request == latest {
-        *offers = found;
-    }
-}
-
 /// Where a kind's tab searches first: Sunrise's registry for mods and shader packs, Modrinth for
 /// the rest.
 fn source_for(kind: PackKind) -> SourceId {
@@ -693,15 +676,4 @@ fn source_for(kind: PackKind) -> SourceId {
 mod tests {
     use super::*;
 
-    #[test]
-    fn an_earlier_look_for_updates_that_answers_late_changes_nothing() {
-        let offer = |id: &str, number: &str| {
-            HashMap::from([((SourceId::Sunrise, id.to_owned()), number.to_owned())])
-        };
-        let mut offers = HashMap::new();
-        // The old instance's look (1) and the new one's (2) are both out; the new one answers first.
-        offer_updates(&mut offers, 2, 2, offer("new-mod", "3"));
-        offer_updates(&mut offers, 2, 1, offer("old-mod", "9"));
-        assert_eq!(offers, offer("new-mod", "3"));
-    }
 }
