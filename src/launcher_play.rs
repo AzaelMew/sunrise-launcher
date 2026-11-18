@@ -176,26 +176,10 @@ impl Launcher {
     fn start_client(&mut self, tag: String, intent: PlayIntent) {
         self.client_error = None;
         self.crash = None;
-        // Every way to Play ends here, so this is where a build with native code is held to
-        // the permission as it stands now and to the profile about to play it.
-        let home = self
-            .instances
-            .list
-            .iter()
-            .find(|i| i.id == intent.instance)
-            .map(|i| i.home.clone());
-        let native = native_mods::is_native(&tag);
-        let refused = native_status::launch_refusal(
-            native,
-            backend::Settings::load().native_mods_allowed_at.is_some(),
-            &home
-                .filter(|_| native)
-                .map(|home| native_status::enabled(&home))
-                .unwrap_or_default(),
-            native_status::built(&tag).as_deref(),
-        );
-        if let Some(refused) = refused {
-            self.client_error = Some(refused.message().into());
+        // Refuse revoked permission early as well as at spawn. The prepared command's
+        // compiled inventory is checked off-thread once its actual profile has been applied.
+        if let Err(error) = native_status::check_permission(&tag) {
+            self.client_error = Some(error);
             self.starting_pack = None;
             self.joining = None;
             self.quick_play = None;

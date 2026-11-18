@@ -1172,10 +1172,12 @@ pub fn before_play(
     }
     let included = crate::native_status::included(tag)?;
     // The mod list lives with the game’s packages, not the separate cache/data home.
-    check_before_play(&args.context.game_dir, &included, || {
+    let notices = check_before_play(&args.context.game_dir, &included, || {
         index().ok()?;
         fetched_index()
-    })
+    })?;
+    crate::native_status::check_compiled_profile(&included, &args.context.game_dir)?;
+    Ok(notices)
 }
 
 fn check_before_play(
@@ -1194,7 +1196,7 @@ fn check_before_play(
     };
     let lines = turn_off_revoked(&index, home)?;
     // Switching the mod off in this profile cannot remove code from the selected binary.
-    for crate::native_status::Included { id, version } in included {
+    for crate::native_status::Included { id, version, .. } in included {
         let published = index
             .project(id)
             .and_then(|p| p.versions.iter().find(|v| &v.version == version));

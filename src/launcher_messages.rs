@@ -121,7 +121,7 @@ impl Launcher {
                             account::check_launch_account(&self.accounts, uuid)
                                 .map_err(|refused| refused.in_window())?;
                         }
-                        native_status::check_spawn_permission(&tag)?;
+                        native_status::check_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
                         backend::spawn(Job::Client, cmd, self.tx.clone())
                     });

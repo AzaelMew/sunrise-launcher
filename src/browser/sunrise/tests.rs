@@ -637,6 +637,7 @@ fn registry_play_refuses_a_taken_down_mod_baked_into_a_build() {
     let built = [crate::native_status::Included {
         id: "coords_hud".into(),
         version: version.version,
+        sha256: "a".repeat(64),
     }];
     let loaded = |index: Index| {
         let text = serde_json::to_string(&index).unwrap();
