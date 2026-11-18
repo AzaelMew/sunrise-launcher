@@ -3,6 +3,9 @@ use super::*;
 
 impl Render for Launcher {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if cfg!(feature = "redesign-preview") {
+            return self.alt_frame(window, cx);
+        }
         let t = self.theme;
         if specimen::wanted() {
             return div()

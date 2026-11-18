@@ -56,19 +56,23 @@ fn run_launcher() {
     }
     // A Sunrise build's first start copies the settings, accounts and instances of the launcher
     // before it into its own folders, before anything reads them.
-    sunrise_launcher::carry_over::at_start();
+    if !cfg!(feature = "redesign-preview") {
+        sunrise_launcher::carry_over::at_start();
+    }
     // A broken location must still open a window: startup() falls back to the default
     // folders and records the error, which Settings shows with Retry and Use the default folder.
     // It keeps the migration lease for the life of the process.
     let _location_error = sunrise_launcher::data_location::startup();
     perf::process_started();
     backend::exe_path();
-    if let Some(code) = sunrise_launcher::update_handoff::run() {
-        std::process::exit(code);
+    if !cfg!(feature = "redesign-preview") {
+        if let Some(code) = sunrise_launcher::update_handoff::run() {
+            std::process::exit(code);
+        }
+        #[cfg(windows)]
+        backend::remove_replaced_binaries();
+        backend::cleanup_launcher_updates();
     }
-    #[cfg(windows)]
-    backend::remove_replaced_binaries();
-    backend::cleanup_launcher_updates();
     // What the launcher downloads goes through the player's proxy, if they set one: the parts
     // that build their own agents (`sunrise-port-pack`) are told before anything starts.
     sunrise_launcher::proxy::announce(sunrise_launcher::backend::Settings::load().proxy);
@@ -130,7 +134,12 @@ fn run_launcher() {
             }
             #[cfg(not(windows))]
             let _ = setup_window;
-            let bounds = Bounds::centered(None, size(px(1180.), px(760.)), cx);
+            let extent = if cfg!(feature = "redesign-preview") {
+                size(px(1280.), px(800.))
+            } else {
+                size(px(1180.), px(760.))
+            };
+            let bounds = Bounds::centered(None, extent, cx);
             cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),

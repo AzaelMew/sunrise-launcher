@@ -4,7 +4,9 @@ use super::*;
 
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        sunrise_launcher::storage::eviction::cleanup_after_start();
+        if !cfg!(feature = "redesign-preview") {
+            sunrise_launcher::storage::eviction::cleanup_after_start();
+        }
         let (tx, rx) = wake::channel();
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
@@ -34,7 +36,8 @@ impl Launcher {
         // Release builds on Linux put their entry back in the applications menu when there is
         // none or it starts a program that is gone (a moved or deleted binary), never over one
         // that works; `SUNRISE_LAUNCHER_DESKTOP_ENTRY=1` does it in a development build.
-        if cfg!(target_os = "linux")
+        if !cfg!(feature = "redesign-preview")
+            && cfg!(target_os = "linux")
             && settings.desktop_entry()
             && (!cfg!(debug_assertions)
                 || std::env::var_os("SUNRISE_LAUNCHER_DESKTOP_ENTRY").is_some())
@@ -60,6 +63,7 @@ impl Launcher {
         let backdrop =
             cx.new(|_| window_root::Backdrop::new(coast.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
+            alt: Default::default(),
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
             behind: Page::Play,
@@ -79,7 +83,7 @@ impl Launcher {
             sheet_size: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
-            opening: (!settings.skip_opening).then(|| {
+            opening: (!cfg!(feature = "redesign-preview") && !settings.skip_opening).then(|| {
                 let focus = cx.focus_handle();
                 window.focus(&focus, cx);
                 Opening {
@@ -92,7 +96,9 @@ impl Launcher {
             checked: None,
             update_error: None,
             // The installer the last Update started could not put the new launcher in place.
-            self_update: sunrise_launcher::update_handoff::take_failure()
+            self_update: (!cfg!(feature = "redesign-preview"))
+                .then(sunrise_launcher::update_handoff::take_failure)
+                .flatten()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
             self_update_hidden: false,
             update_install: None,
@@ -257,7 +263,11 @@ impl Launcher {
             console: Default::default(),
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
-            side_servers: sunrise_launcher::servers::list(),
+            side_servers: if cfg!(feature = "redesign-preview") {
+                Vec::new()
+            } else {
+                sunrise_launcher::servers::list()
+            },
             coast,
             sky,
             rain,
@@ -270,6 +280,15 @@ impl Launcher {
             this.page = Page::Settings;
         }
         this.reload_instances();
+        if cfg!(feature = "redesign-preview") {
+            // Read only public profile metadata on entry. The ordinary launch and sign-in
+            // actions still read/refresh the selected account when the player requests them.
+            this.perf.keep_local_log(false);
+            // The accounts' faces come from their public skins, with no token or keychain.
+            this.load_profile_heads();
+            this.fetch_startup_releases();
+            return this;
+        }
         if this.bench.is_some() {
             this.perf.keep_local_log(false);
         }

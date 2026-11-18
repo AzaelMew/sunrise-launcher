@@ -15,6 +15,9 @@ mod launcher_setup;
 mod widgets;
 pub(crate) use widgets::*;
 mod agents_page;
+mod alt;
+mod alt_build;
+mod alt_sheets;
 mod blocks;
 mod build_mode;
 mod cli;
@@ -227,6 +230,7 @@ enum Load<T> {
 const LOG_LINES: usize = 2000;
 
 struct Launcher {
+    alt: alt::State,
     theme: Theme,
     page: Page,
     /// The page under the glass Settings dialog: the last one shown before it opened.
@@ -564,9 +568,11 @@ actions!(sunrise_launcher, [Quit, CloseWindow]);
 /// exit. A game that is running keeps running. Cmd+Q goes through here too.
 fn shut_down(cx: &mut App) {
     servers_page::stop_on_quit();
-    telemetry::send_before_exit();
-    // A downloaded launcher update goes in only when the player presses Update: closing drops it.
-    sunrise_launcher::update_handoff::forget();
+    if !cfg!(feature = "redesign-preview") {
+        telemetry::send_before_exit();
+        // The preview never owns the installed launcher's pending update.
+        sunrise_launcher::update_handoff::forget();
+    }
     cx.quit()
 }
 
