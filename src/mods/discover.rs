@@ -298,6 +298,7 @@ impl Launcher {
                 browse_card(
                     ("alt-card", n),
                     picture,
+                    &id,
                     &card_data.name,
                     &card_data.authors,
                     &card_data.summary,

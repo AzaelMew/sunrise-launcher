@@ -86,9 +86,10 @@ pub(crate) enum Art {
     Profile(String),
     /// A world's `icon.png`, and when the world was last saved (a new picture is read again).
     World(Option<PathBuf>, u64),
-    /// A mod's icon, by its address in the registry.
-    Mod(Option<String>),
-    Pack(Option<Arc<gpui::Image>>),
+    /// A mod, by its id, and its icon's address in the registry.
+    Mod(String, Option<String>),
+    /// A pack, by its file's name, and its picture.
+    Pack(String, Option<Arc<gpui::Image>>),
 }
 
 #[derive(Clone)]
@@ -372,19 +373,19 @@ impl Launcher {
         all.extend(
             self.mods_for_search()
                 .into_iter()
-                .map(|(title, icon)| Entry {
+                .map(|(id, title, icon)| Entry {
                     group: Group::Mods,
                     label: title.clone(),
                     hint: tr("Mod").to_string(),
                     target: Target::Mod(title),
-                    art: Art::Mod(icon),
+                    art: Art::Mod(id, icon),
                     quiet: false,
                 }),
         );
         all.extend(
             self.packs_for_search()
                 .into_iter()
-                .map(|(kind, title, icon)| Entry {
+                .map(|(kind, file, title, icon)| Entry {
                     group: Group::Packs,
                     label: title.clone(),
                     hint: tr(match kind {
@@ -393,7 +394,7 @@ impl Launcher {
                     })
                     .to_string(),
                     target: Target::Pack(kind, title),
-                    art: Art::Pack(icon),
+                    art: Art::Pack(file, icon),
                     quiet: false,
                 }),
         );
@@ -515,7 +516,7 @@ impl Launcher {
     }
 
     /// A row's picture, `ART` square.
-    fn search_art(&mut self, art: &Art) -> Div {
+    fn search_art(&mut self, art: &Art, label: &str) -> Div {
         let tile = || {
             div()
                 .flex_none()
@@ -549,17 +550,13 @@ impl Launcher {
                     None => glyph("map"),
                 }
             }
-            Art::Mod(icon) => {
+            Art::Mod(id, icon) => {
                 let picture = icon
                     .as_ref()
                     .and_then(|url| self.mods_image(url, sunrise_launcher::browser::images::ROW));
-                match picture {
-                    Some(file) => tile().child(gpui::img(file).size(px(ART))),
-                    None => glyph("package"),
-                }
+                crate::mod_icons::tile(picture, id, label, ART)
             }
-            Art::Pack(Some(image)) => tile().child(gpui::img(image.clone()).size(px(ART))),
-            Art::Pack(None) => glyph("package"),
+            Art::Pack(file, image) => crate::mod_icons::tile(image.clone(), file, label, ART),
         }
     }
 
@@ -657,7 +654,7 @@ impl Launcher {
                     .rounded(px(tokens::R_CONTROL))
                     .cursor_pointer()
                     .when(n == index, |d| d.bg(rgb(palette().selected)))
-                    .child(self.search_art(&entry.art))
+                    .child(self.search_art(&entry.art, &entry.label))
                     .child(
                         div()
                             .flex_1()

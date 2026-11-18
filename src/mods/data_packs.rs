@@ -177,7 +177,7 @@ impl DataState {
 
 /// A world's own picture, or its first letter.
 fn world_icon(world: &World, side: f32) -> Div {
-    tile(world.icon.clone(), &world.name, side)
+    tile(world.icon.clone(), &world.folder, &world.name, side)
 }
 
 /// "Survival · Yesterday".

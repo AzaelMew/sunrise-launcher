@@ -494,6 +494,7 @@ impl Launcher {
                         browse_card(
                             ElementId::named_usize("alt-pack-card", n),
                             picture,
+                            &id,
                             &p.title,
                             &p.author,
                             &p.summary,

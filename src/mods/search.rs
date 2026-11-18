@@ -7,27 +7,36 @@ use sunrise_launcher::packs::Kind;
 
 impl Launcher {
     /// The selected profile's installed mods: each one's name and its icon's address.
-    pub(crate) fn mods_for_search(&mut self) -> Vec<(String, Option<String>)> {
+    pub(crate) fn mods_for_search(&mut self) -> Vec<(String, String, Option<String>)> {
         self.mods_refresh();
         self.rows()
             .into_iter()
-            .map(|row| (row.title, row.icon))
+            .map(|row| (row.id, row.title, row.icon))
             .collect()
     }
 
     /// Its resource packs, then its shader packs: each one's kind, name and picture.
-    pub(crate) fn packs_for_search(&mut self) -> Vec<(Kind, String, Option<Arc<gpui::Image>>)> {
+    pub(crate) fn packs_for_search(
+        &mut self,
+    ) -> Vec<(Kind, String, String, Option<Arc<gpui::Image>>)> {
         self.load_packs_list(self.mods_home());
         let packs = &self.game_packs;
         packs
             .resource
             .iter()
-            .map(|(pack, icon)| (pack.kind, pack.title.clone(), icon.clone()))
+            .map(|(pack, icon)| {
+                (
+                    pack.kind,
+                    pack.file.clone(),
+                    pack.title.clone(),
+                    icon.clone(),
+                )
+            })
             .chain(
                 packs
                     .shader
                     .iter()
-                    .map(|pack| (pack.kind, pack.title.clone(), None)),
+                    .map(|pack| (pack.kind, pack.file.clone(), pack.title.clone(), None)),
             )
             .collect()
     }
