@@ -33,7 +33,6 @@ mod examples;
 mod installed_view;
 mod model;
 mod pack_discover;
-#[cfg(feature = "redesign-preview")]
 mod packs;
 mod project;
 mod ui;
@@ -109,7 +108,6 @@ pub(crate) struct AltModsState {
     filters: model::Filters,
     menu: Option<Menu>,
     row_filter: model::RowFilter,
-    #[cfg(feature = "redesign-preview")]
     collection: sunrise_launcher::packs::Kind,
     /// Discover's resource and data pack scopes (`pack_discover`).
     packs: pack_discover::PackState,
@@ -145,7 +143,6 @@ impl Default for AltModsState {
             filters: model::Filters::default(),
             menu: None,
             row_filter: model::RowFilter::default(),
-            #[cfg(feature = "redesign-preview")]
             collection: sunrise_launcher::packs::Kind::Resource,
             packs: Default::default(),
             selection: BTreeSet::new(),
@@ -166,7 +163,6 @@ impl Launcher {
     /// The Mods screen for `self.alt.page`: Discover, Installed or a mod's page.
     pub(crate) fn alt_mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.alt_mods_drain();
-        #[cfg(feature = "redesign-preview")]
         if self.alt.page == Page::Packs {
             return self.pack_page(window, cx);
         }
@@ -556,7 +552,6 @@ impl Launcher {
             )
             .into(),
         };
-        #[cfg(feature = "redesign-preview")]
         let placeholder = if self.alt.page == Page::Packs {
             match self.alt.mods.collection {
                 sunrise_launcher::packs::Kind::Resource => tr("Search your resource packs").into(),
@@ -644,7 +639,6 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.alt.mods.find)
         };
-        #[cfg(feature = "redesign-preview")]
         if self.alt.page == Page::Packs {
             return div()
                 .flex()

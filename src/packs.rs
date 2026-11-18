@@ -456,7 +456,6 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
 /// anything is written. The copy goes through a hidden temporary file in the folder and is put
 /// in place only whole, never over a pack already there (a same name gets `(2)`), so an error
 /// leaves the folder as it was.
-#[cfg(feature = "redesign-preview")]
 pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
     let name = file.file_name().ok_or("A pack file has a name")?;
     if !fs::metadata(file).is_ok_and(|m| m.is_file()) {
@@ -538,7 +537,6 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
 /// The enabled resource packs the folder shows, as `resourcePacks` holds them: each one's index
 /// in the raw list (bottom first) and its file name. Builtins and references to packs that are
 /// not there are left out.
-#[cfg(feature = "redesign-preview")]
 fn visible_enabled(home: &Path) -> (Vec<String>, Vec<(usize, String)>) {
     let raw = option_list(&fs::read_to_string(home.join(OPTIONS)).unwrap_or_default());
     let shown: Vec<String> = list(home, Kind::Resource)
@@ -556,7 +554,6 @@ fn visible_enabled(home: &Path) -> (Vec<String>, Vec<(usize, String)>) {
 
 /// The file names in `resourcePacks`, highest priority (the game's top) first. Packs that are
 /// not there are included: a page ranks the ones it shows.
-#[cfg(feature = "redesign-preview")]
 pub fn resource_order(home: &Path) -> Vec<String> {
     enabled(home, Kind::Resource).into_iter().rev().collect()
 }
@@ -565,7 +562,6 @@ pub fn resource_order(home: &Path) -> Vec<String> {
 /// ones the folder shows (`resource_order` without the missing ones). Everything else in `resourcePacks` stays where it is, builtins and
 /// references to missing packs included. A pair that is not enabled, not adjacent (the list
 /// changed since the page read it), or a pack listed twice is refused and nothing is written.
-#[cfg(feature = "redesign-preview")]
 pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), String> {
     let (mut raw, slots) = visible_enabled(home);
     let at = |name: &str| {

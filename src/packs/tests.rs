@@ -25,9 +25,7 @@ fn zip_file(path: &Path, files: &[(&str, &[u8])]) {
 const META: &[u8] = "{\"pack\":{\"pack_format\":69,\"description\":[\"\",{\"text\":\"Smooth \u{a7}aglass\"},\"\\nand more\"]}}"
     .as_bytes();
 
-#[cfg(feature = "redesign-preview")]
 const VALID_POST: &[u8] = b"fn post(input: PostInput) -> vec4<f32> { return input.color; }\n";
-#[cfg(feature = "redesign-preview")]
 const MALFORMED_POST: &[u8] = b"fn post(input: PostInput) -> vec4<f32> { return input.color }\n";
 
 const SHADER_META: &str = "schema = 1\nid = \"warm\"\nname = \"Warm Light\"\nversion = \"1.0\"\napi = \"0.1\"\n[[post]]\nfile = \"post.wgsl\"\n";
@@ -299,7 +297,6 @@ fn invalid_native_manifest_does_not_hide_a_valid_duplicate() {
     fs::remove_dir_all(home).unwrap();
 }
 
-#[cfg(feature = "redesign-preview")]
 fn tree(root: &Path) -> Vec<String> {
     fn walk(dir: &Path, out: &mut Vec<String>) {
         for e in fs::read_dir(dir).unwrap().flatten() {
@@ -315,7 +312,6 @@ fn tree(root: &Path) -> Vec<String> {
     out
 }
 
-#[cfg(feature = "redesign-preview")]
 #[test]
 fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
     let home = home("add-local");
@@ -426,7 +422,6 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
     }
 }
 
-#[cfg(feature = "redesign-preview")]
 #[test]
 fn resource_order_lists_enabled_packs_top_first_and_moves_adjacent_pairs() {
     let home = home("order");

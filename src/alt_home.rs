@@ -26,7 +26,6 @@ use gpui::{rgb, rgba};
 use sunrise_launcher::browser::{self, Kind, Project, Query, SourceId};
 use sunrise_launcher::worlds::World;
 
-#[cfg(feature = "redesign-preview")]
 mod world_packs;
 
 /// Worlds shown across the top.
@@ -62,7 +61,6 @@ pub(crate) struct AltHomeState {
     /// An install was under way last frame: the list is read again when it ends.
     was_busy: bool,
     /// The inline data packs view of one explicitly chosen world.
-    #[cfg(feature = "redesign-preview")]
     packs: world_packs::WorldPacks,
 }
 
@@ -215,7 +213,6 @@ impl Launcher {
         self.alt_refresh_installed(&home);
         self.alt_ping_featured(cx);
         self.alt_popular_load(cx);
-        #[cfg(feature = "redesign-preview")]
         {
             // The worlds still on disk, as last listed for this setup.
             let present: Option<Vec<World>> =
@@ -285,7 +282,6 @@ impl Launcher {
             row
         };
         // Worlds past the first few are reached from the chooser, never by default.
-        #[cfg(feature = "redesign-preview")]
         let more = (self.worlds.list.len() > WORLDS).then(|| {
             let home = self.worlds.home.clone();
             button("alt-worlds-more", tr("Data packs for other worlds")).on_click(cx.listener(
@@ -297,8 +293,6 @@ impl Launcher {
                 },
             ))
         });
-        #[cfg(not(feature = "redesign-preview"))]
-        let more: Option<Stateful<Div>> = None;
         div()
             .flex()
             .flex_col()
@@ -380,7 +374,6 @@ impl Launcher {
 
     fn alt_world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
         let folder = world.folder.clone();
-        #[cfg(feature = "redesign-preview")]
         let packs = {
             let (world, home) = (world.clone(), self.worlds.home.clone());
             Some(
@@ -396,8 +389,6 @@ impl Launcher {
                 })),
             )
         };
-        #[cfg(not(feature = "redesign-preview"))]
-        let packs: Option<Stateful<Div>> = None;
         let play = button(format!("alt-world-{}", world.folder), tr("Play")).on_click(cx.listener(
             move |this, _: &ClickEvent, _, cx| {
                 this.alt_go("--world", folder.clone());
