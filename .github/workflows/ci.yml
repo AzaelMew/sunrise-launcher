@@ -1,7 +1,7 @@
 name: CI
 # A dispatch with `pr` runs on main but tests that pull request's head, so it is named for it.
 run-name: "${{ inputs.pr && format('PR #{0} checks', inputs.pr) || github.event.pull_request.title || github.event.head_commit.message || github.workflow }}"
-# Format on every pull request; the full checks on this repository's own branches, main and dispatches, and on a fork's head only by `gh workflow run ci.yml --ref main -f pr=<n>`, which posts `build` there.
+# Static checks on every pull request; the full checks on this repository's own branches, main and dispatches, and on a fork's head only by `gh workflow run ci.yml --ref main -f pr=<n>`, which posts `build` there.
 on:
   pull_request:
   push:
@@ -94,7 +94,7 @@ jobs:
           echo "full=$full sha=${sha:-the event commit} trusted=$trusted runner=$runner"
           { echo "full=$full"; echo "sha=$sha"; echo "trusted=$trusted"; echo "runner=$runner"; } >> "$GITHUB_OUTPUT"
 
-  # The cheap check every pull request gets, a fork's included: no build, GitHub's runner.
+  # The cheap checks every pull request gets, a fork's included: no build, GitHub's runner.
   format:
     needs: route
     runs-on: ubuntu-latest
@@ -104,6 +104,11 @@ jobs:
         with:
           ref: ${{ needs.route.outputs.sha }}
           persist-credentials: false
+      - name: Compare game copies to the Sunrise pin
+        run: |
+          game=$(mktemp -d "$RUNNER_TEMP/sunrise-game.XXXXXX")
+          tools/ci/game_at.sh "$(cat tools/ci/sunrise-commit)" "$game"
+          SUNRISE_GAME_DIR="$game" python3 -m unittest tools/tests/test_game_copies.py
       - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
           toolchain: ${{ needs.route.outputs.rust }}
