@@ -2,7 +2,7 @@
 //! resource, shader or data pack. What it says comes from the pack's source (`Source::details`
 //! and `Source::versions`), read in a worker; the action is the card's own (Add, or the world
 //! picker for a data pack). Back returns to the grid as it was left.
-use super::project::{about_link, about_row, back, gallery, prose};
+use super::project::{about_link, about_row, back, prose};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -271,12 +271,9 @@ impl Launcher {
                     })),
             );
 
-        let shots: Vec<Option<PathBuf>> = details
-            .map(|d| d.gallery.iter().take(4).map(|i| i.url.clone()).collect())
-            .unwrap_or_else(Vec::<String>::new)
-            .iter()
-            .map(|url| self.mods_image(url, images::GALLERY))
-            .collect();
+        let shots = details
+            .map(|d| d.gallery.iter().map(|i| i.url.clone()).collect())
+            .unwrap_or_default();
         let about: AnyElement = match &loaded {
             None => muted(tr("Loading…")).into_any_element(),
             Some(Err(why)) => div()
@@ -343,7 +340,10 @@ impl Launcher {
             true => (Some(side), None),
             false => (None, Some(side.w(px(360.)).flex_none())),
         };
-        main = main.children(above).children(gallery(shots)).child(about);
+        main = main
+            .children(above)
+            .children(self.gallery(shots, cx))
+            .child(about);
         if let Some(list) = list {
             main = main
                 .child(
