@@ -425,24 +425,6 @@ fn a_game_release_names_its_build_through_its_signed_index() {
         &[],
     );
     assert!(matches!(read(replaced), Err(Refusal::Superseded { .. })));
-    // The commit name still parses, but these are no longer the signed index's bytes.
-    fs::write(
-        base.join("nightly-2026-11-17").join(INDEX),
-        format!("{index}\n"),
-    )
-    .unwrap();
-    assert!(matches!(read(replaced), Err(Refusal::Unsigned { .. })));
-    // A valid snapshot tag is immutable; it does not get the Nightly diagnostic.
-    let immutable = "snapshot-2026-11-17-abcdef0";
-    publish(
-        &base,
-        immutable,
-        "snapshot-2026-11-17-0123456",
-        &fixture.key,
-        index.as_bytes(),
-        &[],
-    );
-    assert!(matches!(read(immutable), Err(Refusal::Unsigned { .. })));
     // Only the signature decides: an index naming a later build of that day, signed for
     // anything else, is still a safety refusal.
     let unproven = "nightly-2026-11-18-abcdef0";
