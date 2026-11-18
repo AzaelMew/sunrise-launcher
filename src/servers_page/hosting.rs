@@ -318,13 +318,7 @@ impl Launcher {
                     .filter(|_| self.servers.create.is_none()),
             );
         if self.servers.list.is_empty() {
-            return page.child(
-                card()
-                    .p(px(20.))
-                    .child(hint(tr(
-                        "No server yet. With the defaults you get a friends-only survival world: accept Minecraft's terms and press Create.",
-                    ))),
-            );
+            return page.child(card().p(px(20.)).child(hint(tr("No server yet."))));
         }
         let mut rows = Vec::new();
         for (i, e) in self.servers.list.clone().into_iter().enumerate() {
@@ -1528,9 +1522,7 @@ impl Launcher {
                 cx,
             ))
         } else if worlds.is_empty() {
-            hint(tr(
-                "You have no single-player world yet: play one first, or choose New world.",
-            ))
+            hint(tr("No single-player world yet. Choose New world."))
         } else {
             let mut list = div().flex().flex_col().gap(px(2.));
             for (i, (name, path)) in worlds.into_iter().take(8).enumerate() {

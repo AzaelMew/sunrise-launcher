@@ -38,14 +38,17 @@ impl Launcher {
                         .flex_col()
                         .items_start()
                         .gap(px(12.))
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(tr("No mods installed yet")))
-                        .child(muted(tr("Mods you add from Discover show up here, with their updates and a switch for each.")))
-                        .child(primary("alt-installed-browse", tr("Find mods in Discover")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(tr("No mods yet")),
+                        )
+                        .child(primary("alt-installed-browse", tr("Find mods")).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.choose_view(Page::Discover);
                                 cx.notify();
-                            },
-                        ))),
+                            }),
+                        )),
                 )
                 .into_any_element();
         }

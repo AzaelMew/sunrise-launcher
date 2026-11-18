@@ -511,7 +511,7 @@ impl Launcher {
                             .child(tr("No worlds yet")),
                     )
                     .child(muted(tr(
-                        "A data pack goes into a world. Make a world in the game and it shows up here.",
+                        "A data pack goes into a world. Make one in the game first.",
                     ))),
             );
         } else if shown == 0 {
@@ -552,7 +552,7 @@ impl Launcher {
                 .flex_col()
                 .child(heading)
                 .child(div().text_size(px(13.5)).child(tr(
-                    "This setup has no worlds yet. A data pack goes into a world: make one in the game, then add the pack here.",
+                    "A data pack goes into a world, and this setup has none yet. Make one in the game first.",
                 )))
                 .child(div().flex().justify_end().child(close(tr("Close"))));
             return Some(crate::sheets::frame("alt-pick", 520., body, cx));

@@ -338,9 +338,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .gap(px(12.))
-                .child(muted(tr(
-                    "No worlds yet. Make one in the game and it shows up here.",
-                )))
+                .child(muted(tr("No worlds yet. Make one in the game.")))
                 .children(saves.map(|saves| {
                     button("alt-worlds-folder", tr("Open folder")).on_click(move |_, _, cx| {
                         let _ = std::fs::create_dir_all(&saves);
@@ -603,7 +601,7 @@ impl Launcher {
                 div()
                     .px(px(14.))
                     .py(px(14.))
-                    .child(muted(tr("No servers saved in this setup."))),
+                    .child(muted(tr("No saved servers."))),
             );
         }
         div()

@@ -314,9 +314,9 @@ impl Launcher {
         }
         let body = if shown.is_empty() {
             div().child(muted(if f.text.is_empty() && f.category.is_none() {
-                tr("The registry has no mods for this build yet.")
+                tr("No mods for this build yet.")
             } else {
-                tr("No mods match. Try a different search, or turn off “Fits my game”.")
+                tr("No mods match. Try another search, or turn off “Fits my game”.")
             }))
         } else {
             div()

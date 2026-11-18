@@ -580,7 +580,8 @@ impl Launcher {
             if has_backups {
                 short(&backups)
             } else {
-                tr("None yet. Sunrise backs a world up before a change to your mods could cost it something.").to_string()
+                tr("None yet. Sunrise makes one before a mod change that could harm a world.")
+                    .to_string()
             },
             div().child(if has_backups {
                 open_backups.on_click(move |_, _, cx| glass_toast::open(cx, &backups))

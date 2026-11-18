@@ -200,11 +200,11 @@ impl Launcher {
         let (detail, empty) = match kind {
             Kind::Resource => (
                 tr("Higher packs take priority. A pack you turn on goes to the top."),
-                tr("Packs you add from Discover show up here. You can also drop a resource pack (.zip) on this page."),
+                tr("Or drop a .zip on this page."),
             ),
             Kind::Shader => (
                 tr("Choose one shader pack at a time, or leave them all off."),
-                tr("Packs you add from Discover show up here. You can also drop a shader pack (.zip or .sshader) on this page."),
+                tr("Or drop a .zip or .sshader on this page."),
             ),
         };
         let add = button("alt-pack-import", tr("Import from file…"));
@@ -394,14 +394,8 @@ impl Launcher {
         }
         if items.is_empty() {
             let (none, find) = match kind {
-                Kind::Resource => (
-                    tr("No resource packs installed yet"),
-                    tr("Find resource packs in Discover"),
-                ),
-                Kind::Shader => (
-                    tr("No shader packs installed yet"),
-                    tr("Find shader packs in Discover"),
-                ),
+                Kind::Resource => (tr("No resource packs yet"), tr("Find resource packs")),
+                Kind::Shader => (tr("No shader packs yet"), tr("Find shader packs")),
             };
             list = list.child(
                 div()
