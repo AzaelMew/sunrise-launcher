@@ -4,8 +4,6 @@
 //!
 //! Spacing (gaps and padding) and a single screen's own layout (a column's width, a picture's
 //! height) are not tokens: they say how one screen is laid out, not what the look is.
-// Until tools/sizes_to_tokens.py has run.
-#![allow(dead_code)]
 
 pub(crate) const BG: u32 = 0x191617;
 pub(crate) const CARD: u32 = 0x221e1f;
