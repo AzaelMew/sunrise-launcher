@@ -45,6 +45,25 @@ pub fn trusted_keys_for(repository: &str) -> Vec<PublicKey> {
     parse_keys(repository_keys(repository)).unwrap_or_default()
 }
 
+/// The keys a launcher release is signed with: [`REPOSITORY`]'s own, one key for both (owner decision, 2026-11-18).
+/// The game repository's release environment signs launcher releases; [`launcher_message`]'s prefix keeps the two kinds apart.
+pub fn trusted_launcher_keys() -> Vec<PublicKey> {
+    trusted_keys_for(REPOSITORY)
+}
+
+/// The version in a launcher release tag, which is exactly `vX.Y.Z` (decimal numbers, no leading zeros), or None.
+/// Discovery, download URLs and [`launcher_message`] all take a tag only through this.
+pub fn launcher_version(tag: &str) -> Option<&str> {
+    let version = tag.strip_prefix('v')?;
+    let parts: Vec<&str> = version.split('.').collect();
+    let number = |part: &&str| {
+        (1..=9).contains(&part.len())
+            && part.bytes().all(|b| b.is_ascii_digit())
+            && (part.len() == 1 || !part.starts_with('0'))
+    };
+    (parts.len() == 3 && parts.iter().all(number)).then_some(version)
+}
+
 /// The environment variable that adds one more trusted SDK key: exactly one base64 Ed25519 public key, what
 /// `tools/ci/sign_release.sh` writes to `ephemeral.pub` under `EPHEMERAL=yes`. A value that is not exactly one
 /// key is reported on stderr and adds nothing.
@@ -163,13 +182,19 @@ pub fn verify(
     verify_message(tag, &message(tag, sums), sums, signature, keys)
 }
 
-/// [`verify`] for the launcher's own releases ([`launcher_message`]).
+/// [`verify`] for the launcher's own releases ([`launcher_message`]): `tag` must be a [`launcher_version`] tag, so
+/// nothing but `vX.Y.Z` comes before the newline that ends the signed tag.
 pub fn verify_launcher(
     tag: &str,
     sums: &[u8],
     signature: &str,
     keys: &[PublicKey],
 ) -> Result<Vec<(String, String)>, String> {
+    if launcher_version(tag).is_none() {
+        return Err(format!(
+            "{tag:?} is not a launcher release tag (vX.Y.Z), so it was not installed."
+        ));
+    }
     verify_message(tag, &launcher_message(tag, sums), sums, signature, keys)
 }
 
@@ -615,6 +640,46 @@ mod tests {
         assert!(!signed(&other));
         let for_the_channel = trusted.sign(tag, sums.as_bytes());
         assert!(verify("nightly", sums.as_bytes(), &for_the_channel, &keys).is_err());
+    }
+
+    #[test]
+    fn launcher_releases_trust_the_game_repositorys_key() {
+        assert_eq!(trusted_launcher_keys(), trusted_keys_for(REPOSITORY));
+        assert!(!trusted_launcher_keys().is_empty());
+    }
+
+    #[test]
+    fn only_an_exact_vxyz_tag_is_a_launcher_release() {
+        for tag in ["v1.1.0", "v0.0.1", "v10.20.300", "v1.0.999999999"] {
+            assert!(launcher_version(tag).is_some(), "{tag}");
+        }
+        for tag in [
+            "1.1.0",
+            "v1.1",
+            "v1.1.0.0",
+            "v1.1.0-rc1",
+            "v01.1.0",
+            "v1.1.0\n",
+            "v1.1.0 ",
+            "v1..0",
+            "v1.1.x",
+            "launcher@1.1.0",
+            "v1.1.1234567890",
+            "v1.1.0/../x",
+            "v",
+        ] {
+            assert!(launcher_version(tag).is_none(), "{tag:?}");
+        }
+        let (key, _) = SigningKey::generate().unwrap();
+        let keys = parse_keys(&key.public_base64()).unwrap();
+        let sums = sums_file(&[(
+            "sunrise-launcher-linux-x86_64.tar.gz".into(),
+            "ab".repeat(32),
+        )]);
+        // A tag carrying the newline that ends the signed tag is refused before any signature is checked.
+        let framed = "v1.1.0\nab";
+        let signature = key.sign_bytes(&launcher_message(framed, sums.as_bytes()));
+        assert!(verify_launcher(framed, sums.as_bytes(), &signature, &keys).is_err());
     }
 
     #[test]

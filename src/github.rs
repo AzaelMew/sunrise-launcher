@@ -119,11 +119,13 @@ pub(crate) fn json_with(
 
 const RATE_LIMITED: &str = "GitHub's rate limit was reached for your network";
 
-/// The mirror's URL for an API URL it serves (the game's repository and the launcher's), or None.
+/// The mirror's URL for an API URL it serves, or None: the game's repository, and the launcher's only in a development
+/// build, so a shipped launcher learns of its own updates from GitHub alone.
 fn mirror_url_with(url: &str, base: &str) -> Option<String> {
     let path = url.strip_prefix(API)?;
-    let served = [backend::GAME_REPO, backend::LAUNCHER_REPO]
-        .iter()
+    let launcher = cfg!(debug_assertions).then_some(backend::LAUNCHER_REPO);
+    let served = std::iter::once(backend::GAME_REPO)
+        .chain(launcher)
         .any(|repo| path.starts_with(&format!("/repos/{repo}/")));
     (!base.is_empty() && served).then(|| format!("{}{path}", base.trim_end_matches('/')))
 }

@@ -448,7 +448,7 @@ impl Launcher {
         self.checked = Some(Instant::now());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Updates(backend::check_updates().map(Box::new)));
+            let _ = tx.send(Msg::Updates(Box::new(backend::check_updates())));
         });
     }
 
@@ -564,7 +564,7 @@ impl Launcher {
             let updates = backend::releases_and_updates(|releases| {
                 let _ = tx.send(Msg::Releases(releases));
             });
-            let _ = tx.send(Msg::Updates(updates.map(Box::new)));
+            let _ = tx.send(Msg::Updates(Box::new(updates)));
         });
     }
 

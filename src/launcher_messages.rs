@@ -235,8 +235,8 @@ impl Launcher {
                         self.installed = backend::installed();
                     }
                 }
-                Msg::Updates(Ok(updates)) => {
-                    self.update_error = None;
+                Msg::Updates(updates) => {
+                    self.update_error = updates.sunrise_error.clone();
                     self.updates = *updates;
                     if self.settings.auto_install() {
                         self.install_update();
@@ -245,7 +245,6 @@ impl Launcher {
                         self.update_launcher(release);
                     }
                 }
-                Msg::Updates(Err(e)) => self.update_error = Some(e),
                 Msg::NativeRegistryConsent(inventory, reply) => {
                     native_registry_consent::show(window, inventory, reply, cx)
                 }

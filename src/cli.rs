@@ -1908,16 +1908,28 @@ fn rust(action: RustCmd, as_json: bool) -> Result<(), String> {
     Ok(())
 }
 fn update(check: bool, as_json: bool) -> Result<(), String> {
-    let updates = backend::check_updates()?;
+    let updates = backend::check_updates();
+    // A feed that couldn't be read is never "up to date": its error is printed, and the command fails after the other feed's result.
+    let failed = || match (&updates.sunrise_error, &updates.launcher_error) {
+        (None, None) => Ok(()),
+        (Some(e), None) => Err(format!("Sunrise's update check failed: {e}")),
+        (None, Some(e)) => Err(format!("The launcher's update check failed: {e}")),
+        (Some(s), Some(l)) => Err(format!(
+            "Both update checks failed: Sunrise's ({s}) and the launcher's ({l})"
+        )),
+    };
     if as_json && check {
         json(serde_json::json!({
             "sunrise": updates.sunrise.as_ref().map(|r| &r.tag),
             "launcher": updates.launcher.as_ref().and_then(|r| backend::launcher_version(&r.tag)),
             "launcher_current": backend::VERSION,
+            "sunrise_error": updates.sunrise_error,
+            "launcher_error": updates.launcher_error,
         }));
-        return Ok(());
+        return failed();
     }
     match &updates.sunrise {
+        None if updates.sunrise_error.is_some() => println!("Sunrise: not checked."),
         None => println!("Sunrise: up to date."),
         Some(r) if check => println!("Sunrise: {} is available.", r.tag),
         Some(r) => {
@@ -1927,6 +1939,7 @@ fn update(check: bool, as_json: bool) -> Result<(), String> {
         }
     }
     match &updates.launcher {
+        None if updates.launcher_error.is_some() => println!("Launcher: not checked."),
         None => println!("Launcher: {} is up to date.", backend::VERSION),
         Some(r) => {
             let version = backend::launcher_version(&r.tag).unwrap_or_default();
@@ -1943,7 +1956,7 @@ fn update(check: bool, as_json: bool) -> Result<(), String> {
             }
         }
     }
-    Ok(())
+    failed()
 }
 /// `account …`: names and UUIDs only; tokens are never printed.
 fn account_command(action: AccountCmd, as_json: bool) -> Result<(), String> {

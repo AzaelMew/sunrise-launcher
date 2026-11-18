@@ -54,10 +54,10 @@ fn mirror_serves_only_sunrises_repositories() {
         .as_deref(),
         Some("https://mcp.example/github/public/repos/sunrise-org/sunrise/releases/tags/launcher@0.2.33")
     );
-    // The launcher's own repository is served too: its releases are what it updates itself from.
+    // The launcher's own repository only in a development build: a shipped launcher learns of its own updates from GitHub.
     assert_eq!(
         mirror_url_with("https://api.github.com/repos/sunrise-org/sunrise-launcher/releases?per_page=100", base).as_deref(),
-        Some("https://mcp.example/github/public/repos/sunrise-org/sunrise-launcher/releases?per_page=100")
+        cfg!(debug_assertions).then_some("https://mcp.example/github/public/repos/sunrise-org/sunrise-launcher/releases?per_page=100")
     );
     assert_eq!(
         mirror_url_with("https://api.github.com/repos/someone/mod/commits/abc", base),
