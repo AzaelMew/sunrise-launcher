@@ -472,7 +472,7 @@ impl Launcher {
             .flex_none()
             .rounded(px(tokens::R_CONTROL))
             .border_1()
-            .border_color(rgb(palette().line))
+            .border_color(palette().input_edge())
             .bg(palette().card())
             .reach_edge()
             .cursor_pointer()
