@@ -757,16 +757,25 @@ impl Launcher {
             ("Old Paper Maps", "Resource pack", "folder", false),
             ("Evening Glow", "Shader pack", "globe", true),
         ];
+        let active: Vec<_> = samples.iter().filter(|s| s.3).collect();
+        let off = samples.len() - active.len();
         let mut items = div().flex().flex_col().gap(px(4.));
-        for (n, (name, kind, glyph, on)) in samples.into_iter().enumerate() {
+        for (n, (name, kind, glyph, _)) in active.iter().enumerate() {
+            // A press opens the mod's or the pack's own page.
             items = items.child(
                 card()
+                    .id(("mock-item", n))
                     .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(10.))
                     .p(px(5.))
                     .pr(px(10.))
+                    .cursor_pointer()
+                    .tab_index(0)
+                    .hover(|s| s.bg(rgb(palette().hover)))
+                    .focus_visible(|s| s.border_color(rgb(palette().focus)))
+                    .seen()
                     .child(
                         div()
                             .flex_none()
@@ -788,38 +797,60 @@ impl Launcher {
                                 div()
                                     .text_size(px(tokens::LABEL))
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(if on {
-                                        palette().text
-                                    } else {
-                                        palette().muted
-                                    }))
+                                    .text_color(rgb(palette().text))
                                     .truncate()
-                                    .child(name),
+                                    .child(*name),
                             )
-                            .child(muted(if on {
-                                kind.to_string()
-                            } else {
-                                format!("{kind} · Off")
-                            })),
+                            .child(muted(*kind)),
                     )
-                    .child(crate::mods::switch(("mock-item", n), on)),
+                    .child(blocks::icon(
+                        "chevron-right",
+                        14.,
+                        rgb(palette().muted).into(),
+                    )),
+            );
+        }
+        if off > 0 {
+            // To the Mods tab, filtered to what is off.
+            items = items.child(
+                div()
+                    .id("mock-turned-off")
+                    .mt(px(4.))
+                    .px(px(6.))
+                    .flex()
+                    .cursor_pointer()
+                    .tab_index(0)
+                    .rounded(px(tokens::R_CONTROL))
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(palette().muted))
+                    .hover(|s| s.text_color(rgb(palette().text)))
+                    .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+                    .seen()
+                    .child(format!("{off} turned off")),
             );
         }
         let manage = button("mock-manage-mods", "Manage mods");
         let right = if empty {
             div()
                 .flex()
-                .flex_col()
                 .items_center()
-                .justify_center()
                 .gap(px(8.))
-                .py(px(28.))
-                .child(blocks::icon("package", 28., rgb(palette().muted).into()))
-                .child(heading("No mods or packs in this profile yet"))
-                .child(muted(
-                    "Mods, resource packs and shader packs you add show here.",
-                ))
-                .child(button("mock-browse-mods", "Browse mods").mt(px(6.)))
+                .py(px(8.))
+                .child(muted("No mods yet"))
+                .child(muted("·"))
+                .child(
+                    div()
+                        .id("mock-browse-mods")
+                        .cursor_pointer()
+                        .tab_index(0)
+                        .rounded(px(tokens::R_CONTROL))
+                        .text_size(px(tokens::SMALL))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(rgb(palette().text))
+                        .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+                        .seen()
+                        .child("Browse mods"),
+                )
         } else {
             items
         };
@@ -847,8 +878,15 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(title("Mods and packs"))
-                .when(!empty, |d| d.child(manage)),
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap(px(8.))
+                        .child(title("Mods"))
+                        .when(!empty, |d| d.child(muted(format!("· {}", active.len())))),
+                )
+                .child(manage),
             right,
         );
         let both = div().flex().gap(px(22.)).child(left).child(right);
