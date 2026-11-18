@@ -40,6 +40,8 @@ pub enum Msg {
     },
     JarClient {
         run: Option<String>,
+        account: Option<String>,
+        session_file: Option<PathBuf>,
         prepared: Box<Result<Command, String>>,
     },
     /// Where the native-mods build is.

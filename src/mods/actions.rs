@@ -46,10 +46,7 @@ impl Launcher {
 
     /// Why nothing may change now: the game, a launch step or a build is under way.
     pub(crate) fn mods_locked(&self) -> Option<&'static str> {
-        if self.client.is_some()
-            || self.starting_client.is_some()
-            || self.starting_instance.is_some()
-        {
+        if self.client.is_some() || self.starting_client.is_some() || self.starting_play.is_some() {
             Some(tr(
                 "The game is running or starting. Close it before changing mods.",
             ))

@@ -2396,6 +2396,40 @@ fn play_starts_as_the_account_it_was_pressed_for_whoever_is_selected_since() {
     assert_eq!(accounts.selected.as_deref(), Some(alex));
 }
 
+#[test]
+fn sign_out_after_preparing_a_session_refuses_spawn_and_drops_only_that_session() {
+    let store = MemoryStore::default();
+    let dir = tempfile::tempdir().unwrap();
+    let accounts_file = dir.path().join("accounts.json");
+    let mut accounts = signed_in(&store, &secrets("mc-token", true));
+    accounts.accounts.push(Account {
+        uuid: "other-account".into(),
+        name: "Other".into(),
+        skin: None,
+        cape: None,
+    });
+    accounts.selected = Some("other-account".into());
+    accounts.save_to(&accounts_file).unwrap();
+    assert!(check_launch_account(&Accounts::load_from(&accounts_file), UUID).is_ok());
+    let prepared = dir.path().join("pending-session");
+    let other = dir.path().join("another-session");
+    std::fs::write(&prepared, "prepared for the accepted account").unwrap();
+    std::fs::write(&other, "unrelated session").unwrap();
+
+    // Another process signs the accepted account out while jars are being prepared.
+    accounts.remove(&store, UUID).unwrap();
+    accounts.save_to(&accounts_file).unwrap();
+    let now = Accounts::load_from(&accounts_file);
+    assert_eq!(now.selected().unwrap().uuid, "other-account");
+    assert!(check_launch_account(&now, UUID)
+        .unwrap_err()
+        .in_window()
+        .contains("signed out"));
+    discard_launch_session(Some(prepared.clone()));
+    assert!(!prepared.exists());
+    assert_eq!(std::fs::read_to_string(other).unwrap(), "unrelated session");
+}
+
 /// A launch loads the accounts, asks the services for a while, then saves: a sign-in or sign-out
 /// made meanwhile stays, and only the names and skins it renewed are written.
 #[test]

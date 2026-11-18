@@ -94,12 +94,22 @@ impl Launcher {
                 Msg::Playing(playing) => self.playing = playing,
                 Msg::Session(session) => self.handle_game_session(session),
                 Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
-                Msg::JarClient { run, prepared } => {
+                Msg::JarClient {
+                    run,
+                    account: accepted,
+                    session_file,
+                    prepared,
+                } => {
                     let Some(tag) = self.starting_client.take() else {
-                        account::discard_unread_sessions();
+                        account::discard_launch_session(session_file);
                         continue;
                     };
                     let started = prepared.and_then(|cmd| {
+                        self.accounts = Accounts::load();
+                        if let Some(uuid) = accepted.as_deref() {
+                            account::check_launch_account(&self.accounts, uuid)
+                                .map_err(|refused| refused.in_window())?;
+                        }
                         native_status::check_spawn_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
                         backend::spawn(Job::Client, cmd, self.tx.clone())
@@ -113,7 +123,7 @@ impl Launcher {
                         // A start that does not happen leaves no session file behind.
                         Err(e) => {
                             self.client_error = Some(e);
-                            account::discard_unread_sessions();
+                            account::discard_launch_session(session_file);
                         }
                     }
                 }
@@ -135,11 +145,11 @@ impl Launcher {
                         };
                         self.perf.record_since(name, started);
                     }
-                    let resume = self.ui.after_install.take().filter(|(id, wanted)| {
-                        result.is_ok()
-                            && *wanted == tag
-                            && self.selected_instance().is_some_and(|i| i.id == *id)
-                    });
+                    let resume = self
+                        .ui
+                        .after_install
+                        .take()
+                        .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
                     match result {
                         Ok(()) => {
                             if as_update.is_some()
@@ -181,8 +191,10 @@ impl Launcher {
                         }
                         Err(e) => self.install_error = Some((tag, e)),
                     }
-                    if resume.is_some_and(|(_, wanted)| self.selected() == Some(&wanted)) {
-                        self.play_game();
+                    if let Some((intent, _)) =
+                        resume.filter(|(_, wanted)| self.selected() == Some(wanted))
+                    {
+                        self.resume_play(intent);
                     }
                     if let Some(next) = self.install_next.take() {
                         self.install_for_instance(next);
@@ -300,7 +312,7 @@ impl Launcher {
                         if shown {
                             self.close_sheet();
                         }
-                        self.play(play.account);
+                        self.play(play);
                     }
                 }
                 Msg::LauncherProgress(p) => {
@@ -348,14 +360,12 @@ impl Launcher {
                         Job::Prepare => {
                             self.preparing = false;
                             // Play pressed before the version was prepared plays now.
-                            if let Some((tag, instance)) = self.play_when_prepared.take() {
-                                if error.is_none() && backend::check_prepared(&tag) {
-                                    self.starting_pack = None;
-                                    if self.selected_instance().is_some_and(|i| i.id == instance)
-                                        && self.selected() == Some(&tag)
-                                    {
-                                        self.play_game();
-                                    }
+                            if let Some((tag, intent)) = self.play_when_prepared.take() {
+                                if error.is_none()
+                                    && self.selected() == Some(&tag)
+                                    && backend::check_prepared(&tag)
+                                {
+                                    self.resume_play(intent);
                                 }
                             }
                             if let (None, Some(started)) = (&error, self.prepare_started.take()) {
@@ -460,11 +470,13 @@ impl Launcher {
                         self.settings.owner_notice_seen = true;
                         self.save_settings();
                     }
-                    if account_chip::plays_after_sign_in(
-                        self.ui.after_sign_in.take(),
-                        self.selected_instance().map(|i| i.id.as_str()),
-                    ) {
-                        self.play_game();
+                    if let Some(instance) = self.ui.after_sign_in.take().filter(|asked| {
+                        account_chip::plays_after_sign_in(
+                            Some(asked.clone()),
+                            self.selected_instance().map(|i| i.id.as_str()),
+                        )
+                    }) {
+                        self.resume_play(launcher_play::PlayIntent::new(instance, Some(account)));
                     }
                 }
                 changed = true;

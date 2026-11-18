@@ -7,9 +7,8 @@ impl Launcher {
         session: std::result::Result<Option<account::GameSession>, account::NoOwner>,
     ) {
         self.load_auth_statuses(false);
-        if let Some(tag) = self.starting_client.take() {
-            let instance_id = self.starting_instance.take();
-            let accepted = self.starting_account.take();
+        if let (Some(tag), Some(intent)) = (self.starting_client.take(), self.starting_play.take())
+        {
             let mut cmd = backend::client_command(&tag);
             let pass = match session {
                 Ok(pass) => pass,
@@ -26,6 +25,7 @@ impl Launcher {
                     return;
                 }
             };
+            let session_file = pass.as_ref().and_then(|session| session.file.clone());
             if let Some(session) = pass {
                 self.owner = Some(true);
                 // Still play, offline, and say why.
@@ -45,20 +45,6 @@ impl Launcher {
                 sunrise_launcher::developer_offline::mark(&mut cmd);
                 self.client_error = Some(tr(sunrise_launcher::developer_offline::NOTICE).into());
             }
-            self.accounts = Accounts::load();
-            // Signed out while its session was read: the start is called off, and the session
-            // written for it goes.
-            if accepted.is_some_and(|uuid| !self.accounts.accounts.iter().any(|a| a.uuid == uuid)) {
-                self.client_error = Some(
-                    tr("The account Play was pressed for was signed out before the game started. Press Play again.")
-                        .into(),
-                );
-                self.starting_pack = None;
-                self.joining = None;
-                self.quick_play = None;
-                account::discard_unread_sessions();
-                return;
-            }
             // A pack's Play button plays that pack; Play plays the selected instance.
             let (profile, run) = match self.starting_pack.take() {
                 Some(work) => {
@@ -72,7 +58,7 @@ impl Launcher {
                 None => {
                     let Some(instance) = instances::list()
                         .into_iter()
-                        .find(|i| Some(&i.id) == instance_id.as_ref())
+                        .find(|i| i.id == intent.instance)
                     else {
                         self.client_error = Some(
                             tr("This profile no longer exists. Choose another profile to play.")
@@ -80,7 +66,7 @@ impl Launcher {
                         );
                         self.joining = None;
                         self.quick_play = None;
-                        account::discard_unread_sessions();
+                        account::discard_launch_session(session_file);
                         return;
                     };
                     (instances::apply(&mut cmd, &instance), Some(instance.id))
@@ -88,7 +74,7 @@ impl Launcher {
             };
             if let Err(e) = profile {
                 self.client_error = Some(e);
-                account::discard_unread_sessions();
+                account::discard_launch_session(session_file);
                 return;
             }
             if let Some(code) = self.joining.take() {
@@ -109,7 +95,16 @@ impl Launcher {
             cmd.envs(self.client_vars.iter().map(|(k, v)| (k, v)));
             let launch = instance.map(|i| i.launch).unwrap_or_default();
             self.starting_client = Some(tag);
-            jar_launch::client(cmd, launch, run, self.tx.clone());
+            jar_launch::client(
+                cmd,
+                launch,
+                run,
+                intent.account,
+                session_file,
+                self.tx.clone(),
+            );
+        } else if let Ok(Some(session)) = session {
+            account::discard_launch_session(session.file);
         }
     }
 }

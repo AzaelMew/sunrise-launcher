@@ -34,7 +34,7 @@ pub(super) struct State {
     pub settings: crate::settings::SettingsView,
     pub cat: crate::cat::CatState,
     pub last_server: Option<Page>,
-    pub after_install: Option<(String, String)>,
+    pub after_install: Option<(crate::launcher_play::PlayIntent, String)>,
     /// A Play (including a destination) that explicitly asked for the sign-in now under way.
     pub after_sign_in: Option<String>,
 }
@@ -272,18 +272,34 @@ impl Launcher {
         self.client_error = None;
         self.crash = None;
         self.install_error = None;
-        let Some(instance) = self.selected_instance().cloned() else {
+        let Some(instance) = self.selected_instance().map(|i| i.id.clone()) else {
             return;
         };
-        if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
+        let intent = launcher_play::PlayIntent::new(instance, self.accounts.selected());
+        if intent.account.is_none() && !sunrise_launcher::developer_offline::selected() {
             let destination = self.quick_play.take();
             let invite = self.joining.take();
             self.sign_in_to_play();
             self.quick_play = destination;
             self.joining = invite;
-            self.ui.after_sign_in = Some(instance.id);
+            self.ui.after_sign_in = Some(intent.instance);
             return;
         }
+        self.resume_play(intent);
+    }
+
+    /// Continue the same accepted Play after a launch step; never recapture the account.
+    pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
+        if self.client.is_some() || self.launch_busy() {
+            return;
+        }
+        let Some(instance) = self
+            .selected_instance()
+            .filter(|i| i.id == intent.instance)
+            .cloned()
+        else {
+            return;
+        };
         let expected = instance.version.as_ref();
         let tag = self.version_of(&instance).cloned();
         let Some(tag) = tag else {
@@ -306,7 +322,7 @@ impl Launcher {
                 _ => None,
             };
             if let Some(release) = release {
-                self.ui.after_install = Some((instance.id, release.tag.clone()));
+                self.ui.after_install = Some((intent, release.tag.clone()));
                 self.install(&release);
             } else {
                 self.client_error = Some(match &self.releases {
@@ -326,23 +342,19 @@ impl Launcher {
             return;
         };
         if !backend::check_prepared(&tag) {
-            self.play_when_prepared = Some((tag, instance.id));
+            self.play_when_prepared = Some((tag, intent));
             self.prepare(backend::MinecraftFrom::Install);
             return;
         }
         self.native_error = None;
-        let account = self.accounts.selected().map(|a| a.uuid.clone());
         if matches!(
             self.native_state_of(&instance),
             native_status::State::NotBuilt | native_status::State::Outdated
         ) {
-            self.play_after_build = Some(crate::mods::build_run::PlayAfterBuild {
-                instance: instance.id,
-                account,
-            });
+            self.play_after_build = Some(intent);
             self.build_native();
         } else {
-            self.play(account);
+            self.play(intent);
         }
     }
 

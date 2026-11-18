@@ -1,6 +1,7 @@
 //! The GUI bridge: preparation off the UI thread, one consent for the complete missing set.
 use gpui::{AnyWindowHandle, AppContext, Context, PromptLevel};
 use std::{
+    path::PathBuf,
     process::Command,
     sync::mpsc::{self, Sender},
 };
@@ -12,17 +13,28 @@ use sunrise_launcher::{
 };
 use sunrise_launcher_smod::manifest::JarRef;
 
-pub fn client(mut command: Command, launch: Launch, run: Option<String>, tx: Sender<Msg>) {
+pub fn client(
+    mut command: Command,
+    launch: Launch,
+    run: Option<String>,
+    account: Option<String>,
+    session_file: Option<PathBuf>,
+    tx: Sender<Msg>,
+) {
     std::thread::spawn(move || {
         let prepared = with_consent(&tx, |permission| {
             jars::prepare_launch(&mut command, &launch, permission)
         })
         .map_err(|error| error.to_string())
         .and_then(|()| launch::wrap(command, &launch));
-        let _ = tx.send(Msg::JarClient {
+        if let Err(mpsc::SendError(Msg::JarClient { session_file, .. })) = tx.send(Msg::JarClient {
             run,
+            account,
+            session_file,
             prepared: Box::new(prepared),
-        });
+        }) {
+            sunrise_launcher::account::discard_launch_session(session_file);
+        }
     });
 }
 
