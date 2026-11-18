@@ -91,7 +91,9 @@ impl Launcher {
                         && answer.recv().unwrap_or(false)
                 },
             );
-            let _ = tx.send(Msg::Native(result));
+            let _ = tx.send(Msg::Native(
+                result.map(native_mods::ClientBuild::into_version),
+            ));
         });
     }
 }

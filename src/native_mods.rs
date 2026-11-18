@@ -973,6 +973,36 @@ struct Built {
     left_out: Vec<LeftOut>,
 }
 
+/// The game version a completed client build checked. A plain fallback compiled nothing.
+#[derive(Debug)]
+pub enum ClientBuild {
+    Native(String),
+    Plain(String),
+}
+
+impl ClientBuild {
+    pub fn into_version(self) -> String {
+        match self {
+            Self::Native(version) | Self::Plain(version) => version,
+        }
+    }
+}
+
+impl std::fmt::Display for ClientBuild {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Native(version) => trf(
+                "{build} built and selected for its instance.",
+                &[("build", version)],
+            ),
+            Self::Plain(version) => trf(
+                "Using plain {build}: all native mods were left out. Nothing was built.",
+                &[("build", version)],
+            ),
+        })
+    }
+}
+
 /// Why a native build or internals check stopped.
 #[derive(Debug)]
 pub enum Failed {
@@ -1482,28 +1512,18 @@ fn pipeline(
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
     let blame = |e: String| -> Failed {
-        let failed = fitted.iter().find_map(|id| {
-            let bundle = mods.iter().find(|b| &b.manifest.id == id)?;
-            e.contains(&build_log::failed(&compiling_mod(id)))
-                .then(|| LeftOut::new(bundle, isolate::Why::DidNotBuild))
-        });
-        let Some(left) = failed else {
+        let going = compile_omissions(&e, &fitted, &mods, &declared);
+        let Some(failed) = going.first() else {
             return Failed::Other(e);
         };
         if let Some(home) = worlds {
-            let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = mods
-                .iter()
-                .zip(&declared)
-                .map(|(b, d)| (b, d.as_slice()))
-                .collect();
-            let going = isolate::with_dependents(std::slice::from_ref(&left), &pairs);
             if let Err(stop) = guard_worlds(home, &going, &shown, back_up, progress) {
                 return stop;
             }
         }
         Failed::Mods {
-            error: format!("{}\n\n{e}", fit::did_not_build(&left.id)),
-            left: vec![left],
+            error: format!("{}\n\n{e}", fit::did_not_build(&failed.id)),
+            left: going,
             compiling: true,
         }
     };
@@ -1746,6 +1766,29 @@ fn pipeline(
     Ok(built)
 }
 
+/// The fitted mod identified by the compiler diagnostic, and every required dependent that
+/// would be missing its library. The same reasons guard worlds, drive retries and reach the player.
+fn compile_omissions(
+    error: &str,
+    fitted: &[String],
+    mods: &[Bundle],
+    declared: &[Vec<dependencies::Dependency>],
+) -> Vec<LeftOut> {
+    let Some(bundle) = fitted.iter().find_map(|id| {
+        mods.iter().find(|bundle| {
+            &bundle.manifest.id == id && error.contains(&build_log::failed(&compiling_mod(id)))
+        })
+    }) else {
+        return Vec::new();
+    };
+    let pairs = mods
+        .iter()
+        .zip(declared)
+        .map(|(b, d)| (b, d.as_slice()))
+        .collect::<Vec<_>>();
+    isolate::with_dependents(&[LeftOut::new(bundle, isolate::Why::DidNotBuild)], &pairs)
+}
+
 /// How many times a build compiles again without the mods the compiler's errors were traced to:
 /// each costs a compile, where a mod that doesn't apply costs only horizon-mixins' run.
 const COMPILE_RETRIES: usize = 3;
@@ -1853,7 +1896,7 @@ pub fn build(
     back_up: bool,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
-) -> Result<String, Failed> {
+) -> Result<ClientBuild, Failed> {
     require_consent()?;
     build_log::clear_cancel();
     if let Some(error) = backend::native_mod_architecture_error() {
@@ -1908,7 +1951,7 @@ pub fn build(
                     meta.version = (!follows).then(|| plain.clone());
                 }
             })?;
-            return Ok(plain);
+            return Ok(ClientBuild::Plain(plain));
         }
         let built = built.map_err(|failed| match failed {
             // "Stay" keeps the build the instance plays now.
@@ -1938,7 +1981,7 @@ pub fn build(
                 plan: built.plan,
             });
         }
-        Ok(built.version)
+        Ok(ClientBuild::Native(built.version))
     })
 }
 
@@ -2527,6 +2570,79 @@ mod tests {
             &|_| {},
         );
         assert!(matches!(result, Err(Failed::Mods { left, .. }) if left == [unfit]));
+    }
+
+    #[test]
+    fn a_failed_native_library_records_and_reports_every_required_dependent_in_the_plain_game() {
+        let _guard = scratch_state();
+        let root = dir("plain-omissions");
+        let bundles: Vec<_> = [
+            ("lib", None),
+            ("addon", Some("lib")),
+            ("extra", Some("addon")),
+        ]
+        .into_iter()
+        .map(|(id, needs)| {
+            let folder = root.join(id);
+            write_bundle(&folder, id, "");
+            if let Some(needs) = needs {
+                let manifest = folder.join(NATIVE_MANIFEST);
+                let mut text = fs::read_to_string(&manifest).unwrap();
+                text += &format!("[dependencies]\n{needs} = '*'\n");
+                fs::write(manifest, text).unwrap();
+            }
+            bundle_in(&folder).unwrap().unwrap()
+        })
+        .collect();
+        let deps = bundles
+            .iter()
+            .map(|b| {
+                dependencies::from_manifest(
+                    &b.manifest.dependencies,
+                    sunrise_launcher_smod::manifest::Side::Client,
+                )
+            })
+            .collect::<Vec<_>>();
+        let seen = std::cell::RefCell::new(Vec::new());
+        let stopped = isolated(
+            |skip| {
+                if !skip.is_empty() {
+                    return Err(Failed::Nothing);
+                }
+                let error = build_log::failed(&compiling_mod("lib"));
+                Err(Failed::Mods {
+                    left: compile_omissions(&error, &["lib".into()], &bundles, &deps),
+                    error,
+                    compiling: true,
+                })
+            },
+            &|step| {
+                if let Step::LeftOut(l) = step {
+                    seen.borrow_mut().push(l)
+                }
+            },
+        );
+        let Err(Failed::Mods { left, .. }) = stopped else {
+            panic!("expected a plain fallback")
+        };
+        assert_eq!(*seen.borrow(), left);
+        isolate::keep(&root, "nightly", &left).unwrap();
+        let kept = isolate::kept(&root, "nightly");
+        assert_eq!(
+            kept.iter()
+                .map(|l| (l.id.as_str(), l.why.clone()))
+                .collect::<Vec<_>>(),
+            [
+                ("lib", Why::DidNotBuild),
+                ("addon", Why::Needs("lib".into())),
+                ("extra", Why::Needs("addon".into()))
+            ]
+        );
+        assert_eq!(
+            ClientBuild::Plain("nightly".into()).to_string(),
+            "Using plain nightly: all native mods were left out. Nothing was built."
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
