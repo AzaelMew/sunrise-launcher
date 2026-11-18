@@ -226,6 +226,18 @@ pub(super) fn rows(n: usize) -> Vec<Row> {
             None,
             Some("2.1.0"),
         ),
+        Row {
+            unfit: Some(super::model::Unfit {
+                on: "Nov 17".into(),
+                made_for: Some(("nightly-2026-11-16".into(), "Nov 16".into())),
+                changes: vec![
+                    "the type Block can no longer be built with a literal, and src/sources/client.rs:219 builds it".into(),
+                    "the type Item can no longer be built with a literal, and src/bookmarks.rs:84 builds it".into(),
+                    "the type text::Text can no longer be built with a literal, and src/search.rs:21 builds it".into(),
+                ],
+            }),
+            ..row("jei", "JEI", Some(Make::Native), "1.8.0", true, None, None)
+        },
     ];
     for i in 0..n.saturating_sub(out.len()) {
         let make = Make::ALL[i % 2];
@@ -266,5 +278,6 @@ fn row(
         icon: None,
         entry: None,
         example: true,
+        unfit: None,
     }
 }

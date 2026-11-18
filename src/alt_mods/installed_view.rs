@@ -702,6 +702,200 @@ impl Launcher {
                     ),
             )
         };
-        row.child(verdict).child(sw)
+        match r.unfit.clone() {
+            Some(unfit) => row
+                .child(verdict)
+                .child(self.alt_unfit(n, &r, unfit, real, cx)),
+            None => row.child(verdict).child(sw),
+        }
+    }
+
+    /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
+    /// a "?" that says why in one sentence, the changed items for its author, and the way on.
+    fn alt_unfit(
+        &mut self,
+        n: usize,
+        r: &Row,
+        unfit: model::Unfit,
+        real: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        use crate::alt::{button, CARD, LINE, TEXT};
+        let open = self.alt.mods.unfit_open.as_deref() == Some(r.id.as_str());
+        let id = r.id.clone();
+        let help = div()
+            .id(("alt-unfit-help", n))
+            .tab_index(0)
+            .flex_none()
+            .size(px(16.))
+            .rounded_full()
+            .border_1()
+            .border_color(c(if open { TEXT } else { LINE }))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(10.5))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(c(if open { TEXT } else { MUTED }))
+            .cursor_pointer()
+            .focus_visible(|s| s.border_color(c(GOLD)))
+            .child("?")
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let m = &mut this.alt.mods;
+                m.unfit_open = match m.unfit_open.as_ref() == Some(&id) {
+                    true => None,
+                    false => Some(id.clone()),
+                };
+                m.unfit_details = false;
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        let said = open.then(|| {
+            let sentence = match (&unfit.made_for, unfit.changes.is_empty()) {
+                (Some((_, made)), false) => trf(
+                    "Made for {made}. {on} changed things it uses, so it waits for an update from its author. It stays installed.",
+                    &[("made", made), ("on", &unfit.on)],
+                ),
+                (Some((_, made)), true) => trf(
+                    "Made for {made}, so it waits for an update from its author. It stays installed.",
+                    &[("made", made)],
+                ),
+                (None, false) => trf(
+                    "Made for another build. {on} changed things it uses, so it waits for an update from its author. It stays installed.",
+                    &[("on", &unfit.on)],
+                ),
+                (None, true) => tr(
+                    "Made for another build, so it waits for an update from its author. It stays installed.",
+                )
+                .to_string(),
+            };
+            let details = self.alt.mods.unfit_details;
+            let technical = (!unfit.changes.is_empty()).then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .id("alt-unfit-details")
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(12.))
+                            .text_color(c(MUTED))
+                            .cursor_pointer()
+                            .child(blocks::icon(
+                                if details { "chevron-down" } else { "chevron-right" },
+                                12.,
+                                c(MUTED),
+                            ))
+                            .child(tr("Technical details"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.alt.mods.unfit_details = !this.alt.mods.unfit_details;
+                                cx.stop_propagation();
+                                cx.notify();
+                            })),
+                    )
+                    .children(details.then(|| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .children(unfit.changes.iter().map(|change| {
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(c(MUTED))
+                                    .child(format!("• {change}"))
+                            }))
+                    }))
+            });
+            // One way on: a version that fits when the registry has a newer one, else back to
+            // the build it was made for when that build is still here.
+            let action = match (&r.update, &unfit.made_for) {
+                (Some(_), _) => {
+                    let b = button(
+                        "alt-unfit-update",
+                        trf("Update {mod}", &[("mod", &r.title)]),
+                    );
+                    let row = r.clone();
+                    Some(if real {
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.alt.mods.unfit_open = None;
+                            this.alt_update_one(&row);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                    } else {
+                        dim(b)
+                    })
+                }
+                (None, Some((tag, made))) if !real || self.installed.contains(tag) => {
+                    let b = button(
+                        "alt-unfit-stay",
+                        trf("Stay on {build}", &[("build", made)]),
+                    );
+                    let tag = tag.clone();
+                    Some(if real {
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.alt.mods.unfit_open = None;
+                            this.alt_stay_on(tag.clone());
+                            cx.stop_propagation();
+                            cx.notify();
+                        }))
+                    } else {
+                        dim(b)
+                    })
+                }
+                _ => None,
+            };
+            // Opens under the "?", or over it when the row is low in the window.
+            let popup = div()
+                    .w(px(360.))
+                    .max_w(px(self.alt_content_width() - 28.))
+                    .p(px(14.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(c(LINE))
+                    .bg(c(CARD))
+                    .shadow_lg()
+                    .occlude()
+                    .child(div().text_size(px(13.)).child(sentence))
+                    .children(technical)
+                    .children(action.map(|a| div().flex().justify_end().child(a)));
+            gpui::deferred(
+                div().absolute().top(px(24.)).right_0().child(
+                    gpui::anchored()
+                        .anchor(gpui::Anchor::TopRight)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(popup),
+                ),
+            )
+            .with_priority(10)
+        });
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .child(muted(trf("Not on {build}", &[("build", &unfit.on)])))
+            .child(div().relative().flex_none().child(help).children(said))
+    }
+
+    /// "Stay on Nov 16" for a mod made for it: the setup stays on that build, where the mod
+    /// runs. The next Play builds there as usual.
+    fn alt_stay_on(&mut self, tag: String) {
+        let Some(id) = self.selected_instance().map(|i| i.id.clone()) else {
+            return;
+        };
+        if !self.alt_guard() {
+            return;
+        }
+        match instances::edit(&id, |meta| meta.version = Some(tag)) {
+            Ok(_) => self.reload_instances(),
+            Err(e) => self.alt.mods.notice = Some(Err(e)),
+        }
     }
 }

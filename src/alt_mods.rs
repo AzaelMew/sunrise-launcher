@@ -153,6 +153,10 @@ pub(crate) struct AltModsState {
     errors: HashMap<String, String>,
     /// How many cards Discover draws ("Show more" adds a page).
     limit: usize,
+    /// The Installed row whose "?" is open (a mod not on this build), and whether its
+    /// technical details show.
+    unfit_open: Option<String>,
+    unfit_details: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
     last_mods: Option<Page>,
     last_packs: Option<Page>,
@@ -186,6 +190,8 @@ impl Default for AltModsState {
             notice: None,
             errors: HashMap::new(),
             limit: 0,
+            unfit_open: None,
+            unfit_details: false,
             last_mods: None,
             last_packs: None,
         }
@@ -251,6 +257,25 @@ impl Launcher {
         if let Some(row) = self.alt_rows().into_iter().find(|r| r.id == id) {
             self.alt_update_one(&row);
         }
+    }
+
+    /// Reads the setup's mods for the play bar, when no Mods page has yet.
+    pub(crate) fn alt_mods_read_once(&mut self) {
+        if self.alt.mods.snapshot.is_none() {
+            self.alt_mods_refresh();
+        }
+    }
+
+    /// How many of the setup's mods the game it plays was made without.
+    pub(crate) fn alt_mods_not_on_build(&self) -> usize {
+        self.alt_rows().iter().filter(|r| r.unfit.is_some()).count()
+    }
+
+    /// The play bar's quiet line about them: Mods › Installed, where each says why.
+    pub(crate) fn alt_show_installed_mods(&mut self) {
+        self.alt_leave_section(false);
+        self.alt_mods_refresh();
+        self.alt_choose_view(Page::Installed);
     }
 
     /// The rail's Mods: where the player last was this session, else Installed when this setup
@@ -546,7 +571,7 @@ impl Launcher {
         };
         let index = sunrise::known_index();
         let game = self.mods_game();
-        model::rows(
+        let mut rows = model::rows(
             &snap.entries,
             &model::World {
                 index: index.as_deref(),
@@ -557,7 +582,43 @@ impl Launcher {
                 chosen: &snap.chosen,
                 local: &snap.local,
             },
-        )
+        );
+        // A mod the game was made without isn't waiting for a build: it waits for its author.
+        let left = self.native_left_out();
+        if !left.is_empty() {
+            let on = self
+                .selected_instance()
+                .and_then(|i| self.version_of(i))
+                .map(|tag| crate::alt_sheets::build_name(tag))
+                .unwrap_or_default();
+            for row in rows.iter_mut().filter(|r| r.on) {
+                let Some(l) = left
+                    .iter()
+                    .find(|l| l.id == row.id && l.version == row.version)
+                    .filter(|l| {
+                        matches!(
+                            l.why,
+                            native_mods::Why::Unfit(_) | native_mods::Why::OtherVersion
+                        )
+                    })
+                else {
+                    continue;
+                };
+                let detail = l.detail.clone().unwrap_or_default();
+                row.need = None;
+                row.unfit = Some(model::Unfit {
+                    on: on.clone(),
+                    made_for: detail
+                        .made_for
+                        .map(|tag| (crate::alt_sheets::build_name(&tag), tag))
+                        .map(|(name, tag)| (tag, name)),
+                    changes: detail.changes,
+                });
+            }
+            // A row that no longer needs the player moves out of that group.
+            model::sort(&mut rows);
+        }
+        rows
     }
 
     /// Whether another install or update holds the folder right now.

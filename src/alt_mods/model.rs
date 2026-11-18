@@ -394,6 +394,19 @@ pub(super) struct Row {
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
     pub(super) example: bool,
+    /// It can't run on the game this setup plays: the build left it out.
+    pub(super) unfit: Option<Unfit>,
+}
+
+/// Why a mod is not on the game build its setup plays, in parts the row says in its own words.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Unfit {
+    /// The build played, as people read it ("Nov 17").
+    pub(super) on: String,
+    /// The build it was made for: its version and its name ("Nov 16"), when known.
+    pub(super) made_for: Option<(String, String)>,
+    /// Each thing the game changed that it uses, for its author.
+    pub(super) changes: Vec<String>,
 }
 
 impl Row {
@@ -492,6 +505,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 icon: p.and_then(|p| p.icon.clone()),
                 entry: Some(e.clone()),
                 example: false,
+                unfit: None,
             })
         })
         .collect();
@@ -517,12 +531,18 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             icon: None,
             entry: None,
             example: false,
+            unfit: None,
         }
     }));
-    out.sort_by(|a, b| {
+    sort(&mut out);
+    out
+}
+
+/// Rows in the order the list shows them: by group, then by name.
+pub(super) fn sort(rows: &mut [Row]) {
+    rows.sort_by(|a, b| {
         (a.group(), a.title.to_lowercase()).cmp(&(b.group(), b.title.to_lowercase()))
     });
-    out
 }
 
 impl PartialOrd for Group {

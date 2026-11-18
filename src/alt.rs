@@ -282,6 +282,23 @@ impl Launcher {
                 && !busy
                 && self.client.is_none()
         });
+        let said = brief
+            .map(str::to_owned)
+            .filter(|_| self.native_step.is_none())
+            .or(hold.clone())
+            .or_else(|| {
+                update.as_ref().map(|r| {
+                    trf(
+                        "{build} is available",
+                        &[("build", &crate::alt_sheets::build_name(&r.tag))],
+                    )
+                })
+            });
+        // Mods the game was made without are no problem to raise: one quiet line, at most.
+        self.alt_mods_read_once();
+        let waiting = (said.is_none() && self.native_step.is_none())
+            .then(|| self.alt_mods_not_on_build())
+            .filter(|count| *count > 0);
         let mut bar = div()
             .flex()
             .items_center()
@@ -379,20 +396,25 @@ impl Launcher {
                     .line_clamp(2)
                     .text_ellipsis()
                     .children(self.alt_build_line())
-                    .children(
-                        brief
-                            .map(str::to_owned)
-                            .filter(|_| self.native_step.is_none())
-                            .or(hold.clone())
-                            .or_else(|| {
-                                update.as_ref().map(|r| {
-                                    trf(
-                                        "{build} is available",
-                                        &[("build", &crate::alt_sheets::build_name(&r.tag))],
-                                    )
-                                })
-                            }),
-                    ),
+                    .children(said)
+                    // Nothing to act on here: the row under Mods says why and what to do.
+                    .children(waiting.map(|count| {
+                        div()
+                            .id("alt-not-on-build")
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(TEXT)))
+                            .child(match count {
+                                1 => tr("1 mod not on this build").to_string(),
+                                n => trf(
+                                    "{count} mods not on this build",
+                                    &[("count", &n.to_string())],
+                                ),
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.alt_show_installed_mods();
+                                cx.notify();
+                            }))
+                    })),
             );
         if let Some(all) = more.filter(|_| self.native_step.is_none()) {
             bar = bar.child(

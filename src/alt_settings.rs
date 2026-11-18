@@ -820,20 +820,22 @@ impl Launcher {
                     cx.notify();
                 }));
             let said = shown.then(|| {
+                // Under the "?", or over it when the row is low in the window.
                 gpui::deferred(
-                    div()
-                        .absolute()
-                        .top(px(24.))
-                        .left_0()
-                        .w(px(340.))
-                        .p(px(12.))
-                        .rounded(px(10.))
-                        .border_1()
-                        .border_color(rgb(LINE))
-                        .bg(rgb(CARD))
-                        .shadow_lg()
-                        .occlude()
-                        .child(hint(tr(full))),
+                    div().absolute().top(px(24.)).left_0().child(
+                        gpui::anchored().snap_to_window_with_margin(px(8.)).child(
+                            div()
+                                .w(px(340.))
+                                .p(px(12.))
+                                .rounded(px(10.))
+                                .border_1()
+                                .border_color(rgb(LINE))
+                                .bg(rgb(CARD))
+                                .shadow_lg()
+                                .occlude()
+                                .child(hint(tr(full))),
+                        ),
+                    ),
                 )
                 .with_priority(10)
             });
