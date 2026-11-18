@@ -1,13 +1,19 @@
 //! Home's Mods column: what the selected profile plays with, to read. Its mods and its
 //! resource and shader packs that are on, each a row that opens the item's own page; what is
 //! off is one quiet line that leads to Mods, where things are turned on and off.
+//!
+//! What the profile has is read in the background ([`read`]) and kept ([`Inventory`]): drawing
+//! Home opens no file of a mod or a pack. It is read again when the files it was read from
+//! change ([`stamp`]).
 use super::*;
 use crate::frame::{button, Page, Reach as _};
 use crate::home::{card, heading, muted};
 use crate::paint::palette;
 use gpui::{rgb, ImageSource};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use sunrise_launcher::packs::Kind as PackKind;
+use sunrise_launcher::browser::{installed, mod_list, sunrise};
+use sunrise_launcher::packs::{self, Kind as PackKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -30,9 +36,9 @@ impl Kind {
 /// Where a row's picture comes from.
 #[derive(Clone)]
 pub(crate) enum Picture {
-    /// A mod's icon, by its address in the registry.
-    Address(Option<String>),
-    /// A pack's `pack.png`.
+    /// A registry mod's icon, by the mod's project there: asked for when its row is drawn.
+    Project(String),
+    /// The item's own picture, read with it.
     Image(Option<Arc<gpui::Image>>),
 }
 
@@ -97,6 +103,142 @@ pub(crate) fn column(items: Vec<Item>) -> Option<Column> {
     })
 }
 
+/// Everything the profile in `home` has installed: its registry mods and the mod files put
+/// there by hand, by name, then its resource packs as the game stacks them, then its shader
+/// packs. Each is on or off; only a pack that is on has its picture read. Reads files: never
+/// called while drawing.
+pub(crate) fn read(home: &Path) -> Vec<Item> {
+    let image = |png: Vec<u8>| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png));
+    let mut mods: Vec<Item> = installed::Installed::load(home)
+        .entries
+        .iter()
+        .filter(|e| {
+            e.source == sunrise_launcher::browser::SourceId::Sunrise
+                && e.kind == sunrise_launcher::browser::Kind::Mod
+        })
+        .filter_map(|e| {
+            let id = sunrise::mod_id(e)?;
+            Some(Item {
+                id: id.to_owned(),
+                name: e.title.clone(),
+                kind: Kind::Mod,
+                picture: Picture::Project(e.project.clone()),
+                open: Open::Project(e.project.clone()),
+                on: mod_list::is_enabled(home, id),
+            })
+        })
+        .collect();
+    mods.extend(native_status::untracked(home).into_iter().map(|file| Item {
+        on: mod_list::is_enabled(home, &file.id),
+        name: file.id.clone(),
+        kind: Kind::Mod,
+        picture: Picture::Image(None),
+        open: Open::Installed(file.id.clone()),
+        id: file.id,
+    }));
+    mods.sort_by_key(|item| item.name.to_lowercase());
+    let pack = |pack: packs::Pack| Item {
+        kind: match pack.kind {
+            PackKind::Resource => Kind::Resource,
+            PackKind::Shader => Kind::Shader,
+        },
+        picture: Picture::Image(pack.icon.map(image)),
+        open: Open::Pack(pack.kind, pack.title.clone()),
+        on: pack.enabled,
+        id: pack.file,
+        name: pack.title,
+    };
+    let mut resource = packs::list_with(home, PackKind::Resource, packs::Pictures::On);
+    let order = packs::resource_order(home);
+    // Stable: the packs that are off stay by name after the stack.
+    resource.sort_by_key(|p| {
+        order
+            .iter()
+            .position(|file| *file == p.file)
+            .unwrap_or(usize::MAX)
+    });
+    let shader = packs::list_with(home, PackKind::Shader, packs::Pictures::On);
+    mods.into_iter()
+        .chain(resource.into_iter().map(pack))
+        .chain(shader.into_iter().map(pack))
+        .collect()
+}
+
+/// What [`read`] depends on, from the files' names, sizes and times and the saved choices.
+pub(crate) fn stamp(home: &Path) -> String {
+    native_status::fingerprint(home, None) + "\n" + &packs::stamp(home)
+}
+
+/// What the selected profile has installed, as last read.
+#[derive(Default)]
+pub(crate) struct Inventory {
+    home: Option<PathBuf>,
+    /// None until the first read ends: Home says nothing about mods before it knows.
+    items: Option<Arc<Vec<Item>>>,
+    /// [`stamp`] when `items` were read.
+    stamp: String,
+    reading: bool,
+    /// Something may have changed: check the stamp, in the background, when Home next draws.
+    stale: bool,
+    /// When Home last drew the column.
+    drawn: Option<Instant>,
+    watched: bool,
+}
+
+/// Home drawn again after this long checks the files once more: the player was elsewhere.
+const AWAY: Duration = Duration::from_secs(1);
+/// How often the files are checked while Home stays open.
+const WATCH: Duration = Duration::from_secs(2);
+
+impl Inventory {
+    /// The column is being drawn for `home` at `now`: what to show, and the stamp to read
+    /// against when a read should start.
+    fn draw(&mut self, home: &Path, now: Instant) -> (Option<Arc<Vec<Item>>>, Option<String>) {
+        if self.home.as_deref() != Some(home) {
+            // Another profile: nothing of the last one is shown as this one's.
+            *self = Inventory {
+                home: Some(home.to_path_buf()),
+                watched: self.watched,
+                ..Inventory::default()
+            };
+        }
+        let away = self
+            .drawn
+            .is_none_or(|last| now.duration_since(last) > AWAY);
+        self.drawn = Some(now);
+        let due = !self.reading && (self.items.is_none() || self.stale || away);
+        if due {
+            self.reading = true;
+            self.stale = false;
+        }
+        (self.items.clone(), due.then(|| self.stamp.clone()))
+    }
+
+    /// A read for `home` ended: `None` when its files were as the kept list knows them.
+    fn took(&mut self, home: &Path, read: Option<(String, Vec<Item>)>) {
+        if self.home.as_deref() != Some(home) {
+            return;
+        }
+        self.reading = false;
+        match read {
+            Some((stamp, items)) => {
+                self.stamp = stamp;
+                self.items = Some(Arc::new(items));
+            }
+            // Nothing there and nothing known is still an answer: an empty profile.
+            None => {
+                self.items.get_or_insert_default();
+            }
+        }
+    }
+}
+
+/// [`read`], unless the files are as `known` says.
+fn read_changed(home: &Path, known: &str) -> Option<(String, Vec<Item>)> {
+    let stamp = stamp(home);
+    (stamp != known).then(|| (stamp, read(home)))
+}
+
 /// Home's two columns stand side by side from this window width; under it they stack.
 const SIDE_BY_SIDE_FROM: f32 = 1000.;
 
@@ -157,9 +299,66 @@ impl Launcher {
         }
     }
 
-    /// Home's Mods column for the selected profile.
-    pub(crate) fn home_mods(&mut self, cx: &mut Context<Self>) -> Div {
-        let column = column(self.mods_for_home());
+    /// What the selected profile has, as last read; reads it in the background when it is not
+    /// known yet or may have changed.
+    fn home_inventory(&mut self, home: &Path, cx: &mut Context<Self>) -> Option<Arc<Vec<Item>>> {
+        let home = home.to_path_buf();
+        let (items, read) = self.ui.home.mods.draw(&home, Instant::now());
+        if let Some(known) = read {
+            let at = home.clone();
+            let task = cx
+                .background_executor()
+                .spawn(async move { read_changed(&at, &known) });
+            cx.spawn(async move |this, cx| {
+                let read = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let changed = read.is_some();
+                    this.ui.home.mods.took(&home, read);
+                    if changed {
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        if !std::mem::replace(&mut self.ui.home.mods.watched, true) {
+            // While Home shows, its files are looked at now and then, never while drawing: a
+            // change made elsewhere (the game, the command line) reaches the column.
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(WATCH).await;
+                let Ok(shown) = this.update(cx, |this, _| {
+                    let mods = &this.ui.home.mods;
+                    (this.ui.page == Page::Home && !mods.reading)
+                        .then(|| mods.home.clone().zip(Some(mods.stamp.clone())))
+                        .flatten()
+                }) else {
+                    break;
+                };
+                let Some((home, known)) = shown else {
+                    continue;
+                };
+                let now = cx
+                    .background_executor()
+                    .spawn(async move { stamp(&home) })
+                    .await;
+                if now != known {
+                    let _ = this.update(cx, |this, cx| {
+                        this.ui.home.mods.stale = true;
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
+        items
+    }
+
+    /// Home's Mods column for the profile whose game folder is `home`.
+    pub(crate) fn home_mods(&mut self, home: &Path, cx: &mut Context<Self>) -> Div {
+        let items = self.home_inventory(home, cx);
+        let known = items.is_some();
+        let column = column(items.map(|items| items.to_vec()).unwrap_or_default());
+        let index = sunrise::known_index();
         let head = div()
             .h(px(tokens::CONTROL))
             .flex()
@@ -176,6 +375,8 @@ impl Launcher {
                 )),
             );
         let body = match column {
+            // Still being read: no "none yet" until that is known.
+            None if !known => div(),
             None => div()
                 .flex()
                 .items_center()
@@ -196,10 +397,13 @@ impl Launcher {
                 let mut rows = div().flex().flex_col().gap(px(4.));
                 for (n, item) in column.shown.iter().enumerate() {
                     let picture = match &item.picture {
-                        Picture::Address(address) => tile(
-                            address.as_ref().and_then(|url| {
-                                self.mods_image(url, sunrise_launcher::browser::images::ROW)
-                            }),
+                        Picture::Project(project) => tile(
+                            index
+                                .as_ref()
+                                .and_then(|index| index.project(project)?.icon.clone())
+                                .and_then(|url| {
+                                    self.mods_image(&url, sunrise_launcher::browser::images::ROW)
+                                }),
                             &item.id,
                             &item.name,
                             PICTURE,
@@ -287,7 +491,7 @@ mod tests {
             id: name.to_lowercase(),
             name: name.into(),
             kind,
-            picture: Picture::Address(None),
+            picture: Picture::Image(None),
             open: Open::Installed(name.into()),
             on,
         }
@@ -341,6 +545,45 @@ mod tests {
         .unwrap();
         assert!(all_off.shown.is_empty());
         assert_eq!(all_off.off(), 2);
+    }
+
+    #[test]
+    fn the_profiles_list_is_read_once_and_again_only_when_asked() {
+        let (a, b) = (Path::new("/profiles/a"), Path::new("/profiles/b"));
+        let start = Instant::now();
+        let mut kept = Inventory::default();
+        // Nothing known: nothing shown, and a read starts against no stamp.
+        let (shown, read) = kept.draw(a, start);
+        assert!(shown.is_none());
+        assert_eq!(read.as_deref(), Some(""));
+        // While it runs, drawing starts no other.
+        assert!(kept.draw(a, start).1.is_none());
+        kept.took(
+            a,
+            Some(("one".into(), vec![item("Lanternlight", Kind::Mod, true)])),
+        );
+        let soon = start + Duration::from_millis(100);
+        let (shown, read) = kept.draw(a, soon);
+        assert_eq!(shown.unwrap().len(), 1);
+        assert!(read.is_none(), "a redraw reads nothing");
+        // Told that the files moved, the next draw checks against what it knows.
+        kept.stale = true;
+        assert_eq!(kept.draw(a, soon).1.as_deref(), Some("one"));
+        kept.took(a, None);
+        assert_eq!(kept.draw(a, soon).0.unwrap().len(), 1, "unchanged: kept");
+        // Coming back to Home after a while checks once.
+        let later = soon + AWAY + Duration::from_millis(1);
+        assert_eq!(kept.draw(a, later).1.as_deref(), Some("one"));
+        kept.took(a, None);
+        // Another profile shows nothing of this one, and an answer for the old one is dropped.
+        let (shown, read) = kept.draw(b, later);
+        assert!(shown.is_none());
+        assert_eq!(read.as_deref(), Some(""));
+        kept.took(a, Some(("late".into(), vec![item("Old", Kind::Mod, true)])));
+        assert!(kept.draw(b, later).0.is_none());
+        // A profile with nothing is known to be empty, not still unread.
+        kept.took(b, None);
+        assert_eq!(kept.draw(b, later).0.unwrap().len(), 0);
     }
 
     #[test]

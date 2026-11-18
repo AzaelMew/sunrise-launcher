@@ -53,40 +53,6 @@ impl Launcher {
         m.row_filter.text = title.to_string();
     }
 
-    /// Everything the selected profile has installed, for Home: its mods as Mods › Installed
-    /// orders them, then its resource packs, then its shader packs, each on or off.
-    pub(crate) fn mods_for_home(&mut self) -> Vec<crate::home_mods::Item> {
-        use crate::home_mods::{Item, Kind as Is, Open, Picture};
-        self.mods_refresh();
-        self.load_packs_list(self.mods_home());
-        let mods = self.rows().into_iter().map(|row| Item {
-            open: match row.local {
-                Some(_) => Open::Installed(row.title.clone()),
-                None => Open::Project(row.id.clone()),
-            },
-            id: row.id,
-            name: row.title,
-            kind: Is::Mod,
-            picture: Picture::Address(row.icon),
-            on: row.on,
-        });
-        let pack = |pack: &sunrise_launcher::packs::Pack, icon| Item {
-            id: pack.file.clone(),
-            name: pack.title.clone(),
-            kind: match pack.kind {
-                Kind::Resource => Is::Resource,
-                Kind::Shader => Is::Shader,
-            },
-            picture: Picture::Image(icon),
-            open: Open::Pack(pack.kind, pack.title.clone()),
-            on: pack.enabled,
-        };
-        let packs = &self.game_packs;
-        mods.chain(packs.resource.iter().map(|(p, icon)| pack(p, icon.clone())))
-            .chain(packs.shader.iter().map(|p| pack(p, None)))
-            .collect()
-    }
-
     /// Mods › Installed lists the mods that are off, as its own filter would.
     pub(crate) fn show_mods_turned_off(&mut self) {
         self.mods_refresh();

@@ -40,6 +40,8 @@ const INSET: f32 = 32.;
 pub(crate) struct HomeState {
     /// Where the build picker was last drawn: the build chooser opens under it.
     picker: Rc<Cell<Option<Bounds<gpui::Pixels>>>>,
+    /// What the selected profile has installed, for the Mods column.
+    pub(crate) mods: crate::home_mods::Inventory,
 }
 
 impl HomeState {
@@ -493,7 +495,7 @@ impl Launcher {
             .gap(px(10.))
             .child(top)
             .child(body);
-        let mods = self.home_mods(cx).flex_1().min_w_0();
+        let mods = self.home_mods(&instance.home, cx).flex_1().min_w_0();
         // Worlds, then what the profile plays with: side by side, or in that order down a
         // narrow window.
         let both = div()
