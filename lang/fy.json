@@ -1313,5 +1313,6 @@
   "{value} GB": "{value} GB",
   "TPS of 20": "TPS of 20",
   "Tick time": "Tick time",
-  "Memory": "Memory"
+  "Memory": "Memory",
+  "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.": "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth."
 }

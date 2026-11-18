@@ -238,6 +238,10 @@ fn nothing_is_installed_when_a_check_fails() {
     let jar = project("jar", Kind::Mod);
     assert!(plan(&fake, &jar, false, GAME)
         .unwrap_err()
+        .contains("is a Java mod. Sunrise doesn't install Java mods"));
+    let modpack = project("pack", Kind::Modpack);
+    assert!(plan(&fake, &modpack, false, GAME)
+        .unwrap_err()
         .contains("isn't a pack Sunrise installs"));
     fs::remove_dir_all(&home).unwrap();
 }

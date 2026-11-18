@@ -146,6 +146,12 @@ pub fn plan(
     everything: bool,
     game: &str,
 ) -> Result<Vec<Step>, String> {
+    if project.kind == Kind::Mod {
+        return Err(crate::i18n::trf(
+            "{title} is a Java mod. Sunrise doesn't install Java mods; it installs resource packs, data packs and shader packs from Modrinth.",
+            &[("title", &project.title)],
+        ));
+    }
     if project.kind.folder().is_none() {
         return Err(format!(
             "{} isn't a pack Sunrise installs as a file.",
