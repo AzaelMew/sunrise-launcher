@@ -12,8 +12,11 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-/// Signs the player out of Microsoft in their normal browser, for "Use a different Microsoft account".
-pub const LOGOUT_URL: &str = "https://login.live.com/logout.srf";
+/// Signs the player out of Microsoft in their normal browser, for "Use a different Microsoft account":
+/// the identity platform's end-session page for personal accounts, the endpoint the sign-in's own
+/// device code and token requests use. It signs out of login.live.com and comes back to
+/// Microsoft's own signed-out page; `login.live.com/logout.srf` opened alone goes on to msn.com.
+pub const LOGOUT_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/logout";
 
 /// A browser that has a private-window flag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -250,6 +253,17 @@ pub fn open(url: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn signing_out_stays_on_microsofts_sign_in_pages() {
+        let url = reqwest::Url::parse(LOGOUT_URL).unwrap();
+        assert_eq!(url.scheme(), "https");
+        assert_eq!(url.host_str(), Some("login.microsoftonline.com"));
+        // Personal accounts' end session; the app has no registered sign-out return address,
+        // so none is asked for.
+        assert_eq!(url.path(), "/consumers/oauth2/v2.0/logout");
+        assert_eq!(url.query(), None);
+    }
 
     #[test]
     fn systems_name_the_same_browsers_differently() {
