@@ -133,8 +133,21 @@ impl Launcher {
             .gap(px(GAP))
             .pt(px(24.))
             // Home paints no page of its own: the header stands on the scenery, inset like the
-            // text of the panel under it.
-            .child(header.flex_none().px(px(INSET)))
+            // text of the panel under it. A picture may be any colour, so over one the header
+            // stands on a plate of its own, as wide as what it holds; the picture shows beside
+            // it.
+            .child(if self.theme.photo {
+                div().flex_none().flex().child(
+                    card()
+                        .min_w_0()
+                        .rounded(px(tokens::R_PANEL))
+                        .px(px(INSET))
+                        .py(px(20.))
+                        .child(header),
+                )
+            } else {
+                header.flex_none().px(px(INSET))
+            })
             // The panel is the sidebar's material and fills Home's box to its left, right and
             // bottom edges, so the frame lines it up with the sidebar. It reaches the foot when
             // the worlds leave room and is never squeezed: a short window scrolls the page.
