@@ -49,6 +49,7 @@ pub(crate) fn chip(
         .h(px(tokens::CONTROL))
         .flex()
         .items_center()
+        .justify_center()
         .rounded(px(tokens::R_PANEL))
         .border_1()
         .border_color(if on {
@@ -100,12 +101,15 @@ pub(crate) fn choices(
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)));
     for (n, (label, on, pick)) in chips.into_iter().enumerate() {
-        group = group.child(chip((id, n), label, on).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
-                pick(this, cx);
-                cx.notify();
-            },
-        )));
+        // A few options side by side: short words don't make one smaller than the others.
+        group = group.child(
+            chip((id, n), label, on)
+                .min_w(px(96.))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    pick(this, cx);
+                    cx.notify();
+                })),
+        );
     }
     group.on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
         let step = match ev.keystroke.key.as_str() {
@@ -119,35 +123,88 @@ pub(crate) fn choices(
     }))
 }
 
+/// An on/off switch: a knob that slides across its track when it changes, the track and the
+/// knob turning to their new colours as it goes.
 pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+    let id = id.into();
+    let key = id.to_string();
+    // `v` runs from 0 (off) to 1 (on).
+    let fill = move |d: Div, v: f32| d.opacity(v);
+    let knob = move |d: Div, v: f32| {
+        d.left(px(INSET + TRAVEL * v))
+            .bg(mix(c(palette().muted), c(palette().background), v))
+    };
+    let (fill_el, knob_el): (AnyElement, AnyElement) = {
+        let fill_div = div()
+            .absolute()
+            .size_full()
+            .rounded(px(tokens::R_CONTROL))
+            .bg(c(palette().text));
+        let knob_div = div()
+            .absolute()
+            .top(px(INSET))
+            .size(px(KNOB))
+            .rounded(px(tokens::R_CONTROL - INSET));
+        match crate::motion::sliding(&key, on) {
+            Some(slide) => {
+                let toward = move |p: f32| if on { p } else { 1. - p };
+                (
+                    fill_div
+                        .with_animation(
+                            ElementId::named_usize(format!("{key}-fill"), slide),
+                            crate::motion::slide_motion(),
+                            move |d, p| fill(d, toward(p)),
+                        )
+                        .into_any_element(),
+                    knob_div
+                        .with_animation(
+                            ElementId::named_usize(format!("{key}-knob"), slide),
+                            crate::motion::slide_motion(),
+                            move |d, p| knob(d, toward(p)),
+                        )
+                        .into_any_element(),
+                )
+            }
+            None => {
+                let v = if on { 1. } else { 0. };
+                (
+                    fill(fill_div, v).into_any_element(),
+                    knob(knob_div, v).into_any_element(),
+                )
+            }
+        }
+    };
     div()
         .id(id)
         .flex_none()
         .tab_index(0)
         .seen()
         .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
+        .relative()
         .w(px(40.))
         .h(px(22.))
         .rounded(px(tokens::R_CONTROL))
-        .p(px(2.))
-        .flex()
-        .bg(if on {
-            c(palette().text)
-        } else {
-            c(palette().line)
-        })
-        .when(on, |d| d.justify_end())
+        .bg(c(palette().line))
         .cursor_pointer()
-        .child(
-            div()
-                .size(px(18.))
-                .rounded(px(tokens::R_CONTROL))
-                .bg(if on {
-                    c(palette().background)
-                } else {
-                    c(palette().muted)
-                }),
-        )
+        .child(fill_el)
+        .child(knob_el)
+}
+
+/// A switch's knob, the room around it, and how far it slides.
+const KNOB: f32 = 16.;
+const INSET: f32 = 3.;
+const TRAVEL: f32 = 40. - KNOB - 2. * INSET;
+
+/// `a` turning into `b`, `v` of the way.
+fn mix(a: Hsla, b: Hsla, v: f32) -> Hsla {
+    let (a, b) = (gpui::Rgba::from(a), gpui::Rgba::from(b));
+    let m = |x: f32, y: f32| x + (y - x) * v;
+    Hsla::from(gpui::Rgba {
+        r: m(a.r, b.r),
+        g: m(a.g, b.g),
+        b: m(a.b, b.b),
+        a: m(a.a, b.a),
+    })
 }
 
 pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
