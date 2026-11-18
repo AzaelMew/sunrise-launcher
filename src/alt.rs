@@ -299,6 +299,7 @@ impl Launcher {
         let waiting = (said.is_none() && self.native_step.is_none())
             .then(|| self.alt_mods_not_on_build())
             .filter(|count| *count > 0);
+        let quiet = said.is_none() && waiting.is_none() && self.alt_build_line().is_none();
         let bar = div()
             .flex()
             .items_center()
@@ -468,41 +469,56 @@ impl Launcher {
         }
         let enabled = !busy && self.location_error.is_none();
         let ink = rgb(0x221203);
-        let lane = self.alt_cat(actions.is_empty(), window, cx);
+        // The cat may sleep on Play only while Play is idle and the bar has nothing to say.
+        let free = quiet && !busy && self.client.is_none() && self.location_error.is_none();
+        let (lane, on_play) = self.alt_cat(actions.is_empty(), free, window, cx);
+        let play = div()
+            .id("alt-play")
+            .tab_index(0)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(8.))
+            .rounded(px(14.))
+            .h(px(50.))
+            .min_w(px(160.))
+            .px(px(20.))
+            .font_weight(FontWeight::BOLD)
+            .text_size(px(16.))
+            .text_color(ink)
+            .bg(if signed_in { rgb(GOLD) } else { rgb(TEXT) })
+            .when(signed_in && !busy && self.client.is_none(), |d| {
+                d.child(blocks::icon("play", 17., ink.into()))
+            })
+            .child(label)
+            .when(!enabled, |d| d.opacity(0.6))
+            .when(enabled, |d| {
+                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(client) = &this.client {
+                        client.kill();
+                    } else {
+                        this.quick_play = None;
+                        this.joining = None;
+                        this.alt_play();
+                    }
+                    cx.notify();
+                }))
+            });
         bar.child(lane).children(actions).child(
             div()
-                .id("alt-play")
-                .tab_index(0)
+                .relative()
                 .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(8.))
-                .rounded(px(14.))
-                .h(px(50.))
-                .min_w(px(160.))
-                .px(px(20.))
-                .font_weight(FontWeight::BOLD)
-                .text_size(px(16.))
-                .text_color(ink)
-                .bg(if signed_in { rgb(GOLD) } else { rgb(TEXT) })
-                .when(signed_in && !busy && self.client.is_none(), |d| {
-                    d.child(blocks::icon("play", 17., ink.into()))
-                })
-                .child(label)
-                .when(!enabled, |d| d.opacity(0.6))
-                .when(enabled, |d| {
-                    d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(client) = &this.client {
-                            client.kill();
-                        } else {
-                            this.quick_play = None;
-                            this.joining = None;
-                            this.alt_play();
-                        }
+                // A press on Play sends a cat asleep on it off; the press itself is Play's.
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.alt_cat_off_play();
                         cx.notify();
-                    }))
-                }),
+                    }),
+                )
+                .child(play)
+                .children(on_play),
         )
     }
 
