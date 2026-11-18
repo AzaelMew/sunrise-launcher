@@ -636,6 +636,21 @@ impl Launcher {
                 },
             ))),
         ));
+        let reduce = self.settings.reduce_motion == Some(true);
+        rows.push(row(
+            tr("Reduce motion"),
+            tr("Turn off all animations. The system's reduced motion setting also applies when this switch is off."),
+            div().child(switch("reduce-motion", reduce).seen().on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    let before = this.settings.reduce_motion;
+                    this.settings.reduce_motion = (!reduce).then_some(true);
+                    if !this.save_settings() {
+                        this.settings.reduce_motion = before;
+                    }
+                    cx.notify();
+                },
+            ))),
+        ));
         div()
             .flex()
             .flex_col()

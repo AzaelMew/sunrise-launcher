@@ -78,6 +78,7 @@ fn step_text(step: Step) -> String {
 impl Setup {
     fn new(mode: Mode, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let settings = Settings::load();
+        crate::motion::sync(&settings, cx);
         i18n::set(settings.language());
         titlebar::apply_appearance(window, settings.appearance);
         Self {
@@ -410,12 +411,14 @@ impl Render for Setup {
         if stamp != self.settings_stamp {
             self.settings_stamp = stamp;
             let settings = Settings::load();
+            crate::motion::sync(&settings, cx);
             i18n::set(settings.language());
             titlebar::apply_appearance(window, settings.appearance);
             self.theme =
                 Theme::for_appearance(settings.appearance, settings.accent, window.appearance())
                     .with_glass(settings.glass_tint(), settings.glass_blur());
         }
+        cx.set_reduce_motion(crate::motion::still());
         // Look again twice a second, so a settings change shows even while the scene stands
         // still, without drawing the window at 60 fps and reading the file's metadata every
         // frame for it.

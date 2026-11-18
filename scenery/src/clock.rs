@@ -3,8 +3,7 @@
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-/// How the scenery moves: not at all under reduced motion (the player's choice in Settings, else the
-/// system's: Windows' "Show animations", macOS's "Reduce motion") or with
+/// How the scenery moves: not at all if either the launcher or the system asks to reduce motion, or with
 /// `SUNRISE_LAUNCHER_MOTION=off`; while the window is in front (and 10 s after); or always, with
 /// `SUNRISE_LAUNCHER_MOTION=always`, for recordings.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -14,17 +13,15 @@ pub enum Motion {
     Always,
 }
 
-/// The player's choice (`Settings::reduce_motion`): 0 follows the system, 1 still, 2 moves.
-static PREFERENCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+/// Whether the player independently asks to reduce motion in the launcher.
+static REDUCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Takes the player's choice: `None` follows the system, `Some(true)` holds everything still.
+/// A saved `false` or no preference follows the system. Neither can override OS reduction.
 pub fn set_preference(reduce: Option<bool>) {
-    let v = match reduce {
-        None => 0,
-        Some(true) => 1,
-        Some(false) => 2,
-    };
-    PREFERENCE.store(v, std::sync::atomic::Ordering::Relaxed);
+    REDUCE.store(
+        reduce.unwrap_or(false),
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 pub fn motion() -> Motion {
@@ -37,23 +34,22 @@ pub fn motion() -> Motion {
                 _ => None,
             },
         );
-    if let Some(forced) = *FORCED {
-        return forced;
-    }
-    let still = match PREFERENCE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => system_reduces_motion(),
-    };
-    if still {
+    let launcher = REDUCE.load(std::sync::atomic::Ordering::Relaxed);
+    let system = !launcher && *FORCED != Some(Motion::Still) && system_reduces_motion();
+    resolve(launcher, system, *FORCED)
+}
+
+fn resolve(launcher: bool, system: bool, forced: Option<Motion>) -> Motion {
+    if launcher || system {
         Motion::Still
     } else {
-        Motion::InFront
+        forced.unwrap_or(Motion::InFront)
     }
 }
 
 /// The system's reduced motion, asked again at most every 2 s, so turning it on or off applies
 /// without restarting the launcher.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 fn system_reduces_motion() -> bool {
     static ASKED: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
     let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
@@ -95,23 +91,40 @@ fn ask_system() -> bool {
 /// `gsettings` on a worker thread: the answer lands for the next ask, and a desktop without the
 /// key or the tool answers "moves".
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-fn ask_system() -> bool {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    static REDUCE: AtomicBool = AtomicBool::new(false);
-    static ASKING: AtomicBool = AtomicBool::new(false);
-    if !ASKING.swap(true, Ordering::AcqRel) {
+fn system_reduces_motion() -> bool {
+    use std::sync::Mutex;
+    struct Preference {
+        asked: Option<Instant>,
+        pending: bool,
+        reduce: bool,
+    }
+    static PREF: Mutex<Preference> = Mutex::new(Preference {
+        asked: None,
+        pending: false,
+        reduce: true, // Until the first answer, don't animate against a possible OS preference.
+    });
+    let mut pref = PREF.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    if !pref.pending
+        && pref
+            .asked
+            .is_none_or(|at| now - at >= Duration::from_secs(2))
+    {
+        pref.asked = Some(now);
+        pref.pending = true;
         std::thread::spawn(|| {
-            let off = std::process::Command::new("gsettings")
+            let reduce = std::process::Command::new("gsettings")
                 .args(["get", "org.gnome.desktop.interface", "enable-animations"])
                 .output()
                 .ok()
                 .filter(|o| o.status.success())
                 .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "false");
-            REDUCE.store(off, Ordering::Relaxed);
-            ASKING.store(false, Ordering::Release);
+            let mut pref = PREF.lock().unwrap_or_else(|e| e.into_inner());
+            pref.reduce = reduce;
+            pref.pending = false;
         });
     }
-    REDUCE.load(Ordering::Relaxed)
+    pref.reduce
 }
 
 /// The animation's own time: it runs only while the scenery moves, so a window that comes back
@@ -147,6 +160,19 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn either_preference_takes_priority_over_even_recording_motion() {
+        assert_eq!(resolve(false, false, None), Motion::InFront);
+        assert_eq!(resolve(false, false, Some(Motion::Always)), Motion::Always);
+        assert_eq!(resolve(false, false, Some(Motion::Still)), Motion::Still);
+        for (launcher, system) in [(true, false), (false, true), (true, true)] {
+            assert_eq!(
+                resolve(launcher, system, Some(Motion::Always)),
+                Motion::Still
+            );
+        }
+    }
 
     #[test]
     fn the_clock_stops_and_resumes_without_a_jump() {

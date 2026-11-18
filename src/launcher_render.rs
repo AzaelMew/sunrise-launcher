@@ -3,6 +3,7 @@ use super::*;
 
 impl Render for Launcher {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::motion::sync(&self.settings, cx);
         self.frame(window, cx)
     }
 }
