@@ -21,6 +21,7 @@ mod cat;
 mod cli;
 mod cli_tools;
 mod collection;
+mod command_search;
 mod console;
 mod console_page;
 mod cull;
@@ -307,6 +308,8 @@ struct Launcher {
     profile_heads: profile_heads::Heads,
     /// The account chip's menu (`account_chip`).
     account_menu: account_chip::Menu,
+    /// The launcher's search (`command_search`).
+    search: command_search::Search,
     /// When page switches last checked every account's sign-in.
     auth_checked: Option<Instant>,
     sign_in_target: Option<account::Account>,

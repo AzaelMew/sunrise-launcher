@@ -426,7 +426,14 @@ impl Launcher {
             .border_color(rgb(p.divider))
             .bg(p.chrome_plate())
             .child(tabs)
-            .child(self.account_chip(cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(self.search_button(cx))
+                    .child(self.account_chip(cx)),
+            )
     }
 
     pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -512,16 +519,21 @@ impl Launcher {
             .text_size(px(tokens::BODY))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
                 let k = &ev.keystroke;
-                if k.key == "b"
-                    && (k.modifiers.control || cfg!(target_os = "macos") && k.modifiers.platform)
-                    && !k.modifiers.shift
-                    && !k.modifiers.alt
-                    && !this.ui.sheets.layered
-                {
-                    this.toggle_sidebar();
-                    cx.stop_propagation();
-                    cx.notify();
+                let command = if cfg!(target_os = "macos") {
+                    k.modifiers.platform
+                } else {
+                    k.modifiers.control
+                };
+                if !command || k.modifiers.shift || k.modifiers.alt {
+                    return;
                 }
+                match k.key.as_str() {
+                    "k" if this.toggle_search() => {}
+                    "b" if !this.layer_open() => this.toggle_sidebar(),
+                    _ => return,
+                }
+                cx.stop_propagation();
+                cx.notify();
             }))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 match ev.keystroke.key.as_str() {

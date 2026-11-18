@@ -37,6 +37,7 @@ mod pack_discover;
 mod pack_project;
 mod packs;
 mod project;
+mod search;
 mod ui;
 use std::rc::Rc;
 pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};

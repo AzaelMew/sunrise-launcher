@@ -37,6 +37,7 @@ pub(crate) enum Sheet {
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
     Picture,
+    Search,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -286,6 +287,17 @@ impl Launcher {
         }
     }
 
+    /// A shortcut must not steal focus or dispatch an action behind a consent or modal.
+    pub(crate) fn layer_open(&self) -> bool {
+        self.ui.sheets.layered
+            || self.ui.sheet.is_some()
+            || self.ui.sheets.registry.is_some()
+            || self.pending_consent.is_some()
+            || self.owner_screen_open
+            || self.instances.dialog.is_some()
+            || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
+    }
+
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
         self.ui.sheets.error = None;
@@ -523,6 +535,7 @@ impl Launcher {
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Picture) => self.gallery_picture(cx),
+            Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::Worlds) => {
                 let sheet = self.world_pick_sheet(cx);
                 if sheet.is_none() {

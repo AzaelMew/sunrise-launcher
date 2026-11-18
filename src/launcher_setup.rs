@@ -148,6 +148,7 @@ impl Launcher {
             auth_progress: HashMap::new(),
             profile_heads: profile_heads::Heads::default(),
             account_menu: account_chip::Menu::default(),
+            search: command_search::Search::default(),
             auth_checked: None,
             sign_in_target: None,
             auth_busy: HashMap::new(),
