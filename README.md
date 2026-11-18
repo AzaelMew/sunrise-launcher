@@ -1,5 +1,14 @@
 # Sunrise launcher
 
+The launcher for [Sunrise](https://github.com/sunrise-org/sunrise): it installs, prepares and starts Sunrise builds, and
+manages instances, mods and worlds. It moved here from the game repository with its history ([CONTRIBUTING.md](CONTRIBUTING.md#history)).
+
+**Releases:** none from this repository yet. The first waits for a Sunrise Nightly whose `sunrise-prepare` has `needs`
+and an SDK release with the native build tool (`tool`), which this launcher requires. It is also published in the game
+repository as `launcher@<version>`, so launchers installed from there update to it.
+
+Licence: [PolyForm Shield 1.0.0](LICENSE); code from Horizon is also MIT ([LICENSES/MIT-Horizon.txt](LICENSES/MIT-Horizon.txt)).
+
 ## Sunrise builds
 
 **Sunrise Launcher** is Sunrise's own launcher. Its launcher and game data
