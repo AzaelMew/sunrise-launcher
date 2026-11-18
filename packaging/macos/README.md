@@ -34,8 +34,10 @@ Releases are signed with Ludovic's **Developer ID** ("Developer ID Application: 
 No entitlements are needed. The launcher checks an update's signature before swapping the new
 Sunrise Launcher.app in, and again where it lands; when it doesn't hold, the old app is put back.
 
-The switch is the repository variable `MACOS_SIGN_IDENTITY`: set to the identity's name, the
-builds sign and notarize; empty (as in forks), they are signed **ad hoc** as before.
+`package.sh` signs with `MACOS_SIGN_IDENTITY` when it is set. This repository's release.yml builds on
+GitHub's runners and always packages **ad hoc** (it sets the variable empty): Developer ID signing
+and notarization come back in a separate gated job that provisions the Apple credentials, never in
+the job that compiles and tests. The Mac mini steps below are the game repository's old setup.
 
 ### The signing keychain on the Mac mini
 

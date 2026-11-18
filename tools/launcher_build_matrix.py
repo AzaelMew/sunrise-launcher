@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """The launcher's release build matrix: one entry per platform it ships for, as JSON for GitHub Actions."""
 import json
+import sys
 
 PLATFORMS = [
     dict(name='linux', os='ubuntu-22.04', asset='sunrise-launcher-linux-x86_64.tar.gz', binary='sunrise-launcher'),
@@ -16,5 +17,18 @@ SHIPPED = ('linux', 'macos', 'windows')
 def matrix():
     return {'include': [dict(entry) for entry in PLATFORMS if entry['name'] in SHIPPED]}
 
+def assets():
+    """Every file a release publishes besides SHA256SUMS and its signature, sorted: what release.yml requires, no more and no less."""
+    names = []
+    for entry in matrix()['include']:
+        names.append(entry['asset'])
+        if entry['name'] == 'linux':
+            names.append('sunrise-launcher-linux-x86_64.AppImage')
+        if entry.get('mac'):
+            names.append(f"sunrise-launcher-macos-{entry['mac_arch']}.dmg")
+        if entry.get('setup_asset'):
+            names.append(entry['setup_asset'])
+    return sorted(names)
+
 if __name__ == '__main__':
-    print(json.dumps(matrix(), separators=(',', ':')))
+    print(json.dumps(assets() if sys.argv[1:] == ['--assets'] else matrix(), separators=(',', ':')))

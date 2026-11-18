@@ -25,6 +25,8 @@ pub const SIGNATURE_V2: &str = "SHA256SUMS.v2.sig";
 
 /// The repository whose releases this build installs and checks: Sunrise's.
 pub const REPOSITORY: &str = "sunrise-org/sunrise";
+/// The launcher's own repository: its releases are signed for [`launcher_message`], with [`REPOSITORY`]'s key.
+pub const LAUNCHER_REPOSITORY: &str = "sunrise-org/sunrise-launcher";
 
 /// Each trusted repository and its keys file: one base64 Ed25519 key per line, as `release-keys.txt` lists them.
 const REPOSITORIES: &[(&str, &str)] =

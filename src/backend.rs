@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 /// Where the game's releases, Nightlies, snapshots and mod SDKs are published, and its bugs reported.
 pub const GAME_REPO: &str = "sunrise-org/sunrise";
 /// This launcher's own repository: its releases (what it updates itself from) and links.json.
-pub const LAUNCHER_REPO: &str = "sunrise-org/sunrise-launcher";
+pub const LAUNCHER_REPO: &str = sunrise_launcher_release_verify::LAUNCHER_REPOSITORY;
 
 /// Where a crash is reported.
 pub fn issues_url() -> String {
