@@ -10,8 +10,9 @@
 //! - worlds: `worlds::list` of the selected profile's `saves/` (`level.dat` and `icon.png`, read
 //!   only), newest first; Play starts the game straight into one (`quick_play`), and the box
 //!   opens its data packs;
-//! - a world without `icon.png` is drawn from `dirt.png` of the player's own prepared game
-//!   files (`backend::resources`, nothing is shipped), else a plain tile, no letter;
+//! - the shared artwork worker reads and decodes world pictures in the background, for rows
+//!   and tile bands near the view; a world without `icon.png` uses `dirt.png` of the player's own
+//!   prepared game files (`backend::resources`, nothing is shipped), else a plain tile;
 //! - signed out with no worlds, the welcome stands where the worlds will be, beside the mods.
 use super::*;
 use crate::frame::button;

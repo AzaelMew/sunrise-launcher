@@ -700,3 +700,17 @@ fn artwork_is_read_only_up_to_its_limit() {
     assert_eq!(read_artwork(&root.join("missing.png")), None);
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn artwork_reader_does_not_wait_for_a_pipe_writer() {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let root = scratch("artwork-pipe");
+    let path = root.join("icon.png");
+    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: `name` is a live, NUL-terminated path into our scratch directory.
+    assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+    assert_eq!(read_artwork(&path), None);
+    fs::remove_dir_all(&root).unwrap();
+}
