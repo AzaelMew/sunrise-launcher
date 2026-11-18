@@ -335,3 +335,35 @@ pub(crate) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
     t.glass = false;
     t
 }
+
+/// For the row a page was opened at: the page `scroll` moves, once, so the row shows. Laid over
+/// the row, it takes no room.
+pub(super) fn reveal(
+    scroll: gpui::ScrollHandle,
+    done: Rc<std::cell::Cell<bool>>,
+) -> impl IntoElement {
+    const ROOM: f32 = 24.;
+    gpui::canvas(
+        move |row: Bounds<gpui::Pixels>, window, _| {
+            let view = scroll.bounds();
+            // The page is not laid out before its first frame: wait for the next.
+            if done.get() || view.size.height <= px(0.) {
+                return;
+            }
+            done.set(true);
+            let lift = if row.top() < view.top() {
+                row.top() - view.top() - px(ROOM)
+            } else if row.bottom() > view.bottom() {
+                row.bottom() - view.bottom() + px(ROOM)
+            } else {
+                return;
+            };
+            let at = scroll.offset();
+            scroll.set_offset(gpui::point(at.x, at.y - lift));
+            window.refresh();
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}

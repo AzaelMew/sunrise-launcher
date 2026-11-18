@@ -39,6 +39,7 @@ mod packs;
 mod project;
 mod search;
 mod ui;
+pub(crate) use search::Installed;
 use std::rc::Rc;
 pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
 
@@ -161,6 +162,9 @@ pub(crate) struct ModsState {
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
     last_mods: Option<Page>,
     last_packs: Option<Page>,
+    /// The row another page opened Installed at, and whether it was scrolled to yet.
+    reveal: Option<search::Reveal>,
+    revealed: Rc<std::cell::Cell<bool>>,
 }
 
 impl Default for ModsState {
@@ -194,6 +198,8 @@ impl Default for ModsState {
             unfit_details: false,
             last_mods: None,
             last_packs: None,
+            reveal: None,
+            revealed: Default::default(),
         }
     }
 }
@@ -336,6 +342,7 @@ impl Launcher {
         m.anchor = None;
         m.confirm = None;
         m.menu = None;
+        m.reveal = None;
         self.game_packs.confirm_remove = None;
         // Packs keeps the kind across the switch.
         match page {

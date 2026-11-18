@@ -438,13 +438,9 @@ impl Launcher {
                 }
             }
             Target::World => self.navigate(Page::Home),
-            Target::Mod(title) => {
-                self.navigate(Page::Installed);
-                self.show_installed_mod(&title);
-            }
+            Target::Mod(title) => self.open_installed(crate::mods::Installed::ModNamed(title)),
             Target::Pack(kind, title) => {
-                self.navigate(Page::Packs);
-                self.show_installed_pack(kind, &title);
+                self.open_installed(crate::mods::Installed::PackNamed(kind, title))
             }
             Target::Search => {}
             Target::Sidebar => self.toggle_sidebar(),

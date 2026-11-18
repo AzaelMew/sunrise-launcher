@@ -47,7 +47,7 @@ pub(crate) enum Picture {
 pub(crate) enum Open {
     /// A registry mod's page, by its id.
     Project(String),
-    /// A mod the registry doesn't know: Mods › Installed, showing it by its name.
+    /// A mod the registry doesn't know: Mods › Installed, at the mod with this ID.
     Installed(String),
     /// A pack: its shelf, showing it by its name.
     Pack(PackKind, String),
@@ -299,13 +299,9 @@ impl Launcher {
     fn open_home_item(&mut self, open: Open) {
         match open {
             Open::Project(id) => self.mods_show_project(id),
-            Open::Installed(name) => {
-                self.navigate(Page::Installed);
-                self.show_installed_mod(&name);
-            }
+            Open::Installed(id) => self.open_installed(crate::mods::Installed::Mod(id)),
             Open::Pack(kind, name) => {
-                self.navigate(Page::Packs);
-                self.show_installed_pack(kind, &name);
+                self.open_installed(crate::mods::Installed::PackNamed(kind, name))
             }
         }
     }
@@ -491,9 +487,11 @@ impl Launcher {
                                 .text_color(rgb(palette().muted))
                                 .hover(|s| s.text_color(rgb(palette().text)))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.navigate(page);
-                                    if page == Page::Installed {
-                                        this.show_mods_turned_off();
+                                    match page {
+                                        Page::Installed => {
+                                            this.open_installed(crate::mods::Installed::ModsOff)
+                                        }
+                                        _ => this.navigate(page),
                                     }
                                     cx.notify();
                                 })),
