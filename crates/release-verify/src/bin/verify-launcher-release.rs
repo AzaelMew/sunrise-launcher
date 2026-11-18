@@ -1,8 +1,7 @@
-//! Checks a launcher release folder as a launcher would: its SHA256SUMS signed for the launcher's releases, and every listed file's SHA-256 (release.yml runs it before publishing).
+//! Checks a launcher release folder as a launcher would: its SHA256SUMS signed for the launcher's releases, every listed file's SHA-256, and no file the list leaves out.
 use std::path::PathBuf;
 use sunrise_launcher_release_verify::{
-    LAUNCHER_REPOSITORY, SIGNATURE, SUMS, check, parse_keys, sha256_hex, trusted_keys_for,
-    verify_launcher,
+    SIGNATURE, SUMS, check, parse_keys, sha256_hex, trusted_launcher_keys, verify_launcher,
 };
 
 const USAGE: &str =
@@ -28,10 +27,10 @@ fn run(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let (Some(tag), Some(folder)) = (tag, folder) else {
         return Err(USAGE.into());
     };
-    // A dry run's throwaway key, else the keys built in for the launcher's repository.
+    // A dry run's throwaway key, else the key launchers trust for their own releases (the game repository's).
     let keys = match key {
         Some(key) => parse_keys(&key)?,
-        None => trusted_keys_for(LAUNCHER_REPOSITORY),
+        None => trusted_launcher_keys(),
     };
     let read = |name: &str| {
         std::fs::read(folder.join(name))
@@ -42,6 +41,16 @@ fn run(mut args: impl Iterator<Item = String>) -> Result<(), String> {
     let listed = verify_launcher(&tag, &sums, &signature, &keys)?;
     for (name, expected) in &listed {
         check(name, expected, &sha256_hex(&read(name)?))?;
+    }
+    let entries = std::fs::read_dir(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    for entry in entries {
+        let name = entry.map_err(|e| e.to_string())?.file_name();
+        let name = name.to_string_lossy();
+        if name != SUMS && name != SIGNATURE && !listed.iter().any(|(listed, _)| *listed == name) {
+            return Err(format!(
+                "{name} is in the folder but not in {SUMS}: nothing unsigned is published"
+            ));
+        }
     }
     println!(
         "{tag}: {} files, signed for the launcher and matching",

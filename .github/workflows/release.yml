@@ -1,13 +1,12 @@
 name: release
-# Builds the launcher on each platform it ships for and, only when LAUNCHER_RELEASES is on, publishes vX.Y.Z (Cargo.toml's version).
+# Builds the launcher's release files on each platform and checks them; on main with LAUNCHER_RELEASES on it leaves them, unsigned, as a draft vX.Y.Z (Cargo.toml's version) with build provenance.
 # By hand only, a dry run unless told otherwise: gh workflow run release --ref main -f dry_run=false
-# Off until the core team creates LAUNCHER_SIGNING_KEY in the `release` environment and sets the repository variable LAUNCHER_RELEASES=on.
-# The first release is also published in sunrise-org/sunrise as launcher@X.Y.Z (its launcher-bridge.yml), so launchers installed from there update.
+# No key is held here: sunrise-org/sunrise's launcher-bridge.yml checks the draft's provenance, signs it with the game's RELEASE_SIGNING_KEY in its `release` environment, publishes it here and as launcher@X.Y.Z there.
 on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: Build everything and write the notes, but publish nothing
+        description: Build and check everything, but leave no tag or draft
         type: boolean
         default: true
 
@@ -29,29 +28,39 @@ jobs:
   decide:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      assets: ${{ steps.matrix.outputs.assets }}
       tag: ${{ steps.decide.outputs.tag }}
       version: ${{ steps.decide.outputs.version }}
-      head: ${{ steps.decide.outputs.head }}
       dry_run: ${{ steps.mode.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
       - id: matrix
-        run: echo "matrix=$(python3 tools/launcher_build_matrix.py)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "matrix=$(python3 tools/launcher_build_matrix.py)" >> "$GITHUB_OUTPUT"
+          echo "assets=$(python3 tools/launcher_build_matrix.py --assets)" >> "$GITHUB_OUTPUT"
       - id: mode
+        env:
+          ASKED: ${{ inputs.dry_run }}
         # Off main every run is a dry run.
-        run: echo "dry_run=${{ github.ref != 'refs/heads/main' || inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+        run: |
+          dry=true
+          [[ "$GITHUB_REF" == refs/heads/main && "$ASKED" == false ]] && dry=false
+          echo "dry_run=$dry" >> "$GITHUB_OUTPUT"
       - name: Releases are on, or this is a dry run
         env:
           DRY_RUN: ${{ steps.mode.outputs.dry_run }}
           RELEASES: ${{ vars.LAUNCHER_RELEASES }}
         run: |
           if [[ "$DRY_RUN" != true && "$RELEASES" != on ]]; then
-            echo "::error::Launcher releases are off: they wait for the launcher's signing key (LAUNCHER_SIGNING_KEY) and LAUNCHER_RELEASES=on."
+            echo "::error::Launcher releases are off until the owners set LAUNCHER_RELEASES=on."
             exit 1
           fi
       - id: decide
@@ -60,12 +69,25 @@ jobs:
         run: |
           set -euo pipefail
           if ! python3 tools/release_notes.py decide --head "$GITHUB_SHA" > decision.json; then
-            # A dry run still builds when Cargo.toml's version is already out; a release never does.
+            # A dry run still builds when Cargo.toml's version can't be released; a release never does.
             [[ "$DRY_RUN" == true ]] || exit 1
-            echo "{\"version\": \"0.0.0-dry\", \"tag\": \"v0.0.0-dry\", \"head\": \"$GITHUB_SHA\"}" > decision.json
+            echo "{\"version\": \"0.0.0\", \"tag\": \"v0.0.0\", \"head\": \"$GITHUB_SHA\"}" > decision.json
           fi
-          for key in tag version head; do echo "$key=$(jq -r ".$key" decision.json)" >> "$GITHUB_OUTPUT"; done
+          for key in tag version; do echo "$key=$(jq -r ".$key" decision.json)" >> "$GITHUB_OUTPUT"; done
           echo "### $(jq -r .tag decision.json) at ${GITHUB_SHA:0:9} (dry run: $DRY_RUN)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          python3 tools/release_notes.py notes --tag "$TAG" --head "$GITHUB_SHA" --out notes > /dev/null
+          { echo "## $(cat notes/title.txt)"; echo; cat notes/body.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notes
+          path: notes/*
+          if-no-files-found: error
+          retention-days: 3
 
   build:
     needs: decide
@@ -74,8 +96,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.decide.outputs.matrix) }}
     runs-on: ${{ matrix.mac && 'macos-latest' || matrix.os }}
-    # Notarizing the app and then the .dmg can take a few minutes each.
-    timeout-minutes: ${{ matrix.mac && 60 || 40 }}
+    timeout-minutes: 40
     env:
       RUSTFLAGS: ${{ matrix.rustflags }}
       BIN: ${{ matrix.target && format('target/{0}/release', matrix.target) || 'target/release' }}
@@ -86,16 +107,21 @@ jobs:
       # The release's version and tag, built in (backend::VERSION and own_tag): no version-bump commits.
       SUNRISE_LAUNCHER_VERSION: ${{ needs.decide.outputs.version }}
       SUNRISE_LAUNCHER_TAG: ${{ needs.decide.outputs.tag }}
+      # Ad hoc signed until a separate gated job provisions Apple signing and notarization: packaging/macos never sees an identity.
+      MACOS_SIGN_IDENTITY: ""
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.decide.outputs.head }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
         with:
+          toolchain: ${{ steps.rust.outputs.version }}
           targets: ${{ matrix.target }}
       - name: Linux libraries GPUI links to
         if: runner.os == 'Linux'
@@ -172,18 +198,11 @@ jobs:
             rm -rf "$setup"
           fi
           rm -rf "$SUNRISE_LAUNCHER_HOME"
-      - name: The signing keychain, unlocked
-        if: runner.os == 'macOS' && vars.MACOS_SIGN_IDENTITY != ''
-        env:
-          MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
-        run: packaging/macos/keychain.sh unlock
       - name: Package
-        env:
-          MACOS_SIGN_IDENTITY: ${{ vars.MACOS_SIGN_IDENTITY }}
         run: |
           rm -rf dist out && mkdir -p out
           if [[ "$RUNNER_OS" == "macOS" ]]; then
-            # The app, zipped (self-update) and in a .dmg (installer), signed ad hoc or with Developer ID: packaging/macos.
+            # The app, zipped (self-update) and in a .dmg (installer), signed ad hoc: packaging/macos.
             python3 -m venv "$RUNNER_TEMP/dmg" && "$RUNNER_TEMP/dmg/bin/pip" install --quiet dmgbuild==1.6.5
             DMGBUILD="$RUNNER_TEMP/dmg/bin/dmgbuild" packaging/macos/package.sh "$BIN/${{ matrix.binary }}" "$SUNRISE_LAUNCHER_VERSION" out ${{ matrix.mac_arch }}
             rm -rf "out/$LAUNCHER_APP_BUNDLE"
@@ -206,88 +225,105 @@ jobs:
         # The launcher's binary under the setup's name: started with no arguments it shows the per-user installer.
         if: runner.os == 'Windows'
         run: cp "$BIN/${{ matrix.binary }}" "out/${{ matrix.setup_asset }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.asset }}
           path: out/*
+          if-no-files-found: error
           retention-days: 3
-      - name: The signing keychain, locked again
-        if: always() && runner.os == 'macOS' && vars.MACOS_SIGN_IDENTITY != ''
-        run: packaging/macos/keychain.sh lock
 
-  sign:
+  # Exactly the files the matrix makes, each as its build uploaded it, and a throwaway signature checked as launchers check one.
+  check:
     needs: [decide, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # The only job that holds the launcher's signing key, a secret of the `release` environment that only main's real releases enter; it runs nothing from the repository but sign_release.sh.
-    environment: ${{ needs.decide.outputs.dry_run != 'true' && 'release' || '' }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          sparse-checkout: tools/ci/sign_release.sh
-          sparse-checkout-cone-mode: false
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        run: echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11-15
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           pattern: ${{ env.LAUNCHER_PREFIX }}-*
           merge-multiple: true
-      - name: Sign the checksums (SHA256SUMS, SHA256SUMS.sig)
+          digest-mismatch: error
+      - name: Every expected file, and nothing else
         env:
-          RELEASE_SIGNING_KEY: ${{ secrets.LAUNCHER_SIGNING_KEY }}
-          RELEASE_SIGNING_KEY_NEXT: ${{ secrets.LAUNCHER_SIGNING_KEY_NEXT }}
-          EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
+          EXPECTED: ${{ needs.decide.outputs.assets }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os
+          expected = json.loads(os.environ["EXPECTED"])
+          found = sorted(os.listdir("dist"))
+          if found != expected:
+              raise SystemExit(f"the builds made {found}, not {expected}")
+          PY
+      - name: The checksums, and a throwaway signature checked as launchers check one
+        env:
           TAG: ${{ needs.decide.outputs.tag }}
-        run: bash tools/ci/sign_release.sh "$TAG" dist/"$LAUNCHER_PREFIX"-*
-      - uses: actions/upload-artifact@v4
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- "$LAUNCHER_PREFIX"-*) > "$RUNNER_TEMP/SHA256SUMS"
+          cp -r dist "$RUNNER_TEMP/dry"
+          bash tools/ci/sign_release.sh "$TAG" "$RUNNER_TEMP/dry/$LAUNCHER_PREFIX"-*
+          cmp "$RUNNER_TEMP/SHA256SUMS" "$RUNNER_TEMP/dry/SHA256SUMS"
+          key=$(cat "$RUNNER_TEMP/dry/ephemeral.pub") && rm "$RUNNER_TEMP/dry/ephemeral.pub"
+          cargo run --locked --quiet -p sunrise-launcher-release-verify --bin verify-launcher-release -- --tag "$TAG" --key "$key" "$RUNNER_TEMP/dry"
+          mv "$RUNNER_TEMP/SHA256SUMS" dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: signature
-          path: |
-            dist/SHA256SUMS*
-            dist/ephemeral.pub
+          name: release
+          path: dist/*
           if-no-files-found: error
           retention-days: 3
 
-  release:
-    needs: [decide, build, sign]
+  # A real release on main only: the tag at the built commit, never an existing one, and an unsigned draft with build provenance for the game repository to sign.
+  publish:
+    needs: [decide, check]
+    if: needs.decide.outputs.dry_run == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 tools/release_notes.py notes --tag "${{ needs.decide.outputs.tag }}" --head "${{ needs.decide.outputs.head }}" --out notes > /dev/null
-          { echo "## $(cat notes/title.txt)"; echo; cat notes/body.md; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/download-artifact@v4
-        with:
+          name: release
           path: dist
-          merge-multiple: true
-      - name: The signature, checked as launchers check it
-        env:
-          TAG: ${{ needs.decide.outputs.tag }}
-          EPHEMERAL: ${{ needs.decide.outputs.dry_run == 'true' && 'yes' || '' }}
+          digest-mismatch: error
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notes
+          path: notes
+          digest-mismatch: error
+      - name: The files are SHA256SUMS's, all of them and no others
         run: |
-          key=(); [[ -n "$EPHEMERAL" ]] && key=(--key "$(cat dist/ephemeral.pub)")
-          rm -f dist/ephemeral.pub
-          cargo run --locked --quiet -p sunrise-launcher-release-verify --bin verify-launcher-release -- --tag "$TAG" "${key[@]}" dist
-      - name: Publish ${{ needs.decide.outputs.tag }}
-        if: needs.decide.outputs.dry_run != 'true'
+          set -euo pipefail
+          cd dist
+          sha256sum --check --strict --quiet SHA256SUMS
+          diff <(awk '{print $2}' SHA256SUMS | sort) <(ls | grep -vx SHA256SUMS | sort)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/${{ env.LAUNCHER_PREFIX }}-*
+      - name: Tag ${{ needs.decide.outputs.tag }} at the built commit, never an existing tag
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.decide.outputs.tag }}
+        run: gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+      - name: The unsigned draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.decide.outputs.tag }}
+          VERSION: ${{ needs.decide.outputs.version }}
         run: |
-          gh release create "$TAG" --target "${{ needs.decide.outputs.head }}" --title "$(cat notes/title.txt)" \
-            --notes-file notes/body.md --latest dist/"$LAUNCHER_PREFIX"-* dist/SHA256SUMS dist/SHA256SUMS.sig
-      - name: Dry run, the release that would be published
-        if: needs.decide.outputs.dry_run == 'true'
-        run: |
-          echo "Would publish ${{ needs.decide.outputs.tag }} at ${{ needs.decide.outputs.head }}: $(cat notes/title.txt)"
-          ls -l dist
+          gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --draft --title "$(cat notes/title.txt)" \
+            --notes-file notes/body.md dist/*
+          echo "Draft $TAG is up. Sign and publish it from the game repository: gh workflow run launcher-bridge.yml -R sunrise-org/sunrise --ref main -f version=$VERSION" >> "$GITHUB_STEP_SUMMARY"

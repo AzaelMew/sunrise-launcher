@@ -27,15 +27,24 @@ class ReleaseNotes(unittest.TestCase):
         self.assertIn("Maintenance release.", notes.notes("v1.2.1", [pull(1, "CI", "skip-release")])[1])
 
     def test_the_tag_is_cargo_tomls_version_and_never_released_twice(self):
+        head = "a" * 40
         with mock.patch.object(notes, "version", return_value="1.3.0"), mock.patch.object(notes, "tags", return_value=["v1.2.0"]):
-            self.assertEqual(notes.decide("abc"), {"version": "1.3.0", "tag": "v1.3.0", "head": "abc"})
+            self.assertEqual(notes.decide(head), {"version": "1.3.0", "tag": "v1.3.0", "head": head})
         with mock.patch.object(notes, "version", return_value="1.2.0"), mock.patch.object(notes, "tags", return_value=["v1.2.0"]):
             with self.assertRaises(SystemExit):
-                notes.decide("abc")
-        # 1.0.0 went out from the game repository: installed copies would never take another 1.0.0.
-        with mock.patch.object(notes, "version", return_value="1.0.0"), mock.patch.object(notes, "tags", return_value=[]):
+                notes.decide(head)
+
+    def test_only_a_stable_version_newer_than_the_game_repositorys_last_launcher_is_released(self):
+        head = "a" * 40
+        # launcher@1.0.0 and launcher@1.0.1 went out from the game repository: installed copies would never take either again.
+        for refused in ["1.0.0", "1.0.1", "0.9.9", "1.1.0-rc1", "1.1.0+build", "01.1.0", "1.1", "1.1.0.0", "1.1.0\n"]:
+            with mock.patch.object(notes, "version", return_value=refused), mock.patch.object(notes, "tags", return_value=[]):
+                with self.assertRaises(SystemExit, msg=refused):
+                    notes.decide(head)
+        with mock.patch.object(notes, "version", return_value="1.0.2"), mock.patch.object(notes, "tags", return_value=[]):
+            self.assertEqual(notes.decide(head)["tag"], "v1.0.2")
             with self.assertRaises(SystemExit):
-                notes.decide("abc")
+                notes.decide("main")
 
 
 if __name__ == "__main__":

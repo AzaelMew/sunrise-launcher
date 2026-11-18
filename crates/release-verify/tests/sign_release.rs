@@ -1,4 +1,4 @@
-//! tools/ci/sign_release.sh and verify-launcher-release agree: a folder the script signs passes the check, and another tag or a changed file fails it.
+//! tools/ci/sign_release.sh and verify-launcher-release agree: a folder the script signs passes the check, and another tag, a changed file or an unlisted one fails it.
 #![cfg(unix)]
 use std::path::Path;
 use std::process::Command;
@@ -20,6 +20,7 @@ fn a_release_the_script_signs_passes_the_check_and_a_changed_one_fails_it() {
         .unwrap();
     assert!(signed.success());
     let key = std::fs::read_to_string(dist.join("ephemeral.pub")).unwrap();
+    std::fs::remove_file(dist.join("ephemeral.pub")).unwrap();
     let passes = |tag: &str| {
         Command::new(env!("CARGO_BIN_EXE_verify-launcher-release"))
             .args(["--tag", tag, "--key", key.trim()])
@@ -30,6 +31,12 @@ fn a_release_the_script_signs_passes_the_check_and_a_changed_one_fails_it() {
     };
     assert!(passes("v1.2.3"));
     assert!(!passes("v1.2.4"));
+    assert!(!passes("v1.2.3\nx"));
+    let unlisted = dist.join("sunrise-launcher-extra.zip");
+    std::fs::write(&unlisted, b"unsigned").unwrap();
+    assert!(!passes("v1.2.3"));
+    std::fs::remove_file(&unlisted).unwrap();
+    assert!(passes("v1.2.3"));
     std::fs::write(&archive, b"changed").unwrap();
     assert!(!passes("v1.2.3"));
     std::fs::remove_dir_all(&dist).unwrap();

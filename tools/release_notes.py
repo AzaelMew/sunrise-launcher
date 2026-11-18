@@ -9,8 +9,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = "sunrise-org/sunrise-launcher"
-# The last version released from the game repository (launcher@1.0.0): installed copies take only a newer one.
-SHIPPED_FROM_GAME_REPOSITORY = (1, 0, 0)
+# The last version released from the game repository (launcher@1.0.1): installed copies take only a newer one.
+SHIPPED_FROM_GAME_REPOSITORY = (1, 0, 1)
+# A release is exactly X.Y.Z, as launchers and the game repository's bridge read it: no suffix, no leading zeros.
+STABLE = re.compile(r"(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})")
 
 
 def version() -> str:
@@ -31,14 +33,19 @@ def tags() -> list[str]:
 
 
 def decide(head: str) -> dict:
-    """The release Cargo.toml's version makes: refused when its tag exists or it isn't newer than what the game repository released."""
-    tag = f"v{version()}"
+    """The release Cargo.toml's version makes: refused unless it is a stable X.Y.Z newer than launcher@1.0.1, not tagged yet."""
+    current = version()
+    found = STABLE.fullmatch(current)
+    if not found:
+        raise SystemExit(f"Cargo.toml's version {current!r} is not a stable X.Y.Z")
+    tag = f"v{current}"
     if tag in tags():
         raise SystemExit(f"{tag} is already released: raise Cargo.toml's version first")
-    numbers = tuple(int(n) for n in re.match(r"(\d+)\.(\d+)\.(\d+)", tag[1:]).groups())
-    if numbers <= SHIPPED_FROM_GAME_REPOSITORY:
-        raise SystemExit(f"{tag} isn't newer than launcher@1.0.0 from the game repository: raise Cargo.toml's version")
-    return {"version": tag[1:], "tag": tag, "head": head}
+    if tuple(int(n) for n in found.groups()) <= SHIPPED_FROM_GAME_REPOSITORY:
+        raise SystemExit(f"{tag} isn't newer than launcher@1.0.1 from the game repository: raise Cargo.toml's version")
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise SystemExit(f"{head!r} is not a commit")
+    return {"version": current, "tag": tag, "head": head}
 
 
 def merged_since(tag: str | None, head: str) -> list[dict]:

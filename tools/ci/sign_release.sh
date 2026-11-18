@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Signs a launcher release: SHA256SUMS for the files given, and SHA256SUMS.sig over "sunrise-launcher release <tag>\n" + SHA256SUMS.
-# Keys come from RELEASE_SIGNING_KEY and RELEASE_SIGNING_KEY_NEXT (base64 PKCS#8 Ed25519); EPHEMERAL=yes signs with a throwaway key instead.
-# The job running this holds the private keys, so it calls only the runner's sha256sum, base64 and OpenSSL.
+# Writes SHA256SUMS for the files given and signs it with a throwaway key, for dry runs and tests: SHA256SUMS.sig over "sunrise-launcher release <tag>\n" + SHA256SUMS, the key's public half in ephemeral.pub.
+# No real key is ever here: sunrise-org/sunrise's launcher-bridge.yml signs real releases with the game's RELEASE_SIGNING_KEY, the same message.
 #   tools/ci/sign_release.sh v1.1.0 dist/sunrise-launcher-linux-x86_64.tar.gz dist/sunrise-launcher-windows-x64.zip ...
 set -euo pipefail
 tag=$1; shift
@@ -19,27 +18,9 @@ for file in "$@"; do
 done
 (cd "$dir" && "${sha[@]}" -- "${names[@]}") > "$dir/SHA256SUMS"
 { printf 'sunrise-launcher release %s\n' "$tag"; cat "$dir/SHA256SUMS"; } > "$work/message"
-rm -f "$dir/SHA256SUMS.sig" "$dir/ephemeral.pub"
-
-sign_with() {
-  "$openssl" pkeyutl -sign -rawin -inkey "$1" -keyform DER -in "$work/message" -out "$work/signature"
-  # One base64 line of the 64 bytes (GNU base64 wraps at 76 characters).
-  base64 < "$work/signature" | tr -d '\n' >> "$dir/SHA256SUMS.sig"
-  echo >> "$dir/SHA256SUMS.sig"
-  rm -f "$work/signature" "$1"
-}
-
-if [[ -n "${EPHEMERAL:-}" ]]; then
-  "$openssl" genpkey -algorithm ed25519 -outform DER -out "$work/key"
-  "$openssl" pkey -inform DER -in "$work/key" -pubout -outform DER | tail -c 32 | base64 > "$dir/ephemeral.pub"
-  sign_with "$work/key"
-else
-  for name in RELEASE_SIGNING_KEY RELEASE_SIGNING_KEY_NEXT; do
-    if [[ -n "${!name:-}" ]]; then
-      # From the environment into a private temporary file: never an argument, never printed.
-      printf '%s' "${!name}" | base64 --decode > "$work/key"
-      sign_with "$work/key"
-    fi
-  done
-fi
-echo "$tag: SHA256SUMS lists ${#names[@]} files; $( [[ -f "$dir/SHA256SUMS.sig" ]] && echo "signed with $(wc -l < "$dir/SHA256SUMS.sig" | tr -d ' ') key(s)" || echo "no signing key, so unsigned")"
+"$openssl" genpkey -algorithm ed25519 -outform DER -out "$work/key"
+"$openssl" pkey -inform DER -in "$work/key" -pubout -outform DER | tail -c 32 | base64 > "$dir/ephemeral.pub"
+"$openssl" pkeyutl -sign -rawin -inkey "$work/key" -keyform DER -in "$work/message" -out "$work/signature"
+# One base64 line of the 64 bytes (GNU base64 wraps at 76 characters).
+{ base64 < "$work/signature" | tr -d '\n'; echo; } > "$dir/SHA256SUMS.sig"
+echo "$tag: SHA256SUMS lists ${#names[@]} files, signed with a throwaway key"
