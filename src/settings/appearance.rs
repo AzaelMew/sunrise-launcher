@@ -525,6 +525,18 @@ impl Launcher {
                     ))),
             ),
         );
+        let cat = self.settings.show_cat();
+        rows.push(row(
+            tr("Show the cat"),
+            tr("It visits Home now and then. It stays away while motion is reduced."),
+            div().child(switch("alt-cat-toggle", cat).seen().on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    this.settings.cat = Some(!cat);
+                    this.save_settings();
+                    cx.notify();
+                },
+            ))),
+        ));
         div()
             .flex()
             .flex_col()

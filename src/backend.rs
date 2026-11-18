@@ -4077,6 +4077,10 @@ pub struct Settings {
     /// Off by default, so the opening animation shows unless the player turns it off.
     #[serde(default)]
     pub skip_opening: bool,
+    /// Whether the corner cat shows (`cat`). Unset means yes; only a player who switched it off
+    /// has `false` here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cat: Option<bool>,
     /// Linux: whether the launcher keeps its entry in the applications menu (`desktop`). Unset
     /// means yes; removing the entry stores `false`, so it doesn't come back on the next start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4251,6 +4255,10 @@ impl Settings {
         }
         look_settings::settle(&mut settings);
         settings
+    }
+    /// Whether the corner cat shows.
+    pub fn show_cat(&self) -> bool {
+        self.cat.unwrap_or(true)
     }
     /// Whether the launcher keeps its entry in the applications menu (Linux).
     pub fn desktop_entry(&self) -> bool {

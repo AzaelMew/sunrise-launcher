@@ -10,6 +10,7 @@ pub(super) fn settings_json(s: &backend::Settings) -> serde_json::Value {
         "prune_old_versions": s.auto_prune(),
         "keep_versions": s.keep_newest(),
         "opening_animation": !s.skip_opening,
+        "cat": s.show_cat(),
         "game_args": s.game_args,
         "proxy": s.proxy,
         "desktop_entry": s.desktop_entry.unwrap_or(true),
