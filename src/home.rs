@@ -334,15 +334,12 @@ impl Launcher {
         let idle = view.main == Main::Play;
         let p = palette();
         let on = rgb(p.accent_on);
-        let play = div()
+        let play = crate::frame::input(false)
             .id("alt-play")
             .tab_index(0)
             .flex_none()
-            .flex()
-            .items_center()
             .justify_center()
             .gap(px(10.))
-            .rounded(px(tokens::R_CONTROL))
             .h(px(tokens::PLAY))
             .min_w(px(132.))
             .px(px(22.))
@@ -357,11 +354,13 @@ impl Launcher {
             // Keep the fill and the white label opaque even on glass. Only the available
             // action gets a pointer and a click handler.
             .when(view.enabled, |d| {
-                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
-                    this.cat_off_play();
-                    this.press_play();
-                    cx.notify();
-                }))
+                d.cursor_pointer()
+                    .hover(move |s| s.bg(rgb(p.play_hover)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.cat_off_play();
+                        this.press_play();
+                        cx.notify();
+                    }))
             });
         let act = view.act.clone().map(|act| {
             let id = match act {

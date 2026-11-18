@@ -167,6 +167,8 @@ fn preview(p: &Palette) -> Div {
                             .flex()
                             .items_center()
                             .rounded(px(tokens::R_SMALL))
+                            .border_1()
+                            .border_color(p.input_edge())
                             .bg(rgb(p.play_fill))
                             .text_size(px(tokens::CAPTION))
                             .font_weight(FontWeight::BOLD)
