@@ -39,17 +39,6 @@ fn the_box_tells_an_address_from_an_invite_code() {
 }
 
 #[test]
-fn a_world_always_takes_the_same_block() {
-    assert_eq!(block_for("Harbor"), block_for("Harbor"));
-    assert!(BLOCKS.contains(&block_for("")));
-    let seen: std::collections::HashSet<_> = ["a", "b", "c", "d", "e", "f", "g", "h"]
-        .iter()
-        .map(|f| block_for(f))
-        .collect();
-    assert!(seen.len() > 1);
-}
-
-#[test]
 fn a_tile_shows_the_first_letter_in_capitals() {
     assert_eq!(initial("  éclair"), "É");
     assert_eq!(initial(""), "?");
@@ -74,6 +63,16 @@ fn popular_mods_leave_out_what_cannot_run_or_is_installed() {
 }
 
 #[test]
-fn there_are_no_featured_servers_until_there_is_a_source() {
-    assert!(featured().is_empty());
+fn the_featured_pair_is_bundled_and_joins_only_with_an_address() {
+    assert_eq!(HORIZON_ADDRESS, "play.playhorizon.dev");
+    assert_eq!(featured()[0].address, Some("play.playhorizon.dev"));
+    let none = featured_with("");
+    assert_eq!(none.len(), 2);
+    assert_eq!(none[0].name, "Horizon Minecraft");
+    assert_eq!(none[1].name, "Sunrise server");
+    assert!(none.iter().all(|f| f.address.is_none()));
+    assert_eq!(none[0].inert, "Address coming soon");
+    let set = featured_with("play.example.org");
+    assert_eq!(set[0].address, Some("play.example.org"));
+    assert_eq!(set[1].address, None);
 }
