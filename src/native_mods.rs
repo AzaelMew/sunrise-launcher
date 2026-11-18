@@ -35,7 +35,7 @@ mod isolate;
 mod picker;
 pub mod sdk_cache;
 
-pub use isolate::{kept as kept_left_out, Detail, LeftOut, Why};
+pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::Consent;
 mod uses;
@@ -1888,6 +1888,7 @@ fn select_build_profile(
 /// the error starts with [`MISMATCH`] and names them; `cargo sunrise-mod update --sunrise
 /// <commit>` in each mod's folder pins it to the installed game, then build again.
 /// `profile` is an explicit override; None applies the instance's choice only when needed.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     base: &str,
     folder: &Path,
@@ -1896,6 +1897,7 @@ pub fn build(
     back_up: bool,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
+    catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
     require_consent()?;
     build_log::clear_cancel();
@@ -1938,17 +1940,19 @@ pub fn build(
             let selected = backend::Settings::load()
                 .selected
                 .filter(|s| installed.contains(s));
-            let follows = follows_plain(instance.channel, &plain, selected.as_deref(), || {
-                instances::stable_builds(&backend::releases().ok()?)
-                    .into_iter()
-                    .find(|b| installed.contains(&b.tag))
-                    .map(|b| b.tag)
-            });
+            let pin = plain_pin(
+                instance.channel,
+                &plain,
+                selected.as_deref(),
+                &installed,
+                catalogue,
+                check_cancelled,
+            )?;
             instances::edit(&instance.id, |meta| {
                 let unchanged = meta.version == instance.version
                     && meta.channel.unwrap_or_default() == instance.channel;
                 if unchanged {
-                    meta.version = (!follows).then(|| plain.clone());
+                    meta.version = pin;
                 }
             })?;
             return Ok(ClientBuild::Plain(plain));
@@ -1999,6 +2003,29 @@ fn follows_plain(
             instances::Channel::Nightly => true,
             instances::Channel::Stable => stable().as_deref() == Some(plain),
         }
+}
+
+/// The version a plain fallback pins its instance to: None when clearing the pin plays `plain`
+/// ([`follows_plain`]). Stable asks the newest installed Stable build of `catalogue`, the release
+/// list the caller already has (None when it has none: the pin stays, and nothing is fetched).
+/// The lookup can take a while on the command line, so `cancelled` is asked once it is back, before anything is
+/// saved.
+fn plain_pin(
+    channel: instances::Channel,
+    plain: &str,
+    selected: Option<&str>,
+    installed: &[String],
+    catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
+    cancelled: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    let follows = follows_plain(channel, plain, selected, || {
+        instances::stable_builds(&catalogue()?)
+            .into_iter()
+            .find(|b| installed.contains(&b.tag))
+            .map(|b| b.tag)
+    });
+    cancelled()?;
+    Ok((!follows).then(|| plain.to_owned()))
 }
 
 /// The release or Nightly `instance` plays now (the one a native build of it started from).
@@ -2524,6 +2551,81 @@ mod tests {
         drop(saved);
         drop(lock);
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_plain_fallback_is_cancelled_after_the_stable_lookup() {
+        use instances::Channel::Stable;
+        let installed = ["v1.0.0".to_owned()];
+        let cancelled = std::cell::Cell::new(false);
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || {
+                // A cancel that came while the lookup ran.
+                cancelled.set(true);
+                None
+            },
+            || {
+                if cancelled.get() {
+                    Err("Cancelled".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(pin, Err("Cancelled".to_owned()));
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || None,
+            || Ok(()),
+        );
+        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
+    }
+
+    #[test]
+    fn a_plain_fallback_reads_the_catalogue_it_is_given_and_fetches_none() {
+        use instances::Channel::Stable;
+        let release = |tag: &str| backend::Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((String::new(), 1)),
+            prerelease: false,
+            nightly: None,
+        };
+        let installed = ["v1.0.0".to_owned()];
+        let mut asked = 0;
+        // The newest installed Stable build of the caller's list is v1.0.0: the pin clears.
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || {
+                asked += 1;
+                Some(vec![release("v1.0.0")])
+            },
+            || Ok(()),
+        );
+        assert_eq!((pin, asked), (Ok(None), 1));
+        // The window has no list yet: the pin stays, and the build asks nobody for one.
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || None,
+            || Ok(()),
+        );
+        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
     }
 
     #[test]
@@ -3561,6 +3663,7 @@ mod tests {
             false,
             |_| {},
             |_| false,
+            || None,
         )
         .unwrap_err();
         assert!(String::from(error).contains("is not prepared yet"));
@@ -3718,6 +3821,7 @@ mod tests {
                 false,
                 |_| {},
                 |_| false,
+                || None,
             ));
         }
         denied(sync_internals(&folder));

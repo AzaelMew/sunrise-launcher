@@ -1,672 +1,930 @@
-//! The glass look's frame (the mockup's `launcher-app.tsx`): the sidebar plate with the
-//! instances, the launcher's update, Discord and the links; the top bar with the
-//! pages in a glass tab strip, the player, Microsoft sign-in and Settings; and the menus they open.
-//! Dark appearance only for now (`docs/design-system.md`, "Glass").
+//! The launcher frame owns navigation and the single launch transaction. Backends still
+//! own the on-disk formats, Microsoft device flow, preparation and process lifecycle.
 use super::*;
-use crate::glass_ui::{self as ui, white, Tone};
-use crate::instances_page::java_line;
-use gpui::{anchored, canvas, deferred, point};
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::rc::Rc;
-use sunrise_launcher::instances::{Icon, Instance, Kind as InstanceKind};
-use sunrise_launcher_theme::glass::{fill, ink, radius};
+use crate::sheets::Sheet;
+use gpui::rgb;
 
-/// The Outline look's sidebar, 14 from the window's edges.
-pub const SIDEBAR: f32 = 248.;
-/// The ⋮ menu of a sidebar row while open: whose, and whether Delete… was pressed once.
-#[derive(Clone, Default)]
-pub struct RowMenu {
-    pub open: Option<(String, bool)>,
-    /// Where each row was drawn last, by instance id: the menu opens beside its row.
-    pub rows: Rc<RefCell<HashMap<String, Bounds<Pixels>>>>,
+pub(super) use crate::tokens::{BAD, BG, CARD, CHROME, GOLD, LINE, MUTED, SOFT, TEXT};
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+pub(super) enum Page {
+    #[default]
+    Home,
+    Discover,
+    Installed,
+    Packs,
+    /// Packs › Discover (`Packs` is its Installed).
+    PackFind,
+    /// A pack's page, opened from Packs › Discover.
+    PackProject,
+    Project,
+    Hosting,
+    Settings,
 }
 
-/// Records where the element it sits in is drawn, under `id`.
-fn measure(rows: &Rc<RefCell<HashMap<String, Bounds<Pixels>>>>, id: String) -> impl IntoElement {
-    let rows = rows.clone();
-    canvas(
-        move |bounds, _, _| {
-            rows.borrow_mut().insert(id, bounds);
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+#[derive(Default)]
+pub(super) struct State {
+    pub page: Page,
+    pub home: crate::home::HomeState,
+    pub mods: crate::mods::ModsState,
+    pub sheet: Option<Sheet>,
+    pub sheets: crate::sheets::SheetsState,
+    pub settings: crate::settings::SettingsView,
+    pub cat: crate::cat::CatState,
+    pub picker: bool,
+    pub after_install: Option<(String, String)>,
+    /// A Play (including a destination) that explicitly asked for the sign-in now under way.
+    pub after_sign_in: Option<String>,
+}
+
+/// The first sentence of `text`, or its first line when that is shorter: what the play bar
+/// has room to say.
+fn first_sentence(text: &str) -> &str {
+    let line = text.trim().lines().next().unwrap_or_default();
+    match line.find(". ") {
+        Some(end) => &line[..=end],
+        None => line,
+    }
+}
+
+/// The keyboard's ring, in `color`, around a filled control that has no edge of its own to turn
+/// gold. Behind a see-through control it would show as a fill: give that one an edge instead.
+pub(super) fn focus_ring(color: u32) -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: rgb(color).into(),
+        offset: gpui::point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+        inset: false,
+    }]
+}
+
+pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button_base(id, label).hover(|s| s.bg(rgb(0x393233)))
+}
+
+/// What makes a clickable thing that is not a button reachable by keyboard: a Tab stop that shows
+/// the ring. Enter and Space press it, as a click does.
+pub(crate) trait Reach {
+    /// For a thing with no edge of its own: a gold line just inside it, which takes no room and
+    /// is never cut off by what it sits in.
+    fn reach(self) -> Self;
+    /// For a thing that has an edge: that edge turns gold.
+    fn reach_edge(self) -> Self;
+    /// For every Tab stop: the page it is on scrolls to show it when the keyboard lands on it.
+    fn seen(self) -> Self;
+}
+
+impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
+    fn reach(self) -> Self {
+        self.tab_index(0)
+            .rounded(px(tokens::R_SMALL))
+            .focus_visible(|s| {
+                s.shadow(vec![gpui::BoxShadow {
+                    inset: true,
+                    spread_radius: px(1.),
+                    ..focus_ring(GOLD).remove(0)
+                }])
+            })
+            .seen()
+    }
+
+    fn reach_edge(self) -> Self {
+        self.tab_index(0)
+            .focus_visible(|s| s.border_color(rgb(GOLD)))
+            .seen()
+    }
+
+    fn seen(self) -> Self {
+        // The toolkit tells nobody where the focused control is. So a focused control marks the
+        // text style it hands its children (a background nothing can see), and a child that
+        // covers it reads the mark while the frame is laid out, when it knows its place.
+        self.focus(|s| s.text_bg(focus_mark())).child(
+            gpui::canvas(scroll_to_show, |_, _, _, _| {})
+                .absolute()
+                .inset_0(),
+        )
+    }
+}
+
+fn focus_mark() -> gpui::Hsla {
+    gpui::hsla(0.125, 0.5, 0.25, 0.)
+}
+
+/// The pages that scroll, for [`Reach::seen`].
+#[derive(Default)]
+struct Scrolls {
+    /// A page's handle lives while the page is drawn, so coming back to a page starts at its top.
+    kept: HashMap<&'static str, gpui::ScrollHandle>,
+    /// The handles of the frame being drawn, and their names.
+    live: Vec<(&'static str, gpui::ScrollHandle)>,
+    /// The focused control that was last scrolled to. It is shown once, so the wheel can then
+    /// move the page away from it.
+    shown: Option<FocusHandle>,
+}
+
+thread_local! {
+    static SCROLLS: std::cell::RefCell<Scrolls> = std::cell::RefCell::default();
+}
+
+/// Starts a frame: the pages that scroll name themselves again as they are built.
+fn scrolls_begin() {
+    SCROLLS.with_borrow_mut(|s| {
+        let live = std::mem::take(&mut s.live);
+        s.kept = live
+            .into_iter()
+            .filter(|(key, _)| !key.is_empty())
+            .collect();
+    });
+}
+
+/// The scroll handle of the page called `key`, for `track_scroll` beside its `overflow_y_scroll`:
+/// what lets the keyboard's focus scroll the page.
+pub(crate) fn scrolls(key: &'static str) -> gpui::ScrollHandle {
+    SCROLLS.with_borrow_mut(|s| {
+        let handle = match s.live.iter().find(|(live, _)| *live == key) {
+            Some((_, handle)) => return handle.clone(),
+            None => s.kept.get(key).cloned().unwrap_or_default(),
+        };
+        s.live.push((key, handle.clone()));
+        handle
+    })
+}
+
+/// The same for a page that keeps its own handle.
+pub(crate) fn scrolls_with(handle: &gpui::ScrollHandle) {
+    SCROLLS.with_borrow_mut(|s| s.live.push(("", handle.clone())));
+}
+
+/// Scrolls the page a control is on so the control shows, with a little room around it, when
+/// the keyboard has just landed on it. `bounds` is where the control is.
+fn scroll_to_show(bounds: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut App) {
+    const ROOM: f32 = 24.;
+    if window.text_style().background_color != Some(focus_mark())
+        || !window.last_input_was_keyboard()
+    {
+        return;
+    }
+    let focused = window.focused(cx);
+    let mask = window.content_mask().bounds;
+    let Some(page) = SCROLLS.with_borrow_mut(|s| {
+        if s.shown == focused {
+            return None;
+        }
+        s.shown = focused;
+        // The page is the smallest one the control lies in. A control beside the pages (the
+        // rail, the play bar, a sheet) is not cut off by any of them.
+        s.live
+            .iter()
+            .map(|(_, page)| page)
+            .filter(|page| {
+                let view = page.bounds();
+                let all = Bounds::new(
+                    view.origin + page.offset(),
+                    view.size + gpui::Size::from(page.max_offset()),
+                );
+                all.contains(&bounds.center()) && (mask.is_empty() || view.intersect(&mask) == mask)
+            })
+            .min_by(|a, b| {
+                let area = |page: &gpui::ScrollHandle| {
+                    let size = page.bounds().size;
+                    f32::from(size.width) * f32::from(size.height)
+                };
+                area(a).total_cmp(&area(b))
+            })
+            .cloned()
+    }) else {
+        return;
+    };
+    let view = page.bounds();
+    let by = if bounds.top() < view.top() + px(ROOM) {
+        view.top() + px(ROOM) - bounds.top()
+    } else if bounds.bottom() > view.bottom() - px(ROOM) {
+        (view.bottom() - px(ROOM) - bounds.bottom()).max(view.top() + px(ROOM) - bounds.top())
+    } else {
+        return;
+    };
+    let mut to = page.offset();
+    to.y = (to.y + by).clamp(-page.max_offset().y, px(0.));
+    if to == page.offset() {
+        return;
+    }
+    // A frame that is being drawn can't ask for another: do it right after.
+    let window = window.window_handle();
+    cx.defer(move |cx| {
+        page.set_offset(to);
+        window.update(cx, |_, window, _| window.refresh()).ok();
+    });
+}
+
+/// A sheet's or a page's main action: cream, like Play signed out.
+pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    button_base(id, label)
+        .bg(rgb(TEXT))
+        .border_color(rgb(TEXT))
+        .text_color(rgb(BG))
+        .hover(|s| s.bg(gpui::white()))
+        .focus_visible(|s| s.shadow(focus_ring(GOLD)))
+}
+
+pub(super) fn button_base(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .tab_index(0)
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(tokens::R_CONTROL))
+        .border_1()
+        .border_color(rgb(LINE))
+        .px(px(12.))
+        .h(px(tokens::CONTROL))
+        .text_color(rgb(TEXT))
+        .text_size(px(tokens::LABEL))
+        .font_weight(FontWeight::SEMIBOLD)
+        .cursor_pointer()
+        .focus_visible(|s| s.border_color(rgb(GOLD)))
+        .seen()
+        .child(label.into())
 }
 
 impl Launcher {
-    /// An instance's icon (`InstanceIcon`), `size` square with no frame: Sunrise's mark tile for
-    /// Sunrise's own instance; else its picture or the block chosen for it, round at 26 %; else
-    /// its loader's or Minecraft's mark; else its initial on its colour (the accent when none was
-    /// chosen), as `ColorTile` draws it.
-    pub(super) fn glass_instance_icon(&mut self, i: &Instance, size: f32) -> AnyElement {
-        if i.kind == InstanceKind::Default && i.icon.is_none() {
-            return self.sunrise_mark(size);
+    /// Also called for world and server destinations. Never send a destination through the
+    /// legacy shortcuts, which skip some of the checks on the main Play action.
+    pub(super) fn play_game(&mut self) {
+        if self.client.is_some() || self.launch_busy() {
+            return;
         }
-        if let Some(picture) = self.instance_picture(i, size) {
-            return instance_icons::centred(picture, size, self.scale).into_any_element();
-        }
-        let r = px(ui::rad((size * 0.26).round()).min(size / 2.));
-        let mut colour = self.look.accent;
-        match &i.icon {
-            Some(Icon::Colour(hex)) => {
-                colour = u32::from_str_radix(hex.trim_start_matches('#'), 16).unwrap_or(colour);
-            }
-            Some(Icon::Texture(name)) => {
-                if let Some(image) = self.texture_image(name, size) {
-                    return gpui::img(image)
-                        .flex_none()
-                        .size(px(size))
-                        .rounded(r)
-                        .into_any_element();
-                }
-            }
-            // A Sunrise instance with no icon of its own: its initial on a colour of the
-            // picker's, the same each time for the same instance, so several read apart on
-            // the rail. Java and modded ones keep their game's or loader's mark.
-            None if i.java.is_none() && i.kind != InstanceKind::Port => {
-                let hash =
-                    i.id.bytes()
-                        .fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(u32::from(b)));
-                let colours = crate::glass_instance::COLOURS;
-                colour = colours[hash as usize % colours.len()];
-            }
-            None => {
-                if let Some(mark) = self.instance_mark(i, size) {
-                    return instance_icons::centred(mark, size, self.scale).into_any_element();
-                }
-            }
-        }
-        // Bricolage at the optical size a browser would pick for the letter.
-        let letter = (size * 0.46).round();
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .size(px(size))
-            .rounded(r)
-            .bg(ui::color(colour))
-            .font_family(if letter >= 40. {
-                sunrise_launcher_theme::glass::DISPLAY_FONT
-            } else {
-                sunrise_launcher_theme::glass::HEADING_FONT
-            })
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_size(px(letter))
-            .line_height(px(letter))
-            .text_color(gpui::white())
-            .child(instances_page::initial(&i.name))
-            .into_any_element()
-    }
-
-    /// A sidebar row's state line and its dot (the mockup's `statusOf`), from what the launcher
-    /// knows of the instance.
-    pub(super) fn row_state(&self, i: &Instance) -> (Tone, String) {
-        let running =
-            self.client.is_some() && self.selected_instance().is_some_and(|s| s.id == i.id);
-        if running {
-            return (Tone::Live, tr("Running").into());
-        }
-        let starting = self.starting_client.is_some()
-            && self.selected_instance().is_some_and(|s| s.id == i.id);
-        if starting {
-            return (Tone::Busy, tr("Starting").into());
-        }
-        match i.kind {
-            InstanceKind::Default | InstanceKind::Own => {
-                let tag = self.version_of(i).cloned();
-                let prepared = tag.as_deref().is_some_and(backend::is_prepared);
-                match (&i.java, &tag, &i.version) {
-                    (Some(java), _, _) => (Tone::Live, java_line(java)),
-                    (None, None, Some(own)) => (
-                        Tone::Warn,
-                        trf("{version} is not installed", &[("version", own)]),
-                    ),
-                    (None, None, None) => (Tone::Off, tr("No version installed").into()),
-                    // Following the launcher's version, which has a newer one waiting.
-                    (None, Some(_), None) if self.updates.sunrise.is_some() => (
-                        Tone::Accent(self.look.accent_soft),
-                        tr("Update available").into(),
-                    ),
-                    (None, Some(_), _) if !prepared => (Tone::Warn, tr("Needs preparing").into()),
-                    (None, Some(tag), _) if self.native_build_of(tag).is_some() => {
-                        let build = self.native_build_of(tag).unwrap_or_default();
-                        (
-                            Tone::Live,
-                            trf(
-                                "Native build · {version}",
-                                &[("version", &build.sunrise_short())],
-                            ),
-                        )
-                    }
-                    (None, Some(tag), Some(_)) => (Tone::Live, format!("{} · {tag}", tr("Ready"))),
-                    (None, Some(_), None) => (Tone::Live, tr("Ready").into()),
-                }
-            }
-            InstanceKind::Port => {
-                let slug = &i.id["port:".len()..];
-                let summary = self.packs.iter().find(|p| p.slug == slug);
-                (
-                    Tone::Live,
-                    summary.map_or_else(|| tr("Modpack").into(), |p| p.summary()),
-                )
-            }
-            InstanceKind::Pack => (Tone::Off, tr("From Sunrise's registry").into()),
-        }
-    }
-
-    /// The instances by group (`sections` in the mockup): those without a group first.
-    /// The sidebar's instances, by group. `compact` (the folded sidebar): each its icon alone, the
-    /// name in a tooltip, no group names and no ⋮ (a right click still opens the menu).
-    pub(super) fn glass_instances(
-        &mut self,
-        compact: bool,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let t = self.theme;
-        let selected = self.selected_instance().map(|i| i.id.clone());
-        let on_packs = self.page == Page::Mods && self.mods.on_modpacks();
-        let mut out = Vec::new();
-        let mut group = None;
-        let mut list = div().flex().flex_col().gap(px(4.));
-        let flush = |list: Div, out: &mut Vec<AnyElement>| {
-            out.push(list.into_any_element());
-            div().flex().flex_col().gap(px(4.))
+        self.prepare_error = None;
+        self.client_error = None;
+        self.crash = None;
+        self.install_error = None;
+        let Some(instance) = self.selected_instance().cloned() else {
+            return;
         };
-        for (order, i) in self.instances.list.clone().into_iter().enumerate() {
-            if i.group != group {
-                list = flush(list, &mut out);
-                group = i.group.clone();
-                if let Some(g) = group.as_ref().filter(|_| !compact) {
-                    out.push(
-                        ui::text(12., FontWeight::MEDIUM, ink::DIM)
-                            .px(px(8.))
-                            .pt(px(16.))
-                            .pb(px(6.))
-                            .whitespace_nowrap()
-                            .child(g.clone())
-                            .into_any_element(),
-                    );
+        if instance.java.is_some() {
+            self.client_error =
+                Some(tr("This setup does not run Sunrise. Choose a Sunrise setup.").into());
+            return;
+        }
+        if self.accounts.selected().is_none() && !sunrise_launcher::developer_offline::selected() {
+            let destination = self.quick_play.take();
+            let invite = self.joining.take();
+            self.sign_in_to_play();
+            self.quick_play = destination;
+            self.joining = invite;
+            self.ui.after_sign_in = Some(instance.id);
+            return;
+        }
+        let expected = instance.version.as_ref();
+        let tag = self.version_of(&instance).cloned();
+        let Some(tag) = tag else {
+            let release = match &self.releases {
+                Load::Ready(rows) => rows
+                    .iter()
+                    .find(|r| {
+                        r.asset.is_some()
+                            && expected.map_or_else(
+                                || match instance.channel {
+                                    instances::Channel::Stable => !r.prerelease,
+                                    instances::Channel::Nightly => {
+                                        sunrise_launcher::nightly::date_of(&r.tag).is_some()
+                                    }
+                                },
+                                |tag| tag == &r.tag,
+                            )
+                    })
+                    .cloned(),
+                _ => None,
+            };
+            if let Some(release) = release {
+                self.ui.after_install = Some((instance.id, release.tag.clone()));
+                self.install(&release);
+            } else {
+                self.client_error = Some(match &self.releases {
+                    Load::Loading => {
+                        tr("Checking available builds. Press Play when the list is ready.").into()
+                    }
+                    Load::Failed(e) => e.clone(),
+                    Load::Ready(_) => {
+                        tr("No downloadable build matches this setup. Choose a game build.").into()
+                    }
+                });
+                if matches!(self.releases, Load::Failed(_)) {
+                    self.fetch_startup_releases();
                 }
             }
-            // As in the mockup, the chosen instance stays marked on every page, unless a ported
-            // pack's page is open: that row is the one shown then.
-            let room_key = SharedString::from(format!("rail-name-{}", i.id));
-            let cut = ui::cut(
-                cx,
-                &self.rooms,
-                &room_key,
-                &i.name,
-                sunrise_launcher_theme::glass::FONT,
-                14.,
-                FontWeight::SEMIBOLD,
-            );
-            let current = match i.kind {
-                InstanceKind::Default | InstanceKind::Own => {
-                    !(on_packs && self.pack_open.is_some()) && selected.as_ref() == Some(&i.id)
-                }
-                InstanceKind::Port => {
-                    on_packs && self.pack_open.as_deref() == Some(&i.id["port:".len()..])
-                }
-                InstanceKind::Pack => false,
-            };
-            let state = self.row_state(&i);
-            let icon = self.glass_instance_icon(&i, 36.);
-            let clicked = i.clone();
-            let menu_open = self
-                .row_menu
-                .open
-                .as_ref()
-                .is_some_and(|(id, _)| *id == i.id);
-            let menu_id = i.id.clone();
-            // A right click on the row opens the same menu the ⋮ does.
-            let right_id = i.id.clone();
-            let more = div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .right(px(6.))
-                .flex()
-                .items_center()
-                .child(
-                    ui::icon_button(
-                        format!("side-more-{}", i.id),
-                        "more-vertical",
-                        28.,
-                        16.,
-                        radius::SMALL,
-                        menu_open,
-                        &t,
+            return;
+        };
+        if !backend::check_prepared(&tag) {
+            self.play_when_prepared = Some((tag, instance.id));
+            self.prepare(backend::MinecraftFrom::Install);
+            return;
+        }
+        self.native_error = None;
+        if matches!(
+            self.native_state_of(&instance),
+            native_status::State::NotBuilt | native_status::State::Outdated
+        ) {
+            self.play_after_build = Some(instance.id);
+            self.build_native();
+        } else {
+            self.play();
+        }
+    }
+
+    /// The selected setup's channel, when its last build failed because the build it stays on
+    /// has no mod tools any more and another build is the way on (`sdk_cache::way_on`).
+    fn build_gone(&self) -> Option<instances::Channel> {
+        let error = self.native_error.as_ref()?;
+        let instance = self.selected_instance()?;
+        let mine = self.native_for.as_deref() == Some(instance.id.as_str());
+        (mine
+            && instance.version.is_some()
+            && native_mods::sdk_cache::way_on(error)
+                == Some(native_mods::sdk_cache::WayOn::OtherBuild))
+        .then_some(instance.channel)
+    }
+
+    pub(super) fn launch_busy(&self) -> bool {
+        self.mutating()
+            || self.installing.is_some()
+            || self.preparing
+            || self.native_step.is_some()
+            || self.starting_client.is_some()
+    }
+
+    fn dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let active = self.selected_instance().cloned();
+        let name = self.accounts.selected().map(|a| a.name.clone());
+        let signed_name = name.is_some();
+        // The player's own face, hat layer and all, once it is read; their letter until then.
+        let head = self
+            .accounts
+            .selected()
+            .filter(|a| self.profile_heads.has(&a.uuid))
+            .map(|a| {
+                self.profile_heads
+                    .draw(Some(&a.uuid), 32., self.scale, &self.theme)
+            });
+        let signed_in = signed_name || sunrise_launcher::developer_offline::selected();
+        let version = active.as_ref().and_then(|i| self.version_of(i));
+        // A game built with mods reads as the build it was made from, like any other.
+        let made_from = version
+            .filter(|t| native_mods::is_native(t))
+            .and_then(|t| crate::glass_instance::native_base(t));
+        let nightly = |t: &str| sunrise_launcher::nightly::date_of(t).is_some();
+        let build = match version {
+            Some(t) if nightly(made_from.as_deref().unwrap_or(t)) => trf(
+                "Sunrise · {build}",
+                &[("build", &crate::sheets::build_name(t))],
+            ),
+            Some(t) => self.version_label(t),
+            None => tr("Sunrise").into(),
+        };
+        let follows = match &active {
+            _ if version.is_none() && !signed_in => tr("Installs after you sign in"),
+            _ if version.is_none() => tr("Not installed yet"),
+            Some(i) if i.version.is_some() => tr("Stays on this build"),
+            Some(i) if i.channel == instances::Channel::Stable => tr("Stable"),
+            _ => tr("Nightly"),
+        };
+        let multiple = self
+            .instances
+            .list
+            .iter()
+            .filter(|i| i.java.is_none())
+            .count()
+            > 1
+            || active.as_ref().is_some_and(|i| i.java.is_some());
+        // A held update says so itself and its sheet carries the build's words: only then is
+        // the build's error left to it.
+        let held = self.held_update().is_some();
+        let status = self
+            .client_error
+            .clone()
+            .or_else(|| self.prepare_error.clone())
+            .or_else(|| self.native_error.clone().filter(|_| !held))
+            .or_else(|| self.install_error.as_ref().map(|(_, e)| e.clone()))
+            .or_else(|| self.crash.as_ref().map(|c| c.summary.clone()));
+        // The bar says a problem in one sentence; the rest opens as a sheet.
+        let brief = status.as_deref().map(first_sentence);
+        let more = status
+            .clone()
+            .filter(|all| brief.is_some_and(|b| b.len() < all.trim().len()));
+        let busy = self.launch_busy();
+        let label = if let Some((_, progress)) = &self.installing {
+            trf(
+                "Installing · {percent}%",
+                &[("percent", &format!("{:.0}", 100. * progress))],
+            )
+        } else if self.preparing {
+            tr("Preparing…").into()
+        } else if let Some(step) = &self.native_step {
+            let _ = step;
+            tr("Building mods…").into()
+        } else if self.starting_client.is_some() {
+            tr("Starting…").into()
+        } else if self.mutating() {
+            tr("Changing mods…").into()
+        } else if self.client.is_some() {
+            tr("Stop game").into()
+        } else if !signed_in {
+            tr("Sign in with Microsoft").into()
+        } else if version.is_none() {
+            tr("Install and play").into()
+        } else {
+            tr("Play Sunrise").into()
+        };
+        let hold = self
+            .held_update()
+            .map(|h| trf("The update to {build} is on hold", &[("build", &h.to)]));
+        let update = self.updates.sunrise.clone().filter(|_| {
+            active.as_ref().is_some_and(|i| {
+                i.java.is_none() && i.version.is_none() && i.channel == instances::Channel::Nightly
+            }) && version.is_some()
+                && !busy
+                && self.client.is_none()
+        });
+        let said = brief
+            .map(str::to_owned)
+            .filter(|_| self.native_step.is_none())
+            .or(hold.clone())
+            .or_else(|| {
+                update.as_ref().map(|r| {
+                    trf(
+                        "{build} is available",
+                        &[("build", &crate::sheets::build_name(&r.tag))],
                     )
-                    .on_click(cx.listener(
-                        move |this, event: &ClickEvent, _, cx| {
-                            // The row under the ⋮ would otherwise take the click and go to Play.
-                            cx.stop_propagation();
-                            if this.closed_by_this_press(event) {
-                                return;
-                            }
-                            this.row_menu.open =
-                                row_menu_after_press(this.row_menu.open.take(), &menu_id);
-                            cx.notify();
-                        },
-                    )),
-                );
-            // The ⋮ stays out of the way until its row is under the pointer: it fades and slides
-            // in then. Shown outright while the pointer is on it (the row goes dark under it),
-            // its menu is open, or the keyboard is moving through the rows.
-            let row_id = SharedString::from(format!("side-instance-{}", i.id));
-            let more_id = SharedString::from(format!("side-more-{}", i.id));
-            let shown = menu_open
-                || crate::hover_is(&more_id)
-                || KEYBOARD.load(std::sync::atomic::Ordering::Relaxed);
-            let more = if shown {
-                more.into_any_element()
-            } else {
-                crate::hover_ease(
-                    &row_id,
-                    move || more,
-                    |d, t| d.opacity(t).right(px(2. + 4. * t)),
-                    sunrise_launcher_theme::QUICK,
-                )
-            };
-            list = list.child(crate::motion::enter(
-                ElementId::named_usize(format!("side-enter-{}", i.id), 0),
-                order,
+                })
+            });
+        // Mods the game was made without are no problem to raise: one quiet line, at most.
+        self.mods_read_once();
+        let waiting = (said.is_none() && self.native_step.is_none())
+            .then(|| self.mods_not_on_build())
+            .filter(|count| *count > 0);
+        let quiet = said.is_none() && waiting.is_none() && self.build_line().is_none();
+        let bar = div()
+            .flex()
+            .items_center()
+            .gap(px(14.))
+            .h(px(tokens::BAR))
+            .flex_none()
+            .px(px(16.))
+            .bg(rgb(CHROME))
+            // Signed out, the Play slot is the sign-in: no empty account beside it.
+            .children(name.map(|name| {
                 div()
-                    .relative()
-                    .child(measure(&self.row_menu.rows, i.id.clone()))
+                    .id("alt-who")
+                    .reach()
+                    .flex()
+                    .items_center()
+                    .gap(px(9.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .cursor_pointer()
                     .child(
-                        ui::row(format!("side-instance-{}", i.id), current, 40., &t)
-                            .when(compact, |d| d.justify_center().px_0())
-                            .child(div().relative().flex_none().child(icon))
-                            .when(!compact, |d| {
-                                d.child(
-                                    ui::row_text(i.name.clone(), state)
-                                        .overflow_hidden()
-                                        .child(ui::room(&self.rooms, room_key.clone())),
-                                )
+                        div()
+                            .flex_none()
+                            .size(px(32.))
+                            .rounded(px(tokens::R_CONTROL))
+                            .overflow_hidden()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(rgb(0x45503c))
+                            .children(head.is_none().then(|| {
+                                name.chars()
+                                    .next()
+                                    .map(|c| c.to_uppercase().to_string())
+                                    .unwrap_or_default()
+                            }))
+                            .children(head),
+                    )
+                    .child(name)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ui.page = Page::Settings;
+                        cx.notify();
+                    }))
+            }))
+            .when(multiple, |d| {
+                d.child(
+                    button(
+                        "alt-setup",
+                        active
+                            .as_ref()
+                            .map_or(tr("Setup").to_string(), |i| i.name.clone()),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.ui.picker = !this.ui.picker;
+                        cx.notify();
+                    })),
+                )
+            })
+            .when(signed_name || multiple, |d| {
+                d.child(div().h(px(30.)).w(px(1.)).bg(rgb(LINE)))
+            })
+            .child(
+                div()
+                    .id("alt-build")
+                    .tab_index(0)
+                    .rounded(px(tokens::R_CONTROL))
+                    .border_1()
+                    .border_color(gpui::transparent_black())
+                    .focus_visible(|s| s.border_color(rgb(GOLD)))
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .gap(px(9.))
+                    .px(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(build))
+                            .child(
+                                div()
+                                    .text_size(px(tokens::CAPTION))
+                                    .text_color(rgb(MUTED))
+                                    .child(follows),
+                            ),
+                    )
+                    .child(blocks::icon("chevron-down", 13., rgb(MUTED).into()))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if !this.launch_busy() && this.client.is_none() {
+                            this.open_sheet(Sheet::Build);
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    // As wide as what it says: the rest of the bar is the cat's.
+                    .min_w_0()
+                    .text_size(px(tokens::LABEL))
+                    .text_color(rgb(MUTED))
+                    // Two lines fit the bar; a longer message is cut, never drawn outside it.
+                    .line_clamp(2)
+                    .text_ellipsis()
+                    .children(self.build_line())
+                    .children(said)
+                    // Nothing to act on here: the row under Mods says why and what to do.
+                    .children(waiting.map(|count| {
+                        div()
+                            .id("alt-not-on-build")
+                            .reach()
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(rgb(TEXT)))
+                            .child(match count {
+                                1 => tr("1 mod not on this build").to_string(),
+                                n => trf(
+                                    "{count} mods not on this build",
+                                    &[("count", &n.to_string())],
+                                ),
                             })
-                            // A name cut short, or not shown at all: the full name on hover.
-                            .when(cut || compact, |d| d.tooltip(ui::tip(i.name.clone())))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                match clicked.kind {
-                                    InstanceKind::Default | InstanceKind::Own => {
-                                        this.select_instance(&clicked);
-                                        this.go(Page::Play);
-                                    }
-                                    InstanceKind::Port => {
-                                        this.show_modpack(Some(clicked.id["port:".len()..].into()))
-                                    }
-                                    InstanceKind::Pack => this.show_modpack(None),
-                                }
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_installed_mods();
                                 cx.notify();
                             }))
-                            // The ⋮ menu, from a right click anywhere on the row.
-                            .on_mouse_down(
-                                gpui::MouseButton::Right,
-                                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                                    // The open menu's mouse-down-out already closed it on this
-                                    // press: reopening here would make the toggle a no-op.
-                                    if this.menu_closed_at.take() == Some(event.position) {
-                                        cx.notify();
-                                        return;
-                                    }
-                                    this.row_menu.open =
-                                        row_menu_after_press(this.row_menu.open.take(), &right_id);
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .when(!compact, |d| d.child(more)),
-            ));
-        }
-        out.push(list.into_any_element());
-        out
+                    })),
+            );
+        // One action at most, and one name for it: "Fix…" opens the place where the problem
+        // can be dealt with, "Details…" a problem with nothing to do but read it.
+        let way_out = if status.is_none() {
+            None
+        } else if self.prepare_error.is_some() {
+            Some(crate::sheets::WayOut::MinecraftFolder)
+        } else {
+            self.build_gone()
+                .filter(|_| !busy)
+                .map(crate::sheets::WayOut::Newest)
+        };
+        let action = if self.native_step.is_some() {
+            Some(
+                button("alt-build-stop", tr("Stop")).on_click(cx.listener(|_, _, _, cx| {
+                    native_mods::cancel();
+                    cx.notify();
+                })),
+            )
+        } else if let Some(all) = status
+            .clone()
+            .filter(|_| way_out.is_some() || more.is_some())
+        {
+            let label = if way_out.is_some() {
+                tr("Fix…")
+            } else {
+                tr("Details…")
+            };
+            Some(
+                button("alt-fix", label).on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_notice(all.clone(), way_out);
+                    cx.notify();
+                })),
+            )
+        } else if hold.is_some() && !busy {
+            Some(
+                button("alt-fix", tr("Fix…")).on_click(cx.listener(|this, _, _, cx| {
+                    this.open_sheet(Sheet::Resolve);
+                    cx.notify();
+                })),
+            )
+        } else {
+            update.map(|release| {
+                button("alt-update", tr("Update game")).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        this.install_update_if_safe(&release);
+                        cx.notify();
+                    },
+                ))
+            })
+        };
+        let enabled = !busy && self.location_error.is_none();
+        let ink = rgb(0x221203);
+        // The cat may sleep on Play only while Play is idle and the bar has nothing to say.
+        let free = quiet && !busy && self.client.is_none() && self.location_error.is_none();
+        let (lane, on_play) = self.cat(action.is_none(), free, window, cx);
+        let play = div()
+            .id("alt-play")
+            .tab_index(0)
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(8.))
+            .rounded(px(tokens::R_CARD))
+            .h(px(tokens::PLAY))
+            .min_w(px(160.))
+            .px(px(20.))
+            .font_weight(FontWeight::BOLD)
+            .text_size(px(tokens::LEAD))
+            .text_color(ink)
+            .bg(if signed_in { rgb(GOLD) } else { rgb(TEXT) })
+            .when(signed_in && !busy && self.client.is_none(), |d| {
+                d.child(blocks::icon("play", 17., ink.into()))
+            })
+            .child(label)
+            .focus_visible(move |s| s.shadow(focus_ring(if signed_in { TEXT } else { GOLD })))
+            .when(!enabled, |d| d.opacity(0.6))
+            .when(enabled, |d| {
+                d.cursor_pointer().on_click(cx.listener(|this, _, _, cx| {
+                    if let Some(client) = &this.client {
+                        client.kill();
+                    } else {
+                        this.quick_play = None;
+                        this.joining = None;
+                        this.play_game();
+                    }
+                    cx.notify();
+                }))
+            });
+        bar.child(lane).children(action).child(
+            div()
+                .relative()
+                .flex_none()
+                // A press on Play sends a cat asleep on it off; the press itself is Play's.
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.cat_off_play();
+                        cx.notify();
+                    }),
+                )
+                .child(play)
+                .children(on_play),
+        )
     }
 
-    /// The launcher's own update, as a card at the open rail's foot (while one downloads, waits,
-    /// or could not be applied).
-    pub(super) fn rail_update_card(&mut self, soft: u32, cx: &mut Context<Self>) -> Option<Div> {
-        let t = self.theme;
-        let card = |title: String, right: Option<String>| {
+    fn install_update_if_safe(&mut self, release: &Release) {
+        let Some(instance) = self.selected_instance() else {
+            return;
+        };
+        if self.native_state_of(instance) != native_status::State::NoMods {
+            // Never overwrite a working native build while staging its candidate.
+            self.instance_install = Some(release.tag.clone());
+            self.install(release);
+        } else {
+            self.install_update();
+        }
+    }
+
+    pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let size = window.viewport_size();
+        self.window_width = f32::from(size.width);
+        self.window_height = f32::from(size.height);
+        self.scale = window.scale_factor();
+        self.scale_factor = self.scale;
+        self.window_long_side = self.window_width.max(self.window_height);
+        scrolls_begin();
+        self.modal_before(window, cx);
+        self.servers.note_focus(window, cx);
+        self.friend_focused = self.friend_focus.is_focused(window);
+        self.mods.note_focus(window);
+        if window.focused(cx).is_none() {
+            window.focus(&self.root_focus, cx);
+        }
+        let page = self.ui.page;
+        let rail_link = |p: Page, id: &'static str, label: &str, icon: &'static str| {
+            let on = page == p
+                || (p == Page::Discover && matches!(page, Page::Installed | Page::Project))
+                || (p == Page::Packs && matches!(page, Page::PackFind | Page::PackProject));
             div()
+                .id(id)
+                .tab_index(0)
+                .w(px(56.))
+                .h(px(56.))
+                .rounded(px(tokens::R_CARD))
+                .border_1()
+                .border_color(gpui::transparent_black())
+                .focus_visible(|s| s.border_color(rgb(GOLD)))
+                .relative()
                 .flex()
                 .flex_col()
-                .rounded(px(crate::glass_ui::rad(radius::ROW)))
-                .bg(white(fill::FIELD))
-                .border_1()
-                .border_color(white(ui::edge::REST))
-                .p(px(12.))
-                .child(
-                    div()
-                        .flex()
-                        .items_baseline()
-                        .justify_between()
-                        .child(
-                            ui::text(13.5, FontWeight::SEMIBOLD, ink::FULL)
-                                .flex_1()
-                                .min_w_0()
-                                .child(title),
-                        )
-                        .children(
-                            right.map(|r| ui::text(12.5, FontWeight::NORMAL, ink::NOTE).child(r)),
-                        ),
-                )
-        };
-        match &self.self_update {
-            SelfUpdate::Downloading(version, f) => Some(
-                card(
-                    trf("Launcher {version}", &[("version", version)]),
-                    Some(format!("{:.0}%", f * 100.)),
-                )
-                .child(div().mt(px(10.)).child(ui::bar(*f, soft))),
-            ),
-            SelfUpdate::Ready(version) => Some(
-                card(tr("A new version is available").to_string(), None)
-                    .child(
-                        ui::text(12.5, FontWeight::NORMAL, ink::NOTE)
-                            .mt(px(4.))
-                            .child(trf("Launcher {version}", &[("version", version)])),
+                .items_center()
+                .justify_center()
+                .gap(px(3.))
+                .cursor_pointer()
+                .text_size(px(tokens::CAPTION))
+                .text_color(rgb(if on { TEXT } else { MUTED }))
+                .font_weight(FontWeight::SEMIBOLD)
+                .when(on, |d| {
+                    d.bg(rgb(CARD)).child(
+                        div()
+                            .absolute()
+                            .left(px(-8.))
+                            .h(px(26.))
+                            .w(px(3.))
+                            .bg(rgb(GOLD)),
                     )
-                    .child(
-                        ui::solid("update-launcher", tr("Update"), 32., 13., &t)
-                            .mt(px(10.))
-                            .w_full()
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.apply_launcher_update(cx);
-                                cx.notify();
-                            })),
-                    ),
-            ),
-            SelfUpdate::Stuck(error) if !self.self_update_hidden => {
-                let why = self.launcher_update_help(error.as_deref());
-                let url = backend::download_page(&self.links.website);
-                Some(
-                    card(tr("A new version is available").to_string(), None)
-                        .child(
-                            ui::text(12.5, FontWeight::NORMAL, ink::NOTE)
-                                .mt(px(6.))
-                                .child(why),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(6.))
-                                .mt(px(10.))
-                                .when(self.launcher_download_available(), |actions| {
-                                    actions.child(
-                                        ui::solid(
-                                            "download-launcher",
-                                            tr("Download again"),
-                                            32.,
-                                            13.,
-                                            &t,
-                                        )
-                                        .w_full()
-                                        .on_click(move |_, _, cx| cx.open_url(&url)),
-                                    )
-                                })
-                                .child(
-                                    ui::solid(
-                                        "dismiss-launcher-update",
-                                        tr("Dismiss"),
-                                        32.,
-                                        13.,
-                                        &t,
-                                    )
-                                    .w_full()
-                                    .on_click(cx.listener(
-                                        |this, _: &ClickEvent, _, cx| {
-                                            this.self_update_hidden = true;
-                                            cx.notify();
-                                        },
-                                    )),
-                                ),
-                        ),
-                )
-            }
-            _ => None,
-        }
-    }
-
-    /// The menu under the player (`Switch player`): everyone who can play, then Manage accounts.
-    pub(super) fn glass_account_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if !self.account_menu {
-            return None;
-        }
-        let t = self.theme;
-        let soft = self.look.accent_soft;
-        let now = self.accounts.selected().map(|a| a.uuid.clone());
-        let mut menu = ui::popover(250.)
-            .id("account-menu")
-            .occlude()
-            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                this.account_menu = false;
-                this.menu_closed_at = Some(event.position);
-                cx.notify();
-            }));
-        for (i, (who, name, how)) in self.players().into_iter().enumerate() {
-            let chosen = Some(&who) == now.as_ref();
-            let id = SharedString::from(format!("account-pick-{i}"));
-            menu = menu.child(keyboard(
-                track_hover(
-                    div()
-                        .id(id.clone())
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .h(px(48.))
-                        .px(px(10.))
-                        .rounded(px(crate::glass_ui::rad(radius::CONTROL)))
-                        .cursor_pointer()
-                        .child(hover_layer(&id, white(0.07), radius::CONTROL, 0.))
-                        .child(
-                            div()
-                                .relative()
-                                .size(px(30.))
-                                .rounded(px(crate::glass_ui::rad(8.)))
-                                .overflow_hidden()
-                                .child(self.profile_heads.draw(
-                                    Some(who.as_str()),
-                                    30.,
-                                    self.scale,
-                                    &t,
-                                )),
-                        )
-                        .child(
-                            div()
-                                .relative()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .child(
-                                    ui::text(14., FontWeight::MEDIUM, ink::FULL)
-                                        .truncate()
-                                        .child(name),
-                                )
-                                .child(ui::text(12., FontWeight::NORMAL, ink::FAINT).child(how)),
-                        )
-                        .when(chosen, |d| {
-                            d.child(ui::icon("tick-02", 16., ui::color(soft)).relative())
-                        })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.play_as(&who);
-                            cx.notify();
-                        })),
-                    id,
-                ),
-                &t,
-            ));
-        }
-        menu = menu.child(div().mt(px(4.)).child(
-            ui::menu_row("account-manage", "user", tr("Manage accounts"), false, &t).on_click(
-                cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.account_menu = false;
-                    this.go(Page::Settings);
+                })
+                .child(blocks::icon(
+                    icon,
+                    20.,
+                    rgb(if on { TEXT } else { MUTED }).into(),
+                ))
+                .child(label.to_string())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    match p {
+                        Page::Discover => this.open_mods(),
+                        Page::Packs => this.open_packs(),
+                        _ => this.ui.page = p,
+                    }
+                    this.ui.picker = false;
                     cx.notify();
-                }),
-            ),
-        ));
-        Some(deferred(
-            div().absolute().top(px(52.)).right_0().child(menu),
-        ))
-    }
-
-    /// The ⋮ menu of a sidebar row, beside it: Edit…, Duplicate…, Open folder, Export…,
-    /// launch settings, the desktop shortcut, then Delete… (asked twice). Each acts on that instance.
-    pub(super) fn row_menu(
-        &mut self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let (id, confirm) = self.row_menu.open.clone()?;
-        let Some(instance) = self.instances.list.iter().find(|i| i.id == id).cloned() else {
-            self.row_menu.open = None;
-            return None;
+                }))
         };
-        let row = self.row_menu.rows.borrow().get(&id).copied()?;
-        let t = self.theme;
-        let viewport = window.viewport_size();
-        let height = f32::from(viewport.height);
-        // The mockup's `rect.right + 12`, `min(rect.top - 8, innerHeight - 330)`: its ⋮ button
-        // ends 6 px inside the row and sits in the row's middle.
-        let x = f32::from(row.origin.x + row.size.width) - 6. + 12.;
-        let button_top = f32::from(row.origin.y) + (f32::from(row.size.height) - 32.) / 2.;
-        let y = (button_top - 8.).min(height - 330.).max(8.);
-        let item = |key: &'static str, icon: &'static str, label: String| {
-            ui::menu_row(format!("row-menu-{key}"), icon, label, false, &t)
-        };
-        let pick = |this: &mut Launcher, i: &Instance| {
-            this.row_menu.open = None;
-            this.select_instance(i);
-            this.go(Page::Play);
-        };
-        let (edit, copy, export, launch, shortcut) = (
-            instance.clone(),
-            instance.clone(),
-            instance.clone(),
-            instance.clone(),
-            instance.clone(),
-        );
-        let home = instance.home.clone();
-        let labels = [
-            tr("Edit…"),
-            tr("Duplicate…"),
-            tr("Open folder"),
-            tr("Export…"),
-            tr("Launch…"),
-            if self.has_shortcut(&instance.id) {
-                tr("Remove the desktop shortcut")
-            } else {
-                tr("Create a desktop shortcut")
-            },
-            if confirm {
-                tr("Click again to delete")
-            } else {
-                tr("Delete…")
-            },
-        ];
-        let [edit_label, copy_label, folder_label, export_label, launch_label, shortcut_label, delete_label] =
-            labels;
-        let viewport_width = f32::from(viewport.width);
-        let width = ui::menu_content_width(window, &labels)
-            .max(250.)
-            .min((viewport_width - 16.).max(0.));
-        let x = x.min(viewport_width - width - 8.).max(8.);
-        let mut menu = ui::popover(width)
-            .id("row-menu")
-            .occlude()
-            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                this.row_menu.open = None;
-                this.menu_closed_at = Some(event.position);
-                cx.notify();
-            }))
-            .child(
-                item("edit", "pencil-edit-02", edit_label.into()).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        this.row_menu.open = None;
-                        this.open_instance_sheet(edit.clone(), glass_sheet::SheetTab::General);
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                item("duplicate", "copy-01", copy_label.into()).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        pick(this, &copy);
-                        this.start_copy();
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                item("folder", "folder-01", folder_label.into()).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        this.row_menu.open = None;
-                        let _ = std::fs::create_dir_all(&home);
-                        crate::glass_toast::open(cx, &home);
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                item("export", "upload-04", export_label.into()).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        pick(this, &export);
-                        this.open_instance_sheet(export.clone(), glass_sheet::SheetTab::Storage);
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                item("launch", "sliders-horizontal", launch_label.into()).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        pick(this, &launch);
-                        this.open_instance_sheet(launch.clone(), glass_sheet::SheetTab::Launch);
-                        cx.notify();
-                    },
-                )),
-            )
-            .child(
-                item("shortcut", "link-01", shortcut_label.into()).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _, cx| {
-                        this.row_menu.open = None;
-                        this.toggle_shortcut(shortcut.id.clone(), shortcut.name.clone());
-                        cx.notify();
-                    },
-                )),
-            );
-        // Sunrise's own instance can't be deleted, nor one while a game runs.
-        let can_delete = instance.kind != InstanceKind::Default
-            && self.client.is_none()
-            && self.starting_client.is_none();
-        let gone = instance.id.clone();
-        let delete = ui::menu_row("row-menu-delete", "delete-02", delete_label, true, &t);
-        let delete = if can_delete {
-            delete.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if let Some((_, confirm)) = this.row_menu.open.as_mut().filter(|(_, c)| !*c) {
-                    *confirm = true;
-                } else {
-                    this.row_menu.open = None;
-                    this.delete_instance(&gone);
-                }
-                cx.notify();
-            }))
-        } else {
-            delete.opacity(0.4).cursor_default()
-        };
-        menu = menu.child(div().mt(px(4.)).child(delete));
-        Some(
-            deferred(anchored().position(point(px(x), px(y))).child(menu))
-                .with_priority(1)
+        let rail = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .flex_none()
+            .w(px(tokens::RAIL))
+            .py(px(14.))
+            .gap(px(4.))
+            .child(div().mb(px(12.)).child(crate::mark(36.)))
+            .child(rail_link(Page::Home, "alt-nav-home", tr("Home"), "home"))
+            .child(rail_link(
+                Page::Discover,
+                "alt-nav-mods",
+                tr("Mods"),
+                "package",
+            ))
+            .child(rail_link(
+                Page::Packs,
+                "alt-nav-packs",
+                tr("Packs"),
+                "archive",
+            ))
+            .child(rail_link(
+                Page::Hosting,
+                "alt-nav-hosting",
+                tr("Host"),
+                "server",
+            ))
+            .child(div().flex_1())
+            .child(rail_link(
+                Page::Settings,
+                "alt-nav-settings",
+                tr("Settings"),
+                "sliders",
+            ));
+        let content = match page {
+            Page::Settings => self.settings(window, cx),
+            Page::Hosting => self.hosting(cx),
+            _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
+                .p(px(24.))
+                .child(tr(
+                    "Choose a Sunrise setup in the play bar. Your other setups haven't changed.",
+                ))
                 .into_any_element(),
-        )
+            Page::Home => self.home(window, cx),
+            _ => self.mods(window, cx),
+        };
+        let page_body = div()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .rounded_l(px(tokens::R_PANEL))
+            .bg(rgb(BG))
+            .border_1()
+            .border_color(rgb(SOFT))
+            .overflow_hidden()
+            .child(content);
+        let mut frame = div()
+            .id("alt-root")
+            .track_focus(&self.root_focus)
+            .relative()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(rgb(CHROME))
+            .text_color(rgb(TEXT))
+            .font_family("Figtree")
+            .text_size(px(tokens::BODY))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                match ev.keystroke.key.as_str() {
+                    "tab" => {
+                        if ev.keystroke.modifiers.shift {
+                            window.focus_prev(cx)
+                        } else {
+                            window.focus_next(cx)
+                        }
+                    }
+                    "escape" if this.owner_screen_open => {
+                        this.cancel_sign_in();
+                        this.owner_screen_open = false;
+                    }
+                    "escape" if this.sheet_escape() => {}
+                    "escape" if this.ui.page == Page::Hosting && this.hosting_escape() => {}
+                    "escape" => {
+                        this.ui.sheet = None;
+                        this.ui.picker = false;
+                    }
+                    _ => return,
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .children(titlebar::render(&self.theme, window))
+            .children(self.settings_save_notice(cx))
+            .child(div().flex().flex_1().min_h_0().child(rail).child(page_body))
+            .child(self.dock(window, cx));
+        if self.ui.picker {
+            let mut choices = div()
+                .absolute()
+                .bottom(px(68.))
+                .left(px(12.))
+                .rounded(px(tokens::R_CARD))
+                .p(px(8.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .bg(rgb(CARD))
+                .border_1()
+                .border_color(rgb(LINE));
+            for (n, item) in self
+                .instances
+                .list
+                .iter()
+                .filter(|i| i.java.is_none())
+                .cloned()
+                .enumerate()
+            {
+                choices = choices.child(
+                    button(ElementId::named_usize("alt-pick", n), item.name.clone()).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            if !this.launch_busy() && this.client.is_none() {
+                                this.select_instance(&item);
+                                this.ui.picker = false;
+                                this.client_error = None;
+                            }
+                            cx.notify();
+                        }),
+                    ),
+                );
+            }
+            frame = frame.child(choices);
+        }
+        // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
+        self.versions_focus(window);
+        let create = (page == Page::Hosting)
+            .then(|| self.hosting_create(cx))
+            .flatten();
+        let sheet = self.live_sheet(cx);
+        let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
+        let mut layers: Vec<_> = [create, sheet, sign_in].into_iter().flatten().collect();
+        let top = self.modal(layers.pop(), window, cx);
+        frame = frame.children(layers).children(top);
+        self.pictures.free_retired(window);
+        div()
+            .relative()
+            .size_full()
+            .child(frame)
+            .children(titlebar::resize_handles(window))
     }
 }

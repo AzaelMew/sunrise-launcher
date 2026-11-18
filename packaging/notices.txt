@@ -1,0 +1,11 @@
+# The licence notice of everything this launcher embeds or derives from, shipped with every
+# route (AppImage, macOS app, ZIP and tar.gz archives, Windows Setup and self-update).
+# <file name in the LICENSES folder> <source in the repository>
+# src/notices.rs embeds the same files for Setup; its test keeps the two in step.
+MIT-Horizon.txt LICENSES/MIT-Horizon.txt
+OFL-Figtree.txt assets/fonts/OFL-Figtree.txt
+OFL-Geist.txt crates/theme/fonts/OFL-Geist.txt
+OFL-BricolageGrotesque.txt crates/theme/fonts/OFL-BricolageGrotesque.txt
+OFL-PixelifySans.txt crates/theme/fonts/OFL-PixelifySans.txt
+MIT-Pixelarticons.txt crates/theme/icons/pixel/LICENSE-pixelarticons.txt
+MIT-Hugeicons.txt crates/theme/icons/glass/LICENSE-hugeicons.txt

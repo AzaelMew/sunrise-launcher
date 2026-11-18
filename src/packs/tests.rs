@@ -321,7 +321,10 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
     zip_file(
         &drops.join("glow.sshader"),
         &[
-            (SHADER_MANIFEST, SHADER_META.as_bytes()),
+            (
+                SHADER_MANIFEST,
+                SHADER_META.replace("\"warm\"", "\"glow\"").as_bytes(),
+            ),
             ("post.wgsl", VALID_POST),
         ],
     );
@@ -495,4 +498,123 @@ fn resource_order_lists_enabled_packs_top_first_and_moves_adjacent_pairs() {
     assert!(move_resource(&home, "A.zip", "B.zip").is_err());
     assert!(!home.join(OPTIONS).exists());
     fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn reordering_never_treats_an_unreadable_options_file_as_empty() {
+    let home = home("order-unreadable");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    // A folder where the file should be: reading it fails, and nothing may replace it.
+    fs::remove_file(home.join(OPTIONS)).ok();
+    fs::create_dir(home.join(OPTIONS)).unwrap();
+    let error = move_resource(&home, "A.zip", "B.zip").unwrap_err();
+    assert!(error.contains(OPTIONS), "{error}");
+    assert!(home.join(OPTIONS).is_dir());
+}
+
+#[test]
+fn reordering_replaces_options_whole_and_keeps_its_other_lines() {
+    let home = home("order-atomic");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    fs::write(
+        home.join(OPTIONS),
+        "version:4786\nresourcePacks:[\"vanilla\",\"file/A.zip\",\"file/B.zip\"]\nlang:fr_ch\n",
+    )
+    .unwrap();
+    move_resource(&home, "A.zip", "B.zip").unwrap();
+    let text = fs::read_to_string(home.join(OPTIONS)).unwrap();
+    assert_eq!(
+        text,
+        "version:4786\nresourcePacks:[\"vanilla\",\"file/B.zip\",\"file/A.zip\"]\nlang:fr_ch\n"
+    );
+    let left: Vec<_> = fs::read_dir(&home)
+        .unwrap()
+        .flatten()
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".sunrise-options-")
+        })
+        .collect();
+    assert!(left.is_empty(), "a temporary file was left behind");
+}
+
+#[test]
+fn a_shader_pack_whose_id_is_installed_is_refused() {
+    let home = home("add-same-id");
+    let drops = scratch("drops-same-id");
+    for file in ["warm-copy.sshader", "warm-new.sshader"] {
+        zip_file(
+            &drops.join(file),
+            &[
+                (SHADER_MANIFEST, SHADER_META.as_bytes()),
+                ("post.wgsl", b""),
+            ],
+        );
+    }
+    // `home` already holds the pack with the id "warm"; the manifest above is that id.
+    assert_eq!(
+        shader_key(&drops.join("warm-copy.sshader")).as_deref(),
+        Some("sunrise:warm")
+    );
+    let before = fs::read_dir(home.join("shaderpacks")).unwrap().count();
+    for result in [
+        add(&home, &drops.join("warm-copy.sshader")),
+        add_local(&home, Kind::Shader, &drops.join("warm-new.sshader")),
+    ] {
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("warm") && error.contains("already installed"),
+            "{error}"
+        );
+    }
+    assert_eq!(
+        fs::read_dir(home.join("shaderpacks")).unwrap().count(),
+        before
+    );
+    fs::remove_dir_all(&home).unwrap();
+    fs::remove_dir_all(&drops).unwrap();
+}
+
+/// What a player reads goes through `tr` or `trf`: no `format!` of the pack code builds a
+/// sentence of English words (a path and an error are not words).
+#[test]
+fn pack_errors_are_not_built_with_format() {
+    for file in ["src/packs.rs", "src/mods/packs.rs"] {
+        let source =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        for (at, _) in code.match_indices("format!(") {
+            let rest = &code[at + "format!(".len()..];
+            let literal = rest
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|r| r.split('"').next())
+                .unwrap_or("");
+            let mut bare = String::new();
+            let mut skipping = false;
+            for c in literal.chars() {
+                match c {
+                    '{' => skipping = true,
+                    '}' => skipping = false,
+                    _ if !skipping => bare.push(c),
+                    _ => {}
+                }
+            }
+            let words = bare
+                .split_whitespace()
+                .filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 2)
+                .count();
+            assert!(
+                words < 2,
+                "{file}: {literal:?} reads as a sentence: use tr or trf"
+            );
+        }
+    }
 }

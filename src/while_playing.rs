@@ -53,43 +53,4 @@ impl Launcher {
             let _ = window.update(cx, |_, window, _| window.activate_window());
         });
     }
-
-    /// Settings' row for it.
-    pub(super) fn while_playing_row(&self, n: usize, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let mut options = vec![
-            (WhilePlaying::Stay, "Stay"),
-            (WhilePlaying::Minimize, "Minimise"),
-        ];
-        if cfg!(target_os = "macos") {
-            options.push((WhilePlaying::Hide, "Hide"));
-        }
-        let current = self.settings.while_playing.here();
-        let picker = segments("while-playing", &options, current, &t, {
-            let this = cx.entity().downgrade();
-            move |choice, _, cx| {
-                let _ = this.update(cx, |this, cx| {
-                    this.settings.while_playing = choice;
-                    this.save_settings();
-                    cx.notify();
-                });
-            }
-        });
-        let said = match current {
-            WhilePlaying::Stay => "The launcher stays open while you play.",
-            WhilePlaying::Minimize => {
-                "The launcher goes down when the game starts, and comes back when it closes."
-            }
-            WhilePlaying::Hide => {
-                "The launcher hides when the game starts, and comes back when it closes."
-            }
-        };
-        index_row(
-            n,
-            tr("While playing"),
-            Some(div().child(tr(said)).into_any_element()),
-            Some(picker.into_any_element()),
-            &t,
-        )
-    }
 }

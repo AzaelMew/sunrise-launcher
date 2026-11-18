@@ -32,9 +32,9 @@ dmg=$out/sunrise-launcher-macos-$arch.dmg
 app="$out/Sunrise Launcher.app"
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/LICENSES"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$repo/LICENSE" "$app/Contents/Resources/LICENSE"
-cp "$repo/LICENSES/MIT-Horizon.txt" "$app/Contents/Resources/LICENSES/"
+"$repo/packaging/copy-notices.sh" "$repo" "$app/Contents/Resources/LICENSES"
 cp "$binary" "$app/Contents/MacOS/sunrise-launcher"
 chmod 755 "$app/Contents/MacOS/sunrise-launcher"
 cp "$here/../icons/sunrise.icns" "$app/Contents/Resources/sunrise.icns"

@@ -4,7 +4,7 @@
 
 Every command of `sunrise-launcher`, and the tool `sunrise-launcher mcp` offers for it. A tool's arguments are the command's, in snake_case. A tool runs the command with `--json` and returns what it printed. The tools that change the player's things for good need `confirm: true`. The tools that send something or reach other people say "only when the player asks". The game's own tools, `game_*`, are in [sunrise-ctl-commands.md](https://github.com/sunrise-org/sunrise/blob/main/docs/sunrise-ctl-commands.md). For unsigned developer installations only, `SUNRISE_LAUNCHER_DEVELOPER_OFFLINE=1` enables account-free Play. Only the exact value `1` enables it. The installed base must have persisted developer provenance, and the selected game must advertise `--developer-single-player` through `--launch-api`; older games must be rebuilt and reinstalled. Signed releases, Nightlies and their native descendants keep the account check. This mode supplies no session, blocks normal external connections and LAN hosting, and preserves managed launch leases, instance settings and unsigned labels. It is not a sandbox for native mods. If direct execution reports unregistered cache directories, use Sunrise Launcher Play from the same launcher data directory with the intended instance and installed version (`sunrise-launcher play --instance <instance> --version <tag>`).
 
-With No AI on, `mcp` and `agent-config` are hidden and refuse; every other command stays. See [agent-control.md](https://github.com/sunrise-org/sunrise/blob/main/docs/agent-control.md#no-ai).
+With No AI on, `mcp` is hidden and refuses; every other command stays. See [agent-control.md](https://github.com/sunrise-org/sunrise/blob/main/docs/agent-control.md#no-ai).
 
 ## `sunrise-launcher completions`
 
@@ -1069,17 +1069,6 @@ Serve the Model Context Protocol on stdin and stdout, for AI agents (refused whi
     sunrise-launcher mcp
 
 MCP: none: this command is the MCP server.
-
-## `sunrise-launcher agent-config`
-
-How to connect an AI agent (Claude Code, Codex, Cursor, any MCP client) to `mcp`: the config to paste and the command that adds it (refused while No AI is on).
-
-    sunrise-launcher agent-config
-
-- `--client` (claude-code, codex, cursor, generic): Only this client
-- `--test`: Start the MCP server as a client would and say whether it answered
-
-MCP: none: it prints how to connect a client to `mcp`.
 
 ## `sunrise-launcher no-ai`
 

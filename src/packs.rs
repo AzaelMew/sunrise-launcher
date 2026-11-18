@@ -10,6 +10,7 @@
 //!   `pickedShaderPack` in `sunrise-graphics.txt`.
 //!
 //! Every other line of both files is written back as it was.
+use crate::i18n::{tr, trf};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,28 @@ fn shader_key(path: &Path) -> Option<String> {
     }
     .ok()?;
     Some(format!("sunrise:{}", manifest.id))
+}
+
+/// Refuses a Sunrise shader pack whose id an installed one already has: two would show as one
+/// pack, and which one the game ran would depend on their file names.
+fn refuse_installed_shader(dir: &Path, incoming: &Path) -> Result<(), String> {
+    let Some(key) = shader_key(incoming) else {
+        return Ok(());
+    };
+    let installed = fs::read_dir(dir).into_iter().flatten().flatten().find(|e| {
+        !e.file_name().to_string_lossy().starts_with('.')
+            && shader_key(&e.path()).as_ref() == Some(&key)
+    });
+    match installed {
+        Some(e) => Err(trf(
+            "A shader pack with the ID {id} is already installed ({file}). Remove it first to add this one.",
+            &[
+                ("id", key.strip_prefix("sunrise:").unwrap_or(&key)),
+                ("file", &e.file_name().to_string_lossy()),
+            ],
+        )),
+        None => Ok(()),
+    }
 }
 
 fn migrate_shader_values(home: &Path, pack: &Path, key: &str) -> std::io::Result<()> {
@@ -291,9 +314,39 @@ fn option_list(options: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The file's text; a file that is not there is empty, and any other failure to read it is an
+/// error: an options file that could not be read is never written over as if it were empty.
+fn read_settings(path: &Path) -> Result<String, String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("{}: {e}", path.display())),
+    }
+}
+
+/// Puts `text` in place of the file whole: a temporary file in the same folder, then a rename.
+fn write_settings(path: &Path, text: &str) -> Result<(), String> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut temp = tempfile::Builder::new()
+        .prefix(".sunrise-options-")
+        .tempfile_in(dir)
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
+    std::io::Write::write_all(&mut temp, text.as_bytes())
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    temp.persist(path)
+        .map_err(|e| format!("{}: {}", path.display(), e.error))?;
+    Ok(())
+}
+
 /// Sets `key:value` in the file, or adds the line; every other line stays.
 fn set_line(path: &Path, key: &str, value: &str) -> Result<(), String> {
-    let text = fs::read_to_string(path).unwrap_or_default();
+    let text = read_settings(path)?;
+    write_settings(path, &with_line(&text, key, value))
+}
+
+/// `text` with `key:value` set, or added as a line; every other line stays.
+fn with_line(text: &str, key: &str, value: &str) -> String {
     let mut found = false;
     let mut out: Vec<String> = text
         .lines()
@@ -312,10 +365,7 @@ fn set_line(path: &Path, key: &str, value: &str) -> Result<(), String> {
     }
     let mut text = out.join("\n");
     text.push('\n');
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+    text
 }
 
 /// Turns a pack on or off. A resource pack turned on goes on top; a shader pack turned on
@@ -377,7 +427,15 @@ pub fn find(home: &Path, kind: Kind, query: &str) -> Result<Pack, String> {
         .find(|p| p.file == query)
         .or_else(|| all.iter().find(|p| p.title.eq_ignore_ascii_case(query)))
         .cloned()
-        .ok_or_else(|| format!("No pack {query} in {}", home.join(kind.folder()).display()))
+        .ok_or_else(|| {
+            trf(
+                "No pack {query} in {folder}",
+                &[
+                    ("query", query),
+                    ("folder", &home.join(kind.folder()).display().to_string()),
+                ],
+            )
+        })
 }
 
 /// What a dropped or picked file is: a resource pack (a zip with `pack.mcmeta`), a Sunrise
@@ -393,8 +451,9 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     match ext.as_deref() {
         Some(SHADER_PACKAGE | "zip") => {}
         _ => {
-            return Err(format!(
-                "{name} is not a pack: packs are .zip or .sshader files."
+            return Err(trf(
+                "{name} is not a pack: packs are .zip or .sshader files.",
+                &[("name", &name)],
             ))
         }
     }
@@ -407,14 +466,20 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     } else if zip
         .file_names()
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("{name} has an entry whose name can't be read: {e}"))?
+        .map_err(|e| {
+            trf(
+                "{name} has an entry whose name can't be read: {error}",
+                &[("name", &name), ("error", &e.to_string())],
+            )
+        })?
         .iter()
         .any(|n| n.starts_with("shaders/"))
     {
         Ok(Kind::Shader)
     } else {
-        Err(format!(
-            "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack)."
+        Err(trf(
+            "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+            &[("name", &name)],
         ))
     }
 }
@@ -444,11 +509,28 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
     let kind = kind_of(file)?;
     let dir = home.join(kind.folder());
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = file.file_name().ok_or("A pack file has a name")?;
+    let name = file
+        .file_name()
+        .ok_or_else(|| tr("A pack file has a name").to_string())?;
+    if kind == Kind::Shader {
+        refuse_installed_shader(&dir, file)?;
+    }
     let target = free_target(&dir, name);
-    fs::copy(file, &target).map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
-    read(&target, kind, &[])
-        .ok_or_else(|| format!("{} is not a pack the game reads", target.display()))
+    fs::copy(file, &target).map_err(|e| {
+        trf(
+            "Could not copy {file}: {error}",
+            &[
+                ("file", &file.display().to_string()),
+                ("error", &e.to_string()),
+            ],
+        )
+    })?;
+    read(&target, kind, &[]).ok_or_else(|| {
+        trf(
+            "{file} is not a pack the game reads",
+            &[("file", &target.display().to_string())],
+        )
+    })
 }
 
 /// The Installed page's add: like `add`, for a file the person said is a `kind` pack. A file of
@@ -457,9 +539,14 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
 /// in place only whole, never over a pack already there (a same name gets `(2)`), so an error
 /// leaves the folder as it was.
 pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
-    let name = file.file_name().ok_or("A pack file has a name")?;
+    let name = file
+        .file_name()
+        .ok_or_else(|| tr("A pack file has a name").to_string())?;
     if !fs::metadata(file).is_ok_and(|m| m.is_file()) {
-        return Err(format!("{} is not a file.", file.display()));
+        return Err(trf(
+            "{file} is not a file.",
+            &[("file", &file.display().to_string())],
+        ));
     }
     let dir = home.join(kind.folder());
     let made = !dir.exists();
@@ -474,29 +561,48 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             .suffix(&ext)
             .tempfile_in(&dir)
             .map_err(|e| format!("{}: {e}", dir.display()))?;
-        let mut source =
-            fs::File::open(file).map_err(|e| format!("Could not read {}: {e}", file.display()))?;
-        std::io::copy(&mut source, temp.as_file_mut())
-            .map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
+        let mut source = fs::File::open(file).map_err(|e| {
+            trf(
+                "Could not read {file}: {error}",
+                &[
+                    ("file", &file.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            )
+        })?;
+        std::io::copy(&mut source, temp.as_file_mut()).map_err(|e| {
+            trf(
+                "Could not copy {file}: {error}",
+                &[
+                    ("file", &file.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            )
+        })?;
         // What is checked is the copy that gets put in place.
         let found = kind_of(temp.path())
             .map_err(|e| e.replace(&temp.path().display().to_string(), &name.to_string_lossy()))?;
         if found != kind {
-            return Err(format!(
-                "{} is a {} pack, not a {} pack.",
-                name.to_string_lossy(),
-                found.folder(),
-                kind.folder()
+            return Err(trf(
+                "{file} is a {found} pack, not a {kind} pack.",
+                &[
+                    ("file", &name.to_string_lossy()),
+                    ("found", found.folder()),
+                    ("kind", kind.folder()),
+                ],
             ));
         }
         if ext.eq_ignore_ascii_case(".sshader") {
+            refuse_installed_shader(&dir, temp.path())?;
             let pack = sunrise_launcher_shader_api::Pack::read(temp.path())?;
             if let Err(problems) = sunrise_launcher_shader_api::check(&pack) {
                 let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
-                return Err(format!(
-                    "{} fails the shader pack check:\n{}",
-                    name.to_string_lossy(),
-                    lines.join("\n")
+                return Err(trf(
+                    "{file} fails the shader pack check:\n{problems}",
+                    &[
+                        ("file", &name.to_string_lossy()),
+                        ("problems", &lines.join("\n")),
+                    ],
                 ));
             }
         }
@@ -508,9 +614,9 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             if names.iter().any(|n| n.starts_with("data/"))
                 && !names.iter().any(|n| n.starts_with("assets/"))
             {
-                return Err(format!(
-                    "{} is a data pack (data/ and no assets/): add it as a data pack.",
-                    name.to_string_lossy()
+                return Err(trf(
+                    "{file} is a data pack (data/ and no assets/): add it as a data pack.",
+                    &[("file", &name.to_string_lossy())],
                 ));
             }
         }
@@ -522,9 +628,21 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             .map(str::to_string);
         let mut pack = shown
             .and_then(|shown| read_named(temp.path(), shown, kind, &[]))
-            .ok_or_else(|| format!("{} is not a pack the game reads", name.to_string_lossy()))?;
-        temp.persist_noclobber(&target)
-            .map_err(|e| format!("Could not add {}: {}", target.display(), e.error))?;
+            .ok_or_else(|| {
+                trf(
+                    "{file} is not a pack the game reads",
+                    &[("file", &name.to_string_lossy())],
+                )
+            })?;
+        temp.persist_noclobber(&target).map_err(|e| {
+            trf(
+                "Could not add {file}: {error}",
+                &[
+                    ("file", &target.display().to_string()),
+                    ("error", &e.error.to_string()),
+                ],
+            )
+        })?;
         pack.path = target;
         Ok(pack)
     };
@@ -537,8 +655,8 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
 /// The enabled resource packs the folder shows, as `resourcePacks` holds them: each one's index
 /// in the raw list (bottom first) and its file name. Builtins and references to packs that are
 /// not there are left out.
-fn visible_enabled(home: &Path) -> (Vec<String>, Vec<(usize, String)>) {
-    let raw = option_list(&fs::read_to_string(home.join(OPTIONS)).unwrap_or_default());
+fn visible_enabled(home: &Path, options: &str) -> (Vec<String>, Vec<(usize, String)>) {
+    let raw = option_list(options);
     let shown: Vec<String> = list(home, Kind::Resource)
         .into_iter()
         .map(|p| p.file)
@@ -563,12 +681,19 @@ pub fn resource_order(home: &Path) -> Vec<String> {
 /// references to missing packs included. A pair that is not enabled, not adjacent (the list
 /// changed since the page read it), or a pack listed twice is refused and nothing is written.
 pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), String> {
-    let (mut raw, slots) = visible_enabled(home);
+    let options = home.join(OPTIONS);
+    let text = read_settings(&options)?;
+    let (mut raw, slots) = visible_enabled(home, &text);
     let at = |name: &str| {
         let mut found = slots.iter().filter(|(_, n)| n == name).map(|(i, _)| *i);
         (found.next(), found.next().is_some())
     };
-    let stale = || format!("{file} and {neighbor} are not next to each other any more.");
+    let stale = || {
+        trf(
+            "{file} and {neighbor} are not next to each other any more.",
+            &[("file", file), ("neighbor", neighbor)],
+        )
+    };
     let ((Some(a), false), (Some(b), false)) = (at(file), at(neighbor)) else {
         return Err(stale());
     };
@@ -577,11 +702,12 @@ pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), Stri
         return Err(stale());
     }
     raw.swap(a, b);
-    set_line(
-        &home.join(OPTIONS),
+    let text = with_line(
+        &text,
         "resourcePacks",
         &serde_json::to_string(&raw).unwrap(),
-    )
+    );
+    write_settings(&options, &text)
 }
 
 /// Turns the pack off and moves it to the system's trash.
@@ -589,8 +715,12 @@ pub fn remove(home: &Path, pack: &Pack) -> Result<(), String> {
     if pack.enabled {
         set_enabled(home, pack, false)?;
     }
-    crate::desktop_seams::to_trash(&pack.path)
-        .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))
+    crate::desktop_seams::to_trash(&pack.path).map_err(|e| {
+        trf(
+            "Could not move {file} to the trash: {error}",
+            &[("file", &pack.file), ("error", &e.to_string())],
+        )
+    })
 }
 
 #[cfg(test)]

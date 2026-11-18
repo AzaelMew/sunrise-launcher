@@ -10,40 +10,21 @@ use std::collections::HashMap;
 use std::time::Instant;
 use sunrise_launcher_theme as tokens;
 
-/// `hzl-pop`: `0.2s cubic-bezier(0.2, 0.7, 0.2, 1)`, from transparent and 6 px lower.
-pub const POP: tokens::Motion = tokens::Motion {
-    name: "pop",
-    ms: 200,
-    curve: [0.2, 0.7, 0.2, 1.],
-};
-pub const POP_RISE: f32 = 6.;
-
 /// A new page: as [`POP`], a little longer and from further down, so the switch reads.
+#[cfg(test)]
 pub const PAGE: tokens::Motion = tokens::Motion {
     name: "page",
     ms: 260,
     curve: [0.2, 0.7, 0.2, 1.],
 };
-pub const PAGE_RISE: f32 = 12.;
 
 /// A switch's knob (`transition-[translate] duration-200`, Tailwind's default curve).
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 const SLIDE: tokens::Motion = tokens::Motion {
     name: "slide",
     ms: 200,
     curve: tokens::QUICK.curve,
 };
-
-/// The site's card lift: a spring that settles from a little past where it lands
-/// (`cubic-bezier(.22,.9,.3,1.24)`; `bezier` does not clamp y, so the overshoot plays).
-pub const SPRING: tokens::Motion = tokens::Motion {
-    name: "spring",
-    ms: 260,
-    curve: [0.22, 0.9, 0.3, 1.24],
-};
-
-/// How far a lifting card rises, and how far a pressed control sinks, in px.
-pub const LIFT: f32 = 3.;
-pub const PRESS: f32 = 1.;
 
 /// Whether the player's system asks for reduced motion (or `SUNRISE_LAUNCHER_MOTION=off`).
 pub fn still() -> bool {
@@ -160,6 +141,7 @@ thread_local! {
 
 /// When switch `id`'s knob started sliding towards `on`, while it still slides: a switch seen
 /// for the first time, or changed long ago, is already there.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 fn slide(id: &str, on: bool, now: Instant) -> Option<Instant> {
     SWITCHES.with_borrow_mut(|switches| {
         let seen = switches.entry(id.to_string()).or_insert((on, None));
@@ -173,6 +155,7 @@ fn slide(id: &str, on: bool, now: Instant) -> Option<Instant> {
 
 /// A switch's knob at `left` px when off and `left + travel` when on, sliding there when the
 /// switch `id` changed in the last 200 ms.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub fn knob(id: &str, on: bool, knob: Div, left: f32, travel: f32) -> AnyElement {
     let at = move |p: f32| left + travel * if on { p } else { 1. - p };
     match slide(id, on, Instant::now()) {
@@ -190,35 +173,6 @@ pub fn knob(id: &str, on: bool, knob: Div, left: f32, travel: f32) -> AnyElement
         }
         None => knob.left(px(at(1.))).into_any_element(),
     }
-}
-
-/// How long each later item of a list waits before it comes in ([`enter`]), and the most it waits.
-const STAGGER_MS: u64 = 40;
-const STAGGER_MAX: usize = 8;
-
-/// `el` coming in as a new page does (a fade and a rise, [`PAGE`]), `order` items after the first
-/// of its list, so a list or a column of cards cascades in. `key` names this entrance: it plays
-/// once per key, so put what should replay it (the page switch count, the tab) in the key. Under
-/// reduced motion it is simply there.
-pub fn enter(key: impl Into<ElementId>, order: usize, el: Div) -> AnyElement {
-    if still() {
-        return el.relative().into_any_element();
-    }
-    let delay = STAGGER_MS * order.min(STAGGER_MAX) as u64;
-    let total = PAGE.ms + delay;
-    let start = delay as f32 / total as f32;
-    let animation = Animation::new(std::time::Duration::from_millis(total)).with_easing(move |t| {
-        if t <= start {
-            0.
-        } else {
-            PAGE.ease((t - start) / (1. - start))
-        }
-    });
-    el.relative()
-        .with_animation(key, animation, |d, p| {
-            d.opacity(p).top(px(PAGE_RISE * (1. - p)))
-        })
-        .into_any_element()
 }
 
 #[cfg(test)]

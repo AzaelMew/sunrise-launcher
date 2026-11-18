@@ -225,3 +225,37 @@ fn the_mods_a_world_was_saved_with_are_read_and_matched() {
     assert!(saved_with(&all, &["other".into()]).is_empty());
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn a_level_dat_the_game_loads_is_read_past_the_default_tag_cap() {
+    let home = scratch("saved-limits");
+    // More tags than `Limits::default` allows: the game reads a world's `.dat` files without
+    // that cap, so the scan must too, or the world reads as unknown and holding every mod.
+    let many = Tag::List(vec![Tag::Int(0); Limits::default().max_nodes + 1]);
+    let dir = home.join("saves/Big");
+    fs::create_dir_all(&dir).unwrap();
+    let root = Tag::compound([(
+        "Data",
+        Tag::compound([("LevelName", name("Named")), ("Extra", many)]),
+    )]);
+    let bytes = nbt::write_named(
+        &nbt::NamedTag {
+            name: "".into(),
+            tag: root,
+        },
+        Limits::saved(),
+    )
+    .unwrap();
+    assert!(nbt::read_named(&bytes, Limits::default()).is_err());
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    gz.write_all(&bytes).unwrap();
+    let packed = gz.finish().unwrap();
+    // level.dat, and level.dat_old when level.dat is damaged (the game's recovery order).
+    fs::write(dir.join("level.dat"), &packed).unwrap();
+    let world = read(&dir).unwrap();
+    assert_eq!(world.name, "Named");
+    fs::write(dir.join("level.dat_old"), &packed).unwrap();
+    fs::write(dir.join("level.dat"), b"damaged").unwrap();
+    assert_eq!(read(&dir).unwrap().name, "Named");
+    fs::remove_dir_all(&home).unwrap();
+}

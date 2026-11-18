@@ -4,9 +4,13 @@ use super::*;
 
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        if !cfg!(feature = "redesign-preview") {
-            sunrise_launcher::storage::eviction::cleanup_after_start();
-        }
+        sunrise_launcher::storage::eviction::cleanup_after_start();
+        // A press on something that then leaves the page (a row that opens its page, a tab)
+        // would leave the keyboard on nothing, and Tab dead until the next click.
+        cx.on_focus_lost(window, |this, window, cx| {
+            window.focus(&this.root_focus, cx)
+        })
+        .detach();
         let (tx, rx) = wake::channel();
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
@@ -36,8 +40,7 @@ impl Launcher {
         // Release builds on Linux put their entry back in the applications menu when there is
         // none or it starts a program that is gone (a moved or deleted binary), never over one
         // that works; `SUNRISE_LAUNCHER_DESKTOP_ENTRY=1` does it in a development build.
-        if !cfg!(feature = "redesign-preview")
-            && cfg!(target_os = "linux")
+        if cfg!(target_os = "linux")
             && settings.desktop_entry()
             && (!cfg!(debug_assertions)
                 || std::env::var_os("SUNRISE_LAUNCHER_DESKTOP_ENTRY").is_some())
@@ -57,13 +60,8 @@ impl Launcher {
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
         titlebar::apply_appearance(window, settings.appearance);
-        let coast = cx.new(|cx| coast::Coast::new(window, cx));
-        let sky = cx.new(|cx| sky::SkyView::new(window, cx));
-        let rain = cx.new(|_| rain::Rain::new());
-        let backdrop =
-            cx.new(|_| window_root::Backdrop::new(coast.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
-            alt: Default::default(),
+            ui: Default::default(),
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
             behind: Page::Play,
@@ -71,36 +69,15 @@ impl Launcher {
             content_scroll: Scrollbar::default(),
             settings_pane: gpui::ScrollHandle::new(),
             settings_query: line_edit::LineEdit::new(String::new(), 80, 40),
-            settings_query_focus: cx.focus_handle(),
-            settings_query_focused: false,
-            whats_new_open: None,
-            settings_marked: 0,
-            settings_culled: Default::default(),
             settings_nav_open: false,
-            credit_asked: false,
-            version_menu: false,
-            credit_picture: None,
-            sheet_size: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
-            opening: (!cfg!(feature = "redesign-preview") && !settings.skip_opening).then(|| {
-                let focus = cx.focus_handle();
-                window.focus(&focus, cx);
-                Opening {
-                    started: None,
-                    reveal: None,
-                    focus,
-                }
-            }),
             updates: Updates::default(),
             checked: None,
             update_error: None,
             // The installer the last Update started could not put the new launcher in place.
-            self_update: (!cfg!(feature = "redesign-preview"))
-                .then(sunrise_launcher::update_handoff::take_failure)
-                .flatten()
+            self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
-            self_update_hidden: false,
             update_install: None,
             instance_install: None,
             install_next: None,
@@ -119,7 +96,6 @@ impl Launcher {
             storage_visit: 0,
             storage_revoke_error: None,
             native_consent_build: None,
-            disk_for: Vec::new(),
             install_error: None,
             importing_build: false,
             import_error: None,
@@ -135,39 +111,22 @@ impl Launcher {
             consent_error: None,
             native_for: None,
             native_built_mods: Vec::new(),
-            rooms: Default::default(),
             native_builds: Default::default(),
             native_log: Default::default(),
-            confirm_remove: None,
-            notes_open: Default::default(),
-            technical_open: Default::default(),
-            picker: glass_home::PickerState::default(),
-            accent_strip: false,
-            hue_area: std::rc::Rc::new(std::cell::Cell::new(None)),
-            hue_dragging: false,
-            language_menu: false,
-            account_menu: false,
-            row_menu: Default::default(),
-            islands: island::Islands::new(cx),
-            sheet_tab: Default::default(),
-            look: sunrise_launcher_theme::glass::Glass::default_look(),
-            menu_closed_at: None,
             // The first draw takes the launcher theme from Settings.
-            restyle: true,
-            background_error: None,
-            location_target: None,
             location_error: location_page::startup_error(),
             location_note: location_page::startup_note(),
+            location_target: None,
             args_input: line_edit::LineEdit::new(settings.game_args.clone(), 1024, 38),
             args_focused: false,
-            args_focus: cx.focus_handle(),
+            args_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             proxy_input: line_edit::LineEdit::new(
                 settings.proxy.clone().unwrap_or_default(),
                 256,
                 44,
             ),
             proxy_focused: false,
-            proxy_focus: cx.focus_handle(),
+            proxy_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             settings,
             settings_save_error: None,
             links: backend::Links::default(),
@@ -183,7 +142,6 @@ impl Launcher {
             servers: servers_page::Servers::new(),
             internet: internet::Internet::new(),
             root_focus: cx.focus_handle(),
-            palette: None,
             toast_seen: None,
             accounts: Accounts::load(),
             auth_status: HashMap::new(),
@@ -203,18 +161,16 @@ impl Launcher {
             play_when_prepared: None,
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),
             friend_focused: false,
-            nav_strip: Default::default(),
             window_width: 0.,
             window_height: 0.,
             window_long_side: 0.,
             scale_factor: 1.,
-            friend_focus: cx.focus_handle(),
+            friend_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             joining: None,
             quick_play: None,
             client_run: None,
             client_vars: Vec::new(),
             collection: collection::Collection::load(),
-            agents: agents_page::AgentsUi::default(),
             playing: None,
             tx,
             rx,
@@ -224,22 +180,12 @@ impl Launcher {
             install_started: None,
             prepare_started: None,
             download_seen: None,
-            home_tab: home_tabs::HomeTab::from_env(),
-            home_panel: home_tabs::HomeTab::from_env() != home_tabs::HomeTab::Overview,
-            side_folds: [None; 2],
-            home_menu: Default::default(),
-            list_hover: None,
-            list_menu: None,
             instance_mods: Default::default(),
-            mod_preview: Default::default(),
-            project_icons: Default::default(),
             play_pressed: None,
             bench: perf::Bench::from_env(),
             packs: Vec::new(),
-            registry_packs: Vec::new(),
             packs_loaded: None,
             pack_open: None,
-            pack_filter: None,
             pack_busy: false,
             pack_log: VecDeque::new(),
             pack_error: None,
@@ -247,48 +193,29 @@ impl Launcher {
             found_scanning: false,
             starting_pack: None,
             mods: mods_page::Mods::new(cx),
-            github: github_mods_page::Github::new(cx),
+            github: github_mods_page::Github::new(),
             instances: instances_page::Instances::default(),
             worlds: worlds_page::Worlds::default(),
             multiplayer: multiplayer_page::Multiplayer::default(),
             screenshots: screenshots_page::Screenshots::default(),
-            shot_blur: Default::default(),
             pictures: Default::default(),
             game_packs: packs_page::Packs::default(),
             world_packs: datapacks_page::WorldPacks::default(),
-            export: None,
             launch: None,
             memory_slider: Default::default(),
-            importing: Default::default(),
-            console: Default::default(),
             aside: while_playing::Aside::new(window.window_handle()),
-            shortcuts: Default::default(),
-            side_servers: if cfg!(feature = "redesign-preview") {
-                Vec::new()
-            } else {
-                sunrise_launcher::servers::list()
-            },
-            coast,
-            sky,
-            rain,
-            backdrop,
-            cover_at: Default::default(),
-            pushed: None,
+            side_servers: sunrise_launcher::servers::list(),
             scale: window.scale_factor(),
         };
-        if this.location_error.is_some() || this.location_note.is_some() {
-            this.page = Page::Settings;
+        // A data folder that did not open, or a move that failed or finished, is dealt with in
+        // Settings › Storage, where its message and the recoveries are.
+        if let Some(section) =
+            settings::startup_section(this.location_error.is_some(), this.location_note.is_some())
+        {
+            this.ui.page = frame::Page::Settings;
+            this.ui.settings.section = section;
         }
         this.reload_instances();
-        if cfg!(feature = "redesign-preview") {
-            // Read only public profile metadata on entry. The ordinary launch and sign-in
-            // actions still read/refresh the selected account when the player requests them.
-            this.perf.keep_local_log(false);
-            // The accounts' faces come from their public skins, with no token or keychain.
-            this.load_profile_heads();
-            this.fetch_startup_releases();
-            return this;
-        }
         if this.bench.is_some() {
             this.perf.keep_local_log(false);
         }
@@ -311,31 +238,6 @@ impl Launcher {
         this.load_auth_statuses(true);
         this.fetch_startup_releases();
         this.fetch_links();
-        if home::getting_ready_preview() {
-            this.preparing = true;
-            this.play_when_prepared = this
-                .selected()
-                .cloned()
-                .zip(this.selected_instance().map(|i| i.id.clone()));
-        }
-        // `SUNRISE_LAUNCHER_PAGE=new-instance`: the dialog open on Modded, for screenshots
-        // (`new-instance-sunrise`, `new-instance-vanilla`: on those).
-        let kind = match std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() {
-            Ok("new-instance") => Some(new_instance::NewKind::Modded),
-            Ok("new-instance-sunrise") => Some(new_instance::NewKind::Sunrise),
-            Ok("new-instance-vanilla") => Some(new_instance::NewKind::Vanilla),
-            _ => None,
-        };
-        if let Some(kind) = kind {
-            this.open_instance_dialog(None);
-            this.pick_kind(kind, cx);
-        }
-        if std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() == Ok("edit-instance") {
-            this.sheet_tab = glass_sheet::SheetTab::from_env().unwrap_or_default();
-            this.open_instance_dialog(this.selected_instance().cloned());
-        }
-        // What the game and the launcher kept, if the player allows it and there is a server.
-        this.mod_preview_from_env();
         telemetry::send_in_background();
         telemetry::watch_playing(this.tx.clone());
         this
@@ -438,29 +340,6 @@ impl Launcher {
                 self.mods.reset_lists();
             }
         }
-        self.close_menus();
-    }
-
-    /// Closes every dropdown and row menu, and says whether one was open: a page switch, the
-    /// palette and Escape each close them (Escape the menu first, then what is under it).
-    pub(crate) fn close_menus(&mut self) -> bool {
-        let open = self.picker.open
-            || self.language_menu
-            || self.mods.browse.sort_menu
-            || self.account_menu
-            || self.version_menu
-            || self.row_menu.open.is_some()
-            || self.home_menu != glass_home::HomeMenu::None
-            || self.list_menu.is_some();
-        self.picker.open = false;
-        self.language_menu = false;
-        self.mods.browse.sort_menu = false;
-        self.account_menu = false;
-        self.version_menu = false;
-        self.row_menu.open = None;
-        self.home_menu = glass_home::HomeMenu::None;
-        self.list_menu = None;
-        open
     }
 
     pub(crate) fn check_updates(&mut self) {
@@ -471,7 +350,7 @@ impl Launcher {
         });
     }
 
-    /// Recovery text shared by both sidebar styles and Settings.
+    /// Recovery text for a launcher update that can't go in: why, or where the copy has to be.
     pub(crate) fn launcher_update_help(&self, error: Option<&str>) -> String {
         if let Some(error) = error {
             return trf("the update failed: {error}", &[("error", error)]);
@@ -566,14 +445,6 @@ impl Launcher {
             .entry(version.to_owned())
             .or_insert_with(|| native_status::Build::read(version))
             .clone()
-    }
-
-    pub(crate) fn fetch_releases(&mut self) {
-        self.releases = Load::Loading;
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(Msg::Releases(backend::releases()));
-        });
     }
 
     pub(crate) fn fetch_startup_releases(&mut self) {

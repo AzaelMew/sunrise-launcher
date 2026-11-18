@@ -3,27 +3,19 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-use sunrise_launcher_scenery::{art, clock, coast, glass, rain, sky};
-mod blocks_chrome;
-mod blocks_play;
+#[cfg(windows)]
+use sunrise_launcher_scenery::coast;
+use sunrise_launcher_scenery::{art, clock, glass};
 mod blocks_settings;
-mod blocks_versions;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
-mod widgets;
 pub(crate) use widgets::*;
-mod agents_page;
-mod alt;
-mod alt_build;
-mod alt_cat;
-mod alt_home;
-mod alt_mods;
-mod alt_settings;
-mod alt_sheets;
 mod blocks;
+mod build;
 mod build_mode;
+mod cat;
 mod cli;
 mod cli_tools;
 mod collection;
@@ -32,35 +24,21 @@ mod console_page;
 mod cull;
 mod datapacks_page;
 mod developer_play;
-mod export_page;
 mod frame;
 mod game_tools;
 mod github_mods_page;
-mod glass_account;
-mod glass_home;
-mod glass_home_lists;
-mod glass_home_mods;
-mod glass_home_packs;
-mod glass_home_tabs;
 mod glass_instance;
 mod glass_instance_java;
-mod glass_mod_states;
-mod glass_palette;
-mod glass_settings;
 mod glass_sheet;
-mod glass_shot_blur;
 mod glass_storage;
 mod glass_toast;
 mod glass_ui;
 mod glass_versions;
 mod home;
-mod home_tabs;
-mod import_page;
 mod instance_icons;
 mod instance_mods;
 mod instances_page;
 mod internet;
-mod island;
 mod jar_launch;
 mod language_page;
 mod launch_page;
@@ -71,17 +49,14 @@ mod mcp;
 mod microsoft;
 mod mod_icons;
 mod modpacks_page;
+mod mods;
 mod mods_page;
 mod mods_project;
 mod motion;
 mod multiplayer_page;
 mod native_consent;
 mod native_log_page;
-mod native_registry_consent;
-mod nav_strip;
 mod new_instance;
-mod outline_frame;
-mod outline_home;
 mod owner_page;
 mod packs_page;
 mod perf;
@@ -91,27 +66,27 @@ mod profile_heads;
 mod screenshots_page;
 mod scrollbar;
 mod servers_page;
+mod settings;
 #[cfg(windows)]
 mod setup_page;
+mod sheets;
 mod shell;
-mod shortcut_page;
-mod specimen;
 mod sticky;
 mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
+mod tokens;
 mod wake;
-mod welcome;
 mod while_playing;
+mod widgets;
 mod window_root;
-mod worlds_page;
 
 use gpui::{
     actions, div, ease_out_quint, prelude::*, px, relative, size, Animation, AnimationExt,
     AnyElement, App, Bounds, ClickEvent, Context, Div, ElementId, FocusHandle, FontWeight, Hsla,
-    KeyBinding, KeyDownEvent, Menu, MenuItem, MouseDownEvent, PathPromptOptions, Pixels, Point,
-    SharedString, Stateful, Subscription, Window, WindowBounds, WindowOptions,
+    KeyBinding, KeyDownEvent, Menu, MenuItem, PathPromptOptions, SharedString, Stateful,
+    Subscription, Window, WindowBounds, WindowOptions,
 };
 use native_consent::PendingConsent;
 use scrollbar::Scrollbar;
@@ -143,23 +118,11 @@ enum Page {
 }
 
 impl Page {
-    /// `SUNRISE_LAUNCHER_PAGE=mods` (or `modpacks`, `resourcepacks`, `shaders`, `servers`, `versions`,
-    /// `settings`) opens on that page, for screenshots; Home otherwise (`getting-ready`: Home
-    /// preparing, `home::getting_ready_preview`; `sign-in`: the owner gate's sheet with a
-    /// made-up code, `owner_page::sign_in_preview`; `new-instance`: Home with the New instance
-    /// dialog open on Modded; `edit-instance`: the selected one's Edit dialog; `worlds`, `packs`...: Home on that tab, `HomeTab::from_env`).
+    /// Home; Settings when the data folder did not open, where the message and the two
+    /// recoveries are.
     fn from_env() -> Page {
-        let page = match std::env::var("SUNRISE_LAUNCHER_PAGE").as_deref() {
-            Ok("mods" | "modpacks" | "resourcepacks" | "shaders" | "datapacks") => Page::Mods,
-            Ok("servers") => Page::Servers,
-            Ok("versions") => Page::Versions,
-            Ok("settings") => Page::Settings,
-            _ => Page::Play,
-        };
-        // The data folder did not open: start on Settings, where the message and the two
-        // recoveries are (an explicit SUNRISE_LAUNCHER_PAGE still wins, for screenshots).
         page_after_startup(
-            page,
+            Page::Play,
             sunrise_launcher::data_location::startup_error().is_some(),
         )
     }
@@ -173,13 +136,6 @@ impl Page {
         (Page::Versions, "Versions", "archive"),
         (Page::Settings, "Settings", "sliders"),
     ];
-
-    /// The pages the top bar shows: all but Settings.
-    fn in_top_bar() -> impl Iterator<Item = (Page, &'static str, &'static str)> {
-        Self::ALL
-            .into_iter()
-            .filter(|(page, ..)| *page != Page::Settings)
-    }
 }
 
 /// The launcher's own update, as the footer and Settings show it.
@@ -200,29 +156,8 @@ enum SelfUpdate {
 /// The last game the launcher started ended badly: what it left behind.
 #[derive(Clone)]
 struct Crash {
-    /// The crash report the run wrote, if it wrote one.
-    report: Option<std::path::PathBuf>,
     /// One line on what went wrong: the report's error, else how the process ended.
     summary: String,
-    copied: bool,
-}
-
-/// The opening: the wordmark holds at least `OPENING_HOLD` (until the release
-/// list is in, at most `OPENING_MAX`), then the launcher appears over `OPENING_REVEAL`.
-const OPENING_HOLD: Duration = sunrise_launcher_theme::OPENING_HOLD;
-const OPENING_MAX: Duration = sunrise_launcher_theme::OPENING_MAX;
-const OPENING_REVEAL: Duration = sunrise_launcher_theme::OPENING_REVEAL;
-
-/// The phase of the opening at one moment: how far the reveal has gone, 0 to 1.
-struct Opening {
-    /// Set on the first frame, so a slow start does not eat into the hold.
-    started: Option<Instant>,
-    reveal: Option<Instant>,
-    focus: FocusHandle,
-}
-
-fn ease_out_cubic(x: f32) -> f32 {
-    sunrise_launcher_theme::ease_out_cubic(x)
 }
 
 enum Load<T> {
@@ -234,7 +169,7 @@ enum Load<T> {
 const LOG_LINES: usize = 2000;
 
 struct Launcher {
-    alt: alt::State,
+    ui: frame::State,
     theme: Theme,
     page: Page,
     /// The page under the glass Settings dialog: the last one shown before it opened.
@@ -246,33 +181,16 @@ struct Launcher {
     settings_pane: gpui::ScrollHandle,
     /// The glass Settings page's search, its focus and whether it has it.
     settings_query: line_edit::LineEdit,
-    settings_query_focus: FocusHandle,
-    settings_query_focused: bool,
-    /// The tags whose "What's new" the glass Versions page shows open; None is the newest's.
-    whats_new_open: Option<std::collections::HashSet<String>>,
-    /// The section the glass Settings list marked when last drawn (`glass_settings`).
-    settings_marked: usize,
-    /// Which Settings sections the pane draws in full (`glass_settings::Culled`).
-    settings_culled: std::cell::Cell<glass_settings::Culled>,
     /// Narrow Settings: the category list is dropped open from the switcher row; it starts folded and folds again on a pick.
     settings_nav_open: bool,
-    /// About's credit picture was asked for, and what came back.
-    credit_asked: bool,
-    /// The Game version dropdown of the instance dialog and sheet is open.
-    version_menu: bool,
-    credit_picture: Option<std::sync::Arc<gpui::Image>>,
-    /// The instance sheet's Storage: which instance was measured, and its size once known.
-    sheet_size: Option<(String, Option<u64>)>,
     /// The Mods page's project card, kept in view beside its list.
     mods_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
     long_list: cull::Cull,
-    opening: Option<Opening>,
     updates: Updates,
     checked: Option<Instant>,
     update_error: Option<String>,
     self_update: SelfUpdate,
-    self_update_hidden: bool,
     /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.
     update_install: Option<String>,
@@ -310,7 +228,6 @@ struct Launcher {
     /// The build asked for (its base and back-up choice) while the permission question is open:
     /// Allow resumes it, not a plain build.
     native_consent_build: Option<(Option<String>, bool)>,
-    disk_for: Vec<String>,
     install_error: Option<(String, String)>,
     /// Import a game build (`build_import`, on the Versions page): whether one is being copied in,
     /// and why the last one failed.
@@ -342,50 +259,16 @@ struct Launcher {
     native_for: Option<String>,
     /// The native mods the build under way (or the last one) was given (`native_build.rs`).
     native_built_mods: Vec<String>,
-    /// Where truncating texts were laid out, for their full-text hover labels (`glass_ui::cut`).
-    rooms: glass_ui::Rooms,
     /// What each installed native build was made from, by version. A build's version names its
     /// contents, so an entry never goes stale.
     native_builds:
         std::cell::RefCell<std::collections::HashMap<String, Option<native_status::Build>>>,
-    /// The top bar's Build log panel (`native_log_page.rs`).
+    /// This attempt's build log (`native_log_page.rs`).
     native_log: native_log_page::NativeLog,
-    confirm_remove: Option<String>,
-    /// The releases whose patch notes the Versions page shows open.
-    notes_open: std::collections::HashSet<String>,
-    /// Versions cards whose "Technical details" are open.
-    technical_open: std::collections::HashSet<String>,
-    picker: glass_home::PickerState,
-    /// Settings' any-colour swatch shows the hue strip (the glass look).
-    accent_strip: bool,
-    /// Where the accent picker's hue strip is on screen (`themes_page.rs`), to map a click to a
-    /// hue.
-    hue_area: std::rc::Rc<std::cell::Cell<Option<Bounds<gpui::Pixels>>>>,
-    /// A drag on that strip is in flight, so a release anywhere writes the accent down.
-    hue_dragging: bool,
-    /// Settings > Language's dropdown (`language_page.rs`).
-    language_menu: bool,
-    /// The top bar's quick switch of who plays (`switch_page.rs`).
-    account_menu: bool,
-    /// The glass sidebar's ⋮ menu (`frame.rs`).
-    row_menu: frame::RowMenu,
-    /// The menus drawn as views of their own (`island.rs`).
-    islands: island::Islands,
-    /// The instance sheet's open section (`glass_sheet.rs`).
-    sheet_tab: glass_sheet::SheetTab,
-    /// The glass look's colours for the player's accent (`sunrise_launcher_theme::glass`).
-    look: sunrise_launcher_theme::glass::Glass,
-    /// Where the mouse went down to close a menu by pressing outside it, so that the
-    /// same press, ending on the menu's own button, doesn't open it again.
-    menu_closed_at: Option<Point<Pixels>>,
-    /// Work the look out again on the next frame (a launcher theme put on or taken off).
-    restyle: bool,
-    /// Why the last picture for Home's background was refused.
-    background_error: Option<String>,
-    /// Settings' data relocation confirmation and the worker's last result.
-    location_target: Option<std::path::PathBuf>,
     location_error: Option<String>,
     location_note: Option<String>,
+    /// The empty folder picked for a data move, until it is confirmed or cancelled.
+    location_target: Option<std::path::PathBuf>,
     settings: Settings,
     /// The last failed settings write, kept across page changes until a save succeeds.
     settings_save_error: Option<String>,
@@ -409,8 +292,6 @@ struct Launcher {
     /// Its Friends over the internet panel (`internet.rs`).
     internet: internet::Internet,
     /// The window's own focus, so Tab reaches the controls when nothing else has the keyboard.
-    /// The palette (⌘K), while open (`glass_palette`).
-    palette: Option<glass_palette::Palette>,
     /// The toast last drawn (`glass_toast`), by its number.
     toast_seen: Option<u64>,
     root_focus: FocusHandle,
@@ -444,9 +325,6 @@ struct Launcher {
     friend_code: line_edit::LineEdit,
     friend_focused: bool,
     friend_focus: FocusHandle,
-    /// The window's width at the last frame: Home's head lays out by it, as the mockup's `xl`.
-    /// The top bar's pages, scrolling sideways when the window is too narrow for them.
-    nav_strip: nav_strip::NavStrip,
     window_width: f32,
     window_height: f32,
     /// The window's longer side in points, and the screen's pixels per point: the size pictures
@@ -470,8 +348,6 @@ struct Launcher {
     proxy_focus: FocusHandle,
     /// Opt-in data collection: the player's answer and Settings' section (`collection`).
     collection: collection::Collection,
-    /// Settings' "Connect an AI agent" (`agents_page`).
-    agents: agents_page::AgentsUi,
     /// How many play Sunrise now, while the server answers ("N playing now" on the Play page).
     playing: Option<u64>,
     tx: Sender<Msg>,
@@ -485,37 +361,16 @@ struct Launcher {
     prepare_started: Option<Instant>,
     /// The download under way as first seen (when, files done), for the time left.
     download_seen: Option<(Instant, usize)>,
-    /// The tab open under Home's hero (`home_tabs.rs`).
-    home_tab: home_tabs::HomeTab,
-    /// Whether `home_tab`'s panel is open beside Home's rail.
-    home_panel: bool,
-    /// Each folded sidebar (left, right): whether the pointer is near it, opening it over the
-    /// page, and since when.
-    side_folds: [Option<(bool, Instant)>; 2],
-    /// Home's Play or folder menu, while open (glass look).
-    home_menu: glass_home::HomeMenu,
-    /// The list row under the pointer in Home's glass tabs (a world, a server): it shows its
-    /// actions then.
-    list_hover: Option<SharedString>,
-    /// A Home list row's ⋯ menu, while open, and whether its Delete… was clicked once.
-    list_menu: Option<(SharedString, bool)>,
     /// The selected instance's mods, for Home's Mods tab (`instance_mods.rs`).
     instance_mods: instance_mods::InstanceMods,
-    /// Debug-build previews of the native mod states (`glass_mod_states.rs`).
-    mod_preview: glass_mod_states::Preview,
-    /// Modrinth projects' icon URLs (`instance_mods.rs`).
-    project_icons: instance_mods::ProjectIcons,
     play_pressed: Option<Instant>,
     /// `sunrise-launcher benchmark` started this window to measure it.
     bench: Option<perf::Bench>,
     /// The Modpacks page: the imported packs (read when the page first opens), the one shown,
     /// the report's filter, and the pipeline step running now with its log.
     packs: Vec<sunrise_launcher::modpacks::Imported>,
-    /// Modpacks installed from Sunrise's registry, each its own profile.
-    registry_packs: Vec<sunrise_launcher::browser::sunrise::pack::Installed>,
     packs_loaded: Option<Instant>,
     pack_open: Option<String>,
-    pack_filter: Option<sunrise_launcher::modpacks::Status>,
     pack_busy: bool,
     pack_log: VecDeque<String>,
     pack_error: Option<String>,
@@ -534,34 +389,17 @@ struct Launcher {
     worlds: worlds_page::Worlds,
     multiplayer: multiplayer_page::Multiplayer,
     screenshots: screenshots_page::Screenshots,
-    shot_blur: glass_shot_blur::ShotBlur,
     /// Pictures from disk made at their drawn size (`picture_cache`).
     pictures: picture_cache::Pictures,
     game_packs: packs_page::Packs,
     world_packs: datapacks_page::WorldPacks,
-    export: Option<export_page::ExportPanel>,
     launch: Option<launch_page::LaunchPanel>,
     /// The memory row on Home.
     memory_slider: launch_page::MemorySlider,
-    importing: import_page::Importing,
-    console: console_page::Console,
     /// What the window did when the game started (`while_playing.rs`).
     aside: while_playing::Aside,
-    /// The selected instance's desktop shortcut (`shortcut_page.rs`).
-    shortcuts: shortcut_page::Shortcuts,
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<sunrise_launcher::servers::Entry>,
-    /// Home's scenery, each its own view, drawn by the backdrop behind the launcher
-    /// (`window_root.rs`): Sunrise's coast, a theme's painted sky, Hypr Neon's rain.
-    coast: gpui::Entity<coast::Coast>,
-    sky: gpui::Entity<sky::SkyView>,
-    rain: gpui::Entity<rain::Rain>,
-    backdrop: gpui::Entity<window_root::Backdrop>,
-    /// Where the page between the sidebars, under the top bar, was laid out last: Home's
-    /// scenery goes there.
-    cover_at: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
-    /// What the views behind the launcher were last handed (`launcher_render.rs`).
-    pushed: Option<launcher_render::Pushed>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }
@@ -572,11 +410,8 @@ actions!(sunrise_launcher, [Quit, CloseWindow]);
 /// exit. A game that is running keeps running. Cmd+Q goes through here too.
 fn shut_down(cx: &mut App) {
     servers_page::stop_on_quit();
-    if !cfg!(feature = "redesign-preview") {
-        telemetry::send_before_exit();
-        // The preview never owns the installed launcher's pending update.
-        sunrise_launcher::update_handoff::forget();
-    }
+    telemetry::send_before_exit();
+    sunrise_launcher::update_handoff::forget();
     cx.quit()
 }
 
@@ -626,14 +461,20 @@ fn main() {
     startup::run();
 }
 
-/// Whether the click `event` began with the mouse-down that closed a menu at `closed_at`.
-/// A keyboard click never did.
-fn closed_by_press(closed_at: Option<Point<Pixels>>, event: &ClickEvent) -> bool {
-    matches!(event, ClickEvent::Mouse(click) if closed_at == Some(click.down.position))
-}
-
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prepare_steps_run_in_their_order() {
+        use sunrise_launcher::backend::PrepareStep::*;
+        assert_eq!(
+            sunrise_launcher::backend::PrepareStep::ALL,
+            [Files, Java, Sounds, Prepare]
+        );
+        for s in sunrise_launcher::backend::PrepareStep::ALL {
+            assert_eq!(sunrise_launcher::backend::PrepareStep::ALL[s as usize], s);
+        }
+    }
+
     #[test]
     fn an_unopenable_data_folder_starts_on_settings_instead_of_exiting() {
         use super::{page_after_startup, Page};
@@ -643,29 +484,6 @@ mod tests {
         ));
         assert!(matches!(page_after_startup(Page::Play, false), Page::Play));
         assert!(matches!(page_after_startup(Page::Mods, true), Page::Mods));
-    }
-
-    #[test]
-    fn a_menu_button_stays_closed_after_the_press_that_closed_its_menu() {
-        use super::closed_by_press;
-        use gpui::{point, px, ClickEvent, KeyboardClickEvent, MouseClickEvent, MouseDownEvent};
-        let click = |x: f32| {
-            ClickEvent::Mouse(MouseClickEvent {
-                down: MouseDownEvent {
-                    position: point(px(x), px(20.)),
-                    ..MouseDownEvent::default()
-                },
-                ..MouseClickEvent::default()
-            })
-        };
-        let closed_at = Some(point(px(10.), px(20.)));
-        // The press on the button that closed the open menu: it stays closed.
-        assert!(closed_by_press(closed_at, &click(10.)));
-        // A later press, or one with no menu closed, toggles as before.
-        assert!(!closed_by_press(closed_at, &click(11.)));
-        assert!(!closed_by_press(None, &click(10.)));
-        let keyboard = ClickEvent::Keyboard(KeyboardClickEvent::default());
-        assert!(!closed_by_press(closed_at, &keyboard));
     }
 
     #[cfg(target_os = "macos")]
@@ -679,69 +497,6 @@ mod tests {
         assert!(hit.iter().any(|b| b.action().partial_eq(&Quit)));
         let (hit, _) = keymap.bindings_for_input(&key("cmd-w"), &[]);
         assert!(hit.iter().any(|b| b.action().partial_eq(&CloseWindow)));
-    }
-
-    #[test]
-    fn a_second_version_can_be_removed_while_another_deletes() {
-        let installed = ["v0.2.97".to_string(), "v0.2.76".to_string()];
-        let removing = ["v0.2.97".to_string()];
-        assert!(super::removable(
-            &installed,
-            None,
-            &removing,
-            &[],
-            "v0.2.76"
-        ));
-        assert!(!super::removable(
-            &installed,
-            None,
-            &removing,
-            &[],
-            "v0.2.97"
-        ));
-        assert!(!super::removable(
-            &installed,
-            Some("v0.2.76"),
-            &[],
-            &[],
-            "v0.2.76"
-        ));
-        assert!(!super::removable(&installed, None, &[], &[], "v0.2.85"));
-    }
-
-    #[test]
-    fn a_version_an_instance_plays_cannot_be_removed() {
-        let installed = ["v0.2.97".to_string(), "v0.2.76".to_string()];
-        assert!(!super::removable(
-            &installed,
-            None,
-            &[],
-            &["Sunrise"],
-            "v0.2.97"
-        ));
-        assert!(super::removable(&installed, None, &[], &[], "v0.2.97"));
-    }
-
-    #[test]
-    fn a_press_on_a_sidebar_row_opens_its_menu_or_closes_it() {
-        let open = |id: &str| Some((id.to_string(), false));
-        assert_eq!(
-            super::row_menu_after_press(None, "Sunrise"),
-            open("Sunrise")
-        );
-        assert_eq!(
-            super::row_menu_after_press(open("Other"), "Sunrise"),
-            open("Sunrise")
-        );
-        assert_eq!(
-            super::row_menu_after_press(open("Sunrise"), "Sunrise"),
-            None
-        );
-        // A Delete… already pressed on another row does not carry over.
-        assert_eq!(
-            super::row_menu_after_press(Some(("Other".into(), true)), "Sunrise"),
-            open("Sunrise")
-        );
     }
 
     #[test]
@@ -774,17 +529,6 @@ mod tests {
         assert_eq!(play_press(false, None, false), PlayPress::Nothing);
         assert_eq!(play_press(false, Some(true), true), PlayPress::Nothing);
         assert_eq!(play_press(true, Some(true), true), PlayPress::Nothing);
-    }
-
-    /// Home's one button never says Play over a click that prepares, or that cannot play.
-    #[test]
-    fn play_says_what_it_will_do() {
-        use super::{play_label, play_press};
-        let say = |prepared, owner| play_label(play_press(prepared, owner, false), owner);
-        assert_eq!(say(true, Some(true)), "Play");
-        assert_eq!(say(false, Some(true)), "Prepare & play");
-        assert_eq!(say(false, Some(false)), "Sign in to play");
-        assert_eq!(say(false, None), "Play");
     }
 
     /// A server's Join (and every other shortcut) waits like Play: not while the version's
@@ -841,15 +585,7 @@ mod tests {
             gpui::MenuItem::Action { name, .. } if name == sunrise_launcher::identity::QUIT_LABEL
         ));
     }
-
-    #[test]
-    fn counts_get_thousands_separators() {
-        let shown: Vec<String> = [0, 7, 999, 1000, 12_300, 1_234_500]
-            .into_iter()
-            .map(super::thousands)
-            .collect();
-        assert_eq!(shown, ["0", "7", "999", "1,000", "12,300", "1,234,500"]);
-    }
 }
 
 mod native_build;
+mod worlds_page;

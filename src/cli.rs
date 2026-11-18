@@ -1012,16 +1012,6 @@ enum Cmd {
     /// Serve the Model Context Protocol on stdin and stdout, for AI agents (refused while No AI
     /// is on)
     Mcp,
-    /// How to connect an AI agent (Claude Code, Codex, Cursor, any MCP client) to `mcp`: the
-    /// config to paste and the command that adds it (refused while No AI is on)
-    AgentConfig {
-        /// Only this client
-        #[arg(long, value_parser = ["claude-code", "codex", "cursor", "generic"])]
-        client: Option<String>,
-        /// Start the MCP server as a client would and say whether it answered
-        #[arg(long)]
-        test: bool,
-    },
     /// Show or set No AI: on hides and turns off every AI feature (the companion, agent control,
     /// sunrise-ctl and both MCP servers); off, the default, makes them available
     NoAi {
@@ -1045,7 +1035,7 @@ pub fn command() -> clap::Command {
 
 /// The commands that exist for AI agents: hidden and refused while No AI is on. Every other
 /// command stays: the launcher, packagers and scripts need them, and none drives the game.
-pub const AI_COMMANDS: [&str; 2] = ["mcp", "agent-config"];
+pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
 const SETTING_KEYS: [&str; 14] = [
@@ -1180,7 +1170,7 @@ pub fn run() -> Option<i32> {
     let cli = Cli::from_arg_matches(&definition.get_matches()).unwrap_or_else(|e| e.exit());
     let command = cli.command?;
     let result = match command {
-        Cmd::Mcp | Cmd::AgentConfig { .. } if no_ai => Err(sunrise_launcher::no_ai::REFUSAL.into()),
+        Cmd::Mcp if no_ai => Err(sunrise_launcher::no_ai::REFUSAL.into()),
         Cmd::Mcp => crate::mcp::serve().map(|()| 0),
         command => {
             let result = execute(command, cli.json);
@@ -1419,7 +1409,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, back_up_worlds, steps, registry_consent) {
+                match native_mods::build(&base, &folder, &target, profile, back_up_worlds, steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1645,47 +1635,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             } else {
                 println!("No AI is off: AI features are available.");
             }
-        }
-        Cmd::AgentConfig { test: true, .. } => {
-            let tools = sunrise_launcher::agents::self_test(&backend::update_target())?;
-            if as_json {
-                json(serde_json::json!({ "answered": true, "tools": tools }));
-            } else {
-                println!("The MCP server answered with {tools} tools.");
-            }
-        }
-        Cmd::AgentConfig { client, .. } => {
-            use sunrise_launcher::agents;
-            let exe = &backend::update_target();
-            if as_json {
-                let mut all = agents::json(exe);
-                if let Some(id) = &client {
-                    all["clients"] = all["clients"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|c| c["id"] == id.as_str())
-                        .cloned()
-                        .collect();
-                }
-                json(all);
-                return Ok(0);
-            }
-            for c in agents::clients(exe)
-                .iter()
-                .filter(|c| client.as_ref().is_none_or(|id| id == c.id))
-            {
-                println!("{}", c.name);
-                if let Some(line) = c.add_line() {
-                    println!("  Add it with:  {line}");
-                }
-                println!("  Or put this in {}:", c.file);
-                for line in c.config.lines() {
-                    println!("    {line}");
-                }
-                println!();
-            }
-            println!("Then ask your agent to say hello: it can call the links tool, or play.");
         }
         Cmd::Settings { key, value } => {
             let mut settings = backend::Settings::load();

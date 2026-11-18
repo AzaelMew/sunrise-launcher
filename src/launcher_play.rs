@@ -72,80 +72,6 @@ impl Launcher {
         });
     }
 
-    /// Deletes an installed version on a background thread: a version is thousands of files and
-    /// the window must keep drawing meanwhile. `Msg::Removed` ends it.
-    pub(crate) fn remove(&mut self, tag: &str) {
-        self.confirm_remove = None;
-        let installing = self.installing.as_ref().map(|(t, _)| t.as_str());
-        if !removable(
-            &self.installed,
-            installing,
-            &self.removing,
-            &self.instances_using(tag),
-            tag,
-        ) {
-            return;
-        }
-        self.install_error = None;
-        self.removing.push(tag.to_string());
-        self.installed.retain(|t| t != tag);
-        self.settings.selected =
-            selection_after_removal(&self.installed, self.settings.selected.take());
-        let (tag, tx) = (tag.to_string(), self.tx.clone());
-        std::thread::spawn(move || {
-            let result = backend::remove_version(&tag);
-            let _ = tx.send(Msg::Removed(tag, result));
-        });
-    }
-
-    /// Asks for a game program (or a zip holding one) and installs it as its own version on a
-    /// thread: a version is thousands of files. `Msg::Imported` ends it.
-    pub(crate) fn import_build(&mut self, cx: &mut Context<Self>) {
-        if !self.can_import_build() {
-            return;
-        }
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some(tr("Import").into()),
-        });
-        cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(mut paths))) = paths.await else {
-                return;
-            };
-            let Some(path) = paths.pop() else {
-                return;
-            };
-            let _ = this.update(cx, |this, cx| {
-                // Another picker's import, or a removal, may have started meanwhile.
-                this.start_build_import(path, cx);
-            });
-        })
-        .detach();
-    }
-    /// Whether a build may be imported now. A removal still running could take
-    /// the folder of the same program imported again.
-    pub(crate) fn can_import_build(&self) -> bool {
-        !self.importing_build && self.removing.is_empty()
-    }
-    /// Starts importing the build at `path` on a thread, as the picker does.
-    /// Separate from [`Self::import_build`] so a file dropped on the window can
-    /// start the same import (`import_dropped`) without a picker. Does nothing
-    /// when one is already running. `Msg::Imported` ends it.
-    pub(crate) fn start_build_import(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        if !self.can_import_build() {
-            return;
-        }
-        self.importing_build = true;
-        self.import_error = None;
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(Msg::Imported(build_import::import(&path, None)));
-        });
-        cx.notify();
-    }
-
     /// Prepares the selected version, its Minecraft files from the player's install or, for an
     /// owner who asks, from Mojang.
     pub(crate) fn prepare(&mut self, from: backend::MinecraftFrom) {
@@ -275,22 +201,6 @@ impl Launcher {
         starts_now(backend::is_prepared(tag), self.preparing, running)
     }
 
-    /// Whether the selected instance's version can start now, from a shortcut (a server's Join,
-    /// a world's Play, a friend's code): Sunrise's only, never a Java instance.
-    pub(crate) fn can_start_selected(&self) -> bool {
-        self.selected_instance().is_none_or(|i| i.java.is_none())
-            && self.selected().is_some_and(|tag| self.can_start(tag))
-    }
-
-    /// Whether a server's Join starts the selected instance now: a Java instance too, as Play
-    /// would (no game running or starting).
-    pub(crate) fn can_join_selected(&self) -> bool {
-        match self.selected_instance() {
-            Some(i) if i.java.is_some() => self.client.is_none() && self.starting_client.is_none(),
-            _ => self.can_start_selected(),
-        }
-    }
-
     /// Starts the game: the session first (a network round trip when the token needs
     /// renewing), then `drain` starts the process when it arrives.
     pub(crate) fn start_client(&mut self, tag: String, instance_id: Option<String>) {
@@ -323,7 +233,7 @@ impl Launcher {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
             backend::complete_assets(&tag);
-            if let Some(auto) = auto.filter(|_| !cfg!(feature = "redesign-preview")) {
+            if let Some(auto) = auto {
                 backend::play_step("updating registry mods");
                 let lines = mods_page::auto_update(&[auto], auto_enabled);
                 if !lines.is_empty() {
@@ -400,29 +310,6 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn refresh_account(&mut self, uuid: String) {
-        let Some(generation) = self.begin_auth_job(&uuid) else {
-            return;
-        };
-        let tx = self.tx.clone();
-        std::thread::spawn(move || {
-            let progress = |phase| {
-                let _ = tx.send(Msg::AccountProgress(uuid.clone(), generation, phase));
-            };
-            progress(account::session::Phase::Keychain);
-            if let Ok(status) = account::session::refresh_with_progress(&uuid, &progress) {
-                let _ = tx.send(Msg::AccountStatus(uuid, generation, status));
-            } else {
-                // It may have been removed through the CLI while this window was open.
-                let _ = tx.send(Msg::AccountRemoved(
-                    uuid,
-                    generation,
-                    Ok(Accounts::load().has_owner(account::store())),
-                ));
-            }
-        });
-    }
-
     /// Generic Add account and targeted re-sign-in share the launcher-owned device-code flow.
     pub(crate) fn start_sign_in(&mut self) {
         self.begin_sign_in(None);
@@ -449,7 +336,7 @@ impl Launcher {
     }
 
     pub(crate) fn cancel_sign_in(&mut self) {
-        if self.alt.after_sign_in.take().is_some() {
+        if self.ui.after_sign_in.take().is_some() {
             self.quick_play = None;
             self.joining = None;
         }

@@ -9,7 +9,9 @@ use sunrise_launcher::themes::{self, Accent};
 use sunrise_launcher_theme as tokens;
 
 pub use tokens::night::{self, Night};
-pub use tokens::{Step, CAPTION, DISPLAY, HEADING, LABEL, MICRO, TITLE, UI, WORDMARK};
+#[cfg_attr(not(windows), allow(unused_imports))] // the Windows setup window
+pub use tokens::MICRO;
+pub use tokens::{Step, UI};
 pub const FONT: &str = night::FONT;
 pub const DISPLAY_FONT: &str = night::DISPLAY_FONT;
 pub const MONO: &str = tokens::MONO;
@@ -19,24 +21,18 @@ pub const PIXEL: &str = night::FONT;
 
 pub use tokens::{BLOCK_BEVEL as BEVEL, BLOCK_LIP as LIP};
 /// Shapes and controls, shared with the game's menus and the website.
-pub use tokens::{CONTROL_LARGE, DISABLED, FIELD, PRESSED, RISE, ROW, SEGMENT};
+pub use tokens::{DISABLED, FIELD, PRESSED};
 
 /// Blocks have square corners: these stay for the places that ask for a radius.
 pub const RADIUS: f32 = 0.;
 pub const RADIUS_PLATE: f32 = 0.;
 /// Buttons are a little taller than the quiet look's, for their lip.
 pub const CONTROL: f32 = 34.;
-/// The top bar, and the sidebar of instances and servers.
-pub const TOPBAR: f32 = 56.;
-pub const SIDEBAR: f32 = 248.;
 pub const PAGE_GUTTER: f32 = 32.;
-/// The widest a page past Home grows; on a wider window it stands centred.
-pub const PAGE_MAX: f32 = 1200.;
 
 /// Motion: short and eased out, never bouncy.
+#[cfg_attr(not(windows), allow(dead_code))] // the Windows setup window
 pub const MOVE: Duration = tokens::MOVE.duration();
-pub const ENTER: Duration = tokens::ENTER.duration();
-pub const STAGGER: Duration = tokens::STAGGER;
 
 #[derive(Clone, Copy)]
 pub struct Theme {
@@ -55,13 +51,9 @@ pub struct Theme {
     pub ink_soft: Hsla,
     pub muted: Hsla,
     pub accent: Hsla,
-    pub on_accent: Hsla,
     pub danger: Hsla,
-    pub success: Hsla,
-    pub warn: Hsla,
     /// The blocky parts (`sunrise_launcher_theme::Blocks`).
     pub side: Hsla,
-    pub panel: Hsla,
     pub raised: Hsla,
     pub button: Hsla,
     pub button_bevel: Hsla,
@@ -182,7 +174,7 @@ impl Theme {
     /// pages not rebuilt for it yet draw with these tokens comes out as the mockup's parts do,
     /// white text and fills at a few opacities, no borders, no bevels.
     fn glass(self, accent: Accent) -> Self {
-        use sunrise_launcher_theme::glass::{fill, ink, Glass, BLUR, DANGER, LIVE, TINT, WARN};
+        use sunrise_launcher_theme::glass::{fill, ink, Glass, BLUR, DANGER, TINT};
         let dark = self.dark;
         // Light: the ink where dark has white, as `glass_ui::white` does.
         let white = |a: f32| {
@@ -203,12 +195,8 @@ impl Theme {
             ink_soft: white(ink::SOFT),
             muted: white(ink::QUIET),
             accent: c(look.accent_soft),
-            on_accent: c(look.on_accent),
             // Light: `glass_ui::danger`, `live` and `warn`'s darker shades.
             danger: c(if dark { DANGER } else { 0xdc2626 }),
-            success: c(if dark { LIVE } else { 0x15803d }),
-            warn: c(if dark { WARN } else { 0xb45309 }),
-            panel: white(0.04),
             raised: white(fill::ROW_HOVER),
             button: white(fill::BUTTON),
             button_bevel: none,
@@ -239,12 +227,8 @@ impl Theme {
             ink_soft: c(p.ink_soft),
             muted: c(p.muted),
             accent: c(p.accent),
-            on_accent: c(p.on_face),
             danger: c(p.danger),
-            success: c(p.success),
-            warn: c(p.warn),
             side: c(p.side),
-            panel: c(p.panel),
             raised: c(p.raised),
             button: c(p.button),
             button_bevel: c(p.button_bevel),

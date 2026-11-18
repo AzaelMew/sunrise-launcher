@@ -1,5 +1,7 @@
 //! Settings' two-step data move. Only the separate worker copies data, after this process exits.
 use super::*;
+use crate::frame::button;
+use crate::settings::{hint, off, row, warning};
 
 fn env_value(key: &str) -> Option<String> {
     std::env::var_os(key)
@@ -59,12 +61,9 @@ impl Launcher {
             || (self.sign_in.is_some() && !matches!(self.sign_in_state, Some(SignInState::Done(_))))
             || matches!(self.self_update, SelfUpdate::Downloading(..))
             || self.servers.location_busy()
-            || self.importing.location_busy()
             || self.github.busy()
-            || self.worlds.location_busy()
-            || self.instances.location_busy()
+            || self.instances.dialog.as_ref().is_some_and(|d| d.busy)
             || self.internet.location_busy()
-            || self.export.as_ref().is_some_and(|p| p.location_busy())
     }
 
     fn location_blocked(&self) -> Option<String> {
@@ -190,78 +189,51 @@ impl Launcher {
         }
     }
 
-    pub(super) fn location_row(&self, n: usize, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
+    /// Where the data lives: the folder, Open and Move…, the way to recover when it can't be
+    /// opened (Retry, Use the default folder), and the move's confirmation.
+    pub(super) fn location_row(&self, cx: &mut Context<Self>) -> Div {
         let blocked = self.location_blocked();
-        let move_button = button("move-data", "Move…", Kind::Secondary, &t);
+        let move_button = button("alt-move-data", tr("Move…"));
         let move_button = if blocked.is_some() {
-            disabled(move_button)
+            off(move_button)
         } else {
             move_button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.choose_location(cx);
             }))
         };
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .min_w_0()
-            .gap(px(8.))
-            .child(index_row(
-                n,
-                tr("Data folder"),
-                Some(div().font_family(theme::MONO).child(short(&backend::data_dir())).into_any_element()),
-                Some(
-                    div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(
-                            button("about-open-data", "Open", Kind::Secondary, &t).on_click(
-                                |_, _, cx| crate::glass_toast::open(cx, &backend::data_dir()),
-                            ),
-                        )
-                        .child(move_button)
-                        .into_any_element(),
-                ),
-                &t,
-            ))
-            // Under the row, in line with its title and wrapped inside the card.
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .min_w_0()
-                    .when(glass_ui::flat(), |d| d.px(px(16.)).pb(px(8.)))
-                    .child(text(theme::CAPTION).text_color(t.muted).child(tr(
-                        "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.",
-                    ).to_string()))
-                    .child(text(theme::CAPTION).text_color(t.muted).child(tr(
-                        "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.",
-                    ).to_string()))
-                    .children(blocked.map(|message| text(theme::CAPTION).text_color(t.warn).child(message)))
-                    .children(self.location_note.as_ref().map(|message| {
-                        text(theme::CAPTION).text_color(t.ink).child(message.clone())
-                    }))
-                    .children(self.location_error.as_ref().map(|message| {
-                        text(theme::CAPTION).text_color(t.danger).child(message.clone())
-                    })),
-            );
+        let mut body = div().flex().flex_col().gap(px(10.)).child(row(
+            tr("Data folder"),
+            short(&backend::data_dir()),
+            div()
+                .child(
+                    button("alt-open-data", tr("Open folder"))
+                        .on_click(|_, _, cx| crate::glass_toast::open(cx, &backend::data_dir())),
+                )
+                .child(move_button),
+        ));
+        body = body
+            .child(hint(tr(
+                "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.",
+            )))
+            .child(hint(tr(
+                "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.",
+            )))
+            .children(blocked.map(warning))
+            .children(self.location_note.clone().map(hint))
+            .children(self.location_error.clone().map(warning));
         if sunrise_launcher::data_location::startup_error().is_some() {
             body = body.child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .gap(px(8.))
-                    .child(
-                        button("retry-data-location", "Retry", Kind::Primary, &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.retry_location(cx)),
-                        ),
-                    )
+                    .child(button("alt-retry-data-location", tr("Retry")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| this.retry_location(cx)),
+                    ))
                     .child(
                         button(
-                            "use-default-data-location",
-                            "Use the default folder",
-                            Kind::Secondary,
-                            &t,
+                            "alt-use-default-data-location",
+                            tr("Use the default folder"),
                         )
                         .on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
@@ -272,9 +244,9 @@ impl Launcher {
             );
         }
         if let Some(target) = &self.location_target {
-            let confirm = button("confirm-move-data", "Move and restart", Kind::Primary, &t);
+            let confirm = button("alt-confirm-move-data", tr("Move and restart"));
             let confirm = if self.location_blocked().is_some() {
-                disabled(confirm)
+                off(confirm)
             } else {
                 confirm.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.confirm_location(cx);
@@ -285,23 +257,21 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .p(px(12.))
-                    .bg(t.well)
-                    .child(text(theme::UI).child(trf(
+                    .child(div().child(trf(
                         "Move all data to {path}?",
                         &[("path", &target.display().to_string())],
                     )))
                     .child(div().flex().gap(px(8.)).child(confirm).child(
-                        button("cancel-move-data", "Cancel", Kind::Secondary, &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                        button("alt-cancel-move-data", tr("Cancel")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
                                 this.location_target = None;
                                 this.location_error = None;
                                 cx.notify();
-                            }),
-                        ),
+                            },
+                        )),
                     )),
             );
         }
-        body.mb(px(16.))
+        body
     }
 }

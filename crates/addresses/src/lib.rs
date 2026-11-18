@@ -1,8 +1,5 @@
 //! The outside addresses the launcher has built in, vanilla's aside, in one place.
 
-/// The players' page on connecting an AI agent (the website's docs/agents.md).
-pub const AGENT_DOCS: &str = "https://playsunrise.net/docs/agents";
-
 /// The mod registry's policy, which the launcher's mod pages link.
 pub const MOD_POLICY: &str = "https://playsunrise.net/mods/policy";
 

@@ -56,23 +56,19 @@ fn run_launcher() {
     }
     // A Sunrise build's first start copies the settings, accounts and instances of the launcher
     // before it into its own folders, before anything reads them.
-    if !cfg!(feature = "redesign-preview") {
-        sunrise_launcher::carry_over::at_start();
-    }
+    sunrise_launcher::carry_over::at_start();
     // A broken location must still open a window: startup() falls back to the default
     // folders and records the error, which Settings shows with Retry and Use the default folder.
     // It keeps the migration lease for the life of the process.
     let _location_error = sunrise_launcher::data_location::startup();
     perf::process_started();
     backend::exe_path();
-    if !cfg!(feature = "redesign-preview") {
-        if let Some(code) = sunrise_launcher::update_handoff::run() {
-            std::process::exit(code);
-        }
-        #[cfg(windows)]
-        backend::remove_replaced_binaries();
-        backend::cleanup_launcher_updates();
+    if let Some(code) = sunrise_launcher::update_handoff::run() {
+        std::process::exit(code);
     }
+    #[cfg(windows)]
+    backend::remove_replaced_binaries();
+    backend::cleanup_launcher_updates();
     // What the launcher downloads goes through the player's proxy, if they set one: the parts
     // that build their own agents (`sunrise-port-pack`) are told before anything starts.
     sunrise_launcher::proxy::announce(sunrise_launcher::backend::Settings::load().proxy);
@@ -138,11 +134,7 @@ fn run_launcher() {
             }
             #[cfg(not(windows))]
             let _ = setup_window;
-            let extent = if cfg!(feature = "redesign-preview") {
-                size(px(1280.), px(800.))
-            } else {
-                size(px(1180.), px(760.))
-            };
+            let extent = size(px(1280.), px(800.));
             let bounds = Bounds::centered(None, extent, cx);
             cx.open_window(
                 WindowOptions {
@@ -168,39 +160,4 @@ fn run_launcher() {
             cx.on_window_closed(|cx, _| shut_down(cx)).detach();
             cx.activate(true);
         });
-}
-
-/// Every family and weight the launcher draws text in.
-const DRAWN_FAMILIES: [&str; 5] = [
-    sunrise_launcher_theme::FONT,
-    sunrise_launcher_theme::MONO,
-    sunrise_launcher_theme::night::FONT,
-    sunrise_launcher_theme::glass::DISPLAY_FONT,
-    sunrise_launcher_theme::glass::HEADING_FONT,
-];
-const DRAWN_WEIGHTS: [FontWeight; 4] = [
-    FontWeight::NORMAL,
-    FontWeight::MEDIUM,
-    FontWeight::SEMIBOLD,
-    FontWeight::BOLD,
-];
-
-/// Prepares every font the launcher draws in, on a worker after the first frame. A family and
-/// weight first used mid-frame (a dialog's bold heading, a menu's mono line) otherwise matches
-/// its fallbacks against the system's fonts there, on the UI thread: opening the New instance
-/// dialog the first time took 50 ms, 12 of them shaping 39 lines. One font at a time, so the
-/// frames meanwhile never wait long for the text system.
-pub(super) fn prewarm_fonts(cx: &App) {
-    let text = cx.text_system().clone();
-    cx.background_spawn(async move {
-        for family in DRAWN_FAMILIES {
-            for weight in DRAWN_WEIGHTS {
-                text.prewarm_fonts(&[gpui::Font {
-                    weight,
-                    ..gpui::font(family)
-                }]);
-            }
-        }
-    })
-    .detach();
 }

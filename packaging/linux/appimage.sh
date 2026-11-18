@@ -27,10 +27,9 @@ appdir=$work/AppDir
 mkdir -p "$appdir/usr/bin" "$appdir/usr/lib" \
   "$appdir/usr/share/applications" "$appdir/usr/share/icons"
 
-# Both source licences travel inside the image.
-mkdir -p "$appdir/LICENSES"
+# The licence and the notices of everything embedded travel inside the image.
 cp "$repo/LICENSE" "$appdir/LICENSE"
-cp "$repo/LICENSES/MIT-Horizon.txt" "$appdir/LICENSES/"
+"$repo/packaging/copy-notices.sh" "$repo" "$appdir/LICENSES"
 
 # The program.
 cp "$binary" "$appdir/usr/bin/sunrise-launcher"

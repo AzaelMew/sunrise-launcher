@@ -493,9 +493,8 @@ file, so a test never touches the real trash or clipboard.
 
 ## AI agents (MCP)
 
-`sunrise-launcher mcp` is a Model Context Protocol server over stdio. `sunrise-launcher
-agent-config` prints the config for Claude Code, Codex, Cursor and any MCP client, and the
-command that adds it; for Claude Code:
+`sunrise-launcher mcp` is a Model Context Protocol server over stdio. To add it to an MCP client;
+for Claude Code:
 
     claude mcp add --scope user sunrise -- sunrise-launcher mcp
 
@@ -520,7 +519,7 @@ version's `sunrise-ctl mcp` and passes the calls through; while no game runs, th
 error saying to call `play`.
 
 `sunrise-launcher no-ai on` (the Settings page's No AI switch) hides and turns off every AI
-feature: `mcp` and `agent-config` refuse, the game opens no control socket and `sunrise-ctl`
+feature: `mcp` refuses, the game opens no control socket and `sunrise-ctl`
 refuses. Every other command keeps working.
 
 The window, the command line and the MCP server all call the same core, `src/backend.rs`.
