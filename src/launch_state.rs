@@ -382,7 +382,9 @@ impl Launcher {
     pub(crate) fn launch_facts(&self) -> Facts {
         let active = self.selected_instance();
         let launch = self.ui.home.mods.launch();
-        let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
+        let held = self.held_for_launch(
+            launch.and_then(|summary| summary.update_check.as_ref().map(|(_, key)| key.as_str())),
+        );
         let follows_nightly =
             active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
         Facts {

@@ -13,7 +13,7 @@ use super::*;
 use crate::frame::{Page, Reach as _};
 use crate::paint::palette;
 use crate::settings::Section;
-use crate::sheets::Sheet;
+use crate::sheets::{Layer, Sheet};
 use gpui::{rgb, MouseButton, MouseDownEvent, Pixels};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -225,28 +225,67 @@ impl Launcher {
         if !shows(self.ui.sheet, self.owner_screen_open) {
             return None;
         }
+        let visual = self.ui.sheets.visual(Layer::Sheet(Sheet::AccountMenu));
+        let card = self.account_card(visual.opacity(), visual.anchored_top(0.), true, cx);
+        Some(
+            div()
+                .id("account-menu")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .on_scroll(|_, _, cx| cx.stop_propagation())
+                .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                    let back = match ev.keystroke.key.as_str() {
+                        "down" => false,
+                        "up" => true,
+                        _ => return,
+                    };
+                    this.step_in_layer(back, window, cx);
+                    cx.stop_propagation();
+                }))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                        this.close_sheet();
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .child(card),
+        )
+    }
+
+    /// The same card paints during dismissal, but as plain layout without any actions,
+    /// focus or scrolling handlers.
+    pub(super) fn account_card(
+        &self,
+        alpha: f32,
+        lift: f32,
+        live: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let rows = rows(&self.accounts);
         let mut list = div()
             .id("account-menu-list")
             .flex()
             .flex_col()
             .min_h_0()
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("account-menu"));
+            .when(live, |d| {
+                d.overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("account-menu"))
+            })
+            .when(!live, |d| d.overflow_hidden());
         for (n, row) in rows.into_iter().enumerate() {
             let uuid = row.uuid.clone();
             list = list.child(
                 div()
                     .id(ElementId::named_usize("account-menu-play-as", n))
-                    .reach()
                     .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(10.))
                     .h(px(tokens::ACTION))
                     .px(px(8.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(palette().hover)))
                     .child(self.face(&row.uuid))
                     .child(
                         div()
@@ -259,39 +298,47 @@ impl Launcher {
                     .children(row.plays.then(|| {
                         crate::glass_ui::icon("tick-02", 16., rgb(palette().accent_ink).into())
                     }))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.account_action(Action::PlayAs(uuid.clone()));
-                        cx.notify();
-                    })),
+                    .when(live, |d| {
+                        d.reach()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(rgb(palette().hover)))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.account_action(Action::PlayAs(uuid.clone()));
+                                cx.notify();
+                            }))
+                    }),
             );
         }
         let act = |id: &'static str, icon: &'static str, label: &str, action: Action| {
             div()
                 .id(id)
-                .reach()
                 .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(10.))
                 .h(px(tokens::FIELD))
                 .px(px(8.))
-                .cursor_pointer()
                 .text_size(px(tokens::LABEL))
-                .hover(|s| s.bg(rgb(palette().hover)))
                 .child(div().flex_none().w(px(FACE)).flex().justify_center().child(
                     crate::glass_ui::icon(icon, 16., rgb(palette().muted).into()),
                 ))
                 .child(label.to_string())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.account_action(action.clone());
-                    cx.notify();
-                }))
+                .when(live, |d| {
+                    d.reach()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(palette().hover)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.account_action(action.clone());
+                            cx.notify();
+                        }))
+                })
         };
         let (top, right) = place(self.account_menu.chip.get(), self.window_width);
-        let card = div()
+        div()
             .absolute()
-            .top(px(top))
+            .top(px(top + lift))
             .right(px(right))
+            .opacity(alpha)
             .w(px(MENU_WIDTH))
             .max_w(px((self.window_width - 2. * EDGE).max(0.)))
             .max_h(px((self.window_height - top - EDGE).max(0.)))
@@ -304,8 +351,10 @@ impl Launcher {
             .bg(rgb(palette().raised))
             .text_color(rgb(palette().text))
             .shadow_lg()
-            .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
-                cx.stop_propagation()
+            .when(live, |d| {
+                d.on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
+                    cx.stop_propagation()
+                })
             })
             .child(
                 div()
@@ -344,33 +393,7 @@ impl Launcher {
                 "sliders-horizontal",
                 tr("Settings"),
                 Action::Settings,
-            ));
-        Some(
-            div()
-                .id("account-menu")
-                .absolute()
-                .inset_0()
-                .occlude()
-                .on_scroll(|_, _, cx| cx.stop_propagation())
-                // On the layer, which has the keyboard until a row does.
-                .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                    let back = match ev.keystroke.key.as_str() {
-                        "down" => false,
-                        "up" => true,
-                        _ => return,
-                    };
-                    this.step_in_layer(back, window, cx);
-                    cx.stop_propagation();
-                }))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                        this.close_sheet();
-                        cx.notify();
-                    }),
-                )
-                .child(card),
-        )
+            ))
     }
 }
 

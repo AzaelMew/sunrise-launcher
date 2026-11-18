@@ -456,7 +456,7 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(self.search_button(cx))
+                    .child(self.search_button(expansion, cx))
                     .child(self.account_chip(cx)),
             )
     }
@@ -640,7 +640,7 @@ impl Launcher {
                     ),
             );
         // What lies over the page, bottom to top. The top one has the keyboard (`modal`).
-        let scrim_exit = self.layer_motion(page_changed, &motion, window);
+        let afterimage = self.layer_motion(page_changed, &motion, window, cx);
         self.versions_focus(window);
         let create = (page == Page::Hosting)
             .then(|| self.hosting_create(cx))
@@ -655,7 +655,7 @@ impl Launcher {
         let top = self.modal(layers.pop(), window, cx);
         frame = frame
             .children(self.toast())
-            .children(scrim_exit)
+            .children(afterimage)
             .children(layers)
             .children(top);
         self.pictures.free_retired(window);

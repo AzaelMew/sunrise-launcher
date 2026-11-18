@@ -120,7 +120,7 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 17] = [
+const SETTINGS_ROWS: &[(&str, Section)] = &[
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
@@ -131,6 +131,7 @@ const SETTINGS_ROWS: [(&str, Section); 17] = [
     ("Worlds on Home", Section::Appearance),
     ("Your themes", Section::Appearance),
     ("Show the cat", Section::Appearance),
+    ("Reduce motion", Section::Appearance),
     ("Native code", Section::Mods),
     ("Game files and worlds", Section::Storage),
     ("World backups", Section::Storage),
@@ -165,7 +166,7 @@ pub(crate) fn destinations() -> Vec<Entry> {
             Page::Settings,
         )
     }));
-    all.extend(SETTINGS_ROWS.map(|(title, section)| Entry {
+    all.extend(SETTINGS_ROWS.iter().map(|&(title, section)| Entry {
         group: Group::Settings,
         label: tr(title).to_string(),
         hint: under("Settings", section.label()),
@@ -432,6 +433,7 @@ impl Launcher {
             return;
         }
         self.close_sheet();
+        self.ui.sheets.dismissed = None;
         match target {
             Target::Page(page) => self.navigate(page),
             Target::Section(section) => {
@@ -461,14 +463,12 @@ impl Launcher {
     /// The top bar's way in: a field to press. Its key is shown whole where the bar has room
     /// for it and not at all where it has not; on a narrow window the field is its icon alone,
     /// with the word as its tooltip.
-    pub(crate) fn search_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        // The expanded sidebar takes this much from the bar.
-        let bar = self.window_width
-            - if self.settings.sidebar_expanded {
-                150.
-            } else {
-                0.
-            };
+    pub(crate) fn search_button(
+        &mut self,
+        expansion: f32,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let bar = self.window_width - 150. * expansion;
         let compact = bar < COMPACT_BELOW;
         let badge = bar >= BADGE_FROM;
         let keys = keys("K");
@@ -708,7 +708,12 @@ impl Launcher {
         }
 
         let top = (self.window_height * 0.12).max(16.);
+        let visual = self
+            .ui
+            .sheets
+            .visual(crate::sheets::Layer::Sheet(Sheet::Search));
         let card = div()
+            .opacity(visual.opacity())
             .w(px(WIDTH))
             .max_w_full()
             .max_h(px((self.window_height - top - 32.).max(0.)))
@@ -748,12 +753,13 @@ impl Launcher {
             .items_start()
             .pt(px(top))
             .px(px(16.))
-            .bg(palette().scrim())
+            .bg(visual.scrim(palette().scrim()))
             .on_scroll(|_, _, cx| cx.stop_propagation())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _, cx| {
                     this.close_sheet();
+                    cx.stop_propagation();
                     cx.notify();
                 }),
             )

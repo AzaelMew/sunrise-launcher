@@ -5,7 +5,7 @@ use gpui::{
 };
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use sunrise_launcher_theme as tokens;
 
 pub(super) const FAST: tokens::Motion = tokens::Motion {
@@ -261,6 +261,7 @@ pub fn knob(id: &str, on: bool, knob: Div, left: f32, travel: f32) -> AnyElement
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn a_hover_left_halfway_turns_around_where_it_got_to() {

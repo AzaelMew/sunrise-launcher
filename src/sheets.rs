@@ -72,8 +72,16 @@ impl Layer {
         )
     }
 
-    fn leaves_scrim(self) -> bool {
-        self.rises() && self != Self::Sheet(Sheet::ModBuild)
+    fn enters_with(self) -> sunrise_launcher_theme::Motion {
+        match self {
+            Self::Sheet(Sheet::AccountMenu | Sheet::Build | Sheet::Search) => motion::FAST,
+            _ => motion::STANDARD,
+        }
+    }
+
+    fn leaves_scrim(self, dismissed: Option<Sheet>) -> bool {
+        (self.rises() && self != Self::Sheet(Sheet::ModBuild))
+            || (self == Self::Sheet(Sheet::Search) && dismissed == Some(Sheet::Search))
     }
 }
 
@@ -86,6 +94,14 @@ pub(crate) struct Visual {
 }
 
 impl Visual {
+    pub(crate) fn opacity(self) -> f32 {
+        motion::arrival_opacity(self.progress)
+    }
+
+    pub(crate) fn anchored_top(self, top: f32) -> f32 {
+        top - motion::ANCHOR * (1. - self.progress)
+    }
+
     pub(crate) fn scrim(self, tint: gpui::Hsla) -> gpui::Hsla {
         tint.opacity(self.progress)
     }
@@ -106,6 +122,7 @@ struct Presentation {
     stack: [Option<Layer>; 5],
     entering: Option<Tween>,
     scrim_exit: Option<Tween>,
+    account_exit: Option<Tween>,
     progress: f32,
 }
 
@@ -138,6 +155,7 @@ pub(crate) struct SheetsState {
     before: Option<FocusHandle>,
     pub(super) layered: bool,
     presentation: Presentation,
+    pub(super) dismissed: Option<Sheet>,
     registry: Option<(Consent, Sender<bool>)>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
@@ -416,6 +434,12 @@ impl Launcher {
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
+        self.ui.sheets.dismissed =
+            if self.ui.sheets.registry.is_none() && self.pending_consent.is_none() {
+                self.ui.sheet
+            } else {
+                None
+            };
         if let Some((_, reply)) = self.ui.sheets.registry.take() {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
@@ -497,10 +521,14 @@ impl Launcher {
         if native_status::enabled(&instance.home).is_empty() {
             return CheckState::None;
         }
+        let key = check_key(&instance.home, &to);
+        self.check_state_for(to, &key)
+    }
+
+    fn check_state_for(&self, to: String, key: &str) -> CheckState {
         if self.settings.native_mods_allowed_at.is_none() {
             return CheckState::NeedsPermission(to);
         }
-        let key = check_key(&instance.home, &to);
         match self
             .ui
             .sheets
@@ -567,6 +595,7 @@ impl Launcher {
         page_changed: bool,
         time: &Frame,
         window: &Window,
+        cx: &mut Context<Self>,
     ) -> Option<Div> {
         let stack = [
             (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
@@ -581,32 +610,38 @@ impl Launcher {
             self.owner_screen_open.then_some(Layer::SignIn),
         ];
         let layer = stack.iter().flatten().next_back().copied();
+        let dismissed = self.ui.sheets.dismissed.take();
         let p = &mut self.ui.sheets.presentation;
         let prior = p.stack.iter().flatten().next_back().copied();
         if layer != prior {
-            p.scrim_exit = (layer.is_none() && prior.is_some_and(Layer::leaves_scrim)).then(|| {
-                Tween::new(
-                    time.now,
-                    p.entering.map_or(1., |t| t.value(time.now, time.enabled)),
-                    0.,
-                    motion::FAST,
-                )
-            });
+            let from = p.entering.map_or(1., |t| t.value(time.now, time.enabled));
+            p.scrim_exit = (layer.is_none()
+                && prior.is_some_and(|kind| kind.leaves_scrim(dismissed)))
+            .then(|| Tween::new(time.now, from, 0., motion::FAST));
+            p.account_exit = (layer.is_none()
+                && prior == Some(Layer::Sheet(Sheet::AccountMenu))
+                && dismissed == Some(Sheet::AccountMenu))
+            .then(|| Tween::new(time.now, motion::arrival_opacity(from), 0., motion::FAST));
             p.entering = layer
                 .filter(|kind| !p.stack.contains(&Some(*kind)))
-                .map(|_| Tween::new(time.now, 0., 1., motion::STANDARD));
+                .map(|kind| Tween::new(time.now, 0., 1., kind.enters_with()));
         }
         p.stack = stack;
         if page_changed {
             p.scrim_exit = None;
+            p.account_exit = None;
         }
         p.progress = time.sample(&mut p.entering, window).unwrap_or(1.);
-        time.sample(&mut p.scrim_exit, window).map(|alpha| {
-            div()
-                .absolute()
-                .inset_0()
-                .bg(palette().scrim().opacity(alpha))
-        })
+        if let Some(alpha) = time.sample(&mut p.scrim_exit, window) {
+            return Some(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(palette().scrim().opacity(alpha)),
+            );
+        }
+        time.sample(&mut p.account_exit, window)
+            .map(|alpha| self.account_card(alpha, 0., false, cx))
     }
 
     /// Reads what has the keyboard, before this frame moves it: see [`Self::modal`].
@@ -1219,7 +1254,15 @@ impl Launcher {
 
     /// The Build sheet's native-mod compatibility section: the explicit check and where it stands.
     fn native_check_block(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        let state = self.check_state();
+        let state = self
+            .ui
+            .home
+            .mods
+            .launch()
+            .and_then(|summary| summary.update_check.as_ref())
+            .map_or(CheckState::None, |(to, key)| {
+                self.check_state_for(to.clone(), key)
+            });
         let block = |lines: Vec<Div>| {
             div()
                 .flex()
@@ -1333,28 +1376,56 @@ impl Launcher {
         }
     }
 
+    fn follow_targets(&self) -> (bool, Option<&String>, Option<&String>) {
+        let builds = self.stable_builds();
+        let nightly = self.launcher_version();
+        let stable = builds
+            .iter()
+            .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
+            .or(nightly);
+        (builds.iter().any(|b| b.week.is_none()), nightly, stable)
+    }
+
+    fn choose_follow_build(&mut self, channel: instances::Channel) {
+        let Some(instance) = self.selected_instance() else {
+            return;
+        };
+        let (_, nightly, stable) = self.follow_targets();
+        let target = if channel == instances::Channel::Nightly {
+            nightly
+        } else {
+            stable
+        };
+        // Check the live bundles here: the painted inventory can be one refresh behind.
+        if target != self.version_of(instance) && !native_status::enabled(&instance.home).is_empty()
+        {
+            self.ui.sheets.error =
+                Some(tr("Check your native mods against that build first.").into());
+            return;
+        }
+        self.pin_build(None, channel);
+    }
+
     fn build_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let Some(instance) = self.selected_instance() else {
             return div().id("alt-build");
         };
         let pinned = instance.version.clone();
         let plays = self.version_of(instance).cloned();
-        let stable = self.stable_builds().iter().any(|b| b.week.is_none());
-        // A different build under native mods is never activated from here: those mods have to be
-        // checked against it first (the check button), and the build that follows protects worlds.
-        let has_native = !native_status::enabled(&instance.home).is_empty();
-        let nightly_target = self.launcher_version().cloned();
-        let stable_target = self
-            .stable_builds()
-            .iter()
-            .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
-            .cloned()
-            .or_else(|| nightly_target.clone());
-        let gated = |target: &Option<String>| has_native && *target != plays;
+        let (stable, nightly_target, stable_target) = self.follow_targets();
+        // Use the same prepared inventory as Play. Keep new targets unavailable while
+        // the first scan is in flight; animation frames must not re-open bundles.
+        let scanned = self
+            .ui
+            .home
+            .mods
+            .launch()
+            .map(|inventory| inventory.native_enabled);
+        let gated = |target: Option<&String>| scanned != Some(false) && target != plays.as_ref();
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
-        let nightly_gated = !follow_nightly && gated(&nightly_target);
-        let stable_gated = !follow_stable && gated(&stable_target);
+        let nightly_gated = !follow_nightly && gated(nightly_target);
+        let stable_gated = !follow_stable && gated(stable_target);
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
@@ -1404,7 +1475,7 @@ impl Launcher {
             })
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Nightly);
+                    this.choose_follow_build(instances::Channel::Nightly);
                     cx.notify();
                 }))
             }),
@@ -1426,7 +1497,7 @@ impl Launcher {
             })
             .when(!stable_off, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Stable);
+                    this.choose_follow_build(instances::Channel::Stable);
                     cx.notify();
                 }))
             }),
@@ -1450,7 +1521,7 @@ impl Launcher {
         );
         // Said once, and only when native mods stop a choice above; the check sits with it.
         let native = self.native_check_block(cx).or_else(|| {
-            (nightly_gated || stable_gated).then(|| {
+            (scanned == Some(true) && (nightly_gated || stable_gated)).then(|| {
                 muted(tr(
                     "Your native mods are made for the build you play. Another build needs them checked first.",
                 ))
@@ -1510,6 +1581,8 @@ impl Launcher {
             }));
         // A popover under Home's build picker: the scrim is clear.
         let (left, top) = self.ui.home.chooser_at();
+        let visual = self.ui.sheets.visual(Layer::Sheet(Sheet::Build));
+        let top = top.min((self.window_height - 132.).max(12.));
         let width = 372_f32.min(self.window_width - 24.);
         div()
             .id("alt-build")
@@ -1527,11 +1600,13 @@ impl Launcher {
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _, cx| {
                     this.close_sheet();
+                    cx.stop_propagation();
                     cx.notify();
                 }),
             )
             .child(
                 body.id("alt-build-body")
+                    .opacity(visual.opacity())
                     .absolute()
                     // Never taller than the room under the picker: a long list scrolls.
                     .max_h(px((self.window_height - top - 12.).max(120.)))
@@ -1539,7 +1614,7 @@ impl Launcher {
                     .track_scroll(&crate::frame::scrolls("build-list"))
                     // Inside the window, however narrow it is.
                     .left(px(left.min(self.window_width - width - 12.).max(12.)))
-                    .top(px(top))
+                    .top(px(visual.anchored_top(top)))
                     .w(px(width))
                     .p(px(14.))
                     .rounded(px(tokens::R_CARD))

@@ -284,7 +284,9 @@ struct Query {
 #[derive(Default)]
 pub(crate) struct LaunchSummary {
     pub(crate) mods_off: usize,
-    pub(crate) update_check: Option<String>,
+    pub(crate) native_enabled: bool,
+    /// The target build and the fingerprint of the actual bundle inventory checked against it.
+    pub(crate) update_check: Option<(String, String)>,
 }
 
 #[derive(Default)]
@@ -317,12 +319,13 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
         .version
         .as_deref()
         .and_then(native_status::Build::read);
+    let native_enabled = !native_status::enabled(&query.home).is_empty();
     let update_check = build
         .as_ref()
         .zip(query.newest.as_deref())
         .filter(|(build, next)| backend::compare_versions(next, &build.base).is_gt())
-        .filter(|_| !native_status::enabled(&query.home).is_empty())
-        .map(|(_, next)| crate::sheets::check_key(&query.home, next));
+        .filter(|_| native_enabled)
+        .map(|(_, next)| (next.to_owned(), crate::sheets::check_key(&query.home, next)));
     let left_out = match build {
         Some(build) => build.left_out,
         None => query.version.as_deref().map_or_else(Vec::new, |version| {
@@ -349,6 +352,7 @@ fn read_changed(query: &Query, known: &str) -> Option<(String, Snapshot)> {
             column: column(items),
             launch: LaunchSummary {
                 mods_off,
+                native_enabled,
                 update_check,
             },
         },
