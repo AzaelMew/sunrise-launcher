@@ -76,6 +76,7 @@ mod switch_page;
 mod theme;
 mod themes_page;
 mod titlebar;
+mod tokens;
 mod wake;
 mod while_playing;
 mod widgets;

@@ -4,16 +4,7 @@ use super::*;
 use crate::sheets::Sheet;
 use gpui::rgb;
 
-pub(super) const BG: u32 = 0x191617;
-pub(super) const CARD: u32 = 0x221e1f;
-pub(super) const LINE: u32 = 0x453d3d;
-pub(super) const TEXT: u32 = 0xf3ede6;
-pub(super) const MUTED: u32 = 0xb2a69d;
-pub(super) const GOLD: u32 = 0xffb545;
-/// Card edges and row dividers; `LINE` is for controls.
-pub(super) const SOFT: u32 = 0x322c2d;
-pub(super) const BAD: u32 = 0xff7d63;
-const CHROME: u32 = 0x100e0f;
+pub(super) use crate::tokens::{BAD, BG, CARD, CHROME, GOLD, LINE, MUTED, SOFT, TEXT};
 
 #[derive(Clone, Copy, Default, Eq, PartialEq)]
 pub(super) enum Page {
@@ -304,7 +295,7 @@ impl Launcher {
             .flex()
             .items_center()
             .gap(px(14.))
-            .h(px(72.))
+            .h(px(tokens::BAR))
             .flex_none()
             .px(px(16.))
             .bg(rgb(CHROME))
@@ -480,8 +471,8 @@ impl Launcher {
             .items_center()
             .justify_center()
             .gap(px(8.))
-            .rounded(px(14.))
-            .h(px(50.))
+            .rounded(px(tokens::R_CARD))
+            .h(px(tokens::PLAY))
             .min_w(px(160.))
             .px(px(20.))
             .font_weight(FontWeight::BOLD)
@@ -600,7 +591,7 @@ impl Launcher {
             .flex_col()
             .items_center()
             .flex_none()
-            .w(px(72.))
+            .w(px(tokens::RAIL))
             .py(px(14.))
             .gap(px(4.))
             .child(div().mb(px(12.)).child(crate::mark(36.)))
