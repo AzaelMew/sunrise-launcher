@@ -21,7 +21,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || inputs.pr && format('pr-{0}', inputs.pr) || github.sha }}
+  # A newer push replaces a pull request's running checks, and a newer push to main replaces main's: only main's newest
+  # commit needs its checks, and every main push's macOS and Windows jobs held GitHub's hosted runners while a release's
+  # macOS leg waited behind them (2026-11-18).
+  group: ci-${{ github.event.pull_request.number || inputs.pr && format('pr-{0}', inputs.pr) || github.event_name == 'push' && github.ref || github.sha }}
   cancel-in-progress: true
 
 env:
