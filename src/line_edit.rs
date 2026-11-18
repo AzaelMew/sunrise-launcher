@@ -3,8 +3,9 @@
 //! its Enter/Escape; this is what is inside it. Positions count characters, not bytes.
 
 use super::*;
+use crate::paint::palette;
 use gpui::{
-    black, canvas, Bounds, Font, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
+    black, canvas, rgb, Bounds, Font, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point,
     TextRun,
 };
 use std::{cell::RefCell, rc::Rc};
@@ -521,16 +522,11 @@ pub(super) fn content_with(
 ) -> Div {
     if edit.text.is_empty() && !focused {
         // The glass look's placeholders are white at 40 % (`.hzl input::placeholder`).
-        let color = if t.glass {
-            crate::glass_ui::white(sunrise_launcher_theme::glass::ink::PLACEHOLDER)
-        } else {
-            t.muted
-        };
-        return div().text_color(color).child(placeholder);
+        return div().text_color(rgb(palette().muted)).child(placeholder);
     }
     // A focused empty glass field keeps its placeholder after the caret, as a browser's does.
     if edit.text.is_empty() && t.glass {
-        let color = crate::glass_ui::white(sunrise_launcher_theme::glass::ink::PLACEHOLDER);
+        let color = rgb(palette().muted);
         return div()
             .flex()
             .items_center()
@@ -559,7 +555,7 @@ pub(super) fn content_with(
             d.child(
                 text(selected)
                     .rounded(px(if crate::glass_ui::on() { 2. } else { 0. }))
-                    .bg(t.accent.opacity(theme::SELECTION)),
+                    .bg(rgb(palette().selected)),
             )
         })
         .when(focused && !caret_first, |d| d.child(caret()))

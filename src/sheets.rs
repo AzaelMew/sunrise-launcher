@@ -7,8 +7,9 @@
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
 //! * **Build** edits the selected instance's pin and channel with `instances::edit`.
 use super::*;
+use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use native_consent::PendingConsent;
 use std::cell::RefCell;
@@ -151,14 +152,14 @@ fn card() -> Div {
         .flex_col()
         .rounded(px(tokens::R_CARD))
         .border_1()
-        .border_color(rgb(LINE))
-        .bg(rgb(BG))
+        .border_color(rgb(palette().line))
+        .bg(rgb(palette().background))
 }
 
 fn muted(text: impl IntoElement) -> Div {
     div()
         .text_size(px(tokens::LABEL))
-        .text_color(rgb(MUTED))
+        .text_color(rgb(palette().muted))
         .child(text)
 }
 
@@ -175,13 +176,13 @@ fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
                 .size(px(16.))
                 .rounded(px(tokens::R_SMALL))
                 .border_1()
-                .border_color(rgb(MUTED))
-                .when(on, |d| d.bg(rgb(GOLD))),
+                .border_color(rgb(palette().muted))
+                .when(on, |d| d.bg(rgb(palette().accent))),
         )
         .child(
             div()
                 .text_size(px(tokens::BODY))
-                .text_color(rgb(TEXT))
+                .text_color(rgb(palette().text))
                 .child(label),
         )
 }
@@ -202,7 +203,7 @@ pub(crate) fn frame(
         .items_center()
         .justify_center()
         .p(px(16.))
-        .bg(gpui::black().opacity(0.55))
+        .bg(palette().scrim())
         .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
             cx.stop_propagation()
         })
@@ -229,9 +230,9 @@ pub(crate) fn frame(
                 .gap(px(16.))
                 .rounded(px(tokens::R_PANEL))
                 .border_1()
-                .border_color(rgb(LINE))
-                .bg(rgb(CARD))
-                .text_color(rgb(TEXT))
+                .border_color(rgb(palette().line))
+                .bg(rgb(palette().raised))
+                .text_color(rgb(palette().text))
                 .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
                     cx.stop_propagation()
                 }),
@@ -563,8 +564,8 @@ impl Launcher {
             .flex_col()
             .rounded(px(tokens::R_CARD))
             .border_1()
-            .border_color(rgb(LINE))
-            .bg(rgb(BG));
+            .border_color(rgb(palette().line))
+            .bg(rgb(palette().background));
         for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
             let about = match newer {
                 Some(version) => trf(
@@ -583,9 +584,9 @@ impl Launcher {
                     ElementId::named_usize("alt-resolve-mod", n),
                     trf("Update {mod}", &[("mod", name)]),
                 )
-                .bg(rgb(TEXT))
-                .border_color(rgb(TEXT))
-                .text_color(rgb(BG))
+                .bg(rgb(palette().text))
+                .border_color(rgb(palette().text))
+                .text_color(rgb(palette().background))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.close_sheet();
                     this.update_mod(&id);
@@ -598,7 +599,7 @@ impl Launcher {
                     .items_center()
                     .gap(px(12.))
                     .p(px(14.))
-                    .when(n > 0, |d| d.border_t_1().border_color(rgb(LINE)))
+                    .when(n > 0, |d| d.border_t_1().border_color(rgb(palette().line)))
                     .child(
                         div()
                             .flex_1()
@@ -637,7 +638,9 @@ impl Launcher {
         )
         // Recommended, unless a mod can simply be updated.
         .when(!can_update, |b| {
-            b.bg(rgb(TEXT)).border_color(rgb(TEXT)).text_color(rgb(BG))
+            b.bg(rgb(palette().text))
+                .border_color(rgb(palette().text))
+                .text_color(rgb(palette().background))
         })
         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
             // Staying is what already happens: nothing is written.
@@ -673,7 +676,7 @@ impl Launcher {
                     .items_center()
                     .gap(px(6.))
                     .text_size(px(tokens::SMALL))
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(palette().muted))
                     .cursor_pointer()
                     .child(blocks::icon(
                         if open {
@@ -682,7 +685,7 @@ impl Launcher {
                             "chevron-right"
                         },
                         11.,
-                        rgb(MUTED).into(),
+                        rgb(palette().muted).into(),
                     ))
                     .child(tr("Details"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -697,10 +700,10 @@ impl Launcher {
                     .gap(px(6.))
                     .p(px(12.))
                     .rounded(px(tokens::R_CONTROL))
-                    .bg(rgb(BG))
+                    .bg(rgb(palette().field))
                     .font_family(crate::theme::MONO)
                     .text_size(px(tokens::CAPTION))
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(palette().muted))
                     .children(details)
             }));
 
@@ -855,7 +858,7 @@ impl Launcher {
             .children(
                 self.consent_error
                     .clone()
-                    .map(|e| div().text_color(rgb(BAD)).text_size(px(tokens::LABEL)).child(e)),
+                    .map(|e| div().text_color(rgb(palette().danger)).text_size(px(tokens::LABEL)).child(e)),
             )
             .child(consent_footer(
                 tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows in the bar below."),
@@ -990,7 +993,7 @@ impl Launcher {
                 .gap(px(8.))
                 .pt(px(10.))
                 .border_t_1()
-                .border_color(rgb(SOFT))
+                .border_color(rgb(palette().divider))
                 .children(lines)
         };
         let check = |id: &'static str, label: &str, cx: &mut Context<Self>| {
@@ -1026,7 +1029,7 @@ impl Launcher {
             CheckState::Failed(_, error) => block(vec![
                 div()
                     .text_size(px(tokens::SMALL))
-                    .text_color(rgb(BAD))
+                    .text_color(rgb(palette().danger))
                     .child(error),
                 div().child(check("alt-check-again", "Check again", cx)),
             ]),
@@ -1123,7 +1126,7 @@ impl Launcher {
                 .p(px(10.))
                 .rounded(px(tokens::R_CONTROL))
                 .cursor_pointer()
-                .when(on, |d| d.bg(rgb(BG)))
+                .when(on, |d| d.bg(rgb(palette().selected)))
                 .child(
                     div()
                         .mt(px(3.))
@@ -1131,8 +1134,12 @@ impl Launcher {
                         .flex_none()
                         .rounded_full()
                         .border_1()
-                        .border_color(rgb(if on { GOLD } else { MUTED }))
-                        .when(on, |d| d.bg(rgb(GOLD))),
+                        .border_color(rgb(if on {
+                            palette().accent
+                        } else {
+                            palette().muted
+                        }))
+                        .when(on, |d| d.bg(rgb(palette().accent))),
                 )
                 .child(
                     div()
@@ -1241,7 +1248,7 @@ impl Launcher {
                     .h(px(20.))
                     .rounded_full()
                     .border_1()
-                    .border_color(rgb(LINE)),
+                    .border_color(rgb(palette().line)),
             );
         let body = div()
             .flex()
@@ -1250,16 +1257,16 @@ impl Launcher {
             .child(
                 div()
                     .text_size(px(tokens::CAPTION))
-                    .text_color(rgb(MUTED))
+                    .text_color(rgb(palette().muted))
                     .child(tr("GAME BUILD")),
             )
             .child(list)
             .children(native)
-            .child(div().h(px(1.)).bg(rgb(LINE)))
+            .child(div().h(px(1.)).bg(rgb(palette().line)))
             .child(extras)
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
-                    .text_color(rgb(BAD))
+                    .text_color(rgb(palette().danger))
                     .text_size(px(tokens::SMALL))
                     .child(e)
             }));
@@ -1301,9 +1308,9 @@ impl Launcher {
                     .p(px(14.))
                     .rounded(px(tokens::R_CARD))
                     .border_1()
-                    .border_color(rgb(LINE))
-                    .bg(rgb(CARD))
-                    .text_color(rgb(TEXT))
+                    .border_color(rgb(palette().line))
+                    .bg(rgb(palette().raised))
+                    .text_color(rgb(palette().text))
                     .on_mouse_down(MouseButton::Left, |_: &MouseDownEvent, _, cx| {
                         cx.stop_propagation()
                     }),
@@ -1326,12 +1333,14 @@ fn fact(label: &str, value: String, rule: bool) -> Div {
         .px(px(16.))
         .py(px(10.))
         .text_size(px(tokens::LABEL))
-        .when(rule, |d| d.border_t_1().border_color(rgb(SOFT)))
+        .when(rule, |d| {
+            d.border_t_1().border_color(rgb(palette().divider))
+        })
         .child(
             div()
                 .w(px(110.))
                 .flex_none()
-                .text_color(rgb(MUTED))
+                .text_color(rgb(palette().muted))
                 .child(label.to_owned()),
         )
         .child(div().flex_1().min_w_0().child(value))

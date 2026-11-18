@@ -249,6 +249,7 @@ impl Theme {
 }
 
 /// How strongly a selected suggestion in a text field is tinted with the accent.
+#[cfg(test)]
 pub const SELECTION: f32 = 0.22;
 
 #[cfg(test)]

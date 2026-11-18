@@ -56,6 +56,7 @@ mod native_consent;
 mod native_log_page;
 mod owner_page;
 mod packs_page;
+mod paint;
 mod perf;
 mod picture_cache;
 mod plate;

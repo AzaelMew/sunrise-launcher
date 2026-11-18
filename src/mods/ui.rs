@@ -1,6 +1,6 @@
 //! Small pieces the three Mods screens share. Colours are the launcher's (`crate::frame`).
 use super::*;
-use crate::frame::{BG, CARD, LINE, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use gpui::{rgb, Hsla};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -16,16 +16,16 @@ pub(super) fn tag(label: &'static str) -> Div {
         .py(px(1.))
         .rounded(px(tokens::R_SMALL))
         .border_1()
-        .border_color(c(LINE))
+        .border_color(c(palette().line))
         .text_size(px(tokens::CAPTION))
-        .text_color(c(MUTED))
+        .text_color(c(palette().muted))
         .child(label)
 }
 
 pub(super) fn muted(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::SMALL))
-        .text_color(c(MUTED))
+        .text_color(c(palette().muted))
         .child(text.into())
 }
 
@@ -51,12 +51,24 @@ pub(crate) fn chip(
         .items_center()
         .rounded(px(tokens::R_PANEL))
         .border_1()
-        .border_color(if on { c(TEXT) } else { c(LINE) })
-        .bg(if on { c(TEXT) } else { c(BG) })
-        .text_color(if on { c(BG) } else { c(TEXT) })
+        .border_color(if on {
+            c(palette().text)
+        } else {
+            c(palette().line)
+        })
+        .bg(if on {
+            c(palette().text)
+        } else {
+            c(palette().field)
+        })
+        .text_color(if on {
+            c(palette().background)
+        } else {
+            c(palette().text)
+        })
         .text_size(px(tokens::LABEL))
         .cursor_pointer()
-        .focus_visible(|s| s.border_color(c(tokens::GOLD)))
+        .focus_visible(|s| s.border_color(c(palette().focus)))
         .child(label.into())
 }
 
@@ -86,7 +98,7 @@ pub(crate) fn choices(
         .rounded(px(tokens::R_PANEL + 4.))
         .border_1()
         .border_color(gpui::transparent_black())
-        .focus_visible(|s| s.border_color(c(tokens::GOLD)));
+        .focus_visible(|s| s.border_color(c(palette().focus)));
     for (n, (label, on, pick)) in chips.into_iter().enumerate() {
         group = group.child(chip((id, n), label, on).on_click(cx.listener(
             move |this, _: &ClickEvent, _, cx| {
@@ -113,20 +125,28 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .flex_none()
         .tab_index(0)
         .seen()
-        .focus_visible(|s| s.shadow(crate::frame::focus_ring(tokens::GOLD)))
+        .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
         .w(px(40.))
         .h(px(22.))
         .rounded(px(tokens::R_CONTROL))
         .p(px(2.))
         .flex()
-        .bg(if on { c(TEXT) } else { c(LINE) })
+        .bg(if on {
+            c(palette().text)
+        } else {
+            c(palette().line)
+        })
         .when(on, |d| d.justify_end())
         .cursor_pointer()
         .child(
             div()
                 .size(px(18.))
                 .rounded(px(tokens::R_CONTROL))
-                .bg(if on { c(BG) } else { c(MUTED) }),
+                .bg(if on {
+                    c(palette().background)
+                } else {
+                    c(palette().muted)
+                }),
         )
 }
 
@@ -139,14 +159,22 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .size(px(18.))
         .rounded(px(tokens::R_SMALL))
         .border_1()
-        .border_color(if on { c(TEXT) } else { c(MUTED) })
-        .focus_visible(|s| s.border_color(c(tokens::GOLD)))
-        .bg(if on { c(TEXT) } else { c(BG) })
+        .border_color(if on {
+            c(palette().text)
+        } else {
+            c(palette().muted)
+        })
+        .focus_visible(|s| s.border_color(c(palette().focus)))
+        .bg(if on {
+            c(palette().text)
+        } else {
+            c(palette().field)
+        })
         .flex()
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .children(on.then(|| blocks::icon("check", 12., c(BG))))
+        .children(on.then(|| blocks::icon("check", 12., c(palette().background))))
 }
 
 /// A mod's picture, or its first letter until it arrives.
@@ -156,9 +184,9 @@ pub(super) fn tile(path: Option<PathBuf>, name: &str, side: f32) -> Div {
         .size(px(side))
         .rounded(px(tokens::R_CONTROL))
         .overflow_hidden()
-        .bg(c(CARD))
+        .bg(palette().card())
         .border_1()
-        .border_color(c(LINE))
+        .border_color(c(palette().line))
         .flex()
         .items_center()
         .justify_center();
@@ -166,7 +194,7 @@ pub(super) fn tile(path: Option<PathBuf>, name: &str, side: f32) -> Div {
         Some(p) => t.child(gpui::img(p).size(px(side))),
         None => t
             .text_size(px(side * 0.45))
-            .text_color(c(MUTED))
+            .text_color(c(palette().muted))
             .child(name.chars().next().map(String::from).unwrap_or_default()),
     }
 }
@@ -201,13 +229,13 @@ pub(super) fn browse_card(
         .overflow_hidden()
         .rounded(px(tokens::R_CARD))
         .border_1()
-        .border_color(c(LINE))
-        .bg(c(CARD))
+        .border_color(c(palette().line))
+        .bg(palette().card())
         .cursor_pointer()
-        .hover(|s| s.border_color(c(MUTED)))
+        .hover(|s| s.border_color(c(palette().muted)))
         .tab_index(0)
         .seen()
-        .focus_visible(|s| s.border_color(c(tokens::GOLD)))
+        .focus_visible(|s| s.border_color(c(palette().focus)))
         .child(tile(picture, name, 48.))
         .child(
             div()
@@ -234,7 +262,7 @@ pub(super) fn browse_card(
                                 .flex_1()
                                 .min_w_0()
                                 .text_size(px(tokens::SMALL))
-                                .text_color(c(MUTED))
+                                .text_color(c(palette().muted))
                                 .truncate()
                                 .child(author.to_owned()),
                         ),
@@ -242,7 +270,7 @@ pub(super) fn browse_card(
                 .child(
                     div()
                         .text_size(px(tokens::LABEL))
-                        .text_color(c(MUTED))
+                        .text_color(c(palette().muted))
                         .line_clamp(2)
                         .text_ellipsis()
                         .child(summary.to_owned()),
@@ -286,8 +314,8 @@ pub(super) fn added_mark() -> AnyElement {
         .items_center()
         .gap(px(5.))
         .text_size(px(tokens::LABEL))
-        .text_color(c(0x7fd6a0))
-        .child(blocks::icon("check", 12., c(0x7fd6a0)))
+        .text_color(c(palette().success))
+        .child(blocks::icon("check", 12., c(palette().success)))
         .child(tr("Added"))
         .into_any_element()
 }
@@ -296,14 +324,14 @@ pub(super) fn card() -> Div {
     div()
         .rounded(px(tokens::R_CARD))
         .border_1()
-        .border_color(c(SOFT))
-        .bg(c(CARD))
+        .border_color(c(palette().divider))
+        .bg(palette().card())
 }
 
 /// The theme the shared text field draws with, in this look's colours.
 pub(crate) fn field_theme(mut t: crate::theme::Theme) -> crate::theme::Theme {
-    t.ink = c(TEXT);
-    t.muted = c(MUTED);
+    t.ink = c(palette().text);
+    t.muted = c(palette().muted);
     t.glass = false;
     t
 }

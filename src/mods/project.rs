@@ -2,7 +2,7 @@
 use super::model::{self, Make};
 use super::ui::*;
 use super::*;
-use crate::frame::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use sunrise_launcher::browser::images;
 
 /// A page's pictures: the first large, up to three small beside it. None when it has none.
@@ -20,7 +20,7 @@ pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
                     .size_full()
                     .object_fit(gpui::ObjectFit::Cover),
             ),
-        None => div().rounded(px(tokens::R_CONTROL)).bg(c(CARD)),
+        None => div().rounded(px(tokens::R_CONTROL)).bg(palette().card()),
     };
     let mut shots = shots.into_iter();
     Some(
@@ -48,9 +48,9 @@ pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
 /// A page's description, written in Markdown, in this look's colours.
 pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
     let mut t = field_theme(theme);
-    t.ink_soft = c(0xcfc9c0);
-    t.plate_soft = c(CARD);
-    t.rule = c(SOFT);
+    t.ink_soft = c(palette().text);
+    t.plate_soft = c(palette().card_color);
+    t.rule = c(palette().divider);
     crate::markdown::render(text, &t)
 }
 
@@ -64,7 +64,7 @@ pub(super) fn back(label: &'static str) -> Stateful<Div> {
         .items_center()
         .gap(px(8.))
         .text_size(px(tokens::LABEL))
-        .text_color(c(MUTED))
+        .text_color(c(palette().muted))
         .cursor_pointer()
         .child("‹")
         .child(label)
@@ -78,7 +78,7 @@ pub(super) fn about_row(key: &'static str, value: String) -> Div {
         .gap(px(12.))
         .py(px(5.))
         .text_size(px(tokens::LABEL))
-        .child(div().flex_none().text_color(c(MUTED)).child(key))
+        .child(div().flex_none().text_color(c(palette().muted)).child(key))
         .child(div().min_w_0().truncate().child(value))
 }
 
@@ -92,8 +92,12 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
         .py(px(5.))
         .text_size(px(tokens::LABEL))
         .cursor_pointer()
-        .child(div().text_color(c(MUTED)).child(key))
-        .child(div().text_color(c(GOLD)).child(tr("Open ↗")))
+        .child(div().text_color(c(palette().muted)).child(key))
+        .child(
+            div()
+                .text_color(c(palette().accent_ink))
+                .child(tr("Open ↗")),
+        )
 }
 
 impl Launcher {
@@ -114,7 +118,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.ui.page = back_to;
@@ -193,9 +197,9 @@ impl Launcher {
                                     .px(px(6.))
                                     .rounded(px(tokens::R_SMALL))
                                     .border_1()
-                                    .border_color(c(LINE))
+                                    .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
-                                    .text_color(c(MUTED))
+                                    .text_color(c(palette().muted))
                                     .child(sunrise_launcher::browser::details::category_label(k))
                             }))
                             .child(
@@ -204,9 +208,9 @@ impl Launcher {
                                     .px(px(6.))
                                     .rounded(px(tokens::R_SMALL))
                                     .border_1()
-                                    .border_color(c(LINE))
+                                    .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
-                                    .text_color(c(MUTED))
+                                    .text_color(c(palette().muted))
                                     .child(p.side),
                             ),
                     ),
@@ -227,7 +231,7 @@ impl Launcher {
                 .gap(px(16.))
                 .px(px(14.))
                 .py(px(10.))
-                .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
+                .when(i > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                 .text_size(px(tokens::LABEL))
                 .child(
                     div()
@@ -238,16 +242,18 @@ impl Launcher {
                 .child(
                     div()
                         .w(px(90.))
-                        .text_color(c(MUTED))
+                        .text_color(c(palette().muted))
                         .child(v.published.clone()),
                 )
                 .child(match (&v.fit.reason(), installed, will) {
-                    (_, true, _) => div().text_color(c(0x7fd6a0)).child(tr("Added")),
+                    (_, true, _) => div().text_color(c(palette().success)).child(tr("Added")),
                     (None, _, true) => div()
-                        .text_color(c(0x7fd6a0))
+                        .text_color(c(palette().success))
                         .child(tr("Fits your game · what Add installs")),
-                    (None, _, false) => div().text_color(c(0x7fd6a0)).child(tr("Fits your game")),
-                    (Some(why), _, _) => div().text_color(c(MUTED)).child(why.clone()),
+                    (None, _, false) => div()
+                        .text_color(c(palette().success))
+                        .child(tr("Fits your game")),
+                    (Some(why), _, _) => div().text_color(c(palette().muted)).child(why.clone()),
                 })
         }));
 
@@ -261,7 +267,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(c(0x7fd6a0))
+                .text_color(c(palette().success))
                 .child(trf("Added · version {version}", &[("version", n)]))
                 .into_any_element(),
             (None, fit, Some(will)) if fit.fits() => {
@@ -316,7 +322,7 @@ impl Launcher {
                 .items_center()
                 .gap(px(12.))
                 .py(px(10.))
-                .child(div().w(px(22.)).text_color(c(MUTED)).child(glyph))
+                .child(div().w(px(22.)).text_color(c(palette().muted)).child(glyph))
                 .child(
                     div()
                         .flex()
@@ -333,7 +339,7 @@ impl Launcher {
         let mut what = div().flex().flex_col().child(
             div()
                 .text_size(px(tokens::CAPTION))
-                .text_color(c(MUTED))
+                .text_color(c(palette().muted))
                 .pb(px(6.))
                 .child(tr("WHAT THIS CHANGES")),
         );
@@ -367,7 +373,7 @@ impl Launcher {
                     .children(facts_line.map(|l| {
                         div()
                             .text_size(px(tokens::SMALL))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(l)
                     }))
                     .child(what)
@@ -383,7 +389,7 @@ impl Launcher {
                     .child(
                         div()
                             .text_size(px(tokens::CAPTION))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )

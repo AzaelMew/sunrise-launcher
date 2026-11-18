@@ -5,15 +5,10 @@
 //! Spacing (gaps and padding) and a single screen's own layout (a column's width, a picture's
 //! height) are not tokens: they say how one screen is laid out, not what the look is.
 
-pub(crate) const BG: u32 = 0x191617;
-pub(crate) const CARD: u32 = 0x221e1f;
 pub(crate) const LINE: u32 = 0x453d3d;
 pub(crate) const TEXT: u32 = 0xf3ede6;
 pub(crate) const MUTED: u32 = 0xb2a69d;
 pub(crate) const GOLD: u32 = 0xffb545;
-/// Card edges and row dividers; `LINE` is for controls.
-pub(crate) const SOFT: u32 = 0x322c2d;
-pub(crate) const BAD: u32 = 0xff7d63;
 /// The window around the page: the rail and the play bar.
 pub(crate) const CHROME: u32 = 0x100e0f;
 
