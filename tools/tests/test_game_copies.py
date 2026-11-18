@@ -1,10 +1,12 @@
 """The launcher's copies of game files (crates/, assets/) stay byte- and value-equal to the originals."""
 import ast
 import hashlib
+import json
 import os
 import re
 import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 LAUNCHER = Path(__file__).resolve().parents[2]
@@ -298,10 +300,18 @@ class LauncherCopies(unittest.TestCase):
         if not game_dir:
             raise RuntimeError("Set SUNRISE_GAME_DIR to the Sunrise checkout to compare against")
         cls.game = Path(game_dir)
+        if not cls.game.is_dir():
+            raise RuntimeError(f"SUNRISE_GAME_DIR is not a directory: {cls.game}")
+
+    @contextmanager
+    def comparing(self, table, game, launcher, **labels):
+        self.copy_row = (table, game, launcher)
+        with self.subTest(**labels):
+            yield
 
     def test_copied_files_are_the_games_byte_for_byte(self):
         for game, copy in SAME_BYTES:
-            with self.subTest(copy=copy):
+            with self.comparing("SAME_BYTES", game, copy, copy=copy):
                 original, copied = files(self.game / game), files(LAUNCHER / copy)
                 self.assertTrue(original, f"{game} is empty or missing")
                 self.assertEqual(sorted(copied), sorted(original), f"{copy} lists other files than {game}")
@@ -311,7 +321,7 @@ class LauncherCopies(unittest.TestCase):
 
     def test_rewritten_copies_are_the_games_code_with_their_listed_edits(self):
         for game, copy, edits in SAME_CODE:
-            with self.subTest(copy=copy):
+            with self.comparing("SAME_CODE", game, copy, copy=copy):
                 original = code((self.game / game).read_text(encoding="utf-8"))
                 for old, new in edits:
                     self.assertIn(code(old), original, f"{game} no longer has the code {copy} edits: update both")
@@ -321,14 +331,14 @@ class LauncherCopies(unittest.TestCase):
 
     def test_mirrored_game_functions_are_unchanged(self):
         for path, name, pinned, mirror in MIRRORED:
-            with self.subTest(function=name):
+            with self.comparing("MIRRORED", path, mirror.split(" ", 1)[0], function=name):
                 digest = hashlib.sha256(code(function(self.game / path, name)).encode()).hexdigest()
                 self.assertEqual(digest, pinned, f"{path}'s {name} changed: change {mirror} to match, then pin {digest}")
 
     def test_functions_copied_whole_are_the_games(self):
         for game, copy, names in SAME_FUNCTIONS:
             for name in names:
-                with self.subTest(function=name):
+                with self.comparing("SAME_FUNCTIONS", game, copy, function=name):
                     original = code(uncommented(function(self.game / game, name)))
                     self.assertEqual(code(uncommented(function(LAUNCHER / copy, name))), original,
                                      f"{copy}'s {name} differs from {game}'s: copy the change")
@@ -336,7 +346,7 @@ class LauncherCopies(unittest.TestCase):
     def test_items_copied_whole_are_the_games(self):
         for game, copy, edits, heads in SAME_ITEMS:
             for head in heads:
-                with self.subTest(item=head):
+                with self.comparing("SAME_ITEMS", game, copy, item=head):
                     original = code(uncommented(item(self.game / game, head)))
                     for old, new in edits:
                         original = original.replace(code(old), code(new))
@@ -344,13 +354,13 @@ class LauncherCopies(unittest.TestCase):
                                      f"{copy}'s {head} differs from {game}'s: copy the change")
 
     def test_format_constants_match_the_games(self):
-        package_format = int((self.game / PACKAGE_FORMAT).read_text().strip())
         for copy in ("crates/smod/src/index/native.rs", "crates/sdk/src/lib.rs"):
-            with self.subTest(copy=copy, constant="PACKAGE_FORMAT"):
+            with self.comparing("FORMAT_CONSTANTS", PACKAGE_FORMAT, copy, copy=copy, constant="PACKAGE_FORMAT"):
+                package_format = int((self.game / PACKAGE_FORMAT).read_text().strip())
                 self.assertEqual(constant(LAUNCHER / copy, "PACKAGE_FORMAT"), package_format,
                                  f"{copy}'s PACKAGE_FORMAT differs from {PACKAGE_FORMAT}: copy the change")
         for game, name, copy, copied_name in FORMAT_CONSTANTS:
-            with self.subTest(copy=copy, constant=copied_name):
+            with self.comparing("FORMAT_CONSTANTS", game, copy, copy=copy, constant=copied_name):
                 self.assertEqual(constant(LAUNCHER / copy, copied_name), constant(self.game / game, name),
                                  f"{copy}'s {copied_name} differs from {game}'s {name}: copy the change")
 
@@ -365,10 +375,40 @@ class LauncherCopies(unittest.TestCase):
         self.assertEqual(code(uncommented("fn f() {\n    // Why.\n    g(1)\n}")), "fn f(){g(1)}".replace(" ", ""))
 
 
+def load_tests(loader, tests, pattern):
+    # Release-tool discovery has no game checkout; the format job runs this file explicitly with the pin.
+    if pattern is not None and not os.environ.get("SUNRISE_GAME_DIR"):
+        return unittest.TestSuite()
+    return tests
+
+
+class CopyReport(unittest.TextTestResult):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.failed_rows = []
+
+    def addSubTest(self, test, subtest, err):
+        super().addSubTest(test, subtest, err)
+        if err is not None:
+            self.failed_rows.append(test.copy_row)
+
+
+def write_report(path, suite):
+    """Return 1 for drift and 2 for a check that could not run to completion."""
+    result = unittest.TextTestRunner(resultclass=CopyReport).run(suite)
+    if result.skipped or len(result.failed_rows) != len(result.failures) + len(result.errors):
+        return 2
+    path.write_text(json.dumps(list(dict.fromkeys(result.failed_rows))) + "\n", encoding="utf-8")
+    return int(bool(result.failed_rows))
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["--paths"]:
         tables = (SAME_BYTES, SAME_CODE, MIRRORED, SAME_FUNCTIONS, SAME_ITEMS, FORMAT_CONSTANTS)
         paths = {row[0] for table in tables for row in table} | {PACKAGE_FORMAT}
         print("\n".join(sorted(paths)))
+    elif len(sys.argv) == 3 and sys.argv[1] == "--report":
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(LauncherCopies)
+        sys.exit(write_report(Path(sys.argv[2]), suite))
     else:
         unittest.main()
