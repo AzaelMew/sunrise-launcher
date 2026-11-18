@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "설정, 월드, 인스턴스 및 설치된 버전을 포함한 모든 런처, 게임 및 빌드 데이터를 이동합니다. 여유 공간이 충분한 빈 폴더를 선택하세요.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "데이터를 복사하고 검증하는 동안 런처가 종료되며, 완료되면 다시 열립니다. 기존 폴더는 그대로 보관되며, 이동이 정상적으로 완료되었는지 확인한 후 직접 삭제할 때까지 디스크 공간을 계속 차지합니다.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "SUNRISE_LAUNCHER_HOME 또는 SUNRISE_HOME으로 데이터 폴더가 지정되어 있습니다. 여기서 데이터를 이동하려면 해당 환경 변수 설정을 해제하고 런처를 다시 시작하세요.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "데이터를 이동하기 전에 게임과 서버를 종료하고 다운로드, 빌드, 가져오기 및 로그인이 완료될 때까지 기다리세요."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "데이터를 이동하기 전에 게임과 서버를 종료하고 다운로드, 빌드, 가져오기 및 로그인이 완료될 때까지 기다리세요.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

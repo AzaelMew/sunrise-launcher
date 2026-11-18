@@ -427,7 +427,15 @@ pub fn find(home: &Path, kind: Kind, query: &str) -> Result<Pack, String> {
         .find(|p| p.file == query)
         .or_else(|| all.iter().find(|p| p.title.eq_ignore_ascii_case(query)))
         .cloned()
-        .ok_or_else(|| format!("No pack {query} in {}", home.join(kind.folder()).display()))
+        .ok_or_else(|| {
+            trf(
+                "No pack {query} in {folder}",
+                &[
+                    ("query", query),
+                    ("folder", &home.join(kind.folder()).display().to_string()),
+                ],
+            )
+        })
 }
 
 /// What a dropped or picked file is: a resource pack (a zip with `pack.mcmeta`), a Sunrise
@@ -443,8 +451,9 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     match ext.as_deref() {
         Some(SHADER_PACKAGE | "zip") => {}
         _ => {
-            return Err(format!(
-                "{name} is not a pack: packs are .zip or .sshader files."
+            return Err(trf(
+                "{name} is not a pack: packs are .zip or .sshader files.",
+                &[("name", &name)],
             ))
         }
     }
@@ -457,14 +466,20 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     } else if zip
         .file_names()
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| format!("{name} has an entry whose name can't be read: {e}"))?
+        .map_err(|e| {
+            trf(
+                "{name} has an entry whose name can't be read: {error}",
+                &[("name", &name), ("error", &e.to_string())],
+            )
+        })?
         .iter()
         .any(|n| n.starts_with("shaders/"))
     {
         Ok(Kind::Shader)
     } else {
-        Err(format!(
-            "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack)."
+        Err(trf(
+            "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+            &[("name", &name)],
         ))
     }
 }
@@ -673,7 +688,12 @@ pub fn move_resource(home: &Path, file: &str, neighbor: &str) -> Result<(), Stri
         let mut found = slots.iter().filter(|(_, n)| n == name).map(|(i, _)| *i);
         (found.next(), found.next().is_some())
     };
-    let stale = || format!("{file} and {neighbor} are not next to each other any more.");
+    let stale = || {
+        trf(
+            "{file} and {neighbor} are not next to each other any more.",
+            &[("file", file), ("neighbor", neighbor)],
+        )
+    };
     let ((Some(a), false), (Some(b), false)) = (at(file), at(neighbor)) else {
         return Err(stale());
     };
@@ -695,8 +715,12 @@ pub fn remove(home: &Path, pack: &Pack) -> Result<(), String> {
     if pack.enabled {
         set_enabled(home, pack, false)?;
     }
-    crate::desktop_seams::to_trash(&pack.path)
-        .map_err(|e| format!("Could not move {} to the trash: {e}", pack.file))
+    crate::desktop_seams::to_trash(&pack.path).map_err(|e| {
+        trf(
+            "Could not move {file} to the trash: {error}",
+            &[("file", &pack.file), ("error", &e.to_string())],
+        )
+    })
 }
 
 #[cfg(test)]

@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Flytter alle data for launcher, spill og bygg, inkludert innstillinger, verdener, forekomster og installerte versjoner. Velg en tom mappe med nok ledig plass.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Launcheren lukkes mens dataene dine kopieres og verifiseres, og åpnes deretter igjen. Gamle mapper beholdes og bruker fortsatt diskplass til du verifiserer flyttingen og fjerner dem selv.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Datamappene styres av SUNRISE_LAUNCHER_HOME eller SUNRISE_HOME. Fjern disse miljøoverstyringene og start launcheren på nytt før du flytter data hit.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Lukk spillet og serverne, og vent til nedlastinger, bygg, importer og pålogging er ferdige før du flytter data."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Lukk spillet og serverne, og vent til nedlastinger, bygg, importer og pålogging er ferdige før du flytter data.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

@@ -18,11 +18,16 @@ fn title(text: impl Into<SharedString>) -> Div {
 }
 
 fn label(text: &'static str) -> Div {
+    caption(tr(text))
+}
+
+/// A small heading in capitals; `text` is already in the player's language.
+fn caption(text: &str) -> Div {
     div()
         .text_size(px(tokens::CAPTION))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(MUTED))
-        .child(tr(text).to_uppercase())
+        .child(text.to_uppercase())
 }
 
 fn card() -> Div {
@@ -608,7 +613,7 @@ impl Launcher {
             )));
         let on = status.running();
         let dash = || "–".to_string();
-        let stat = |value: String, name: &'static str| {
+        let stat = |value: String, name: &str| {
             div()
                 .flex_1()
                 .flex()
@@ -620,7 +625,7 @@ impl Launcher {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(value),
                 )
-                .child(label(name))
+                .child(caption(name))
         };
         let stats = card()
             .flex_row()
@@ -636,28 +641,29 @@ impl Launcher {
                 } else {
                     dash()
                 },
-                "Players",
+                tr("Players"),
             ))
             .child(stat(
                 status
                     .tps
                     .filter(|_| on)
                     .map_or_else(dash, |v| format!("{v:.1}")),
-                "TPS of 20",
+                tr("TPS of 20"),
             ))
             .child(stat(
-                status
-                    .mspt
-                    .filter(|_| on)
-                    .map_or_else(dash, |v| format!("{v:.1} ms")),
-                "Tick time",
+                status.mspt.filter(|_| on).map_or_else(dash, |v| {
+                    trf("{value} ms", &[("value", &format!("{v:.1}"))])
+                }),
+                tr("Tick time"),
             ))
             .child(stat(
-                status
-                    .ram_bytes
-                    .filter(|_| on)
-                    .map_or_else(dash, |b| format!("{:.2} GB", b as f64 / 1e9)),
-                "Memory",
+                status.ram_bytes.filter(|_| on).map_or_else(dash, |b| {
+                    trf(
+                        "{value} GB",
+                        &[("value", &format!("{:.2}", b as f64 / 1e9))],
+                    )
+                }),
+                tr("Memory"),
             ));
         let mut right = div()
             .flex_1()

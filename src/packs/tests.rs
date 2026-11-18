@@ -581,3 +581,40 @@ fn a_shader_pack_whose_id_is_installed_is_refused() {
     fs::remove_dir_all(&home).unwrap();
     fs::remove_dir_all(&drops).unwrap();
 }
+
+/// What a player reads goes through `tr` or `trf`: no `format!` of the pack code builds a
+/// sentence of English words (a path and an error are not words).
+#[test]
+fn pack_errors_are_not_built_with_format() {
+    for file in ["src/packs.rs", "src/mods/packs.rs"] {
+        let source =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        let code = source.split("#[cfg(test)]").next().unwrap();
+        for (at, _) in code.match_indices("format!(") {
+            let rest = &code[at + "format!(".len()..];
+            let literal = rest
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|r| r.split('"').next())
+                .unwrap_or("");
+            let mut bare = String::new();
+            let mut skipping = false;
+            for c in literal.chars() {
+                match c {
+                    '{' => skipping = true,
+                    '}' => skipping = false,
+                    _ if !skipping => bare.push(c),
+                    _ => {}
+                }
+            }
+            let words = bare
+                .split_whitespace()
+                .filter(|w| w.chars().filter(|c| c.is_alphabetic()).count() >= 2)
+                .count();
+            assert!(
+                words < 2,
+                "{file}: {literal:?} reads as a sentence: use tr or trf"
+            );
+        }
+    }
+}

@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "همه داده‌های لانچر، بازی و ساخت را جابه‌جا می‌کند، از جمله تنظیمات، دنیاها، نمونه‌ها و نسخه‌های نصب‌شده. پوشه‌ای خالی با فضای آزاد کافی انتخاب کنید.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "لانچر هنگام کپی و بررسی داده‌های شما بسته می‌شود و سپس دوباره باز می‌شود. پوشه‌های قدیمی نگه داشته می‌شوند و تا وقتی انتقال را بررسی کنید و خودتان آن‌ها را حذف کنید، از فضای دیسک استفاده می‌کنند.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "پوشه‌های داده با SUNRISE_LAUNCHER_HOME یا SUNRISE_HOME تعیین می‌شوند. این بازنویسی‌های محیطی را بردارید و پیش از انتقال داده‌ها به اینجا، لانچر را دوباره راه‌اندازی کنید.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "بازی و سرورها را ببندید و پیش از جابه‌جایی داده‌ها، منتظر تمام شدن دانلودها، ساخت‌ها، وارد کردن‌ها و ورود به حساب بمانید."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "بازی و سرورها را ببندید و پیش از جابه‌جایی داده‌ها، منتظر تمام شدن دانلودها، ساخت‌ها، وارد کردن‌ها و ورود به حساب بمانید.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Réckelt all Launcher-, Spill- a Build-Daten, och Astellungen, Welten, Instanzen an installéiert Versiounen. Wielt en eidele Dossier mat genuch fräier Plaz.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "De Launcher geet zou wärend Är Daten kopéiert a gepréift ginn, dann mécht en erëm op. Al Dossiere bleiwen a benotzen nach Plaz bis Dir d'Réckelen iwwerpréift an se selwer ewech hëlt.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Daten-Dossiere ginn duerch SUNRISE_LAUNCHER_HOME oder SUNRISE_HOME festgeluecht. Huelt dës Ëmwelt-Iwwerschreiwungen ewech a start de Launcher nei éier Dir Daten heihi réckelt.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Maacht d'Spill an d'Serveren zou, a waart bis Downloads, Builds, Importen an d'Umeldung fäerdeg sinn éier Dir Daten réckelt."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Maacht d'Spill an d'Serveren zou, a waart bis Downloads, Builds, Importen an d'Umeldung fäerdeg sinn éier Dir Daten réckelt.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

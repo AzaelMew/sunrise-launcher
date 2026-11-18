@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Perkelia visus paleidimo priemonės, žaidimo ir kūrimo duomenis, įskaitant nustatymus, pasaulius, egzempliorius ir įdiegtas versijas. Pasirinkite tuščią aplanką su pakankamai laisvos vietos.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Kol duomenys kopijuojami ir tikrinami, paleidimo priemonė uždaroma, tada vėl atidaroma. Seni aplankai paliekami ir vis dar užima disko vietą, kol patikrinsite perkėlimą ir juos pašalinsite patys.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Duomenų aplankus nustato SUNRISE_LAUNCHER_HOME arba SUNRISE_HOME. Pašalinkite šiuos aplinkos kintamųjų pakeitimus ir paleiskite paleidimo priemonę iš naujo prieš perkeldami duomenis čia.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Uždarykite žaidimą ir serverius bei palaukite, kol pasibaigs atsisiuntimai, kūrimas, importavimas ir prisijungimas, prieš perkeldami duomenis."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Uždarykite žaidimą ir serverius bei palaukite, kol pasibaigs atsisiuntimai, kūrimas, importavimas ir prisijungimas, prieš perkeldami duomenis.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

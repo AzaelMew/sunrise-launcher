@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Bogann sé seo gach sonra tosaitheora, cluiche agus tógála, lena n-áirítear socruithe, domhain, cásanna agus leaganacha suiteáilte. Roghnaigh fillteán folamh a bhfuil go leor spáis shaor ann.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Dúnann an tosaitheoir agus do chuid sonraí á gcóipeáil agus á ndeimhniú, ansin osclaíonn sé arís. Coinnítear seanfhillteáin agus úsáideann siad spás diosca go dtí go ndeimhníonn tú an bogadh agus go mbaineann tú féin iad.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "Socraítear fillteáin sonraí le SUNRISE_LAUNCHER_HOME nó SUNRISE_HOME. Bain na sáruithe timpeallachta seo agus atosaigh an tosaitheoir sula mbogann tú sonraí anseo.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Dún an cluiche agus na freastalaithe, agus fan go gcríochnóidh íoslódálacha, tógálacha, iompórtálacha agus síniú isteach sula mbogann tú sonraí."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Dún an cluiche agus na freastalaithe, agus fan go gcríochnóidh íoslódálacha, tógálacha, iompórtálacha agus síniú isteach sula mbogann tú sonraí.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

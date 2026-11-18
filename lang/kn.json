@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "ಸೆಟ್ಟಿಂಗ್‌ಗಳು, ಪ್ರಪಂಚಗಳು, ನಿದರ್ಶನಗಳು ಮತ್ತು ಸ್ಥಾಪಿತ ಆವೃತ್ತಿಗಳು ಸೇರಿದಂತೆ ಎಲ್ಲಾ ಲಾಂಚರ್, ಆಟ ಮತ್ತು ಬಿಲ್ಡ್ ಡೇಟಾವನ್ನು ಸರಿಸುತ್ತದೆ. ಸಾಕಷ್ಟು ಖಾಲಿ ಸ್ಥಳವಿರುವ ಖಾಲಿ ಫೋಲ್ಡರ್ ಆರಿಸಿ.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "ನಿಮ್ಮ ಡೇಟಾವನ್ನು ನಕಲಿಸಿ ಪರಿಶೀಲಿಸುವಾಗ ಲಾಂಚರ್ ಮುಚ್ಚುತ್ತದೆ, ನಂತರ ಮತ್ತೆ ತೆರೆಯುತ್ತದೆ. ನೀವು ಸರಿಸುವಿಕೆಯನ್ನು ಪರಿಶೀಲಿಸಿ ಅವನ್ನು ನೀವೇ ತೆಗೆದುಹಾಕುವವರೆಗೆ ಹಳೆಯ ಫೋಲ್ಡರ್‌ಗಳನ್ನು ಇಟ್ಟುಕೊಳ್ಳಲಾಗುತ್ತದೆ ಮತ್ತು ಅವು ಇನ್ನೂ ಡಿಸ್ಕ್ ಸ್ಥಳವನ್ನು ಬಳಸುತ್ತವೆ.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "ಡೇಟಾ ಫೋಲ್ಡರ್‌ಗಳನ್ನು SUNRISE_LAUNCHER_HOME ಅಥವಾ SUNRISE_HOME ನಿರ್ಧರಿಸುತ್ತವೆ. ಡೇಟಾವನ್ನು ಇಲ್ಲಿಗೆ ಸರಿಸುವ ಮೊದಲು ಈ ಪರಿಸರ ಬದಲಾವಣೆಗಳನ್ನು ತೆಗೆದುಹಾಕಿ ಮತ್ತು ಲಾಂಚರ್ ಅನ್ನು ಮರುಪ್ರಾರಂಭಿಸಿ.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ಡೇಟಾ ಸರಿಸುವ ಮೊದಲು ಆಟ ಮತ್ತು ಸರ್ವರ್‌ಗಳನ್ನು ಮುಚ್ಚಿ, ಮತ್ತು ಡೌನ್‌ಲೋಡ್‌ಗಳು, ಬಿಲ್ಡ್‌ಗಳು, ಆಮದುಗಳು ಮತ್ತು ಸೈನ್-ಇನ್ ಮುಗಿಯುವವರೆಗೆ ಕಾಯಿರಿ."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ಡೇಟಾ ಸರಿಸುವ ಮೊದಲು ಆಟ ಮತ್ತು ಸರ್ವರ್‌ಗಳನ್ನು ಮುಚ್ಚಿ, ಮತ್ತು ಡೌನ್‌ಲೋಡ್‌ಗಳು, ಬಿಲ್ಡ್‌ಗಳು, ಆಮದುಗಳು ಮತ್ತು ಸೈನ್-ಇನ್ ಮುಗಿಯುವವರೆಗೆ ಕಾಯಿರಿ.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

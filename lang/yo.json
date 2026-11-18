@@ -1348,5 +1348,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "Ó ń gbé gbogbo dátà ìfilọ́lẹ̀, ere àti ìkọ́lé, pẹ̀lú àwọn ètò, agbaye, apẹẹrẹ àti àwọn ẹ̀yà tí a fi sori ẹrọ. Yan folda òfo tí ó ní ààyè tó fẹ́.",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "Ìfilọ́lẹ̀ yóò pa nígbà tí a ń dà àti ṣàyẹ̀wò dátà rẹ, lẹ́yìn náà yóò tún ṣí. A pa àwọn folda àtijọ́ mọ́, wọ́n sì ṣì ń lo ààyè diskì títí ìwọ yóò fi ṣàyẹ̀wò gbígbé náà kí o sì yọ wọ́n kúrò fúnra rẹ.",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "SUNRISE_LAUNCHER_HOME tàbí SUNRISE_HOME ni ó ń ṣètò àwọn folda dátà. Yọ àwọn àṣẹ àyíká wọ̀nyí kúrò, kí o sì tun ìfilọ́lẹ̀ bẹ̀rẹ̀ kí o tó gbé dátà síbí.",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Pa ere àti àwọn olupin, kí o sì dúró kí àwọn ìgbàlódé, ìkọ́lé, ìgbéwọlé àti ìwọlé parí kí o tó gbé dátà."
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Pa ere àti àwọn olupin, kí o sì dúró kí àwọn ìgbàlódé, ìkọ́lé, ìgbéwọlé àti ìwọlé parí kí o tó gbé dátà.",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }

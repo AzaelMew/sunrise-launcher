@@ -1356,5 +1356,16 @@
   "Moves all launcher, game and build data, including settings, worlds, instances and installed versions. Choose an empty folder with enough free space.": "ย้ายข้อมูลทั้งหมดของลันเชอร์ เกม และบิลด์ รวมถึงการตั้งค่า โลก อินสแตนซ์ และเวอร์ชันที่ติดตั้ง เลือกโฟลเดอร์ว่างที่มีพื้นที่เหลือพอ",
   "The launcher closes while your data is copied and verified, then reopens. Old folders are kept and still use disk space until you verify the move and remove them yourself.": "ลันเชอร์จะปิดระหว่างคัดลอกและตรวจสอบข้อมูล แล้วเปิดขึ้นมาใหม่ โฟลเดอร์เก่าจะถูกเก็บไว้และยังใช้พื้นที่ดิสก์ จน��ว่าคุณจะตรวจดูผลการย้ายและลบเอง",
   "Data folders are set by SUNRISE_LAUNCHER_HOME or SUNRISE_HOME. Remove these environment overrides and restart the launcher before moving data here.": "โฟลเดอร์ข้อมูลถูกกำหนดโดย SUNRISE_LAUNCHER_HOME หรือ SUNRISE_HOME ลบตัวแปรสภาพแวดล้อมเหล่านี้แล้วรีสตาร์ทลันเชอร์ก่อนย้ายข้อมูลมาที่นี่",
-  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ปิดเกมและเซิร์ฟเวอร์ แล้วรอให้การดาวน์โหลด การบิลด์ การนำเข้า และการลงชื่อเข้าใช้เสร็จก่อนย้ายข้อมูล"
+  "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "ปิดเกมและเซิร์ฟเวอร์ แล้วรอให้การดาวน์โหลด การบิลด์ การนำเข้า และการลงชื่อเข้าใช้เสร็จก่อนย้ายข้อมูล",
+  "No pack {query} in {folder}": "No pack {query} in {folder}",
+  "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
+  "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
+  "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",
+  "Could not move {file} to the trash: {error}": "Could not move {file} to the trash: {error}",
+  "{value} ms": "{value} ms",
+  "{value} GB": "{value} GB",
+  "TPS of 20": "TPS of 20",
+  "Tick time": "Tick time",
+  "Memory": "Memory"
 }
