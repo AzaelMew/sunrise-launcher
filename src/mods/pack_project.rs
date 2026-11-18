@@ -373,6 +373,7 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("pack-project"))
                 .child(columns),
         );
         page.into_any_element()

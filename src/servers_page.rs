@@ -3,6 +3,7 @@
 //! action runs `sunrise-server` or calls the running server's control API (`sunrise_launcher::servers`).
 use super::line_edit::{self, Key, LineEdit};
 use super::*;
+use crate::frame::Reach as _;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -1069,6 +1070,7 @@ impl Launcher {
         let field = base
             .id(SharedString::from(format!("field-{f:?}")))
             .track_focus(&handle)
+            .seen()
             .w(px(width))
             .cursor_text()
             .child(line_edit::content(

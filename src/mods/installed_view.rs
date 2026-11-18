@@ -107,6 +107,7 @@ impl Launcher {
                     filter.makes.contains(&make),
                 )
                 .tab_index(0)
+                .seen()
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.ui.mods;
                     if !m.row_filter.makes.remove(&make) {
@@ -457,7 +458,7 @@ impl Launcher {
             .overflow_hidden()
             .child(toolbar)
             .children(confirm)
-            .child(div().id("alt-installed-scroll").flex_1().min_h_0().overflow_y_scroll().child(list))
+            .child(div().id("alt-installed-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&crate::frame::scrolls("installed")).child(list))
             .children((hidden > 0).then(|| {
                 div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(SOFT)).child(muted(trf(
                     "{count} other files the launcher installed (packs, or from other sources) aren't listed here.",
@@ -727,6 +728,7 @@ impl Launcher {
         let help = div()
             .id(("alt-unfit-help", n))
             .tab_index(0)
+            .seen()
             .flex_none()
             .size(px(16.))
             .rounded_full()

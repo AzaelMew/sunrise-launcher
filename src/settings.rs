@@ -206,6 +206,7 @@ impl Launcher {
             .id("alt-settings-scroll")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("settings"))
             .px(px(32.))
             .py(px(24.))
             .text_color(rgb(TEXT))
@@ -711,6 +712,7 @@ impl Launcher {
                     value == limit,
                 )
                 .tab_index(0)
+                .seen()
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.settings.cache_limit_gib = Some(value);
                     if let Err(error) = this.settings.save() {
@@ -810,6 +812,7 @@ impl Launcher {
             let help = div()
                 .id(name)
                 .tab_index(0)
+                .seen()
                 .flex_none()
                 .size(px(16.))
                 .rounded_full()
@@ -1141,6 +1144,7 @@ impl Launcher {
         let field = div()
             .id(id)
             .track_focus(&focus)
+            .seen()
             .h(px(tokens::FIELD))
             .px(px(12.))
             .flex()

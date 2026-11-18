@@ -756,6 +756,7 @@ impl Launcher {
                 "alt-mods-find"
             })
             .track_focus(focus)
+            .seen()
             .flex_1()
             .min_w(px(120.))
             .h(px(tokens::ACTION))
@@ -861,6 +862,7 @@ impl Launcher {
                     // One Tab stop for the two: the arrow keys go to the other.
                     .id("alt-mods-tabs")
                     .tab_index(0)
+                    .seen()
                     .focus_visible(|s| s.border_color(c(tokens::GOLD)))
                     .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
                         if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {

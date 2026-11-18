@@ -292,6 +292,7 @@ impl Launcher {
         let help = div()
             .id("alt-data-help")
             .tab_index(0)
+            .seen()
             .flex_none()
             .size(px(16.))
             .rounded_full()
@@ -507,6 +508,7 @@ impl Launcher {
                 grid.into_any_element()
             }
         };
+        crate::frame::scrolls_with(&self.ui.mods.packs.scroll);
         page.child(
             div()
                 .id("alt-pack-scroll")

@@ -190,6 +190,7 @@ impl Launcher {
         let field = div()
             .id("alt-versions-find")
             .track_focus(&focus)
+            .seen()
             .h(px(tokens::FIELD))
             .px(px(12.))
             .flex()

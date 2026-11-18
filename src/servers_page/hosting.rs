@@ -2,7 +2,6 @@
 //! address, players, settings, backups and log. Every action is the Servers page's own
 //! (`servers_page.rs`); only the drawing is new.
 use super::*;
-use crate::frame::Reach as _;
 use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use crate::mods::{choices, switch, Choose};
 use crate::settings::{danger, group, hint, off, row, warning};
@@ -226,6 +225,7 @@ impl Launcher {
             .id("alt-hosting-scroll")
             .size_full()
             .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("host"))
             .px(px(32.))
             .py(px(24.))
             .text_color(rgb(TEXT))
@@ -1522,6 +1522,7 @@ impl Launcher {
                     div()
                         .id(ElementId::named_usize("host-create-copy", i))
                         .tab_index(0)
+                        .seen()
                         .border_1()
                         .border_color(gpui::transparent_black())
                         .focus_visible(|s| s.border_color(rgb(GOLD)))
@@ -1652,6 +1653,7 @@ impl Launcher {
                 div()
                     .id("host-create-eula-read")
                     .tab_index(0)
+                    .seen()
                     .px(px(4.))
                     .rounded(px(tokens::R_SMALL))
                     .border_1()
@@ -1669,7 +1671,7 @@ impl Launcher {
             .min_h_0()
             .gap(px(18.))
             .p(px(28.))
-            .overflow_y_scroll()
+            .overflow_y_scroll().track_scroll(&crate::frame::scrolls("host-create"))
             .child(
                 div()
                     .flex()

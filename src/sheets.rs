@@ -224,6 +224,7 @@ pub(crate) fn frame(
                 .max_w_full()
                 .max_h_full()
                 .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("sheet"))
                 .p(px(28.))
                 .gap(px(16.))
                 .rounded(px(tokens::R_PANEL))
@@ -454,6 +455,7 @@ impl Launcher {
         Some(
             layer
                 .track_focus(&focus)
+                .seen()
                 .on_key_down(move |ev: &KeyDownEvent, window, cx| {
                     if ev.keystroke.key != "tab" {
                         return;
@@ -666,6 +668,7 @@ impl Launcher {
                 div()
                     .id("alt-resolve-details")
                     .tab_index(0)
+                    .seen()
                     .flex()
                     .items_center()
                     .gap(px(6.))
@@ -1299,6 +1302,7 @@ impl Launcher {
                     // Never taller than the room above the bar: a long list scrolls.
                     .max_h(px((self.window_height - 94.).max(120.)))
                     .overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("build-list"))
                     // Under the build chip, which starts the bar when nobody is signed in.
                     .left(px(if self.accounts.selected().is_some() {
                         148.

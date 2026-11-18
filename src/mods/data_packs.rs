@@ -362,6 +362,7 @@ impl Launcher {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("data-packs"))
             .flex()
             .flex_col()
             .gap(px(12.));

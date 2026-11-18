@@ -3,7 +3,7 @@
 //! without one (those who played offline before the gate), and again whenever Play is refused.
 //! The sign-in runs on it, code and all.
 use super::*;
-use crate::frame::{button, primary, BAD, BG, CARD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{button, primary, Reach as _, BAD, BG, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::rgb;
 
 impl Launcher {
@@ -62,7 +62,7 @@ impl Launcher {
             .w(px(580.))
             .max_w_full()
             .max_h_full()
-            .overflow_y_scroll()
+            .overflow_y_scroll().track_scroll(&crate::frame::scrolls("sign-in"))
             .p(px(28.))
             .rounded(px(tokens::R_PANEL))
             .border_1()
@@ -205,6 +205,7 @@ impl Launcher {
                 // Microsoft's own button, as Microsoft publishes it (`microsoft`).
                 microsoft::sign_in_button("owner-sign-in", &self.theme)
                     .tab_index(0)
+                    .seen()
                     .focus_visible(|s| s.shadow(crate::frame::focus_ring(crate::tokens::GOLD)))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.sign_in_to_play();
