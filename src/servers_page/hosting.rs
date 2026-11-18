@@ -1409,8 +1409,10 @@ impl Launcher {
                 &[("tag", tag), ("release", &release)],
             ),
             (None, Some(_), _) => trf("Up to date: Sunrise {release}.", &[("release", &release)]),
-            (None, None, Some((last, _))) => format!("Sunrise {release}. {last}"),
-            (None, None, None) => format!("Sunrise {release}."),
+            (None, None, Some((last, _))) => {
+                trf("Sunrise {release}. {last}", &[("release", &release), ("last", last)])
+            }
+            (None, None, None) => trf("Sunrise {release}.", &[("release", &release)]),
         };
         let control = match available {
             Some(tag) => primary(self.host_button(
@@ -1425,7 +1427,7 @@ impl Launcher {
                             "Updated to Sunrise {tag}. The world was backed up first (Backups).",
                             &[("tag", &tag)],
                         );
-                        this.server_job(format!("Updating to {tag}"), move |log| {
+                        this.server_job(trf("Updating to {tag}", &[("tag", &tag)]), move |log| {
                             servers::run_streamed(&dir, &["update"], log).map(|_| done)
                         });
                     }

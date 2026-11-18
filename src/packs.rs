@@ -10,6 +10,7 @@
 //!   `pickedShaderPack` in `sunrise-graphics.txt`.
 //!
 //! Every other line of both files is written back as it was.
+use crate::i18n::{tr, trf};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -444,11 +445,20 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
     let kind = kind_of(file)?;
     let dir = home.join(kind.folder());
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = file.file_name().ok_or("A pack file has a name")?;
+    let name = file.file_name().ok_or_else(|| tr("A pack file has a name").to_string())?;
     let target = free_target(&dir, name);
-    fs::copy(file, &target).map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
-    read(&target, kind, &[])
-        .ok_or_else(|| format!("{} is not a pack the game reads", target.display()))
+    fs::copy(file, &target).map_err(|e| {
+        trf(
+            "Could not copy {file}: {error}",
+            &[("file", &file.display().to_string()), ("error", &e.to_string())],
+        )
+    })?;
+    read(&target, kind, &[]).ok_or_else(|| {
+        trf(
+            "{file} is not a pack the game reads",
+            &[("file", &target.display().to_string())],
+        )
+    })
 }
 
 /// The Installed page's add: like `add`, for a file the person said is a `kind` pack. A file of
@@ -457,9 +467,9 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
 /// in place only whole, never over a pack already there (a same name gets `(2)`), so an error
 /// leaves the folder as it was.
 pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
-    let name = file.file_name().ok_or("A pack file has a name")?;
+    let name = file.file_name().ok_or_else(|| tr("A pack file has a name").to_string())?;
     if !fs::metadata(file).is_ok_and(|m| m.is_file()) {
-        return Err(format!("{} is not a file.", file.display()));
+        return Err(trf("{file} is not a file.", &[("file", &file.display().to_string())]));
     }
     let dir = home.join(kind.folder());
     let made = !dir.exists();
@@ -475,28 +485,39 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             .tempfile_in(&dir)
             .map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut source =
-            fs::File::open(file).map_err(|e| format!("Could not read {}: {e}", file.display()))?;
+            fs::File::open(file).map_err(|e| {
+            trf(
+                "Could not read {file}: {error}",
+                &[("file", &file.display().to_string()), ("error", &e.to_string())],
+            )
+        })?;
         std::io::copy(&mut source, temp.as_file_mut())
-            .map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
+            .map_err(|e| {
+                trf(
+                    "Could not copy {file}: {error}",
+                    &[("file", &file.display().to_string()), ("error", &e.to_string())],
+                )
+            })?;
         // What is checked is the copy that gets put in place.
         let found = kind_of(temp.path())
             .map_err(|e| e.replace(&temp.path().display().to_string(), &name.to_string_lossy()))?;
         if found != kind {
-            return Err(format!(
-                "{} is a {} pack, not a {} pack.",
-                name.to_string_lossy(),
-                found.folder(),
-                kind.folder()
+            return Err(trf(
+                "{file} is a {found} pack, not a {kind} pack.",
+                &[
+                    ("file", &name.to_string_lossy()),
+                    ("found", found.folder()),
+                    ("kind", kind.folder()),
+                ],
             ));
         }
         if ext.eq_ignore_ascii_case(".sshader") {
             let pack = sunrise_launcher_shader_api::Pack::read(temp.path())?;
             if let Err(problems) = sunrise_launcher_shader_api::check(&pack) {
                 let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
-                return Err(format!(
-                    "{} fails the shader pack check:\n{}",
-                    name.to_string_lossy(),
-                    lines.join("\n")
+                return Err(trf(
+                    "{file} fails the shader pack check:\n{problems}",
+                    &[("file", &name.to_string_lossy()), ("problems", &lines.join("\n"))],
                 ));
             }
         }
@@ -508,9 +529,9 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             if names.iter().any(|n| n.starts_with("data/"))
                 && !names.iter().any(|n| n.starts_with("assets/"))
             {
-                return Err(format!(
-                    "{} is a data pack (data/ and no assets/): add it as a data pack.",
-                    name.to_string_lossy()
+                return Err(trf(
+                    "{file} is a data pack (data/ and no assets/): add it as a data pack.",
+                    &[("file", &name.to_string_lossy())],
                 ));
             }
         }
@@ -522,9 +543,18 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             .map(str::to_string);
         let mut pack = shown
             .and_then(|shown| read_named(temp.path(), shown, kind, &[]))
-            .ok_or_else(|| format!("{} is not a pack the game reads", name.to_string_lossy()))?;
-        temp.persist_noclobber(&target)
-            .map_err(|e| format!("Could not add {}: {}", target.display(), e.error))?;
+            .ok_or_else(|| {
+                trf(
+                    "{file} is not a pack the game reads",
+                    &[("file", &name.to_string_lossy())],
+                )
+            })?;
+        temp.persist_noclobber(&target).map_err(|e| {
+            trf(
+                "Could not add {file}: {error}",
+                &[("file", &target.display().to_string()), ("error", &e.error.to_string())],
+            )
+        })?;
         pack.path = target;
         Ok(pack)
     };

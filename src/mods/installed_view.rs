@@ -66,7 +66,9 @@ impl Launcher {
 
         // ---- what to show: the same row of chips Discover filters with
         let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
-        let counted = |label: &str, n: usize| format!("{label} · {n}");
+        let counted = |label: &str, n: usize| {
+            trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
+        };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
         for (i, (label, n, which)) in [
             (tr("All"), rows.len(), Show::All),
@@ -299,7 +301,7 @@ impl Launcher {
                             &[("count", &n.to_string())],
                         )))
                         .children(worlds.iter().map(|(world, mods)| {
-                            div().text_size(px(13.)).child(format!("{world}: {}", mods.join(", ")))
+                            div().text_size(px(13.)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
                         }))
                         .child(div().text_size(px(13.)).text_color(c(GOLD)).child(trf(
                             "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
@@ -326,18 +328,20 @@ impl Launcher {
                     panel
                         .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Update {count} mods?", &[("count", &included.len().to_string())])))
                         .children(included.iter().take(14).map(|i| {
-                            div().text_size(px(13.)).child(format!(
-                                "{} {} → {}{}",
-                                i.title,
-                                i.from,
-                                i.to,
-                                if i.native { format!("  ({})", tr("native code")) } else { String::new() }
+                            div().text_size(px(13.)).child(trf(
+                                "{title} {from} → {to}{native}",
+                                &[
+                                    ("title", &i.title),
+                                    ("from", &i.from),
+                                    ("to", &i.to),
+                                    ("native", &if i.native { trf("  ({code})", &[("code", tr("native code"))]) } else { String::new() }),
+                                ],
                             ))
                         }))
                         .children((included.len() > 14).then(|| muted(trf("and {count} more", &[("count", &(included.len() - 14).to_string())]))))
                         .children((!plan.skipped.is_empty()).then(|| {
                             div().flex().flex_col().gap(px(2.)).child(muted(tr("Left out:"))).children(plan.skipped.iter().map(|(t, why)| {
-                                div().text_size(px(12.)).text_color(c(GOLD)).child(format!("{t}: {why}"))
+                                div().text_size(px(12.)).text_color(c(GOLD)).child(trf("{title}: {why}", &[("title", t), ("why", why)]))
                             }))
                         }))
                         .child(muted(tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off.")))
@@ -394,12 +398,10 @@ impl Launcher {
                     .px(px(14.))
                     .h(px(38.))
                     .bg(c(BG))
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(c(MUTED))
-                            .child(format!("{title} · {count}")),
-                    );
+                    .child(div().text_size(px(11.)).text_color(c(MUTED)).child(trf(
+                        "{title} · {count}",
+                        &[("title", title), ("count", &count.to_string())],
+                    )));
                 if g == Group::Updates {
                     let b = crate::frame::button(
                         "alt-update-all",
@@ -575,7 +577,7 @@ impl Launcher {
         if let Some(to) = &r.update {
             let b = act("alt-row-update", "Update", true);
             let row = r.clone();
-            notes.push(say(format!("→ {to}"), BLUE));
+            notes.push(say(trf("→ {to}", &[("to", to)]), BLUE));
             verdict = verdict.child(if !busy {
                 b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.update_one(&row);
@@ -692,7 +694,10 @@ impl Launcher {
                             .gap_x(px(10.))
                             .child(muted(match kind {
                                 "" => r.version.clone(),
-                                kind => format!("{kind} · {}", r.version),
+                                kind => trf(
+                                    "{kind} · {version}",
+                                    &[("kind", kind), ("version", &r.version)],
+                                ),
                             }))
                             .children(notes),
                     ),

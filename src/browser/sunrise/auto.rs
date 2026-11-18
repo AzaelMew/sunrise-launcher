@@ -366,20 +366,31 @@ pub fn update_to(
     let entry = installed::Installed::load(home)
         .find(SourceId::Sunrise, project)
         .cloned()
-        .ok_or_else(|| format!("{project} wasn't installed from the registry."))?;
+        .ok_or_else(|| {
+            trf(
+                "{project} wasn't installed from the registry.",
+                &[("project", project)],
+            )
+        })?;
     if crate::native_status::is_native_file(&entry.file) {
-        return Err(format!(
-            "{project} is a native mod: it updates by its own path."
+        return Err(trf(
+            "{project} is a native mod: it updates by its own path.",
+            &[("project", project)],
         ));
     }
     let p = index
         .project(project)
-        .ok_or_else(|| format!("{project} isn't in Sunrise's registry."))?;
+        .ok_or_else(|| trf("{project} isn't in Sunrise's registry.", &[("project", project)]))?;
     let v = p
         .versions
         .iter()
         .find(|v| v.version == version && index.revoked(&p.id, &v.file.sha256).is_none())
-        .ok_or_else(|| format!("{project} {version} can't be installed."))?;
+        .ok_or_else(|| {
+            trf(
+                "{project} {version} can't be installed.",
+                &[("project", project), ("version", version)],
+            )
+        })?;
     update(index, super::local(), p, v, &entry, home, progress)
 }
 

@@ -80,7 +80,7 @@ impl Launcher {
                 .child(
                     div()
                         .truncate()
-                        .child(format!("{} · {step}", self.build_stage())),
+                        .child(trf("{stage} · {step}", &[("stage", &self.build_stage()), ("step", &step)])),
                 )
                 .child(self.build_bar()),
         )
@@ -150,7 +150,7 @@ impl Launcher {
                                     div()
                                         .text_size(px(13.))
                                         .text_color(rgb(MUTED))
-                                        .child(format!("{} · {step}", self.build_stage())),
+                                        .child(trf("{stage} · {step}", &[("stage", &self.build_stage()), ("step", &step)])),
                                 ),
                         )
                         .child(

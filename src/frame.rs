@@ -549,7 +549,7 @@ impl Launcher {
             window.focus(&self.root_focus, cx);
         }
         let page = self.ui.page;
-        let rail_link = |p: Page, id: &'static str, label: &'static str, icon: &'static str| {
+        let rail_link = |p: Page, id: &'static str, label: &str, icon: &'static str| {
             let on = page == p
                 || (p == Page::Discover && matches!(page, Page::Installed | Page::Project))
                 || (p == Page::Packs && matches!(page, Page::PackFind | Page::PackProject));
@@ -584,7 +584,7 @@ impl Launcher {
                     20.,
                     rgb(if on { TEXT } else { MUTED }).into(),
                 ))
-                .child(tr(label))
+                .child(label.to_string())
                 .on_click(cx.listener(move |this, _, _, cx| {
                     match p {
                         Page::Discover => this.open_mods(),
@@ -604,20 +604,20 @@ impl Launcher {
             .py(px(14.))
             .gap(px(4.))
             .child(div().mb(px(12.)).child(crate::mark(36.)))
-            .child(rail_link(Page::Home, "alt-nav-home", "Home", "home"))
-            .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"))
-            .child(rail_link(Page::Packs, "alt-nav-packs", "Packs", "archive"))
+            .child(rail_link(Page::Home, "alt-nav-home", tr("Home"), "home"))
+            .child(rail_link(Page::Discover, "alt-nav-mods", tr("Mods"), "package"))
+            .child(rail_link(Page::Packs, "alt-nav-packs", tr("Packs"), "archive"))
             .child(rail_link(
                 Page::Hosting,
                 "alt-nav-hosting",
-                "Host",
+                tr("Host"),
                 "server",
             ))
             .child(div().flex_1())
             .child(rail_link(
                 Page::Settings,
                 "alt-nav-settings",
-                "Settings",
+                tr("Settings"),
                 "sliders",
             ));
         let content = match page {
