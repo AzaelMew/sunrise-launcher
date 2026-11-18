@@ -1,8 +1,7 @@
 name: CI
 # A dispatch with `pr` runs on main but tests that pull request's head, so it is named for it.
 run-name: "${{ inputs.pr && format('PR #{0} checks', inputs.pr) || github.event.pull_request.title || github.event.head_commit.message || github.workflow }}"
-# Every pull request gets the format check; the full checks (everything that compiles) run for this repository's own branches, main's pushes and dispatches.
-# A fork's pull request gets them only when a maintainer runs `gh workflow run ci.yml -R sunrise-org/sunrise-launcher --ref main -f pr=<number>`, on GitHub's runners, which posts `build` on its head.
+# Format on every pull request; the full checks on this repository's own branches, main and dispatches, and on a fork's head only by `gh workflow run ci.yml --ref main -f pr=<n>`, which posts `build` there.
 on:
   pull_request:
   push:
