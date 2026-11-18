@@ -169,7 +169,7 @@ fn preview(p: &Palette) -> Div {
                             .rounded(px(tokens::R_SMALL))
                             .border_1()
                             .border_color(p.input_edge())
-                            .bg(rgb(p.play_fill))
+                            .bg(p.play_gradient())
                             .text_size(px(tokens::CAPTION))
                             .font_weight(FontWeight::BOLD)
                             .text_color(rgb(p.accent_on))
@@ -534,8 +534,13 @@ impl Launcher {
         });
         let theme = stacked(
             tr("Theme"),
-            tr("Colours and scenery for the whole launcher. Play stays solid, with a white label, in every one."),
-            div().flex().flex_col().gap(px(12.)).children(gone).child(cards),
+            tr("Colours and scenery for the whole launcher. Play uses white text in every theme."),
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .children(gone)
+                .child(cards),
         );
         let mut rows = vec![theme];
         if !bad.is_empty() {

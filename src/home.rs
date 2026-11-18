@@ -25,6 +25,7 @@ use gpui::rgb;
 use std::cell::Cell;
 use std::rc::Rc;
 use sunrise_launcher::worlds::World;
+use sunrise_launcher_theme::glass::radius;
 
 /// A world's picture in a row.
 const WORLD_ICON: f32 = 40.;
@@ -323,7 +324,7 @@ impl Launcher {
             .child(self.play_row(instance, window, cx).mt(px(18.)))
     }
 
-    /// Play, the build picker, Play's one action and its one sentence, then the cat's lane.
+    /// Play, the build picker and profile shortcuts, then Play's status and the cat's lane.
     fn play_row(
         &mut self,
         instance: &instances::Instance,
@@ -334,34 +335,72 @@ impl Launcher {
         let idle = view.main == Main::Play;
         let p = palette();
         let on = rgb(p.accent_on);
+        // Xmilon's accent halo sits outside the button. Hover strengthens it without putting
+        // a veil over the gradient or its text.
+        let glow = move |hover| {
+            vec![gpui::BoxShadow {
+                color: Hsla::from(rgb(p.accent)).opacity(if hover { 0.78 } else { 0.58 }),
+                offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
+                blur_radius: px(if hover { 32. } else { 22. }),
+                spread_radius: px(-8.),
+                inset: false,
+            }]
+        };
         let play = crate::frame::input(false)
             .id("alt-play")
-            .tab_index(0)
             .flex_none()
             .justify_center()
             .gap(px(10.))
+            .rounded(px(radius::LARGE))
             .h(px(tokens::PLAY))
-            .min_w(px(132.))
+            .min_w(px(172.))
             .px(px(22.))
             .font_weight(FontWeight::BOLD)
             .text_size(px(tokens::LEAD))
             .text_color(on)
-            .bg(rgb(p.play_fill))
+            .bg(p.play_gradient())
+            .shadow(glow(false))
             .when(idle, |d| d.child(blocks::icon("play", 17., on.into())))
             .child(view.main.label())
-            .focus_visible(move |s| s.shadow(crate::frame::focus_ring(p.focus)))
-            .seen()
-            // Keep the fill and the white label opaque even on glass. Only the available
-            // action gets a pointer and a click handler.
             .when(view.enabled, |d| {
                 d.cursor_pointer()
-                    .hover(move |s| s.bg(rgb(p.play_hover)))
+                    .hover(move |s| {
+                        s.border_color(Hsla::from(on).opacity(0.25))
+                            .shadow(glow(true))
+                    })
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.cat_off_play();
                         this.press_play();
                         cx.notify();
                     }))
-            });
+            })
+            .reach_edge();
+        let icon_button = |id, icon, label| {
+            crate::frame::input(false)
+                .id(id)
+                .flex_none()
+                .justify_center()
+                .rounded(px(radius::LARGE))
+                .size(px(tokens::PLAY))
+                .cursor_pointer()
+                .hover(move |s| s.bg(rgb(p.hover)))
+                .reach_edge()
+                .tooltip(crate::glass_ui::tip(label))
+                .child(crate::glass_ui::icon(icon, 21., rgb(p.text).into()))
+        };
+        let mods = icon_button("alt-quick-mods", "puzzle", tr("Manage mods")).on_click(
+            cx.listener(|this, _, _, cx| {
+                this.show_installed_mods();
+                cx.notify();
+            }),
+        );
+        let home = instance.home.clone();
+        let folder = icon_button("alt-quick-folder", "folder-01", tr("Open folder")).on_click(
+            cx.listener(move |_, _, _, cx| {
+                crate::glass_toast::open(cx, &home);
+                cx.notify();
+            }),
+        );
         let act = view.act.clone().map(|act| {
             let id = match act {
                 crate::launch_state::Act::StopBuild => "alt-build-stop",
@@ -423,6 +462,8 @@ impl Launcher {
                     .h(px(tall))
                     .child(play)
                     .child(self.build_picker(instance, cx))
+                    .child(mods)
+                    .child(folder)
                     .children(act)
                     .child(says),
             )
