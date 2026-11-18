@@ -346,16 +346,20 @@ impl Store {
     }
     fn save(&self, data: &Path) -> Result<(), String> {
         fs::create_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
-        let text = serde_json::to_string_pretty(self).unwrap();
-        // Replaced whole or not at all: a write that stops halfway would lose every instance's
-        // choices.
-        let part = data.join(format!("{FILE}.{}.part", std::process::id()));
-        fs::write(&part, text)
-            .and_then(|()| fs::rename(&part, data.join(FILE)))
-            .map_err(|e| {
-                let _ = fs::remove_file(&part);
-                format!("{FILE}: {e}")
-            })
+        let write = || -> std::io::Result<()> {
+            use std::io::Write as _;
+            let data = data.canonicalize()?;
+            // Own this file before writing to it. A failed save drops just this attempt's
+            // file; a successful one replaces the store whole.
+            let mut part = tempfile::Builder::new()
+                .prefix(".instances-")
+                .tempfile_in(&data)?;
+            let text = serde_json::to_string_pretty(self).unwrap();
+            part.write_all(text.as_bytes())?;
+            part.persist(data.join(FILE))?;
+            Ok(())
+        };
+        write().map_err(|e| format!("{FILE}: {e}"))
     }
 }
 
@@ -693,18 +697,25 @@ fn create_whole_in(
     if name.is_empty() {
         return Err("A profile needs a name.".into());
     }
-    let all = list_in(game_home, data);
-    if all.iter().any(|i| i.name.eq_ignore_ascii_case(name)) {
-        return Err(name_taken(name));
-    }
     if let Some(from) = from.filter(|f| f.kind == Kind::Pack) {
         return Err(format!(
             "{} plays its pack's mods: import the pack again for a second copy.",
             from.name
         ));
     }
+    let create_error = |e| format!("Could not make profile {name}: {e}");
+    fs::create_dir_all(game_home).map_err(create_error)?;
+    let root = game_home.canonicalize().map_err(create_error)?;
+    let own = creation_parent(&root, OWN).map_err(create_error)?;
+    let staging = creation_parent(&root, STAGING).map_err(create_error)?;
+    if list_in(game_home, data)
+        .iter()
+        .any(|i| i.name.eq_ignore_ascii_case(name))
+    {
+        return Err(name_taken(name));
+    }
     let base = slug(name);
-    let taken = |s: &str| s == DEFAULT || game_home.join(OWN).join(s).exists();
+    let taken = |s: &str| s == DEFAULT || own.join(s).symlink_metadata().is_ok();
     let slug = (1..)
         .map(|n| {
             if n == 1 {
@@ -715,42 +726,33 @@ fn create_whole_in(
         })
         .find(|s| !taken(s))
         .unwrap();
-    let dir = game_home.join(OWN).join(&slug);
-    // Put together out of sight, then moved into place whole.
-    let stage = game_home
-        .join(STAGING)
-        .join(format!("{slug}.{}", std::process::id()));
-    let staged = fs::remove_dir_all(&stage)
-        .or_else(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => Ok(()),
-            _ => Err(e),
-        })
-        .and_then(|()| match from {
-            Some(from) => copy_home(&from.home, &stage),
-            None => fs::create_dir_all(&stage).and_then(|()| {
-                for f in PLAYER_FILES {
-                    let own = game_home.join(f);
-                    if own.is_file() {
-                        fs::copy(own, stage.join(f))?;
-                    }
+    let dir = own.join(&slug);
+    // Each attempt owns one private directory. Move its child, not the temp directory's
+    // own path, so dropping the guard can never clean up a reused path after publication.
+    let stage = tempfile::tempdir_in(&staging).map_err(create_error)?;
+    let contents = stage.path().join("home");
+    let staged = || -> std::io::Result<()> {
+        if let Some(from) = from {
+            copy_home(&from.home, &contents)?;
+        } else {
+            fs::create_dir(&contents)?;
+            for f in PLAYER_FILES {
+                let source = game_home.join(f);
+                if source.is_file() {
+                    fs::copy(source, contents.join(f))?;
                 }
-                Ok(())
-            }),
-        })
-        .and_then(|()| match picture {
-            Some(Some(png)) => fs::write(stage.join(PICTURE), png),
-            // The copy's own file, not the picture of the instance it was copied from.
-            Some(None) if stage.join(PICTURE).is_file() => fs::remove_file(stage.join(PICTURE)),
-            _ => Ok(()),
-        })
-        .and_then(|()| fs::create_dir_all(game_home.join(OWN)))
-        .and_then(|()| fs::rename(&stage, &dir));
-    if let Err(e) = staged {
-        let _ = fs::remove_dir_all(&stage);
-        let _ = fs::remove_dir(game_home.join(STAGING));
-        return Err(format!("Could not make {}: {e}", dir.display()));
-    }
-    let _ = fs::remove_dir(game_home.join(STAGING));
+            }
+        }
+        let icon = contents.join(PICTURE);
+        match picture {
+            Some(Some(png)) => fs::write(icon, png)?,
+            Some(None) if icon.is_file() => fs::remove_file(icon)?,
+            _ => {}
+        }
+        creation_parent(&root, OWN)?;
+        publish_new_folder(&contents, &dir)
+    };
+    staged().map_err(create_error)?;
     let recorded = crate::run_leases::publish(&dir)
         .map_err(crate::native_mods::cache_error)
         .and_then(|()| {
@@ -766,11 +768,89 @@ fn create_whole_in(
             store.save(data)
         });
     if let Err(e) = recorded {
-        // Nothing has played in it and nothing names it: the folder goes, the name is free.
-        let _ = fs::remove_dir_all(&dir);
+        // A no-replace rename put this attempt's folder here. Don't follow a redirected parent
+        // even on the failure path.
+        if creation_parent(&root, OWN).is_ok() {
+            let _ = fs::remove_dir_all(&dir);
+        }
         return Err(e);
     }
     find_in(&list_in(game_home, data), &slug)
+}
+
+/// A real child directory of the canonical game root, not a symlink or a junction.
+fn creation_parent(root: &Path, name: &str) -> std::io::Result<PathBuf> {
+    let path = root.join(name);
+    match fs::create_dir(&path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(e),
+    }
+    if !path.symlink_metadata()?.is_dir() || path.canonicalize()? != path {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "{} is not a directory inside the game folder",
+                path.display()
+            ),
+        ));
+    }
+    Ok(path)
+}
+
+/// Publish atomically without replacing another attempt's folder, even if it is empty.
+fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt as _;
+        let from = CString::new(from.as_os_str().as_bytes())?;
+        let to = CString::new(to.as_os_str().as_bytes())?;
+        // SAFETY: both pointers name owned, null-terminated path strings for the call.
+        let result = unsafe {
+            #[cfg(target_os = "linux")]
+            let result = libc::renameat2(
+                libc::AT_FDCWD,
+                from.as_ptr(),
+                libc::AT_FDCWD,
+                to.as_ptr(),
+                libc::RENAME_NOREPLACE,
+            );
+            #[cfg(target_os = "macos")]
+            let result = libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_EXCL);
+            result
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt as _;
+        let wide = |path: &Path| {
+            path.as_os_str()
+                .encode_wide()
+                .chain([0])
+                .collect::<Vec<_>>()
+        };
+        let (from, to) = (wide(from), wide(to));
+        // SAFETY: both pointers name owned, null-terminated path strings for the call.
+        let result = unsafe {
+            windows_sys::Win32::Storage::FileSystem::MoveFileW(from.as_ptr(), to.as_ptr())
+        };
+        if result != 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    {
+        let _ = (from, to);
+        Err(std::io::ErrorKind::Unsupported.into())
+    }
 }
 
 fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
