@@ -78,23 +78,6 @@ stroke in `currentColor`.
 [Simple Icons](https://github.com/simple-icons/simple-icons) 13.21.0 (CC0 1.0). The logo is Discord's
 trademark, used only on the button that opens Sunrise's Discord server.
 
-## Mod loader logos
-
-The launcher shows the logo of the mod loader an instance plays with, and offers the logos as
-instance icons.
-
-- `assets/logos/{fabric,quilt,neoforge,forge}.png` are the loaders' logos as the launcher
-  mockup on [playsunrise.net/launcher](https://playsunrise.net/launcher) shows them (sunrise-site
-  `public/media/launcher/*.webp`, converted to PNG), each its project's own mark:
-  [Fabric](https://fabricmc.net/), [Quilt](https://quiltmc.org/) (its art is
-  [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)),
-  [NeoForged](https://neoforged.net/) (its art, by Ridanisaurus, is
-  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)) and
-  [Minecraft Forge](https://minecraftforge.net/). They name the loader an instance runs.
-
-Each logo belongs to its project. Showing it says which loader an instance runs; it does not mean
-the project endorses Sunrise.
-
 ## Sign in with Microsoft
 
 The launcher's sign-in buttons follow Microsoft's published branding guidelines for apps that sign in
