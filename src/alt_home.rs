@@ -26,6 +26,9 @@ use gpui::{rgb, rgba};
 use sunrise_launcher::browser::{self, Kind, Project, Query, SourceId};
 use sunrise_launcher::worlds::World;
 
+#[cfg(feature = "redesign-preview")]
+mod world_packs;
+
 /// Worlds shown across the top.
 const WORLDS: usize = 3;
 /// Popular mods listed.
@@ -58,6 +61,9 @@ pub(crate) struct AltHomeState {
     installed_home: Option<std::path::PathBuf>,
     /// An install was under way last frame: the list is read again when it ends.
     was_busy: bool,
+    /// The inline data packs view of one explicitly chosen world.
+    #[cfg(feature = "redesign-preview")]
+    packs: world_packs::WorldPacks,
 }
 
 /// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
@@ -209,6 +215,19 @@ impl Launcher {
         self.alt_refresh_installed(&home);
         self.alt_ping_featured(cx);
         self.alt_popular_load(cx);
+        #[cfg(feature = "redesign-preview")]
+        {
+            // The worlds still on disk, as last listed for this setup.
+            let present: Option<Vec<World>> =
+                (self.worlds.home.as_ref() == Some(&home)).then(|| {
+                    let list = self.worlds.list.iter();
+                    list.filter(|w| w.path.is_dir()).cloned().collect()
+                });
+            self.alt.home.packs.sync(&home, present.as_deref());
+            if self.alt.home.packs.is_open() {
+                return self.alt_world_packs(cx);
+            }
+        }
         let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
         let worlds = if first_start {
             self.alt_welcome(cx)
@@ -265,11 +284,33 @@ impl Launcher {
         } else {
             row
         };
+        // Worlds past the first few are reached from the chooser, never by default.
+        #[cfg(feature = "redesign-preview")]
+        let more = (self.worlds.list.len() > WORLDS).then(|| {
+            let home = self.worlds.home.clone();
+            button("alt-worlds-more", tr("Data packs for other worlds")).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
+                    if let Some(home) = home.clone() {
+                        this.alt.home.packs.open(home, None);
+                    }
+                    cx.notify();
+                },
+            ))
+        });
+        #[cfg(not(feature = "redesign-preview"))]
+        let more: Option<Stateful<Div>> = None;
         div()
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(heading(tr("Your worlds")))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(heading(tr("Your worlds")))
+                    .children(more),
+            )
             .child(body)
     }
 
@@ -339,6 +380,24 @@ impl Launcher {
 
     fn alt_world_card(&mut self, world: &World, art: Div, cx: &mut Context<Self>) -> Div {
         let folder = world.folder.clone();
+        #[cfg(feature = "redesign-preview")]
+        let packs = {
+            let (world, home) = (world.clone(), self.worlds.home.clone());
+            Some(
+                button(
+                    format!("alt-world-packs-{}", world.folder),
+                    tr("Data packs"),
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(home) = home.clone() {
+                        this.alt.home.packs.open(home, Some(&world));
+                    }
+                    cx.notify();
+                })),
+            )
+        };
+        #[cfg(not(feature = "redesign-preview"))]
+        let packs: Option<Stateful<Div>> = None;
         let play = button(format!("alt-world-{}", world.folder), tr("Play")).on_click(cx.listener(
             move |this, _: &ClickEvent, _, cx| {
                 this.alt_go("--world", folder.clone());
@@ -378,6 +437,7 @@ impl Launcher {
                             )
                             .child(muted(facts)),
                     )
+                    .children(packs)
                     .child(play),
             )
     }
