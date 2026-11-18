@@ -7,13 +7,18 @@
 //! and call `alt_play`, which owns the sign-in, install, prepare, build and trust gates:
 //! - worlds: `worlds::list` of the selected setup's `saves/` (`level.dat` and `icon.png`, read
 //!   only), Play starts the game straight into one (`quick_play`);
-//! - a world without `icon.png` is drawn from a block texture of the player's own prepared
-//!   game files (`backend::resources`, nothing is shipped), else a plain tile with its initial;
+//! - a world without `icon.png` is drawn from `dirt.png` of the player's own prepared game
+//!   files (`backend::resources`, nothing is shipped), else a plain charcoal tile, no letter;
 //! - servers: the game's own `servers.dat` (`server_list`) with the status ping the Multiplayer
 //!   screen sends, Join, Save and Remove; an invite code joins through `join_friend`;
-//! - featured servers: [`featured`] has no source yet, so none is shown;
+//! - featured servers: a bundled pair, Horizon Minecraft (joinable once its address is set)
+//!   and Sunrise's own (inert, coming soon); no backend service;
 //! - popular mods: the registry index's most downloaded mods installable on this game, Add is
 //!   the Mods page's own install (`mods_install`, with its consent), a row opens the project.
+//!   Home never calls `mods_load`, which looks for updates and turns off taken-down mods: it
+//!   reads the installed list itself and points installs at the selected setup (`follow_home`);
+//!   a row opens the project page of the Mods screens (`alt_mods_show_project`).
+//! - signed out with no worlds, the top is the welcome banner (mock 10) in place of worlds.
 use super::*;
 use crate::alt::{button, BG, CARD, GOLD, LINE, MUTED, TEXT};
 use crate::worlds_page;
@@ -31,15 +36,6 @@ const BAND: f32 = 150.;
 const BAND_ART: f32 = 480.;
 /// One texture tile, in points (16 pixels at 8×).
 const TILE: f32 = 128.;
-/// The game's block textures a world without a picture may take, one by its folder's name.
-const BLOCKS: [&str; 6] = [
-    "dirt",
-    "stone",
-    "cobblestone",
-    "oak_planks",
-    "sand",
-    "spruce_planks",
-];
 /// The icons of a world or a server are small: anything larger is not one.
 const MAX_PICTURE: u64 = 4 << 20;
 
@@ -57,18 +53,46 @@ pub(crate) struct AltHomeState {
     popular: Popular,
     /// The saved server whose Remove button is showing, and whether it was asked once.
     menu: Option<(usize, bool)>,
+    /// The registry projects installed in the selected setup, and which setup that was.
+    installed: Vec<String>,
+    installed_home: Option<std::path::PathBuf>,
+    /// An install was under way last frame: the list is read again when it ends.
+    was_busy: bool,
 }
 
-/// A server Sunrise features. There is no public list to read them from yet: none is shown
-/// until there is one, and none is made up.
+/// Horizon Minecraft's address, passed to the game as written. Empty: the row has no Join.
+pub(crate) const HORIZON_ADDRESS: &str = "play.playhorizon.dev";
+
+/// A server Sunrise features, bundled: there is no service to ask.
+#[derive(Debug, PartialEq)]
 pub(crate) struct Featured {
-    pub name: String,
-    pub address: String,
-    pub note: String,
+    pub name: &'static str,
+    /// None: it can't be joined (yet).
+    pub address: Option<&'static str>,
+    pub note: &'static str,
+    /// What an entry without an address says.
+    pub inert: &'static str,
 }
 
 pub(crate) fn featured() -> Vec<Featured> {
-    Vec::new()
+    featured_with(HORIZON_ADDRESS)
+}
+
+fn featured_with(horizon: &'static str) -> Vec<Featured> {
+    vec![
+        Featured {
+            name: "Horizon Minecraft",
+            address: Some(horizon).filter(|a| !a.is_empty()),
+            note: "A Horizon community server",
+            inert: "Address coming soon",
+        },
+        Featured {
+            name: "Sunrise server",
+            address: None,
+            note: "Sunrise's own server",
+            inert: "Coming soon",
+        },
+    ]
 }
 
 /// What the address box holds.
@@ -92,14 +116,6 @@ pub(crate) fn entry(text: &str) -> Entry {
     } else {
         Entry::Address(text.to_string())
     }
-}
-
-/// The block texture a world takes, the same one every time for the same folder.
-pub(crate) fn block_for(folder: &str) -> &'static str {
-    let sum = folder
-        .bytes()
-        .fold(0usize, |a, b| a.wrapping_mul(31).wrapping_add(b as usize));
-    BLOCKS[sum % BLOCKS.len()]
 }
 
 /// The first letter of `name`, upper case, for a plain tile.
@@ -187,11 +203,18 @@ impl Launcher {
                 .into_any_element();
         };
         self.load_worlds(home.clone(), cx);
-        self.load_servers(home);
+        self.load_servers(home.clone());
         self.ping_servers(cx);
-        self.mods_load();
+        self.mods.follow_home(Some(home.clone()));
+        self.alt_refresh_installed(&home);
+        self.alt_ping_featured(cx);
         self.alt_popular_load(cx);
-        let worlds = self.alt_worlds(cx);
+        let first_start = self.accounts.selected().is_none() && self.worlds.list.is_empty();
+        let worlds = if first_start {
+            self.alt_welcome(cx)
+        } else {
+            self.alt_worlds(cx)
+        };
         let servers = self.alt_servers(cx);
         let popular = self.alt_popular(cx);
         div()
@@ -250,8 +273,8 @@ impl Launcher {
             .child(body)
     }
 
-    /// A world's picture: its own `icon.png`, drawn big and sharp; else a block texture of the
-    /// player's own game files, darkened; else a plain tile with its initial.
+    /// A world's picture: its own `icon.png`, drawn big and sharp; else `dirt.png` of the
+    /// player's own game files, darkened; else plain charcoal.
     fn alt_world_art(&mut self, world: &World) -> Div {
         let scale = self.scale;
         let band = div()
@@ -286,12 +309,11 @@ impl Launcher {
                 );
             }
         }
-        let resources = self.game_resources();
-        let block = block_for(&world.folder);
-        let file = resources
-            .join("assets/minecraft/textures/block")
-            .join(format!("{block}.png"));
-        let key = format!("alt-block:{}", file.display());
+        // Always dirt, from the player's own prepared files; none shipped.
+        let file = self
+            .game_resources()
+            .join("assets/minecraft/textures/block/dirt.png");
+        let key = format!("alt-dirt:{}", file.display());
         let texture = self.icon_image(key, TILE, true, move || std::fs::read(file).ok());
         match texture {
             Some(image) => {
@@ -310,12 +332,8 @@ impl Launcher {
                 band.child(tiles)
                     .child(div().absolute().inset_0().bg(rgba(0x0000_0073)))
             }
-            None => band
-                .bg(rgb(CARD))
-                .text_size(px(56.))
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(MUTED))
-                .child(initial(&world.name)),
+            // No dirt: plain charcoal, no letter.
+            None => band.bg(rgb(CARD)),
         }
     }
 
@@ -452,9 +470,9 @@ impl Launcher {
         let mut shown = 0;
         for server in featured() {
             // Saved already: it shows once, as saved.
-            if saved
-                .iter()
-                .any(|(s, _)| s.ip.eq_ignore_ascii_case(&server.address))
+            if server
+                .address
+                .is_some_and(|a| saved.iter().any(|(s, _)| s.ip.eq_ignore_ascii_case(a)))
             {
                 continue;
             }
@@ -495,13 +513,29 @@ impl Launcher {
     }
 
     fn alt_featured_row(&mut self, i: usize, server: Featured, cx: &mut Context<Self>) -> Div {
-        let address = server.address.clone();
-        let join = button(format!("alt-featured-{i}"), tr("Join")).on_click(cx.listener(
-            move |this, _: &ClickEvent, _, cx| {
-                this.alt_go("--server", address.clone());
-                cx.notify();
-            },
-        ));
+        use multiplayer_page::Reach;
+        let (end, line) = match server.address {
+            Some(address) => {
+                let line = match self.multiplayer.reach.get(address) {
+                    Some(Reach::Online { players, .. }) => {
+                        trf("{count} playing", &[("count", &players.to_string())])
+                    }
+                    Some(Reach::Offline) => tr("No answer").to_string(),
+                    _ => tr(server.note).to_string(),
+                };
+                let join = button(format!("alt-featured-{i}"), tr("Join")).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        this.alt_go("--server", address.to_string());
+                        cx.notify();
+                    },
+                ));
+                (join.into_any_element(), line)
+            }
+            None => (
+                muted(tr(server.inert)).into_any_element(),
+                tr(server.note).to_string(),
+            ),
+        };
         div()
             .flex()
             .items_center()
@@ -510,7 +544,7 @@ impl Launcher {
             .py(px(10.))
             .border_t_1()
             .border_color(rgb(LINE))
-            .child(tile(&server.name, 36.))
+            .child(tile(server.name, 36.))
             .child(
                 div()
                     .flex_1()
@@ -522,7 +556,7 @@ impl Launcher {
                             .text_size(px(14.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(rgb(TEXT))
-                            .child(server.name)
+                            .child(tr(server.name))
                             .child(
                                 div()
                                     .text_size(px(11.))
@@ -530,9 +564,39 @@ impl Launcher {
                                     .child(tr("Featured")),
                             ),
                     )
-                    .child(muted(server.note)),
+                    .child(muted(line)),
             )
-            .child(join)
+            .child(end)
+    }
+
+    /// Asks the featured servers that can be joined for their players, once each.
+    fn alt_ping_featured(&mut self, cx: &mut Context<Self>) {
+        for address in featured().into_iter().filter_map(|f| f.address) {
+            if self.multiplayer.reach.contains_key(address) {
+                continue;
+            }
+            self.multiplayer
+                .reach
+                .insert(address.to_string(), multiplayer_page::Reach::Asking);
+            let task = cx
+                .background_executor()
+                .spawn(async move { sunrise_launcher::telemetry::server_players(address) });
+            cx.spawn(async move |this, cx| {
+                let answer = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let reach = match answer {
+                        Some(p) => multiplayer_page::Reach::Online {
+                            players: p.online,
+                            max: p.max,
+                        },
+                        None => multiplayer_page::Reach::Offline,
+                    };
+                    this.multiplayer.reach.insert(address.to_string(), reach);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
     }
 
     fn alt_server_row(
@@ -665,6 +729,91 @@ impl Launcher {
         }
     }
 
+    /// Reads what the registry installed in this setup (a file read, nothing else), when the
+    /// setup changes or an install just ended.
+    fn alt_refresh_installed(&mut self, home: &std::path::Path) {
+        let busy = self.mods.busy.is_some();
+        let state = &mut self.alt.home;
+        let ended = state.was_busy && !busy;
+        state.was_busy = busy;
+        if state.installed_home.as_deref() == Some(home) && !ended {
+            return;
+        }
+        state.installed_home = Some(home.to_path_buf());
+        state.installed = browser::installed::Installed::load(home)
+            .entries
+            .into_iter()
+            .filter(|e| e.source == SourceId::Sunrise)
+            .map(|e| e.project)
+            .collect();
+    }
+
+    /// The first start: signed out, nothing to play yet (mock 10). Nothing is read from outside
+    /// the launcher's own data.
+    fn alt_welcome(&mut self, cx: &mut Context<Self>) -> Div {
+        div()
+            .relative()
+            .h(px(270.))
+            .rounded(px(12.))
+            .overflow_hidden()
+            .border_1()
+            .border_color(rgb(LINE))
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(rgb(0x1a1320), 0.),
+                gpui::linear_color_stop(rgb(0x8a4a3e), 1.),
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(110.))
+                    .bg(gpui::linear_gradient(
+                        0.,
+                        gpui::linear_color_stop(rgb(0x1a1214), 0.),
+                        gpui::linear_color_stop(rgba(0x1a121400), 1.),
+                    )),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .px(px(34.))
+                    .py(px(60.))
+                    .child(
+                        div()
+                            .text_size(px(30.))
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(TEXT))
+                            .child(tr("Welcome to Sunrise")),
+                    )
+                    .child(
+                        div().text_size(px(15.)).text_color(rgb(TEXT)).child(tr(
+                            "Sign in with the Microsoft account that owns Minecraft: Java Edition. Sunrise then installs itself and you can play.",
+                        )),
+                    )
+                    .child(div().text_size(px(12.5)).text_color(rgb(MUTED)).child(tr(
+                        "While you play, Sunrise counts you as playing once a minute. Nothing else is sent.",
+                    )))
+                    .child(
+                        div()
+                            .id("alt-privacy")
+                            .cursor_pointer()
+                            .text_size(px(13.))
+                            .text_color(rgb(GOLD))
+                            .child(tr("Privacy choices"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.alt.page = crate::alt::Page::Settings;
+                                cx.notify();
+                            })),
+                    ),
+            )
+    }
+
     /// Asks the registry for the most downloaded mods once per game version.
     fn alt_popular_load(&mut self, cx: &mut Context<Self>) {
         let game = self.mods_game();
@@ -719,7 +868,12 @@ impl Launcher {
         let game = self.mods_game();
         let body = match &self.alt.home.popular {
             Popular::Ready(_, found) => {
-                let rows = popular_rows(found, &game, |p| self.mods.entry(p).is_some(), POPULAR);
+                let rows = popular_rows(
+                    found,
+                    &game,
+                    |p| self.alt.home.installed.contains(&p.id),
+                    POPULAR,
+                );
                 if rows.is_empty() {
                     card()
                         .p(px(14.))
@@ -787,7 +941,7 @@ impl Launcher {
         } else {
             add.opacity(0.4).cursor_default()
         };
-        let open = project.clone();
+        let open = project.id.clone();
         div()
             .flex()
             .items_center()
@@ -817,8 +971,7 @@ impl Launcher {
                         None => project.summary.clone(),
                     }))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.mods_open(open.clone());
-                        this.alt.page = crate::alt::Page::Discover;
+                        this.alt_mods_show_project(open.clone());
                         cx.notify();
                     })),
             )
