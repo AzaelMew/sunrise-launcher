@@ -122,7 +122,7 @@ pub(super) fn keep(scope: Scope, hits: Vec<Project>) -> Vec<Project> {
             p.source == SourceId::Modrinth
                 || (p.source == SourceId::Sunrise && kind == Kind::Shader)
         })
-        .filter(|p| seen.insert(p.id.clone()))
+        .filter(|p| seen.insert((p.source, p.id.clone())))
         .collect()
 }
 
@@ -200,8 +200,10 @@ impl Launcher {
 
     /// The Home child's entry: Discover for data packs, aimed at `world` of the selected setup.
     /// Validates the world, then searches. Changes no file.
-    pub(super) fn alt_pack_for_world(&mut self, world: PathBuf) {
+    pub(crate) fn alt_discover_for_world(&mut self, world: PathBuf) {
         self.alt.page = Page::Discover;
+        // Discard any prior setup's snapshot before recording this explicit world.
+        self.alt_mods_refresh();
         self.alt.mods.menu = None;
         let p = &mut self.alt.mods.packs;
         p.scope = Scope::Data;
@@ -248,10 +250,14 @@ impl Launcher {
                 Scope::Shader => ask(SourceId::Sunrise).unwrap_or_default(),
                 _ => Vec::new(),
             };
-            let result = modrinth.map(|found| {
-                hits.extend(found);
-                keep(scope, hits)
-            });
+            let result = match modrinth {
+                Ok(found) => {
+                    hits.extend(found);
+                    Ok(keep(scope, hits))
+                }
+                Err(_) if !hits.is_empty() => Ok(keep(scope, hits)),
+                Err(e) => Err(e),
+            };
             let _ = tx.send(Event::Packs(seq, result));
         });
     }
@@ -283,7 +289,7 @@ impl Launcher {
 
     /// Add on a result: checked against the scope, the selected setup and (for a data pack) the
     /// chosen world, then installed in a worker.
-    fn alt_pack_install(&mut self, id: String) {
+    fn alt_pack_install(&mut self, source: SourceId, id: &str) {
         let scope = self.alt.mods.packs.scope;
         let Some(project) = self
             .alt
@@ -291,7 +297,7 @@ impl Launcher {
             .packs
             .results
             .iter()
-            .find(|p| p.id == id && Some(p.kind) == scope.kind())
+            .find(|p| p.source == source && p.id == id && Some(p.kind) == scope.kind())
             .cloned()
         else {
             return;
@@ -326,7 +332,7 @@ impl Launcher {
             _ => None,
         };
         self.alt_dismiss_notice();
-        self.alt.mods.busy = Some((trf("Asking Modrinth…", &[]), 0.));
+        self.alt.mods.busy = Some((tr("Checking the pack…").into(), 0.));
         let (tx, game) = (self.alt.mods.tx.clone(), self.mods_game());
         std::thread::spawn(move || {
             let result = install(&project, &home, world.as_ref(), &game, &|line, f| {
@@ -440,8 +446,10 @@ impl Launcher {
                             dim(b).into_any_element()
                         } else {
                             let id = p.id.clone();
+                            let source = p.source;
                             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.alt_pack_install(id.clone());
+                                this.alt_pack_install(source, &id);
+                                cx.stop_propagation();
                                 cx.notify();
                             }))
                             .into_any_element()
@@ -588,11 +596,11 @@ fn install(
                 .map(|e| format!("{} {}", e.title, e.number))
                 .collect();
             let on = match project.kind {
-                Kind::Shader => tr("Options > Shader Packs"),
-                _ => tr("Options > Resource Packs"),
+                Kind::Shader => tr("Packs → Shader packs"),
+                _ => tr("Packs → Resource packs"),
             };
             Ok(trf(
-                "Installed {mods}, checksums checked. Turn it on in the game: {where}.",
+                "Installed {mods}, checksums checked. Turn it on under {where}.",
                 &[("mods", &names.join(", ")), ("where", on)],
             ))
         }

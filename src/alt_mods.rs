@@ -199,13 +199,6 @@ impl Launcher {
         self.alt_mods_load_page(id, from);
     }
 
-    /// Home's "Data packs → Add" on a world: Discover for data packs, aimed at `world` of the
-    /// selected setup once it is checked, and a search. Changes no file.
-    #[allow(dead_code)] // Called by Home's world rows.
-    pub(super) fn alt_discover_for_world(&mut self, world: PathBuf) {
-        self.alt_pack_for_world(world);
-    }
-
     fn alt_mods_home(&self) -> PathBuf {
         self.selected_instance()
             .map(|i| i.home.clone())

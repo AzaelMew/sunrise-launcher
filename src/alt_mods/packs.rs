@@ -186,8 +186,16 @@ impl Launcher {
         let editable = self.can_edit_packs(&home, kind);
         let query = self.alt.mods.have.text().trim().to_lowercase();
         let (title, detail, empty) = match kind {
-            Kind::Resource => (tr("Resource packs"), tr("Higher packs take priority. A pack you turn on goes to the top."), tr("Drop a resource pack (.zip) here or choose Import from file.")),
-            Kind::Shader => (tr("Shader packs"), tr("Choose one shader pack at a time, or leave them all off."), tr("Drop a shader pack (.zip or .sshader) here or choose Import from file.")),
+            Kind::Resource => (
+                tr("Resource packs"),
+                tr("Higher packs take priority. A pack you turn on goes to the top."),
+                tr("Drop a resource pack (.zip) here or choose Import from file."),
+            ),
+            Kind::Shader => (
+                tr("Shader packs"),
+                tr("Choose one shader pack at a time, or leave them all off."),
+                tr("Drop a shader pack (.zip or .sshader) here or choose Import from file."),
+            ),
         };
         let add = primary("alt-pack-import", tr("Import from file…"));
         let add = if editable {
@@ -350,7 +358,17 @@ impl Launcher {
                                     tr("This pack changed. Check the refreshed list.").into()
                                 );
                             }
-                            packs::remove(&dest, &p)
+                            packs::remove(&dest, &p)?;
+                            // Otherwise Discover thinks this version is still installed and
+                            // will not download it again. change_pack holds the home lock.
+                            let mut kept = installed::Installed::load(&dest);
+                            let before = kept.entries.len();
+                            kept.entries
+                                .retain(|entry| entry.path(&dest).as_deref() != Some(&p.path));
+                            if kept.entries.len() != before {
+                                kept.save(&dest)?;
+                            }
+                            Ok(())
                         });
                     } else {
                         this.game_packs.confirm_remove = Some(key.clone());

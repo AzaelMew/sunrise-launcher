@@ -213,8 +213,8 @@ impl Launcher {
         self.alt_refresh_installed(&home);
         self.alt_ping_featured(cx);
         self.alt_popular_load(cx);
-        {
-            // The worlds still on disk, as last listed for this setup.
+        if self.alt.home.packs.is_open() {
+            // Only check worlds for the chooser when the chooser is actually open.
             let present: Option<Vec<World>> =
                 (self.worlds.home.as_ref() == Some(&home)).then(|| {
                     let list = self.worlds.list.iter();
