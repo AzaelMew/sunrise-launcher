@@ -26,6 +26,10 @@ When bringing in a game change, update that file to the new full commit SHA and 
 If the game changes a function in the test's `MIRRORED` table, review and update the launcher implementation before
 changing the corresponding hash.
 
+The daily workflow checks the same copies against Sunrise's current `main`. If they differ, it opens or updates
+one **Game copies drifted** issue with the affected copies and the Sunrise commits since the pin that touched them.
+The next daily that finds the copies match closes the issue.
+
 Run the check locally from the launcher repository root:
 
 ```sh
