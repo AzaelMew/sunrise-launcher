@@ -30,9 +30,6 @@ pub const LAUNCHER_LOOK_CREDIT: &str = "https://github.com/Xmilon";
 /// The official launcher installer's product home.
 pub const LAUNCHER_ABOUT: &str = "https://playsunrise.net";
 
-/// The separately branded arismoko fork launcher installer's product home.
-pub const FORK_LAUNCHER_ABOUT: &str = "https://github.com/sunrise-org/sunrise";
-
 /// Where the game repository publishes each game build's mod SDK (`sdk-<build id>`) and the game
 /// releases whose `sdk.json` names their build; a release's tag and file follow.
 /// `SUNRISE_SDK_BASE` overrides it.

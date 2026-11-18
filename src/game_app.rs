@@ -17,7 +17,7 @@ const PROGRAMS: [&str; 2] = ["sunrise-client", "sunrise-ctl"];
 
 const ICON: &[u8] = include_bytes!("../assets/icons/sunrise.icns");
 
-/// Its own identifier, so macOS keeps it apart from the launcher (dev.sunrise.launcher); the
+/// Its own identifier, so macOS keeps it apart from the launcher (net.playsunrise.launcher); the
 /// games category lets macOS turn Game Mode on when it plays full screen.
 const INFO_PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

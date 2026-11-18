@@ -15,7 +15,7 @@ pub const KEYCHAIN_SERVICE: &str = "net.playsunrise.launcher";
 pub const LOCATION_FOLDER: &str = "sunrise/location";
 pub const LAUNCHER_FOLDER: &str = "sunrise/launcher";
 pub const GAME_FOLDER: &str = "sunrise/game";
-pub const PUBLISHER: &str = "Sunrise";
+pub const PUBLISHER: &str = "sunrise-org";
 pub const UNINSTALL_KEY: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\SunriseLauncher";
 pub const INSTALL_KEY: &str = "Software\\Sunrise\\Launcher";
@@ -52,7 +52,7 @@ pub fn game_folder_in(base: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Product home used by the Windows installer's About link.
-pub const ABOUT_URL: &str = sunrise_launcher_addresses::FORK_LAUNCHER_ABOUT;
+pub const ABOUT_URL: &str = sunrise_launcher_addresses::LAUNCHER_ABOUT;
 
 /// Whether the uninstaller may remove `path` as this launcher's own data: the complete owned
 /// suffix, not just a generic leaf selected by an override. An earlier launcher's folder

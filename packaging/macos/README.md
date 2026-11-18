@@ -1,33 +1,20 @@
-# The macOS launcher: Sunrise.app in a .dmg
+# The macOS launcher: Sunrise Launcher.app in a .dmg
 
-`package.sh BINARY VERSION OUTDIR` (run by `.github/workflows/launcher.yml` on macOS) makes:
+`package.sh BINARY VERSION OUTDIR ARCH` (run by `.github/workflows/release.yml` on macOS) makes:
 
-- `Sunrise.app`: `Contents/MacOS/sunrise-launcher`, `Contents/Info.plist` (this folder's, bundle
-  id `dev.sunrise.launcher`, macOS 11 or later), `Contents/Resources/sunrise.icns`
+- `Sunrise Launcher.app`: `Contents/MacOS/sunrise-launcher`, `Contents/Info.plist` (this folder's,
+  bundle id `net.playsunrise.launcher`, macOS 11 or later), `Contents/Resources/sunrise.icns`
   (`packaging/icons`, from `cargo run -p xtask -- icons`).
-- `sunrise-launcher-macos-arm64.dmg`: the installer. Opening it shows the app and a link to
-  Applications over `background.png` / `background@2x.png` (drawn from `background.html`); the
-  player drags one onto the other. Built by [dmgbuild](https://github.com/dmgbuild/dmgbuild),
-  which writes the Finder layout without a GUI session.
+- `sunrise-launcher-macos-arm64.dmg`: the installer, its volume named `Sunrise Launcher`. Opening
+  it shows the app and a link to Applications over `background.png` / `background@2x.png` (drawn
+  from `background.html`); the player drags one onto the other. Built by
+  [dmgbuild](https://github.com/dmgbuild/dmgbuild), which writes the Finder layout without a GUI session.
 - `sunrise-launcher-macos-arm64.zip`: the same app, zipped with `ditto`. The launcher updates
-  itself from this: inside Sunrise.app it replaces the whole bundle (copied beside it, then
-  swapped in by renaming, then restarted); a bare `sunrise-launcher` binary, as launchers before
-  the app shipped, finds the binary inside the zip and replaces only itself.
+  itself from this: inside the app it replaces the whole bundle (copied beside it, then swapped in
+  by renaming, then restarted); a bare `sunrise-launcher` binary, as launchers before the app
+  shipped, finds the binary inside the zip and replaces only itself.
 
-## Fork packages
-
-The arismoko fork ships Apple Silicon (arm64) only, not Intel. Its staged packaging
-uses `Sunrise Launcher.app`, bundle id `net.playsunrise.launcher`, the fork icon and
-executable `sunrise-launcher`. The volume is named `Sunrise Launcher`.
-The installer is `sunrise-launcher-macos-arm64.dmg`; self-update uses
-`sunrise-launcher-macos-arm64.zip` from sunrise-org/sunrise. Settings, accounts
-and game data use Sunrise's own namespace.
-
-The app is **ad hoc signed, not notarized**. Drag it to Applications. On macOS 14
-and earlier, right-click the app and choose **Open**, then confirm **Open**. On
-macOS 15 and later, open it once, then use **System Settings › Privacy & Security ›
-Open Anyway** and confirm. No Apple signing identity or notarization profile is needed. The upstream signing description below does not
-apply to these fork packages.
+Apple Silicon (arm64) only, not Intel, for now.
 
 ## Signing and notarization
 
@@ -35,7 +22,7 @@ Releases are signed with Ludovic's **Developer ID** ("Developer ID Application: 
 (YYJU63HSD4)"), with the hardened runtime and a secure timestamp, then **notarized** by Apple and
 **stapled**, so Gatekeeper opens them on any Mac without a warning, offline too:
 
-- the launcher (`package.sh`): Sunrise.app is signed, notarized and stapled first, so the zip the
+- the launcher (`package.sh`): Sunrise Launcher.app is signed, notarized and stapled first, so the zip the
   launcher updates itself from and the .dmg both hold it stapled; then the .dmg is signed,
   notarized and stapled. The script ends with what Gatekeeper says of each, which must read
   `accepted` and `source=Notarized Developer ID`.
@@ -45,7 +32,7 @@ Releases are signed with Ludovic's **Developer ID** ("Developer ID Application: 
   ticket: Gatekeeper asks Apple online the first time each one runs.
 
 No entitlements are needed. The launcher checks an update's signature before swapping the new
-Sunrise.app in, and again where it lands; when it doesn't hold, the old app is put back.
+Sunrise Launcher.app in, and again where it lands; when it doesn't hold, the old app is put back.
 
 The switch is the repository variable `MACOS_SIGN_IDENTITY`: set to the identity's name, the
 builds sign and notarize; empty (as in forks), they are signed **ad hoc** as before.
