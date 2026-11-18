@@ -485,7 +485,7 @@ fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
         Some("port:old-pack")
     );
 
-    let made = create_in(&home, &data, "Survival", None, None).unwrap();
+    let made = create_in(&home, &data, "Survival", None).unwrap();
     let all = list_in(&home, &data);
     assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
     assert_eq!(selection_in(&all, Some(DEFAULT)).unwrap().id, DEFAULT);
@@ -497,5 +497,33 @@ fn a_retired_selection_is_refused_not_replaced_by_sunrise() {
         ported,
         "its files are untouched"
     );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// The same for a Java instance an earlier launcher made: it isn't listed, so a saved selection of
+/// it is retired and refused by name, not read as Sunrise.
+#[test]
+fn a_retired_java_selection_is_refused_by_name() {
+    let root = scratch("retired-java");
+    let (home, data) = (root.join("sunrise"), root.join("launcher"));
+    put(
+        &home.join("instances/vanilla/saves/World/level.dat"),
+        "world",
+    );
+    fs::create_dir_all(&data).unwrap();
+    fs::write(
+        data.join("instances.json"),
+        r#"{"instances":{"vanilla":{"name":"Vanilla 1.21.4","java":{"minecraft":"1.21.4"}}}}"#,
+    )
+    .unwrap();
+    let all = list_in(&home, &data);
+    assert!(all.iter().all(|i| i.id != "vanilla"));
+    let refused = selection_in(&all, Some("vanilla")).unwrap_err();
+    assert!(refused.contains("vanilla"), "{refused}");
+    assert_eq!(
+        retired_in(&all, Some("vanilla")).as_deref(),
+        Some("vanilla")
+    );
+    assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
