@@ -554,21 +554,28 @@ pub fn uninstall(remove_data: bool, progress: impl Fn(Step, f32)) -> Result<Vec<
     Ok(left)
 }
 
-/// After a self-update: the Uninstall entry names the new version and size. Only for the install
-/// this launcher runs from; a launcher unpacked from the ZIP touches nothing.
+/// Private, stable command line for the new binary to refresh the registered install's notices
+/// after a swap. There is no path argument: the new binary checks that it is the registered one.
+const REFRESH_NOTICES: &str = "--refresh-install-notices";
+
+/// On a normal installed start, repairs missing or outdated notices left by an older updater.
+/// Setup and portable copies never touch the folder they were launched from.
+pub fn ensure_notices() -> io::Result<()> {
+    crate::notices::refresh_installed(
+        backend::exe_path(),
+        installed_exe().as_deref(),
+        is_setup_exe(),
+    )
+}
+
+/// After a self-update, the Uninstall entry names the new version and size, and the replacement
+/// launcher writes its own notices. Only for the exact registered executable.
 pub fn after_update(version: &str) {
-    let Some(registered) = registered() else {
+    let exe = backend::exe_path();
+    let Some(dir) = crate::notices::installed_dir(exe, installed_exe().as_deref(), is_setup_exe())
+    else {
         return;
     };
-    let exe = backend::exe_path();
-    if !exe
-        .parent()
-        .is_some_and(|dir| same_path(dir, &registered.dir))
-    {
-        return;
-    }
-    // An install from before these notices existed gets them with its first update.
-    let _ = crate::notices::write_into(&registered.dir);
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     if let Ok(key) = hkcu.open_subkey_with_flags(UNINSTALL_KEY, KEY_WRITE) {
         let _ = key.set_value("DisplayVersion", &version.to_string());
@@ -577,12 +584,27 @@ pub fn after_update(version: &str) {
     if let Ok(key) = hkcu.open_subkey_with_flags(OWN_KEY, KEY_WRITE) {
         let _ = key.set_value("Version", &version.to_string());
     }
+    // `place_staged` has already put the checked new executable at `exe`. A normal start can
+    // retry if this refresh fails, without treating an already successful swap as a failure.
+    let _ = crate::process::command(exe)
+        .arg(REFRESH_NOTICES)
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .status();
 }
 
-/// `setup --quiet [--dir <folder>] [--desktop-shortcut]` (the setup exe only) and
-/// `uninstall --quiet [--remove-data]`: no window, for scripts. None: not a quiet command.
+/// Windowless setup, uninstall and the post-update notice refresh. None for a normal invocation.
 pub fn run_quiet() -> Option<i32> {
     let args = args();
+    if args.as_slice() == [REFRESH_NOTICES] {
+        return Some(match ensure_notices() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("The licences: {error}");
+                1
+            }
+        });
+    }
     let flag = |name: &str| args.iter().any(|a| a == name);
     match invocation() {
         Invocation::QuietUninstall => Some(match uninstall(flag("--remove-data"), |_, _| {}) {
