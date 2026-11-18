@@ -1938,17 +1938,19 @@ pub fn build(
             let selected = backend::Settings::load()
                 .selected
                 .filter(|s| installed.contains(s));
-            let follows = follows_plain(instance.channel, &plain, selected.as_deref(), || {
-                instances::stable_builds(&backend::releases().ok()?)
-                    .into_iter()
-                    .find(|b| installed.contains(&b.tag))
-                    .map(|b| b.tag)
-            });
+            let pin = plain_pin(
+                instance.channel,
+                &plain,
+                selected.as_deref(),
+                &installed,
+                || backend::releases().ok(),
+                check_cancelled,
+            )?;
             instances::edit(&instance.id, |meta| {
                 let unchanged = meta.version == instance.version
                     && meta.channel.unwrap_or_default() == instance.channel;
                 if unchanged {
-                    meta.version = (!follows).then(|| plain.clone());
+                    meta.version = pin;
                 }
             })?;
             return Ok(ClientBuild::Plain(plain));
@@ -1999,6 +2001,28 @@ fn follows_plain(
             instances::Channel::Nightly => true,
             instances::Channel::Stable => stable().as_deref() == Some(plain),
         }
+}
+
+/// The version a plain fallback pins its instance to: None when clearing the pin plays `plain`
+/// ([`follows_plain`]). Stable asks `catalogue` for the release list. The lookup can take a
+/// while (it is a network request), so `cancelled` is asked once it is back, before anything is
+/// saved.
+fn plain_pin(
+    channel: instances::Channel,
+    plain: &str,
+    selected: Option<&str>,
+    installed: &[String],
+    catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
+    cancelled: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    let follows = follows_plain(channel, plain, selected, || {
+        instances::stable_builds(&catalogue()?)
+            .into_iter()
+            .find(|b| installed.contains(&b.tag))
+            .map(|b| b.tag)
+    });
+    cancelled()?;
+    Ok((!follows).then(|| plain.to_owned()))
 }
 
 /// The release or Nightly `instance` plays now (the one a native build of it started from).
@@ -2524,6 +2548,41 @@ mod tests {
         drop(saved);
         drop(lock);
         fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn a_plain_fallback_is_cancelled_after_the_stable_lookup() {
+        use instances::Channel::Stable;
+        let installed = ["v1.0.0".to_owned()];
+        let cancelled = std::cell::Cell::new(false);
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || {
+                // A cancel that came while the lookup ran.
+                cancelled.set(true);
+                None
+            },
+            || {
+                if cancelled.get() {
+                    Err("Cancelled".into())
+                } else {
+                    Ok(())
+                }
+            },
+        );
+        assert_eq!(pin, Err("Cancelled".to_owned()));
+        let pin = plain_pin(
+            Stable,
+            "v1.0.0",
+            Some("v1.0.0"),
+            &installed,
+            || None,
+            || Ok(()),
+        );
+        assert_eq!(pin, Ok(Some("v1.0.0".to_owned())));
     }
 
     #[test]
