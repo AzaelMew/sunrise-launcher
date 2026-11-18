@@ -25,6 +25,11 @@ fn zip_file(path: &Path, files: &[(&str, &[u8])]) {
 const META: &[u8] = "{\"pack\":{\"pack_format\":69,\"description\":[\"\",{\"text\":\"Smooth \u{a7}aglass\"},\"\\nand more\"]}}"
     .as_bytes();
 
+#[cfg(feature = "redesign-preview")]
+const VALID_POST: &[u8] = b"fn post(input: PostInput) -> vec4<f32> { return input.color; }\n";
+#[cfg(feature = "redesign-preview")]
+const MALFORMED_POST: &[u8] = b"fn post(input: PostInput) -> vec4<f32> { return input.color }\n";
+
 const SHADER_META: &str = "schema = 1\nid = \"warm\"\nname = \"Warm Light\"\nversion = \"1.0\"\napi = \"0.1\"\n[[post]]\nfile = \"post.wgsl\"\n";
 
 /// A game folder with three resource packs (one on), and shader packs of both kinds.
@@ -321,7 +326,28 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
         &drops.join("glow.sshader"),
         &[
             (SHADER_MANIFEST, SHADER_META.as_bytes()),
-            ("post.wgsl", b""),
+            ("post.wgsl", VALID_POST),
+        ],
+    );
+    // Parses as a package, but its WGSL does not compile.
+    zip_file(
+        &drops.join("typo.sshader"),
+        &[
+            (SHADER_MANIFEST, SHADER_META.as_bytes()),
+            ("post.wgsl", MALFORMED_POST),
+        ],
+    );
+    // Data only: a data pack, not a resource pack; with assets/ too it is both.
+    zip_file(
+        &drops.join("Data.zip"),
+        &[("pack.mcmeta", META), ("data/x/tags/a.json", b"{}")],
+    );
+    zip_file(
+        &drops.join("Both.zip"),
+        &[
+            ("pack.mcmeta", META),
+            ("data/x/tags/a.json", b"{}"),
+            ("assets/x/a.json", b"{}"),
         ],
     );
     // A manifest naming a file the package lacks: the shader package's own check fails it.
@@ -339,6 +365,8 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
         (Kind::Resource, "Shiny.zip"),
         (Kind::Resource, "glow.sshader"),
         (Kind::Shader, "hollow.sshader"),
+        (Kind::Shader, "typo.sshader"),
+        (Kind::Resource, "Data.zip"),
         (Kind::Shader, "broken.sshader"),
         (Kind::Resource, "missing.zip"),
     ] {
@@ -358,6 +386,12 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
         fs::read(home.join("resourcepacks/Zed.zip")).unwrap(),
         fs::read(drops.join("Zed.zip")).unwrap()
     );
+    assert_eq!(
+        add_local(&home, Kind::Resource, &drops.join("Both.zip"))
+            .unwrap()
+            .file,
+        "Both.zip"
+    );
     let glow = add_local(&home, Kind::Shader, &drops.join("glow.sshader")).unwrap();
     assert!(!glow.enabled && home.join("shaderpacks/glow.sshader").is_file());
     assert!(
@@ -369,6 +403,9 @@ fn add_local_takes_only_the_chosen_kind_and_leaves_nothing_on_error() {
 
     let empty = scratch("add-local-empty");
     assert!(add_local(&empty, Kind::Shader, &drops.join("Zed.zip")).is_err());
+    // Bad content found only after the copy: the folder made for it goes too.
+    assert!(add_local(&empty, Kind::Shader, &drops.join("typo.sshader")).is_err());
+    assert!(add_local(&empty, Kind::Resource, &drops.join("Data.zip")).is_err());
     assert!(
         fs::read_dir(&empty).unwrap().next().is_none(),
         "a refused file makes no folder"

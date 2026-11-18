@@ -454,33 +454,59 @@ pub fn add(home: &Path, file: &Path) -> Result<Pack, String> {
 #[cfg(feature = "redesign-preview")]
 pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
     let name = file.file_name().ok_or("A pack file has a name")?;
-    let found = kind_of(file)?;
-    if found != kind {
-        return Err(format!(
-            "{} is a {} pack, not a {} pack.",
-            name.to_string_lossy(),
-            found.folder(),
-            kind.folder()
-        ));
-    }
-    if file
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case(SHADER_PACKAGE))
-    {
-        sunrise_launcher_shader_api::Pack::read(file)?;
-    }
     let dir = home.join(kind.folder());
     let made = !dir.exists();
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let put = || -> Result<PathBuf, String> {
+        fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let ext = Path::new(name)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy()))
+            .unwrap_or_default();
         let mut temp = tempfile::Builder::new()
             .prefix(".sunrise-add-")
+            .suffix(&ext)
             .tempfile_in(&dir)
             .map_err(|e| format!("{}: {e}", dir.display()))?;
         let mut source =
             fs::File::open(file).map_err(|e| format!("Could not read {}: {e}", file.display()))?;
         std::io::copy(&mut source, temp.as_file_mut())
             .map_err(|e| format!("Could not copy {}: {e}", file.display()))?;
+        // What is checked is the copy that gets put in place.
+        let found = kind_of(temp.path())
+            .map_err(|e| e.replace(&temp.path().display().to_string(), &name.to_string_lossy()))?;
+        if found != kind {
+            return Err(format!(
+                "{} is a {} pack, not a {} pack.",
+                name.to_string_lossy(),
+                found.folder(),
+                kind.folder()
+            ));
+        }
+        if ext.eq_ignore_ascii_case(".sshader") {
+            let pack = sunrise_launcher_shader_api::Pack::read(temp.path())?;
+            if let Err(problems) = sunrise_launcher_shader_api::check(&pack) {
+                let lines: Vec<String> = problems.iter().map(ToString::to_string).collect();
+                return Err(format!(
+                    "{} fails the shader pack check:\n{}",
+                    name.to_string_lossy(),
+                    lines.join("\n")
+                ));
+            }
+        }
+        if kind == Kind::Resource {
+            // A pack with data but no assets is a data pack; one with both stays a resource pack.
+            let zip = crate::zip_intake::open(temp.reopen().map_err(|e| e.to_string())?)
+                .map_err(|e| e.to_string())?;
+            let names: Vec<_> = zip.file_names().flatten().collect();
+            if names.iter().any(|n| n.starts_with("data/"))
+                && !names.iter().any(|n| n.starts_with("assets/"))
+            {
+                return Err(format!(
+                    "{} is a data pack (data/ and no assets/): add it as a data pack.",
+                    name.to_string_lossy()
+                ));
+            }
+        }
         let target = free_target(&dir, name);
         temp.persist_noclobber(&target)
             .map_err(|e| format!("Could not add {}: {}", target.display(), e.error))?;
