@@ -30,6 +30,8 @@ pub(crate) const HEADING: f32 = 18.;
 pub(crate) const TITLE: f32 = 24.;
 /// A page's title.
 pub(crate) const DISPLAY: f32 = 28.;
+/// The selected profile's name on Home.
+pub(crate) const HERO: f32 = 40.;
 
 // ---- corner radii
 
@@ -54,6 +56,5 @@ pub(crate) const FIELD: f32 = 36.;
 pub(crate) const ACTION: f32 = 44.;
 /// The rail's width.
 pub(crate) const RAIL: f32 = 72.;
-/// The play bar's height, and Play's inside it.
-pub(crate) const BAR: f32 = 72.;
+/// Play, and the build picker beside it.
 pub(crate) const PLAY: f32 = 50.;

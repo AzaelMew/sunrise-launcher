@@ -24,7 +24,7 @@ const TAB_STOPS: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Sheet {
-    /// The game-build chooser, a popover over the bar's build chip.
+    /// The game-build chooser, a popover under Home's build picker.
     Build,
     /// Choose what to do with a held update.
     Resolve,
@@ -754,6 +754,8 @@ impl Launcher {
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.native_error = None;
                 this.pin_build(None, channel);
+                // The chooser opens under Home's build picker.
+                this.navigate(crate::frame::Page::Home);
                 this.open_sheet(Sheet::Build);
                 cx.notify();
             })),
@@ -861,7 +863,7 @@ impl Launcher {
                     .map(|e| div().text_color(rgb(palette().danger)).text_size(px(tokens::LABEL)).child(e)),
             )
             .child(consent_footer(
-                tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows in the bar below."),
+                tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows beside Play on Home, and at the top of every other page."),
                 button("alt-consent-cancel", tr("Not now")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         this.close_sheet();
@@ -1270,7 +1272,9 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .child(e)
             }));
-        // A popover over the bar's build chip: the scrim is clear.
+        // A popover under Home's build picker: the scrim is clear.
+        let (left, top) = self.ui.home.chooser_at();
+        let width = 372_f32.min(self.window_width - 24.);
         div()
             .id("alt-build")
             .absolute()
@@ -1293,18 +1297,14 @@ impl Launcher {
             .child(
                 body.id("alt-build-body")
                     .absolute()
-                    // Never taller than the room above the bar: a long list scrolls.
-                    .max_h(px((self.window_height - 94.).max(120.)))
+                    // Never taller than the room under the picker: a long list scrolls.
+                    .max_h(px((self.window_height - top - 12.).max(120.)))
                     .overflow_y_scroll()
                     .track_scroll(&crate::frame::scrolls("build-list"))
-                    // Under the build chip, which starts the bar when nobody is signed in.
-                    .left(px(if self.accounts.selected().is_some() {
-                        148.
-                    } else {
-                        16.
-                    }))
-                    .bottom(px(78.))
-                    .w(px(372.))
+                    // Inside the window, however narrow it is.
+                    .left(px(left.min(self.window_width - width - 12.).max(12.)))
+                    .top(px(top))
+                    .w(px(width))
                     .p(px(14.))
                     .rounded(px(tokens::R_CARD))
                     .border_1()

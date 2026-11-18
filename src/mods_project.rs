@@ -158,14 +158,4 @@ impl Launcher {
             })
             .clone()
     }
-
-    /// A project's icon, `side` pixels: its image, or its first letter on a plate until then.
-    pub(super) fn mods_icon(&mut self, p: &Project, side: f32) -> AnyElement {
-        let t = self.theme;
-        let path = p
-            .icon
-            .clone()
-            .and_then(|url| self.mods_image(&url, images::ICON));
-        blocks::slot(path.map(gpui::ImageSource::from), &p.title, side, &t).into_any_element()
-    }
 }

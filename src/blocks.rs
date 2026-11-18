@@ -1,11 +1,8 @@
 //! The blocky look's parts (`docs/design-system.md`, "Blocks"): pixel type, pixel icons, panels
 //! with a dark outline, a light bevel on top and a darker lip below, sunk wells, badges, the
 //! inventory tabs, and the slots that hold icons downloaded at run time.
-use crate::theme::{self, Theme};
-use gpui::{
-    div, img, prelude::*, px, svg, AnyElement, Div, FontWeight, Hsla, ImageSource, ObjectFit,
-    SharedString, Svg,
-};
+use crate::theme;
+use gpui::{div, prelude::*, px, svg, AnyElement, Div, FontWeight, Hsla, SharedString, Svg};
 use std::borrow::Cow;
 
 /// The icons, served to `svg()` as `icons/<name>.svg`.
@@ -79,33 +76,4 @@ pub fn edges(top: Hsla, bottom: Hsla, lip: f32) -> [AnyElement; 2] {
             .bg(bottom)
             .into_any_element(),
     ]
-}
-
-/// A square slot for an icon: the picture at `source` when there is one, else the first letter of
-/// `name` on a raised block.
-pub fn slot(source: Option<ImageSource>, name: &str, size: f32, t: &Theme) -> Div {
-    let frame = div()
-        .flex()
-        .flex_none()
-        .items_center()
-        .justify_center()
-        .size(px(size))
-        .overflow_hidden()
-        .border_2()
-        .border_color(t.outline)
-        .bg(t.well);
-    match source {
-        Some(source) => frame.child(img(source).size(px(size - 4.)).object_fit(ObjectFit::Cover)),
-        None => frame.bg(t.raised).child(
-            pixel((size * 0.42).round(), FontWeight::BOLD)
-                .text_color(t.muted)
-                .child(
-                    name.chars()
-                        .find(|c| c.is_alphanumeric())
-                        .unwrap_or('?')
-                        .to_uppercase()
-                        .to_string(),
-                ),
-        ),
-    }
 }

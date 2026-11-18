@@ -18,6 +18,8 @@ pub(super) struct Multiplayer {
     pub(super) adding: bool,
     pub(super) confirm_remove: Option<usize>,
     pub(super) error: Option<String>,
+    /// The saved server whose Remove button is showing, and whether it was asked once.
+    pub(super) menu: Option<(usize, bool)>,
     /// What each address answered to the status ping, asked once per list.
     pub(super) reach: HashMap<String, Reach>,
     /// The picture each address sent with that answer, for a server the game hasn't saved one
