@@ -1147,6 +1147,10 @@ fn refused(refusal: sdk_cache::Refusal) -> String {
 /// when a world in `home` was saved with a mod of `left`, the build stops with
 /// [`Failed::Worlds`] naming them, unless the player chose `back_up`; then each of those worlds
 /// is backed up first, and a backup that fails stops the build with nothing switched off.
+/// The scan fails closed: a `saves/` that can't be listed stops the build, and a world whose
+/// `level.dat` and `level.dat_old` can't be read is unknown, so it counts as saved with every
+/// mod of `left` (named, then backed up on the player's choice) and is never taken for "no mods".
+/// Each backup is read back before anything is switched off.
 fn guard_worlds(
     home: &Path,
     left: &[LeftOut],
@@ -1155,8 +1159,12 @@ fn guard_worlds(
     progress: &impl Fn(Step),
 ) -> Result<(), Failed> {
     let ids: Vec<String> = left.iter().map(|l| l.id.clone()).collect();
-    let all = crate::worlds::list(home);
-    let at_stake = crate::worlds::saved_with(&all, &ids);
+    let at_stake = crate::worlds::at_risk(home, &ids).map_err(|error| {
+        Failed::Other(trf(
+            "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})",
+            &[("error", &error)],
+        ))
+    })?;
     if at_stake.is_empty() {
         return Ok(());
     }
@@ -1166,8 +1174,14 @@ fn guard_worlds(
             .filter_map(|l| {
                 let worlds: Vec<String> = at_stake
                     .iter()
-                    .filter(|(_, mods)| mods.contains(&l.id))
-                    .map(|(world, _)| world.name.clone())
+                    .filter(|(_, mods, _)| mods.contains(&l.id))
+                    .map(|(world, _, known)| match known {
+                        true => world.name.clone(),
+                        false => trf(
+                            "{name} (its list of mods can't be read)",
+                            &[("name", &world.name)],
+                        ),
+                    })
                     .collect();
                 (!worlds.is_empty()).then(|| match l.why {
                     isolate::Why::DidNotBuild => {
@@ -1182,17 +1196,17 @@ fn guard_worlds(
             text,
             worlds: at_stake
                 .iter()
-                .map(|(world, _)| world.name.clone())
+                .map(|(world, _, _)| world.name.clone())
                 .collect(),
             mods: left
                 .iter()
-                .filter(|l| at_stake.iter().any(|(_, mods)| mods.contains(&l.id)))
+                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
                 .map(|l| l.id.clone())
                 .collect(),
             unbuilt: left
                 .iter()
                 .filter(|l| matches!(l.why, isolate::Why::DidNotBuild))
-                .filter(|l| at_stake.iter().any(|(_, mods)| mods.contains(&l.id)))
+                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
                 .map(|l| l.id.clone())
                 .collect(),
             backups: home.join("backups"),
@@ -1200,8 +1214,8 @@ fn guard_worlds(
             base: String::new(),
         })));
     }
-    for (world, _) in &at_stake {
-        let made = crate::worlds::backup(home, world).map_err(|error| {
+    for (world, _, _) in &at_stake {
+        let made = crate::worlds::backup_verified(home, world).map_err(|error| {
             Failed::Other(trf(
                 "Backing up {world} failed, so nothing was switched off or updated: {error}",
                 &[("world", &world.name), ("error", &error)],
@@ -2330,7 +2344,9 @@ mod tests {
             Limits::default(),
         )
         .unwrap();
-        fs::write(world.join("level.dat"), bytes).unwrap();
+        // Only the recovery copy still records this mod. Opening the world without it loses content.
+        fs::write(world.join("level.dat_old"), bytes).unwrap();
+        fs::write(world.join("level.dat"), b"damaged").unwrap();
         let left = |why| LeftOut {
             id: "greeter".into(),
             version: "1.0.0".into(),
@@ -2401,6 +2417,49 @@ mod tests {
             detail: None,
         };
         assert!(guard_worlds(&home, &[other], build, false, &|_| {}).is_ok());
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn the_native_switch_backs_up_unknown_worlds_and_stops_if_the_scan_or_backup_fails() {
+        let _guard = scratch_state();
+        let home = dir("native-switch-worlds");
+        let saves = home.join("saves");
+        let world = saves.join("Uncertain");
+        let changed = [LeftOut {
+            id: "greeter".into(),
+            version: "1.0.0".into(),
+            why: isolate::Why::DidNotBuild,
+            detail: None,
+        }];
+        let switch = |allow| guard_worlds(&home, &changed, "nightly", allow, &|_| {});
+        fs::write(&saves, b"not a directory").unwrap();
+        assert!(matches!(switch(true), Err(Failed::Other(_))));
+        fs::remove_file(&saves).unwrap();
+        fs::create_dir_all(&world).unwrap();
+        fs::write(world.join("level.dat"), b"truncated").unwrap();
+        fs::write(world.join("level.dat_old"), b"also truncated").unwrap();
+        let Err(Failed::Worlds(stake)) = switch(false) else {
+            panic!("unknown is not an empty mod list")
+        };
+        assert_eq!(stake.worlds, ["Uncertain"]);
+        assert!(stake.text.contains("can't be read"));
+        assert!(!home.join("backups").exists());
+        let lock = fs::File::create(world.join("session.lock")).unwrap();
+        lock.try_lock().unwrap();
+        assert!(matches!(switch(true), Err(Failed::Other(_))));
+        lock.unlock().unwrap();
+        switch(true).unwrap();
+        let zip = fs::read_dir(home.join("backups"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let mut saved = zip::ZipArchive::new(fs::File::open(zip).unwrap()).unwrap();
+        assert!(saved.by_name("Uncertain/level.dat_old").is_ok());
+        drop(saved);
+        drop(lock);
         fs::remove_dir_all(home).unwrap();
     }
 

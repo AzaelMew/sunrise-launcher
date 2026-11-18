@@ -319,138 +319,6 @@ fn reviewed_here(confirming: bool, reviewed: &Option<PathBuf>, current: &std::pa
     !confirming || reviewed.as_deref() == Some(current)
 }
 
-/// A world in `saves/` and whether its list of mods could be read. A world whose `level.dat`
-/// doesn't parse is *unknown*: it counts as holding every mod, never as holding none.
-struct Scanned {
-    world: worlds::World,
-    known: bool,
-}
-
-/// Whether `level.dat` is readable NBT with a `Data` compound (gzip, as vanilla writes it, or plain).
-fn level_dat_reads(dat: &std::path::Path) -> bool {
-    use std::io::Read;
-    let Ok(bytes) = std::fs::read(dat) else {
-        return false;
-    };
-    let mut raw = Vec::new();
-    let raw = match flate2::read::GzDecoder::new(&bytes[..])
-        .take(64 << 20)
-        .read_to_end(&mut raw)
-    {
-        Ok(_) => raw,
-        Err(_) => bytes,
-    };
-    sunrise_launcher_nbt::read_named(&raw, sunrise_launcher_nbt::Limits::default())
-        .is_ok_and(|(named, _)| named.tag.get("Data").is_some())
-}
-
-/// Every world of `home`'s `saves/`. A missing `saves/` is no worlds; any other failure to list
-/// the folder, an entry or a file's metadata is an error, never "no worlds".
-fn scan(home: &std::path::Path) -> Result<Vec<Scanned>, String> {
-    let saves = home.join("saves");
-    let entries = match std::fs::read_dir(&saves) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("{}: {e}", saves.display())),
-    };
-    let listed = worlds::list(home);
-    let mut out = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("{}: {e}", saves.display()))?;
-        let path = entry.path();
-        let meta = path
-            .metadata()
-            .map_err(|e| format!("{}: {e}", path.display()))?;
-        if !meta.is_dir() {
-            continue;
-        }
-        let dat = path.join("level.dat");
-        match dat.metadata() {
-            Ok(m) if m.is_file() => {}
-            Ok(_) => continue,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(format!("{}: {e}", dat.display())),
-        }
-        let folder = entry.file_name().to_string_lossy().into_owned();
-        let world = listed
-            .iter()
-            .find(|w| w.folder == folder)
-            .cloned()
-            .ok_or_else(|| format!("{}: its level.dat can't be read", path.display()))?;
-        out.push(Scanned {
-            known: level_dat_reads(&dat),
-            world,
-        });
-    }
-    Ok(out)
-}
-
-/// Reads the backup back: every file of the world (but the lock) is in the zip at its size, and
-/// each zip entry is read to the end so a bad checksum or length is found now.
-fn verify_backup(zip: &std::path::Path, world: &worlds::World) -> Result<(), String> {
-    let file = std::fs::File::open(zip).map_err(|e| format!("{}: {e}", zip.display()))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("{}: {e}", zip.display()))?;
-    let mut seen = std::collections::HashMap::new();
-    for i in 0..archive.len() {
-        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        if entry.is_dir() {
-            continue;
-        }
-        let name = entry
-            .name()
-            .map(|n| n.into_owned())
-            .map_err(|e| e.to_string())?;
-        let size = entry.size();
-        let copied = std::io::copy(&mut entry, &mut std::io::sink()).map_err(|e| {
-            trf(
-                "{name} in the backup is damaged: {error}",
-                &[("name", &name), ("error", &e.to_string())],
-            )
-        })?;
-        if copied != size {
-            return Err(trf(
-                "{name} in the backup has the wrong length",
-                &[("name", &name)],
-            ));
-        }
-        seen.insert(name, size);
-    }
-    let mut stack = vec![world.path.clone()];
-    while let Some(dir) = stack.pop() {
-        for e in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))? {
-            let e = e.map_err(|e| e.to_string())?;
-            let path = e.path();
-            let meta = path
-                .metadata()
-                .map_err(|e| format!("{}: {e}", path.display()))?;
-            if meta.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.file_name() == Some("session.lock".as_ref()) {
-                continue;
-            }
-            let relative = path.strip_prefix(&world.path).unwrap_or(&path);
-            let mut name = world.folder.clone();
-            for part in relative.components() {
-                name.push('/');
-                name.push_str(&part.as_os_str().to_string_lossy());
-            }
-            match seen.get(&name) {
-                Some(size) if *size == meta.len() => {}
-                Some(_) => {
-                    return Err(trf(
-                        "{name} in the backup has another size than the file",
-                        &[("name", &name)],
-                    ))
-                }
-                None => return Err(trf("the backup lacks {name}", &[("name", &name)])),
-            }
-        }
-    }
-    Ok(())
-}
-
 fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
     let refuse = |why: String| {
         let _ = tx.send(Event::Refused(why));
@@ -461,31 +329,14 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
     };
     // Which saved worlds hold content of these mods; a world whose list can't be read counts as
     // holding all of them.
-    let scanned = match scan(home) {
-        Ok(scanned) => scanned,
-        Err(e) => {
-            return refuse(trf(
-                "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})",
-                &[("error", &e)],
-            ))
-        }
-    };
     let mods = action.mods();
     let ids: Vec<String> = mods.iter().map(|(id, _)| id.clone()).collect();
-    let at_stake: Vec<(&worlds::World, Vec<String>, bool)> = scanned
-        .iter()
-        .filter_map(|s| {
-            let used: Vec<String> = match s.known {
-                true => ids
-                    .iter()
-                    .filter(|id| s.world.mods.contains(id))
-                    .cloned()
-                    .collect(),
-                false => ids.clone(),
-            };
-            (!used.is_empty()).then_some((&s.world, used, s.known))
-        })
-        .collect();
+    let at_stake = match worlds::at_risk(home, &ids) {
+        Ok(worlds) => worlds,
+        Err(e) => return refuse(trf(
+            "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})", &[("error", &e)],
+        )),
+    };
     let mut backups = 0;
     if !at_stake.is_empty() {
         if !backed_up {
@@ -515,9 +366,7 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
                 trf("Backing up {world}…", &[("world", &world.name)]),
                 i as f32 / at_stake.len() as f32,
             ));
-            match worlds::backup(home, world)
-                .and_then(|zip| verify_backup(&zip, world).map(|()| zip))
-            {
+            match worlds::backup_verified(home, world) {
                 Ok(_) => backups += 1,
                 Err(e) => {
                     return refuse(trf(
@@ -713,7 +562,7 @@ mod tests {
             .collect();
         assert_eq!(zips.len(), 1);
         let world = worlds::list(&home).remove(0);
-        verify_backup(&zips[0].path(), &world).unwrap();
+        worlds::verify_backup(&zips[0].path(), &world).unwrap();
         assert!(!java::is_enabled(&home, "bricks"));
         assert!(
             java::is_enabled(&home, "unrelated"),
@@ -802,11 +651,13 @@ mod tests {
         let home = home_with_world("bricks");
         let world = worlds::list(&home).remove(0);
         let zip = worlds::backup(&home, &world).unwrap();
-        verify_backup(&zip, &world).unwrap();
+        worlds::verify_backup(&zip, &world).unwrap();
 
         // A file the world has that the backup doesn't.
         std::fs::write(world.path.join("region/r.1.1.mca"), [1u8; 10]).unwrap();
-        assert!(verify_backup(&zip, &world).unwrap_err().contains("lacks"));
+        assert!(worlds::verify_backup(&zip, &world)
+            .unwrap_err()
+            .contains("lacks"));
         std::fs::remove_file(world.path.join("region/r.1.1.mca")).unwrap();
 
         // A damaged byte inside an entry's data.
@@ -819,7 +670,7 @@ mod tests {
         bytes[start + 1] ^= 0xff;
         std::fs::write(&zip, bytes).unwrap();
         assert!(
-            verify_backup(&zip, &world).is_err(),
+            worlds::verify_backup(&zip, &world).is_err(),
             "a bad checksum or stream is found"
         );
         std::fs::remove_dir_all(home).ok();
