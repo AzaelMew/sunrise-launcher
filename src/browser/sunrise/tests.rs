@@ -497,13 +497,15 @@ fn installs_combined_native_content_as_one_smod() {
     let mut bytes = fs::read(&own).unwrap();
     bytes.extend_from_slice(b"\0");
     fs::write(&own, &bytes).unwrap();
+    // From here the test models a remote registry. Its file URL is validated but never fetched.
+    index.projects[0].versions[0].file.url = "https://example.com/coords_hud.smod".into();
     let mut forged = index.clone();
     forged.projects[0].versions[0].file.sha256 = index::sha256(&bytes);
     forged.projects[0].versions[0].file.size = bytes.len() as u64;
     let cache = home.join(CACHE);
     fs::create_dir_all(cache.parent().unwrap()).unwrap();
     fs::write(&cache, serde_json::to_string(&forged).unwrap()).unwrap();
-    let kept = load(Err("offline".into()), &cache, true).unwrap();
+    let kept = load(Err("offline".into()), &cache, false).unwrap();
     assert_eq!(
         named(&kept.index),
         as_registry,
@@ -517,7 +519,7 @@ fn installs_combined_native_content_as_one_smod() {
     );
     // The registry's own answer is asked, and does not list that file.
     let text = serde_json::to_string(&index).unwrap();
-    let answered = load(Ok((index.clone(), text)), &cache, true).unwrap();
+    let answered = load(Ok((index, text)), &cache, false).unwrap();
     let checked = crate::native_status::build_inputs(&home, answered.fetched().as_deref());
     assert_eq!(
         checked[0].registry,
