@@ -1,0 +1,6 @@
+# Generated files that tests compare byte for byte with what they generate: LF on every OS, also where core.autocrlf would give CRLF.
+docs/launcher-commands.md text eol=lf
+crates/theme/tokens.css text eol=lf
+# Signed test fixtures, checked byte for byte against their signatures and hashes: never converted.
+crates/release-verify/tests/signed/** -text
+crates/smod/tests/index/** -text

@@ -175,17 +175,22 @@ fn full_backlog_cannot_block_connect_past_its_deadline() {
         std::os::unix::net::UnixListener::bind(marker.directory.join("control")).unwrap();
     // SAFETY: live listener, lowering the backlog exposes exhaustion with one queued client.
     assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
-    let _queued = connect(&marker, deadline()).unwrap();
-    let (send, receive) = mpsc::channel();
-    std::thread::spawn(move || {
-        let result = connect(&marker, Instant::now() + Duration::from_millis(20)).map(drop);
-        let _ = send.send(result);
-    });
-    let result = receive.recv_timeout(Duration::from_secs(1));
-    assert!(
-        matches!(result, Ok(Err(_))),
-        "connect blocked behind the full backlog: {result:?}"
-    );
+    // How many a zero backlog still queues differs by system (BSD rounds it up): fill it until a connect is refused, and none may block past its deadline.
+    for _ in 0..64 {
+        let (send, receive) = mpsc::channel();
+        let marker = marker.clone();
+        std::thread::spawn(move || {
+            let result = connect(&marker, Instant::now() + Duration::from_millis(20));
+            // A queued client stays connected, so the backlog stays full.
+            let _ = send.send(result.map(std::mem::forget));
+        });
+        match receive.recv_timeout(Duration::from_secs(1)) {
+            Ok(Ok(())) => continue,
+            Ok(Err(_)) => return,
+            Err(_) => panic!("connect blocked behind the full backlog"),
+        }
+    }
+    panic!("64 clients queued behind a zero backlog");
 }
 
 #[test]
