@@ -3,16 +3,58 @@
 use super::ui::{c, card, dim, muted, primary, switch};
 use super::*;
 use crate::alt::{button, LINE, MUTED, SOFT, TEXT};
+use gpui::ExternalPaths;
 use std::path::Path;
 use sunrise_launcher::packs::{self, Kind};
 
 impl Launcher {
+    pub(crate) fn reset_pack_view(&mut self) {
+        let m = &mut self.alt.mods;
+        m.have.set(String::new());
+        m.row_filter.text.clear();
+        m.selection.clear();
+        m.anchor = None;
+        m.confirm = None;
+        self.alt_dismiss_notice();
+        self.game_packs.confirm_remove = None;
+        self.game_packs.stale();
+    }
+
+    pub(super) fn pack_page(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let focus = self
+            .alt
+            .mods
+            .have_focus
+            .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
+        let header = self.alt_mods_header(true, &focus, window, cx);
+        let kind = self.alt.mods.collection;
+        let home = self.alt_mods_home();
+        div()
+            .id("alt-packs-page")
+            .size_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .p(px(24.))
+            .text_color(c(TEXT))
+            .child(header)
+            .children(self.alt_strip(cx))
+            .child(self.installed_packs(kind, cx))
+            .drag_over::<ExternalPaths>(|s, _, _, _| s.border_1().border_color(c(MUTED)))
+            .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                this.import_pack_files(home.clone(), kind, paths.paths().to_vec(), cx);
+                cx.stop_propagation();
+            }))
+            .into_any_element()
+    }
+
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
         let mut tabs = div().flex().items_center().gap(px(8.));
         for (index, (kind, label)) in [
-            (None, tr("Mods")),
-            (Some(Kind::Resource), tr("Resource packs")),
-            (Some(Kind::Shader), tr("Shader packs")),
+            (Kind::Resource, tr("Resource packs")),
+            (Kind::Shader, tr("Shader packs")),
         ]
         .into_iter()
         .enumerate()
@@ -23,16 +65,8 @@ impl Launcher {
                     .when(chosen, |d| d.bg(c(LINE)).border_color(c(TEXT)))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.alt.mods.collection != kind {
-                            let m = &mut this.alt.mods;
-                            m.collection = kind;
-                            m.have.set(String::new());
-                            m.row_filter.text.clear();
-                            m.selection.clear();
-                            m.anchor = None;
-                            m.confirm = None;
-                            this.alt_dismiss_notice();
-                            this.game_packs.confirm_remove = None;
-                            this.game_packs.stale();
+                            this.alt.mods.collection = kind;
+                            this.reset_pack_view();
                         }
                         cx.notify();
                     })),
@@ -46,8 +80,8 @@ impl Launcher {
             && self.alt_mods_locked().is_none()
             && !self.alt_mutating()
             && !self.alt.mods.examples
-            && self.alt.page == Page::Installed
-            && self.alt.mods.collection == Some(kind)
+            && self.alt.page == Page::Packs
+            && self.alt.mods.collection == kind
             && self
                 .selected_instance()
                 .is_some_and(|i| i.java.is_none() && i.home == home)
@@ -60,29 +94,32 @@ impl Launcher {
         let pick = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
-            multiple: false,
+            multiple: true,
             prompt: Some(tr("Import from file").into()),
         });
         cx.spawn(async move |this, cx| {
-            let Ok(Ok(Some(mut paths))) = pick.await else {
-                return;
-            };
-            let Some(path) = paths.pop() else {
-                return;
-            };
-            // The file dialog is asynchronous: don't apply a past selection to today's setup.
-            let started = this.update(cx, |this, cx| {
-                if !this.can_edit_packs(&home, kind) {
-                    return false;
-                }
-                this.alt_dismiss_notice();
-                this.alt.mods.busy = Some((tr("Importing pack…").into(), 0.));
-                cx.notify();
-                true
-            });
-            if !matches!(started, Ok(true)) {
-                return;
+            if let Ok(Ok(Some(paths))) = pick.await {
+                let _ = this.update(cx, |this, cx| this.import_pack_files(home, kind, paths, cx));
             }
+        })
+        .detach();
+    }
+
+    fn import_pack_files(
+        &mut self,
+        home: PathBuf,
+        kind: Kind,
+        paths: Vec<PathBuf>,
+        cx: &mut Context<Self>,
+    ) {
+        // A dialog or drop may outlive the view that offered it.
+        if paths.is_empty() || !self.can_edit_packs(&home, kind) {
+            return;
+        }
+        self.alt_dismiss_notice();
+        self.alt.mods.busy = Some((tr("Importing packs…").into(), 0.));
+        cx.notify();
+        cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
@@ -91,8 +128,24 @@ impl Launcher {
                             tr("This setup is busy. Try again when the operation finishes.")
                                 .to_string()
                         })?;
-                    packs::add_local(&home, kind, &path)
-                        .map(|p| trf("Imported {name}.", &[("name", &p.title)]))
+                    let mut added = Vec::new();
+                    let mut refused = Vec::new();
+                    for path in paths {
+                        match packs::add_local(&home, kind, &path) {
+                            Ok(p) => added.push(p.title),
+                            Err(e) => refused.push(e),
+                        }
+                    }
+                    let mut parts = Vec::new();
+                    if !added.is_empty() {
+                        parts.push(trf("Imported {name}.", &[("name", &added.join(", "))]));
+                    }
+                    if refused.is_empty() {
+                        Ok(parts.join(" "))
+                    } else {
+                        parts.extend(refused);
+                        Err(parts.join("\n"))
+                    }
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
@@ -133,8 +186,8 @@ impl Launcher {
         let editable = self.can_edit_packs(&home, kind);
         let query = self.alt.mods.have.text().trim().to_lowercase();
         let (title, detail, empty) = match kind {
-            Kind::Resource => (tr("Resource packs"), tr("Higher packs take priority. A pack you turn on goes to the top."), tr("No resource packs yet. Import a local resource pack (.zip) to add it to this setup.")),
-            Kind::Shader => (tr("Shader packs"), tr("Choose one shader pack at a time, or leave them all off."), tr("No shader packs yet. Import a local shader pack (.zip or .sshader) to add it to this setup.")),
+            Kind::Resource => (tr("Resource packs"), tr("Higher packs take priority. A pack you turn on goes to the top."), tr("Drop a resource pack (.zip) here or choose Import from file.")),
+            Kind::Shader => (tr("Shader packs"), tr("Choose one shader pack at a time, or leave them all off."), tr("Drop a shader pack (.zip or .sshader) here or choose Import from file.")),
         };
         let add = primary("alt-pack-import", tr("Import from file…"));
         let add = if editable {

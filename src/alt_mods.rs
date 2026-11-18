@@ -105,7 +105,7 @@ pub(crate) struct AltModsState {
     menu: Option<Menu>,
     row_filter: model::RowFilter,
     #[cfg(feature = "redesign-preview")]
-    collection: Option<sunrise_launcher::packs::Kind>,
+    collection: sunrise_launcher::packs::Kind,
     selection: BTreeSet<String>,
     /// The row last clicked, for Shift-click ranges (an index into the visible rows).
     anchor: Option<usize>,
@@ -139,7 +139,7 @@ impl Default for AltModsState {
             menu: None,
             row_filter: model::RowFilter::default(),
             #[cfg(feature = "redesign-preview")]
-            collection: None,
+            collection: sunrise_launcher::packs::Kind::Resource,
             selection: BTreeSet::new(),
             anchor: None,
             confirm: None,
@@ -158,6 +158,10 @@ impl Launcher {
     /// The Mods screen for `self.alt.page`: Discover, Installed or a mod's page.
     pub(crate) fn alt_mods(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.alt_mods_drain();
+        #[cfg(feature = "redesign-preview")]
+        if self.alt.page == Page::Packs {
+            return self.pack_page(window, cx);
+        }
         self.alt_mods_refresh();
         let m = &mut self.alt.mods;
         let find_focus = m
@@ -535,14 +539,13 @@ impl Launcher {
             .into(),
         };
         #[cfg(feature = "redesign-preview")]
-        let placeholder = match (installed, self.alt.mods.collection) {
-            (true, Some(sunrise_launcher::packs::Kind::Resource)) => {
-                tr("Search your resource packs").into()
+        let placeholder = if self.alt.page == Page::Packs {
+            match self.alt.mods.collection {
+                sunrise_launcher::packs::Kind::Resource => tr("Search your resource packs").into(),
+                sunrise_launcher::packs::Kind::Shader => tr("Search your shader packs").into(),
             }
-            (true, Some(sunrise_launcher::packs::Kind::Shader)) => {
-                tr("Search your shader packs").into()
-            }
-            _ => placeholder,
+        } else {
+            placeholder
         };
         let edit = if installed {
             &self.alt.mods.have
@@ -614,6 +617,21 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.alt.mods.find)
         };
+        #[cfg(feature = "redesign-preview")]
+        if self.alt.page == Page::Packs {
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(20.))
+                .child(
+                    div()
+                        .text_size(px(28.))
+                        .font_weight(FontWeight::BOLD)
+                        .child(tr("Packs")),
+                )
+                .child(self.collection_tabs(cx))
+                .child(field);
+        }
         let seg = |id: &'static str,
                    label: &'static str,
                    on: bool,

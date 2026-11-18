@@ -21,6 +21,8 @@ pub(super) enum Page {
     Home,
     Discover,
     Installed,
+    #[cfg(feature = "redesign-preview")]
+    Packs,
     Project,
     Settings,
 }
@@ -448,6 +450,10 @@ impl Launcher {
                 ))
                 .child(tr(label))
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    #[cfg(feature = "redesign-preview")]
+                    if (this.alt.page == Page::Packs || p == Page::Packs) && this.alt.page != p {
+                        this.reset_pack_view();
+                    }
                     this.alt.page = p;
                     this.alt.picker = false;
                     cx.notify();
@@ -463,14 +469,15 @@ impl Launcher {
             .gap(px(4.))
             .child(div().mb(px(12.)).child(crate::mark(36.)))
             .child(rail_link(Page::Home, "alt-nav-home", "Home", "home"))
-            .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"))
-            .child(div().flex_1())
-            .child(rail_link(
-                Page::Settings,
-                "alt-nav-settings",
-                "Settings",
-                "sliders",
-            ));
+            .child(rail_link(Page::Discover, "alt-nav-mods", "Mods", "package"));
+        #[cfg(feature = "redesign-preview")]
+        let rail = rail.child(rail_link(Page::Packs, "alt-nav-packs", "Packs", "archive"));
+        let rail = rail.child(div().flex_1()).child(rail_link(
+            Page::Settings,
+            "alt-nav-settings",
+            "Settings",
+            "sliders",
+        ));
         let content = match page {
             Page::Settings => self.alt_settings(window, cx),
             _ if self.selected_instance().is_some_and(|i| i.java.is_some()) => div()
