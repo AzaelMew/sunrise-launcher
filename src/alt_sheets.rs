@@ -36,7 +36,10 @@ struct Memo {
 
 #[derive(Default)]
 pub(crate) struct AltSheetsState {
+    /// The explicit compatibility check's state; only a click on the Build sheet starts one.
     update: RefCell<Option<Memo>>,
+    /// Keyboard focus of the sheet on screen, so keys never reach the page under it.
+    focus: Option<FocusHandle>,
     registry: Option<(Consent, Sender<bool>)>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
@@ -44,6 +47,23 @@ pub(crate) struct AltSheetsState {
     /// The Build chooser lists builds to keep.
     picking: bool,
     example_closed: bool,
+}
+
+/// The explicit native-mod check against the newer installed build.
+#[derive(Clone, Debug)]
+pub(crate) enum CheckState {
+    /// No newer build is installed, or no native mod is turned on: nothing to check.
+    None,
+    /// Native mods are not allowed yet, so nothing can be checked.
+    NeedsPermission(String),
+    Idle(String),
+    Pending(String),
+    Failed(String, String),
+    Done(UpdateCheck),
+}
+
+fn check_key(home: &std::path::Path, to: &str) -> String {
+    format!("{}{to}", native_status::fingerprint(home, Some(to)))
 }
 
 /// A held update as the bottom bar and the Resolve sheet read it.
@@ -153,6 +173,13 @@ fn frame(id: &'static str, width: f32, body: Div, cx: &mut Context<Launcher>) ->
         .items_center()
         .justify_center()
         .bg(gpui::black().opacity(0.55))
+        .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
+            cx.stop_propagation()
+        })
+        .on_mouse_down(MouseButton::Middle, |_: &MouseDownEvent, _, cx| {
+            cx.stop_propagation()
+        })
+        .on_scroll(|_, _, cx| cx.stop_propagation())
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, _: &MouseDownEvent, _, cx| {
@@ -307,12 +334,11 @@ impl Launcher {
         open
     }
 
-    /// The update the bar should call held, if there is one: the build waiting and the mods that
-    /// don't fit it. It reads what [`native_mods::update_check`] says, on a worker (so `None`
-    /// while that runs and when nothing is held), or a build that stopped for worlds
-    /// (`native_worlds`). Call it from the bar's render; it starts the check at most once per
-    /// state of the game folder. It needs native-mod permission, as the check does.
-    pub(crate) fn alt_held_update(&self, cx: &mut Context<Self>) -> Option<Held> {
+    /// The update the bar should call held, if there is one. It only *reads*: a build that stopped
+    /// for worlds (`native_worlds`), or the result of the check the player started from the Build
+    /// sheet ([`Self::alt_check_native`]). It never runs a check itself, because a check stages
+    /// files into the real build folder.
+    pub(crate) fn alt_held_update(&self) -> Option<Held> {
         let instance = self.selected_instance()?;
         let plays = self.version_of(instance)?.clone();
         if let Some(stake) = self
@@ -331,59 +357,134 @@ impl Launcher {
                 stopped: true,
             });
         }
-        if self.native_step.is_some() || self.settings.native_mods_allowed_at.is_none() {
-            return None;
+        match self.alt_check_state() {
+            CheckState::Done(check) => Held::of_check(check, &plays),
+            _ => None,
         }
-        let to = native_mods::update_for(&plays, &self.installed)?;
-        let home = self.mods.home();
-        let key = format!(
-            "{}{to}",
-            native_status::fingerprint(&home, Some(to.as_str()))
-        );
-        let mut memo = self.alt.sheets.update.borrow_mut();
-        if let Some(previous) = memo.as_ref().filter(|previous| previous.key == key) {
-            let check = previous.result.as_ref()?.as_ref().ok()?.clone();
-            return Held::of_check(check, &plays);
+    }
+
+    /// Where the selected setup's native-mod check against the newer installed build stands.
+    pub(crate) fn alt_check_state(&self) -> CheckState {
+        let Some(instance) = self.selected_instance() else {
+            return CheckState::None;
+        };
+        let Some(plays) = self.version_of(instance) else {
+            return CheckState::None;
+        };
+        let Some(to) = native_mods::update_for(plays, &self.installed) else {
+            return CheckState::None;
+        };
+        if native_status::enabled(&instance.home).is_empty() {
+            return CheckState::None;
         }
-        *memo = Some(Memo {
+        if self.settings.native_mods_allowed_at.is_none() {
+            return CheckState::NeedsPermission(to);
+        }
+        let key = check_key(&instance.home, &to);
+        match self
+            .alt
+            .sheets
+            .update
+            .borrow()
+            .as_ref()
+            .filter(|memo| memo.key == key)
+        {
+            None => CheckState::Idle(to),
+            Some(Memo { result: None, .. }) => CheckState::Pending(to),
+            Some(Memo {
+                result: Some(Err(e)),
+                ..
+            }) => CheckState::Failed(to, e.clone()),
+            Some(Memo {
+                result: Some(Ok(check)),
+                ..
+            }) => CheckState::Done(check.clone()),
+        }
+    }
+
+    /// The button's action: check the selected setup's native mods against the newer installed
+    /// build, once, on a worker, in the setup's own game folder. Nothing else calls it.
+    fn alt_check_native(&mut self, cx: &mut Context<Self>) {
+        if self.native_step.is_some() {
+            return;
+        }
+        let (CheckState::Idle(to) | CheckState::Failed(to, _)) = self.alt_check_state() else {
+            return;
+        };
+        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
+            return;
+        };
+        let key = check_key(&home, &to);
+        *self.alt.sheets.update.borrow_mut() = Some(Memo {
             key: key.clone(),
             result: None,
         });
-        drop(memo);
         let work = cx
             .background_executor()
             .spawn(async move { native_mods::update_check(&home, &to).map_err(String::from) });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
-                *this.alt.sheets.update.borrow_mut() = Some(Memo {
-                    key,
-                    result: Some(result),
-                });
+                let mut memo = this.alt.sheets.update.borrow_mut();
+                // A result for a state the game folder has left is dropped.
+                if memo.as_ref().is_some_and(|m| m.key == key) {
+                    *memo = Some(Memo {
+                        key,
+                        result: Some(result),
+                    });
+                }
+                drop(memo);
                 cx.notify();
             });
         })
         .detach();
-        None
     }
 
     /// The sheet on screen, if any. Real state wins over an example: a pending library question,
     /// a pending permission, the sheet asked for, then `SUNRISE_PREVIEW_EXAMPLES`.
     pub(crate) fn alt_sheet(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        let sheet = self.live_sheet(cx)?;
+        // The sheet takes the keyboard: keys never reach the page under it.
+        let focus = match self.alt.sheets.focus.clone() {
+            Some(focus) => focus,
+            None => {
+                let focus = cx.focus_handle();
+                self.alt.sheets.focus = Some(focus.clone());
+                focus
+            }
+        };
+        if !focus.contains_focused(window, cx) {
+            window.focus(&focus, cx);
+        }
+        Some(
+            sheet
+                .track_focus(&focus)
+                .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                    if ev.keystroke.key == "escape" {
+                        this.close_alt_sheet();
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if self.alt.sheets.registry.is_some() {
-            return Some(self.libraries_sheet(cx).into_any_element());
+            return Some(self.libraries_sheet(cx));
         }
         if self.pending_consent.is_some() {
-            return Some(self.consent_sheet(cx).into_any_element());
+            return Some(self.consent_sheet(cx));
         }
         match self.alt.sheet {
-            Some(Sheet::Build) => Some(self.build_sheet(cx).into_any_element()),
-            Some(Sheet::Resolve) => match self.alt_held_update(cx) {
-                Some(held) => Some(self.resolve_sheet(held, false, cx).into_any_element()),
+            Some(Sheet::Build) => Some(self.build_sheet(cx)),
+            Some(Sheet::Resolve) => match self.alt_held_update() {
+                Some(held) => Some(self.resolve_sheet(held, false, cx)),
                 None => {
                     // Nothing is held any more (it was resolved elsewhere): close quietly.
                     self.alt.sheet = None;
@@ -395,11 +496,8 @@ impl Launcher {
                 None
             }
             None => match example().filter(|_| !self.alt.sheets.example_closed)? {
-                Example::Resolve => Some(
-                    self.resolve_sheet(example_held(), true, cx)
-                        .into_any_element(),
-                ),
-                Example::Consent => Some(self.example_consent_sheet(cx).into_any_element()),
+                Example::Resolve => Some(self.resolve_sheet(example_held(), true, cx)),
+                Example::Consent => Some(self.example_consent_sheet(cx)),
             },
         }
     }
@@ -837,10 +935,106 @@ impl Launcher {
 
     // ---- Game build ----
 
+    /// The Build sheet's native-mod compatibility section: the explicit check and where it stands.
+    fn native_check_block(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+        let state = self.alt_check_state();
+        let block = |lines: Vec<Div>| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .pt(px(10.))
+                .border_t_1()
+                .border_color(rgb(LINE))
+                .children(lines)
+        };
+        let check = |id: &'static str, label: &str, cx: &mut Context<Self>| {
+            button(id, tr(label)).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.alt_check_native(cx);
+                cx.notify();
+            }))
+        };
+        Some(match state {
+            CheckState::None => return None,
+            CheckState::NeedsPermission(to) => block(vec![muted(trf(
+                "A newer build, {to}, is installed. Native mods need your permission before they can be checked against it.",
+                &[("to", &build_name(&to))],
+            ))
+            .text_size(px(12.))]),
+            CheckState::Idle(to) => block(vec![
+                muted(trf(
+                    "A newer build, {to}, is installed. Your native mods have not been checked against it.",
+                    &[("to", &build_name(&to))],
+                ))
+                .text_size(px(12.)),
+                div().child(check(
+                    "alt-check",
+                    "Check native mod compatibility",
+                    cx,
+                )),
+            ]),
+            CheckState::Pending(to) => block(vec![muted(trf(
+                "Checking your native mods against {to}…",
+                &[("to", &build_name(&to))],
+            ))
+            .text_size(px(12.))]),
+            CheckState::Failed(_, error) => block(vec![
+                div()
+                    .text_size(px(12.))
+                    .text_color(gpui::red())
+                    .child(error),
+                div().child(check("alt-check-again", "Check again", cx)),
+            ]),
+            CheckState::Done(done) => match Held::of_check(done.clone(), "") {
+                Some(_) => block(vec![
+                    muted(trf(
+                        "The update to {to} is on hold: some mods don't fit.",
+                        &[("to", &build_name(&done.to))],
+                    ))
+                    .text_size(px(12.)),
+                    div().child(
+                        button("alt-check-resolve", tr("Resolve…")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.open_alt_sheet(Sheet::Resolve);
+                                cx.notify();
+                            },
+                        )),
+                    ),
+                ]),
+                None => {
+                    let base = done.to.clone();
+                    block(vec![
+                        muted(done.summary.clone()).text_size(px(12.)),
+                        div().child(
+                            button(
+                                "alt-check-build",
+                                trf("Build on {to}", &[("to", &build_name(&done.to))]),
+                            )
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.close_alt_sheet();
+                                this.build_native_on(Some(base.clone()), false);
+                                cx.notify();
+                            })),
+                        ),
+                    ])
+                }
+            },
+        })
+    }
+
     fn pin_alt_build(&mut self, version: Option<String>, channel: instances::Channel) {
-        let Some(id) = self.selected_instance().map(|i| i.id.clone()) else {
+        let Some(instance) = self.selected_instance() else {
             return;
         };
+        let id = instance.id.clone();
+        // Backstop for the sheet's own gate: never pin another build under native mods.
+        if let (Some(to), Some(plays)) = (&version, self.version_of(instance)) {
+            if to != plays && !native_status::enabled(&instance.home).is_empty() {
+                self.alt.sheets.error =
+                    Some(tr("Check your native mods against that build first.").into());
+                return;
+            }
+        }
         match instances::edit(&id, |m| {
             m.version = version;
             m.channel = Some(channel);
@@ -869,6 +1063,20 @@ impl Launcher {
             .cloned()
             .collect();
         builds.sort_by(|a, b| sunrise_launcher::backend::compare_versions(b, a));
+        // A different build under native mods is never activated from here: those mods have to be
+        // checked against it first (the check button), and the build that follows protects worlds.
+        let has_native = !native_status::enabled(&instance.home).is_empty();
+        let nightly_target = self.launcher_version().cloned();
+        let stable_target = self
+            .stable_builds()
+            .iter()
+            .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
+            .cloned()
+            .or_else(|| nightly_target.clone());
+        let gated = |target: &Option<String>| has_native && *target != plays;
+        let nightly_gated = gated(&nightly_target);
+        let stable_gated = gated(&stable_target);
+        let gate_note = tr("Your native mods would change build. Check them first with “Check native mod compatibility”.");
         let picking = self.alt.sheets.picking || pinned.is_some();
         let follow_nightly = pinned.is_none() && channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && channel == instances::Channel::Stable;
@@ -905,12 +1113,19 @@ impl Launcher {
                 "alt-build-nightly",
                 follow_nightly,
                 tr("Follow Nightly").into(),
-                tr("The newest build each day.").into(),
+                if nightly_gated {
+                    gate_note.into()
+                } else {
+                    tr("The newest build each day.").into()
+                },
             )
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.pin_alt_build(None, instances::Channel::Nightly);
-                cx.notify();
-            })),
+            .when(nightly_gated, |d| d.opacity(0.5))
+            .when(!nightly_gated, |d| {
+                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.pin_alt_build(None, instances::Channel::Nightly);
+                    cx.notify();
+                }))
+            }),
         );
         if stable || follow_stable {
             list = list.child(
@@ -918,12 +1133,19 @@ impl Launcher {
                     "alt-build-stable",
                     follow_stable,
                     tr("Follow Stable").into(),
-                    tr("Only builds marked stable.").into(),
+                    if stable_gated {
+                        gate_note.into()
+                    } else {
+                        tr("Only builds marked stable.").into()
+                    },
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_alt_build(None, instances::Channel::Stable);
-                    cx.notify();
-                })),
+                .when(stable_gated, |d| d.opacity(0.5))
+                .when(!stable_gated, |d| {
+                    d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.pin_alt_build(None, instances::Channel::Stable);
+                        cx.notify();
+                    }))
+                }),
             );
         }
         let keep_now = plays.clone();
@@ -950,6 +1172,7 @@ impl Launcher {
                     .map(|l| format!("{} · {l}", build_name(&tag)))
                     .unwrap_or_else(|| tag.clone());
                 let pick = tag.clone();
+                let blocked = has_native && plays.as_deref() != Some(tag.as_str());
                 choices = choices.child(
                     div()
                         .id(("alt-build-choice", i))
@@ -960,14 +1183,21 @@ impl Launcher {
                         .text_size(px(13.))
                         .text_color(rgb(if on { GOLD } else { TEXT }))
                         .child(label)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.pin_alt_build(Some(pick.clone()), channel);
-                            cx.notify();
-                        })),
+                        .when(blocked, |d| d.opacity(0.5))
+                        .when(!blocked, |d| {
+                            d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.pin_alt_build(Some(pick.clone()), channel);
+                                cx.notify();
+                            }))
+                        }),
                 );
             }
             list = list.child(choices);
+            if has_native {
+                list = list.child(muted(gate_note).text_size(px(12.)).px(px(10.)));
+            }
         }
+        let native = self.native_check_block(cx);
         let extras = div()
             .flex()
             .items_start()
@@ -1006,6 +1236,7 @@ impl Launcher {
                     .child(tr("GAME BUILD")),
             )
             .child(list)
+            .children(native)
             .child(div().h(px(1.)).bg(rgb(LINE)))
             .child(extras)
             .children(
@@ -1021,6 +1252,13 @@ impl Launcher {
             .absolute()
             .inset_0()
             .occlude()
+            .on_mouse_down(MouseButton::Right, |_: &MouseDownEvent, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_mouse_down(MouseButton::Middle, |_: &MouseDownEvent, _, cx| {
+                cx.stop_propagation()
+            })
+            .on_scroll(|_, _, cx| cx.stop_propagation())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseDownEvent, _, cx| {
