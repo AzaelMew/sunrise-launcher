@@ -15,6 +15,9 @@ pub(super) struct Worlds {
     pub(super) cull: cull::Cull,
     pub(super) fresh: bool,
     reading: bool,
+    /// Home's tiles: the focus of each world's picture, by folder, so what sits on the picture
+    /// can show while the keyboard is on it.
+    pub(super) tile_focus: std::collections::HashMap<String, FocusHandle>,
 }
 
 impl Worlds {
@@ -59,6 +62,9 @@ impl Launcher {
             let _ = this.update(cx, |this, cx| {
                 // Another instance may have been picked meanwhile.
                 if this.worlds.home.as_ref() == Some(&home) {
+                    this.worlds
+                        .tile_focus
+                        .retain(|folder, _| list.iter().any(|w| &w.folder == folder));
                     this.worlds.list = list;
                     this.worlds.cull.reset();
                     this.worlds.fresh = true;

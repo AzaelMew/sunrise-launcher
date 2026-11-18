@@ -528,6 +528,32 @@ impl Launcher {
         }
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
+        let layout = self.settings.world_layout;
+        let layouts = [
+            (backend::WorldLayout::Rows, "Rows"),
+            (backend::WorldLayout::Tiles, "Tiles"),
+        ]
+        .into_iter()
+        .map(|(way, label)| {
+            let pick: crate::mods::Choose = std::rc::Rc::new(move |this, _| {
+                this.settings.world_layout = way;
+                this.save_settings();
+            });
+            (tr(label).into(), way == layout, pick)
+        })
+        .collect();
+        rows.push(row(
+            tr("Worlds on Home"),
+            tr(match layout {
+                backend::WorldLayout::Rows => {
+                    "Continue playing lists one world a row, with its full name."
+                }
+                backend::WorldLayout::Tiles => {
+                    "Continue playing shows the worlds' pictures side by side."
+                }
+            }),
+            div().child(crate::mods::choices("alt-world-layout", layouts, cx).gap(px(6.))),
+        ));
         rows.push(
             self.wide_row(
                 tr("Your themes"),

@@ -763,7 +763,8 @@ enum Cmd {
     /// on|off, prune-old-versions on|off (delete old versions after an install, keeping the
     /// selected one, the ones instances use and the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
-    /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language
+    /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), worlds
+    /// rows|tiles (how Home lists the worlds under Continue playing), language
     /// system|CODE (the window's language: en, fr, de, ja, pt-br... any language the launcher has;
     /// system follows the computer's; a wrong code lists them all), theme default|ID|local:SLUG
     /// (a built-in theme, or one of yours from the themes folder; "default" is Dawn; a wrong id
@@ -917,7 +918,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 17] = [
+const SETTING_KEYS: [&str; 18] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -929,6 +930,7 @@ const SETTING_KEYS: [&str; 17] = [
     "game-architecture",
     "proxy",
     "while-playing",
+    "worlds",
     "language",
     "theme",
     "accent",
@@ -981,6 +983,10 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
         "while-playing" => {
             s.while_playing = backend::WhilePlaying::parse(value)
                 .ok_or_else(|| format!("{value}: say stay, minimize or hide"))?
+        }
+        "worlds" => {
+            s.world_layout = backend::WorldLayout::parse(value)
+                .ok_or_else(|| format!("{value}: say rows or tiles"))?
         }
         "theme" => sunrise_launcher::appearance::select_theme(s, value)?,
         "accent" => sunrise_launcher::appearance::type_accent(s, value)?,
