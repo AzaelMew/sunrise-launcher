@@ -21,7 +21,7 @@ the MCP server is off.
 1. `sunrise-launcher versions`, `sunrise-launcher install latest`, `sunrise-launcher play`.
 2. Modpacks: `sunrise-launcher modpack import <file>`, then `modpack port` and `modpack play`
    ([modpacks.md](../modpacks.md)).
-3. For an agent: `sunrise-launcher agent-config` prints how to connect a client to `sunrise-launcher mcp`.
+3. For an agent: point its MCP client at `sunrise-launcher mcp`.
 
 ## Reference
 

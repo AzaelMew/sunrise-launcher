@@ -78,7 +78,7 @@ def scenario(m, out):
                  'account_list', 'game_args', 'game_state', 'game_ui', 'game_click',
                  'game_screenshot']:
         assert name in tools, f'{name} missing from {sorted(tools)}'
-    for name in ['game_launch', 'mcp', 'no_ai', 'agent_config']:
+    for name in ['game_launch', 'mcp', 'no_ai']:
         assert name not in tools, f'{name} is a tool'
 
     # Generated from the CLI: the same command, its JSON output.
@@ -172,11 +172,6 @@ def no_ai_scenario(launcher, env, home):
     run = lambda *a: subprocess.run([str(launcher), *a], env=env, input='', capture_output=True, text=True,
                                     timeout=60)
     assert json.loads(run('no-ai', '--json').stdout) == {'no_ai': False}
-    config = json.loads(run('agent-config', '--json').stdout)
-    assert config['server']['args'] == ['mcp'] and len(config['clients']) == 4, config
-    assert 'agent-config' in run('--help').stdout
-    test = json.loads(run('agent-config', '--test', '--json').stdout)
-    assert test['answered'] and test['tools'] > 100, test
     m = Mcp(launcher, env)
     m.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
                          'clientInfo': {'name': 'launcher_mcp_e2e', 'version': '1'}})
@@ -189,11 +184,11 @@ def no_ai_scenario(launcher, env, home):
     except Failed as e:
         assert REFUSAL in str(e), e
     m.close()
-    for command in ('mcp', 'agent-config'):
+    for command in ('mcp',):
         r = run(command)
         print(f'[launcher-mcp] {command} under No AI -> exit {r.returncode}: {r.stderr.strip()}')
         assert r.returncode == 1 and r.stderr.strip() == f'error: {REFUSAL}', r
-    assert 'agent-config' not in run('--help').stdout and ' mcp ' not in run('--help').stdout
+    assert ' mcp ' not in run('--help').stdout
     # What the launcher needs keeps working.
     assert run('versions', '--installed', '--json').returncode == 0
     assert run('no-ai', 'off').returncode == 0

@@ -72,7 +72,34 @@ fn cli_keeps_redirected_stdout_and_stderr() {
 #[test]
 fn mcp_keeps_its_stdio_transport() {
     let executable = Path::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
-    assert!(sunrise_launcher::agents::self_test(executable).unwrap() > 0);
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = process::command(executable)
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let lines = [
+        serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "sunrise-launcher-test", "version": "1" } } }),
+        serde_json::json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }),
+    ];
+    let mut stdin = child.stdin.take().unwrap();
+    for line in &lines {
+        writeln!(stdin, "{line}").unwrap();
+    }
+    // Dropping stdin ends the session: the server answers, then exits.
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    let tools = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|r| r["id"] == 2)
+        .and_then(|r| r["result"]["tools"].as_array().map(Vec::len));
+    assert!(tools.is_some_and(|n| n > 0));
 }
 
 #[test]

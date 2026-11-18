@@ -19,8 +19,6 @@ pub fn issues_url() -> String {
     format!("https://github.com/{GAME_REPO}/issues")
 }
 pub const README_URL: &str = "https://github.com/sunrise-org/sunrise-launcher/blob/main/README.md";
-/// The players' page on connecting an AI agent (the website's docs/agents.md).
-pub const AGENT_DOCS_URL: &str = sunrise_launcher_addresses::AGENT_DOCS;
 /// This launcher's version: the release workflow sets `SUNRISE_LAUNCHER_VERSION` from the
 /// tag it builds (no version-bump commits); other builds say Cargo.toml's.
 pub const VERSION: &str = version_or(option_env!("SUNRISE_LAUNCHER_VERSION"));
