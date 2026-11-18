@@ -225,18 +225,28 @@ fn home_shows_the_players_picture_then_the_themes_then_the_scene() {
         Behind::Personal(kept.clone())
     );
     assert!(mine.is_file(), "the original is the player's");
-    // Scenery off shows neither, and forgets neither.
+    // Reduced graphics keeps the chosen still picture; only Show background hides it.
+    settings.reduced_graphics = Some(true);
+    assert_eq!(
+        behind_home(&settings, data.path()),
+        Behind::Personal(kept.clone())
+    );
     settings.scenery_on = Some(false);
     assert_eq!(behind_home(&settings, data.path()), Behind::Plain);
     assert!(settings.background.is_some());
+    settings.reduced_graphics = Some(false);
+    assert_eq!(behind_home(&settings, data.path()), Behind::Plain);
+    settings.reduced_graphics = Some(true);
     settings.scenery_on = Some(true);
     // The kept copy is lost: the theme's shows, the name stays, and Appearance can say so.
     std::fs::remove_file(&kept).unwrap();
     assert_eq!(behind_home(&settings, data.path()), Behind::Theme(theirs));
     assert!(background_lost(&settings, data.path()));
     assert!(settings.background.is_some());
-    // A built-in theme has only its scene.
+    // A built-in theme still uses its scene with Reduced graphics on or off.
     select_theme(&mut settings, "nord").unwrap();
+    assert_eq!(behind_home(&settings, data.path()), Behind::Scene);
+    settings.reduced_graphics = Some(false);
     assert_eq!(behind_home(&settings, data.path()), Behind::Scene);
 }
 
