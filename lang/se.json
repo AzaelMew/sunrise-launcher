@@ -683,7 +683,6 @@
   "A newer build, {to}, is installed. Native mods need your permission before they can be checked against it.": "A newer build, {to}, is installed. Native mods need your permission before they can be checked against it.",
   "A newer build, {to}, is installed. Your native mods have not been checked against it.": "A newer build, {to}, is installed. Your native mods have not been checked against it.",
   "A player's name, then Enter": "A player's name, then Enter",
-  "A second set of mods": "A second set of mods",
   "A specific version…": "A specific version…",
   "ABOUT": "ABOUT",
   "Add to 1 world": "Add to 1 world",
@@ -1391,5 +1390,6 @@
   "{build} built and selected for its profile.": "{build} built and selected for its profile.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed one thing that {mod} uses: {items}.",
   "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.": "It was made for {made_for} and this profile runs {build}. Since then the game changed {count} things that {mod} uses: {items}.",
-  "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}"
+  "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}": "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
+  "Profiles": "Profiles"
 }

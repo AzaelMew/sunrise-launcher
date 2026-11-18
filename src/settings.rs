@@ -487,7 +487,7 @@ impl Launcher {
         );
         let asking = self.ui.settings.setup;
         let mut setup = row(
-            tr("A second set of mods"),
+            tr("Profiles"),
             tr("A profile keeps its own mods, worlds and servers. Switch between profiles in the sidebar."),
             div().child(
                 button("alt-create", tr(if asking { "Cancel" } else { "New profile…" })).on_click(
