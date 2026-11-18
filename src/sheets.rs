@@ -7,6 +7,7 @@
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
 //! * **Build** edits the selected instance's pin and channel with `instances::edit`.
 use super::*;
+use crate::frame::Reach as _;
 use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, MouseButton, MouseDownEvent};
 use native_consent::PendingConsent;
@@ -164,6 +165,7 @@ fn muted(text: impl IntoElement) -> Div {
 fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
     div()
         .id(id)
+        .reach()
         .flex()
         .items_center()
         .gap(px(10.))
@@ -1125,6 +1127,7 @@ impl Launcher {
         let option = |id: &'static str, on: bool, head: String, sub: String| {
             div()
                 .id(id)
+                .reach()
                 .flex()
                 .gap(px(12.))
                 .p(px(10.))
@@ -1161,7 +1164,9 @@ impl Launcher {
                 tr("Latest Nightly").into(),
                 tr("The newest build each day.").into(),
             )
-            .when(nightly_gated, |d| d.opacity(0.5).cursor_default())
+            .when(nightly_gated, |d| {
+                d.opacity(0.5).cursor_default().tab_stop(false)
+            })
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.pin_build(None, instances::Channel::Nightly);
@@ -1181,7 +1186,9 @@ impl Launcher {
                     tr("No stable release yet").into()
                 },
             )
-            .when(stable_off, |d| d.opacity(0.5).cursor_default())
+            .when(stable_off, |d| {
+                d.opacity(0.5).cursor_default().tab_stop(false)
+            })
             .when(!stable_off, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.pin_build(None, instances::Channel::Stable);

@@ -19,6 +19,7 @@
 //! down what the registry revoked is left to `before_play` and the row says so.
 use super::*;
 use crate::frame::Page;
+use crate::frame::Reach as _;
 use crate::line_edit::{self, Key, LineEdit};
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -37,7 +38,8 @@ mod pack_project;
 mod packs;
 mod project;
 mod ui;
-pub(crate) use ui::{checkbox, chip, field_theme, switch};
+use std::rc::Rc;
+pub(crate) use ui::{checkbox, chip, choices, field_theme, switch, Choose};
 
 use model::{Card, Row};
 
@@ -705,6 +707,7 @@ impl Launcher {
                 .child(
                     muted(tr("Dismiss"))
                         .id("alt-mods-dismiss")
+                        .reach()
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.dismiss_notice();
@@ -855,6 +858,23 @@ impl Launcher {
             )
             .child(
                 div()
+                    // One Tab stop for the two: the arrow keys go to the other.
+                    .id("alt-mods-tabs")
+                    .tab_index(0)
+                    .focus_visible(|s| s.border_color(c(tokens::GOLD)))
+                    .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+                        if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
+                            return;
+                        }
+                        this.choose_view(match (packs, installed) {
+                            (true, true) => Page::PackFind,
+                            (true, false) => Page::Packs,
+                            (false, true) => Page::Discover,
+                            (false, false) => Page::Installed,
+                        });
+                        cx.stop_propagation();
+                        cx.notify();
+                    }))
                     .flex()
                     .flex_none()
                     .p(px(3.))

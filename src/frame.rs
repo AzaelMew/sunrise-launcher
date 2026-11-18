@@ -63,6 +63,35 @@ pub(super) fn button(id: impl Into<ElementId>, label: impl Into<SharedString>) -
     button_base(id, label).hover(|s| s.bg(rgb(0x393233)))
 }
 
+/// What makes a clickable thing that is not a button reachable by keyboard: a Tab stop that shows
+/// the ring. Enter and Space press it, as a click does.
+pub(crate) trait Reach {
+    /// For a thing with no edge of its own: a gold line just inside it, which takes no room and
+    /// is never cut off by what it sits in.
+    fn reach(self) -> Self;
+    /// For a thing that has an edge: that edge turns gold.
+    fn reach_edge(self) -> Self;
+}
+
+impl Reach for Stateful<Div> {
+    fn reach(self) -> Self {
+        self.tab_index(0)
+            .rounded(px(tokens::R_SMALL))
+            .focus_visible(|s| {
+                s.shadow(vec![gpui::BoxShadow {
+                    inset: true,
+                    spread_radius: px(1.),
+                    ..focus_ring(GOLD).remove(0)
+                }])
+            })
+    }
+
+    fn reach_edge(self) -> Self {
+        self.tab_index(0)
+            .focus_visible(|s| s.border_color(rgb(GOLD)))
+    }
+}
+
 /// A sheet's or a page's main action: cream, like Play signed out.
 pub(super) fn primary(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
     button_base(id, label)
@@ -325,6 +354,7 @@ impl Launcher {
             .children(name.map(|name| {
                 div()
                     .id("alt-who")
+                    .reach()
                     .flex()
                     .items_center()
                     .gap(px(9.))
@@ -419,6 +449,7 @@ impl Launcher {
                     .children(waiting.map(|count| {
                         div()
                             .id("alt-not-on-build")
+                            .reach()
                             .cursor_pointer()
                             .hover(|s| s.text_color(rgb(TEXT)))
                             .child(match count {

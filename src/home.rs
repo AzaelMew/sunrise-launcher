@@ -20,6 +20,7 @@
 //!   a row opens the project page of the Mods screens (`mods_show_project`).
 //! - signed out with no worlds, the top is the welcome banner (mock 10) in place of worlds.
 use super::*;
+use crate::frame::Reach as _;
 use crate::frame::{button, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use crate::worlds_page;
 use gpui::{rgb, rgba};
@@ -546,7 +547,7 @@ impl Launcher {
                 cx.notify();
             }))
         } else {
-            save.opacity(0.4).cursor_default()
+            save.opacity(0.4).cursor_default().tab_stop(false)
         };
         let joinable = matches!(typed, Entry::Address(_) | Entry::Invite);
         let join = button("alt-server-join", tr("Join"));
@@ -556,7 +557,7 @@ impl Launcher {
                 cx.notify();
             }))
         } else {
-            join.opacity(0.4).cursor_default()
+            join.opacity(0.4).cursor_default().tab_stop(false)
         };
         let mut list = div().flex().flex_col();
         if let Some(e) = self.multiplayer.error.clone() {
@@ -878,6 +879,7 @@ impl Launcher {
                     .child(
                         div()
                             .id("alt-privacy")
+.reach()
                             .cursor_pointer()
                             .text_size(px(tokens::LABEL))
                             .text_color(rgb(GOLD))
@@ -932,6 +934,7 @@ impl Launcher {
             .child(
                 div()
                     .id("alt-browse-mods")
+                    .reach()
                     .cursor_pointer()
                     .text_size(px(tokens::LABEL))
                     .text_color(rgb(GOLD))
@@ -1017,7 +1020,7 @@ impl Launcher {
                 cx.notify();
             }))
         } else {
-            add.opacity(0.4).cursor_default()
+            add.opacity(0.4).cursor_default().tab_stop(false)
         };
         let open = project.id.clone();
         div()
@@ -1031,6 +1034,7 @@ impl Launcher {
             .child(
                 div()
                     .id(SharedString::from(format!("alt-popular-{i}-open")))
+                    .reach()
                     .flex_1()
                     .min_w(px(0.))
                     .cursor_pointer()

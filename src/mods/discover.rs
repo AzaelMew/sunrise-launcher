@@ -80,39 +80,36 @@ impl Launcher {
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
 
         // Category chips, then the three controls.
-        let mut chips = div().flex().flex_wrap().items_center().gap(px(8.)).flex_1();
-        chips = chips.child(
-            chip("alt-cat-all", tr("All"), f.category.is_none()).on_click(cx.listener(
-                |this, _: &ClickEvent, _, cx| {
-                    this.ui.mods.filters.category = None;
-                    cx.notify();
-                },
-            )),
-        );
-        for (i, k) in categories.iter().take(8).enumerate() {
-            let key = k.clone();
-            chips = chips.child(
-                chip(
-                    ("alt-cat", i),
-                    category_label(k),
-                    f.category.as_ref() == Some(k),
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        let all: Choose = Rc::new(|this, _| this.ui.mods.filters.category = None);
+        let chips = std::iter::once((tr("All").into(), f.category.is_none(), all))
+            .chain(categories.iter().take(8).map(|k| {
+                let key = k.clone();
+                let pick: Choose = Rc::new(move |this, _| {
                     let filters = &mut this.ui.mods.filters;
                     filters.category =
                         (filters.category.as_ref() != Some(&key)).then(|| key.clone());
-                    cx.notify();
-                })),
-            );
-        }
+                });
+                (
+                    category_label(k).into(),
+                    f.category.as_ref() == Some(k),
+                    pick,
+                )
+            }))
+            .collect();
+        let chips = div()
+            .flex()
+            .flex_1()
+            .child(choices("alt-cat", chips, cx).gap(px(8.)));
         let fits = div()
             .id("alt-fits")
+            .reach()
             .flex()
             .items_center()
             .gap(px(8.))
             .cursor_pointer()
             .text_size(px(tokens::LABEL))
-            .child(ui::switch("alt-fits-switch", f.fits_only))
+            // The line is the Tab stop, not the switch in it.
+            .child(ui::switch("alt-fits-switch", f.fits_only).tab_stop(false))
             .child(tr("Fits my game"))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 let f = &mut this.ui.mods.filters;
@@ -151,6 +148,7 @@ impl Launcher {
                             .map(|(i, (label, on, pick))| {
                                 div()
                                     .id(("alt-menu-option", i))
+                                    .reach()
                                     .px(px(10.))
                                     .py(px(7.))
                                     .rounded(px(tokens::R_SMALL))
@@ -172,6 +170,7 @@ impl Launcher {
         let dropdown = |id: &'static str, label: &str, which: Menu, cx: &mut Context<Self>| {
             div()
                 .id(id)
+                .reach()
                 .flex()
                 .items_center()
                 .gap(px(6.))

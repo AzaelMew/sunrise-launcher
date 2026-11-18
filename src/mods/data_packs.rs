@@ -581,7 +581,10 @@ impl Launcher {
                     // Its place is kept so the names line up.
                     true => div().flex_none().size(px(18.)).into_any_element(),
                     false => {
-                        checkbox(ElementId::named_usize("alt-pick-box", n), on).into_any_element()
+                        // The row is the Tab stop, not the box in it.
+                        checkbox(ElementId::named_usize("alt-pick-box", n), on)
+                            .tab_stop(false)
+                            .into_any_element()
                     }
                 })
                 .child(world_icon(world, 36.))
@@ -602,7 +605,8 @@ impl Launcher {
                 row
             } else {
                 let path = world.path.clone();
-                row.cursor_pointer()
+                row.reach()
+                    .cursor_pointer()
                     .hover(|s| s.bg(c(CARD).opacity(0.6)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         if let Some(pick) = &mut this.ui.mods.data.pick {

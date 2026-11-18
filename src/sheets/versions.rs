@@ -292,12 +292,15 @@ impl Launcher {
                                 }))
                                 .when(blocked, |d| d.opacity(0.45))
                                 .when(!blocked, |d| {
-                                    d.cursor_pointer().hover(|s| s.bg(rgb(BG))).on_click(
-                                        cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.ui.sheets.versions.pick = Some(tag.clone());
-                                            cx.notify();
-                                        }),
-                                    )
+                                    d.reach()
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(rgb(BG)))
+                                        .on_click(cx.listener(
+                                            move |this, _: &ClickEvent, _, cx| {
+                                                this.ui.sheets.versions.pick = Some(tag.clone());
+                                                cx.notify();
+                                            },
+                                        ))
                                 })
                         }
                     })
@@ -336,7 +339,7 @@ impl Launcher {
                 }
                 cx.notify();
             })),
-            None => keep.opacity(0.45).cursor_default(),
+            None => keep.opacity(0.45).cursor_default().tab_stop(false),
         };
         // Said once, and only when it stops a choice: with the check that lifts it.
         let native = has_native.then(|| {

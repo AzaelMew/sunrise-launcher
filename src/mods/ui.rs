@@ -3,6 +3,7 @@ use super::*;
 use crate::frame::{BG, CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Hsla};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 pub(super) fn c(x: u32) -> Hsla {
     rgb(x).into()
@@ -33,7 +34,7 @@ pub(super) use crate::frame::primary;
 
 /// A control that can't be used now: drawn dim, with no handler.
 pub(super) fn dim(b: Stateful<Div>) -> Stateful<Div> {
-    b.opacity(0.45).cursor_default()
+    b.opacity(0.45).cursor_default().tab_stop(false)
 }
 
 pub(crate) fn chip(
@@ -55,13 +56,62 @@ pub(crate) fn chip(
         .text_color(if on { c(BG) } else { c(TEXT) })
         .text_size(px(tokens::LABEL))
         .cursor_pointer()
+        .focus_visible(|s| s.border_color(c(tokens::GOLD)))
         .child(label.into())
+}
+
+/// What choosing one of [`choices`] does.
+pub(crate) type Choose = Rc<dyn Fn(&mut Launcher, &mut Context<Launcher>)>;
+
+/// One choice among chips (`label`, chosen, what choosing it does): tabs, or a setting with a
+/// few values. The group is one Tab stop with the ring around it, and the arrow keys choose the
+/// chip before or after, as a click on it would.
+pub(crate) fn choices(
+    id: &'static str,
+    chips: Vec<(SharedString, bool, Choose)>,
+    cx: &mut Context<Launcher>,
+) -> Stateful<Div> {
+    let at = chips.iter().position(|(_, on, _)| *on).unwrap_or(0);
+    let picks: Vec<Choose> = chips.iter().map(|(_, _, pick)| pick.clone()).collect();
+    let mut group = div()
+        .id(id)
+        .tab_index(0)
+        .flex()
+        .flex_wrap()
+        .items_center()
+        // Room for the ring, taken back so the chips stay where they were.
+        .p(px(3.))
+        .m(px(-4.))
+        .rounded(px(tokens::R_PANEL + 4.))
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus_visible(|s| s.border_color(c(tokens::GOLD)));
+    for (n, (label, on, pick)) in chips.into_iter().enumerate() {
+        group = group.child(chip((id, n), label, on).on_click(cx.listener(
+            move |this, _: &ClickEvent, _, cx| {
+                pick(this, cx);
+                cx.notify();
+            },
+        )));
+    }
+    group.on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+        let step = match ev.keystroke.key.as_str() {
+            "left" | "up" => picks.len() - 1,
+            "right" | "down" => 1,
+            _ => return,
+        };
+        picks[(at + step) % picks.len()](this, cx);
+        cx.stop_propagation();
+        cx.notify();
+    }))
 }
 
 pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
+        .tab_index(0)
+        .focus_visible(|s| s.shadow(crate::frame::focus_ring(tokens::GOLD)))
         .w(px(40.))
         .h(px(22.))
         .rounded(px(tokens::R_CONTROL))
@@ -152,6 +202,8 @@ pub(super) fn browse_card(
         .bg(c(CARD))
         .cursor_pointer()
         .hover(|s| s.border_color(c(MUTED)))
+        .tab_index(0)
+        .focus_visible(|s| s.border_color(c(tokens::GOLD)))
         .child(tile(picture, name, 48.))
         .child(
             div()

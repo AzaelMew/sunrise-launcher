@@ -1,6 +1,6 @@
 //! The selected setup’s local collections. Reading a list never creates its folder. Choosing a
 //! file targets the collection that opened the dialog, even if another setup exists.
-use super::ui::{c, card, chip, dim, muted, primary, switch};
+use super::ui::{c, card, dim, muted, primary, switch};
 use super::*;
 use crate::frame::{button, LINE, MUTED, SOFT, TEXT};
 use gpui::ExternalPaths;
@@ -59,34 +59,28 @@ impl Launcher {
     }
 
     pub(super) fn collection_tabs(&self, cx: &mut Context<Self>) -> Div {
-        let mut tabs = div().flex().flex_wrap().items_center().gap(px(8.));
-        for (index, (kind, label)) in [
+        let chosen = self.ui.mods.shelf;
+        let tabs = [
             (Shelf::Resource, tr("Resource packs")),
             (Shelf::Shader, tr("Shader packs")),
             (Shelf::Data, tr("Data packs")),
         ]
         .into_iter()
-        .enumerate()
-        {
-            let chosen = self.ui.mods.shelf == kind;
-            tabs = tabs.child(
-                chip(
-                    ElementId::named_usize("alt-collection", index),
-                    label,
-                    chosen,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.ui.mods.shelf != kind {
-                        this.ui.mods.shelf = kind;
-                        this.reset_pack_view();
-                        this.worlds.stale();
-                        this.ui.mods.data.reread();
-                    }
-                    cx.notify();
-                })),
-            );
-        }
-        tabs
+        .map(|(kind, label)| {
+            let pick: Choose = Rc::new(move |this, _| {
+                if this.ui.mods.shelf != kind {
+                    this.ui.mods.shelf = kind;
+                    this.reset_pack_view();
+                    this.worlds.stale();
+                    this.ui.mods.data.reread();
+                }
+            });
+            (label.into(), kind == chosen, pick)
+        })
+        .collect();
+        div()
+            .flex()
+            .child(choices("alt-collection", tabs, cx).gap(px(8.)))
     }
 
     fn can_edit_packs(&self, home: &Path, kind: Kind) -> bool {

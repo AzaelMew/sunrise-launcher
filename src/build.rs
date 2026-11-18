@@ -2,6 +2,7 @@
 //! build's three stages and how far the current one is when the build says so, beside Stop. The
 //! build gives no time left, so none is shown. The strip above the Mods lists says how it ended.
 use super::*;
+use crate::frame::Reach as _;
 use crate::frame::{CARD, LINE, MUTED, SOFT, TEXT};
 use gpui::{rgb, Animation, AnimationExt as _};
 use native_mods::Stage;
@@ -106,6 +107,7 @@ impl Launcher {
                 .child(
                     div()
                         .id("alt-build-dismiss")
+                        .reach()
                         .flex_none()
                         .text_size(px(tokens::SMALL))
                         .text_color(rgb(MUTED))

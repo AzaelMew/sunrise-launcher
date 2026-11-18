@@ -58,6 +58,8 @@ pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
 pub(super) fn back(label: &'static str) -> Stateful<Div> {
     div()
         .id("alt-project-back")
+        .reach()
+        .self_start()
         .flex()
         .items_center()
         .gap(px(8.))
@@ -84,6 +86,7 @@ pub(super) fn about_row(key: &'static str, value: String) -> Div {
 pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
     div()
         .id(id)
+        .reach()
         .flex()
         .justify_between()
         .py(px(5.))

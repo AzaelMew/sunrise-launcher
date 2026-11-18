@@ -1,9 +1,11 @@
 //! Settings for the whole launcher, one section at a time. The game build and its channel stay
 //! in the play bar, the one place that shows them.
 use super::*;
+use crate::frame::Reach as _;
 use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
-use crate::mods::{chip, switch};
+use crate::mods::{chip, choices, switch, Choose};
 use gpui::rgb;
+use std::rc::Rc;
 use storage::Category;
 use sunrise_launcher::telemetry;
 use sunrise_launcher_telemetry::Choices;
@@ -127,7 +129,7 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
 }
 
 pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
-    b.opacity(0.4).cursor_default()
+    b.opacity(0.4).cursor_default().tab_stop(false)
 }
 
 pub(crate) fn danger(b: Stateful<Div>) -> Stateful<Div> {
@@ -152,7 +154,7 @@ impl Launcher {
             nav = nav.child(
                 div()
                     .id(ElementId::named_usize("alt-settings-nav", n))
-                    .tab_index(0)
+                    .reach()
                     .h(px(tokens::FIELD))
                     .px(px(12.))
                     .flex()
@@ -377,21 +379,17 @@ impl Launcher {
         if cfg!(target_os = "macos") {
             ways.push((WhilePlaying::Hide, "Hide"));
         }
-        let mut picker = div();
-        for (n, (way, label)) in ways.into_iter().enumerate() {
-            picker = picker.child(
-                chip(
-                    ElementId::named_usize("alt-while-playing", n),
-                    tr(label),
-                    way == current,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        let ways = ways
+            .into_iter()
+            .map(|(way, label)| {
+                let pick: Choose = Rc::new(move |this, _| {
                     this.settings.while_playing = way;
                     this.save_settings();
-                    cx.notify();
-                })),
-            );
-        }
+                });
+                (tr(label).into(), way == current, pick)
+            })
+            .collect();
+        let picker = div().child(choices("alt-while-playing", ways, cx).gap(px(6.)));
         let while_playing = row(
             tr("While you play"),
             tr(match current {
@@ -705,11 +703,14 @@ impl Launcher {
         .enumerate()
         {
             limits = limits.child(
+                // Each its own Tab stop, pressed with Enter or Space: a smaller limit clears
+                // downloads, which an arrow key passing over it must not do.
                 chip(
                     ElementId::named_usize("alt-storage-limit", n),
                     tr(label),
                     value == limit,
                 )
+                .tab_index(0)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.settings.cache_limit_gib = Some(value);
                     if let Err(error) = this.settings.save() {
@@ -1056,34 +1057,27 @@ impl Launcher {
             ),
         );
         if picking {
-            let mut options = div()
-                .id("alt-languages")
+            let chosen = self.settings.language;
+            let languages = std::iter::once(None)
+                .chain(i18n::Language::ALL.map(Some))
+                .map(|choice| {
+                    let pick: Choose = Rc::new(move |this, _| {
+                        this.settings.language = choice;
+                        i18n::set(this.settings.language());
+                        this.save_settings();
+                        this.ui.settings.languages = false;
+                    });
+                    (
+                        choice.map_or(tr("Same as the system"), |l| l.name()).into(),
+                        choice == chosen,
+                        pick,
+                    )
+                })
+                .collect();
+            let options = choices("alt-languages", languages, cx)
                 .max_h(px(190.))
                 .overflow_y_scroll()
-                .flex()
-                .flex_wrap()
                 .gap(px(6.));
-            for (n, choice) in std::iter::once(None)
-                .chain(i18n::Language::ALL.map(Some))
-                .enumerate()
-            {
-                options = options.child(
-                    chip(
-                        ElementId::named_usize("alt-lang", n),
-                        choice.map_or(tr("Same as the system"), |l| l.name()),
-                        choice == self.settings.language,
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
-                            this.settings.language = choice;
-                            i18n::set(this.settings.language());
-                            this.save_settings();
-                            this.ui.settings.languages = false;
-                            cx.notify();
-                        },
-                    )),
-                );
-            }
             language = div()
                 .flex()
                 .flex_col()

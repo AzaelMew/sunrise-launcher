@@ -5,6 +5,12 @@ use super::*;
 impl Launcher {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         sunrise_launcher::storage::eviction::cleanup_after_start();
+        // A press on something that then leaves the page (a row that opens its page, a tab)
+        // would leave the keyboard on nothing, and Tab dead until the next click.
+        cx.on_focus_lost(window, |this, window, cx| {
+            window.focus(&this.root_focus, cx)
+        })
+        .detach();
         let (tx, rx) = wake::channel();
         let appearance = cx.observe_window_appearance(window, |this, window, cx| {
             this.theme = this.settings_theme(window);
@@ -112,14 +118,14 @@ impl Launcher {
             location_note: location_page::startup_note(),
             args_input: line_edit::LineEdit::new(settings.game_args.clone(), 1024, 38),
             args_focused: false,
-            args_focus: cx.focus_handle(),
+            args_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             proxy_input: line_edit::LineEdit::new(
                 settings.proxy.clone().unwrap_or_default(),
                 256,
                 44,
             ),
             proxy_focused: false,
-            proxy_focus: cx.focus_handle(),
+            proxy_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             settings,
             settings_save_error: None,
             links: backend::Links::default(),
@@ -158,7 +164,7 @@ impl Launcher {
             window_height: 0.,
             window_long_side: 0.,
             scale_factor: 1.,
-            friend_focus: cx.focus_handle(),
+            friend_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             joining: None,
             quick_play: None,
             client_run: None,

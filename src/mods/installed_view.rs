@@ -73,26 +73,23 @@ impl Launcher {
             trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
         };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
-        for (i, (label, n, which)) in [
+        let shown = [
             (tr("All"), rows.len(), Show::All),
             (tr("Turned on"), count(&|r| r.on), Show::On),
             (tr("Turned off"), count(&|r| !r.on), Show::Off),
         ]
         .into_iter()
-        .enumerate()
-        {
-            chips = chips.child(
-                chip(("alt-show", i), counted(label, n), filter.show == which).on_click(
-                    cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        let m = &mut this.ui.mods;
-                        m.row_filter.show = which;
-                        m.selection.clear();
-                        m.anchor = None;
-                        cx.notify();
-                    }),
-                ),
-            );
-        }
+        .map(|(label, n, which)| {
+            let pick: Choose = Rc::new(move |this, _| {
+                let m = &mut this.ui.mods;
+                m.row_filter.show = which;
+                m.selection.clear();
+                m.anchor = None;
+            });
+            (counted(label, n).into(), filter.show == which, pick)
+        })
+        .collect();
+        chips = chips.child(choices("alt-show", shown, cx).gap(px(8.)));
         chips = chips.child(
             div()
                 .flex_none()
@@ -103,11 +100,13 @@ impl Launcher {
         for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
             let n = count(&|r| r.make == Some(make));
             chips = chips.child(
+                // Two switches, not one choice: each is its own Tab stop.
                 chip(
                     ("alt-kind", i),
                     counted(make.label(), n),
                     filter.makes.contains(&make),
                 )
+                .tab_index(0)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.ui.mods;
                     if !m.row_filter.makes.remove(&make) {
@@ -242,6 +241,7 @@ impl Launcher {
                     .child(
                         muted(tr("Clear"))
                             .id("alt-selection-clear")
+                            .reach()
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.ui.mods.selection.clear();
@@ -604,12 +604,13 @@ impl Launcher {
                     cx.notify();
                 }))
             } else {
-                s.opacity(0.45).cursor_default()
+                s.opacity(0.45).cursor_default().tab_stop(false)
             }
         };
         let title = {
             let d = div()
                 .id(("alt-row-title", n))
+                .reach()
                 .min_w_0()
                 .flex()
                 .items_baseline()
@@ -778,6 +779,7 @@ impl Launcher {
                     .child(
                         div()
                             .id("alt-unfit-details")
+.reach()
                             .flex()
                             .items_center()
                             .gap(px(6.))

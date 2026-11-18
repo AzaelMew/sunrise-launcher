@@ -13,7 +13,7 @@
 //! **Nothing else changes.** Installing never turns a pack on, starts the game or edits options;
 //! it stays blocked while the game or another change runs, and holds Play and setup changes
 //! through the shared busy flag (`mutating`).
-use super::ui::{added_mark, browse_card, c, card, chip, columns, dim, muted, tag};
+use super::ui::{added_mark, browse_card, c, card, columns, dim, muted, tag};
 use super::*;
 use crate::frame::{button, TEXT};
 use std::path::Path;
@@ -358,20 +358,14 @@ impl Launcher {
         }
         let header = self.mods_header(false, focus, window, cx);
         let scope = self.ui.mods.packs.scope;
-        let mut kinds = div().flex().flex_wrap().items_center().gap(px(8.));
-        for (i, kind) in Scope::ALL.into_iter().enumerate() {
-            kinds = kinds.child(
-                chip(
-                    ElementId::named_usize("alt-discover-scope", i),
-                    kind.label(),
-                    scope == kind,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.pack_scope(kind);
-                    cx.notify();
-                })),
-            );
-        }
+        let kinds = Scope::ALL
+            .into_iter()
+            .map(|kind| {
+                let pick: Choose = Rc::new(move |this, _| this.pack_scope(kind));
+                (kind.label().into(), scope == kind, pick)
+            })
+            .collect();
+        let kinds = choices("alt-discover-scope", kinds, cx).gap(px(8.));
         let from: AnyElement = match scope {
             Scope::Data => self.data_pack_line(cx),
             Scope::Shader => muted(tr(

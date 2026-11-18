@@ -2,10 +2,12 @@
 //! address, players, settings, backups and log. Every action is the Servers page's own
 //! (`servers_page.rs`); only the drawing is new.
 use super::*;
+use crate::frame::Reach as _;
 use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
-use crate::mods::{chip, switch};
+use crate::mods::{choices, switch, Choose};
 use crate::settings::{danger, group, hint, off, row, warning};
 use gpui::rgb;
+use std::rc::Rc;
 
 const OK: u32 = 0x7fd6a0;
 
@@ -69,47 +71,15 @@ fn chip_group(
     cx: &mut Context<Launcher>,
     set: impl Fn(&mut Launcher, &'static str) + Clone + 'static,
 ) -> Div {
-    let values: Vec<&'static str> = options.iter().map(|(value, _)| *value).collect();
-    let at = values.iter().position(|v| *v == current).unwrap_or(0);
-    let mut chips = div()
-        .id(id)
-        .tab_index(0)
-        .flex()
-        .flex_wrap()
-        .gap(px(6.))
-        // Room for the ring, taken back so the chips stay where they were.
-        .p(px(3.))
-        .m(px(-4.))
-        .rounded(px(tokens::R_PANEL + 4.))
-        .border_1()
-        .border_color(gpui::transparent_black())
-        .focus_visible(|s| s.border_color(rgb(GOLD)));
-    for &(value, name) in options {
-        let set = set.clone();
-        chips = chips.child(
-            chip(
-                SharedString::from(format!("{id}-{value}")),
-                tr(name),
-                value == current,
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                set(this, value);
-                cx.notify();
-            })),
-        );
-    }
-    div().flex().child(
-        chips.on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
-            let step = match ev.keystroke.key.as_str() {
-                "left" | "up" => values.len() - 1,
-                "right" | "down" => 1,
-                _ => return,
-            };
-            set(this, values[(at + step) % values.len()]);
-            cx.stop_propagation();
-            cx.notify();
-        })),
-    )
+    let chips = options
+        .iter()
+        .map(|&(value, name)| {
+            let set = set.clone();
+            let pick: Choose = Rc::new(move |this, _| set(this, value));
+            (tr(name).into(), value == current, pick)
+        })
+        .collect();
+    div().flex().child(choices(id, chips, cx).gap(px(6.)))
 }
 
 fn phase_color(status: &Status) -> u32 {
@@ -493,6 +463,7 @@ impl Launcher {
                 div().flex().child(
                     div()
                         .id("host-back")
+                        .reach()
                         .flex()
                         .items_center()
                         .gap(px(8.))
@@ -559,21 +530,20 @@ impl Launcher {
                 )),
             ));
         }
-        let mut tabs = div().flex().gap(px(6.));
-        for (n, (tab, name)) in TABS.into_iter().enumerate() {
-            tabs = tabs.child(
-                chip(
-                    ElementId::named_usize("host-tab", n),
-                    tr(name),
-                    tab == self.servers.tab,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+        let chosen = self.servers.tab;
+        let tabs = TABS
+            .into_iter()
+            .map(|(tab, name)| {
+                let pick: Choose = Rc::new(move |this, _| {
                     this.servers.tab = tab;
                     this.servers.confirm_restore = None;
-                    cx.notify();
-                })),
-            );
-        }
+                });
+                (tr(name).into(), tab == chosen, pick)
+            })
+            .collect();
+        let tabs = div()
+            .flex()
+            .child(choices("host-tab", tabs, cx).gap(px(6.)));
         let body = match self.servers.tab {
             Tab::Overview => self.host_overview(&status, cx),
             Tab::Players => self.host_players(dir, &status, cx),
@@ -1624,6 +1594,7 @@ impl Launcher {
                 names = names.child(
                     div()
                         .id(ElementId::named_usize("host-create-friend", i))
+                        .reach_edge()
                         .flex()
                         .items_center()
                         .gap(px(8.))
