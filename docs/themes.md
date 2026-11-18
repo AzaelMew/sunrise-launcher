@@ -45,7 +45,7 @@ A folder the launcher can't use is listed under the themes with the reason, and 
 - `version` isn't `1`, `name` is missing or not plain one-line text, or a colour isn't `"#RRGGBB"`;
 - `background` is anything but one file name: no folders, `..`, drive letters or addresses;
 - the picture is missing, isn't a PNG, JPEG or still WebP by its contents, is over 40 MB, is under 64 or over 8192 pixels on a side, or is over 16 megapixels;
-- the folder, `theme.toml` or the picture is a link;
+- the folder, `theme.toml` or the picture is a link, or `theme.toml` or the picture is not a regular file;
 - `background`, `card` and `chrome` are so far apart that neither black nor white text reads on all of them. Make them all dark or all light.
 
 If the theme you chose stops loading, the launcher shows Dawn and keeps your choice: repair the file and press Reload.

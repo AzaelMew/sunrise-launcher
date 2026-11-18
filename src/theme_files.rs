@@ -139,6 +139,7 @@ pub enum Reason {
     Slug,
     /// The folder, the file or the picture is a link.
     Linked(&'static str),
+    NotRegular(&'static str),
     NoFile,
     TooLong,
     NotText,
@@ -176,6 +177,7 @@ impl Reason {
                 "The {what} is a link. A theme's files must be in its own folder.",
                 &[("what", tr(what))],
             ),
+            Reason::NotRegular(what) => trf("The {what} must be a regular file.", &[("what", tr(what))]),
             Reason::NoFile => tr("There is no theme.toml in this folder.").into(),
             Reason::TooLong => tr("theme.toml is over 16 KiB.").into(),
             Reason::NotText => tr("theme.toml isn't UTF-8 text.").into(),
@@ -324,15 +326,40 @@ fn bounded(
     name: &str,
     max: u64,
     what: &'static str,
+    missing: Reason,
     over: Reason,
 ) -> Result<Vec<u8>, Reason> {
     use std::io::Read as _;
+    let kind = dir
+        .symlink_metadata(name)
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                missing
+            } else {
+                Reason::Io(e.to_string())
+            }
+        })?
+        .file_type();
+    if kind.is_symlink() {
+        return Err(Reason::Linked(what));
+    }
+    if !kind.is_file() {
+        return Err(Reason::NotRegular(what));
+    }
     let mut options = cap_std::fs::OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
+    // Even if a pipe replaces the regular file between the check and the open, do not wait
+    // for a writer. Check the opened handle below before reading anything from it.
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
+    }
     let file = dir
         .open_with(name, &options)
         .map_err(|e| match dir.symlink_metadata(name) {
-            Ok(meta) if !meta.is_file() => Reason::Linked(what),
+            Ok(meta) if meta.file_type().is_symlink() => Reason::Linked(what),
+            Ok(meta) if !meta.is_file() => Reason::NotRegular(what),
             _ => Reason::Io(e.to_string()),
         })?;
     if !file
@@ -340,7 +367,7 @@ fn bounded(
         .map_err(|e| Reason::Io(e.to_string()))?
         .is_file()
     {
-        return Err(Reason::Linked(what));
+        return Err(Reason::NotRegular(what));
     }
     let mut bytes = Vec::new();
     file.take(max + 1)
@@ -466,14 +493,12 @@ pub fn parse(text: &str) -> Result<Parsed, Reason> {
 /// 40 MB at most, 64 to 8192 pixels a side and 16 megapixels at most.
 fn picture_bytes(folder: &Dir, name: &str) -> Result<Vec<u8>, Reason> {
     let name = name.to_string();
-    if folder.symlink_metadata(&name).is_err() {
-        return Err(Reason::PictureMissing(name));
-    }
     let bytes = bounded(
         folder,
         &name,
         MAX_PICTURE,
         "picture",
+        Reason::PictureMissing(name.clone()),
         Reason::PictureTooBig(name.clone()),
     )?;
     kind(&bytes, &name)?;
@@ -579,10 +604,14 @@ fn read(themes: &Dir, root: &Path, slug: &str) -> Result<Local, Reason> {
         return Err(Reason::Slug);
     }
     let folder = open_folder(themes, slug)?;
-    if folder.symlink_metadata(FILE).is_err() {
-        return Err(Reason::NoFile);
-    }
-    let bytes = bounded(&folder, FILE, MAX_TOML, "theme.toml", Reason::TooLong)?;
+    let bytes = bounded(
+        &folder,
+        FILE,
+        MAX_TOML,
+        "theme.toml",
+        Reason::NoFile,
+        Reason::TooLong,
+    )?;
     let text = String::from_utf8(bytes).map_err(|_| Reason::NotText)?;
     let parsed = parse(&text)?;
     let picture = match parsed.picture {

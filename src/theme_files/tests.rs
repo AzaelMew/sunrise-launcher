@@ -402,6 +402,32 @@ fn a_picture_is_checked_by_what_it_holds_and_how_big_it_is() {
 
 #[cfg(unix)]
 #[test]
+fn discovery_refuses_non_regular_theme_files_and_pictures() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let root = tempfile::tempdir().unwrap();
+    let a = root.path().join("a");
+    fs::create_dir(&a).unwrap();
+    let b = theme(
+        root.path(),
+        "b",
+        &TIDEPOOL.replace("[palette]", "background = \"shore.png\"\n[palette]"),
+    );
+    for path in [a.join(FILE), b.join("shore.png")] {
+        let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: path is a live, nul-terminated pathname in this test's private directory.
+        assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
+    }
+    theme(root.path(), "c", TIDEPOOL);
+    let found = scan(root.path());
+    assert!(matches!(&found[..], [
+        Entry::Bad { reason: Reason::NotRegular("theme.toml"), .. },
+        Entry::Bad { reason: Reason::NotRegular("picture"), .. },
+        Entry::Good(local),
+    ] if local.slug == "c"));
+}
+
+#[cfg(unix)]
+#[test]
 fn a_linked_folder_file_or_picture_is_refused() {
     use std::os::unix::fs::symlink;
     let root = tempfile::tempdir().unwrap();
