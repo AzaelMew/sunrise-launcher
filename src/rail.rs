@@ -2,6 +2,7 @@
 use super::*;
 use crate::{
     frame::{Page, Reach},
+    motion::{still, Tween, STANDARD},
     paint::palette,
 };
 use gpui::rgb;
@@ -9,7 +10,13 @@ use instances::{Icon, Instance};
 
 impl Launcher {
     pub(super) fn toggle_sidebar(&mut self) {
+        let from = f32::from(u8::from(self.settings.sidebar_expanded));
         self.settings.sidebar_expanded = !self.settings.sidebar_expanded;
+        let now = Instant::now();
+        self.ui.sidebar_motion = (!still()).then(|| {
+            let shown = self.ui.sidebar_motion.map_or(from, |t| t.value(now, true));
+            Tween::new(now, shown, 1. - from, STANDARD)
+        });
         self.save_settings();
     }
 
@@ -100,10 +107,12 @@ impl Launcher {
         }
     }
 
-    pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
-        let wide = self.settings.sidebar_expanded;
+    pub(super) fn sidebar(&mut self, expansion: f32, cx: &mut Context<Self>) -> Div {
         let p = palette();
-        let row = |id: ElementId, label: String, on: bool| {
+        let row = |id: ElementId, label: String, on: bool, icon: f32| {
+            // At 54 px the inside of a bordered row is 40 px. At rest these are the
+            // same icon positions as the centred and padded layouts.
+            let inset = (40. - icon) / 2.;
             div()
                 .id(id)
                 .reach_edge()
@@ -120,8 +129,10 @@ impl Launcher {
                 .when(on, |d| d.bg(rgb(p.selected)))
                 .flex()
                 .items_center()
-                .when(wide, |d| d.px(px(8.)).gap(px(10.)))
-                .when(!wide, |d| d.justify_center())
+                .overflow_hidden()
+                .pl(px(inset + (8. - inset) * expansion))
+                .pr(px(8. * expansion))
+                .gap(px(10.))
                 .cursor_pointer()
                 .hover(|d| d.bg(rgb(p.chrome_raised)))
                 .tooltip(crate::glass_ui::tip(label))
@@ -131,6 +142,7 @@ impl Launcher {
                 .min_w_0()
                 .flex_1()
                 .truncate()
+                .opacity(expansion)
                 .text_size(px(tokens::LABEL))
                 .child(s)
         };
@@ -141,8 +153,7 @@ impl Launcher {
             .flex_none()
             .h(px(32.))
             .items_center()
-            .when(wide, |d| d.px(px(4.)))
-            .when(!wide, |d| d.justify_center())
+            .pl(px(7. - 3. * expansion))
             .child(
                 div()
                     .id("sidebar-toggle")
@@ -154,7 +165,7 @@ impl Launcher {
                     .rounded(px(tokens::R_SMALL))
                     .cursor_pointer()
                     .hover(|d| d.bg(rgb(p.chrome_raised)))
-                    .tooltip(crate::glass_ui::tip(if wide {
+                    .tooltip(crate::glass_ui::tip(if self.settings.sidebar_expanded {
                         tr("Hide sidebar")
                     } else {
                         tr("Show sidebar")
@@ -175,17 +186,22 @@ impl Launcher {
                     })),
             );
         let locked = self.profile_locked();
-        let add = row("sidebar-create".into(), tr("New profile").into(), false)
-            .child(blocks::icon("plus", 20., rgb(p.chrome_text).into()))
-            .when(wide, |d| d.child(txt(tr("New profile").into())))
-            .when(locked, |d| d.opacity(0.45).tab_stop(false))
-            .when(!locked, |d| {
-                d.on_click(cx.listener(|this, _, _, cx| {
-                    if !this.profile_locked() {
-                        this.new_profile(cx);
-                    }
-                }))
-            });
+        let add = row(
+            "sidebar-create".into(),
+            tr("New profile").into(),
+            false,
+            20.,
+        )
+        .child(blocks::icon("plus", 20., rgb(p.chrome_text).into()).flex_none())
+        .when(expansion > 0., |d| d.child(txt(tr("New profile").into())))
+        .when(locked, |d| d.opacity(0.45).tab_stop(false))
+        .when(!locked, |d| {
+            d.on_click(cx.listener(|this, _, _, cx| {
+                if !this.profile_locked() {
+                    this.new_profile(cx);
+                }
+            }))
+        });
         let selected = self.selected_instance().map(|i| i.id.clone());
         let mut list = div()
             .id("sidebar-profiles")
@@ -203,9 +219,10 @@ impl Launcher {
                     ElementId::named_usize("sidebar-profile", n),
                     i.name.clone(),
                     on,
+                    28.,
                 )
                 .child(self.profile_mark(&i, 28.))
-                .when(wide, |d| d.child(txt(i.name.clone())))
+                .when(expansion > 0., |d| d.child(txt(i.name.clone())))
                 .when(!locked, |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
                 })
@@ -215,7 +232,7 @@ impl Launcher {
         let mut rail = div()
             .flex()
             .flex_col()
-            .w(px(if wide { 204. } else { 54. }))
+            .w(px(54. + (204. - 54.) * expansion))
             .min_h_0()
             .flex_none()
             .gap(px(4.))
@@ -254,9 +271,10 @@ impl Launcher {
                     id.into(),
                     label.into(),
                     settings && self.ui.page == Page::Settings,
+                    18.,
                 )
-                .child(crate::glass_ui::icon(icon, 18., rgb(p.chrome_muted).into()))
-                .when(wide, |d| d.child(txt(label.into())))
+                .child(crate::glass_ui::icon(icon, 18., rgb(p.chrome_muted).into()).flex_none())
+                .when(expansion > 0., |d| d.child(txt(label.into())))
                 .when(settings || !url.is_empty(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| {
                         if settings {

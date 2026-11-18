@@ -26,6 +26,7 @@ pub(super) enum Page {
 #[derive(Default)]
 pub(super) struct State {
     pub page: Page,
+    pub sidebar_motion: Option<crate::motion::Tween>,
     pub home: crate::home::HomeState,
     pub backdrop: crate::backdrop::Backdrop,
     pub mods: crate::mods::ModsState,
@@ -370,7 +371,7 @@ impl Launcher {
         }
     }
 
-    fn header(&mut self, cx: &mut Context<Self>) -> Div {
+    fn header(&mut self, expansion: f32, cx: &mut Context<Self>) -> Div {
         let p = palette();
         let page = self.ui.page;
         let active = match page {
@@ -393,7 +394,7 @@ impl Launcher {
         ] {
             let on = active == dest;
             let colour = if on { p.chrome_text } else { p.chrome_muted };
-            let compact = self.window_width < 900. && self.settings.sidebar_expanded;
+            let compact = self.window_width < 900. && expansion > 0.5;
             tabs = tabs.child(
                 div()
                     .id(id)
@@ -476,8 +477,12 @@ impl Launcher {
             window.focus(&self.root_focus, cx);
         }
         let page = self.ui.page;
-        let rail = self.sidebar(cx);
-        let header = self.header(cx);
+        let motion = crate::motion::Frame::new(window, cx);
+        let expansion = motion
+            .sample(&mut self.ui.sidebar_motion, window)
+            .unwrap_or_else(|| u8::from(self.settings.sidebar_expanded).into());
+        let rail = self.sidebar(expansion, cx);
+        let header = self.header(expansion, cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),
             Page::Versions => self.versions_page(cx).into_any_element(),
