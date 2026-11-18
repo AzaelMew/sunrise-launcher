@@ -28,14 +28,15 @@ impl PendingConsent {
         }
     }
 
-    /// What the question is about, for its heading: one mod's name, or how many a build takes.
+    /// Who the question is about: a mod being installed, or the packages a build takes.
+    /// Build package names and provenance stay in the individual rows.
     pub(super) fn name(&self) -> String {
         match self {
             Self::ReadingBuild(_) => String::new(),
-            Self::Build(inputs) => match inputs.as_slice() {
-                [] => String::new(),
-                [one] => build_label(one),
-                many => crate::i18n::trf("{count} mods", &[("count", &many.len().to_string())]),
+            Self::Build(inputs) => match inputs.len() {
+                0 => String::new(),
+                1 => crate::i18n::tr("this mod").into(),
+                count => crate::i18n::trf("{count} mods", &[("count", &count.to_string())]),
             },
             Self::Toggle(entry) => entry.title.clone(),
             // The mod as the page that asked names it ("JEI"), not its id ("jei").
@@ -161,21 +162,21 @@ mod tests {
             file: "jei.smod".into(),
             registry,
         };
-        let build = |i| PendingConsent::Build(vec![i]).name();
+        let build_row = |i| PendingConsent::Build(vec![i]).rows().pop().unwrap();
         assert_eq!(
-            build(input(Registry::Listed("JEI".into()))),
+            build_row(input(Registry::Listed("JEI".into()))),
             "JEI (jei, from the Sunrise registry)"
         );
         assert_eq!(
-            build(input(Registry::NotListed)),
+            build_row(input(Registry::NotListed)),
             "jei (jei.smod, not from the registry)"
         );
         assert_eq!(
-            build(input(Registry::Listed(String::new()))),
+            build_row(input(Registry::Listed(String::new()))),
             "jei (jei.smod, not from the registry)"
         );
         assert_eq!(
-            build(input(Registry::Revoked)),
+            build_row(input(Registry::Revoked)),
             "jei (jei.smod, taken down)"
         );
     }
@@ -187,9 +188,10 @@ mod tests {
             file: "jei.smod".into(),
             registry: Registry::Unchecked,
         }]);
+        assert_eq!(build.name(), "this mod");
         assert_eq!(
-            build.name(),
-            "jei (jei.smod, not checked against the registry)"
+            build.rows(),
+            ["jei (jei.smod, not checked against the registry)"]
         );
     }
 

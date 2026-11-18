@@ -63,8 +63,8 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
             .unwrap()
             .finish_read(&read, native_status::build_inputs(&read, None));
         assert_eq!(
-            pending.as_ref().unwrap().name(),
-            "selected_mod (selected_mod.smod, not checked against the registry)"
+            pending.as_ref().unwrap().rows(),
+            ["selected_mod (selected_mod.smod, not checked against the registry)"]
         );
         assert_eq!(home.current(), selected);
         let action =
