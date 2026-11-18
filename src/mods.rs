@@ -847,9 +847,9 @@ impl Launcher {
                             .text_color(c(palette().accent_ink))
                             .cursor_pointer()
                             .child(if packs {
-                                tr("Browse mods")
+                                tr("Back to mods")
                             } else {
-                                tr("Browse packs")
+                                tr("Resource, shader and data packs")
                             })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if packs {

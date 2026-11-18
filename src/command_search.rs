@@ -31,6 +31,8 @@ const ART: f32 = 28.;
 const WIDTH: f32 = 600.;
 /// Below this window width the top bar's field is its icon alone.
 const COMPACT_BELOW: f32 = 960.;
+/// From this width the field has room for its key beside the word.
+const BADGE_FROM: f32 = 1100.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Group {
@@ -40,6 +42,8 @@ pub(crate) enum Group {
     Mods,
     Packs,
     Settings,
+    /// The launcher's keys: said here, never printed on a button.
+    Shortcuts,
 }
 
 impl Group {
@@ -49,8 +53,9 @@ impl Group {
             Group::Profiles => "Profiles",
             Group::Worlds => "Worlds",
             Group::Mods => "Installed mods",
-            Group::Packs => "Installed packs",
+            Group::Packs => "Installed resource and shader packs",
             Group::Settings => "Settings",
+            Group::Shortcuts => "Keyboard shortcuts",
         }
     }
 }
@@ -67,6 +72,10 @@ pub(crate) enum Target {
     /// An installed mod, by its name: Mods › Installed, showing it.
     Mod(String),
     Pack(PackKind, String),
+    /// The search itself: it is open already, and stays.
+    Search,
+    /// Shows or hides the sidebar.
+    Sidebar,
 }
 
 /// A row's picture.
@@ -128,7 +137,11 @@ pub(crate) fn destinations() -> Vec<Entry> {
     let mut all = vec![
         Entry::page(tr("Home").to_string(), "home", Page::Home),
         Entry::page(tr("Mods").to_string(), "package", Page::Discover),
-        Entry::page(under("Mods", "Packs"), "archive", Page::Packs),
+        Entry::page(
+            under("Mods", "Resource, shader and data packs"),
+            "archive",
+            Page::Packs,
+        ),
         Entry::page(under("Servers", "Join"), "globe", Page::Join),
         Entry::page(under("Servers", "Host"), "server", Page::Hosting),
         Entry::page(tr("Versions").to_string(), "download", Page::Versions),
@@ -152,6 +165,32 @@ pub(crate) fn destinations() -> Vec<Entry> {
         quiet: true,
     }));
     all
+}
+
+/// The key held with a letter for the launcher's shortcuts, as its platform names it.
+fn keys(letter: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("⌘{letter}")
+    } else {
+        format!("Ctrl {letter}")
+    }
+}
+
+/// The launcher's keyboard shortcuts, each a row that does what its key does.
+pub(crate) fn shortcuts() -> Vec<Entry> {
+    [
+        ("Search", "K", Target::Search, "search"),
+        ("Show or hide the sidebar", "B", Target::Sidebar, "home"),
+    ]
+    .map(|(label, letter, target, icon)| Entry {
+        group: Group::Shortcuts,
+        label: tr(label).to_string(),
+        hint: keys(letter),
+        target,
+        art: Art::Glyph(icon),
+        quiet: false,
+    })
+    .into()
 }
 
 /// How well `label` answers `query`, lower being better; none when a word of the query is not
@@ -181,16 +220,25 @@ pub(crate) fn rank(query: &str, label: &str) -> Option<u32> {
 
 /// The rows for `query`, as indexes into `entries`, in the order they are listed: group after
 /// group, the group holding the best match first, each group's best matches first. With no
-/// query: the pages and the profiles.
+/// query: the pages and the profiles, then the keyboard shortcuts, which are never crowded out.
 pub(crate) fn results(entries: &[Entry], query: &str) -> Vec<usize> {
     let query = query.trim();
     if query.is_empty() {
-        return (0..entries.len())
-            .filter(|&i| {
+        let of = |shortcuts: bool| {
+            (0..entries.len()).filter(move |&i| {
                 let e = &entries[i];
-                !e.quiet && matches!(e.group, Group::Navigate | Group::Profiles)
+                !e.quiet
+                    && match e.group {
+                        Group::Navigate | Group::Profiles => !shortcuts,
+                        Group::Shortcuts => shortcuts,
+                        _ => false,
+                    }
             })
-            .take(SHOWN)
+        };
+        let keys = of(true).count();
+        return of(false)
+            .take(SHOWN.saturating_sub(keys))
+            .chain(of(true))
             .collect();
     }
     let mut groups: Vec<(Group, Vec<(u32, usize)>)> = Vec::new();
@@ -291,6 +339,7 @@ impl Launcher {
     /// Everything the search can find, gathered when it opens.
     fn search_entries(&mut self) -> Vec<Entry> {
         let mut all = destinations();
+        all.extend(shortcuts());
         all.extend(self.instances.list.iter().map(|profile| Entry {
             group: Group::Profiles,
             label: profile.name.clone(),
@@ -367,6 +416,9 @@ impl Launcher {
     }
 
     fn search_go(&mut self, target: Target, cx: &mut Context<Self>) {
+        if target == Target::Search {
+            return;
+        }
         self.close_sheet();
         match target {
             Target::Page(page) => self.navigate(page),
@@ -388,18 +440,25 @@ impl Launcher {
                 self.navigate(Page::Packs);
                 self.show_installed_pack(kind, &title);
             }
+            Target::Search => {}
+            Target::Sidebar => self.toggle_sidebar(),
         }
     }
 
-    /// The top bar's way in: a field to press, with the shortcut on it. On a narrow window it
-    /// is its icon alone, with the words as its tooltip.
+    /// The top bar's way in: a field to press. Its key is shown whole where the bar has room
+    /// for it and not at all where it has not; on a narrow window the field is its icon alone,
+    /// with the word as its tooltip.
     pub(crate) fn search_button(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let compact = self.window_width < COMPACT_BELOW;
-        let keys = if cfg!(target_os = "macos") {
-            "⌘K"
-        } else {
-            "Ctrl K"
-        };
+        // The expanded sidebar takes this much from the bar.
+        let bar = self.window_width
+            - if self.settings.sidebar_expanded {
+                150.
+            } else {
+                0.
+            };
+        let compact = bar < COMPACT_BELOW;
+        let badge = bar >= BADGE_FROM;
+        let keys = keys("K");
         let glass = blocks::icon("search", 16., rgb(palette().chrome_muted).into());
         let button = div()
             .id("search-open")
@@ -422,31 +481,31 @@ impl Launcher {
                 .w(px(tokens::FIELD))
                 .justify_center()
                 .child(glass)
-                .tooltip(crate::glass_ui::tip(trf(
-                    "Search ({keys})",
-                    &[("keys", tr(keys))],
-                )));
+                .tooltip(crate::glass_ui::tip(tr("Search")));
         }
         button
-            .w(px(204.))
+            .w(px(if badge { 204. } else { 150. }))
             .gap(px(8.))
             .pl(px(12.))
-            .pr(px(6.))
+            .pr(px(if badge { 6. } else { 12. }))
             .text_size(px(tokens::LABEL))
             .text_color(rgb(palette().chrome_muted))
             .child(glass)
             .child(div().flex_1().min_w_0().truncate().child(tr("Search…")))
-            .child(
-                div()
-                    .flex_none()
-                    .px(px(6.))
-                    .py(px(2.))
-                    .rounded(px(tokens::R_SMALL))
-                    .bg(rgb(palette().chrome_raised))
-                    .text_size(px(tokens::CAPTION))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr(keys)),
-            )
+            .when(badge, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .px(px(6.))
+                        .py(px(2.))
+                        .rounded(px(tokens::R_SMALL))
+                        .bg(rgb(palette().chrome_raised))
+                        .text_size(px(tokens::CAPTION))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(keys),
+                )
+            })
     }
 
     /// A row's picture, `ART` square.
@@ -537,7 +596,7 @@ impl Launcher {
                         true,
                         false,
                         false,
-                        "Search pages, profiles, worlds, mods and settings",
+                        "Search pages, profiles, worlds, mods, settings and shortcuts",
                     )),
             )
             .child(
@@ -606,6 +665,14 @@ impl Launcher {
                             .flex_none()
                             .text_size(px(tokens::SMALL))
                             .text_color(rgb(palette().muted))
+                            // A shortcut's key reads as a key.
+                            .when(entry.group == Group::Shortcuts, |d| {
+                                d.px(px(6.))
+                                    .py(px(2.))
+                                    .rounded(px(tokens::R_SMALL))
+                                    .bg(rgb(palette().field))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                            })
                             .child(entry.hint),
                     )
                     .on_mouse_move(cx.listener(move |this, _, _, cx| {
@@ -732,6 +799,7 @@ mod tests {
     /// The launcher's own places and a player's things beside them.
     fn sample() -> Vec<Entry> {
         let mut all = destinations();
+        all.extend(shortcuts());
         all.extend([
             entry(Group::Profiles, "Sunrise"),
             entry(Group::Profiles, "Wildflower Valley"),
@@ -776,15 +844,33 @@ mod tests {
             [
                 "Home",
                 "Mods",
-                "Mods › Packs",
+                "Mods › Resource, shader and data packs",
                 "Servers › Join",
                 "Servers › Host",
                 "Versions",
                 "Settings",
                 "Sunrise",
                 "Wildflower Valley",
+                "Search",
+                "Show or hide the sidebar",
             ]
         );
+    }
+
+    #[test]
+    fn the_shortcuts_are_listed_with_their_keys_however_many_profiles_there_are() {
+        let mut entries = sample();
+        entries.extend((0..40).map(|n| entry(Group::Profiles, &format!("Profile {n}"))));
+        let found = results(&entries, "");
+        assert_eq!(found.len(), SHOWN);
+        let shown: Vec<&str> = found[SHOWN - 2..]
+            .iter()
+            .map(|&i| entries[i].hint.as_str())
+            .collect();
+        assert_eq!(shown, [keys("K"), keys("B")]);
+        // Found by name too, and each does what its key does.
+        let i = results(&entries, "sidebar")[0];
+        assert!(entries[i].target == Target::Sidebar);
     }
 
     #[test]
@@ -863,7 +949,7 @@ mod tests {
             [
                 "Home",
                 "Mods",
-                "Mods › Packs",
+                "Mods › Resource, shader and data packs",
                 "Servers › Join",
                 "Servers › Host",
                 "Versions",
@@ -911,7 +997,7 @@ mod tests {
         assert!(press(&mut search, "up") == Press::Stay);
         assert_eq!(
             on(&search),
-            "Wildflower Valley",
+            "Show or hide the sidebar",
             "up from the first is the last"
         );
         assert!(press(&mut search, "down") == Press::Stay);
