@@ -277,9 +277,10 @@ impl Launcher {
                     true => dim(b).into_any_element(),
                     false => {
                         let id = id.clone();
+                        let name = card_data.name.clone();
                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             cx.stop_propagation();
-                            this.add(id.clone());
+                            this.add(id.clone(), name.clone());
                             cx.notify();
                         }))
                         .into_any_element()

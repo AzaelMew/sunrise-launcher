@@ -860,6 +860,11 @@ impl Launcher {
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| tr("your mods").into());
         let building = matches!(pending, Some(PendingConsent::Build(_)));
+        // One row per package.
+        let rows = match pending.map(PendingConsent::rows) {
+            Some(rows) if building && !rows.is_empty() => rows,
+            _ => vec![name.clone()],
+        };
         let host = sunrise_launcher::rust_toolchain::host();
         let downloads = match (host, sunrise_launcher::rust_toolchain::installed()) {
             (None, _) => tr("Unavailable on this platform").into(),
@@ -900,7 +905,9 @@ impl Launcher {
             )))
             .child(
                 card()
-                    .child(fact(tr("Mods"), name.clone(), false))
+                    .children(rows.into_iter().enumerate().map(|(n, row)| {
+                        fact(if n == 0 { tr("Mods") } else { "" }, row, false)
+                    }))
                     .child(fact(tr("Downloads"), downloads, true))
                     .child(fact(
                         tr("While building"),
@@ -964,8 +971,8 @@ impl Launcher {
                         self.build_native_on(base, back_up)
                     }
                     PendingConsent::Toggle(entry) => self.mods_switch(&entry),
-                    PendingConsent::Install(source, id, known) => {
-                        self.mods_install(source, id, known)
+                    PendingConsent::Install(source, id, known, _) => {
+                        self.mods_install(source, id, known, None)
                     }
                     PendingConsent::Github(found, only) => self.github_install(found, only),
                 }

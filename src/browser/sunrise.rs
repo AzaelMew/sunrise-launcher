@@ -50,23 +50,41 @@ pub fn local() -> bool {
     !location().starts_with("https://")
 }
 
-static LOADED: Mutex<Option<(Instant, Arc<Index>)>> = Mutex::new(None);
+/// The index read last, and whether the registry itself gave it in this run. The copy kept in
+/// the game folder is a file anything there can write (a modpack, a mod, the player), so it is
+/// good for showing what was installed and never for saying a file is the registry's.
+struct Loaded {
+    at: Instant,
+    index: Arc<Index>,
+    fetched: bool,
+}
+
+impl Loaded {
+    /// The index as [`fetched_index`] gives it.
+    fn fetched(&self) -> Option<Arc<Index>> {
+        self.fetched.then(|| self.index.clone())
+    }
+}
+
+static LOADED: Mutex<Option<Loaded>> = Mutex::new(None);
 
 /// The index, asked for again now whatever was read last: "Check for update".
 pub fn refreshed_index() -> Result<Arc<Index>, String> {
-    if let Some((at, _)) = LOADED.lock().unwrap().as_mut() {
-        *at = Instant::now().checked_sub(FRESH).unwrap_or(*at);
+    if let Some(loaded) = LOADED.lock().unwrap().as_mut() {
+        loaded.at = Instant::now().checked_sub(FRESH).unwrap_or(loaded.at);
     }
     index()
 }
 
 /// The index read last in this run, without asking the network: for what must not wait.
 pub fn known_index() -> Option<Arc<Index>> {
-    LOADED
-        .lock()
-        .unwrap()
-        .as_ref()
-        .map(|(_, index)| index.clone())
+    LOADED.lock().unwrap().as_ref().map(|l| l.index.clone())
+}
+
+/// [`known_index`], only when the registry answered with it in this run: None for the copy kept
+/// in the game folder. What decides whether a file on disk is the registry's asks this one.
+pub fn fetched_index() -> Option<Arc<Index>> {
+    LOADED.lock().unwrap().as_ref().and_then(Loaded::fetched)
 }
 
 /// Whether the registry's project `id` is a native mod, by the index already read (never the
@@ -117,32 +135,48 @@ pub fn index() -> Result<Arc<Index>, String> {
     if location().is_empty() {
         return Err("The Sunrise mod registry is not available yet.".into());
     }
-    if let Some((at, index)) = LOADED.lock().unwrap().as_ref() {
-        if at.elapsed() < FRESH {
-            return Ok(index.clone());
+    if let Some(loaded) = LOADED.lock().unwrap().as_ref() {
+        if loaded.at.elapsed() < FRESH {
+            return Ok(loaded.index.clone());
         }
     }
     let cache = crate::backend::game_home().join(CACHE);
-    let index = match fetch_index() {
+    let loaded = load(fetch_index(), &cache, local())?;
+    let index = loaded.index.clone();
+    *LOADED.lock().unwrap() = Some(loaded);
+    Ok(index)
+}
+
+/// What [`index`] keeps: the registry's answer `fetched` (written to `cache` for next time), else
+/// the copy in `cache`, marked as not the registry's own answer.
+fn load(
+    fetched: Result<(Index, String), String>,
+    cache: &Path,
+    local: bool,
+) -> Result<Loaded, String> {
+    let (index, fetched) = match fetched {
         Ok((index, text)) => {
             if let Some(dir) = cache.parent() {
                 let _ = fs::create_dir_all(dir);
             }
-            let _ = fs::write(&cache, text);
-            index
+            let _ = fs::write(cache, text);
+            (index, true)
         }
         Err(e) => {
-            let kept = fs::read_to_string(&cache).map_err(|_| e.clone())?;
-            match local() {
+            let kept = fs::read_to_string(cache).map_err(|_| e.clone())?;
+            let index = match local {
                 true => Index::parse_local(&kept),
                 false => Index::parse(&kept),
             }
-            .map_err(|_| e)?
+            .map_err(|_| e)?;
+            (index, false)
         }
     };
-    let index = Arc::new(index);
-    *LOADED.lock().unwrap() = Some((Instant::now(), index.clone()));
-    Ok(index)
+    Ok(Loaded {
+        at: Instant::now(),
+        index: Arc::new(index),
+        fetched,
+    })
 }
 
 fn fetch_index() -> Result<(Index, String), String> {

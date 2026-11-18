@@ -88,8 +88,8 @@ impl Launcher {
 
     /// Add `id` to the game: the existing install path, which asks first for native code, checks
     /// the file against the index and its signature, and refuses what was taken down. Only a mod
-    /// the registry says fits this build.
-    pub(crate) fn install_registry_mod(&mut self, id: String) -> Result<(), String> {
+    /// the registry says fits this build. `shown` is the name the page or card that asks shows.
+    pub(crate) fn install_registry_mod(&mut self, id: String, shown: String) -> Result<(), String> {
         let fit = match &self.ui.mods.catalog {
             Catalog::Ready(cards, _) => cards.iter().find(|c| c.id == id).map(|c| c.fit.clone()),
             _ => None,
@@ -108,12 +108,12 @@ impl Launcher {
         }
         self.ui.mods.notice = None;
         self.mods.message = None;
-        self.mods_install(SourceId::Sunrise, id, None);
+        self.mods_install(SourceId::Sunrise, id, None, Some(shown));
         Ok(())
     }
 
-    pub(crate) fn add(&mut self, id: String) {
-        if let Err(why) = self.install_registry_mod(id) {
+    pub(crate) fn add(&mut self, id: String, shown: String) {
+        if let Err(why) = self.install_registry_mod(id, shown) {
             self.ui.mods.notice = Some(Err(why));
         }
     }
