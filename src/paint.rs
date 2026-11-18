@@ -82,6 +82,7 @@ pub(crate) struct Palette {
     pub accent_on: u32,
     /// Play's two opaque accent stops, both fitted to hold white text.
     play_stops: [u32; 2],
+    pub play_glow: u32,
     /// The accent as text, a link or a tick on the surfaces above (4.5:1).
     pub accent_ink: u32,
     /// The keyboard ring, on every surface (3:1).
@@ -137,6 +138,7 @@ impl Inputs {
             scene_tone: theme.scene_tone,
             photo_tone: photo.and_then(|p| p.tone),
             accent: theme.accent_choice.rgb(),
+            play_seed: theme.play_seed,
             tint: settings.glass_tint(),
             scenery: settings.scenery() && !theme.photo && !settings.performance(),
         }
@@ -207,6 +209,7 @@ struct Inputs {
     scene_tone: Option<u32>,
     photo_tone: Option<u32>,
     accent: u32,
+    play_seed: Option<u32>,
     tint: f32,
     scenery: bool,
 }
@@ -220,6 +223,7 @@ impl Inputs {
             scene_tone,
             photo_tone,
             accent: raw,
+            play_seed,
             tint,
             scenery,
         } = *self;
@@ -291,9 +295,16 @@ impl Inputs {
         // Leave room beyond 4.5:1 for renderer rounding.
         let accent_on = 0xffffff;
         let play_text = |c| contrast(accent_on, c) >= 4.65;
-        let base = fit(raw, false, play_text);
-        let light = fit_toward(mix_oklab(accent_on, raw, 0.25), base, play_text);
-        let dark = fit(raw, false, |c| {
+        let play_glow = play_seed.unwrap_or(raw);
+        let base = fit(play_glow, false, play_text);
+        // An authored vivid face already has the right lift. Mixing white into it would
+        // put back the dusty colour this shade is meant to avoid.
+        let light = if play_seed.is_some() {
+            base
+        } else {
+            fit_toward(mix_oklab(accent_on, raw, 0.25), base, play_text)
+        };
+        let dark = fit(play_glow, false, |c| {
             contrast(accent_on, c) >= contrast(accent_on, light) + 1.5
         });
         let accent_ink = fit(raw, lighter, reads(&surfaces[..5], TEXT));
@@ -375,6 +386,7 @@ impl Inputs {
             accent: raw,
             accent_on,
             play_stops: [dark, light],
+            play_glow,
             accent_ink,
             focus,
             danger: status(n.danger),
@@ -396,6 +408,7 @@ impl Palette {
             scene_tone: tone,
             photo_tone: None,
             accent,
+            play_seed: None,
             tint,
             scenery: false,
         }
@@ -567,6 +580,17 @@ mod tests {
         (3f32.sqrt() * (g - b)).atan2(2. * r - g - b)
     }
 
+    // The ordinary ramp scales RGB channels, while the authored vibrant tones are matched
+    // to the accent in OKLab so their hue does not drift as chroma goes up.
+    fn play_hue(c: u32, vivid: bool) -> f32 {
+        if vivid {
+            let [_, a, b] = oklab(c);
+            b.atan2(a)
+        } else {
+            hue(c)
+        }
+    }
+
     fn spread(c: u32) -> u32 {
         let ch = [16, 8, 0].map(|s| (c >> s) & 255);
         ch.iter().max().unwrap() - ch.iter().min().unwrap()
@@ -589,7 +613,8 @@ mod tests {
         reads("white on Play", p.accent_on, &ramp, TEXT);
         assert!(luminance(light) > luminance(dark));
         if spread(p.accent) > 60 && spread(dark) > 40 {
-            let drift = (hue(dark) - hue(p.accent)).abs();
+            let vivid = theme.play_seed.is_some();
+            let drift = (play_hue(dark, vivid) - play_hue(p.accent, vivid)).abs();
             assert!(
                 drift.min(std::f32::consts::TAU - drift) < 0.1,
                 "{name}: hue {drift}"
@@ -800,9 +825,39 @@ mod tests {
                 dark_contrast >= bright_contrast + 1.5,
                 "{id}: flat gradient"
             );
-            let drift = (hue(dark) - hue(own)).abs();
-            assert!(drift.min(std::f32::consts::TAU - drift) < 0.02, "{id}");
+            let vivid = theme.play_seed.is_some();
+            let drift = (play_hue(dark, vivid) - play_hue(own, vivid)).abs();
+            assert!(
+                drift.min(std::f32::consts::TAU - drift) < 0.02,
+                "{id}: hue drift {drift:.3}"
+            );
         }
+    }
+
+    #[test]
+    fn cherry_and_nord_keep_their_swatches_with_vivid_primary_actions() {
+        for (id, accent, min_chroma) in
+            [("cherry_blossom", 0xf59ac0, 0.16), ("nord", 0x88c0d0, 0.07)]
+        {
+            let settings = Settings::parse(&format!(r#"{{"theme":"{id}"}}"#));
+            let theme = from_settings(&settings, WindowAppearance::Dark);
+            let p = Palette::of(&settings, &theme);
+            assert_eq!(p.accent, accent);
+            for stop in p.play_stops {
+                let [_, a, b] = oklab(stop);
+                assert!(a.hypot(b) > min_chroma, "{id}: faded stop {stop:06x}");
+            }
+            assert_eq!(p.play_glow, p.play_stops[1]);
+        }
+
+        let custom = Accent::from_rgb(0x206fcc);
+        let (settings, theme) = look(Some("cherry_blossom"), custom, 6., true);
+        let p = Palette::of(&settings, &theme);
+        assert_eq!(
+            p.play_glow,
+            custom.rgb(),
+            "custom accents keep their own glow"
+        );
     }
 
     /// A player's theme holds the same contract as a built-in one, whatever six colours it

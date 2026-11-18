@@ -69,6 +69,8 @@ pub struct Theme {
     pub night: Night,
     /// The built-in scene's tint source. Local themes instead supply their own plate colours.
     pub(crate) scene_tone: Option<u32>,
+    /// A stronger version of the default accent for the primary Home action, if authored.
+    pub(crate) play_seed: Option<u32>,
     /// The accent this look was built from, before the glass look's mixes.
     pub accent_choice: Accent,
     /// A Home picture is configured: automatic panel opacity stays solid.
@@ -171,6 +173,11 @@ impl Theme {
             self.night.sky = picked.sky;
         }
         self.scene_tone = Some(sky_tone(picked.sky));
+        self.play_seed = match picked.id {
+            "cherry_blossom" if self.accent_choice == picked.accent.accent() => Some(0xc8297e),
+            "nord" if self.accent_choice == picked.accent.accent() => Some(0x087d95),
+            _ => None,
+        };
         self
     }
 
@@ -277,6 +284,7 @@ impl Theme {
             on_face: c(p.on_face),
             night,
             scene_tone: None,
+            play_seed: None,
             accent_choice: accent,
             photo: false,
             dark: p.dark,

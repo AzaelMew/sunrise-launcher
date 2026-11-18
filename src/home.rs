@@ -386,7 +386,7 @@ impl Launcher {
         // a veil over the gradient or its text.
         let glow = move |hover| {
             vec![gpui::BoxShadow {
-                color: Hsla::from(rgb(p.accent)).opacity(if hover { 0.78 } else { 0.58 }),
+                color: Hsla::from(rgb(p.play_glow)).opacity(if hover { 0.78 } else { 0.58 }),
                 offset: gpui::point(px(0.), px(if hover { 9. } else { 6. })),
                 blur_radius: px(if hover { 32. } else { 22. }),
                 spread_radius: px(-8.),
