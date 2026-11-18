@@ -36,7 +36,6 @@ pub(crate) enum Sheet {
     Versions,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
-    Picture,
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
@@ -59,7 +58,6 @@ struct Memo {
 
 #[derive(Default)]
 pub(crate) struct SheetsState {
-    pub(super) gallery: Option<(std::rc::Rc<[String]>, usize)>,
     /// The explicit compatibility check's state; only a click on the Build sheet starts one.
     update: RefCell<Option<Memo>>,
     /// Keyboard focus of the layer over the page, so keys never reach the page under it.
@@ -337,7 +335,6 @@ impl Launcher {
             self.cancel_native_consent();
         }
         self.ui.sheet = None;
-        self.ui.sheets.gallery = None;
         self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
     }
@@ -552,7 +549,6 @@ impl Launcher {
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
-            Some(Sheet::Picture) => self.gallery_picture(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::ModBuild) => {
                 let sheet = self.build_modal(cx);

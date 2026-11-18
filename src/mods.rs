@@ -42,6 +42,7 @@ mod project;
 mod search;
 mod ui;
 pub(crate) use search::Installed;
+mod viewer;
 use std::rc::Rc;
 pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};
 
@@ -178,6 +179,8 @@ pub(crate) struct ModsState {
     /// The row another page opened Installed at, and whether it was scrolled to yet.
     reveal: Option<search::Reveal>,
     revealed: Rc<std::cell::Cell<bool>>,
+    /// A gallery picture enlarged over the window.
+    viewer: Option<viewer::Viewer>,
 }
 
 impl Default for ModsState {
@@ -217,6 +220,7 @@ impl Default for ModsState {
             last_packs: None,
             reveal: None,
             revealed: Default::default(),
+            viewer: None,
         }
     }
 }
