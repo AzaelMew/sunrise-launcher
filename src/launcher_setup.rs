@@ -284,6 +284,8 @@ impl Launcher {
             // Read only public profile metadata on entry. The ordinary launch and sign-in
             // actions still read/refresh the selected account when the player requests them.
             this.perf.keep_local_log(false);
+            // The accounts' faces come from their public skins, with no token or keychain.
+            this.load_profile_heads();
             this.fetch_startup_releases();
             return this;
         }
