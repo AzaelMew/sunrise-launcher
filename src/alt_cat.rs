@@ -1,5 +1,5 @@
 //! The website's cat, hiding behind Play: now and then it peeks out, or walks out into the empty
-//! part of the play bar and stays a while. Click it to pet it.
+//! part of the play bar and stays a while (click it to pet it), or climbs up and sleeps on Play.
 //!
 //! Its look and its ways are the Sunrise site's, ported from sunrise-org/sunny
 //! (`frontend/site/art/`: `cat.ts` for the poses and coats, `cat-actions.ts` for what it does and
@@ -1424,6 +1424,11 @@ const PEEK: f32 = 4200.;
 /// Walking: pixels a millisecond, and the leg swing that keeps the paws from sliding at that pace.
 const SPEED: f32 = 0.055;
 const STRIDE: f32 = 0.012;
+/// Sleeping on Play: the climb up from behind the button, curling up, and uncurling again, in
+/// ms. A cat that has to leave at once drops back behind the button in `DROP`.
+const CLIMB: f32 = 800.;
+const CURL: f32 = 1300.;
+const DROP: f32 = 260.;
 
 /// Where the cat is. Mostly it is away, behind Play; now and then it peeks out, or walks out
 /// into the empty part of the bar, stays a while and walks back.
@@ -1445,6 +1450,17 @@ enum Scene {
         at: f32,
         until: f32,
     },
+    /// Asleep on top of Play until `until`, then it uncurls and climbs back down.
+    Perch {
+        since: f32,
+        until: f32,
+    },
+    /// Off Play at once, from the `pose` and height (`up`) it had.
+    Drop {
+        since: f32,
+        pose: Pose,
+        up: f32,
+    },
 }
 
 /// What to draw of the cat: how far out it is, its pose, and whether it faces left.
@@ -1453,6 +1469,8 @@ struct View {
     pose: Pose,
     left: bool,
     pettable: bool,
+    /// On Play instead of in the bar: how far it has climbed over the button's top edge, 0 to 1.
+    perch: Option<f32>,
 }
 
 struct Outing {
@@ -1460,6 +1478,13 @@ struct Outing {
     scene: Scene,
     /// The first time out is a visit, so the cat introduces itself properly.
     been_out: bool,
+    /// Its next time out is a sleep on Play, when Play is free.
+    perch_next: bool,
+}
+
+fn ease(k: f32) -> f32 {
+    let k = unit(k);
+    k * k * (3. - 2. * k)
 }
 
 impl Outing {
@@ -1468,6 +1493,34 @@ impl Outing {
             cat: Cat::new(ways, seed),
             scene: Scene::Away { until: first },
             been_out: false,
+            perch_next: false,
+        }
+    }
+
+    /// The cat on Play at `now`: its pose and how far up it is.
+    fn perched(since: f32, until: f32, now: f32) -> (Pose, f32) {
+        let (t, left) = (now - since, now - until);
+        // Curled up once it is up, and uncurled again before it climbs down.
+        let curl = ease((t - CLIMB) / CURL) * ease(-left / CURL);
+        let (sit, sleep) = (with(SIT, &[(TURN, 0.35)]), rest(State::Sleep));
+        let mut pose = sit;
+        for (value, asleep) in pose.iter_mut().zip(sleep) {
+            *value = lerp(*value, asleep, curl);
+        }
+        // Eyes are open or shut, never half.
+        pose[EYES] = if curl > 0.6 { 0. } else { 1. };
+        (pose, ease(t / CLIMB) * ease((CURL + CLIMB - left) / CLIMB))
+    }
+
+    /// Whatever it was doing on Play, it gets off now.
+    fn leave_play(&mut self, now: f32) {
+        if let Scene::Perch { since, until } = self.scene {
+            let (pose, up) = Self::perched(since, until, now);
+            self.scene = Scene::Drop {
+                since: now,
+                pose: with(pose, &[(EYES, 1.), (EAR_NEAR, 0.), (EAR_FAR, 0.)]),
+                up,
+            };
         }
     }
 
@@ -1478,11 +1531,21 @@ impl Outing {
     }
 
     /// Moves the scene on to `now` (ms). `room` is the empty width beside Play, in pixels: the
-    /// cat never goes further out than that, and stays hidden when there is none.
-    fn step(&mut self, now: f32, room: f32) {
+    /// cat never goes further out than that, and stays hidden when there is none. `free` says
+    /// Play is idle and the bar has nothing to say, so the cat may sleep on the button.
+    fn step(&mut self, now: f32, room: f32, free: bool) {
         match self.scene {
+            Scene::Perch { .. } if !free => self.leave_play(now),
+            Scene::Perch { until, .. } if now >= until + CURL + CLIMB => self.hide(now),
+            Scene::Drop { since, .. } if now - since >= DROP => self.hide(now),
             Scene::Away { until } if now >= until => {
-                if room < PEEK_OUT {
+                if free && (self.perch_next || self.been_out && self.cat.random.next() < 0.25) {
+                    self.perch_next = false;
+                    self.scene = Scene::Perch {
+                        since: now,
+                        until: now + self.cat.random.span([45000., 150000.]),
+                    };
+                } else if room < PEEK_OUT {
                     self.scene = Scene::Away { until: now + 5000. };
                 } else if room >= WIDTH * 1.5 && (!self.been_out || self.cat.random.next() < 0.7) {
                     let far = room.min(WIDTH + 16. + 520.);
@@ -1541,12 +1604,25 @@ impl Outing {
     }
 
     fn view(&self, now: f32) -> Option<View> {
-        let ease = |k: f32| {
-            let k = unit(k);
-            k * k * (3. - 2. * k)
-        };
         match self.scene {
             Scene::Away { .. } => None,
+            Scene::Perch { since, until } => {
+                let (pose, up) = Self::perched(since, until, now);
+                Some(View {
+                    out: 0.,
+                    pose,
+                    left: true,
+                    pettable: false,
+                    perch: Some(up),
+                })
+            }
+            Scene::Drop { since, pose, up } => Some(View {
+                out: 0.,
+                pose,
+                left: true,
+                pettable: false,
+                perch: Some(up * (1. - ease((now - since) / DROP))),
+            }),
             Scene::Peek { since } => {
                 let t = now - since;
                 // Out, a look at you with a blink and a tilt of the head, and back in.
@@ -1565,6 +1641,7 @@ impl Outing {
                     ),
                     left: true,
                     pettable: false,
+                    perch: None,
                 })
             }
             Scene::Walk { from, to, since } => {
@@ -1578,6 +1655,7 @@ impl Outing {
                     ),
                     left: to > from,
                     pettable: false,
+                    perch: None,
                 })
             }
             Scene::Visit { at, .. } => Some(View {
@@ -1585,6 +1663,7 @@ impl Outing {
                 pose: self.cat.pose(now),
                 left: true,
                 pettable: true,
+                perch: None,
             }),
         }
     }
@@ -1594,13 +1673,25 @@ impl Outing {
         let until = |at: f32| Duration::from_secs_f32((at - now).max(0.) / 1000.);
         match self.scene {
             Scene::Away { until: at } => until(at),
-            Scene::Peek { .. } | Scene::Walk { .. } => STEP_FRAME,
+            Scene::Peek { .. } | Scene::Walk { .. } | Scene::Drop { .. } => STEP_FRAME,
+            // Asleep it is one still picture: the next look is when it wakes.
+            Scene::Perch { since, until } => {
+                if now - since < CLIMB + CURL || now >= until - CURL {
+                    STEP_FRAME
+                } else {
+                    self::until_ms(until - CURL - now)
+                }
+            }
             Scene::Visit { until: at, .. } => self
                 .cat
                 .next_change()
                 .map_or(FRAME, |change| until(change.min(at.max(now + 500.)))),
         }
     }
+}
+
+fn until_ms(ms: f32) -> Duration {
+    Duration::from_secs_f32(ms.max(0.) / 1000.)
 }
 
 #[derive(Default)]
@@ -1622,12 +1713,17 @@ impl Launcher {
     /// The cat is drawn inside this stretch and cut at its edges, under Play, so it comes out
     /// from behind the button and can never lie over text or a control. `beside` says Play is
     /// what follows; with other buttons in between the cat stays in.
+    ///
+    /// The second element is the cat asleep on Play, for Play's own box: it is drawn only above
+    /// the button's top edge and takes no clicks. `free` says Play is idle and the bar has
+    /// nothing to say; the cat climbs up only then, and drops off the moment that ends.
     pub(super) fn alt_cat(
         &mut self,
         beside: bool,
+        free: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> (Div, Option<Div>) {
         let measured = self.alt.cat.lane.clone();
         let lane = div()
             .flex_1()
@@ -1645,11 +1741,13 @@ impl Launcher {
                 .absolute()
                 .size_full(),
             );
-        let room = if beside && self.window_width >= ROOM.0 && self.window_height >= ROOM.1 {
+        let roomy = beside && self.window_width >= ROOM.0 && self.window_height >= ROOM.1;
+        let room = if roomy {
             self.alt.cat.lane.get() - UNDER - 6.
         } else {
             0.
         };
+        let free = free && roomy;
         // A window in the background keeps its cat still: nothing is scheduled until it is back.
         let awake = window.is_window_active();
         if awake {
@@ -1670,9 +1768,12 @@ impl Launcher {
                 &TABBY_WAYS
             };
             let mut outing = Outing::new(ways, seed, 0.);
-            // `SUNRISE_PREVIEW_CAT=1` brings it out at once, for design critique.
+            // `SUNRISE_PREVIEW_CAT=1` brings it out at once, for design critique, and
+            // `SUNRISE_PREVIEW_CAT=play` onto Play.
+            let preview = std::env::var_os("SUNRISE_PREVIEW_CAT");
+            outing.perch_next = preview.as_deref().is_some_and(|v| v == "play");
             outing.scene = Scene::Away {
-                until: if std::env::var_os("SUNRISE_PREVIEW_CAT").is_some() {
+                until: if preview.is_some() {
                     1500.
                 } else {
                     outing.cat.random.span([15000., 40000.])
@@ -1681,19 +1782,26 @@ impl Launcher {
             outing
         });
         if awake {
-            if room <= 0. && !matches!(outing.scene, Scene::Away { .. }) {
+            if room <= 0.
+                && matches!(
+                    outing.scene,
+                    Scene::Peek { .. } | Scene::Walk { .. } | Scene::Visit { .. }
+                )
+            {
                 outing.hide(now);
             }
-            outing.step(now, room);
+            outing.step(now, room, free);
         }
         let after = outing.next_change(now);
         let coat = outing.cat.ways.coat;
-        let view = outing.view(now).filter(|_| room > 0.);
+        let view = outing
+            .view(now)
+            .filter(|view| room > 0. || view.perch.is_some());
         if awake {
             self.alt_cat_wake(after, cx);
         }
         let Some(view) = view else {
-            return lane;
+            return (lane, None);
         };
         let scale = (SIZE * self.scale).round().max(1.) as usize;
         let image = match &self.alt.cat.shown {
@@ -1731,6 +1839,29 @@ impl Launcher {
                 image
             }
         };
+        let tall = H as f32 * SIZE;
+        if let Some(up) = view.perch {
+            // A window above Play's top edge, as tall as the cat: it climbs into it from below,
+            // its feet on the edge, and nothing of it is ever drawn over the button.
+            let feet = (H as f32 - GY - 1.) * SIZE;
+            let down = ((1. - up) * (tall - feet) / SIZE).round() * SIZE;
+            let perch = div()
+                .absolute()
+                .top(px(feet - tall))
+                .right(px(18.))
+                .w(px(WIDTH))
+                .h(px(tall - feet))
+                .overflow_hidden()
+                .child(
+                    gpui::img(image)
+                        .absolute()
+                        .top(px(down))
+                        .left(px(0.))
+                        .w(px(WIDTH))
+                        .h(px(tall)),
+                );
+            return (lane, Some(perch));
+        }
         // Whole cat pixels, so the picture stays crisp as it moves.
         let out = (view.out / SIZE).round() * SIZE;
         let cat = div()
@@ -1738,8 +1869,8 @@ impl Launcher {
             .absolute()
             .top(px(0.))
             .right(px(out + UNDER - WIDTH))
-            .child(gpui::img(image).w(px(WIDTH)).h(px(H as f32 * SIZE)));
-        lane.child(if view.pettable {
+            .child(gpui::img(image).w(px(WIDTH)).h(px(tall)));
+        let lane = lane.child(if view.pettable {
             cat.cursor_pointer()
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     let now = this.alt.cat.clock;
@@ -1750,7 +1881,16 @@ impl Launcher {
                 }))
         } else {
             cat
-        })
+        });
+        (lane, None)
+    }
+
+    /// Play was pressed: a cat asleep on it hops off.
+    pub(super) fn alt_cat_off_play(&mut self) {
+        let now = self.alt.cat.clock;
+        if let Some(outing) = &mut self.alt.cat.cat {
+            outing.leave_play(now);
+        }
     }
 
     /// Draws the launcher again `after` this, unless a wake is already due by then.
@@ -1793,14 +1933,14 @@ mod tests {
     #[test]
     fn the_cat_hides_comes_out_into_the_room_it_has_and_goes_back() {
         let mut outing = Outing::new(&TABBY_WAYS, 7, 1000.);
-        outing.step(0., 400.);
+        outing.step(0., 400., false);
         assert!(outing.view(0.).is_none(), "it starts out of sight");
         let (mut now, mut furthest, mut visited) = (0., 0f32, false);
         // Until it has come out and is away again.
         while !(visited && matches!(outing.scene, Scene::Away { .. })) {
             now += 40.;
             assert!(now < 600_000., "it went home within ten minutes");
-            outing.step(now, 400.);
+            outing.step(now, 400., false);
             if let Some(view) = outing.view(now) {
                 furthest = furthest.max(view.out);
                 visited |= view.pettable;
@@ -1817,13 +1957,13 @@ mod tests {
     fn with_too_little_room_the_cat_only_peeks_and_with_none_it_stays_in() {
         let mut outing = Outing::new(&SIAMESE_WAYS, 3, 0.);
         for step in 0..200 {
-            outing.step(step as f32 * 40., 0.);
+            outing.step(step as f32 * 40., 0., false);
             assert!(outing.view(step as f32 * 40.).is_none());
         }
         let mut furthest = 0f32;
         for step in 200..2000 {
             let now = step as f32 * 40.;
-            outing.step(now, 60.);
+            outing.step(now, 60., false);
             if let Some(view) = outing.view(now) {
                 assert!(!view.pettable);
                 furthest = furthest.max(view.out);
@@ -1833,6 +1973,34 @@ mod tests {
             furthest > PEEK_OUT - 1. && furthest <= PEEK_OUT,
             "head and chest, no further: {furthest}"
         );
+    }
+
+    #[test]
+    fn on_play_the_cat_sleeps_without_frames_and_drops_off_when_play_is_needed() {
+        let mut outing = Outing::new(&TABBY_WAYS, 7, 0.);
+        outing.perch_next = true;
+        // Play is busy: it does not climb up.
+        outing.step(0., 400., false);
+        assert!(!matches!(outing.scene, Scene::Perch { .. }));
+        let mut outing = Outing::new(&TABBY_WAYS, 7, 0.);
+        outing.perch_next = true;
+        outing.step(0., 0., true);
+        let mut now = 0.;
+        while now < CLIMB + CURL + 40. {
+            now += 40.;
+            outing.step(now, 0., true);
+        }
+        let view = outing.view(now).expect("it is on Play");
+        assert_eq!(view.perch, Some(1.), "wholly up");
+        assert_eq!(view.pose, rest(State::Sleep), "and curled up asleep");
+        let wait = outing.next_change(now);
+        assert!(wait >= Duration::from_secs(40), "no frames while it sleeps");
+        assert_eq!(outing.view(now + 30_000.).map(|v| v.pose), Some(view.pose));
+        // Play is pressed, or turns busy: off it goes, and it is gone within the drop.
+        outing.step(now + 30_000., 0., false);
+        assert!(matches!(outing.scene, Scene::Drop { .. }));
+        outing.step(now + 30_000. + DROP, 0., false);
+        assert!(outing.view(now + 30_000. + DROP).is_none());
     }
 
     #[test]
