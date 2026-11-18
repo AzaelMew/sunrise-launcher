@@ -1048,9 +1048,16 @@ fn signed_game_index(
                     format!("{day}{}", &commit[..named.len()])
                 });
             match later {
-                Some(later) if digest(&later).is_ok() => Refusal::Superseded {
-                    build: version.to_owned(),
-                },
+                Some(later)
+                    if digest(&later).is_ok_and(|signed| {
+                        sunrise_launcher_release_verify::check(INDEX, &signed, &sha256(&bytes))
+                            .is_ok()
+                    }) =>
+                {
+                    Refusal::Superseded {
+                        build: version.to_owned(),
+                    }
+                }
                 _ => unsigned(why),
             }
         })
