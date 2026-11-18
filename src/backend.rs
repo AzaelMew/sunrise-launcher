@@ -1301,6 +1301,13 @@ fn played(field: &str) -> String {
     played_by(None, field)
 }
 
+/// The build `selected` names when it is installed, else the newest installed: what the launcher plays, and what [`played_version_id`] reads.
+pub fn launcher_build<'a>(selected: Option<&'a str>, installed: &'a [String]) -> Option<&'a str> {
+    selected
+        .filter(|s| installed.iter().any(|t| t == s))
+        .or(installed.first().map(String::as_str))
+}
+
 /// The Minecraft version id the installed build `tag` plays (an instance's own build), else the launcher's.
 pub fn played_version_id_by(tag: Option<&str>) -> String {
     played_by(tag, "version_id")
@@ -1318,10 +1325,8 @@ fn played_by(tag: Option<&str>, field: &str) -> String {
 /// The played build's sunrise-release.json `field`, else its locked Minecraft, else [`PINNED_GAME`].
 fn played_in(versions: &Path, selected: Option<&str>, field: &str) -> String {
     let installed = installed_in(versions);
-    let tag = selected
-        .filter(|s| installed.iter().any(|t| t == s))
-        .or(installed.first().map(String::as_str));
-    tag.map(|t| versions.join(t))
+    launcher_build(selected, &installed)
+        .map(|t| versions.join(t))
         .and_then(|dir| {
             read_json(&dir.join(RELEASE_FILE))
                 .and_then(|release| release[field].as_str().map(String::from))
@@ -4426,6 +4431,15 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn the_launchers_build_is_its_selected_one_when_installed_else_the_newest() {
+        let installed = ["v0.4.0".to_owned(), "v0.3.0".to_owned()];
+        assert_eq!(launcher_build(Some("v0.3.0"), &installed), Some("v0.3.0"));
+        assert_eq!(launcher_build(Some("v0.2.0"), &installed), Some("v0.4.0"));
+        assert_eq!(launcher_build(None, &installed), Some("v0.4.0"));
+        assert_eq!(launcher_build(Some("v0.3.0"), &[]), None);
+    }
 
     #[test]
     fn an_installed_build_keeps_its_release_file_only_when_it_is_the_signed_one() {

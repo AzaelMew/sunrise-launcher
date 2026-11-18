@@ -46,7 +46,7 @@ pub(super) enum Event {
     Progress(String, f32),
     Done(Result<String, String>, bool),
     /// Newer versions of what the browser installed, looked for on one build (`checked_for`).
-    Updates(Option<String>, HashMap<(SourceId, String), String>),
+    Updates(u64, HashMap<(SourceId, String), String>),
     /// A Java mod's check (its jar read, or why it couldn't be), for the Minecraft version it picked the jar for.
     Checked((SourceId, String), String, Result<Box<Check>, String>),
     /// What a Sunrise registry project says before install: signed or not, what it may do.
@@ -99,6 +99,8 @@ pub(super) struct Mods {
     pub(super) chosen: std::collections::BTreeMap<String, String>,
     /// The Sunrise the selected instance played when its updates were last looked for.
     pub(super) checked_for: Option<String>,
+    /// The number of the latest look for updates: only its answer is taken ([`offer_updates`]).
+    updates_asked: u64,
     /// The build the page's Minecraft version was last worked out for (the selected instance's).
     game_for: Option<(Option<String>, Option<String>)>,
     /// Whether the start's auto-update ran: it waits for the release list.
@@ -228,6 +230,7 @@ impl Mods {
             installed: Vec::new(),
             chosen: Default::default(),
             checked_for: None,
+            updates_asked: 0,
             game_for: None,
             auto_updated: false,
             loaded: false,
@@ -460,8 +463,9 @@ impl Launcher {
                     }
                 }
                 // A look for an earlier build than the instance's now is dropped.
-                Event::Updates(build, found) if build == m.checked_for => m.updates = found,
-                Event::Updates(..) => {}
+                Event::Updates(request, found) => {
+                    offer_updates(&mut m.updates, m.updates_asked, request, found)
+                }
                 // A check for another Minecraft version than the page's (the instance moved) is dropped.
                 Event::Checked(key, game, result) if game == m.game => {
                     let state = match result {
@@ -796,7 +800,8 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let java = self.mods.java.clone();
         let game = self.mods_game();
-        let build = self.mods.checked_for.clone();
+        self.mods.updates_asked += 1;
+        let request = self.mods.updates_asked;
         std::thread::spawn(move || {
             let mut found = HashMap::new();
             for e in entries {
@@ -811,7 +816,7 @@ impl Launcher {
                     found.insert((e.source, e.project.clone()), v.number);
                 }
             }
-            let _ = tx.send(Event::Updates(build, found));
+            let _ = tx.send(Event::Updates(request, found));
         });
     }
 
@@ -1143,7 +1148,8 @@ impl Launcher {
             self.selected_instance()
                 .and_then(|i| self.version_of(i))
                 .cloned(),
-            self.selected().cloned(),
+            backend::launcher_build(self.settings.selected.as_deref(), &self.installed)
+                .map(String::from),
         );
         if self.mods.game_for.as_ref() != Some(&builds) {
             self.mods.game_for = Some(builds);
@@ -1158,22 +1164,21 @@ impl Launcher {
             .selected_instance()
             .and_then(|i| self.version_of(i))
             .cloned();
-        if self.mods.loaded && self.mods.java.is_none() && plays != self.mods.checked_for {
-            self.mods.checked_for = plays.clone();
-            self.mods.updates.clear();
-            self.mods_check_updates();
-        }
-        if !self.mods.loaded || (home.is_some() && self.mods.home != home) {
-            self.mods.checked_for = plays;
+        let moved = !self.mods.loaded || (home.is_some() && self.mods.home != home);
+        if moved {
             self.mods.home = home;
             self.mods.reload_installed();
             self.mods.installed_list.reset();
-            self.mods.updates.clear();
             self.mods.confirm_remove = None;
             self.mods.read_worlds();
-            self.mods_check_updates();
             self.mods_taken_down();
             self.mods.loaded = true;
+        }
+        // The new instance's list is read first, then looked at once.
+        if moved || (self.mods.java.is_none() && plays != self.mods.checked_for) {
+            self.mods.checked_for = plays;
+            self.mods.updates.clear();
+            self.mods_check_updates();
         }
     }
 
@@ -1954,6 +1959,18 @@ pub(super) fn auto_update(targets: &[AutoTarget], enabled: bool) -> Vec<String> 
     lines
 }
 
+/// Takes the update offers of look `request` when it is the latest asked for (`latest`): an earlier one (another instance's list, another build) that answers late changes nothing.
+fn offer_updates(
+    offers: &mut HashMap<(SourceId, String), String>,
+    latest: u64,
+    request: u64,
+    found: HashMap<(SourceId, String), String>,
+) {
+    if request == latest {
+        *offers = found;
+    }
+}
+
 /// Where a kind's tab searches first: Sunrise's registry for mods and shader packs, Modrinth for
 /// the rest.
 fn source_for(kind: PackKind) -> SourceId {
@@ -2011,6 +2028,18 @@ fn source_switch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_earlier_look_for_updates_that_answers_late_changes_nothing() {
+        let offer = |id: &str, number: &str| {
+            HashMap::from([((SourceId::Sunrise, id.to_owned()), number.to_owned())])
+        };
+        let mut offers = HashMap::new();
+        // The old instance's look (1) and the new one's (2) are both out; the new one answers first.
+        offer_updates(&mut offers, 2, 2, offer("new-mod", "3"));
+        offer_updates(&mut offers, 2, 1, offer("old-mod", "9"));
+        assert_eq!(offers, offer("new-mod", "3"));
+    }
 
     #[test]
     fn counts_and_checksums_read_short() {
