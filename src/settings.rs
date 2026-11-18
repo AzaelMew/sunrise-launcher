@@ -1,9 +1,10 @@
 //! Settings for the whole launcher, one section at a time. The game build and its channel stay
 //! in the play bar, the one place that shows them.
 use super::*;
+use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::frame::{button, BAD, BG, CARD, GOLD, LINE, MUTED, SOFT, TEXT};
 use crate::mods::{chip, choices, switch, Choose};
+use crate::paint::palette;
 use gpui::rgb;
 use std::rc::Rc;
 use storage::Category;
@@ -28,7 +29,7 @@ pub(super) fn startup_section(location_error: bool, location_note: bool) -> Opti
 }
 
 impl Section {
-    const ALL: [Section; 6] = [
+    pub(super) const ALL: [Section; 6] = [
         Section::Account,
         Section::Game,
         Section::Mods,
@@ -37,7 +38,7 @@ impl Section {
         Section::Launcher,
     ];
 
-    fn label(self) -> &'static str {
+    pub(super) fn label(self) -> &'static str {
         match self {
             Section::Account => "Account",
             Section::Game => "Game",
@@ -51,7 +52,7 @@ impl Section {
     fn about(self) -> &'static str {
         match self {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
-            Section::Game => "How the game starts. Its build is chosen in the bar below.",
+            Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Mods => "What mods with native code may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
@@ -75,21 +76,19 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
         .flex_col()
         .rounded(px(tokens::R_CARD))
         .border_1()
-        .border_color(rgb(SOFT))
-        .bg(rgb(CARD));
+        .border_color(rgb(palette().divider))
+        .bg(palette().card());
     for (i, row) in rows.into_iter().enumerate() {
-        card = card.child(
-            row.px(px(16.))
-                .py(px(14.))
-                .when(i > 0, |d| d.border_t_1().border_color(rgb(SOFT))),
-        );
+        card = card.child(row.px(px(16.)).py(px(14.)).when(i > 0, |d| {
+            d.border_t_1().border_color(rgb(palette().divider))
+        }));
     }
     card
 }
 
 pub(crate) fn hint(text: impl Into<SharedString>) -> Div {
     div()
-        .text_color(rgb(MUTED))
+        .text_color(rgb(palette().muted))
         .text_size(px(tokens::SMALL))
         .child(text.into())
 }
@@ -156,13 +155,13 @@ pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
 }
 
 pub(crate) fn danger(b: Stateful<Div>) -> Stateful<Div> {
-    b.text_color(rgb(BAD))
+    b.text_color(rgb(palette().danger))
 }
 
 pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::SMALL))
-        .text_color(rgb(BAD))
+        .text_color(rgb(palette().danger))
         .child(text.into())
 }
 
@@ -185,9 +184,9 @@ impl Launcher {
                     .rounded(px(tokens::R_CONTROL))
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(if on { TEXT } else { MUTED }))
-                    .when(on, |d| d.bg(rgb(CARD)))
-                    .hover(|d| d.text_color(rgb(TEXT)))
+                    .text_color(rgb(if on { palette().text } else { palette().muted }))
+                    .when(on, |d| d.bg(rgb(palette().selected)))
+                    .hover(|d| d.text_color(rgb(palette().text)))
                     .child(tr(s.label()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.settings_open(s);
@@ -232,7 +231,7 @@ impl Launcher {
             .track_scroll(&crate::frame::scrolls("settings"))
             .px(px(32.))
             .py(px(24.))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
             .flex()
             .flex_col()
             .gap(px(20.))
@@ -317,6 +316,10 @@ impl Launcher {
                 off(out)
             } else {
                 out.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if this.account_locked() {
+                        this.say_account_locked();
+                        return;
+                    }
                     let Some(generation) = this.begin_auth_job(&uuid) else {
                         return;
                     };
@@ -476,7 +479,7 @@ impl Launcher {
         let asking = self.ui.settings.setup;
         let mut setup = row(
             tr("A second set of mods"),
-            tr("A setup keeps its own mods, worlds and servers. Switch between setups in the bar below."),
+            tr("A setup keeps its own mods, worlds and servers. Switch between setups in the sidebar."),
             div().child(
                 button("alt-create", tr(if asking { "Cancel" } else { "New setup…" })).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -501,9 +504,8 @@ impl Launcher {
                                     this.servers
                                         .text(servers_page::Field::InstanceName)
                                         .set(String::new());
-                                    this.ui.settings.note = Some(
-                                        tr("Setup created. Select it in the bar below.").into(),
-                                    );
+                                    this.ui.settings.note =
+                                        Some(tr("Setup created. Select it in the sidebar.").into());
                                 }
                                 Err(e) => this.ui.settings.note = Some(e),
                             };
@@ -841,15 +843,23 @@ impl Launcher {
                 .size(px(16.))
                 .rounded_full()
                 .border_1()
-                .border_color(rgb(if pinned { TEXT } else { LINE }))
+                .border_color(rgb(if pinned {
+                    palette().text
+                } else {
+                    palette().line
+                }))
                 .flex()
                 .items_center()
                 .justify_center()
                 .text_size(px(tokens::CAPTION))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(rgb(if pinned { TEXT } else { MUTED }))
+                .text_color(rgb(if pinned {
+                    palette().text
+                } else {
+                    palette().muted
+                }))
                 .cursor_pointer()
-                .focus_visible(|s| s.border_color(rgb(GOLD)))
+                .focus_visible(|s| s.border_color(rgb(palette().focus)))
                 .child("?")
                 .on_hover(cx.listener(move |this, over: &bool, _, cx| {
                     let hover = &mut this.collection.sent_hover;
@@ -879,8 +889,8 @@ impl Launcher {
                                 .p(px(12.))
                                 .rounded(px(tokens::R_CONTROL))
                                 .border_1()
-                                .border_color(rgb(LINE))
-                                .bg(rgb(CARD))
+                                .border_color(rgb(palette().line))
+                                .bg(rgb(palette().raised))
                                 .shadow_lg()
                                 .occlude()
                                 .child(hint(tr(full))),
@@ -1036,12 +1046,12 @@ impl Launcher {
                         .overflow_y_scroll()
                         .p(px(12.))
                         .rounded(px(tokens::R_CONTROL))
-                        .bg(rgb(BG))
+                        .bg(rgb(palette().field))
                         .border_1()
-                        .border_color(rgb(SOFT))
+                        .border_color(rgb(palette().divider))
                         .font_family(theme::MONO)
                         .text_size(px(tokens::SMALL))
-                        .text_color(rgb(MUTED))
+                        .text_color(rgb(palette().muted))
                         .children(json.lines().map(|l| div().child(l.to_string()))),
                 );
         }
@@ -1253,22 +1263,15 @@ impl Launcher {
     ) -> Div {
         let theme = crate::mods::field_theme(self.theme);
         let to_focus = focus.clone();
-        let field = div()
+        let field = crate::frame::input(focused)
             .id(id)
             .track_focus(&focus)
             .seen()
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .flex()
-            .items_center()
-            .overflow_hidden()
-            .rounded(px(tokens::R_CONTROL))
-            .bg(rgb(BG))
-            .border_1()
-            .border_color(rgb(if focused { GOLD } else { LINE }))
             .font_family(theme::MONO)
             .text_size(px(tokens::LABEL))
-            .text_color(rgb(TEXT))
+            .text_color(rgb(palette().text))
             .cursor_text()
             .child(line_edit::content(
                 input,

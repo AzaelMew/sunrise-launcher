@@ -11,6 +11,16 @@ fn scratch(name: &str) -> PathBuf {
     root
 }
 
+/// An instance with nothing chosen but its name and what it copies.
+fn create_in(
+    game_home: &Path,
+    data: &Path,
+    name: &str,
+    from: Option<&Instance>,
+) -> Result<Instance, String> {
+    create_whole_in(game_home, data, name, from, None, |_| {})
+}
+
 fn put(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, text).unwrap();
@@ -525,5 +535,168 @@ fn a_retired_java_selection_is_refused_by_name() {
         Some("vanilla")
     );
     assert_eq!(selection_in(&all, None).unwrap().id, DEFAULT);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_last_played_no_calendar_holds_reads_as_never_played() {
+    let root = scratch("far-future");
+    let (home, data) = (root.join("home"), root.join("data"));
+    fs::create_dir_all(home.join(OWN).join("far")).unwrap();
+    fs::create_dir_all(home.join(OWN).join("near")).unwrap();
+    // Both fit a u64 of seconds; only one is a date.
+    put(
+        &data.join(FILE),
+        &format!(
+            r#"{{"instances": {{
+                "sunrise": {{"last_played": {}, "played_secs": 60}},
+                "far": {{"last_played": 9223372036854775807, "name": "Far"}},
+                "near": {{"last_played": 1763424000, "name": "Near"}}}}}}"#,
+            u64::MAX
+        ),
+    );
+    let all = list_in(&home, &data);
+    let played = |id: &str| all.iter().find(|i| i.id == id).unwrap().last_played;
+    assert_eq!(played("sunrise"), None);
+    assert_eq!(played("far"), None);
+    let near = played("near").unwrap();
+    assert_eq!(near, UNIX_EPOCH + Duration::from_secs(1_763_424_000));
+    // What Home does with one: every time kept converts to a local date without a panic.
+    for kept in [near, calendar_time(LATEST).unwrap()] {
+        let _: chrono::DateTime<chrono::Local> = kept.into();
+    }
+    assert_eq!(calendar_time(LATEST + Duration::from_secs(1)), None);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
+    let root = scratch("create-fails");
+    let (home, data) = (root.join("home"), root.join("data"));
+    player_home(&home);
+    let all = list_in(&home, &data);
+    let before = files(&home);
+    // The choices can't be saved: instances.json is a folder.
+    fs::create_dir_all(data.join(FILE)).unwrap();
+    for from in [None, Some(&all[0])] {
+        let failed = create_whole_in(&home, &data, "Skyblock", from, Some(Some(b"png")), |m| {
+            m.group = Some("Mine".into())
+        });
+        assert!(failed.is_err());
+        assert!(!home.join(OWN).join("skyblock").exists());
+        assert!(!home.join(STAGING).exists());
+        assert_eq!(files(&home), before, "nothing of the attempt stays");
+    }
+    fs::remove_dir(data.join(FILE)).unwrap();
+    assert_eq!(list_in(&home, &data).len(), all.len());
+
+    // The same name again, now whole: its folder, picture and every choice at once.
+    let made = create_whole_in(
+        &home,
+        &data,
+        "Skyblock",
+        Some(&all[0]),
+        Some(Some(b"png")),
+        |m| {
+            m.group = Some("Mine".into());
+            m.version = Some("nightly-2026-11-13-aaaaaaa".into());
+        },
+    )
+    .unwrap();
+    assert_eq!(made.id, "skyblock");
+    assert_eq!(made.group.as_deref(), Some("Mine"));
+    assert_eq!(made.version.as_deref(), Some("nightly-2026-11-13-aaaaaaa"));
+    assert_eq!(fs::read(made.home.join(PICTURE)).unwrap(), b"png");
+    assert!(made.home.join("saves/World/level.dat").is_file());
+    assert!(!home.join(STAGING).exists());
+    // A copy asked to have no picture doesn't keep the one it copied.
+    let plain = create_whole_in(&home, &data, "Plain", Some(&made), Some(None), |_| {}).unwrap();
+    assert!(!plain.home.join(PICTURE).exists());
+    assert!(made.home.join(PICTURE).is_file());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_saved_texture_name_is_held_to_the_typed_ones_and_stays_inside_the_resources() {
+    let root = scratch("saved-icon");
+    let (home, data) = (root.join("home"), root.join("data"));
+    for slug in ["escape", "odd", "fine", "tinted"] {
+        fs::create_dir_all(home.join(OWN).join(slug)).unwrap();
+    }
+    put(
+        &data.join(FILE),
+        r##"{"instances": {
+            "escape": {"icon": {"texture": "../../../../secret"}, "group": "Kept"},
+            "odd": {"icon": {"colour": "red; x"}, "name": "Odd"},
+            "fine": {"icon": {"texture": "diamond"}},
+            "tinted": {"icon": {"colour": "#3fa7d6"}}}}"##,
+    );
+    let all = list_in(&home, &data);
+    let of = |id: &str| all.iter().find(|i| i.id == id).unwrap();
+    // The bad icon alone is dropped: the instance and its other choices stay.
+    assert_eq!(of("escape").icon, None);
+    assert_eq!(of("escape").group.as_deref(), Some("Kept"));
+    assert_eq!(
+        (of("odd").icon.clone(), of("odd").name.as_str()),
+        (None, "Odd")
+    );
+    assert_eq!(of("fine").icon, Some(Icon::Texture("diamond".into())));
+    assert_eq!(of("tinted").icon, Some(Icon::Colour("#3fa7d6".into())));
+
+    // Even a name made in code reads nothing outside the textures.
+    let resources = root.join("resources");
+    put(
+        &resources.join("assets/minecraft/textures/item/diamond.png"),
+        "png",
+    );
+    put(&root.join("secret.png"), "secret");
+    for name in ["../../../../secret", "item/diamond", "/etc/passwd", ""] {
+        assert_eq!(
+            Icon::Texture(name.into()).texture(&resources),
+            None,
+            "{name}"
+        );
+    }
+    #[cfg(unix)]
+    {
+        fs::create_dir_all(resources.join("assets/minecraft/textures/block")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("secret.png"),
+            resources.join("assets/minecraft/textures/block/linked.png"),
+        )
+        .unwrap();
+        assert_eq!(Icon::Texture("linked".into()).texture(&resources), None);
+    }
+    assert!(Icon::Texture("diamond".into())
+        .texture(&resources)
+        .unwrap()
+        .ends_with("item/diamond.png"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn artwork_is_read_only_up_to_its_limit() {
+    let root = scratch("artwork");
+    let small = root.join("icon.png");
+    fs::write(&small, b"png").unwrap();
+    assert_eq!(read_artwork(&small).as_deref(), Some(&b"png"[..]));
+    // One byte over: refused before anything of it is read (a sparse file, so no disk either).
+    let big = root.join("big.png");
+    fs::File::create(&big)
+        .unwrap()
+        .set_len(MAX_ARTWORK + 1)
+        .unwrap();
+    assert_eq!(read_artwork(&big), None);
+    let most = root.join("most.png");
+    fs::File::create(&most)
+        .unwrap()
+        .set_len(MAX_ARTWORK)
+        .unwrap();
+    assert_eq!(
+        read_artwork(&most).map(|b| b.len() as u64),
+        Some(MAX_ARTWORK)
+    );
+    assert_eq!(read_artwork(&root), None, "a folder is no picture");
+    assert_eq!(read_artwork(&root.join("missing.png")), None);
     fs::remove_dir_all(&root).unwrap();
 }

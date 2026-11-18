@@ -971,7 +971,7 @@ impl Launcher {
 
     // ----- Building blocks ------------------------------------------------------------------
 
-    fn focus_handle(&mut self, f: Field, cx: &mut Context<Self>) -> FocusHandle {
+    pub(super) fn focus_handle(&mut self, f: Field, cx: &mut Context<Self>) -> FocusHandle {
         self.servers
             .focus
             .entry(f)

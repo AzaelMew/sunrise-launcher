@@ -925,6 +925,10 @@ impl Step {
                 ],
             ),
             Self::ToolsKept { .. } => tr("Using the mod tools already downloaded").into(),
+            // The log keeps the backup destination and the full compatibility report. Neither
+            // belongs in the shared Play header while the remaining mods are being built.
+            Self::BackedUp(_) => tr("World backup saved").into(),
+            Self::LeftOut(left) => trf("Leaving out {mod} for this build", &[("mod", &left.id)]),
             Self::Compile { .. } => tr("Building the game with your mods").into(),
             Self::Mod { id, done, total } => trf(
                 "Building {mod} ({done} of {total})",
@@ -2241,6 +2245,17 @@ mod tests {
         assert!(!rust.contains("Rust") && !rust.contains('%'), "{rust}");
         assert!(!Step::Tool.shown().contains("mixins"));
         assert!(!Step::Mixins.shown().contains("mixins"));
+        let backup = Step::BackedUp("Backed up Test to /home/player/saves/Test".into());
+        assert_eq!(backup.shown(), "World backup saved");
+        assert!(backup.label().contains("/home/player/"));
+        let skipped = Step::LeftOut(LeftOut {
+            id: "example".into(),
+            version: "1.0.0".into(),
+            why: Why::Unfit("the native symbol was removed".into()),
+            detail: None,
+        });
+        assert_eq!(skipped.shown(), "Leaving out example for this build");
+        assert!(skipped.label().contains("native symbol"));
         // A step already in plain words reads the same in both.
         let done = Step::Done {
             secs: 41,

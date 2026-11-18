@@ -13,7 +13,7 @@ pub(super) struct Worlds {
     pub(super) list: Vec<World>,
     /// Which of the list's rows Home's glass Worlds tab has built and measured (`cull`).
     pub(super) cull: cull::Cull,
-    fresh: bool,
+    pub(super) fresh: bool,
     reading: bool,
 }
 

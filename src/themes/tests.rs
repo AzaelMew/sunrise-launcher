@@ -162,6 +162,44 @@ fn a_background_is_a_picture_kept_once() {
 }
 
 #[test]
+fn a_background_is_drawn_no_larger_than_the_gpu_holds_and_a_huge_one_is_refused() {
+    let root = std::env::temp_dir().join(format!("sunrise-background-big-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dir = root.join("data");
+    std::fs::create_dir_all(&dir).unwrap();
+    // Wider than any texture atlas, as a saved choice from before sizes were checked.
+    let wide = dir.join("background-0123456789ab.png");
+    image::GrayImage::new(20_000, 70).save(&wide).unwrap();
+    for limit in [1024, 8192, 16384] {
+        let drawn = load_background(&wide, limit).unwrap();
+        let most = BACKGROUND_SIDE.min(limit);
+        assert_eq!(drawn.width(), most, "at limit {limit}");
+        assert!(drawn.height() >= 1 && drawn.height() <= most);
+    }
+    // Not a picture: an error, for the caller to show its own scenery instead.
+    std::fs::write(dir.join("background-broken.png"), "no").unwrap();
+    assert!(load_background(&dir.join("background-broken.png"), 8192).is_err());
+    assert!(load_background(&dir.join("background-missing.png"), 8192).is_err());
+
+    // The importer measures pixels, not only bytes: a small file claiming 30000 × 30000.
+    let claimed = root.join("claimed.png");
+    image::GrayImage::new(64, 64).save(&claimed).unwrap();
+    let mut bytes = std::fs::read(&claimed).unwrap();
+    // IHDR's data starts after the 8-byte signature, the chunk's length and its name.
+    bytes[16..20].copy_from_slice(&30_000u32.to_be_bytes());
+    bytes[20..24].copy_from_slice(&30_000u32.to_be_bytes());
+    let mut crc = flate2::Crc::new();
+    crc.update(&bytes[12..29]);
+    bytes[29..33].copy_from_slice(&crc.sum().to_be_bytes());
+    std::fs::write(&claimed, bytes).unwrap();
+    assert!(keep_background(&dir, &claimed)
+        .unwrap_err()
+        .contains("too large"));
+    assert!(wide.exists(), "a refused file keeps the old one");
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn a_picked_hue_is_any_degree_and_survives_settings_json() {
     assert_eq!(Accent::parse("blue"), Some(Accent::BLUE));
     assert_eq!(Accent::parse("217"), Some(Accent::custom(217.)));

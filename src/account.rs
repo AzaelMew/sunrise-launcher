@@ -1923,6 +1923,18 @@ impl Accounts {
         Ok(())
     }
 
+    /// Switches who plays to `uuid`, on disk: the list as it is saved now with that account
+    /// selected, saved again. The window keeps what this returns.
+    pub fn switch(uuid: &str) -> Result<Self, String> {
+        Self::switch_in(&Self::path(), uuid)
+    }
+    pub(crate) fn switch_in(path: &Path, uuid: &str) -> Result<Self, String> {
+        let mut accounts = Self::load_from(path);
+        accounts.play_as(uuid)?;
+        accounts.save_to(path)?;
+        Ok(accounts)
+    }
+
     /// A renewed profile (its name or skin changed) in place of the old one; who plays stays.
     fn update(&mut self, account: Account) {
         if let Some(a) = self.accounts.iter_mut().find(|a| a.uuid == account.uuid) {
@@ -2379,6 +2391,48 @@ pub fn session_for_game(game_home: &Path) -> Result<GameSession, NoOwner> {
         eprintln!("Sunrise: the accounts are not saved: {e}");
     }
     Ok(session_file(game_home, pass))
+}
+
+/// [`session_for_game`] for the account that was selected when Play was accepted, `accepted`:
+/// installing, preparing and building can take minutes, and whoever is selected when they end
+/// must not be the one who plays. Which account is selected now is not touched. An account
+/// signed out meanwhile doesn't play, and no session file is written for it.
+pub fn session_for_game_accepted(game_home: &Path, accepted: &str) -> Result<GameSession, NoOwner> {
+    let mut accounts = Accounts::load();
+    let pass = launch_accepted(
+        &Endpoints::live(),
+        client_id().as_deref(),
+        store(),
+        &mut accounts,
+        accepted,
+    )?;
+    if let Err(e) = accounts.save_renewed() {
+        eprintln!("Sunrise: the accounts are not saved: {e}");
+    }
+    Ok(session_file(game_home, pass))
+}
+
+fn launch_accepted(
+    ep: &Endpoints,
+    client_id: Option<&str>,
+    store: &dyn SecretStore,
+    accounts: &mut Accounts,
+    accepted: &str,
+) -> Result<Launch, NoOwner> {
+    if !accounts.accounts.iter().any(|a| a.uuid == accepted) {
+        return Err(NoOwner {
+            keyring: Some(
+                crate::i18n::tr(
+                    "The account Play was pressed for was signed out before the game started. Press Play again.",
+                )
+                .into(),
+            ),
+        });
+    }
+    let chosen = accounts.selected.replace(accepted.to_owned());
+    let pass = launch_for_game(ep, client_id, store, accounts);
+    accounts.selected = chosen;
+    pass
 }
 
 /// [`session_for_game`] for one launch as `who` (`play --account`, a signed-in account): who

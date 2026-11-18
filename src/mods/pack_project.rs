@@ -2,10 +2,10 @@
 //! resource, shader or data pack. What it says comes from the pack's source (`Source::details`
 //! and `Source::versions`), read in a worker; the action is the card's own (Add, or the world
 //! picker for a data pack). Back returns to the grid as it was left.
-use super::project::{about_link, about_row, back, gallery, prose};
+use super::project::{about_link, about_row, back, prose};
 use super::ui::*;
 use super::*;
-use crate::frame::{MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use sunrise_launcher::browser::details::Details;
 use sunrise_launcher::browser::{self, images, Kind, Project, Version};
 
@@ -109,7 +109,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(
                 back(tr("Discover")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.ui.page = Page::PackFind;
@@ -246,7 +246,7 @@ impl Launcher {
                     .child(
                         div()
                             .text_size(px(tokens::CAPTION))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )
@@ -271,12 +271,9 @@ impl Launcher {
                     })),
             );
 
-        let shots: Vec<Option<PathBuf>> = details
-            .map(|d| d.gallery.iter().take(4).map(|i| i.url.clone()).collect())
-            .unwrap_or_else(Vec::<String>::new)
-            .iter()
-            .map(|url| self.mods_image(url, images::GALLERY))
-            .collect();
+        let shots = details
+            .map(|d| d.gallery.iter().map(|i| i.url.clone()).collect())
+            .unwrap_or_default();
         let about: AnyElement = match &loaded {
             None => muted(tr("Loading…")).into_any_element(),
             Some(Err(why)) => div()
@@ -303,7 +300,7 @@ impl Launcher {
                     .gap(px(16.))
                     .px(px(14.))
                     .py(px(10.))
-                    .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
+                    .when(i > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                     .text_size(px(tokens::LABEL))
                     .child(
                         div()
@@ -317,7 +314,7 @@ impl Launcher {
                         div()
                             .w(px(90.))
                             .flex_none()
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(day(&v.published)),
                     )
                     .child(
@@ -325,7 +322,7 @@ impl Launcher {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(games(&v.game_versions)),
                     )
             }))
@@ -343,7 +340,10 @@ impl Launcher {
             true => (Some(side), None),
             false => (None, Some(side.w(px(360.)).flex_none())),
         };
-        main = main.children(above).children(gallery(shots)).child(about);
+        main = main
+            .children(above)
+            .children(self.gallery(shots, cx))
+            .child(about);
         if let Some(list) = list {
             main = main
                 .child(

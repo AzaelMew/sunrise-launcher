@@ -2,7 +2,8 @@
 //! file targets the collection that opened the dialog, even if another setup exists.
 use super::ui::{c, card, dim, muted, primary, switch};
 use super::*;
-use crate::frame::{button, LINE, MUTED, SOFT, TEXT};
+use crate::frame::button;
+use crate::paint::palette;
 use gpui::ExternalPaths;
 use std::path::Path;
 use sunrise_launcher::packs::{self, Kind};
@@ -42,18 +43,22 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(header)
             .children(self.strip(cx))
             .child(self.collection_tabs(cx))
             .child(list)
             // A file dropped on the page joins the collection shown; a data pack needs a world.
             .when_some(kind, |page, kind| {
-                page.drag_over::<ExternalPaths>(|s, _, _, _| s.border_1().border_color(c(MUTED)))
-                    .on_drop(cx.listener(move |this, paths: &ExternalPaths, _, cx| {
+                page.drag_over::<ExternalPaths>(|s, _, _, _| {
+                    s.border_1().border_color(c(palette().muted))
+                })
+                .on_drop(cx.listener(
+                    move |this, paths: &ExternalPaths, _, cx| {
                         this.import_pack_files(home.clone(), kind, paths.paths().to_vec(), cx);
                         cx.stop_propagation();
-                    }))
+                    },
+                ))
             })
             .into_any_element()
     }
@@ -259,13 +264,15 @@ impl Launcher {
                 .items_center()
                 .gap(px(12.))
                 .px(px(16.))
-                .when(shown > 0, |d| d.border_t_1().border_color(c(SOFT)));
+                .when(shown > 0, |d| {
+                    d.border_t_1().border_color(c(palette().divider))
+                });
             shown += 1;
             let image = div()
                 .size(px(36.))
                 .flex_none()
                 .rounded(px(tokens::R_SMALL))
-                .bg(c(LINE))
+                .bg(c(palette().selected))
                 .overflow_hidden()
                 .flex()
                 .items_center()
@@ -273,7 +280,7 @@ impl Launcher {
             row = row
                 .child(match icon {
                     Some(icon) => image.child(gpui::img(icon.clone()).size_full()),
-                    None => image.child(blocks::icon("package", 16., c(MUTED))),
+                    None => image.child(blocks::icon("package", 16., c(palette().muted))),
                 })
                 .child(
                     div()

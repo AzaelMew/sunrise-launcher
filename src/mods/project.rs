@@ -2,55 +2,166 @@
 use super::model::{self, Make};
 use super::ui::*;
 use super::*;
-use crate::frame::{CARD, GOLD, LINE, MUTED, SOFT, TEXT};
+use crate::paint::palette;
 use sunrise_launcher::browser::images;
 
-/// A page's pictures: the first large, up to three small beside it. None when it has none.
-pub(super) fn gallery(shots: Vec<Option<PathBuf>>) -> Option<Div> {
-    if shots.is_empty() {
-        return None;
-    }
-    let pic = |path: Option<PathBuf>| match path {
-        Some(path) => div()
-            .rounded(px(tokens::R_CONTROL))
-            .overflow_hidden()
-            // Filled edge to edge: a picture of another shape is cropped, never boxed.
-            .child(
-                gpui::img(path)
-                    .size_full()
-                    .object_fit(gpui::ObjectFit::Cover),
-            ),
-        None => div().rounded(px(tokens::R_CONTROL)).bg(c(CARD)),
-    };
-    let mut shots = shots.into_iter();
-    Some(
-        div()
-            .flex()
-            .gap(px(10.))
-            .h(px(280.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(pic(shots.next().flatten()).size_full()),
-            )
-            .children((shots.len() > 0).then(|| {
+/// Show every registry screenshot. Pack feeds can list many more: the full-size viewer steps
+/// through those too, without fetching all of a large pack gallery on opening its page.
+impl Launcher {
+    pub(super) fn gallery(&mut self, urls: Vec<String>, cx: &mut Context<Self>) -> Option<Div> {
+        if urls.is_empty() {
+            return None;
+        }
+        let urls: Rc<[String]> = urls.into();
+        const PREVIEWS: usize = sunrise_launcher_smod::index::page::MAX_SCREENSHOTS;
+        let count = urls.len().min(PREVIEWS);
+        let columns = if self.window_width < 950. { 3 } else { 4 };
+        let mut tiles = urls.iter().take(PREVIEWS).enumerate().map(|(i, url)| {
+            let photo = self.mods_image(url, images::GALLERY);
+            let all = urls.clone();
+            let label = trf(
+                "Picture {number} of {total}",
+                &[
+                    ("number", &(i + 1).to_string()),
+                    ("total", &urls.len().to_string()),
+                ],
+            );
+            div()
+                .id(ElementId::named_usize("gallery-picture", i))
+                .reach_edge()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .cursor_pointer()
+                .rounded(px(tokens::R_CONTROL))
+                .border_1()
+                .border_color(c(palette().divider))
+                .bg(palette().card())
+                .overflow_hidden()
+                .tooltip(crate::glass_ui::tip(label))
+                .children(photo.map(|path| {
+                    gpui::img(path)
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover)
+                }))
+                .when(i + 1 == PREVIEWS && urls.len() > PREVIEWS, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .right_0()
+                            .bottom_0()
+                            .px(px(6.))
+                            .bg(c(palette().raised))
+                            .child(format!("+{}", urls.len() - PREVIEWS)),
+                    )
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.ui.sheets.gallery = Some((all.clone(), i));
+                    this.open_sheet(crate::sheets::Sheet::Picture);
+                    cx.notify();
+                }))
+        });
+        let mut grid = div().flex().flex_col().flex_none().gap(px(6.));
+        for _ in 0..count.div_ceil(columns) {
+            grid = grid.child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .w(px(150.))
-                    .children(shots.map(|s| pic(s).flex_1().w_full()))
-            })),
-    )
+                    .gap(px(6.))
+                    .h(px(if count == 1 { 220. } else { 104. }))
+                    .children(tiles.by_ref().take(columns)),
+            );
+        }
+        Some(grid)
+    }
+
+    pub(crate) fn gallery_picture(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let (urls, index) = self.ui.sheets.gallery.as_ref()?;
+        let n = urls.len();
+        let index = *index;
+        let url = urls.get(index)?.clone();
+        let image = self.mods_image(&url, images::GALLERY);
+        let mut bar = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(div().flex_1().child(trf(
+                "Picture {number} of {total}",
+                &[
+                    ("number", &(index + 1).to_string()),
+                    ("total", &n.to_string()),
+                ],
+            )));
+        for (id, label, to) in [
+            ("picture-prev", tr("Previous"), index.checked_sub(1)),
+            (
+                "picture-next",
+                tr("Next"),
+                (index + 1 < n).then_some(index + 1),
+            ),
+        ] {
+            let btn = crate::frame::button(id, label);
+            bar = bar.child(match to {
+                None => btn.opacity(0.4).cursor_default().tab_stop(false),
+                Some(to) => btn.on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some((_, i)) = &mut this.ui.sheets.gallery {
+                        *i = to;
+                    }
+                    cx.notify();
+                })),
+            });
+        }
+        bar = bar.child(
+            crate::frame::button("picture-close", tr("Close")).on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.close_sheet();
+                    cx.notify();
+                },
+            )),
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(bar)
+            .child(match image {
+                Some(path) => div()
+                    .w_full()
+                    .h(px((self.window_height - 160.).max(80.)))
+                    .child(
+                        gpui::img(path)
+                            .size_full()
+                            .object_fit(gpui::ObjectFit::Contain),
+                    ),
+                None => muted(tr("Picture unavailable.")).py(px(32.)),
+            })
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
+                let Some((pages, i)) = &mut this.ui.sheets.gallery else {
+                    return;
+                };
+                match ev.keystroke.key.as_str() {
+                    "left" => *i = i.saturating_sub(1),
+                    "right" => *i = (*i + 1).min(pages.len() - 1),
+                    _ => return,
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        Some(crate::sheets::frame(
+            "gallery-full",
+            self.window_width - 48.,
+            body,
+            cx,
+        ))
+    }
 }
 
 /// A page's description, written in Markdown, in this look's colours.
 pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
     let mut t = field_theme(theme);
-    t.ink_soft = c(0xcfc9c0);
-    t.plate_soft = c(CARD);
-    t.rule = c(SOFT);
+    t.ink_soft = c(palette().text);
+    t.plate_soft = c(palette().card_color);
+    t.rule = c(palette().divider);
     crate::markdown::render(text, &t)
 }
 
@@ -64,7 +175,7 @@ pub(super) fn back(label: &'static str) -> Stateful<Div> {
         .items_center()
         .gap(px(8.))
         .text_size(px(tokens::LABEL))
-        .text_color(c(MUTED))
+        .text_color(c(palette().muted))
         .cursor_pointer()
         .child("‹")
         .child(label)
@@ -78,7 +189,7 @@ pub(super) fn about_row(key: &'static str, value: String) -> Div {
         .gap(px(12.))
         .py(px(5.))
         .text_size(px(tokens::LABEL))
-        .child(div().flex_none().text_color(c(MUTED)).child(key))
+        .child(div().flex_none().text_color(c(palette().muted)).child(key))
         .child(div().min_w_0().truncate().child(value))
 }
 
@@ -92,8 +203,12 @@ pub(super) fn about_link(id: &'static str, key: &'static str) -> Stateful<Div> {
         .py(px(5.))
         .text_size(px(tokens::LABEL))
         .cursor_pointer()
-        .child(div().text_color(c(MUTED)).child(key))
-        .child(div().text_color(c(GOLD)).child(tr("Open ↗")))
+        .child(div().text_color(c(palette().muted)).child(key))
+        .child(
+            div()
+                .text_color(c(palette().accent_ink))
+                .child(tr("Open ↗")),
+        )
 }
 
 impl Launcher {
@@ -114,7 +229,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.ui.page = back_to;
@@ -150,12 +265,6 @@ impl Launcher {
             .icon
             .clone()
             .and_then(|u| self.mods_image(&u, images::ICON));
-        let shots: Vec<Option<PathBuf>> = p
-            .screenshots
-            .iter()
-            .take(4)
-            .map(|u| self.mods_image(u, images::GALLERY))
-            .collect();
         let credit = match p.authors.is_empty() {
             true => String::new(),
             false => trf("by {authors}", &[("authors", &p.authors.join(", "))]),
@@ -193,9 +302,9 @@ impl Launcher {
                                     .px(px(6.))
                                     .rounded(px(tokens::R_SMALL))
                                     .border_1()
-                                    .border_color(c(LINE))
+                                    .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
-                                    .text_color(c(MUTED))
+                                    .text_color(c(palette().muted))
                                     .child(sunrise_launcher::browser::details::category_label(k))
                             }))
                             .child(
@@ -204,15 +313,15 @@ impl Launcher {
                                     .px(px(6.))
                                     .rounded(px(tokens::R_SMALL))
                                     .border_1()
-                                    .border_color(c(LINE))
+                                    .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
-                                    .text_color(c(MUTED))
+                                    .text_color(c(palette().muted))
                                     .child(p.side),
                             ),
                     ),
             );
 
-        let gallery = gallery(shots);
+        let gallery = self.gallery(p.screenshots.clone(), cx);
         let about = prose(self.theme, &p.description);
 
         let versions = card().children(p.versions.iter().enumerate().map(|(i, v)| {
@@ -227,7 +336,7 @@ impl Launcher {
                 .gap(px(16.))
                 .px(px(14.))
                 .py(px(10.))
-                .when(i > 0, |d| d.border_t_1().border_color(c(SOFT)))
+                .when(i > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                 .text_size(px(tokens::LABEL))
                 .child(
                     div()
@@ -238,16 +347,18 @@ impl Launcher {
                 .child(
                     div()
                         .w(px(90.))
-                        .text_color(c(MUTED))
+                        .text_color(c(palette().muted))
                         .child(v.published.clone()),
                 )
                 .child(match (&v.fit.reason(), installed, will) {
-                    (_, true, _) => div().text_color(c(0x7fd6a0)).child(tr("Added")),
+                    (_, true, _) => div().text_color(c(palette().success)).child(tr("Added")),
                     (None, _, true) => div()
-                        .text_color(c(0x7fd6a0))
+                        .text_color(c(palette().success))
                         .child(tr("Fits your game · what Add installs")),
-                    (None, _, false) => div().text_color(c(0x7fd6a0)).child(tr("Fits your game")),
-                    (Some(why), _, _) => div().text_color(c(MUTED)).child(why.clone()),
+                    (None, _, false) => div()
+                        .text_color(c(palette().success))
+                        .child(tr("Fits your game")),
+                    (Some(why), _, _) => div().text_color(c(palette().muted)).child(why.clone()),
                 })
         }));
 
@@ -261,7 +372,7 @@ impl Launcher {
                 .flex()
                 .items_center()
                 .justify_center()
-                .text_color(c(0x7fd6a0))
+                .text_color(c(palette().success))
                 .child(trf("Added · version {version}", &[("version", n)]))
                 .into_any_element(),
             (None, fit, Some(will)) if fit.fits() => {
@@ -316,7 +427,7 @@ impl Launcher {
                 .items_center()
                 .gap(px(12.))
                 .py(px(10.))
-                .child(div().w(px(22.)).text_color(c(MUTED)).child(glyph))
+                .child(div().w(px(22.)).text_color(c(palette().muted)).child(glyph))
                 .child(
                     div()
                         .flex()
@@ -333,7 +444,7 @@ impl Launcher {
         let mut what = div().flex().flex_col().child(
             div()
                 .text_size(px(tokens::CAPTION))
-                .text_color(c(MUTED))
+                .text_color(c(palette().muted))
                 .pb(px(6.))
                 .child(tr("WHAT THIS CHANGES")),
         );
@@ -367,7 +478,7 @@ impl Launcher {
                     .children(facts_line.map(|l| {
                         div()
                             .text_size(px(tokens::SMALL))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .child(l)
                     }))
                     .child(what)
@@ -383,7 +494,7 @@ impl Launcher {
                     .child(
                         div()
                             .text_size(px(tokens::CAPTION))
-                            .text_color(c(MUTED))
+                            .text_color(c(palette().muted))
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )

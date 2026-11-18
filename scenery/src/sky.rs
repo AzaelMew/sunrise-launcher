@@ -215,6 +215,34 @@ impl Sky {
         };
         self.clock.set(run, now);
         let t = self.clock.at(now).as_secs_f32();
+        let next = self.clock.running().then(|| {
+            let clouds = CLOUDS.iter().map(|l| until_next(t * l.speed) / l.speed);
+            let stars = STAR_PERIODS.iter().enumerate().map(|(g, p)| {
+                let quarter = p / STAR_LEVELS.len() as f32;
+                until_next(t / quarter + g as f32) * quarter
+            });
+            let mut soonest = clouds.chain(stars).fold(f32::MAX, f32::min);
+            if n.art.mood != Mood::Plain {
+                soonest = soonest.min(until_next(t * MOOD_STEPS) / MOOD_STEPS);
+            }
+            if let (Some(since), Motion::InFront) = (self.unfocused, motion()) {
+                soonest = soonest.min((UNFOCUSED - (now - since)).as_secs_f32());
+            }
+            // A little after the change, so the frame's clock is surely past it.
+            Duration::from_secs_f32(soonest.max(0.) + 0.005)
+        });
+        (self.frame_at(n, (w, h), scale, keep, t), next)
+    }
+
+    /// A still sky for the launcher backdrop. Unlike an animated view, it requests no wakeups.
+    pub fn frame_at(
+        &mut self,
+        n: &Night,
+        (w, h): (f32, f32),
+        scale: f32,
+        keep: Keep,
+        t: f32,
+    ) -> Div {
         let layers = self.layers(n.art, scale);
         let snap = |v: f32| (v * scale).round() / scale;
         let art = &n.art;
@@ -342,23 +370,7 @@ impl Sky {
             );
         }
 
-        let next = self.clock.running().then(|| {
-            let clouds = CLOUDS.iter().map(|l| until_next(t * l.speed) / l.speed);
-            let stars = STAR_PERIODS.iter().enumerate().map(|(g, p)| {
-                let quarter = p / STAR_LEVELS.len() as f32;
-                until_next(t / quarter + g as f32) * quarter
-            });
-            let mut soonest = clouds.chain(stars).fold(f32::MAX, f32::min);
-            if mood != Mood::Plain {
-                soonest = soonest.min(until_next(t * MOOD_STEPS) / MOOD_STEPS);
-            }
-            if let (Some(since), Motion::InFront) = (self.unfocused, motion()) {
-                soonest = soonest.min((UNFOCUSED - (now - since)).as_secs_f32());
-            }
-            // A little after the change, so the frame's clock is surely past it.
-            Duration::from_secs_f32(soonest.max(0.) + 0.005)
-        });
-        (sky, next)
+        sky
     }
 
     fn layers(&mut self, art: SkyArt, scale: f32) -> &Layers {

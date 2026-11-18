@@ -2,7 +2,7 @@
 use super::model::{self, Make, Sort};
 use super::ui::*;
 use super::*;
-use crate::frame::{BG, CARD, LINE, MUTED, TEXT};
+use crate::paint::palette;
 use gpui::deferred;
 use sunrise_launcher::browser::details::category_label;
 use sunrise_launcher::browser::images;
@@ -27,7 +27,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .p(px(24.))
-            .text_color(c(TEXT))
+            .text_color(c(palette().text))
             .child(header)
             .children(self.strip(cx));
         let (cards, categories): (Vec<Card>, Vec<String>) = match &self.ui.mods.catalog {
@@ -135,8 +135,8 @@ impl Launcher {
                     .p(px(6.))
                     .rounded(px(tokens::R_CONTROL))
                     .border_1()
-                    .border_color(c(LINE))
-                    .bg(c(CARD))
+                    .border_color(c(palette().line))
+                    .bg(c(palette().raised))
                     .shadow_lg()
                     .occlude()
                     .flex()
@@ -154,7 +154,7 @@ impl Launcher {
                                     .rounded(px(tokens::R_SMALL))
                                     .text_size(px(tokens::LABEL))
                                     .cursor_pointer()
-                                    .hover(|s| s.bg(c(LINE)))
+                                    .hover(|s| s.bg(c(palette().hover)))
                                     .when(on, |d| d.font_weight(FontWeight::SEMIBOLD))
                                     .child(label)
                                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -178,7 +178,7 @@ impl Launcher {
                 .cursor_pointer()
                 .text_size(px(tokens::LABEL))
                 .child(label.to_owned())
-                .child(blocks::icon("chevron-down", 13., c(MUTED)))
+                .child(blocks::icon("chevron-down", 13., c(palette().muted)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let same = matches!(
                         (&this.ui.mods.menu, &which),
@@ -354,7 +354,6 @@ impl Launcher {
                 }
             }),
         )
-        .bg(c(BG))
         .into_any_element()
     }
 }

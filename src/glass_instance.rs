@@ -65,14 +65,16 @@ impl Launcher {
 
 /// Every Nightly published with a build for this platform, newest first, then the installed
 /// versions that list lacks (older Nightlies, imported builds). Picking one not installed installs
-/// it on Create.
+/// it on Create. Never a build made with mods (as on Versions): that is one profile's, made from
+/// its mods with the player's permission, not a game to start another profile on.
 pub(super) fn sunrise_choices(releases: &[Release], installed: &[String]) -> Vec<String> {
     let published = releases
         .iter()
         .filter(|r| r.nightly.is_some() && r.asset.is_some())
         .map(|r| &r.tag);
+    let games = installed.iter().filter(|t| !native_mods::is_native(t));
     let mut out: Vec<String> = Vec::new();
-    for tag in published.chain(installed) {
+    for tag in published.chain(games) {
         if !out.contains(tag) {
             out.push(tag.clone());
         }
@@ -186,6 +188,16 @@ mod tests {
             "nightly-2026-10-20-ddddddd".to_string(),
             "imported-2026-10-30".to_string(),
         ];
+        // A build made with mods, even one left on disk after the permission went, is not
+        // offered.
+        let mut with_native = installed.to_vec();
+        with_native.insert(0, "native-aaaaaaa-0123456789abcdef".to_string());
+        assert!(native_mods::is_native(&with_native[0]));
+        assert_eq!(
+            sunrise_choices(&releases, &with_native),
+            sunrise_choices(&releases, &installed)
+        );
+        assert_eq!(sunrise_choices(&[], &with_native), installed);
         assert_eq!(
             sunrise_choices(&releases, &installed),
             [

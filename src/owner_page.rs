@@ -3,7 +3,8 @@
 //! without one (those who played offline before the gate), and again whenever Play is refused.
 //! The sign-in runs on it, code and all.
 use super::*;
-use crate::frame::{button, primary, Reach as _, BAD, BG, CARD, LINE, MUTED, SOFT, TEXT};
+use crate::frame::{button, primary, Reach as _};
+use crate::paint::palette;
 use gpui::rgb;
 
 impl Launcher {
@@ -28,6 +29,16 @@ impl Launcher {
         }
     }
 
+    /// What the screen is called: adding an account beside the ones here is not signing in to
+    /// play.
+    fn sign_in_title(&self) -> &'static str {
+        crate::account_chip::sign_in_title(
+            self.ui.after_sign_in.is_some(),
+            self.sign_in_target.is_some(),
+            self.accounts.accounts.len(),
+        )
+    }
+
     pub(crate) fn owner_screen(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let configured = account::client_id().is_some();
         let state = match &self.sign_in_state {
@@ -49,8 +60,8 @@ impl Launcher {
                 .p(px(16.))
                 .rounded(px(tokens::R_CARD))
                 .border_1()
-                .border_color(rgb(SOFT))
-                .bg(rgb(BG))
+                .border_color(rgb(palette().divider))
+                .bg(rgb(palette().background))
         };
         let mut card = div()
             .id("owner-card")
@@ -66,19 +77,19 @@ impl Launcher {
             .p(px(28.))
             .rounded(px(tokens::R_PANEL))
             .border_1()
-            .border_color(rgb(LINE))
-            .bg(rgb(CARD))
-            .text_color(rgb(TEXT))
+            .border_color(rgb(palette().line))
+            .bg(palette().card())
+            .text_color(rgb(palette().text))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(4.))
                     .child(
-                        said(tr("Microsoft account").into(), tokens::SMALL, MUTED)
+                        said(tr("Microsoft account").into(), tokens::SMALL, palette().muted)
                             .font_weight(FontWeight::SEMIBOLD),
                     )
-                    .child(crate::sheets::title(tr("Sign in to play").into())),
+                    .child(crate::sheets::title(tr(self.sign_in_title()).into())),
             )
             .child(
                 div()
@@ -88,12 +99,12 @@ impl Launcher {
                     .child(said(
                         tr("Sunrise needs a Microsoft account that owns Minecraft: Java Edition, like other launchers.").into(),
                         tokens::BODY,
-                        TEXT,
+                        palette().text,
                     ))
                     .child(said(
                         tr("No Minecraft install needed: Sunrise downloads it from Mojang for your account.").into(),
                         tokens::BODY,
-                        TEXT,
+                        palette().text,
                     )),
             );
         // What follows is in reading order, which is the order Tab takes: the code and its
@@ -129,7 +140,7 @@ impl Launcher {
                                     )
                                     .into(),
                                     tokens::LABEL,
-                                    MUTED,
+                                    palette().muted,
                                 ))
                                 .child(
                                     div()
@@ -150,7 +161,7 @@ impl Launcher {
                     said(
                         tr("Open this link in a private window to pick another account.").into(),
                         tokens::LABEL,
-                        MUTED,
+                        palette().muted,
                     )
                 }))
                 .child(
@@ -187,15 +198,17 @@ impl Launcher {
                 .child(said(
                     tr("Waiting for Microsoft… the window goes on by itself.").into(),
                     tokens::LABEL,
-                    MUTED,
+                    palette().muted,
                 ))
             }
             Shown::Starting(what) => {
-                card.child(panel().child(said(tr(what).into(), tokens::BODY, MUTED)))
+                card.child(panel().child(said(tr(what).into(), tokens::BODY, palette().muted)))
             }
-            Shown::Error(e) => {
-                card.child(panel().child(said(e.to_string().into(), tokens::BODY, BAD)))
-            }
+            Shown::Error(e) => card.child(panel().child(said(
+                e.to_string().into(),
+                tokens::BODY,
+                palette().danger,
+            ))),
             Shown::Idle => card,
         };
         let again = match state {
@@ -206,7 +219,7 @@ impl Launcher {
                 microsoft::sign_in_button("owner-sign-in", &self.theme)
                     .tab_index(0)
                     .seen()
-                    .focus_visible(|s| s.shadow(crate::frame::focus_ring(crate::tokens::GOLD)))
+                    .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.sign_in_to_play();
                         cx.notify();
@@ -239,7 +252,7 @@ impl Launcher {
             .items_center()
             .justify_center()
             .p(px(16.))
-            .bg(gpui::black().opacity(0.55))
+            .bg(palette().scrim())
             .on_scroll(|_, _, cx| cx.stop_propagation())
             .child(card)
     }
@@ -281,7 +294,7 @@ impl Launcher {
                     .text_size(px(28.))
                     .line_height(px(35.))
                     .text_color(white(ink::FULL))
-                    .child(tr("Sign in to play")),
+                    .child(tr(self.sign_in_title())),
             )
             .child(
                 div()

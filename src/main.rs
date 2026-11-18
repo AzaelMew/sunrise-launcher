@@ -6,12 +6,14 @@
 #[cfg(windows)]
 use sunrise_launcher_scenery::coast;
 use sunrise_launcher_scenery::{art, clock, glass};
+mod account_chip;
 mod blocks_settings;
 mod launcher_messages;
 mod launcher_play;
 mod launcher_render;
 mod launcher_setup;
 pub(crate) use widgets::*;
+mod backdrop;
 mod blocks;
 mod build;
 mod build_mode;
@@ -19,6 +21,7 @@ mod cat;
 mod cli;
 mod cli_tools;
 mod collection;
+mod command_search;
 mod console;
 mod console_page;
 mod cull;
@@ -39,8 +42,10 @@ mod instance_mods;
 mod instances_page;
 mod internet;
 mod jar_launch;
+mod join;
 mod language_page;
 mod launch_page;
+mod launch_state;
 mod line_edit;
 mod location_page;
 mod markdown;
@@ -56,10 +61,13 @@ mod native_consent;
 mod native_log_page;
 mod owner_page;
 mod packs_page;
+mod paint;
 mod perf;
 mod picture_cache;
 mod plate;
+mod profile_dialog;
 mod profile_heads;
+mod rail;
 mod screenshots_page;
 mod scrollbar;
 mod servers_page;
@@ -68,6 +76,7 @@ mod settings;
 mod setup_page;
 mod sheets;
 mod shell;
+mod status_strip;
 mod sticky;
 mod switch_page;
 mod theme;
@@ -297,6 +306,10 @@ struct Launcher {
     auth_status: HashMap<String, account::session::Status>,
     auth_progress: HashMap<String, account::session::Phase>,
     profile_heads: profile_heads::Heads,
+    /// The account chip's menu (`account_chip`).
+    account_menu: account_chip::Menu,
+    /// The launcher's search (`command_search`).
+    search: command_search::Search,
     /// When page switches last checked every account's sign-in.
     auth_checked: Option<Instant>,
     sign_in_target: Option<account::Account>,
@@ -314,6 +327,9 @@ struct Launcher {
     /// The game is waiting for its session (a token renewal), before it starts.
     starting_client: Option<String>,
     starting_instance: Option<String>,
+    /// The account selected when the game's start was accepted: the one that plays, whoever
+    /// is selected when its session is read.
+    starting_account: Option<String>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.
     play_when_prepared: Option<(String, String)>,
     /// Join a friend: the code typed on the Play page, and the one the game

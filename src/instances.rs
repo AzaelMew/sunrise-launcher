@@ -21,6 +21,9 @@ pub const DEFAULT: &str = "sunrise";
 const FILE: &str = "instances.json";
 /// Where new instances live, in the game's home.
 const OWN: &str = "instances";
+/// Where a new instance is put together, in the game's home (the same disk as [`OWN`], so
+/// moving it there is one rename). Never listed: an instance exists once it is whole.
+const STAGING: &str = ".new-instance";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -51,11 +54,7 @@ impl Icon {
             if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
                 return Ok(Icon::Colour(format!("#{}", hex.to_ascii_lowercase())));
             }
-        } else if !text.is_empty()
-            && text
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        {
+        } else if texture_name(text) {
             return Ok(Icon::Texture(text.into()));
         }
         Err(format!(
@@ -63,17 +62,68 @@ impl Icon {
         ))
     }
 
-    /// The texture's file in prepared resources, if it is a texture they hold.
+    /// The texture's file in prepared resources, if it is a texture they hold. Only a name
+    /// [`Icon::parse`] takes is looked for, and only a file that really is inside the resources'
+    /// textures is answered: a name with a path in it, or a link leading out, reads nothing.
     pub fn texture(&self, resources: &Path) -> Option<PathBuf> {
         let Icon::Texture(name) = self else {
             return None;
         };
-        let textures = resources.join("assets/minecraft/textures");
+        if !texture_name(name) {
+            return None;
+        }
+        let textures = resources
+            .join("assets/minecraft/textures")
+            .canonicalize()
+            .ok()?;
         ["block", "item"]
             .iter()
-            .map(|kind| textures.join(kind).join(format!("{name}.png")))
-            .find(|p| p.is_file())
+            .filter_map(|kind| {
+                textures
+                    .join(kind)
+                    .join(format!("{name}.png"))
+                    .canonicalize()
+                    .ok()
+            })
+            .find(|p| p.starts_with(&textures) && p.is_file())
     }
+}
+
+/// A texture's name: lowercase letters, digits and `_`, so never a path.
+fn texture_name(text: &str) -> bool {
+    !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+}
+
+// A saved icon is held to what the dialog and the command line take; one that isn't is no icon,
+// and never a reason to lose the instance's other choices.
+fn saved_icon<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<Icon>, D::Error> {
+    let saved: Option<Icon> =
+        serde_json::from_value(serde_json::Value::deserialize(deserializer)?).ok();
+    Ok(saved.filter(|icon| match icon {
+        Icon::Texture(name) => texture_name(name),
+        Icon::Colour(hex) => Icon::parse(hex).as_ref() == Ok(icon),
+    }))
+}
+
+/// The most a picture drawn as artwork (a profile's, a world's, a texture) is read: one a game
+/// or the launcher wrote is far smaller.
+pub const MAX_ARTWORK: u64 = 8 << 20;
+
+/// The file at `path` for drawing, or None when it is no regular file or is over
+/// [`MAX_ARTWORK`]: nothing larger is ever read into memory, whatever its length claims.
+pub fn read_artwork(path: &Path) -> Option<Vec<u8>> {
+    use std::io::Read as _;
+    let file = fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    if !meta.is_file() || meta.len() > MAX_ARTWORK {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_ARTWORK + 1).read_to_end(&mut bytes).ok()?;
+    (bytes.len() as u64 <= MAX_ARTWORK).then_some(bytes)
 }
 
 /// An instance's own picture, in its game folder: one the player chose, or its modpack's icon.
@@ -214,7 +264,11 @@ fn saved_channel<'de, D: serde::Deserializer<'de>>(
 pub struct Meta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "saved_icon",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub icon: Option<Icon>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
@@ -284,7 +338,15 @@ impl Store {
     fn save(&self, data: &Path) -> Result<(), String> {
         fs::create_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
         let text = serde_json::to_string_pretty(self).unwrap();
-        fs::write(data.join(FILE), text).map_err(|e| format!("{FILE}: {e}"))
+        // Replaced whole or not at all: a write that stops halfway would lose every instance's
+        // choices.
+        let part = data.join(format!("{FILE}.{}.part", std::process::id()));
+        fs::write(&part, text)
+            .and_then(|()| fs::rename(&part, data.join(FILE)))
+            .map_err(|e| {
+                let _ = fs::remove_file(&part);
+                format!("{FILE}: {e}")
+            })
     }
 }
 
@@ -327,6 +389,18 @@ impl Instance {
             _ => backend::resolve_version(requested),
         }
     }
+}
+
+/// The last second of the year 9999: the latest time a saved file is believed about.
+const LATEST: Duration = Duration::from_secs(253_402_300_799);
+
+/// A time read from a saved file (`since_epoch` after 1970), or None for one no calendar holds:
+/// seconds that fit a `SystemTime` can still be past any date, and drawing one as a date panics.
+/// Read as "never", like a file that names no time.
+pub fn calendar_time(since_epoch: Duration) -> Option<SystemTime> {
+    (since_epoch <= LATEST)
+        .then(|| UNIX_EPOCH.checked_add(since_epoch))
+        .flatten()
 }
 
 /// The instances, by the default game home and the launcher's data folder: Sunrise first, then
@@ -392,7 +466,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
                 played: Duration::from_secs(meta.played_secs),
                 last_played: meta
                     .last_played
-                    .map(|s| UNIX_EPOCH + Duration::from_secs(s)),
+                    .and_then(|s| calendar_time(Duration::from_secs(s))),
                 launch: meta.launch,
                 id,
                 kind,
@@ -547,6 +621,7 @@ fn slug(name: &str) -> String {
 /// caches, data collection's state, and sign-in sessions (a session never leaves its folder).
 const NOT_COPIED: &[&str] = &[
     OWN,
+    STAGING,
     "ports",
     "sunrise-packs",
     "logs",
@@ -565,12 +640,27 @@ const PLAYER_FILES: &[&str] = &["options.txt", "sunrise-player.txt"];
 /// Creates an instance named `name`: empty but for the player's options and offline name, or a
 /// copy of `from`'s game folder (its worlds, options and packs). Nothing of `from` changes.
 pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
+    create_with(name, from, None, |_| {})
+}
+
+/// [`create`], with everything else the New Profile dialog chose, as one step: `picture` (None
+/// keeps what a copy brought, `Some(None)` leaves it without one) and `choose`, which sets the
+/// rest of its choices. An instance appears only once its folder, picture and choices are all in
+/// place; a failure leaves nothing behind, so the same name can be tried again.
+pub fn create_with(
+    name: &str,
+    from: Option<&str>,
+    picture: Option<Option<&[u8]>>,
+    choose: impl FnOnce(&mut Meta),
+) -> Result<Instance, String> {
     let from = from.map(find).transpose()?;
-    create_in(
+    create_whole_in(
         &backend::game_home(),
         &backend::data_dir(),
         name,
         from.as_ref(),
+        picture,
+        choose,
     )
 }
 
@@ -582,11 +672,13 @@ pub fn name_taken(name: &str) -> String {
     )
 }
 
-fn create_in(
+fn create_whole_in(
     game_home: &Path,
     data: &Path,
     name: &str,
     from: Option<&Instance>,
+    picture: Option<Option<&[u8]>>,
+    choose: impl FnOnce(&mut Meta),
 ) -> Result<Instance, String> {
     let name = name.trim();
     if name.is_empty() {
@@ -615,32 +707,60 @@ fn create_in(
         .find(|s| !taken(s))
         .unwrap();
     let dir = game_home.join(OWN).join(&slug);
-    let made = match from {
-        Some(from) => copy_home(&from.home, &dir),
-        None => fs::create_dir_all(&dir).and_then(|()| {
-            for f in PLAYER_FILES {
-                let own = game_home.join(f);
-                if own.is_file() {
-                    fs::copy(own, dir.join(f))?;
+    // Put together out of sight, then moved into place whole.
+    let stage = game_home
+        .join(STAGING)
+        .join(format!("{slug}.{}", std::process::id()));
+    let staged = fs::remove_dir_all(&stage)
+        .or_else(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Ok(()),
+            _ => Err(e),
+        })
+        .and_then(|()| match from {
+            Some(from) => copy_home(&from.home, &stage),
+            None => fs::create_dir_all(&stage).and_then(|()| {
+                for f in PLAYER_FILES {
+                    let own = game_home.join(f);
+                    if own.is_file() {
+                        fs::copy(own, stage.join(f))?;
+                    }
                 }
-            }
-            Ok(())
-        }),
-    };
-    if let Err(e) = made {
-        let _ = fs::remove_dir_all(&dir);
+                Ok(())
+            }),
+        })
+        .and_then(|()| match picture {
+            Some(Some(png)) => fs::write(stage.join(PICTURE), png),
+            // The copy's own file, not the picture of the instance it was copied from.
+            Some(None) if stage.join(PICTURE).is_file() => fs::remove_file(stage.join(PICTURE)),
+            _ => Ok(()),
+        })
+        .and_then(|()| fs::create_dir_all(game_home.join(OWN)))
+        .and_then(|()| fs::rename(&stage, &dir));
+    if let Err(e) = staged {
+        let _ = fs::remove_dir_all(&stage);
+        let _ = fs::remove_dir(game_home.join(STAGING));
         return Err(format!("Could not make {}: {e}", dir.display()));
     }
-    crate::run_leases::publish(&dir).map_err(crate::native_mods::cache_error)?;
-    let mut store = Store::load(data);
-    // A folder removed outside the launcher may still have metadata. A new folder
-    // never inherits its launch settings. Do not rewrite the old entry just by listing it.
-    store.instances.remove(&slug);
-    let meta = store.instances.entry(slug.clone()).or_default();
-    meta.name = (name != slug).then(|| name.to_string());
-    meta.icon = from.and_then(|f| f.icon.clone());
-    meta.group = from.and_then(|f| f.group.clone());
-    store.save(data)?;
+    let _ = fs::remove_dir(game_home.join(STAGING));
+    let recorded = crate::run_leases::publish(&dir)
+        .map_err(crate::native_mods::cache_error)
+        .and_then(|()| {
+            let mut store = Store::load(data);
+            // A folder removed outside the launcher may still have metadata. A new folder
+            // never inherits its launch settings. Do not rewrite the old entry just by listing it.
+            store.instances.remove(&slug);
+            let meta = store.instances.entry(slug.clone()).or_default();
+            meta.name = (name != slug).then(|| name.to_string());
+            meta.icon = from.and_then(|f| f.icon.clone());
+            meta.group = from.and_then(|f| f.group.clone());
+            choose(meta);
+            store.save(data)
+        });
+    if let Err(e) = recorded {
+        // Nothing has played in it and nothing names it: the folder goes, the name is free.
+        let _ = fs::remove_dir_all(&dir);
+        return Err(e);
+    }
     find_in(&list_in(game_home, data), &slug)
 }
 
