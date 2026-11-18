@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Preuzmi ponovno",
+  "downloading {version}, {percent}%": "preuzimanje {version}, {percent}%",
+  "{version} available": "{version} dostupno",
+  "Update to {version}": "Ažuriraj na {version}",
+  "up to date": "ažurno",
+  "the update failed: {error}": "ažuriranje nije uspjelo: {error}",
+  "Update this launcher with your package manager.": "Ažurirajte ovaj pokretač svojim upraviteljem paketa.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Zatvorite ovaj pokretač, premjestite ga u {folder} i otvorite ga ondje da biste omogućili ažuriranja."
 }

@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Luchdaich a-nuas a-rithist",
+  "downloading {version}, {percent}%": "a' luchdachadh sìos {version}, {percent}%",
+  "{version} available": "{version} ri fhaighinn",
+  "Update to {version}": "Ùraich gu {version}",
+  "up to date": "suas chun latha",
+  "the update failed: {error}": "dh'fhàillig an t-ùrachadh: {error}",
+  "Update this launcher with your package manager.": "Ùraich an lannsair seo le do mhanaidsear phacaidean.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Dùin an lannsair seo, gluais e gu {folder}, agus fosgail an sin e gus ùrachaidhean a chomasachadh."
 }

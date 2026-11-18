@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Telecargar tornarmai",
+  "downloading {version}, {percent}%": "telecargament {version}, {percent}%",
+  "{version} available": "{version} disponible",
+  "Update to {version}": "Mesa a jorn a {version}",
+  "up to date": "a jorn",
+  "the update failed: {error}": "la mesa a jorn a fracassat : {error}",
+  "Update this launcher with your package manager.": "Metètz a jorn aqueste lançaire amb vòstre gestionari de paquets.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Barratz aqueste lançaire, desplaçatz-lo a {folder}, e dobritz-lo aquí per activar las mesas a jorn."
 }

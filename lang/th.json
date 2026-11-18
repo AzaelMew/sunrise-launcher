@@ -1335,5 +1335,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "ดาวน์โหลดอีกครั้ง",
+  "downloading {version}, {percent}%": "กำลังดาวน์โหลด {version}, {percent}%",
+  "{version} available": "มี {version} แล้ว",
+  "Update to {version}": "อัปเดตเป็น {version}",
+  "up to date": "ล่าสุดแล้ว",
+  "the update failed: {error}": "อัปเดตไม่สำเร็จ: {error}",
+  "Update this launcher with your package manager.": "อัปเดตลันเชอร์นี้ด้วยตัวจัดการแพ็กเกจ",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ปิดลันเชอร์นี้ ย้ายไปไว้ที่ {folder} แล้วเปิดจากที่นั่นเพื่อให้อัปเดตได้"
 }

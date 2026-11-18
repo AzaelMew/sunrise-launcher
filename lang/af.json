@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Laai weer af",
+  "downloading {version}, {percent}%": "laai tans {version}, {percent}% af",
+  "{version} available": "{version} beskikbaar",
+  "Update to {version}": "Dateer op na {version}",
+  "up to date": "op datum",
+  "the update failed: {error}": "die opdatering het misluk: {error}",
+  "Update this launcher with your package manager.": "Dateer hierdie lanseerder op met jou pakketbestuurder.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Maak hierdie lanseerder toe, skuif dit na {folder} en maak dit daar oop om opdaterings te aktiveer."
 }

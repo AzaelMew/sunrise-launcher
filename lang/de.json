@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Erneut herunterladen",
+  "downloading {version}, {percent}%": "lade {version} herunter, {percent}%",
+  "{version} available": "{version} verfügbar",
+  "Update to {version}": "Auf {version} aktualisieren",
+  "up to date": "aktuell",
+  "the update failed: {error}": "das Update ist fehlgeschlagen: {error}",
+  "Update this launcher with your package manager.": "Aktualisiere diesen Launcher mit deiner Paketverwaltung.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Schließe diesen Launcher, verschiebe ihn nach {folder} und öffne ihn dort, um Updates zu ermöglichen."
 }

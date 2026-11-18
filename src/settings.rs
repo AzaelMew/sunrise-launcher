@@ -1126,14 +1126,7 @@ impl Launcher {
         if let Some(why) = refused {
             proxy = proxy.child(warning(why));
         }
-        let version = row(
-            trf(
-                "Sunrise Launcher {version}",
-                &[("version", backend::VERSION)],
-            ),
-            "",
-            div(),
-        );
+        let version = self.launcher_update_row(cx);
         div()
             .flex()
             .flex_col()
@@ -1141,6 +1134,101 @@ impl Launcher {
             .child(group(vec![language]))
             .child(group(vec![proxy]))
             .child(group(vec![version]))
+    }
+
+    /// This launcher's version and its own update: the state of the staged download, and the
+    /// action that fits it (Update, or Download again when this copy can't replace itself).
+    fn launcher_update_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let title = trf(
+            "Sunrise Launcher {version}",
+            &[("version", backend::VERSION)],
+        );
+        let failed = |error: &str| trf("the update failed: {error}", &[("error", error)]);
+        let (about, action, bad) = match &self.self_update {
+            SelfUpdate::Downloading(version, done) => (
+                trf(
+                    "downloading {version}, {percent}%",
+                    &[
+                        ("version", version),
+                        ("percent", &format!("{:.0}", done * 100.)),
+                    ],
+                ),
+                None,
+                false,
+            ),
+            SelfUpdate::Ready(version) => (
+                trf("{version} available", &[("version", version)]),
+                Some(
+                    button("alt-launcher-update", tr("Update")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.apply_launcher_update(cx);
+                            cx.notify();
+                        },
+                    )),
+                ),
+                false,
+            ),
+            SelfUpdate::Stuck(error) => {
+                let url = backend::download_page(&self.links.website);
+                (
+                    self.launcher_update_help(error.as_deref()),
+                    self.launcher_download_available().then(|| {
+                        button("alt-launcher-download", tr("Download again"))
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                    }),
+                    error.is_some(),
+                )
+            }
+            SelfUpdate::Failed(error) => {
+                let url = backend::download_page(&self.links.website);
+                (
+                    failed(error),
+                    self.launcher_download_available().then(|| {
+                        button("alt-launcher-download", tr("Download again"))
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                    }),
+                    true,
+                )
+            }
+            SelfUpdate::Idle => match &self.updates.launcher {
+                Some(release) => {
+                    let version = backend::launcher_version(&release.tag).unwrap_or_default();
+                    let about = trf("{version} available", &[("version", version)]);
+                    let release = release.clone();
+                    let get = button(
+                        "alt-launcher-get",
+                        trf("Update to {version}", &[("version", version)]),
+                    );
+                    (
+                        about,
+                        Some(if backend::self_update_allowed() {
+                            get.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.update_launcher(release.clone());
+                                cx.notify();
+                            }))
+                        } else {
+                            off(get)
+                        }),
+                        false,
+                    )
+                }
+                None if self.checked.is_some() && self.update_error.is_none() => {
+                    (tr("up to date").to_string(), None, false)
+                }
+                None => (String::new(), None, false),
+            },
+        };
+        let mut words = div().flex().flex_col().gap(px(2.));
+        words = words.child(div().font_weight(FontWeight::SEMIBOLD).child(title));
+        if !about.is_empty() {
+            words = words.child(if bad { warning(about) } else { hint(about) });
+        }
+        div()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .child(words.flex_1().min_w_0())
+            .child(div().flex_none().children(action))
     }
 
     /// One line of text in this look, saved as it is typed.

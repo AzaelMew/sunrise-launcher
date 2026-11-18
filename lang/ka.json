@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "ხელახლა ჩამოტვირთვა",
+  "downloading {version}, {percent}%": "ჩამოტვირთვა {version}, {percent}%",
+  "{version} available": "{version} ხელმისაწვდომია",
+  "Update to {version}": "განახლება {version}-ზე",
+  "up to date": "განახლებული",
+  "the update failed: {error}": "განახლება ვერ მოხერხდა: {error}",
+  "Update this launcher with your package manager.": "განაახლეთ ეს გამშვები თქვენი პაკეტების მენეჯერით.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "დახურეთ ეს გამშვები, გადაიტანეთ {folder}-ში და გახსენით იქ, რომ განახლებები ჩაირთოს."
 }

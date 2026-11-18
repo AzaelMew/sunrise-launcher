@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Íoslódáil arís",
+  "downloading {version}, {percent}%": "á íoslódáil {version}, {percent}%",
+  "{version} available": "{version} ar fáil",
+  "Update to {version}": "Nuashonraigh go {version}",
+  "up to date": "suas chun dáta",
+  "the update failed: {error}": "theip ar an nuashonrú: {error}",
+  "Update this launcher with your package manager.": "Nuashonraigh an tosaitheoir seo le do bhainisteoir pacáistí.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Dún an tosaitheoir seo, bog go {folder} é, agus oscail ansin é chun nuashonruithe a chumasú."
 }

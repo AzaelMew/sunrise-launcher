@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Laadi uuesti alla",
+  "downloading {version}, {percent}%": "allalaadimine {version}, {percent}%",
+  "{version} available": "{version} saadaval",
+  "Update to {version}": "Värskenda versioonile {version}",
+  "up to date": "ajakohane",
+  "the update failed: {error}": "värskendamine ebaõnnestus: {error}",
+  "Update this launcher with your package manager.": "Värskendage seda käivitajat oma paketihalduriga.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sulgege see käivitaja, liigutage see kausta {folder} ja avage see seal, et värskendused sisse lülitada."
 }

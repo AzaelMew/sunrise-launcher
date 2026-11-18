@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "I-download ulit",
+  "downloading {version}, {percent}%": "dina-download ang {version}, {percent}%",
+  "{version} available": "May {version}",
+  "Update to {version}": "Update sa {version}",
+  "up to date": "napapanahon",
+  "the update failed: {error}": "nabigo ang pag-update: {error}",
+  "Update this launcher with your package manager.": "I-update ang launcher na ito gamit ang iyong package manager.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Isara ang launcher na ito, ilipat ito sa {folder}, at buksan doon para i-enable ang mga update."
 }

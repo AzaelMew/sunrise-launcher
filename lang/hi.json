@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "फिर से डाउनलोड करें",
+  "downloading {version}, {percent}%": "{version} डाउनलोड हो रहा है, {percent}%",
+  "{version} available": "{version} उपलब्ध है",
+  "Update to {version}": "{version} पर अपडेट करें",
+  "up to date": "अप टू डेट",
+  "the update failed: {error}": "अपडेट विफल रहा: {error}",
+  "Update this launcher with your package manager.": "इस लॉन्चर को अपने पैकेज मैनेजर से अपडेट करें।",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "इस लॉन्चर को बंद करें, इसे {folder} में ले जाएँ और अपडेट सक्षम करने के लिए वहीं से खोलें।"
 }

@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Landa futhi",
+  "downloading {version}, {percent}%": "iyalanda {version}, {percent}%",
+  "{version} available": "{version} iyatholakala",
+  "Update to {version}": "Buyekeza ku-{version}",
+  "up to date": "kusesimweni",
+  "the update failed: {error}": "isibuyekezo sihlulekile: {error}",
+  "Update this launcher with your package manager.": "Buyekeza lesi siqalisi ngomphathi wamaphakethe wakho.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Vala lesi siqalisi, sihambise ku-{folder}, bese usivula lapho ukuze uvule izibuyekezo."
 }

@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "もう一度ダウンロード",
+  "downloading {version}, {percent}%": "{version} をダウンロード中 ({percent}%)",
+  "{version} available": "{version} が利用可能です",
+  "Update to {version}": "{version} に更新",
+  "up to date": "最新",
+  "the update failed: {error}": "アップデートに失敗しました: {error}",
+  "Update this launcher with your package manager.": "パッケージマネージャーでこのランチャーを更新してください。",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "このランチャーを閉じて {folder} に移動し、そこから開くと更新できるようになります。"
 }

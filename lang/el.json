@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Λήψη ξανά",
+  "downloading {version}, {percent}%": "λήψη {version}, {percent}%",
+  "{version} available": "{version} διαθέσιμο",
+  "Update to {version}": "Ενημέρωση σε {version}",
+  "up to date": "ενημερωμένο",
+  "the update failed: {error}": "η ενημέρωση απέτυχε: {error}",
+  "Update this launcher with your package manager.": "Ενημερώστε αυτό το πρόγραμμα εκκίνησης με τον διαχειριστή πακέτων σας.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Κλείστε αυτό το πρόγραμμα εκκίνησης, μετακινήστε το στο {folder} και ανοίξτε το εκεί για να ενεργοποιήσετε τις ενημερώσεις."
 }

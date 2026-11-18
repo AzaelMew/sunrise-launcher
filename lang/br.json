@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Pellgargañ en-dro",
+  "downloading {version}, {percent}%": "pellgargañ {version}, {percent}%",
+  "{version} available": "{version} hegerz",
+  "Update to {version}": "Hizivaat da {version}",
+  "up to date": "hizivaet",
+  "the update failed: {error}": "c'hwitet en deus an hizivadenn : {error}",
+  "Update this launcher with your package manager.": "Hizivait al lañser-mañ gant ho merour pakadoù.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Serrit al lañser-mañ, dilec'hit anezhañ da {folder}, ha digorit anezhañ eno evit gweredekaat an hizivadennoù."
 }

@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Torne a discjamâ",
+  "downloading {version}, {percent}%": "scaricant {version}, {percent}%",
+  "{version} available": "{version} disponibil",
+  "Update to {version}": "Agjiornament a {version}",
+  "up to date": "a zornade",
+  "the update failed: {error}": "l'agjiornament al è falit: {error}",
+  "Update this launcher with your package manager.": "Agjiornâ chest lançadôr cul to gjestôr di pachets.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sierâ chest lançadôr, spostâlu in {folder} e vierzilu li par abilitâ i agjiornaments."
 }

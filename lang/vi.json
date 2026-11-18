@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Tải lại",
+  "downloading {version}, {percent}%": "đang tải xuống {version}, {percent}%",
+  "{version} available": "{version} có sẵn",
+  "Update to {version}": "Cập nhật lên {version}",
+  "up to date": "cập nhật",
+  "the update failed: {error}": "cập nhật không thành công: {error}",
+  "Update this launcher with your package manager.": "Cập nhật trình khởi chạy này bằng trình quản lý gói.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Đóng trình khởi chạy này, chuyển vào {folder}, rồi mở từ đó để bật cập nhật."
 }

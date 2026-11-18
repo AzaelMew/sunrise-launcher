@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Descarcă din nou",
+  "downloading {version}, {percent}%": "se descarcă {version}, {percent}%",
+  "{version} available": "{version} disponibil",
+  "Update to {version}": "Actualizare la {version}",
+  "up to date": "la zi",
+  "the update failed: {error}": "actualizarea a eșuat: {error}",
+  "Update this launcher with your package manager.": "Actualizați acest lansator cu managerul de pachete.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Închideți acest lansator, mutați-l în {folder} și deschideți-l acolo pentru a activa actualizările."
 }

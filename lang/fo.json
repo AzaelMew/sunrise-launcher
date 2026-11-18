@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Tak niður aftur",
+  "downloading {version}, {percent}%": "heinta {version}, {percent}%",
+  "{version} available": "{version} fáast",
+  "Update to {version}": "Dagfør til {version}",
+  "up to date": "dagført",
+  "the update failed: {error}": "dagføringin miseydnaðist: {error}",
+  "Update this launcher with your package manager.": "Dagfør henda sjósetaran við pakkastjóranum tínum.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Lat henda sjósetaran aftur, flyt hann til {folder}, og opna hann har fyri at gera dagføringar virknar."
 }

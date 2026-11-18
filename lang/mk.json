@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Преземи повторно",
+  "downloading {version}, {percent}%": "преземање {version}, {percent}%",
+  "{version} available": "{version} на располагање",
+  "Update to {version}": "Ажурирајте до {version}",
+  "up to date": "ажурирани",
+  "the update failed: {error}": "ажурирањето не успеа: {error}",
+  "Update this launcher with your package manager.": "Ажурирајте го овој стартувач со вашиот менаџер на пакети.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Затворете го овој стартувач, преместете го во {folder} и отворете го таму за да ги овозможите ажурирањата."
 }

@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Descarga da novo",
+  "downloading {version}, {percent}%": "scaricando {version}, {percent}%",
+  "{version} available": "{version} disponibiłe",
+  "Update to {version}": "Ajornamento a {version}",
+  "up to date": "ajornà",
+  "the update failed: {error}": "l'ajornamento no xe stà: {error}",
+  "Update this launcher with your package manager.": "Ajorna sto lansador co el to gestor de pacheti.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sara sto lansador, spostalo in {folder} e verxilo là par inpisar i ajornamenti."
 }

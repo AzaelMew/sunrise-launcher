@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Hoʻoiho hou",
+  "downloading {version}, {percent}%": "hoʻoiho ʻia {version}, {percent}%",
+  "{version} available": "{version} loaʻa",
+  "Update to {version}": "Hōʻano hou iā {version}",
+  "up to date": "i kēia lā",
+  "the update failed: {error}": "ʻaʻole i hāʻawi ʻia ka mea hou: {error}",
+  "Update this launcher with your package manager.": "Hōʻano hou i kēia mea hoʻolaha me kāu mea hoʻokele pūʻolo.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Pani i kēia mea hoʻolaha, neʻe iā ia i {folder}, a wehe ma laila e hiki ai nā hōʻano hou."
 }

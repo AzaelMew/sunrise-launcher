@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "ಮತ್ತೆ ಡೌನ್‌ಲೋಡ್ ಮಾಡಿ",
+  "downloading {version}, {percent}%": "ಡೌನ್‌ಲೋಡ್ ಮಾಡಲಾಗುತ್ತಿದೆ {version}, {percent}%",
+  "{version} available": "{version} ಲಭ್ಯವಿದೆ",
+  "Update to {version}": "{version} ಗೆ ನವೀಕರಿಸಿ",
+  "up to date": "ಇಲ್ಲಿಯವರೆಗೆ",
+  "the update failed: {error}": "ನವೀಕರಣ ವಿಫಲವಾಗಿದೆ: {error}",
+  "Update this launcher with your package manager.": "ನಿಮ್ಮ ಪ್ಯಾಕೇಜ್ ಮ್ಯಾನೇಜರ್‌ನಿಂದ ಈ ಲಾಂಚರ್ ಅನ್ನು ನವೀಕರಿಸಿ.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "ಈ ಲಾಂಚರ್ ಅನ್ನು ಮುಚ್ಚಿ, ಅದನ್ನು {folder} ಗೆ ಸರಿಸಿ ಮತ್ತು ನವೀಕರಣಗಳನ್ನು ಸಕ್ರಿಯಗೊಳಿಸಲು ಅಲ್ಲಿಂದ ತೆರೆಯಿರಿ."
 }

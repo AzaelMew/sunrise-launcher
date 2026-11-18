@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Yenidən endirin",
+  "downloading {version}, {percent}%": "endirilir {version}, {percent}%",
+  "{version} available": "{version} mövcuddur",
+  "Update to {version}": "{version} üçün yeniləyin",
+  "up to date": "bu günə qədər",
+  "the update failed: {error}": "yeniləmə uğursuz oldu: {error}",
+  "Update this launcher with your package manager.": "Bu başlatıcını paket menecerinizlə yeniləyin.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Bu başlatıcını bağlayın, onu {folder} ünvanına köçürün və yeniləmələri aktivləşdirmək üçün orada açın."
 }

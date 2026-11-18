@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Lataa uudelleen",
+  "downloading {version}, {percent}%": "ladataan {version}, {percent}%",
+  "{version} available": "{version} saatavilla",
+  "Update to {version}": "Päivitä {version}",
+  "up to date": "ajan tasalla",
+  "the update failed: {error}": "päivitys epäonnistui: {error}",
+  "Update this launcher with your package manager.": "Päivitä tämä käynnistysohjelma paketinhallinnallasi.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Sulje tämä käynnistysohjelma, siirrä se kansioon {folder} ja avaa se siellä, jotta päivitykset toimivat."
 }

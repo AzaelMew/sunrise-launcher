@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "Mar kale soo deji",
+  "downloading {version}, {percent}%": "soo dejinta {version}, {percent}%",
+  "{version} available": "{version} la heli karo",
+  "Update to {version}": "Cusbooneysii ilaa {version}",
+  "up to date": "ilaa hadda",
+  "the update failed: {error}": "Cusboonaysiinta ayaa fashilantay: {error}",
+  "Update this launcher with your package manager.": "Ku cusboonaysii furahan maareeyaha xirmooyinkaaga.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "Xir furahan, u rar {folder}, oo halkaas ka fur si cusboonaysiinta u shaqeyso."
 }

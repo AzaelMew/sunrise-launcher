@@ -1327,5 +1327,13 @@
   "None yet. Sunrise makes one before a mod change that could harm a world.": "None yet. Sunrise makes one before a mod change that could harm a world.",
   "Or drop a .zip on this page.": "Or drop a .zip on this page.",
   "Or drop a .zip or .sshader on this page.": "Or drop a .zip or .sshader on this page.",
-  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher."
+  "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.": "The first build downloads the compiler ({size} MB), once. You can keep using the launcher.",
+  "Download again": "மீண்டும் பதிவிறக்கு",
+  "downloading {version}, {percent}%": "பதிவிறக்குகிறது {version}, {percent}%",
+  "{version} available": "{version} கிடைக்கிறது",
+  "Update to {version}": "{version} க்கு புதுப்பிக்கவும்",
+  "up to date": "இன்றுவரை",
+  "the update failed: {error}": "மேம்படுத்தல் தோல்வியடைந்தது: {error}",
+  "Update this launcher with your package manager.": "இந்தத் துவக்கியை உங்கள் தொகுப்பு மேலாளர் மூலம் புதுப்பிக்கவும்.",
+  "Close this launcher, move it to {folder}, and open it there to enable updates.": "இந்தத் துவக்கியை மூடி, அதை {folder} க்கு நகர்த்தி, புதுப்பிப்புகளை இயக்க அங்கே திறக்கவும்."
 }
