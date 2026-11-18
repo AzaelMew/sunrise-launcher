@@ -1,5 +1,6 @@
 //! One deferred native-code action. Declining never invokes its installer or builder.
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
     browser::{installed::Entry, mod_list, Project, SourceId},
@@ -8,6 +9,9 @@ use sunrise_launcher::{
 };
 
 pub(super) enum PendingConsent {
+    /// A build's package files are being read. The Arc also identifies this request, not just
+    /// its folder: two questions opened on the same profile are different requests.
+    ReadingBuild(Arc<PathBuf>),
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
     Toggle(Entry),
@@ -18,9 +22,16 @@ pub(super) enum PendingConsent {
 }
 
 impl PendingConsent {
+    pub(super) fn finish_read(&mut self, read: &Arc<PathBuf>, inputs: Vec<BuildInput>) {
+        if matches!(self, Self::ReadingBuild(active) if Arc::ptr_eq(active, read)) {
+            *self = Self::Build(inputs);
+        }
+    }
+
     /// What the question is about, for its heading: one mod's name, or how many a build takes.
     pub(super) fn name(&self) -> String {
         match self {
+            Self::ReadingBuild(_) => String::new(),
             Self::Build(inputs) => match inputs.as_slice() {
                 [] => String::new(),
                 [one] => build_label(one),
@@ -80,6 +91,9 @@ pub(super) fn resolve(
         return Ok(None);
     }
     if allow {
+        if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
+            return Ok(None);
+        }
         if !supported {
             return Err(crate::i18n::tr("Unavailable on this platform").into());
         }
@@ -98,7 +112,9 @@ pub(super) fn resolve(
                     mod_list::set_enabled(home, id, false)?;
                 }
             }
-            PendingConsent::Install(..) | PendingConsent::Github(..) => {}
+            PendingConsent::ReadingBuild(_)
+            | PendingConsent::Install(..)
+            | PendingConsent::Github(..) => {}
         }
     }
     Ok(None)
@@ -203,6 +219,17 @@ mod tests {
         assert_eq!(build.name(), "4 mods");
         assert_eq!(PendingConsent::Build(Vec::new()).name(), "");
         assert!(PendingConsent::Build(Vec::new()).rows().is_empty());
+    }
+
+    #[test]
+    fn an_old_read_cannot_finish_a_new_consent_request_for_the_same_profile() {
+        let old = Arc::new(PathBuf::from("profile"));
+        let current = Arc::new(PathBuf::from("profile"));
+        let mut pending = PendingConsent::ReadingBuild(current.clone());
+        pending.finish_read(&old, Vec::new());
+        assert!(matches!(&pending, PendingConsent::ReadingBuild(_)));
+        pending.finish_read(&current, Vec::new());
+        assert!(matches!(&pending, PendingConsent::Build(_)));
     }
 
     #[test]

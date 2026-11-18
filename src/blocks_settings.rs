@@ -2,17 +2,6 @@
 use super::*;
 
 impl Launcher {
-    pub(crate) fn request_native_build_consent(&mut self) {
-        self.native_consent_build = None;
-        // Play can ask before Mods has ever opened. Bind the same folder for the names in
-        // the question, Decline's toggle and the build that Allow dispatches.
-        let selected = self.selected_instance().map(|i| i.home.clone());
-        // Name the files when the question opens. Only the registry's own answer can say a
-        // file is the registry's (`fetched_index`).
-        let index = sunrise_launcher::browser::sunrise::fetched_index();
-        self.pending_consent = selected.map(|home| self.mods.build_consent(home, index.as_deref()));
-    }
-
     /// Cancel and Escape share the transition; neither can execute a pending action.
     pub(crate) fn cancel_native_consent(&mut self) {
         self.play_after_build = None;

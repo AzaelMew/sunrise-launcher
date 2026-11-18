@@ -42,6 +42,8 @@ pub enum Msg {
         run: Option<String>,
         prepared: Box<Result<Command, String>>,
     },
+    /// The native packages read for the consent request identified by this folder Arc.
+    NativeConsentRead(Arc<PathBuf>, Vec<crate::native_status::BuildInput>),
     /// Where the native-mods build is.
     NativeProgress(crate::native_mods::Step),
     NativeRegistryConsent(crate::native_mods::Consent, std::sync::mpsc::Sender<bool>),

@@ -853,8 +853,45 @@ impl Launcher {
 
     // ---- Consent ----
 
+    pub(crate) fn request_native_build_consent(&mut self) {
+        self.native_consent_build = None;
+        self.ui.sheets.ticked.0 = false;
+        self.consent_error = None;
+        // Play can ask before Mods has ever opened. Bind the same folder for the names in
+        // the question, Decline's toggle and the build that Allow dispatches.
+        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
+            self.pending_consent = None;
+            return;
+        };
+        let read = self.mods.begin_build_consent(home);
+        self.pending_consent = Some(PendingConsent::ReadingBuild(read.clone()));
+        // Snapshot the registry's own answer before hashing. An answer arriving later must
+        // not replace the names for this question.
+        let index = sunrise_launcher::browser::sunrise::fetched_index();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let inputs = native_status::build_inputs(&read, index.as_deref());
+            let _ = tx.send(Msg::NativeConsentRead(read, inputs));
+        });
+    }
+
     fn consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let pending = self.pending_consent.as_ref();
+        if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
+            let body = div()
+                .flex()
+                .flex_col()
+                .child(title(tr("Checking package files…").into()))
+                .child(div().flex().justify_end().child(
+                    button("alt-consent-cancel", tr("Cancel")).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.close_sheet();
+                            cx.notify();
+                        },
+                    )),
+                ));
+            return frame("alt-consent", 760., body, cx);
+        }
         let name = pending
             .map(PendingConsent::name)
             .filter(|name| !name.is_empty())
@@ -966,6 +1003,7 @@ impl Launcher {
                 self.storage_revoke_error = None;
                 self.ui.sheets.ticked = (false, false);
                 match action {
+                    PendingConsent::ReadingBuild(_) => {}
                     PendingConsent::Build(_) => {
                         let (base, back_up) = self.native_consent_build.take().unwrap_or_default();
                         self.build_native_on(base, back_up)
