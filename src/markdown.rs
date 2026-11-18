@@ -139,6 +139,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
     }
     flush(&mut blocks, &mut text, &mut spans, &mut item, None);
 
+    let blocks_drawn = std::cell::Cell::new(0u64);
     let styled = |text: String, spans: Spans| {
         let highlights = spans.into_iter().map(|(range, span)| {
             let style = match span {
@@ -164,8 +165,11 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
             (range, style)
         });
         let text = SharedString::from(text);
+        // Numbered, so two blocks with the same words are two selections.
+        let nth = blocks_drawn.get();
+        blocks_drawn.set(nth + 1);
         crate::selectable::Selectable::styled(
-            text.clone(),
+            gpui::ElementId::NamedInteger(text.clone(), nth),
             StyledText::new(text).with_highlights(highlights.collect::<Vec<_>>()),
         )
     };
