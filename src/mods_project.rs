@@ -18,9 +18,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::browser::{
     self,
-    details::{Details, Filters, Tags},
-    images, java, Kind as PackKind, Project, SourceId, Version,
-};
+    details::{Details, Filters},
+    images, java, Kind as PackKind, Project, SourceId, Version};
 
 /// The open project page.
 pub(super) struct Opened {
@@ -45,7 +44,6 @@ pub(super) struct Browse {
     pub(super) filters: Filters,
     /// The Sort by dropdown's list is open.
     pub(super) sort_menu: bool,
-    tags: HashMap<(SourceId, PackKind), Tags>,
     /// Images on disk, by URL and size; `None` while they load or when they failed.
     images: HashMap<(String, u32), Option<PathBuf>>,
     image_queue: Option<std::sync::mpsc::Sender<(String, u32)>>,
