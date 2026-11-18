@@ -739,7 +739,7 @@ impl Launcher {
                     .map(|e| div().text_color(rgb(BAD)).text_size(px(13.)).child(e)),
             )
             .child(consent_footer(
-                tr("This stays allowed on this computer until you take it back in Settings. Progress shows in the bar below."),
+                tr("This permission is saved on this computer. Progress shows in the bar below."),
                 button("alt-consent-cancel", tr("Not now")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         this.close_alt_sheet();
@@ -914,7 +914,7 @@ impl Launcher {
                     })),
             )
             .child(consent_footer(
-                tr("Both stay allowed on this computer until you take them back in Settings."),
+                tr("These permissions would be saved on this computer."),
                 button("alt-example-cancel", tr("Not now")).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {
                         this.close_alt_sheet();
