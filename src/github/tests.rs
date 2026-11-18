@@ -388,3 +388,41 @@ fn a_corrupt_or_foreign_copy_is_ignored() {
     assert_eq!(got.unwrap(), Some(list("v2")));
     let _ = fs::remove_dir_all(cache);
 }
+
+#[test]
+fn the_launchers_releases_are_never_kept_from_the_mirror() {
+    const LAUNCHER: &str =
+        "https://api.github.com/repos/sunrise-org/sunrise-launcher/releases?per_page=100";
+    let cache = scratch("launcher-mirror");
+    let mirrored = |_: &str| Answer::Fresh(list("v9.9.9"), None);
+    let got = json_with(LAUNCHER, &cache, T0, |_, _| Answer::RateLimited, mirrored);
+    if cfg!(debug_assertions) {
+        assert_eq!(got.unwrap(), Some(list("v9.9.9")));
+    }
+    // Nothing was kept: the next read asks GitHub again, and with it failing there is no copy to fall back on.
+    let again = json_with(
+        LAUNCHER,
+        &cache,
+        T0 + 1,
+        |_, _| Answer::RateLimited,
+        |_| Answer::Failed("down".into()),
+    );
+    assert!(again.is_err());
+    // A copy without GitHub's ETag (what a mirror's answer was kept as) is ignored.
+    write_kept(
+        &cache.join(cache_name(LAUNCHER)),
+        LAUNCHER,
+        "",
+        &list("v9.9.9"),
+        T0,
+    );
+    let fresh = json_with(
+        LAUNCHER,
+        &cache,
+        T0 + 1,
+        |_, _| Answer::Fresh(list("v1.1.0"), Some("e".into())),
+        no_mirror,
+    );
+    assert_eq!(fresh.unwrap(), Some(list("v1.1.0")));
+    let _ = fs::remove_dir_all(cache);
+}

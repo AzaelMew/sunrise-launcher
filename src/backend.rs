@@ -773,13 +773,20 @@ fn game_releases_with(
 
 /// This launcher's releases, from [`LAUNCHER_REPO`] on GitHub only, or why they couldn't be read.
 fn launcher_releases() -> Result<Vec<Release>, String> {
-    let list = crate::github::json_optional(&format!(
+    launcher_releases_from(crate::github::json_optional(&format!(
         "https://api.github.com/repos/{LAUNCHER_REPO}/releases?per_page=100"
-    ))?;
-    // A repository with no release yet answers an empty list; a missing one, 404: no update either way.
-    Ok(list.map_or_else(Vec::new, |list| {
-        parse_launcher_releases(&list, launcher_asset())
-    }))
+    )))
+}
+
+/// The releases in the launcher's release list: only a list counts as checked (a repository with no release answers an empty one), never a 404 or anything else.
+fn launcher_releases_from(
+    answer: Result<Option<serde_json::Value>, String>,
+) -> Result<Vec<Release>, String> {
+    match answer? {
+        Some(list) if list.is_array() => Ok(parse_launcher_releases(&list, launcher_asset())),
+        Some(_) => Err("The launcher's release list isn't a list.".into()),
+        None => Err(format!("{LAUNCHER_REPO}'s release list is missing.")),
+    }
 }
 
 /// The newest Sunrise release that has a build for this platform.
@@ -6005,6 +6012,16 @@ pub fn {f}("
             sorted,
             ["v0.2.1", "v0.2.0", "v2026.10.21", "v2026.10.19.15"]
         );
+    }
+
+    #[test]
+    fn only_a_release_list_counts_as_a_checked_launcher_feed() {
+        assert!(launcher_releases_from(Ok(Some(serde_json::json!([]))))
+            .unwrap()
+            .is_empty());
+        assert!(launcher_releases_from(Ok(None)).is_err());
+        assert!(launcher_releases_from(Ok(Some(serde_json::json!({"message": "x"})))).is_err());
+        assert!(launcher_releases_from(Err("offline".into())).is_err());
     }
 
     #[test]
