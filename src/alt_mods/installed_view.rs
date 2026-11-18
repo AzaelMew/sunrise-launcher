@@ -177,10 +177,11 @@ impl Launcher {
             ));
 
         // ---- toolbar: select-all and the bulk actions, naming their scope
-        let all_on = !shown_ids.is_empty()
-            && shown_ids
-                .iter()
-                .all(|id| self.alt.mods.selection.contains(id));
+        let selected_here = shown_ids
+            .iter()
+            .filter(|id| self.alt.mods.selection.contains(*id))
+            .count();
+        let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
         let real = !self.alt.mods.examples;
         let busy = self.alt_mods_busy();
@@ -196,8 +197,13 @@ impl Launcher {
         };
         let toolbar = {
             let ids = shown_ids.clone();
-            let select_all = checkbox("alt-select-all", all_on).on_click(cx.listener(
-                move |this, _: &ClickEvent, _, cx| {
+            let select_all = checkbox("alt-select-all", all_on)
+                .when(selected_here > 0 && !all_on, |d| {
+                    d.bg(c(TEXT))
+                        .border_color(c(TEXT))
+                        .child(div().w(px(10.)).h(px(2.)).bg(c(BG)))
+                })
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.alt.mods;
                     match ids.iter().all(|id| m.selection.contains(id)) {
                         true => m.selection.clear(),
@@ -205,8 +211,7 @@ impl Launcher {
                     }
                     m.anchor = None;
                     cx.notify();
-                },
-            ));
+                }));
             let mut bar = div()
                 .flex()
                 .items_center()
