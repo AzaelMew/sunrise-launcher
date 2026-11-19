@@ -2702,14 +2702,33 @@ pub fn server_command(tag: &str, folder: &Path) -> Command {
 /// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
 /// `#` and `!` lines are comments, the key ends at the first `=`, `:` or blank, spaces around the
 /// separator are free, the value runs to the end of the line (a trailing blank is part of it), the
-/// last `eula` line wins, and the value counts as true in any case.
+/// last `eula` line wins, and the value counts as true in any case. A line ending in a backslash
+/// continues on the next line (its leading blanks dropped), and `\n`, `\r\n` and a lone `\r` all end
+/// a line. Left out: backslash escapes inside the text (`\u0074rue`), which no real file uses.
 pub fn eula_agreed(folder: &Path) -> bool {
     let Ok(text) = fs::read_to_string(folder.join("eula.txt")) else {
         return false;
     };
     let mut agreed = false;
-    for line in text.lines() {
-        let line = line.trim_start_matches([' ', '\t', '\x0c']);
+    // The logical lines: a physical line ending in an odd number of backslashes joins the next.
+    let mut logical: Vec<String> = Vec::new();
+    let mut joining = false;
+    for physical in text.replace("\r\n", "\n").replace('\r', "\n").split('\n') {
+        let physical = physical.trim_start_matches([' ', '\t', '\x0c']);
+        let comment = !joining && physical.starts_with(['#', '!']);
+        if joining {
+            logical.last_mut().unwrap().push_str(physical);
+        } else {
+            logical.push(physical.to_string());
+        }
+        let slashes = physical.len() - physical.trim_end_matches('\\').len();
+        joining = !comment && slashes % 2 == 1;
+        if joining {
+            let last = logical.last_mut().unwrap();
+            last.pop();
+        }
+    }
+    for line in &logical {
         if line.starts_with(['#', '!']) {
             continue;
         }
