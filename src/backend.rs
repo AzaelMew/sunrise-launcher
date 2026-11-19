@@ -3749,7 +3749,8 @@ pub fn place_staged(staged: &Staged) -> Result<(), String> {
             )
         })?,
     }
-    // An installed launcher's Uninstall entry names the new version (installer.rs).
+    // Only a registered Setup install owns its folder. Its new executable refreshes the
+    // notices, including when the CLI applied this update without restarting the window.
     #[cfg(windows)]
     crate::installer::after_update(launcher_version(&staged.tag).unwrap_or(VERSION));
     Ok(())
