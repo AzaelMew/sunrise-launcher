@@ -421,6 +421,7 @@ impl Launcher {
                             };
                             div()
                                 .id(("installed-group", at))
+                                .w_full()
                                 .h(px(height))
                                 .px(px(14.))
                                 .flex()
@@ -433,7 +434,10 @@ impl Launcher {
                                     &[("title", title), ("count", &count.to_string())],
                                 ))
                         }
-                        Item::Mod(n) => this.row(n, displayed.clone(), busy, cx).h(px(height)),
+                        Item::Mod(n) => this
+                            .row(n, displayed.clone(), busy, cx)
+                            .w_full()
+                            .h(px(height)),
                     })
                     .collect()
             }),
