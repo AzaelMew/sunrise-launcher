@@ -105,7 +105,7 @@ pub(crate) fn choices(
         // Room for the ring, taken back so the chips stay where they were.
         .p(px(3.))
         .m(px(-4.))
-        .rounded(px(tokens::R_PANEL + 4.))
+        .rounded(px(tokens::R_CONTROL + 4.))
         .border_1()
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)));
