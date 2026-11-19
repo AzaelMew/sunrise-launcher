@@ -544,10 +544,19 @@ impl Launcher {
                 cx.notify();
             }))
         };
-        let heading = crate::sheets::title(trf(
-            "Add {pack} to your worlds",
-            &[("pack", pick.what.title())],
-        ));
+        let pack = pick.what.title().to_owned();
+        let heading = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(crate::sheets::title(tr("Add to worlds").into()))
+            .child(
+                muted(pack.clone())
+                    .id("alt-pick-pack")
+                    .truncate()
+                    .tooltip(crate::glass_ui::tip(pack)),
+            );
         if worlds.is_empty() {
             let body = div()
                 .flex()
@@ -560,12 +569,17 @@ impl Launcher {
             return Some(crate::sheets::frame("alt-pick", 520., body, cx));
         }
         let mut list = div()
+            .id("alt-pick-list")
             .flex()
             .flex_col()
+            .min_h_0()
+            .max_h(px(300.))
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
             .border_color(c(palette().line))
-            .overflow_hidden();
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("alt-pick-list"))
+            .on_scroll(|_, _, cx| cx.stop_propagation());
         let mut free = 0;
         for (n, (world, packs)) in worlds.iter().enumerate() {
             let has = pick.what.in_world(world, packs);
@@ -573,11 +587,13 @@ impl Launcher {
             free += usize::from(!has);
             let row = div()
                 .id(ElementId::named_usize("alt-pick-world", n))
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(12.))
+                .h(px(46.))
                 .px(px(14.))
-                .py(px(10.))
+                .tooltip(crate::glass_ui::tip(world.name.clone()))
                 .when(n > 0, |d| d.border_t_1().border_color(c(palette().divider)))
                 .child(match has {
                     // Its place is kept so the names line up.
@@ -589,7 +605,7 @@ impl Launcher {
                             .into_any_element()
                     }
                 })
-                .child(world_icon(world, 36.))
+                .child(world_icon(world, 32.).flex_none())
                 .child(
                     div()
                         .flex_1()
@@ -638,14 +654,37 @@ impl Launcher {
             0 => tr("Every world of this profile has it already."),
             _ => tr("Choose the worlds it goes into. The game turns it on when a world opens."),
         };
+        let count = if worlds.len() == 1 {
+            trf(
+                "1 world · {chosen} selected",
+                &[("chosen", &chosen.to_string())],
+            )
+        } else {
+            trf(
+                "{count} worlds · {chosen} selected",
+                &[
+                    ("count", &worlds.len().to_string()),
+                    ("chosen", &chosen.to_string()),
+                ],
+            )
+        };
         let body = div()
             .flex()
             .flex_col()
             .child(heading)
-            .child(div().text_size(px(tokens::LABEL)).child(say))
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(muted(count))
+                    .child(div().text_size(px(tokens::LABEL)).child(say)),
+            )
             .child(list)
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .justify_end()
                     .gap(px(8.))
