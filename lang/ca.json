@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Comproveu els comptes de Minecraft",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Comproveu la propietat de Minecraft: Java Edition i el vostre perfil a minecraft.net.",
   "Check again": "Comproveu de nou",
-  "Check for updates": "Comproveu si hi ha actualitzacions",
   "Checking Minecraft ownership…": "S'està comprovant la propietat de Minecraft...",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Comprovació de les caixes de modificacions amb Cargo.lock d'Sunrise",
   "Checking…": "S'està comprovant…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

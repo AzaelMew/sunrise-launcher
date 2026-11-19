@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Gwiriwch gyfrifon Minecraft",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Gwiriwch berchnogaeth Minecraft: Java Edition a'ch proffil yn minecraft.net.",
   "Check again": "Gwiriwch eto",
-  "Check for updates": "Gwiriwch am ddiweddariadau",
   "Checking Minecraft ownership…": "Wrthi'n gwirio perchnogaeth Minecraft…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Gwirio cewyll y mods yn erbyn Sunrise's Cargo.lock",
   "Checking…": "Wrthi'n gwirio…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

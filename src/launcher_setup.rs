@@ -78,6 +78,7 @@ impl Launcher {
             checked: None,
             checking_updates: false,
             launcher_checked_now: None,
+            launcher_notice_hidden: false,
             // The installer the last Update started could not put the new launcher in place.
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),

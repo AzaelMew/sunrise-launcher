@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Lelee akaụntụ Minecraft",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Lelee Minecraft: Java nwe mbipụta yana profaịlụ gị na minecraft.net.",
   "Check again": "Lelee ọzọ",
-  "Check for updates": "Lelee maka mmelite",
   "Checking Minecraft ownership…": "Na-enyocha Minecraft nwe…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Na-enyocha igbe mods megide Sunrise's Cargo.lock",
   "Checking…": "Na-enyocha…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Seiceáil cuntais Minecraft",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Seiceáil úinéireacht Minecraft: Java Edition agus do phróifíl ag minecraft.net.",
   "Check again": "Seiceáil arís",
-  "Check for updates": "Seiceáil le haghaidh nuashonruithe",
   "Checking Minecraft ownership…": "Tá úinéireacht Minecraft á seiceáil…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Ag seiceáil cliathbhoscaí na mods i gcoinne Sunrise Cargo.lock",
   "Checking…": "Ag seiceáil…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

@@ -1494,7 +1494,7 @@ impl Launcher {
                         None if self.checked.is_some() => (tr("up to date").to_string(), false),
                         None => (String::new(), false),
                     };
-                    let check = button("alt-launcher-check", tr("Check for updates")).on_click(
+                    let check = button("alt-launcher-check", tr("Check now")).on_click(
                         cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.check_updates(UpdateCheck::ManualLauncher);
                             cx.notify();

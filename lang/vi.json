@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Kiểm tra tài khoản Minecraft",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Kiểm tra quyền sở hữu Minecraft: Java Edition và hồ sơ của bạn tại minecraft.net.",
   "Check again": "Kiểm tra lại",
-  "Check for updates": "Kiểm tra các bản cập nhật",
   "Checking Minecraft ownership…": "Đang kiểm tra quyền sở hữu Minecraft…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Kiểm tra thùng của mod với Cargo.lock của Sunrise",
   "Checking…": "Đang kiểm tra…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

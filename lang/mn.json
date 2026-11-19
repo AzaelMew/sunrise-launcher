@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Minecraft дансуудыг шалгана уу",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Minecraft: Java Edition эзэмшил болон өөрийн профайлыг minecraft.net дээрээс шалгана уу.",
   "Check again": "Дахин шалгана уу",
-  "Check for updates": "Шинэчлэлт байгаа эсэхийг шалгана уу",
   "Checking Minecraft ownership…": "Minecraft эзэмшигчийг шалгаж байна...",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Модны хайрцагыг Sunrise-ийн Cargo.lock-той харьцуулж шалгаж байна",
   "Checking…": "Шалгаж байна...",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

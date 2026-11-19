@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Egiaztatu Minecraft kontuak",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Egiaztatu Minecraft: Java Edition jabetza eta zure profila minecraft.net helbidean.",
   "Check again": "Egiaztatu berriro",
-  "Check for updates": "Egiaztatu eguneratzeak",
   "Checking Minecraft ownership…": "Minecraft-en jabetza egiaztatzen…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Mods-en kaxak Sunrise-ren Cargo.lock-ekin egiaztatzea",
   "Checking…": "Egiaztatzen…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

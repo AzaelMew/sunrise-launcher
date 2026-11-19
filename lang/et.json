@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Kontrollige Minecrafti kontosid",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Kontrollige Minecraft: Java Editioni omandiõigust ja oma profiili saidil minecraft.net.",
   "Check again": "Kontrollige uuesti",
-  "Check for updates": "Kontrollige värskendusi",
   "Checking Minecraft ownership…": "Minecrafti omandiõiguse kontrollimine…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Modifikatsioonide kastide kontrollimine Sunrisei Cargo.locki vastu",
   "Checking…": "Kontrollimine…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

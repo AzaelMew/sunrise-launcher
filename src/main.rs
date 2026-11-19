@@ -209,6 +209,8 @@ struct Launcher {
     checked: Option<Instant>,
     checking_updates: bool,
     launcher_checked_now: Option<Instant>,
+    /// Home's launcher-update notice was dismissed: it stays away until the launcher restarts.
+    launcher_notice_hidden: bool,
     self_update: SelfUpdate,
     /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.

@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Minecraft ಖಾತೆಗಳನ್ನು ಪರಿಶೀಲಿಸಿ",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Minecraft: Java ಆವೃತ್ತಿ ಮಾಲೀಕತ್ವ ಮತ್ತು minecraft.net ನಲ್ಲಿ ನಿಮ್ಮ ಪ್ರೊಫೈಲ್ ಪರಿಶೀಲಿಸಿ.",
   "Check again": "ಮತ್ತೊಮ್ಮೆ ಪರಿಶೀಲಿಸಿ",
-  "Check for updates": "ನವೀಕರಣಗಳಿಗಾಗಿ ಪರಿಶೀಲಿಸಿ",
   "Checking Minecraft ownership…": "Minecraft ಮಾಲೀಕತ್ವವನ್ನು ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ...",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Sunrise ನ Cargo.lock ವಿರುದ್ಧ ಮೋಡ್ಸ್ ಕ್ರೇಟ್‌ಗಳನ್ನು ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ",
   "Checking…": "ಪರಿಶೀಲಿಸಲಾಗುತ್ತಿದೆ...",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

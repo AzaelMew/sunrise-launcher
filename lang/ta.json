@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Minecraft கணக்குகளை சரிபார்க்கவும்",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Minecraft: Java பதிப்பு உரிமை மற்றும் உங்கள் சுயவிவரத்தை minecraft.net இல் சரிபார்க்கவும்.",
   "Check again": "மீண்டும் சரிபார்க்கவும்",
-  "Check for updates": "புதுப்பிப்புகளைச் சரிபார்க்கவும்",
   "Checking Minecraft ownership…": "Minecraft உரிமையைச் சரிபார்க்கிறது…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "Sunrise's Cargo.lockக்கு எதிராக மோட்களின் கிரேட்களைச் சரிபார்க்கிறது",
   "Checking…": "சரிபார்க்கிறது…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }

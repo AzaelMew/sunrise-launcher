@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "Ellenőrizze a Minecraft fiókokat",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "Ellenőrizze a Minecraft: Java Edition tulajdonjogát és profilját a minecraft.net oldalon.",
   "Check again": "Ellenőrizze újra",
-  "Check for updates": "Ellenőrizze a frissítéseket",
   "Checking Minecraft ownership…": "A Minecraft tulajdonjogának ellenőrzése…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "A modok ládájának ellenőrzése a Sunrise's Cargo.lock függvényében",
   "Checking…": "Ellenőrzés…",
@@ -1476,5 +1475,11 @@
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
   "Some picks can't be installed together.": "Some picks can't be installed together.",
-  "Version {version} is out. {why}": "Version {version} is out. {why}"
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "Check for updates"
 }
