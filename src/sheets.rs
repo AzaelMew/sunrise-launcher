@@ -983,29 +983,76 @@ impl Launcher {
             Some(PendingConsent::Build(_)) => {
                 trf("Build {name} on this computer?", &[("name", &name)])
             }
-            _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
+            _ => tr("Allow native code?").into(),
         };
         let rows = pending.map(PendingConsent::rows).unwrap_or_default();
-        let mods = if rows.is_empty() {
-            fact(tr("Mods"), name.clone(), false)
+        let package_count = rows.len();
+        let mut facts = card().flex_none();
+        if rows.is_empty() {
+            facts = facts.child(fact(tr("Mods"), crate::selectable::selectable(name), false));
         } else {
-            let packages = div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .children(rows.into_iter().map(|row| {
-                    let picture = row.icon.and_then(|url| {
-                        self.mods_image(&url, sunrise_launcher::browser::images::ROW)
+            let mut packages = div().flex().flex_col();
+            for origin in native_consent::Origin::ALL {
+                let count = rows.iter().filter(|r| r.origin == origin).count();
+                if count == 0 {
+                    continue;
+                }
+                if package_count > 1 {
+                    packages = packages.child(
+                        muted(trf(
+                            "{origin} · {count}",
+                            &[("origin", origin.label()), ("count", &count.to_string())],
+                        ))
+                        .px(px(16.))
+                        .py(px(6.)),
+                    );
+                }
+                for (n, row) in rows.iter().enumerate().filter(|(_, r)| r.origin == origin) {
+                    let picture = row.icon.as_deref().and_then(|url| {
+                        self.mods_image(url, sunrise_launcher::browser::images::ROW)
                     });
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(crate::mod_icons::tile(picture, &row.id, &row.name, 32.))
-                        .child(div().min_w_0().child(row.label))
-                }));
-            fact(tr("Mods"), packages, false)
-        };
+                    let tip = format!("{}\n{}", row.label, row.file);
+                    let words = if package_count == 1 {
+                        div().truncate().child(row.label.clone())
+                    } else {
+                        let identity =
+                            trf("{id} · {file}", &[("id", &row.id), ("file", &row.file)]);
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .truncate()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(row.name.clone()),
+                            )
+                            .child(
+                                div()
+                                    .truncate()
+                                    .text_size(px(tokens::SMALL))
+                                    .text_color(rgb(palette().muted))
+                                    .child(identity),
+                            )
+                    };
+                    packages = packages.child(
+                        div()
+                            .id(("consent-package", n))
+                            .h(px(44.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.))
+                            .px(px(16.))
+                            .border_t_1()
+                            .border_color(rgb(palette().divider))
+                            .tooltip(crate::glass_ui::tip(tip))
+                            .child(crate::mod_icons::tile(picture, &row.id, &row.name, 30.))
+                            .child(words.flex_1().min_w_0()),
+                    );
+                }
+            }
+            facts = facts.child(packages);
+        }
         let host = sunrise_launcher::rust_toolchain::host();
         let downloads = match (host, sunrise_launcher::rust_toolchain::installed()) {
             (None, _) => tr("Unavailable on this platform").into(),
@@ -1036,13 +1083,13 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(title(heading))
+            .child(title(heading).flex_none())
             .child(muted(tr(
                 "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.",
-            )))
-            .child(
-                card()
-                    .child(mods)
+            )).flex_none())
+            .child(div().id("consent-facts").min_h_0().max_h(px((self.window_height * 0.63 - 204.).clamp(100., 300.)))
+                .overflow_y_scroll().track_scroll(&crate::frame::scrolls("consent-facts"))
+                .child(facts
                     .child(fact(tr("Downloads"), downloads, true))
                     .child(fact(
                         tr("While building"),
@@ -1053,24 +1100,21 @@ impl Launcher {
                         tr("When you play"),
                         tr("The mod, inside the game, with the same access to your files and programs as the game has."),
                         true,
-                    )),
-            )
+                    ))))
             .child(
                 checkbox(
                     "alt-consent-native",
                     ticked,
-                    trf("Let {name} run as native code in my game", &[("name", &name)]),
-                )
+                    if package_count > 1 { tr("Let these mods run as native code in my game").into() } else { tr("Let this mod run as native code in my game").into() },
+                ).flex_none()
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.ui.sheets.ticked.0 ^= true;
                     cx.notify();
                 })),
             )
-            .children(
-                self.consent_error
-                    .clone()
-                    .map(|e| div().text_color(rgb(palette().danger)).text_size(px(tokens::LABEL)).child(e)),
-            )
+            .children(self.consent_error.clone().map(|e| div().id("consent-error").flex_none()
+                .line_clamp(2).text_color(rgb(palette().danger)).text_size(px(tokens::LABEL))
+                .tooltip(crate::glass_ui::tip(e.clone())).child(e)))
             .child(consent_footer(
                 tr("This stays allowed on this computer until you take it back in Settings, under Mods. Progress shows beside Play on Home, and at the top of every other page."),
                 button("alt-consent-cancel", tr("Not now")).on_click(cx.listener(
@@ -1081,7 +1125,7 @@ impl Launcher {
                 )),
                 allow,
             ));
-        frame("alt-consent", 760., body, cx)
+        bounded_frame("alt-consent", 760., body, cx)
     }
 
     /// Allow: persist the permission, then run the one pending action. The old overlay's match.
@@ -1578,6 +1622,7 @@ fn fact(label: &str, value: impl IntoElement, rule: bool) -> Div {
 fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
     div()
         .flex()
+        .flex_none()
         .flex_col()
         .gap(px(12.))
         .child(muted(note.to_owned()))
