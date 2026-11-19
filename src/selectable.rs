@@ -241,27 +241,52 @@ fn auto_scroll(window: &Window, cx: &mut App) {
 /// The rectangles a selection covers, one per visual row, each from the first selected
 /// character on that row to the end of the last, as a browser draws it.
 fn rows(layout: &TextLayout, text: &str, range: &Range<usize>) -> Vec<Bounds<Pixels>> {
-    let line = layout.line_height();
-    let left = layout.bounds().left();
     let edges = text[range.clone()]
         .char_indices()
-        .map(|(i, _)| range.start + i)
-        .chain([range.end]);
-    let mut out: Vec<Bounds<Pixels>> = Vec::new();
-    for at in edges.filter_map(|ix| layout.position_for_index(ix)) {
-        match out.last_mut() {
-            Some(row) if row.top() == at.y => {
-                row.size.width = row.size.width.max(at.x - row.left());
+        .map(|(i, c)| (range.start + i, Some(c)))
+        .chain([(range.end, None)])
+        .filter_map(|(ix, c)| Some((layout.position_for_index(ix)?, c)));
+    row_bounds(edges, layout.bounds().left(), layout.line_height())
+}
+
+/// [`rows`] from each selected character's place (and the end's, with no character), the
+/// text's left edge and its line height. A row's indentation is left out: it starts at its first
+/// character that isn't a space, and a row of only spaces has none. Copy still takes the spaces.
+fn row_bounds(
+    edges: impl IntoIterator<Item = (Point<Pixels>, Option<char>)>,
+    edge: Pixels,
+    line: Pixels,
+) -> Vec<Bounds<Pixels>> {
+    // The row being built: its top, where its highlight starts once known, and how far it goes.
+    let mut row: Option<(Pixels, Option<Pixels>, Pixels)> = None;
+    let mut out = Vec::new();
+    let mut close = |row: Option<(Pixels, Option<Pixels>, Pixels)>| {
+        if let Some((top, Some(left), right)) = row {
+            out.push(Bounds::new(
+                gpui::point(left, top),
+                gpui::size((right - left).max(Pixels::ZERO), line),
+            ));
+        }
+    };
+    for (at, c) in edges {
+        match &mut row {
+            Some((top, _, right)) if *top == at.y => *right = (*right).max(at.x),
+            _ => {
+                // A row that a long line wrapped onto is already under way where its first
+                // place shows (the index at a wrap reports the end of the row above): it starts
+                // at the text's edge. A new line starts where its first character is.
+                let wrapped = row.is_some() && at.x > edge;
+                close(row.take());
+                row = Some((at.y, wrapped.then_some(edge), at.x));
             }
-            // A row after the first starts at the text's left edge: the index at a wrap reports
-            // the end of the row above, not the start of its own.
-            Some(_) => out.push(Bounds::new(
-                gpui::point(left, at.y),
-                gpui::size(at.x - left, line),
-            )),
-            None => out.push(Bounds::new(at, gpui::size(Pixels::ZERO, line))),
+        }
+        if let (Some((_, left @ None, _)), Some(c)) = (&mut row, c) {
+            if !c.is_whitespace() {
+                *left = Some(at.x);
+            }
         }
     }
+    close(row);
     out
 }
 
@@ -399,6 +424,9 @@ impl Element for Selectable {
         if dragging {
             let drag = layout.clone();
             let mine = id.clone();
+            // Only the part of the block that shows counts: text scrolled out of a box above or
+            // below its edge is not where the pointer is.
+            let visible = bounds.intersect(&window.content_mask().bounds);
             window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
                 if phase != DispatchPhase::Capture || ev.pressed_button != Some(MouseButton::Left) {
                     return;
@@ -416,20 +444,27 @@ impl Element for Selectable {
                 let moved = ACTIVE.with_borrow_mut(|a| {
                     let a = a.as_mut().filter(|a| a.dragging)?;
                     let (left, right) = a.column;
-                    let shares = bounds.left() < right && bounds.right() > left;
-                    if !shares || bounds.top() > y {
+                    let shares = visible.left() < right && visible.right() > left;
+                    let hidden = visible.size.height <= Pixels::ZERO;
+                    if !shares || hidden || visible.top() > y {
                         return None;
                     }
-                    // Every block hears the move: the lowest one starting above the pointer
-                    // takes the head.
+                    // Every block hears the move: the lowest one whose shown part starts above
+                    // the pointer takes the head.
                     let best = a.probe.filter(|(at, _)| *at == ev.position).map(|(_, t)| t);
-                    if best.is_some_and(|top| top >= bounds.top()) {
+                    if best.is_some_and(|top| top >= visible.top()) {
                         return None;
                     }
-                    a.probe = Some((ev.position, bounds.top()));
+                    a.probe = Some((ev.position, visible.top()));
+                    // Below the shown part, the head stays on its last shown line until the box
+                    // scrolls more into view.
+                    let at = gpui::point(
+                        ev.position.x,
+                        y.min(visible.bottom() - gpui::px(1.)),
+                    );
                     let head = Place {
                         block: mine.clone(),
-                        ix: index(&drag, ev.position),
+                        ix: index(&drag, at),
                     };
                     (head != a.head).then(|| a.head = head)
                 });
@@ -514,7 +549,28 @@ impl IntoElement for Selectable {
 
 #[cfg(test)]
 mod tests {
-    use super::word;
+    use super::{row_bounds, word};
+    use gpui::{point, px};
+
+    #[test]
+    fn a_highlight_leaves_out_each_lines_indentation() {
+        // "a\n  bc": a at 0, its line ends at 10; b at 20 and c at 30 on the next, after two
+        // spaces at 0 and 10; the end at 40.
+        let y2 = px(20.);
+        let edges = [
+            (point(px(0.), px(0.)), Some('a')),
+            (point(px(10.), px(0.)), Some('\n')),
+            (point(px(0.), y2), Some(' ')),
+            (point(px(10.), y2), Some(' ')),
+            (point(px(20.), y2), Some('b')),
+            (point(px(30.), y2), Some('c')),
+            (point(px(40.), y2), None),
+        ];
+        let rows = row_bounds(edges, px(0.), px(20.));
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].left(), rows[0].right()), (px(0.), px(10.)));
+        assert_eq!((rows[1].left(), rows[1].right()), (px(20.), px(40.)));
+    }
 
     #[test]
     fn a_double_click_takes_the_word_or_the_mark_it_lands_on() {
