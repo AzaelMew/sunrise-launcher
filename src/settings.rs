@@ -1196,27 +1196,36 @@ impl Launcher {
                             cx.notify();
                         }))
                 });
+            let list = div()
+                .id("alt-language-menu")
+                .w(px(260.))
+                .max_h(px(320.))
+                .overflow_y_scroll()
+                .p(px(6.))
+                .rounded(px(tokens::R_CONTROL))
+                .border_1()
+                .border_color(rgb(palette().line))
+                .bg(rgb(palette().raised))
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_scroll(|_, _, cx| cx.stop_propagation())
+                .flex()
+                .flex_col()
+                .children(options);
+            // Under the button, right-aligned to it, and kept inside the window: at 800×600 the
+            // whole list, edge included, moves up rather than running off the bottom.
             gpui::deferred(
                 div()
-                    .id("alt-language-menu")
                     .absolute()
                     .top(px(tokens::CONTROL + 6.))
-                    .right(px(0.))
-                    .w(px(260.))
-                    .max_h(px(320.))
-                    .overflow_y_scroll()
-                    .p(px(6.))
-                    .rounded(px(tokens::R_CONTROL))
-                    .border_1()
-                    .border_color(rgb(palette().line))
-                    .bg(rgb(palette().raised))
-                    .shadow_lg()
-                    .occlude()
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_scroll(|_, _, cx| cx.stop_propagation())
-                    .flex()
-                    .flex_col()
-                    .children(options),
+                    .right_0()
+                    .child(
+                        gpui::anchored()
+                            .anchor(gpui::Anchor::TopRight)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(list),
+                    ),
             )
             .with_priority(10)
         });
