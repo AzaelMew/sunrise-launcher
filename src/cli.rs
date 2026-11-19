@@ -920,7 +920,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 19] = [
+const SETTING_KEYS: [&str; 20] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",

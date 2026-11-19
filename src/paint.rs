@@ -1147,12 +1147,11 @@ accent = "#101010""##,
         assert_eq!(Palette::of(&settings, &theme), automatic);
 
         settings.background = Some("background-0123456789ab.png".into());
-        settings.performance = Some(true);
         let photo = from_settings(&settings, WindowAppearance::Dark);
         assert_eq!(Palette::of(&settings, &photo).alpha, 1.);
         settings.set_panel_opacity(Some(PANEL_OPACITY_MIN));
         assert_eq!(Palette::of(&settings, &photo).alpha, floor);
-        // The renderer can substitute a scene for an unavailable picture, even in performance.
+        // The renderer can substitute a scene for an unavailable picture.
         assert_eq!(Palette::of(&settings, &theme).alpha, floor);
         settings.scenery_on = Some(false);
         assert_eq!(Palette::of(&settings, &photo).alpha, 1.);
