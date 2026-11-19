@@ -245,13 +245,25 @@ impl Launcher {
                     }
                 }
                 Msg::Updates(updates) => {
-                    self.update_error = updates.sunrise_error.clone();
+                    self.checking_updates = false;
+                    self.launcher_checked_now = None;
                     self.updates = *updates;
                     if self.settings.auto_install() {
                         self.install_update();
                     }
                     if let Some(release) = self.updates.launcher.clone() {
                         self.update_launcher(release);
+                    }
+                }
+                Msg::LauncherChecked(result) => {
+                    self.checking_updates = false;
+                    self.launcher_checked_now = result.is_ok().then(Instant::now);
+                    match *result {
+                        Ok(release) => {
+                            self.updates.launcher = release;
+                            self.updates.launcher_error = None;
+                        }
+                        Err(error) => self.updates.launcher_error = Some(error),
                     }
                 }
                 Msg::NativeConsentRead(read, inputs) => {
@@ -531,11 +543,13 @@ impl Launcher {
                 changed = true;
             }
         }
-        if self
-            .checked
-            .is_some_and(|at| at.elapsed() > backend::CHECK_EVERY)
+        if !self.checking_updates
+            && self
+                .checked
+                .is_some_and(|at| at.elapsed() > backend::CHECK_EVERY)
         {
-            self.check_updates();
+            self.check_updates(UpdateCheck::Scheduled);
+            changed = true;
         }
         if changed {
             cx.notify();

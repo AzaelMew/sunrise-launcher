@@ -1457,10 +1457,31 @@ impl Launcher {
                         false,
                     )
                 }
-                None if self.checked.is_some() && self.update_error.is_none() => {
-                    (tr("up to date").to_string(), None, false)
+                None if self.checking_updates => (
+                    String::new(),
+                    Some(off(button("alt-launcher-check", tr("Checking…")))),
+                    false,
+                ),
+                None => {
+                    let (about, bad) = match &self.updates.launcher_error {
+                        Some(error) => (trf("Not checked: {error}", &[("error", error)]), true),
+                        None if self
+                            .launcher_checked_now
+                            .is_some_and(|checked| checked.elapsed() < Duration::from_secs(60)) =>
+                        {
+                            (tr("up to date · checked just now").to_string(), false)
+                        }
+                        None if self.checked.is_some() => (tr("up to date").to_string(), false),
+                        None => (String::new(), false),
+                    };
+                    let check = button("alt-launcher-check", tr("Check for updates")).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.check_updates(UpdateCheck::ManualLauncher);
+                            cx.notify();
+                        }),
+                    );
+                    (about, Some(check), bad)
                 }
-                None => (String::new(), None, false),
             },
         };
         let mut words = div().flex().flex_col().gap(px(2.));
