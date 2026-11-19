@@ -107,14 +107,18 @@ pub(crate) fn row(
     actions: Div,
 ) -> Div {
     let about = about.into();
+    // When the words would get narrower than a short line, the controls go under them instead:
+    // the words never squeeze to a word a line beside them.
     div()
         .flex()
+        .flex_wrap()
         .items_center()
-        .gap(px(16.))
+        .gap_x(px(16.))
+        .gap_y(px(10.))
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(160.))
                 .flex()
                 .flex_col()
                 .gap(px(2.))
