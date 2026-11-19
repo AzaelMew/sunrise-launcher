@@ -40,12 +40,18 @@ pub(crate) fn tile(
         .rounded(corners)
         .overflow_hidden();
     match picture {
-        Some(picture) => square.child(
-            gpui::img(picture)
-                .size_full()
-                .object_fit(ObjectFit::Cover)
-                .with_fallback(move || letter().into_any_element()),
-        ),
+        Some(picture) => {
+            // The letter stands in while the picture is on its way too, so a list never shows
+            // empty squares waiting for its pictures.
+            let waiting = letter.clone();
+            square.child(
+                gpui::img(picture)
+                    .size_full()
+                    .object_fit(ObjectFit::Cover)
+                    .with_loading(move || waiting().into_any_element())
+                    .with_fallback(move || letter().into_any_element()),
+            )
+        }
         None => square.child(letter()),
     }
 }
