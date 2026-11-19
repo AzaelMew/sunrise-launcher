@@ -600,4 +600,9 @@ fn each_system_has_its_launcher_folders() {
     );
     assert!(got.contains(&"ATLauncher: C:/Users/r/AppData/Roaming/ATLauncher".into()));
     assert!(got.contains(&"Dawn Client: C:/Users/r/AppData/Roaming/.dawn".into()));
+    // The Microsoft Store's Minecraft Launcher keeps its Java under its package's local cache.
+    assert!(got.contains(
+        &"the official launcher: C:/Users/r/AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local"
+            .into()
+    ));
 }

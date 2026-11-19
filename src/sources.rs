@@ -149,6 +149,13 @@ pub fn known_folders(os: Os, f: &Folders) -> Vec<(&'static str, PathBuf)> {
             ("Modrinth App", f.data.join("ModrinthApp")),
             ("ATLauncher", f.data.join("ATLauncher")),
             ("Dawn Client", f.data.join(".dawn")),
+            // The Microsoft Store's Minecraft Launcher keeps its Java runtimes here.
+            (
+                OFFICIAL,
+                f.home.join(
+                    "AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local",
+                ),
+            ),
         ],
     };
     // Names every system shares: the Modrinth App before its rename, GDLauncher and its
