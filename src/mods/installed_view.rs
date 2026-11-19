@@ -878,7 +878,7 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(palette().line))
                     .bg(c(palette().raised))

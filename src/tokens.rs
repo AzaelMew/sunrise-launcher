@@ -5,6 +5,26 @@
 //! Spacing (gaps and padding) and a single screen's own layout (a column's width, a picture's
 //! height) are not tokens: they say how one screen is laid out, not what the look is.
 
+thread_local! {
+    /// The player's corner rounding (Settings › Appearance), as a factor of the radii below.
+    static ROUNDNESS: std::cell::Cell<f32> = const { std::cell::Cell::new(1.) };
+}
+
+/// Set as each frame starts being built.
+pub(crate) fn set_roundness(factor: f32) {
+    ROUNDNESS.set(factor);
+}
+
+/// The player's corner rounding, as a factor of the look's radii (1 as drawn).
+pub(crate) fn roundness() -> f32 {
+    ROUNDNESS.get()
+}
+
+/// A corner `radius` as the player wants corners: every rounded corner goes through this.
+pub(crate) fn r(radius: f32) -> gpui::Pixels {
+    gpui::px(radius * ROUNDNESS.get())
+}
+
 // ---- type scale
 
 /// Tags, counts and the rail's labels.

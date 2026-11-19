@@ -55,13 +55,13 @@ impl Launcher {
 pub(crate) fn progress_bar(fraction: f32) -> Div {
     div()
         .h(px(4.))
-        .rounded(px(tokens::R_BAR))
+        .rounded(crate::tokens::r(crate::tokens::R_BAR))
         .bg(rgb(palette().line))
         .overflow_hidden()
         .child(
             div()
                 .h(px(4.))
-                .rounded(px(tokens::R_BAR))
+                .rounded(crate::tokens::r(crate::tokens::R_BAR))
                 .bg(rgb(palette().accent))
                 .w(relative(fraction.clamp(0.02, 1.))),
         )

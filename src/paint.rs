@@ -997,10 +997,7 @@ accent = "#101010""##,
         let p = Palette::of(&settings, &theme);
         assert_eq!(p.card().a, 1.);
         assert_eq!(p.chrome_plate().a, 1.);
-        assert_eq!(
-            Inputs::of(&settings, &theme, None, Some(82)).plates,
-            Plates::Opaque
-        );
+        assert!(Inputs::of(&settings, &theme, None, Some(82)).plates == Plates::Opaque);
         assert_eq!(theme.look.blur, 0.);
         assert!(settings.scenery());
     }

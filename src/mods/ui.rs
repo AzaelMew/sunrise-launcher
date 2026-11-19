@@ -14,7 +14,7 @@ pub(super) fn tag(label: &'static str) -> Div {
         .flex_none()
         .px(px(6.))
         .py(px(1.))
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .border_1()
         .border_color(c(palette().line))
         .text_size(px(tokens::CAPTION))
@@ -58,7 +58,7 @@ pub(crate) fn chip(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(tokens::R_PANEL))
+        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
         .border_1()
         .border_color(if on {
             c(palette().text)
@@ -104,7 +104,7 @@ pub(crate) fn choices(
         // Room for the ring, taken back so the chips stay where they were.
         .p(px(3.))
         .m(px(-4.))
-        .rounded(px(tokens::R_PANEL + 4.))
+        .rounded(crate::tokens::r(crate::tokens::R_PANEL) + px(4.))
         .border_1()
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)));
@@ -146,13 +146,13 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         let fill_div = div()
             .absolute()
             .size_full()
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .bg(c(palette().text));
         let knob_div = div()
             .absolute()
             .top(px(INSET))
             .size(px(KNOB))
-            .rounded(px(tokens::R_CONTROL - INSET));
+            .rounded((crate::tokens::r(crate::tokens::R_CONTROL) - px(INSET)).max(px(0.)));
         match crate::motion::sliding(&key, on) {
             Some(slide) => {
                 let toward = move |p: f32| if on { p } else { 1. - p };
@@ -191,7 +191,7 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .relative()
         .w(px(40.))
         .h(px(22.))
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .bg(c(palette().line))
         .cursor_pointer()
         .child(fill_el)
@@ -222,7 +222,7 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .tab_index(0)
         .seen()
         .size(px(18.))
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .border_1()
         .border_color(if on {
             c(palette().text)
@@ -273,7 +273,7 @@ pub(super) fn browse_card(
         .p(px(12.))
         .min_w_0()
         .overflow_hidden()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(c(palette().line))
         .bg(palette().card())
@@ -381,7 +381,7 @@ pub(super) fn status(icon: &'static str, label: impl Into<SharedString>, color: 
 
 pub(super) fn card() -> Div {
     div()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(c(palette().divider))
         .bg(palette().card())

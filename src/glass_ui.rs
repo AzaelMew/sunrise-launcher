@@ -62,11 +62,8 @@ pub fn set_on(on: bool) {
 
 /// A corner of the glass parts: square, as the Outline look draws them (`docs/design-system.md`).
 pub fn rad(r: f32) -> f32 {
-    if on() {
-        CORNERS.get()
-    } else {
-        r
-    }
+    let r = if on() { CORNERS.get() } else { r };
+    r * crate::tokens::roundness()
 }
 
 /// Set as each frame's pages start being built: the colours for the player's accent.

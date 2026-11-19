@@ -142,7 +142,7 @@ fn preview(p: &Palette) -> Div {
         div()
             .h(px(4.))
             .w(px(w))
-            .rounded(px(tokens::R_BAR))
+            .rounded(crate::tokens::r(crate::tokens::R_BAR))
             .bg(rgb(color))
     };
     div()
@@ -155,7 +155,7 @@ fn preview(p: &Palette) -> Div {
             div()
                 .w(px(14.))
                 .h_full()
-                .rounded(px(tokens::R_SMALL))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                 .bg(rgb(p.chrome))
                 .border_1()
                 .border_color(rgb(p.chrome_line))
@@ -172,7 +172,7 @@ fn preview(p: &Palette) -> Div {
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .rounded(px(tokens::R_SMALL))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                 .bg(rgb(p.card_color))
                 .border_1()
                 .border_color(rgb(p.divider))
@@ -208,7 +208,7 @@ fn preview(p: &Palette) -> Div {
                             .h(px(20.))
                             .flex()
                             .items_center()
-                            .rounded(px(tokens::R_SMALL))
+                            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                             .border_1()
                             .border_color(p.input_edge())
                             .bg(p.play_gradient())
@@ -505,7 +505,7 @@ impl Launcher {
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .rounded(px(tokens::R_CARD))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .overflow_hidden()
                     .border_1()
                     .border_color(rgb(if on {
@@ -726,6 +726,7 @@ impl Launcher {
                     ))),
             ),
         );
+        rows.push(self.corners_row(cx));
         let cat = self.settings.show_cat();
         rows.push(row(
             tr("Show the cat"),
@@ -875,7 +876,7 @@ impl Launcher {
                     div()
                         .flex_none()
                         .size(px(tokens::FIELD))
-                        .rounded(px(tokens::R_CONTROL))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .border_1()
                         .border_color(rgb(palette().line))
                         .bg(rgb(palette().accent)),

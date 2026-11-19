@@ -4080,6 +4080,9 @@ impl WhilePlaying {
 /// they are until the player picks.
 pub const MAX_CORNERS: u8 = 24;
 pub const DEFAULT_CORNERS: u8 = 4;
+/// A button's corner radius as the look draws it, and the roundest the player can set, in px.
+pub const DEFAULT_CORNER_RADIUS: u8 = 9;
+pub const MAX_CORNER_RADIUS: u8 = 30;
 
 /// Custom panel opacity, in whole percentages. Unset keeps the theme's existing opacity.
 pub const PANEL_OPACITY_MIN: u8 = 82;
@@ -4210,6 +4213,15 @@ pub struct Settings {
     /// unset is [`DEFAULT_CORNERS`] (read it with [`Settings::corners`]).
     #[serde(default, rename = "corners", skip_serializing_if = "Option::is_none")]
     pub corners_px: Option<u8>,
+    /// How round every corner in the launcher is, as a button's corner radius in px: 0 square,
+    /// [`DEFAULT_CORNER_RADIUS`] the look as drawn, up to [`MAX_CORNER_RADIUS`]; cards and panels
+    /// keep their proportion to it. Unset is the default (read it with [`Settings::corner_radius`]).
+    #[serde(
+        default,
+        rename = "corner_radius",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub corner_radius_px: Option<u8>,
     /// Home's scenery between the sidebars: the theme's animated pixel scene (or the player's
     /// picture). Unset is on; off leaves the plain page (read it with [`Settings::scenery`]).
     #[serde(default, rename = "scenery", skip_serializing_if = "Option::is_none")]
@@ -4234,6 +4246,18 @@ impl Settings {
     pub fn set_panel_opacity(&mut self, opacity: Option<u8>) {
         self.panel_opacity =
             opacity.map(|percent| percent.clamp(PANEL_OPACITY_MIN, PANEL_OPACITY_MAX));
+    }
+
+    /// A button's corner radius in px, as the player set it.
+    pub fn corner_radius(&self) -> u8 {
+        self.corner_radius_px
+            .unwrap_or(DEFAULT_CORNER_RADIUS)
+            .min(MAX_CORNER_RADIUS)
+    }
+
+    /// How round the launcher's corners are, as a factor of the look's radii (1 as drawn).
+    pub fn roundness(&self) -> f32 {
+        f32::from(self.corner_radius()) / f32::from(DEFAULT_CORNER_RADIUS)
     }
 
     /// Whether Home shows its scenery: on unless the player turned it off.

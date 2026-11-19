@@ -366,6 +366,11 @@ struct Launcher {
     proxy_input: line_edit::LineEdit,
     proxy_focused: bool,
     proxy_focus: FocusHandle,
+    /// Settings › Appearance › Corner rounding, typed in px.
+    corners_input: line_edit::LineEdit,
+    corners_focused: bool,
+    corners_focus: FocusHandle,
+    corners_slider: slider::Slider,
     /// Opt-in data collection: the player's answer and Settings' section (`collection`).
     collection: collection::Collection,
     /// How many play Sunrise now, while the server answers ("N playing now" on the Play page).

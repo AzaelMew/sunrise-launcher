@@ -60,7 +60,7 @@ impl Launcher {
         self.field(f, placeholder, width, cx)
             .h(px(36.))
             .px(px(12.))
-            .rounded(px(8.))
+            .rounded(crate::tokens::r(8.))
             .border_1()
             .border_color(rgb(if focused {
                 palette().focus
@@ -78,7 +78,7 @@ impl Launcher {
             .flex_col()
             .gap(px(10.))
             .p(px(16.))
-            .rounded(px(12.))
+            .rounded(crate::tokens::r(12.))
             .border_1()
             .border_color(rgb(palette().divider))
             .bg(palette().card())
@@ -435,7 +435,7 @@ impl Launcher {
                                 div()
                                     .flex_none()
                                     .size(px(8.))
-                                    .rounded(px(4.))
+                                    .rounded(crate::tokens::r(4.))
                                     .bg(rgb(palette().success)),
                             )
                             .child(div().flex_1().min_w_0().child(crate::selectable::selectable(trf(
@@ -468,7 +468,7 @@ impl Launcher {
                         .child(
                             div()
                                 .p(px(12.))
-                                .rounded(px(8.))
+                                .rounded(crate::tokens::r(8.))
                                 .bg(rgb(palette().field))
                                 .border_1()
                                 .border_color(rgb(palette().divider))

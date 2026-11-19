@@ -449,7 +449,7 @@ fn link(id: &'static str, label: String) -> Stateful<Div> {
         .flex_none()
         .cursor_pointer()
         .tab_index(0)
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .text_size(px(tokens::SMALL))
         .focus_visible(|s| s.shadow(crate::frame::focus_ring(palette().focus)))
         .seen()

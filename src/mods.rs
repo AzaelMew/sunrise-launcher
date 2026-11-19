@@ -698,12 +698,12 @@ impl Launcher {
                     .child(
                         div()
                             .h(px(4.))
-                            .rounded(px(tokens::R_BAR))
+                            .rounded(crate::tokens::r(crate::tokens::R_BAR))
                             .bg(c(palette().line))
                             .child(
                                 div()
                                     .h(px(4.))
-                                    .rounded(px(tokens::R_BAR))
+                                    .rounded(crate::tokens::r(crate::tokens::R_BAR))
                                     .bg(c(palette().text))
                                     .w(relative(f.clamp(0.02, 1.))),
                             ),
@@ -786,7 +786,7 @@ impl Launcher {
             .min_w(px(120.))
             .h(px(tokens::ACTION))
             .px(px(16.))
-            .rounded(px(tokens::R_CARD))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content_with(
@@ -846,7 +846,7 @@ impl Launcher {
                 .h(px(tokens::FIELD))
                 .flex()
                 .items_center()
-                .rounded(px(tokens::R_CONTROL))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .text_size(px(tokens::BODY))
                 .cursor_pointer()
                 .when(on, |d| {
@@ -920,7 +920,7 @@ impl Launcher {
                     .flex()
                     .flex_none()
                     .p(px(3.))
-                    .rounded(px(tokens::R_CARD))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
                     .border_color(c(palette().line))
                     .bg(palette().card())
