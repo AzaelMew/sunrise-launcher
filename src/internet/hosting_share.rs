@@ -172,7 +172,9 @@ impl Launcher {
                             .min_w_0()
                             .font_family(theme::MONO)
                             .text_size(px(18.))
-                            .child(address.clone()),
+                            // A long name breaks after a dot, never inside a word: a zero-width
+                            // space after each dot is a place it may wrap. Copy takes the plain one.
+                            .child(address.replace('.', ".\u{200B}")),
                     )
                     .child(self.share_copy("share-copy", address, cx)),
             )
@@ -218,8 +220,11 @@ impl Launcher {
             )));
             if !self.internet.asking_token {
                 return d.child(
+                    // The second button goes under the first when the card is narrow, rather
+                    // than past its edge.
                     div()
                         .flex()
+                        .flex_wrap()
                         .gap(px(6.))
                         .child(link(
                             "share-console",
