@@ -743,8 +743,9 @@ enum Cmd {
         #[arg(long, hide = true)]
         mixins_from_source: bool,
         /// When a mod this build can't use was saved into the profile's worlds, build without
-        /// it anyway. Without this the build stops and names the worlds, leaving the profile
-        /// as it is
+        /// it anyway: what the mod added to those worlds is lost when they are next opened
+        /// (back them up in the game first). Without this the build stops and names the
+        /// worlds, leaving the profile as it is
         #[arg(long, conflicts_with = "server_output")]
         leave_out_mods: bool,
     },

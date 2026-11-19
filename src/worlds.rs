@@ -107,7 +107,7 @@ fn read(path: &Path) -> Option<World> {
 }
 
 /// A folder with either level file is a world. Use the same recovery order as the game;
-/// if neither is readable it must still be offered a backup.
+/// if neither is readable it is still a world, of unknown mods.
 fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
     let mut changed = None;
     let mut root = None;
@@ -250,7 +250,7 @@ fn scan(home: &Path) -> Result<Vec<Scanned>, String> {
     Ok(out)
 }
 
-/// Saved worlds a change to these mods could affect. Unknown worlds require backup too.
+/// Saved worlds a change to these mods could affect. Unknown worlds count as saved with every one of them.
 pub fn at_risk(home: &Path, ids: &[String]) -> Result<Vec<(World, Vec<String>, bool)>, String> {
     Ok(scan(home)?
         .into_iter()
