@@ -238,6 +238,13 @@ impl Launcher {
                         )),
                 );
             }
+            // As tall as the token field they stand beside.
+            let save = self
+                .share_button("share-token-save", tr("Save"), true, cx, |this, _| {
+                    this.save_token()
+                })
+                .h(px(tokens::FIELD));
+            let keys = link("share-keys", "Make a token", tailscale::KEYS).h(px(tokens::FIELD));
             return d
                 .child(
                     div()
@@ -246,14 +253,8 @@ impl Launcher {
                         .items_center()
                         .gap(px(6.))
                         .child(self.share_field(Field::Token, "tskey-api-…", 280., cx))
-                        .child(self.share_button(
-                            "share-token-save",
-                            tr("Save"),
-                            true,
-                            cx,
-                            |this, _| this.save_token(),
-                        ))
-                        .child(link("share-keys", "Make a token", tailscale::KEYS)),
+                        .child(save)
+                        .child(keys),
                 )
                 .child(hint(tr(
                     "Settings, Keys, Generate access token. It's kept in this computer's keychain and only sent to Tailscale.",
@@ -275,7 +276,9 @@ impl Launcher {
                         idle,
                         cx,
                         |this, _| this.invite_friend(),
-                    )),
+                    )
+                    // As tall as the email field beside it.
+                    .h(px(tokens::FIELD))),
             )
             .child(hint(tr(
                 "One invitation per friend. With an email Tailscale sends it; without, send them the link. They accept it in their own Tailscale account.",
