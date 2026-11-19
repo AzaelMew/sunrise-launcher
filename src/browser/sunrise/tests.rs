@@ -84,6 +84,27 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     assert!(!home.join(installed::MANIFEST).exists());
     assert!(!home.join("sunrise-mods.txt").exists());
 
+    // The index's own dependency claim is planned before anything downloads: no version of
+    // sunrise_creatures satisfies ^2, so the install is refused with the planner's reason.
+    let mut claimed = index.clone();
+    let fireflies = claimed
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "fireflies")
+        .unwrap();
+    fireflies.versions[0].dependencies = Some(vec![index::Dependency {
+        id: "sunrise_creatures".into(),
+        version: "^2".into(),
+        optional: false,
+        side: None,
+    }]);
+    let refused = run(&claimed).unwrap_err();
+    assert!(
+        refused.contains("Fireflies can't be installed"),
+        "{refused}"
+    );
+    assert!(!home.join(installed::MANIFEST).exists());
+
     // A failure after moving the mod files must also leave none behind.
     fs::create_dir(home.join(installed::MANIFEST)).unwrap();
     assert!(run(&index).is_err());

@@ -137,6 +137,27 @@ fn plain_tag(tag: &str) -> bool {
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+/// The title and one-line summary rules shared by project and collection pages.
+pub(super) fn check_title(name: &str, summary: &str) -> Vec<String> {
+    const MAX_SUMMARY: usize = 160;
+    let mut errors = Vec::new();
+    if name.trim().is_empty() {
+        errors.push("has no name".into());
+    }
+    if summary.trim().is_empty() {
+        errors.push("has no summary".into());
+    } else if summary.chars().count() > MAX_SUMMARY {
+        errors.push(format!("the summary is over {MAX_SUMMARY} characters"));
+    }
+    errors
+}
+
+pub(super) fn check_description_limit(description: &str) -> Option<String> {
+    let length = description.trim().chars().count();
+    (length > MAX_DESCRIPTION)
+        .then(|| format!("the description is {length} characters: at most {MAX_DESCRIPTION}"))
+}
+
 /// Every problem with a page's description, categories and tags, each a
 /// sentence a submitter can act on.
 pub fn check(
@@ -145,13 +166,7 @@ pub fn check(
     categories: &[String],
     tags: &[String],
 ) -> Vec<String> {
-    let mut errors = Vec::new();
-    let length = description.trim().chars().count();
-    if length > MAX_DESCRIPTION {
-        errors.push(format!(
-            "the description is {length} characters: at most {MAX_DESCRIPTION}"
-        ));
-    }
+    let mut errors: Vec<_> = check_description_limit(description).into_iter().collect();
     let known = self::categories(kind);
     if categories.len() > MAX_CATEGORIES {
         errors.push(format!(

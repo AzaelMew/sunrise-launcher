@@ -31,6 +31,18 @@ pub const WASM: &str = "mod.wasm";
 /// A native mod's uses table (`mod_surface::uses::USES_FILE` in the game repository).
 pub const USES_FILE: &str = "uses.json";
 /// The largest uses table ([`USES_FILE`]) a package may carry: what the surface crate reads.
+/// Ids no mod or pack may take: the mod site's own pages under `/mods/` (a project's page is
+/// `/mods/<id>`), and the names of the pages below an id.
+pub const RESERVED_IDS: [&str; 7] = [
+    "account",
+    "edit",
+    "index",
+    "mine",
+    "policy",
+    "registry-page",
+    "submit",
+];
+
 pub const MAX_USES: u64 = 4 << 20;
 /// The content manifest API this build loads.
 pub const API: &str = "0.2";
