@@ -306,10 +306,14 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
             let ids: Vec<&str> = items.iter().map(|(id, _)| id.as_str()).collect();
             match mod_list::set_all_enabled(home, &ids, false) {
                 Ok(()) => done(
-                    trf(
-                        "Turned off {count} mods. The game reads this when it starts.",
-                        &[("count", &ids.len().to_string())],
-                    ),
+                    if ids.len() == 1 {
+                        tr("Turned off 1 mod. The game reads this when it starts.").into()
+                    } else {
+                        trf(
+                            "Turned off {count} mods. The game reads this when it starts.",
+                            &[("count", &ids.len().to_string())],
+                        )
+                    },
                     Vec::new(),
                 ),
                 Err(e) => refuse(e),
@@ -328,7 +332,11 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
                 }
             }
             done(
-                trf("Removed {count} mods.", &[("count", &removed.to_string())]),
+                if removed == 1 {
+                    tr("Removed 1 mod.").into()
+                } else {
+                    trf("Removed {count} mods.", &[("count", &removed.to_string())])
+                },
                 failed,
             );
         }
@@ -372,10 +380,14 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
                 }
             }
             done(
-                trf(
-                    "Updated {count} mods, each checked against the registry.",
-                    &[("count", &updated.to_string())],
-                ),
+                if updated == 1 {
+                    tr("Updated 1 mod, checked against the registry.").into()
+                } else {
+                    trf(
+                        "Updated {count} mods, each checked against the registry.",
+                        &[("count", &updated.to_string())],
+                    )
+                },
                 failed,
             );
         }
@@ -441,7 +453,9 @@ mod tests {
         let home = home_with_world("bricks");
         let (tx, rx) = channel();
         run(off(&["bricks"]), &home, "26.3", &tx);
-        assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
+        assert!(
+            matches!(rx.try_iter().last(), Some(Event::Done(said, _)) if said.starts_with("Turned off 1 mod."))
+        );
         assert!(!mod_list::is_enabled(&home, "bricks"));
         assert!(mod_list::is_enabled(&home, "unrelated"));
         assert!(!home.join("backups").exists(), "no backup, no prompt");
