@@ -149,13 +149,6 @@ pub fn known_folders(os: Os, f: &Folders) -> Vec<(&'static str, PathBuf)> {
             ("Modrinth App", f.data.join("ModrinthApp")),
             ("ATLauncher", f.data.join("ATLauncher")),
             ("Dawn Client", f.data.join(".dawn")),
-            // The Microsoft Store's Minecraft Launcher keeps its Java runtimes here.
-            (
-                OFFICIAL,
-                f.home.join(
-                    "AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local",
-                ),
-            ),
         ],
     };
     // Names every system shares: the Modrinth App before its rename, GDLauncher and its
@@ -166,6 +159,18 @@ pub fn known_folders(os: Os, f: &Folders) -> Vec<(&'static str, PathBuf)> {
         ("GDLauncher", f.config.join("gdlauncher_next")),
     ]);
     list
+}
+
+/// Folders that hold only a launcher's Java runtimes, not a game directory: searched for
+/// Java and nowhere else (never the default game folder or an import source). The Microsoft
+/// Store's Minecraft Launcher keeps its runtimes under its package's local cache.
+pub fn java_only_folders(os: Os, f: &Folders) -> Vec<PathBuf> {
+    match os {
+        Os::Windows => vec![f
+            .home
+            .join("AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local")],
+        _ => Vec::new(),
+    }
 }
 
 /// The client jar's path in a Maven repository: `com.mojang:minecraft:26.3:client` is

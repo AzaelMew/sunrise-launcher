@@ -2328,6 +2328,11 @@ pub fn preparer(
             .into_iter()
             .map(|(_, dir)| dir),
     );
+    games.extend(
+        sources::Folders::current()
+            .map(|f| sources::java_only_folders(sources::Os::current(), &f))
+            .unwrap_or_default(),
+    );
     set_prepare_step(PrepareStep::Java);
     let java_home = java(major, needs.jdk, &games, &manifest, log)?;
     let jar = data_dir()

@@ -600,9 +600,16 @@ fn each_system_has_its_launcher_folders() {
     );
     assert!(got.contains(&"ATLauncher: C:/Users/r/AppData/Roaming/ATLauncher".into()));
     assert!(got.contains(&"Dawn Client: C:/Users/r/AppData/Roaming/.dawn".into()));
-    // The Microsoft Store's Minecraft Launcher keeps its Java under its package's local cache.
-    assert!(got.contains(
-        &"the official launcher: C:/Users/r/AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local"
-            .into()
-    ));
+    // The Store launcher's Java folder is no game folder: it stays out of this list (so the
+    // default Minecraft folder and the import list never see it) and is searched for Java only.
+    assert!(!got.iter().any(|g| g.contains("Packages")), "{got:#?}");
+    let java: Vec<String> = java_only_folders(Os::Windows, &windows)
+        .iter()
+        .map(|d| d.display().to_string().replace('\\', "/"))
+        .collect();
+    assert_eq!(
+        java,
+        ["C:/Users/r/AppData/Local/Packages/Microsoft.4297127D64EC6_8wekyb3d8bbwe/LocalCache/Local"]
+    );
+    assert!(java_only_folders(Os::Linux, &windows).is_empty());
 }
