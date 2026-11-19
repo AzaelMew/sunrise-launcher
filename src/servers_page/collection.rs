@@ -111,7 +111,7 @@ pub(crate) fn status(narrow: bool, first: String, second: Option<String>) -> Div
     div()
         .flex_none()
         .flex()
-        .w(px(if narrow { 68. } else { 124. }))
+        .w(px(if narrow { 84. } else { 124. }))
         .when(narrow, |d| d.flex_col())
         .when(!narrow, |d| d.gap(px(8.)).items_center())
         .text_size(px(tokens::SMALL))
