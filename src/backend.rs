@@ -516,7 +516,7 @@ pub(crate) fn get_unless_missing(url: &str) -> Result<Option<ureq::Response>, St
     }
 }
 
-/// A Sunrise game tag: `v` then a digit (`v2026.10.13`). Launcher tags never match.
+/// A Sunrise game tag: `v` then a digit (`v2026.10.13`); a launcher `vX.Y.Z` matches too, but only the game repository's list is checked, and its launcher releases are `launcher@X.Y.Z`.
 pub fn is_game_tag(tag: &str) -> bool {
     tag.strip_prefix('v')
         .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
@@ -4080,6 +4080,9 @@ impl WhilePlaying {
 /// they are until the player picks.
 pub const MAX_CORNERS: u8 = 24;
 pub const DEFAULT_CORNERS: u8 = 4;
+/// A button's corner radius as the look draws it, and the roundest the player can set, in px.
+pub const DEFAULT_CORNER_RADIUS: u8 = 9;
+pub const MAX_CORNER_RADIUS: u8 = 30;
 
 /// Custom panel opacity, in whole percentages. Unset keeps the theme's existing opacity.
 pub const PANEL_OPACITY_MIN: u8 = 82;
@@ -4172,10 +4175,14 @@ pub struct Settings {
     /// the indigo one is `themes::TWILIGHT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
-    /// The cheaper scene for older computers (a lower-resolution sky, a box blur, the scene
-    /// following the mouse less often and resizes baked in the background). Unset is off.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub performance: Option<bool>,
+    /// Keep launcher effects still and use opaque glass. Unset is off. On disk this is
+    /// still `performance`, the setting saved by earlier launchers.
+    #[serde(
+        rename = "performance",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reduced_graphics: Option<bool>,
     /// Home's background: a picture the player picked, kept in the data folder under this name
     /// (`themes::keep_background`). Unset shows Sunrise's landscape.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4206,6 +4213,15 @@ pub struct Settings {
     /// unset is [`DEFAULT_CORNERS`] (read it with [`Settings::corners`]).
     #[serde(default, rename = "corners", skip_serializing_if = "Option::is_none")]
     pub corners_px: Option<u8>,
+    /// How round every corner in the launcher is, as a button's corner radius in px: 0 square,
+    /// [`DEFAULT_CORNER_RADIUS`] the look as drawn, up to [`MAX_CORNER_RADIUS`]; cards and panels
+    /// keep their proportion to it. Unset is the default (read it with [`Settings::corner_radius`]).
+    #[serde(
+        default,
+        rename = "corner_radius",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub corner_radius_px: Option<u8>,
     /// Home's scenery between the sidebars: the theme's animated pixel scene (or the player's
     /// picture). Unset is on; off leaves the plain page (read it with [`Settings::scenery`]).
     #[serde(default, rename = "scenery", skip_serializing_if = "Option::is_none")]
@@ -4230,6 +4246,18 @@ impl Settings {
     pub fn set_panel_opacity(&mut self, opacity: Option<u8>) {
         self.panel_opacity =
             opacity.map(|percent| percent.clamp(PANEL_OPACITY_MIN, PANEL_OPACITY_MAX));
+    }
+
+    /// A button's corner radius in px, as the player set it.
+    pub fn corner_radius(&self) -> u8 {
+        self.corner_radius_px
+            .unwrap_or(DEFAULT_CORNER_RADIUS)
+            .min(MAX_CORNER_RADIUS)
+    }
+
+    /// How round the launcher's corners are, as a factor of the look's radii (1 as drawn).
+    pub fn roundness(&self) -> f32 {
+        f32::from(self.corner_radius()) / f32::from(DEFAULT_CORNER_RADIUS)
     }
 
     /// Whether Home shows its scenery: on unless the player turned it off.
@@ -4352,15 +4380,18 @@ impl Settings {
                 v.clamp(0., 16.) / 100.
             })
     }
-    /// The plates' blur in px (0 to 48).
+    /// The plates' effective blur in px (0 to 48), never applied under Reduced graphics.
     pub fn glass_blur(&self) -> f32 {
+        if self.reduced_graphics() {
+            return 0.;
+        }
         self.blur
             .filter(|v| v.is_finite())
             .map_or(sunrise_launcher_theme::glass::BLUR, |v| v.clamp(0., 48.))
     }
-    /// Whether the cheaper scene is on ([`performance`](Self::performance)).
-    pub fn performance(&self) -> bool {
-        self.performance.unwrap_or(false)
+    /// Whether the launcher reduces graphics effects.
+    pub fn reduced_graphics(&self) -> bool {
+        self.reduced_graphics.unwrap_or(false)
     }
     /// Registry mods update by themselves ([`Settings::mods_auto_update`]): on unless turned off.
     pub fn auto_updates_mods(&self) -> bool {
@@ -5564,6 +5595,17 @@ pub fn {f}("
             ),
             (0.06, 24., "--x")
         );
+    }
+
+    #[test]
+    fn reduced_graphics_turns_off_blur_without_forgetting_its_value() {
+        let mut s = Settings::parse(r#"{"blur":8.5,"performance":true}"#);
+        assert_eq!(s.glass_blur(), 0.);
+        let saved = serde_json::to_string(&s).unwrap();
+        s = Settings::parse(&saved);
+        assert_eq!(s.glass_blur(), 0.);
+        s.reduced_graphics = Some(false);
+        assert_eq!(s.glass_blur(), 8.5);
     }
 
     #[test]

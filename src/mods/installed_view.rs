@@ -1,6 +1,6 @@
 //! Mods › Installed (mocks 05, 05b): what needs the player first, then updates, then the rest;
 //! one switch per row; bulk actions that name their count and scope.
-use super::model::{self, Group, Make, Need, Row, Show};
+use super::model::{self, Group, Make, Row, Show};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -523,18 +523,11 @@ impl Launcher {
         // too; the action and the switch keep theirs.
         let wide = self.content_width() >= 860.;
         use super::build_run::State;
-        let building = self.build_here().and_then(|run| {
-            if run.failed(&r.id, &r.version) {
-                return Some(model::InBuild::Failed);
-            }
-            match run.state_of(&r.id)? {
-                State::Waiting => Some(model::InBuild::Waiting),
-                State::Building => Some(model::InBuild::Building),
-                State::Built => Some(model::InBuild::Built),
-                _ => None,
-            }
-        });
-        let failed = building == Some(model::InBuild::Failed) && r.need == Some(Need::Build);
+        let building = self
+            .build_here()
+            .filter(|_| r.on)
+            .and_then(|run| run.state_of(&r.id, &r.version));
+        let failed = matches!(building, Some(State::Failed(_)));
         let cells = model::cells(&r, error.as_deref(), building);
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
@@ -549,19 +542,21 @@ impl Launcher {
             }
             // A mod the last build could not build: its status opens that build's window
             // again, where Details and the build log are.
-            (Some(said), _) if failed => status(said.icon, said.label.clone(), tone(said.tone))
-                .id(("alt-row-failed", n))
-                .reach()
-                .min_w_0()
-                .cursor_pointer()
-                .hover(|s| s.text_color(c(palette().text)))
-                .tooltip(crate::glass_ui::tip(said.tip.clone()))
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.open_sheet(crate::sheets::Sheet::ModBuild);
-                    cx.stop_propagation();
-                    cx.notify();
-                }))
-                .into_any_element(),
+            (Some(said), _) if failed && said.label == tr("Failed") => {
+                status(said.icon, said.label.clone(), tone(said.tone))
+                    .id(("alt-row-failed", n))
+                    .reach()
+                    .min_w_0()
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(c(palette().text)))
+                    .tooltip(crate::glass_ui::tip(said.tip.clone()))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.open_sheet(crate::sheets::Sheet::ModBuild);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            }
             (Some(said), _) => status(said.icon, said.label.clone(), tone(said.tone))
                 .id(("alt-row-status", n))
                 .min_w_0()
@@ -588,7 +583,11 @@ impl Launcher {
             }))
         });
         let sw = {
-            let s = ui::switch(("alt-row-switch", n), r.on);
+            let s = ui::switch(("alt-row-switch", n), r.on).when(cells.unavailable, |s| {
+                s.opacity(0.52).tooltip(crate::glass_ui::tip(tr(
+                    "Enabled for this profile, but not included in the build.",
+                )))
+            });
             if cells.switch {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -878,7 +877,7 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(10.))
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(palette().line))
                     .bg(c(palette().raised))

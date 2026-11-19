@@ -1127,29 +1127,33 @@ fn guard_worlds(
         return Ok(());
     }
     if !back_up {
-        let text = left
+        // One short summary for every mod at stake, not a paragraph per mod: the build window's
+        // rows already name each mod.
+        let at: Vec<&LeftOut> = left
             .iter()
-            .filter_map(|l| {
-                let worlds: Vec<String> = at_stake
-                    .iter()
-                    .filter(|(_, mods, _)| mods.contains(&l.id))
-                    .map(|(world, _, known)| match known {
-                        true => world.name.clone(),
-                        false => trf(
-                            "{name} (its list of mods can't be read)",
-                            &[("name", &world.name)],
-                        ),
-                    })
-                    .collect();
-                (!worlds.is_empty()).then(|| match l.why {
-                    isolate::Why::DidNotBuild => {
-                        fit::worlds_at_stake_unbuilt(&l.id, build, &worlds)
-                    }
-                    _ => fit::worlds_at_stake(&l.id, build, &worlds),
-                })
+            .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
+            .collect();
+        let worlds: Vec<String> = at_stake
+            .iter()
+            .map(|(world, _, known)| match known {
+                true => world.name.clone(),
+                false => trf(
+                    "{name} (its list of mods can't be read)",
+                    &[("name", &world.name)],
+                ),
             })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+            .collect();
+        let text = match at.as_slice() {
+            [one] => match one.why {
+                isolate::Why::DidNotBuild => fit::worlds_at_stake_unbuilt(&one.id, build, &worlds),
+                _ => fit::worlds_at_stake(&one.id, build, &worlds),
+            },
+            many => fit::mods_at_stake(
+                &many.iter().map(|l| l.id.clone()).collect::<Vec<_>>(),
+                build,
+                &worlds,
+            ),
+        };
         return Err(Failed::Worlds(Box::new(AtStake {
             text,
             worlds: at_stake

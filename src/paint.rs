@@ -141,11 +141,11 @@ impl Inputs {
     ) -> Inputs {
         // Backdrop renders either a decoded picture or a scene, even in performance mode;
         // a missing picture falls back to a scene. Only turning scenery off removes both.
-        let plates = if !settings.scenery() {
+        let plates = if !settings.scenery() || settings.reduced_graphics() {
             Plates::Opaque
         } else if let Some(percent) = preview.or(settings.panel_opacity()) {
             Plates::Custom(percent)
-        } else if theme.photo || settings.performance() {
+        } else if theme.photo {
             Plates::Opaque
         } else {
             Plates::Automatic
@@ -986,6 +986,25 @@ accent = "#101010""##,
     }
 
     #[test]
+    fn reduced_graphics_makes_glass_opaque_without_hiding_the_scenery() {
+        let mut settings = Settings::parse(r#"{"scenery":true,"blur":8.5,"panel_opacity":82}"#);
+        let theme = from_settings(&settings, WindowAppearance::Dark);
+        assert!(Palette::of(&settings, &theme).alpha < 1.);
+        assert_eq!(theme.look.blur, 8.5);
+
+        settings.reduced_graphics = Some(true);
+        let theme = from_settings(&settings, WindowAppearance::Dark);
+        let p = Palette::of(&settings, &theme);
+        assert_eq!(p.card().a, 1.);
+        assert_eq!(p.chrome_plate().a, 1.);
+        assert!(Inputs::of(&settings, &theme, None, Some(82)).plates == Plates::Opaque);
+        assert_eq!(theme.look.blur, 0.);
+        assert!(settings.scenery());
+    }
+
+    /// A picture behind Home, the player's or their theme's, may be any colour: the plates
+    /// over it are opaque.
+    #[test]
     fn plates_use_the_displayed_photo_only_and_stay_opaque_over_it() {
         let settings = Settings {
             background: Some("background-0123456789ab.png".into()),
@@ -1128,12 +1147,11 @@ accent = "#101010""##,
         assert_eq!(Palette::of(&settings, &theme), automatic);
 
         settings.background = Some("background-0123456789ab.png".into());
-        settings.performance = Some(true);
         let photo = from_settings(&settings, WindowAppearance::Dark);
         assert_eq!(Palette::of(&settings, &photo).alpha, 1.);
         settings.set_panel_opacity(Some(PANEL_OPACITY_MIN));
         assert_eq!(Palette::of(&settings, &photo).alpha, floor);
-        // The renderer can substitute a scene for an unavailable picture, even in performance.
+        // The renderer can substitute a scene for an unavailable picture.
         assert_eq!(Palette::of(&settings, &theme).alpha, floor);
         settings.scenery_on = Some(false);
         assert_eq!(Palette::of(&settings, &photo).alpha, 1.);

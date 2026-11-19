@@ -141,3 +141,26 @@ fn the_worlds_buttons_and_the_stopped_mod_say_what_is_so() {
     assert!(did_not_build_pending("Greeter").contains("stays on until you choose"));
     assert!(did_not_build_last("Greeter").contains("didn't build the last time"));
 }
+
+#[test]
+fn several_mods_at_stake_are_said_in_two_sentences() {
+    let said = mods_at_stake(
+        &["butterflies".into(), "fairies".into(), "worms".into()],
+        "the Nov 19 update",
+        &["New World".into()],
+    );
+    assert_eq!(said.lines().count(), 2);
+    assert!(said.starts_with(
+        "3 mods don't work with the Nov 19 update yet: butterflies, fairies and worms."
+    ));
+    assert!(said.contains("Your world “New World” uses them."));
+}
+
+#[test]
+fn a_thousand_mods_at_stake_stay_two_short_sentences() {
+    let names: Vec<String> = (0..1000).map(|n| format!("mod{n}")).collect();
+    let said = mods_at_stake(&names, "the Nov 19 update", &["New World".into()]);
+    assert_eq!(said.lines().count(), 2);
+    assert!(said.contains("mod0, mod1, mod2, mod3, mod4 and 995 more."));
+    assert!(said.len() < 300);
+}

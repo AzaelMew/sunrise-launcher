@@ -70,7 +70,7 @@ pub(crate) trait Reach {
 impl<T: InteractiveElement + ParentElement + Styled> Reach for T {
     fn reach(self) -> Self {
         self.tab_index(0)
-            .rounded(px(tokens::R_SMALL))
+            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
             .focus_visible(|s| {
                 s.shadow(vec![gpui::BoxShadow {
                     inset: true,
@@ -230,7 +230,7 @@ pub(super) fn button_base(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .border_1()
         .border_color(rgb(palette().line))
         .px(px(12.))
@@ -251,7 +251,7 @@ pub(crate) fn input(focused: bool) -> Div {
         .flex()
         .items_center()
         .overflow_hidden()
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .bg(palette().input_fill())
         .border_1()
         .border_color(if focused {
@@ -301,17 +301,9 @@ impl Launcher {
         else {
             return;
         };
-        let expected = instance.version.as_ref();
-        let tag = self.version_of(&instance).cloned();
-        let Some(tag) = tag else {
-            let release = match &self.releases {
-                Load::Ready(rows) => match expected {
-                    Some(tag) => rows.iter().find(|r| r.asset.is_some() && &r.tag == tag),
-                    None => instance.channel.following(rows).builds(rows).next(),
-                }
-                .cloned(),
-                _ => None,
-            };
+        let target = self.profile_target(&instance);
+        let Some(tag) = target.filter(|tag| self.installed.contains(tag)).cloned() else {
+            let release = target.and_then(|tag| self.release_to_install(tag));
             if let Some(release) = release {
                 self.ui.after_install = Some((intent, release.tag.clone()));
                 self.install(&release);
@@ -350,11 +342,7 @@ impl Launcher {
     }
 
     pub(super) fn launch_busy(&self) -> bool {
-        self.mutating()
-            || self.installing.is_some()
-            || self.preparing
-            || self.native_step.is_some()
-            || self.starting_client.is_some()
+        self.launch_activity().busy()
     }
 
     pub(super) fn navigate(&mut self, page: Page) {
@@ -446,7 +434,7 @@ impl Launcher {
             .justify_between()
             .px(px(10.))
             .h(px(tokens::HEADER))
-            .rounded(px(tokens::R_PANEL))
+            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .border_1()
             .border_color(rgb(p.divider))
             .bg(p.chrome_plate())
@@ -462,6 +450,11 @@ impl Launcher {
     }
 
     pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        crate::clock::set_preference(
+            self.settings.reduce_motion,
+            self.settings.reduced_graphics(),
+        );
+        cx.set_reduce_motion(crate::motion::still());
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_height = f32::from(size.height);
@@ -481,6 +474,7 @@ impl Launcher {
         );
         scrolls_begin();
         crate::selectable::begin();
+        crate::tokens::set_roundness(self.corner_roundness());
         self.modal_before(window, cx);
         self.servers.note_focus(window, cx);
         self.friend_focused = self.friend_focus.is_focused(window);
@@ -500,25 +494,46 @@ impl Launcher {
                 } else {
                     self.join(cx)
                 };
-                let mut tabs = div().flex().px(px(22.)).pt(px(12.)).gap(px(6.));
-                for (dest, id, label) in [
-                    (Page::Join, "servers-join", tr("Join")),
-                    (Page::Hosting, "servers-host", tr("Host")),
-                ] {
-                    tabs = tabs.child(
-                        button(id, label)
-                            .when(page == dest, |d| d.bg(rgb(palette().selected)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.navigate(dest);
-                                cx.notify();
-                            })),
-                    );
-                }
+                // The page's header, as Mods has it: its name, then Join and Host as one
+                // control, the chosen one filled.
+                let tabs = div()
+                    .flex()
+                    .items_center()
+                    .gap(px(20.))
+                    .px(px(24.))
+                    .pt(px(24.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens::TITLE))
+                            .font_weight(FontWeight::BOLD)
+                            .child(tr("Servers")),
+                    )
+                    .child(crate::mods::segmented(
+                        "servers-tabs",
+                        [
+                            (
+                                "servers-join",
+                                tr("Join").into(),
+                                page == Page::Join,
+                                Page::Join,
+                            ),
+                            (
+                                "servers-host",
+                                tr("Host").into(),
+                                page == Page::Hosting,
+                                Page::Hosting,
+                            ),
+                        ],
+                        Launcher::navigate,
+                        cx,
+                    ));
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .text_color(rgb(palette().text))
                     .child(tabs)
                     .child(body)
                     .into_any_element()
@@ -533,7 +548,7 @@ impl Launcher {
             .min_h_0()
             .flex()
             .flex_col()
-            .rounded(px(tokens::R_PANEL))
+            .rounded(crate::tokens::r(crate::tokens::R_PANEL))
             .when(page != Page::Home, |d| {
                 d.bg(palette().chrome_plate())
                     .border_1()
@@ -580,6 +595,9 @@ impl Launcher {
                             window.focus_next(cx)
                         }
                     }
+                    "escape" if this.viewer_close(cx) => {}
+                    "left" if this.viewer_step(-1, cx) => {}
+                    "right" if this.viewer_step(1, cx) => {}
                     "escape" if this.owner_screen_open => {
                         this.cancel_sign_in();
                         this.owner_screen_open = false;
@@ -630,6 +648,7 @@ impl Launcher {
             .collect();
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
+        frame = frame.children(self.viewer(window, cx));
         self.pictures.free_retired(window);
         let scenery = self
             .ui

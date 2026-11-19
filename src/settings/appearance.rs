@@ -133,15 +133,25 @@ struct Look {
     accents: std::collections::BTreeMap<String, Accent>,
     background: Option<String>,
     scenery: Option<bool>,
+    reduced_graphics: Option<bool>,
 }
 
 /// A theme's preview: its page, a panel on it with both inks, and Play in its own fill.
+/// The least width of a theme's card, and the room between cards.
+const CARD_MIN: f32 = 168.;
+const GAP: f32 = 12.;
+
+thread_local! {
+    /// Where the grid of themes was last drawn, for its number of columns.
+    static THEME_GRID: gpui::ScrollHandle = gpui::ScrollHandle::new();
+}
+
 fn preview(p: &Palette) -> Div {
     let bar = |w: f32, color: u32| {
         div()
             .h(px(4.))
             .w(px(w))
-            .rounded(px(tokens::R_BAR))
+            .rounded(crate::tokens::r(crate::tokens::R_BAR))
             .bg(rgb(color))
     };
     div()
@@ -154,7 +164,7 @@ fn preview(p: &Palette) -> Div {
             div()
                 .w(px(14.))
                 .h_full()
-                .rounded(px(tokens::R_SMALL))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                 .bg(rgb(p.chrome))
                 .border_1()
                 .border_color(rgb(p.chrome_line))
@@ -171,7 +181,7 @@ fn preview(p: &Palette) -> Div {
                 .flex_1()
                 .min_w_0()
                 .h_full()
-                .rounded(px(tokens::R_SMALL))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                 .bg(rgb(p.card_color))
                 .border_1()
                 .border_color(rgb(p.divider))
@@ -207,7 +217,7 @@ fn preview(p: &Palette) -> Div {
                             .h(px(20.))
                             .flex()
                             .items_center()
-                            .rounded(px(tokens::R_SMALL))
+                            .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                             .border_1()
                             .border_color(p.input_edge())
                             .bg(p.play_gradient())
@@ -247,6 +257,7 @@ impl Launcher {
             accents: self.settings.theme_accents.clone(),
             background: self.settings.background.clone(),
             scenery: self.settings.scenery_on,
+            reduced_graphics: self.settings.reduced_graphics,
         }
     }
 
@@ -269,12 +280,14 @@ impl Launcher {
                 accents,
                 background,
                 scenery,
+                reduced_graphics,
             } = before;
             self.settings.theme = theme;
             self.settings.accent = accent;
             self.settings.theme_accents = accents;
             self.settings.background = background;
             self.settings.scenery_on = scenery;
+            self.settings.reduced_graphics = reduced_graphics;
             return;
         }
         self.appearance_changed(window);
@@ -482,7 +495,18 @@ impl Launcher {
             Some(id) if missing => id.clone(),
             _ => appearance::effective_id(&self.settings),
         };
-        let mut cards = div().flex().flex_wrap().gap(px(12.));
+        // As many columns as fit at a card's least width, and the cards share the row between
+        // them: no strip of empty space on the right at any width. The row's width is the one it
+        // was last drawn at.
+        let grid = THEME_GRID.with(|g| g.clone());
+        let width = f32::from(grid.bounds().size.width);
+        let columns = (((width + GAP) / (CARD_MIN + GAP)).floor() as u16).max(1);
+        let mut cards = div()
+            .id("alt-theme-grid")
+            .track_scroll(&grid)
+            .grid()
+            .grid_cols(columns)
+            .gap(px(GAP));
         let choices = self
             .ui
             .settings
@@ -497,11 +521,10 @@ impl Launcher {
                 div()
                     .id(ElementId::named_usize("alt-theme", n))
                     .tab_index(0)
-                    .w(px(168.))
-                    .flex_none()
+                    .min_w_0()
                     .flex()
                     .flex_col()
-                    .rounded(px(tokens::R_CARD))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .overflow_hidden()
                     .border_1()
                     .border_color(rgb(if on {
@@ -619,6 +642,26 @@ impl Launcher {
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
         rows.push(self.scenery_row(cx));
+        let reduced = self.settings.reduced_graphics();
+        rows.push(row(
+            tr("Reduced graphics"),
+            tr("Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher."),
+            div().child(
+                switch("alt-reduced-graphics", reduced)
+                    .seen()
+                    .tooltip(crate::glass_ui::tip(tr("Reduced graphics")))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.appearance_change(
+                            |s| {
+                                s.reduced_graphics = Some(!reduced);
+                                Ok(())
+                            },
+                            window,
+                        );
+                        cx.notify();
+                    })),
+            ),
+        ));
         let layout = self.settings.world_layout;
         let layouts = [
             (backend::WorldLayout::Rows, "Rows"),
@@ -702,6 +745,7 @@ impl Launcher {
                     ))),
             ),
         );
+        rows.push(self.corners_row(cx));
         let cat = self.settings.show_cat();
         rows.push(row(
             tr("Show the cat"),
@@ -833,7 +877,8 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        let reset = button("alt-accent-reset", tr("Use theme accent"));
+        // As tall as the colour and the field beside it.
+        let reset = button("alt-accent-reset", tr("Use theme accent")).h(px(tokens::FIELD));
         let reset = if own || missing {
             off(reset)
         } else {
@@ -851,7 +896,7 @@ impl Launcher {
                     div()
                         .flex_none()
                         .size(px(tokens::FIELD))
-                        .rounded(px(tokens::R_CONTROL))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .border_1()
                         .border_color(rgb(palette().line))
                         .bg(rgb(palette().accent)),

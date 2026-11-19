@@ -366,6 +366,16 @@ struct Launcher {
     proxy_input: line_edit::LineEdit,
     proxy_focused: bool,
     proxy_focus: FocusHandle,
+    /// Settings › Appearance › Corner rounding, typed in px.
+    corners_input: line_edit::LineEdit,
+    corners_focused: bool,
+    corners_focus: FocusHandle,
+    corners_slider: slider::Slider,
+    /// Settings › Storage › Keep at most, typed in GB: applied when the field is left, as a
+    /// smaller limit clears downloads at once.
+    cache_input: line_edit::LineEdit,
+    cache_focused: bool,
+    cache_focus: FocusHandle,
     /// Opt-in data collection: the player's answer and Settings' section (`collection`).
     collection: collection::Collection,
     /// How many play Sunrise now, while the server answers ("N playing now" on the Play page).

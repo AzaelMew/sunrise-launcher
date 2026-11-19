@@ -14,7 +14,7 @@ pub(super) fn tag(label: &'static str) -> Div {
         .flex_none()
         .px(px(6.))
         .py(px(1.))
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .border_1()
         .border_color(c(palette().line))
         .text_size(px(tokens::CAPTION))
@@ -58,7 +58,8 @@ pub(crate) fn chip(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(tokens::R_PANEL))
+        // A button's corners: a choice is a row of buttons, not of pills.
+        .rounded(tokens::r(tokens::R_CONTROL))
         .border_1()
         .border_color(if on {
             c(palette().text)
@@ -104,7 +105,7 @@ pub(crate) fn choices(
         // Room for the ring, taken back so the chips stay where they were.
         .p(px(3.))
         .m(px(-4.))
-        .rounded(px(tokens::R_PANEL + 4.))
+        .rounded(tokens::r(tokens::R_CONTROL) + px(4.))
         .border_1()
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)));
@@ -131,6 +132,67 @@ pub(crate) fn choices(
     }))
 }
 
+/// Two views of one page side by side, the chosen one filled (`id`, `label`, chosen, its page):
+/// Mods' Discover | Installed and Servers' Join | Host. The pair is one Tab stop, and the arrow
+/// keys go to the other view, as a click on it would; `go` opens a view.
+pub(crate) fn segmented(
+    id: &'static str,
+    views: [(&'static str, SharedString, bool, Page); 2],
+    go: fn(&mut Launcher, Page),
+    cx: &mut Context<Launcher>,
+) -> Stateful<Div> {
+    let other = views
+        .iter()
+        .find(|(_, _, on, _)| !*on)
+        .map(|(_, _, _, page)| *page);
+    let mut pair = div()
+        .id(id)
+        .tab_index(0)
+        .seen()
+        .focus_visible(|s| s.border_color(c(palette().focus)))
+        .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+            if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
+                return;
+            }
+            if let Some(page) = other {
+                go(this, page);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .flex()
+        .flex_none()
+        .p(px(3.))
+        .rounded(tokens::r(tokens::R_CARD))
+        .border_1()
+        .border_color(c(palette().line))
+        .bg(palette().card());
+    for (view, label, on, page) in views {
+        pair = pair.child(
+            div()
+                .id(view)
+                .px(px(18.))
+                .h(px(tokens::FIELD))
+                .flex()
+                .items_center()
+                .rounded(tokens::r(tokens::R_CONTROL))
+                .text_size(px(tokens::BODY))
+                .cursor_pointer()
+                .when(on, |d| {
+                    d.bg(c(palette().line)).font_weight(FontWeight::SEMIBOLD)
+                })
+                .child(label)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if !on {
+                        go(this, page);
+                    }
+                    cx.notify();
+                })),
+        );
+    }
+    pair
+}
+
 /// An on/off switch: a knob that slides across its track when it changes, the track and the
 /// knob turning to their new colours as it goes.
 pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
@@ -146,13 +208,13 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         let fill_div = div()
             .absolute()
             .size_full()
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .bg(c(palette().text));
         let knob_div = div()
             .absolute()
             .top(px(INSET))
             .size(px(KNOB))
-            .rounded(px(tokens::R_CONTROL - INSET));
+            .rounded((crate::tokens::r(crate::tokens::R_CONTROL) - px(INSET)).max(px(0.)));
         match crate::motion::sliding(&key, on) {
             Some(slide) => {
                 let toward = move |p: f32| if on { p } else { 1. - p };
@@ -191,7 +253,7 @@ pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .relative()
         .w(px(40.))
         .h(px(22.))
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .bg(c(palette().line))
         .cursor_pointer()
         .child(fill_el)
@@ -222,7 +284,7 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .tab_index(0)
         .seen()
         .size(px(18.))
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .border_1()
         .border_color(if on {
             c(palette().text)
@@ -273,7 +335,7 @@ pub(super) fn browse_card(
         .p(px(12.))
         .min_w_0()
         .overflow_hidden()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(c(palette().line))
         .bg(palette().card())
@@ -381,7 +443,7 @@ pub(super) fn status(icon: &'static str, label: impl Into<SharedString>, color: 
 
 pub(super) fn card() -> Div {
     div()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(c(palette().divider))
         .bg(palette().card())

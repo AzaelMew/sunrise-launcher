@@ -43,13 +43,16 @@ mod search;
 mod ui;
 pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
+mod viewer;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};
+pub(crate) use ui::{checkbox, choices, field_theme, reveal, segmented, switch, Choose};
 
 use crate::paint::palette;
 use model::{Card, Row};
 
+#[derive(Clone, Copy, PartialEq)]
 enum Menu {
+    Category,
     Make,
     Sort,
 }
@@ -84,7 +87,7 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
-    /// Mod files the browser didn't install: listed, never changed from here.
+    /// Mod files the registry didn't install: on/off is editable, the files are not.
     local: Vec<model::Local>,
 }
 
@@ -179,6 +182,8 @@ pub(crate) struct ModsState {
     /// The row another page opened Installed at, and whether it was scrolled to yet.
     reveal: Option<search::Reveal>,
     revealed: Rc<std::cell::Cell<bool>>,
+    /// A gallery picture enlarged over the window.
+    viewer: Option<viewer::Viewer>,
 }
 
 impl Default for ModsState {
@@ -218,6 +223,7 @@ impl Default for ModsState {
             last_packs: None,
             reveal: None,
             revealed: Default::default(),
+            viewer: None,
         }
     }
 }
@@ -390,9 +396,15 @@ impl Launcher {
         self.ui.page = page;
     }
 
-    /// The width a page's own content has: the window less the rail and the page's margins.
+    /// The width a page's own content has: the window less its edges, the sidebar (open or
+    /// closed), the gap beside it, the pane's border and the page's margins.
     pub(super) fn content_width(&self) -> f32 {
-        self.window_width - 72. - 2. - 48.
+        let edges = 2. * crate::tokens::FRAME_INSET + 12.;
+        self.window_width
+            - edges
+            - crate::rail::rail_width(self.settings.sidebar_expanded)
+            - 2.
+            - 48.
     }
 
     fn mods_home(&self) -> PathBuf {
@@ -698,12 +710,12 @@ impl Launcher {
                     .child(
                         div()
                             .h(px(4.))
-                            .rounded(px(tokens::R_BAR))
+                            .rounded(crate::tokens::r(crate::tokens::R_BAR))
                             .bg(c(palette().line))
                             .child(
                                 div()
                                     .h(px(4.))
-                                    .rounded(px(tokens::R_BAR))
+                                    .rounded(crate::tokens::r(crate::tokens::R_BAR))
                                     .bg(c(palette().text))
                                     .w(relative(f.clamp(0.02, 1.))),
                             ),
@@ -786,7 +798,7 @@ impl Launcher {
             .min_w(px(120.))
             .h(px(tokens::ACTION))
             .px(px(16.))
-            .rounded(px(tokens::R_CARD))
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .text_size(px(tokens::BODY))
             .cursor_text()
             .child(line_edit::content_with(
@@ -835,31 +847,6 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.ui.mods.find)
         };
-        let seg = |id: &'static str,
-                   label: &'static str,
-                   on: bool,
-                   page: Page,
-                   cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .px(px(18.))
-                .h(px(tokens::FIELD))
-                .flex()
-                .items_center()
-                .rounded(px(tokens::R_CONTROL))
-                .text_size(px(tokens::BODY))
-                .cursor_pointer()
-                .when(on, |d| {
-                    d.bg(c(palette().line)).font_weight(FontWeight::SEMIBOLD)
-                })
-                .child(tr(label))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if this.ui.page != page {
-                        this.choose_view(page);
-                    }
-                    cx.notify();
-                }))
-        };
         div()
             .flex()
             .items_center()
@@ -897,52 +884,29 @@ impl Launcher {
                             })),
                     ),
             )
-            .child(
-                div()
-                    // One Tab stop for the two: the arrow keys go to the other.
-                    .id("alt-mods-tabs")
-                    .tab_index(0)
-                    .seen()
-                    .focus_visible(|s| s.border_color(c(palette().focus)))
-                    .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
-                        if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
-                            return;
-                        }
-                        this.choose_view(match (packs, installed) {
-                            (true, true) => Page::PackFind,
-                            (true, false) => Page::Packs,
-                            (false, true) => Page::Discover,
-                            (false, false) => Page::Installed,
-                        });
-                        cx.stop_propagation();
-                        cx.notify();
-                    }))
-                    .flex()
-                    .flex_none()
-                    .p(px(3.))
-                    .rounded(px(tokens::R_CARD))
-                    .border_1()
-                    .border_color(c(palette().line))
-                    .bg(palette().card())
-                    .child(seg(
+            .child(segmented(
+                "alt-mods-tabs",
+                [
+                    (
                         "alt-mods-tab-discover",
-                        "Discover",
+                        tr("Discover").into(),
                         !installed,
                         if packs {
                             Page::PackFind
                         } else {
                             Page::Discover
                         },
-                        cx,
-                    ))
-                    .child(seg(
+                    ),
+                    (
                         "alt-mods-tab-installed",
-                        "Installed",
+                        tr("Installed").into(),
                         installed,
                         if packs { Page::Packs } else { Page::Installed },
-                        cx,
-                    )),
-            )
+                    ),
+                ],
+                Launcher::choose_view,
+                cx,
+            ))
             .child(field)
     }
 }

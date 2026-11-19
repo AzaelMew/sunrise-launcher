@@ -33,7 +33,7 @@ fn card() -> Div {
     div()
         .flex()
         .flex_col()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(rgb(palette().divider))
         .bg(palette().card())
@@ -50,7 +50,7 @@ fn dot(color: u32) -> Div {
     div()
         .flex_none()
         .size(px(8.))
-        .rounded(px(tokens::R_SMALL))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
         .bg(rgb(color))
 }
 
@@ -110,7 +110,7 @@ impl Launcher {
         self.field(f, placeholder, width, cx)
             .h(px(tokens::FIELD))
             .px(px(12.))
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(rgb(if invalid {
                 palette().danger
@@ -232,8 +232,9 @@ impl Launcher {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("host"))
-            .px(px(32.))
-            .py(px(24.))
+            .px(px(24.))
+            .pt(px(18.))
+            .pb(px(24.))
             .text_color(rgb(palette().text))
             .child(body.max_w(px(1180.)).flex().flex_col().gap(px(18.)))
             .into_any_element()
@@ -287,7 +288,6 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(4.))
-                    .child(title(tr("Hosting")))
                     .child(hint(tr(
                         "Host a world for your friends on this computer. Create a server, press Start, and give them the address.",
                     ))),
@@ -450,12 +450,14 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(6.))
+                    // One height along the row: Start is the field's height, so are the rest.
                     .child(
                         button("host-folder", tr("Open folder"))
+                            .h(px(tokens::FIELD))
                             .on_click(move |_, _, cx| crate::glass_toast::open(cx, &folder)),
                     )
-                    .child(panel)
-                    .child(restart)
+                    .child(panel.h(px(tokens::FIELD)))
+                    .child(restart.h(px(tokens::FIELD)))
                     .child(
                         start
                             .h(px(tokens::FIELD))
@@ -921,9 +923,11 @@ impl Launcher {
             .gap(px(8.))
             .child(self.host_field(Field::AddPlayer, tr("A player's name"), 240., cx))
             .child(
+                // As tall as the name field beside it.
                 self.host_button("host-let-in", tr("Let in"), idle, cx, |this, _| {
                     this.add_player()
-                }),
+                })
+                .h(px(tokens::FIELD)),
             )
             .children(refused.map(|e| warning(tr(e))));
         allowed.push(add);
@@ -1544,13 +1548,13 @@ impl Launcher {
                         .gap(px(10.))
                         .h(px(tokens::CONTROL))
                         .px(px(10.))
-                        .rounded(px(tokens::R_CONTROL))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .cursor_pointer()
                         .when(chosen, |d| d.bg(rgb(palette().selected)))
                         .child(
                             div()
                                 .size(px(12.))
-                                .rounded(px(tokens::R_SMALL))
+                                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                                 .border_1()
                                 .border_color(rgb(if chosen {
                                     palette().text
@@ -1618,7 +1622,7 @@ impl Launcher {
                         .gap(px(8.))
                         .h(px(tokens::CONTROL))
                         .px(px(12.))
-                        .rounded(px(tokens::R_PANEL))
+                        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_1()
                         .border_color(rgb(palette().line))
                         .text_size(px(tokens::LABEL))
@@ -1672,7 +1676,7 @@ impl Launcher {
                     .tab_index(0)
                     .seen()
                     .px(px(4.))
-                    .rounded(px(tokens::R_SMALL))
+                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                     .border_1()
                     .border_color(gpui::transparent_black())
                     .focus_visible(|s| s.border_color(rgb(palette().focus)))
@@ -1801,12 +1805,15 @@ impl Launcher {
                 .text_color(rgb(palette().text))
                 .on_scroll(|_, _, cx| cx.stop_propagation())
                 .child(
+                    // Solid, like every other dialog: a card's fill is see-through, made to lie on
+                    // the page, and the page showed through the form.
                     card()
                         .w(px(620.))
                         .max_w_full()
                         .max_h_full()
-                        .rounded(px(tokens::R_PANEL))
+                        .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                         .border_color(rgb(palette().line))
+                        .bg(rgb(palette().raised))
                         .overflow_hidden()
                         .child(body)
                         .child(foot),

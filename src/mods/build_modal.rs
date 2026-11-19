@@ -112,7 +112,7 @@ impl Launcher {
                     .gap(px(6.))
                     .px(px(10.))
                     .h(px(28.))
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .border_1()
                     .border_color(c(palette().divider))
                     .bg(palette().card())
@@ -176,7 +176,7 @@ impl Launcher {
         // ---- one line per mod
         let mut list = div().flex().flex_col();
         for (n, line) in run.lines.iter().enumerate() {
-            list = list.child(self.build_line_of(n, line, run.details, cx));
+            list = list.child(self.build_line_of(n, line, run.details));
         }
         let list = card().overflow_hidden().child(
             div()
@@ -278,18 +278,20 @@ impl Launcher {
     }
 
     /// One mod's line: its picture, its name and version, and where it stands.
-    fn build_line_of(
-        &mut self,
-        n: usize,
-        line: &Line,
-        details: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn build_line_of(&mut self, n: usize, line: &Line, details: bool) -> Div {
         let picture = line
             .icon
             .clone()
             .and_then(|url| self.mods_image(&url, images::ROW));
+        // A build that ended never reaches the mods still waiting: they weren't built.
+        let ended = self
+            .ui
+            .mods
+            .build
+            .as_ref()
+            .is_some_and(|run| run.end.is_some());
         let (icon, color, label): (&'static str, u32, String) = match &line.state {
+            State::Waiting if ended => ("minus-sign", palette().muted, tr("Not built").into()),
             State::Waiting => ("clock", palette().muted, tr("Waiting").into()),
             State::Building => ("hammer", palette().accent_ink, tr("Building").into()),
             State::Built => ("tick-02", palette().success, tr("Built").into()),
@@ -299,10 +301,11 @@ impl Launcher {
                 tr("Needs an update").into(),
             ),
             State::Skipped(_) => ("minus-sign", palette().muted, tr("Skipped").into()),
-            State::Failed(_) => ("cancel-01", palette().danger, tr("Didn't build").into()),
+            State::Failed(_) => ("cancel-01", palette().danger, tr("Failed").into()),
         };
+        // "Needs an update" says it on the right, and the summary above says why for all of
+        // them: no sentence repeated under each one.
         let said = match &line.state {
-            State::NeedsUpdate { why, .. } => Some(why.clone()),
             State::Skipped(why) | State::Failed(why) => Some(why.clone()),
             _ => None,
         };
@@ -326,34 +329,6 @@ impl Launcher {
             glyph.into_any_element()
         };
         let waiting = line.state == State::Waiting;
-        let check = match (&line.state, self.ui.mods.build.as_ref()) {
-            (State::NeedsUpdate { .. }, Some(run)) if !run.running() => {
-                let id = line.id.clone();
-                Some(
-                    div()
-                        .id(("build-line-check", n))
-                        .reach()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .mt(px(2.))
-                        .text_size(px(tokens::SMALL))
-                        .text_color(c(palette().accent_ink))
-                        .cursor_pointer()
-                        .child(crate::glass_ui::icon(
-                            "refresh",
-                            12.,
-                            c(palette().accent_ink),
-                        ))
-                        .child(tr("Check for update"))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.check_mod_update(&id);
-                            cx.notify();
-                        })),
-                )
-            }
-            _ => None,
-        };
         div()
             .flex()
             .flex_col()
@@ -399,8 +374,7 @@ impl Launcher {
                                             .child(line.version.clone()),
                                     ),
                             )
-                            .children(said.map(muted))
-                            .children(check.map(|check| div().flex().child(check))),
+                            .children(said.map(muted)),
                     )
                     .child(
                         div()
@@ -419,7 +393,7 @@ impl Launcher {
                     .mx(px(14.))
                     .mb(px(12.))
                     .p(px(10.))
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .bg(c(palette().field))
                     .flex()
                     .flex_col()

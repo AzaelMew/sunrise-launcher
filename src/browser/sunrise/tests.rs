@@ -915,6 +915,39 @@ fn a_project_made_for_the_earlier_mod_system_says_it_cant_be_installed() {
 }
 
 #[test]
+fn install_takes_the_newest_version_this_build_can_install() {
+    let mut index = sample();
+    let versions = &mut index.projects[0].versions;
+    // A newer version above the sample's, asking for a capability this build does not know.
+    let mut newer = versions[0].clone();
+    newer.version = "9.0.0".into();
+    newer.capabilities = vec!["game-read".to_string()].into();
+    versions.insert(0, newer);
+    let home = scratch("newest-installable");
+    let done = install_from(&index, true, &hud(&index), &home, GAME, false, &|_, _| {}).unwrap();
+    assert_eq!(done[0].version, "0.1.0");
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn install_keeps_the_takedown_reason_of_a_version_it_could_not_install_anyway() {
+    let mut index = sample();
+    let v = &mut index.projects[0].versions[0];
+    v.capabilities = vec!["game-read".to_string()].into();
+    let sha256 = v.file.sha256.clone();
+    index.revoked.push(index::Revoked {
+        id: "coords_hud".into(),
+        sha256: Some(sha256),
+        reason: "Test.".into(),
+        date: String::new(),
+    });
+    let home = scratch("unsupported-and-revoked");
+    let e = install_from(&index, true, &hud(&index), &home, GAME, false, &|_, _| {}).unwrap_err();
+    assert_eq!(e, "Coordinates HUD was taken down: Test.");
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
 fn a_summary_the_registry_cut_mid_word_ends_on_a_whole_word() {
     let cut = format!("{} and tools at the crafti", "x".repeat(SUMMARY_CUT - 24));
     assert_eq!(cut.chars().count(), SUMMARY_CUT);

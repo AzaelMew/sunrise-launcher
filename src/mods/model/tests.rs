@@ -1,5 +1,5 @@
 use super::*;
-use sunrise_launcher::browser::installed::Entry;
+use sunrise_launcher::browser::{installed::Entry, mod_list};
 
 const GAME: &str = "26.3";
 
@@ -442,6 +442,49 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
 }
 
 #[test]
+fn turning_on_a_local_native_file_exposes_permission_then_build() {
+    let home = tempfile::tempdir().unwrap();
+    let on_list = home.path();
+    let id = "example";
+    let local = [Local {
+        id: id.into(),
+        name: "Example".into(),
+        version: "1.0".into(),
+        github: false,
+        native: true,
+    }];
+    let unbuilt = HashSet::from([id.into()]);
+    let row = |allowed| {
+        let enabled = if mod_list::is_enabled(on_list, id) {
+            HashSet::from([id.into()])
+        } else {
+            HashSet::new()
+        };
+        rows(
+            &[],
+            &World {
+                index: None,
+                game: GAME,
+                enabled: &enabled,
+                unbuilt: &unbuilt,
+                native_allowed: allowed,
+                chosen: &NO_PINS,
+                local: &local,
+            },
+        )
+        .remove(0)
+    };
+    let off = row(false);
+    assert!(!off.on);
+    assert!(cells(&off, None, None).switch);
+    mod_list::set_enabled(on_list, id, true).unwrap();
+    let needs_permission = row(false);
+    assert!(needs_permission.on);
+    assert_eq!(needs_permission.need, Some(Need::Permission));
+    assert_eq!(row(true).need, Some(Need::Build));
+}
+
+#[test]
 fn turning_on_skips_what_is_taken_down_or_needs_permission() {
     let (idx, entries) = pack();
     let none = HashSet::new();
@@ -539,12 +582,14 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     ];
     mark_left_out(&mut r, &list, "Nov 17", |tag| format!("name of {tag}"));
     let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
-    assert!(row("lib").left_out.as_deref().unwrap().contains("lib"));
-    assert!(row("addon")
-        .left_out
-        .as_deref()
-        .unwrap()
-        .contains("needs lib"));
+    let failed = cells(row("lib"), None, None);
+    let status = failed.status.unwrap();
+    assert_eq!(status.label, "Failed");
+    assert!(status.tip.contains("lib"));
+    assert!(failed.unavailable);
+    assert!(
+        matches!(&row("addon").left_out, Some(Omission::Skipped(why)) if why.contains("needs lib"))
+    );
     assert!(row("lib").unfit.is_none() && row("lib").need.is_none());
     let old = row("old").unfit.as_ref().unwrap();
     assert_eq!(
@@ -615,23 +660,42 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         "Needs a build"
     );
     for (at, label, tone) in [
-        (InBuild::Waiting, "Waiting", Tone::Muted),
-        (InBuild::Building, "Building", Tone::Accent),
-        (InBuild::Built, "Built", Tone::Success),
-        // The build ended without it: the card says so, not "Needs a build" again.
-        (InBuild::Failed, "Didn't build", Tone::Warning),
+        (BuildState::Waiting, "Waiting", Tone::Muted),
+        (BuildState::Building, "Building", Tone::Accent),
+        (BuildState::Built, "Built", Tone::Success),
+        (
+            BuildState::Failed("Missing hook".into()),
+            "Failed",
+            Tone::Warning,
+        ),
+        (
+            BuildState::NeedsUpdate {
+                why: "No build for this game".into(),
+                details: Vec::new(),
+            },
+            "Needs an update",
+            Tone::Warning,
+        ),
     ] {
-        let status = cells(addon, None, Some(at)).status.unwrap();
+        let cells = cells(addon, None, Some(&at));
+        let status = cells.status.unwrap();
         assert_eq!((status.label.as_str(), status.tone), (label, tone));
+        match at {
+            BuildState::Failed(why) | BuildState::NeedsUpdate { why, .. } => {
+                assert!(status.tip.contains(&why));
+                assert!(
+                    cells.unavailable && cells.switch,
+                    "can still turn the mod off"
+                );
+            }
+            _ => assert!(!cells.unavailable),
+        }
     }
     // A row with nothing pressing says where it is from, quietly; its cells are still there.
     let fine = cells(row("fine"), None, None);
     assert_eq!(fine.status.as_ref().unwrap().tone, Tone::Muted);
     assert_eq!(fine.action, None);
-    assert!(
-        !fine.switch,
-        "a local file's switch is drawn dim, in its place"
-    );
+    assert!(fine.switch, "local files can be switched on and off");
     // A registry row with nothing to say: empty status and action cells, a live switch.
     let plain = r
         .iter()

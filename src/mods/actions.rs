@@ -115,32 +115,43 @@ impl Launcher {
         }
     }
 
-    /// One mod on or off. On: the existing switch, with its native-permission and taken-down
-    /// checks. Off: like any change that could take content out of a world, after the worlds
-    /// check.
+    /// Turn one mod on, or check its worlds before turning it off. For files installed
+    /// outside the registry, switching on records the choice; the native consent and build
+    /// gates still decide whether the game can use it.
     pub(super) fn toggle(&mut self, row: &Row) {
-        if row.local.is_some() || !self.guard() {
+        if !self.guard() {
             return;
         }
-        let Some(entry) = row.entry.clone() else {
-            return;
-        };
         if row.on {
             self.run(
                 Action::TurnOff(vec![(row.id.clone(), row.title.clone())]),
                 false,
             );
-            return;
-        }
-        self.mods.message = None;
-        self.mods_switch(&entry);
-        if let Some(Err(e)) = self.mods.message.take() {
-            self.ui.mods.notice = Some(Err(e));
+        } else if let Some(entry) = &row.entry {
+            self.mods.message = None;
+            self.mods_switch(entry);
+            if let Some(Err(e)) = self.mods.message.take() {
+                self.ui.mods.notice = Some(Err(e));
+            }
+        } else if let Some(snapshot) = &mut self.ui.mods.snapshot {
+            let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
+                self.ui.mods.notice =
+                    Some(Err(tr("Wait for the current operation to finish.").into()));
+                return;
+            };
+            self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, &row.id, true) {
+                Ok(()) => {
+                    snapshot.key.clear();
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            };
         }
     }
 
-    /// Turn the chosen mods on in one rewrite of the list. A mod that can't be turned on (taken
-    /// down, or native code with no permission) stays as it is and its row says why.
+    /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods
+    /// have individual switches only: they aren't selectable for registry bulk actions.
+    /// A mod that can't be turned on stays as it is and its row says why.
     pub(super) fn bulk_on(&mut self) {
         if !self.guard() {
             return;
@@ -320,11 +331,16 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
     // holding all of them.
     let mods = action.mods();
     let ids: Vec<String> = mods.iter().map(|(id, _)| id.clone()).collect();
-    let at_stake = match worlds::at_risk(home, &ids) {
-        Ok(worlds) => worlds,
-        Err(e) => return refuse(trf(
-            "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})", &[("error", &e)],
-        )),
+    // A switch is just a switch (owner, 2026-11-19): turning a mod off writes the list and
+    // nothing else. Only removing a mod's file still checks the worlds that use it.
+    let at_stake = match &action {
+        Action::TurnOff(_) => Vec::new(),
+        _ => match worlds::at_risk(home, &ids) {
+            Ok(worlds) => worlds,
+            Err(e) => return refuse(trf(
+                "Your worlds can't be read, so Sunrise can't tell whether they use these mods. Nothing was changed. ({error})", &[("error", &e)],
+            )),
+        },
     };
     let mut backups = 0;
     if !at_stake.is_empty() {
@@ -514,70 +530,14 @@ mod tests {
     }
 
     #[test]
-    fn turning_off_a_mod_a_world_was_saved_with_stops_and_changes_nothing() {
+    fn turning_off_a_mod_a_world_was_saved_with_is_just_the_switch() {
         let home = home_with_world("bricks");
         let (tx, rx) = channel();
         run(off(&["bricks"]), false, &home, "26.3", &tx);
-        match rx.try_recv() {
-            Ok(Event::Stake(_, _, worlds)) => {
-                assert_eq!(worlds, [("Home".to_string(), vec!["BRICKS".to_string()])])
-            }
-            _ => panic!("expected the worlds at stake"),
-        }
-        assert!(
-            mod_list::is_enabled(&home, "bricks"),
-            "nothing was switched off"
-        );
-        assert!(
-            !home.join("backups").exists(),
-            "no backup before the player agrees"
-        );
-        std::fs::remove_dir_all(home).ok();
-    }
-
-    #[test]
-    fn after_the_player_agrees_the_world_is_backed_up_and_checked_before_the_change() {
-        let home = home_with_world("bricks");
-        let (tx, rx) = channel();
-        run(off(&["bricks"]), true, &home, "26.3", &tx);
-        let events: Vec<Event> = rx.try_iter().collect();
-        assert!(
-            matches!(events.last(), Some(Event::Done(..))),
-            "it went through"
-        );
-        let zips: Vec<_> = std::fs::read_dir(home.join("backups"))
-            .unwrap()
-            .flatten()
-            .collect();
-        assert_eq!(zips.len(), 1);
-        let world = worlds::list(&home).remove(0);
-        worlds::verify_backup(&zips[0].path(), &world).unwrap();
+        assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
         assert!(!mod_list::is_enabled(&home, "bricks"));
-        assert!(
-            mod_list::is_enabled(&home, "unrelated"),
-            "only the chosen mod changed"
-        );
-        std::fs::remove_dir_all(home).ok();
-    }
-
-    #[test]
-    fn a_failed_backup_refuses_and_leaves_the_mod_as_it_was() {
-        let home = home_with_world("bricks");
-        // The game holds the world: its lock can't be taken, so it can't be backed up.
-        let held = std::fs::File::options()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(home.join("saves/Home/session.lock"))
-            .unwrap();
-        held.lock().unwrap();
-        let (tx, rx) = channel();
-        run(off(&["bricks"]), true, &home, "26.3", &tx);
-        let events: Vec<Event> = rx.try_iter().collect();
-        assert!(
-            matches!(events.last(), Some(Event::Refused(why)) if why.contains("nothing was changed"))
-        );
-        assert!(mod_list::is_enabled(&home, "bricks"));
+        assert!(mod_list::is_enabled(&home, "unrelated"));
+        assert!(!home.join("backups").exists(), "no backup, no prompt");
         std::fs::remove_dir_all(home).ok();
     }
 
@@ -589,50 +549,6 @@ mod tests {
         assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
         assert!(!mod_list::is_enabled(&home, "unrelated"));
         std::fs::remove_dir_all(home).ok();
-    }
-
-    #[test]
-    fn a_world_whose_mod_list_cant_be_read_counts_as_using_every_mod() {
-        let home = home_with_world("bricks");
-        let bad = home.join("saves/Garbled");
-        std::fs::create_dir_all(&bad).unwrap();
-        std::fs::write(bad.join("level.dat"), b"not nbt at all").unwrap();
-        let (tx, rx) = channel();
-        // The mod no readable world uses: still a stop, because Garbled might.
-        run(off(&["unrelated"]), false, &home, "26.3", &tx);
-        match rx.try_recv() {
-            Ok(Event::Stake(_, _, worlds)) => {
-                assert_eq!(worlds.len(), 1);
-                assert!(worlds[0].0.contains("can't be read"), "{worlds:?}");
-            }
-            _ => panic!("expected the unreadable world at stake"),
-        }
-        assert!(mod_list::is_enabled(&home, "unrelated"));
-        std::fs::remove_dir_all(home).ok();
-    }
-
-    #[test]
-    fn saves_that_cant_be_listed_refuse_but_no_saves_at_all_is_fine() {
-        let home = home_with_world("bricks");
-        std::fs::remove_dir_all(home.join("saves")).unwrap();
-        let (tx, rx) = channel();
-        run(off(&["unrelated"]), false, &home, "26.3", &tx);
-        assert!(
-            matches!(rx.try_iter().last(), Some(Event::Done(..))),
-            "no saves folder: no worlds"
-        );
-
-        let home2 = home_with_world("bricks");
-        std::fs::remove_dir_all(home2.join("saves")).unwrap();
-        std::fs::write(home2.join("saves"), b"a file where the folder should be").unwrap();
-        let (tx, rx) = channel();
-        run(off(&["unrelated"]), false, &home2, "26.3", &tx);
-        assert!(
-            matches!(rx.try_iter().last(), Some(Event::Refused(why)) if why.contains("Nothing was changed"))
-        );
-        assert!(mod_list::is_enabled(&home2, "unrelated"));
-        std::fs::remove_dir_all(home).ok();
-        std::fs::remove_dir_all(home2).ok();
     }
 
     #[test]

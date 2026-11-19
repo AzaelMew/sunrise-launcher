@@ -40,11 +40,12 @@ impl Launcher {
         switched.then_some(label)
     }
 
-    /// The version Play starts: the selected instance's own, else the launcher's.
+    /// The installed version Play starts; an uninstalled profile target can't start yet.
     pub(crate) fn selected(&self) -> Option<&String> {
-        self.selected_instance()
-            .and_then(|i| self.version_of(i))
-            .or_else(|| self.launcher_version())
+        match self.selected_instance() {
+            Some(instance) => self.version_of(instance),
+            None => self.launcher_version(),
+        }
     }
 
     /// The launcher's version: what instances without one of their own play.

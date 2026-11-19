@@ -3,7 +3,7 @@
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::mods::{chip, choices, switch, Choose};
+use crate::mods::{choices, switch, Choose};
 use crate::paint::palette;
 use gpui::rgb;
 use std::rc::Rc;
@@ -82,7 +82,7 @@ pub(crate) fn group(rows: Vec<Div>) -> Div {
     let mut card = div()
         .flex()
         .flex_col()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(rgb(palette().divider))
         .bg(palette().card());
@@ -107,14 +107,18 @@ pub(crate) fn row(
     actions: Div,
 ) -> Div {
     let about = about.into();
+    // When the words would get narrower than a short line, the controls go under them instead:
+    // the words never squeeze to a word a line beside them.
     div()
         .flex()
+        .flex_wrap()
         .items_center()
-        .gap(px(16.))
+        .gap_x(px(16.))
+        .gap_y(px(10.))
         .child(
             div()
                 .flex_1()
-                .min_w_0()
+                .min_w(px(160.))
                 .flex()
                 .flex_col()
                 .gap(px(2.))
@@ -166,6 +170,12 @@ impl Launcher {
     }
 }
 
+/// For a box that scrolls inside the page: the wheel over it scrolls only the box. The box has
+/// scrolled by the time this runs (an element's own scrolling hears the wheel first).
+fn own_wheel(_: &gpui::ScrollEvent, _: &mut Window, cx: &mut App) {
+    cx.stop_propagation();
+}
+
 pub(crate) fn off(b: Stateful<Div>) -> Stateful<Div> {
     b.opacity(0.4).cursor_default().tab_stop(false)
 }
@@ -181,10 +191,56 @@ pub(crate) fn warning(text: impl Into<SharedString>) -> Div {
         .child(crate::selectable::selectable(text))
 }
 
+fn corner_px(value: f32) -> u8 {
+    (value * f32::from(backend::MAX_CORNER_RADIUS)).round() as u8
+}
+
+/// A cache limit as its field shows it: a number of GB, or nothing for no limit.
+pub(crate) fn cache_limit_text(limit: Option<u64>) -> String {
+    match limit.unwrap_or(25) {
+        0 => String::new(),
+        gb => gb.to_string(),
+    }
+}
+
+impl Launcher {
+    /// Keep at most `gib` of downloads (0: no limit), and say so in its field.
+    fn set_cache_limit(&mut self, gib: u64) {
+        self.settings.cache_limit_gib = Some(gib);
+        self.cache_input
+            .set(cache_limit_text(self.settings.cache_limit_gib));
+        if let Err(error) = self.settings.save() {
+            self.storage_error = Some(error);
+        }
+    }
+
+    /// The limit as typed, once its field is left: a whole number of GB; empty or 0 is no
+    /// limit; anything else puts the limit back as it was.
+    fn apply_cache_limit(&mut self) {
+        let typed = self.cache_input.text().trim();
+        match if typed.is_empty() {
+            Ok(0)
+        } else {
+            typed.parse::<u64>()
+        } {
+            Ok(gib) => self.set_cache_limit(gib),
+            Err(_) => self
+                .cache_input
+                .set(cache_limit_text(self.settings.cache_limit_gib)),
+        }
+    }
+}
+
 impl Launcher {
     pub(super) fn settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
+        self.corners_focused = self.corners_focus.is_focused(window);
+        let was_typing_limit = self.cache_focused;
+        self.cache_focused = self.cache_focus.is_focused(window);
+        if was_typing_limit && !self.cache_focused {
+            self.apply_cache_limit();
+        }
         let section = self.ui.settings.section;
         let scroll = crate::frame::scrolls("settings");
         let mut nav = div()
@@ -205,7 +261,7 @@ impl Launcher {
                     .px(px(12.))
                     .flex()
                     .items_center()
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .cursor_pointer()
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(if on { palette().text } else { palette().muted }))
@@ -284,6 +340,16 @@ impl Launcher {
                             .child(nav)
                             .child(pane),
                     ),
+            )
+            // A press anywhere else closes the language menu; the menu and its button keep
+            // their own presses.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if std::mem::take(&mut this.ui.settings.languages) {
+                        cx.notify();
+                    }
+                }),
             )
             .into_any_element()
     }
@@ -391,7 +457,7 @@ impl Launcher {
                     .child(
                         div()
                             .flex_none()
-                            .rounded(px(tokens::R_CONTROL))
+                            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                             .overflow_hidden()
                             .child(
                                 self.profile_heads
@@ -760,41 +826,35 @@ impl Launcher {
                     ),
             );
         }
-        let limit = self.settings.cache_limit_gib.unwrap_or(25);
-        let mut limits = div();
-        for (n, (value, label)) in [
-            (10u64, "10 GB"),
-            (25, "25 GB"),
-            (50, "50 GB"),
-            (100, "100 GB"),
-            (0, "No limit"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            limits = limits.child(
-                // Each its own Tab stop, pressed with Enter or Space: a smaller limit clears
-                // downloads, which an arrow key passing over it must not do.
-                chip(
-                    ElementId::named_usize("alt-storage-limit", n),
-                    tr(label),
-                    value == limit,
-                )
-                .tab_index(0)
-                .seen()
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.settings.cache_limit_gib = Some(value);
-                    if let Err(error) = this.settings.save() {
-                        this.storage_error = Some(error);
-                    }
-                    cx.notify();
-                })),
-            );
-        }
-        cache.push(self.wide_row(
+        let typed = self
+            .settings_field(
+                "alt-storage-limit-gb",
+                self.cache_focus.clone(),
+                self.cache_focused,
+                &self.cache_input,
+                "No limit",
+                |this| &mut this.cache_input,
+                |_| {},
+                cx,
+            )
+            .w(px(96.));
+        // "GB" after a number, not after the empty field's "No limit".
+        let unit = (!self.cache_input.text().trim().is_empty()).then(|| {
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().muted))
+                .child(tr("GB"))
+        });
+        let field = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(typed)
+            .children(unit);
+        cache.push(row(
             tr("Keep at most"),
             tr("Past this, the oldest downloads are cleared by themselves."),
-            limits,
+            field,
         ));
         for (n, category) in Category::ALL.into_iter().enumerate() {
             let found = self
@@ -931,7 +991,7 @@ impl Launcher {
                             div()
                                 .w(px(340.))
                                 .p(px(12.))
-                                .rounded(px(tokens::R_CONTROL))
+                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                                 .border_1()
                                 .border_color(rgb(palette().line))
                                 .bg(rgb(palette().raised))
@@ -945,7 +1005,8 @@ impl Launcher {
             });
             div()
                 .flex()
-                .items_start()
+                // The switch in the middle of its row, as everywhere else in Settings.
+                .items_center()
                 .gap(px(16.))
                 .child(
                     div()
@@ -1088,8 +1149,9 @@ impl Launcher {
                         .id("alt-data-json")
                         .max_h(px(220.))
                         .overflow_y_scroll()
+                        .on_scroll(own_wheel)
                         .p(px(12.))
-                        .rounded(px(tokens::R_CONTROL))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .bg(rgb(palette().field))
                         .border_1()
                         .border_color(rgb(palette().divider))
@@ -1119,53 +1181,195 @@ impl Launcher {
             .child(group(vec![no_ai]))
     }
 
+    /// Preview rounding while dragging, without changing the saved choice.
+    pub(super) fn corner_roundness(&self) -> f32 {
+        if self.ui.page == crate::frame::Page::Settings
+            && self.ui.settings.section == Section::Appearance
+        {
+            if let Some(value) = self.corners_slider.preview() {
+                return f32::from(corner_px(value)) / f32::from(backend::DEFAULT_CORNER_RADIUS);
+            }
+        } else {
+            self.corners_slider.cancel();
+        }
+        self.settings.roundness()
+    }
+
+    /// How round every corner is: a button's corner radius in px, by slider or typed; cards
+    /// and panels keep their proportion to it.
+    pub(super) fn corners_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let max = f32::from(backend::MAX_CORNER_RADIUS);
+        let now = self.settings.corner_radius();
+        let preview = self
+            .corners_slider
+            .preview()
+            .map(|value| line_edit::LineEdit::new(corner_px(value).to_string(), 2, 3));
+        let field = self
+            .settings_field(
+                "alt-corners-px",
+                self.corners_focus.clone(),
+                self.corners_focused,
+                preview.as_ref().unwrap_or(&self.corners_input),
+                "",
+                |this| &mut this.corners_input,
+                |this| this.save_corners(),
+                cx,
+            )
+            .w(px(52.));
+        let slider = self.corners_slider.render(
+            "alt-corners",
+            f32::from(now) / max,
+            1. / max,
+            |this, value, cx| {
+                let radius = corner_px(value);
+                this.settings.corner_radius_px = Some(radius);
+                this.corners_input.set(radius.to_string());
+                this.save_settings();
+                cx.notify();
+            },
+            cx,
+        );
+        row(
+            tr("Corner rounding"),
+            "",
+            div()
+                .flex()
+                .min_w_0()
+                .items_center()
+                .justify_end()
+                .gap(px(10.))
+                .child(slider.flex_1().min_w(px(80.)).max_w(px(200.)))
+                .child(field.flex_none())
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(tokens::LABEL))
+                        .text_color(rgb(palette().muted))
+                        .child(tr("px")),
+                ),
+        )
+    }
+
+    /// The corner radius as typed: a number up to the most it goes; anything else waits.
+    fn save_corners(&mut self) {
+        if let Ok(radius) = self.corners_input.text().trim().parse::<u8>() {
+            self.settings.corner_radius_px = Some(radius.min(backend::MAX_CORNER_RADIUS));
+            self.save_settings();
+        }
+    }
+
     fn settings_launcher(&mut self, cx: &mut Context<Self>) -> Div {
         let picking = self.ui.settings.languages;
-        let mut language = row(
-            tr("Language"),
-            "",
-            div().child(
-                button(
-                    "alt-language",
-                    self.settings
-                        .language
-                        .map_or(tr("Same as the system"), |l| l.name()),
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.ui.settings.languages = !this.ui.settings.languages;
-                    cx.notify();
-                })),
-            ),
-        );
-        if picking {
-            let chosen = self.settings.language;
-            let languages = std::iter::once(None)
+        let chosen = self.settings.language;
+        let system = i18n::Language::system().name();
+        let now: SharedString = match chosen {
+            Some(l) => l.name().into(),
+            None => tr("Same as the system").into(),
+        };
+        // One button with the language on it; a press opens the list under it, as Discover's
+        // menus do. 87 languages don't fit on a page as buttons.
+        let opener = button("alt-language", now)
+            .gap(px(8.))
+            .child(crate::blocks::icon(
+                "chevron-down",
+                13.,
+                rgb(palette().muted).into(),
+            ))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.ui.settings.languages = !this.ui.settings.languages;
+                cx.notify();
+            }));
+        let menu = picking.then(|| {
+            let options = std::iter::once(None)
                 .chain(i18n::Language::ALL.map(Some))
-                .map(|choice| {
-                    let pick: Choose = Rc::new(move |this, _| {
-                        this.settings.language = choice;
-                        i18n::set(this.settings.language());
-                        this.save_settings();
-                        this.ui.settings.languages = false;
-                    });
-                    (
-                        choice.map_or(tr("Same as the system"), |l| l.name()).into(),
-                        choice == chosen,
-                        pick,
-                    )
-                })
-                .collect();
-            let options = choices("alt-languages", languages, cx)
-                .max_h(px(190.))
+                .enumerate()
+                .map(|(i, choice)| {
+                    let on = choice == chosen;
+                    let label: SharedString = match choice {
+                        Some(l) => l.name().into(),
+                        None => tr("Same as the system").into(),
+                    };
+                    div()
+                        .id(("alt-language-option", i))
+                        .reach()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .px(px(10.))
+                        .py(px(7.))
+                        .rounded(tokens::r(tokens::R_SMALL))
+                        .text_size(px(tokens::LABEL))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(rgb(palette().hover)))
+                        .when(on, |d| d.font_weight(FontWeight::SEMIBOLD))
+                        .child(div().flex_1().min_w_0().truncate().child(label))
+                        // The system's own language, beside the choice that follows it.
+                        .when(choice.is_none(), |d| {
+                            d.child(
+                                div()
+                                    .flex_none()
+                                    .text_color(rgb(palette().muted))
+                                    .child(system),
+                            )
+                        })
+                        .when(on, |d| {
+                            d.child(crate::blocks::icon(
+                                "check",
+                                13.,
+                                rgb(palette().text).into(),
+                            ))
+                        })
+                        // The first choice stands apart from the languages under it.
+                        .when(choice.is_none(), |d| {
+                            d.mb(px(4.)).border_b_1().border_color(rgb(palette().line))
+                        })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.settings.language = choice;
+                            i18n::set(this.settings.language());
+                            this.save_settings();
+                            this.ui.settings.languages = false;
+                            cx.notify();
+                        }))
+                });
+            let list = div()
+                .id("alt-language-menu")
+                .w(px(260.))
+                .max_h(px(320.))
                 .overflow_y_scroll()
-                .gap(px(6.));
-            language = div()
+                .p(px(6.))
+                .rounded(tokens::r(tokens::R_CONTROL))
+                .border_1()
+                .border_color(rgb(palette().line))
+                .bg(rgb(palette().raised))
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_scroll(own_wheel)
                 .flex()
                 .flex_col()
-                .gap(px(12.))
-                .child(language)
-                .child(options);
-        }
+                .children(options);
+            // Under the button, right-aligned to it, and kept inside the window: at 800×600 the
+            // whole list, edge included, moves up rather than running off the bottom.
+            gpui::deferred(
+                div()
+                    .absolute()
+                    .top(px(tokens::CONTROL + 6.))
+                    .right_0()
+                    .child(
+                        gpui::anchored()
+                            .anchor(gpui::Anchor::TopRight)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(list),
+                    ),
+            )
+            .with_priority(10)
+        });
+        let language = row(
+            tr("Language"),
+            "",
+            div().relative().child(opener).children(menu),
+        );
         let refused = (!self.proxy_focused)
             .then(|| sunrise_launcher::proxy::refuse(self.proxy_input.text()))
             .flatten();
@@ -1332,7 +1536,7 @@ impl Launcher {
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                 match line_edit::handle(get(this), ev, cx) {
                     line_edit::Key::Pass => return,
-                    line_edit::Key::Escape => window.blur(cx),
+                    line_edit::Key::Escape | line_edit::Key::Enter => window.blur(cx),
                     line_edit::Key::Edited => edited(this),
                     _ => {}
                 }

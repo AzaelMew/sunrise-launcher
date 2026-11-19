@@ -58,9 +58,9 @@ impl Launcher {
     ) -> Stateful<Div> {
         let focused = self.servers.has_focus(f);
         self.field(f, placeholder, width, cx)
-            .h(px(36.))
+            .h(px(tokens::FIELD))
             .px(px(12.))
-            .rounded(px(8.))
+            .rounded(tokens::r(tokens::R_CONTROL))
             .border_1()
             .border_color(rgb(if focused {
                 palette().focus
@@ -78,7 +78,7 @@ impl Launcher {
             .flex_col()
             .gap(px(10.))
             .p(px(16.))
-            .rounded(px(12.))
+            .rounded(tokens::r(tokens::R_CARD))
             .border_1()
             .border_color(rgb(palette().divider))
             .bg(palette().card())
@@ -172,7 +172,9 @@ impl Launcher {
                             .min_w_0()
                             .font_family(theme::MONO)
                             .text_size(px(18.))
-                            .child(address.clone()),
+                            // A long name breaks after a dot, never inside a word: a zero-width
+                            // space after each dot is a place it may wrap. Copy takes the plain one.
+                            .child(address.replace('.', ".\u{200B}")),
                     )
                     .child(self.share_copy("share-copy", address, cx)),
             )
@@ -218,8 +220,11 @@ impl Launcher {
             )));
             if !self.internet.asking_token {
                 return d.child(
+                    // The second button goes under the first when the card is narrow, rather
+                    // than past its edge.
                     div()
                         .flex()
+                        .flex_wrap()
                         .gap(px(6.))
                         .child(link(
                             "share-console",
@@ -238,6 +243,13 @@ impl Launcher {
                         )),
                 );
             }
+            // As tall as the token field they stand beside.
+            let save = self
+                .share_button("share-token-save", tr("Save"), true, cx, |this, _| {
+                    this.save_token()
+                })
+                .h(px(tokens::FIELD));
+            let keys = link("share-keys", "Make a token", tailscale::KEYS).h(px(tokens::FIELD));
             return d
                 .child(
                     div()
@@ -246,14 +258,8 @@ impl Launcher {
                         .items_center()
                         .gap(px(6.))
                         .child(self.share_field(Field::Token, "tskey-api-…", 280., cx))
-                        .child(self.share_button(
-                            "share-token-save",
-                            tr("Save"),
-                            true,
-                            cx,
-                            |this, _| this.save_token(),
-                        ))
-                        .child(link("share-keys", "Make a token", tailscale::KEYS)),
+                        .child(save)
+                        .child(keys),
                 )
                 .child(hint(tr(
                     "Settings, Keys, Generate access token. It's kept in this computer's keychain and only sent to Tailscale.",
@@ -275,7 +281,9 @@ impl Launcher {
                         idle,
                         cx,
                         |this, _| this.invite_friend(),
-                    )),
+                    )
+                    // As tall as the email field beside it.
+                    .h(px(tokens::FIELD))),
             )
             .child(hint(tr(
                 "One invitation per friend. With an email Tailscale sends it; without, send them the link. They accept it in their own Tailscale account.",
@@ -435,7 +443,7 @@ impl Launcher {
                                 div()
                                     .flex_none()
                                     .size(px(8.))
-                                    .rounded(px(4.))
+                                    .rounded(crate::tokens::r(4.))
                                     .bg(rgb(palette().success)),
                             )
                             .child(div().flex_1().min_w_0().child(crate::selectable::selectable(trf(
@@ -468,7 +476,7 @@ impl Launcher {
                         .child(
                             div()
                                 .p(px(12.))
-                                .rounded(px(8.))
+                                .rounded(tokens::r(tokens::R_CONTROL))
                                 .bg(rgb(palette().field))
                                 .border_1()
                                 .border_color(rgb(palette().divider))

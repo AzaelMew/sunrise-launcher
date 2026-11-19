@@ -1,5 +1,6 @@
 //! What the Mods screens show, worked out from the registry index and the installed list:
 //! pure data in and out, no files, no network, no window. Everything here only reads.
+use super::build_run::State as BuildState;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use sunrise_launcher::browser::installed::Entry;
 use sunrise_launcher::i18n::{tr, trf};
@@ -398,7 +399,7 @@ pub(super) struct Row {
     pub(super) dependency: bool,
     /// The player chose this version (`sunrise::chosen`): a batch leaves it alone.
     pub(super) pinned: bool,
-    /// Not installed by the browser: read-only here.
+    /// Not installed by the registry; no registry update or removal.
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
@@ -406,7 +407,13 @@ pub(super) struct Row {
     pub(super) unfit: Option<Unfit>,
     /// The build left it out for another reason (it didn't build, it needs a mod that was left
     /// out, it clashes with another): what the player reads, in a sentence.
-    pub(super) left_out: Option<String>,
+    pub(super) left_out: Option<Omission>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Omission {
+    Failed(String),
+    Skipped(String),
 }
 
 /// Why a mod is not on the game build its setup plays, in parts the row says in its own words.
@@ -450,7 +457,8 @@ pub(super) fn mark_left_out(
                     changes: detail.changes,
                 });
             }
-            _ => row.left_out = Some(l.label()),
+            native_mods::Why::DidNotBuild => row.left_out = Some(Omission::Failed(l.label())),
+            _ => row.left_out = Some(Omission::Skipped(l.label())),
         }
     }
 }
@@ -493,8 +501,10 @@ pub(super) struct Cells {
     /// The status opens the "needs an update" popover.
     pub(super) popover: bool,
     pub(super) action: Option<RowAction>,
-    /// The switch can be flipped (a local file's or a taken-down mod's is drawn dim).
+    /// The switch can be flipped (a taken-down mod's is drawn dim).
     pub(super) switch: bool,
+    /// The switch records the player's preference, but the mod isn't in the build.
+    pub(super) unavailable: bool,
 }
 
 /// The widths of the list's fixed columns on a roomy window.
@@ -506,20 +516,9 @@ pub(super) mod column {
     pub(in super::super) const SWITCH: f32 = 44.;
 }
 
-/// Where a row's mod stands in its setup's build while that runs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum InBuild {
-    Waiting,
-    Building,
-    Built,
-    /// The build ended and this mod's own code did not compile.
-    Failed,
-}
-
-/// `row`'s cells. `error` is why its last update failed, `building` where it stands in its
-/// setup's build while that runs. The status is the first thing that applies, most pressing first; whatever else
-/// applies is in its tooltip.
-pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -> Cells {
+/// `row`'s cells. `error` is why its last update failed. The status is the first thing that
+/// applies, most pressing first; whatever else applies is in its tooltip.
+pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState>) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -550,37 +549,7 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
             Tone::Warning,
             tr("Needs your permission to run native code").into(),
         ),
-        Some(Need::Build) if building == Some(InBuild::Building) => say(
-            "hammer",
-            tr("Building").into(),
-            Tone::Accent,
-            tr("Its build is running").into(),
-        ),
-        Some(Need::Build) if building == Some(InBuild::Built) => say(
-            "tick-02",
-            tr("Built").into(),
-            Tone::Success,
-            tr("Built. It is in the game once the build is done.").into(),
-        ),
-        Some(Need::Build) if building == Some(InBuild::Waiting) => say(
-            "clock",
-            tr("Waiting").into(),
-            Tone::Muted,
-            tr("Its build is running").into(),
-        ),
-        Some(Need::Build) if building == Some(InBuild::Failed) => say(
-            "cancel-01",
-            tr("Didn't build").into(),
-            Tone::Warning,
-            tr("Didn't build. The problem is in the mod, not in your game.").into(),
-        ),
-        Some(Need::Build) => say(
-            "clock",
-            tr("Needs a build").into(),
-            Tone::Warning,
-            tr("Not built for this computer yet").into(),
-        ),
-        None => {}
+        Some(Need::Build) | None => {}
     }
     if let Some(unfit) = &row.unfit {
         say(
@@ -592,14 +561,55 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
                 &[("mod", &row.title), ("build", &unfit.on)],
             ),
         );
-    }
-    if let Some(why) = &row.left_out {
-        say(
-            "information-circle",
-            tr("Not in this build").into(),
-            Tone::Warning,
-            why.clone(),
-        );
+    } else if let Some(omission) = &row.left_out {
+        match omission {
+            Omission::Failed(why) => {
+                say("cancel-01", tr("Failed").into(), Tone::Warning, why.clone())
+            }
+            Omission::Skipped(why) => say(
+                "information-circle",
+                tr("Not in this build").into(),
+                Tone::Warning,
+                why.clone(),
+            ),
+        }
+    } else {
+        match (building, &row.need) {
+            (Some(BuildState::NeedsUpdate { why, .. }), _) => say(
+                "information-circle",
+                tr("Needs an update").into(),
+                Tone::Warning,
+                why.clone(),
+            ),
+            (Some(BuildState::Failed(why)), _) => {
+                say("cancel-01", tr("Failed").into(), Tone::Warning, why.clone())
+            }
+            (Some(BuildState::Building), Some(Need::Build)) => say(
+                "hammer",
+                tr("Building").into(),
+                Tone::Accent,
+                tr("Its build is running").into(),
+            ),
+            (Some(BuildState::Built), Some(Need::Build)) => say(
+                "tick-02",
+                tr("Built").into(),
+                Tone::Success,
+                tr("Built. It is in the game once the build is done.").into(),
+            ),
+            (Some(BuildState::Waiting), Some(Need::Build)) => say(
+                "clock",
+                tr("Waiting").into(),
+                Tone::Muted,
+                tr("Its build is running").into(),
+            ),
+            (_, Some(Need::Build)) => say(
+                "clock",
+                tr("Needs a build").into(),
+                Tone::Warning,
+                tr("Not built for this computer yet").into(),
+            ),
+            _ => {}
+        }
     }
     if let Some(to) = &row.update {
         say(
@@ -618,8 +628,8 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
             },
             Tone::Muted,
             match local.github {
-                true => tr("From GitHub, not the registry: read-only here").into(),
-                false => tr("A local file, not from the registry: read-only here").into(),
+                true => tr("Get updates from GitHub, not the registry.").into(),
+                false => tr("Replace the local file to update this mod.").into(),
             },
         );
     }
@@ -642,7 +652,13 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
             (_, Some(_)) => Some(RowAction::Update),
             _ => None,
         },
-        switch: row.local.is_none() && !matches!(row.need, Some(Need::TakenDown(_))),
+        switch: !matches!(row.need, Some(Need::TakenDown(_))),
+        unavailable: row.unfit.is_some()
+            || row.left_out.is_some()
+            || matches!(
+                building,
+                Some(BuildState::Failed(_) | BuildState::NeedsUpdate { .. })
+            ),
     }
 }
 
@@ -686,7 +702,7 @@ pub(super) struct World<'a> {
 }
 
 /// A `.smod` in the game folder that the registry browser didn't install (a local file or a
-/// GitHub install): where it came from isn't verified, so it is listed and left alone.
+/// GitHub install): it can be turned on or off but is not managed by the registry.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Local {
     pub(super) id: String,

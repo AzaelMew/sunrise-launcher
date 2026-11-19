@@ -16,8 +16,17 @@ impl Launcher {
         const PREVIEWS: usize = sunrise_launcher_smod::index::page::MAX_SCREENSHOTS;
         let count = urls.len().min(PREVIEWS);
         let columns = if self.window_width < 950. { 3 } else { 4 };
+        let height = if count == 1 { 220. } else { 104. };
+        // A tile's tooltip would float over its own picture once that is open.
+        let viewing = self.ui.mods.viewer.is_some();
         let mut tiles = urls.iter().take(PREVIEWS).enumerate().map(|(i, url)| {
             let photo = self.mods_image(url, images::GALLERY);
+            // No wider than the picture's own shape at the row's height: a wide window would
+            // otherwise blow it up and crop it.
+            let ratio = photo
+                .as_deref()
+                .and_then(super::viewer::picture_size)
+                .map_or(16. / 9., |(w, h)| w.max(1) as f32 / h.max(1) as f32);
             let all = urls.clone();
             let label = trf(
                 "Picture {number} of {total}",
@@ -33,13 +42,14 @@ impl Launcher {
                 .flex_1()
                 .min_h_0()
                 .w_full()
+                .max_w(px(height * ratio))
                 .cursor_pointer()
-                .rounded(px(tokens::R_CONTROL))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .border_1()
                 .border_color(c(palette().divider))
                 .bg(palette().card())
                 .overflow_hidden()
-                .tooltip(crate::glass_ui::tip(label))
+                .when(!viewing, |d| d.tooltip(crate::glass_ui::tip(label)))
                 .children(photo.map(|path| {
                     gpui::img(path)
                         .size_full()
@@ -56,9 +66,9 @@ impl Launcher {
                             .child(format!("+{}", urls.len() - PREVIEWS)),
                     )
                 })
+                .track_scroll(&super::viewer::tile(i))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.ui.sheets.gallery = Some((all.clone(), i));
-                    this.open_sheet(crate::sheets::Sheet::Picture);
+                    this.viewer_open(all.clone(), i);
                     cx.notify();
                 }))
         });
@@ -68,91 +78,11 @@ impl Launcher {
                 div()
                     .flex()
                     .gap(px(6.))
-                    .h(px(if count == 1 { 220. } else { 104. }))
+                    .h(px(height))
                     .children(tiles.by_ref().take(columns)),
             );
         }
         Some(grid)
-    }
-
-    pub(crate) fn gallery_picture(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let (urls, index) = self.ui.sheets.gallery.as_ref()?;
-        let n = urls.len();
-        let index = *index;
-        let url = urls.get(index)?.clone();
-        let image = self.mods_image(&url, images::GALLERY);
-        let mut bar = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(div().flex_1().child(trf(
-                "Picture {number} of {total}",
-                &[
-                    ("number", &(index + 1).to_string()),
-                    ("total", &n.to_string()),
-                ],
-            )));
-        for (id, label, to) in [
-            ("picture-prev", tr("Previous"), index.checked_sub(1)),
-            (
-                "picture-next",
-                tr("Next"),
-                (index + 1 < n).then_some(index + 1),
-            ),
-        ] {
-            let btn = crate::frame::button(id, label);
-            bar = bar.child(match to {
-                None => btn.opacity(0.4).cursor_default().tab_stop(false),
-                Some(to) => btn.on_click(cx.listener(move |this, _, _, cx| {
-                    if let Some((_, i)) = &mut this.ui.sheets.gallery {
-                        *i = to;
-                    }
-                    cx.notify();
-                })),
-            });
-        }
-        bar = bar.child(
-            crate::frame::button("picture-close", tr("Close")).on_click(cx.listener(
-                |this, _, _, cx| {
-                    this.close_sheet();
-                    cx.notify();
-                },
-            )),
-        );
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(10.))
-            .child(bar)
-            .child(match image {
-                Some(path) => div()
-                    .w_full()
-                    .h(px((self.window_height - 160.).max(80.)))
-                    .child(
-                        gpui::img(path)
-                            .size_full()
-                            .object_fit(gpui::ObjectFit::Contain),
-                    ),
-                None => muted(tr("Picture unavailable.")).py(px(32.)),
-            })
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _, cx| {
-                let Some((pages, i)) = &mut this.ui.sheets.gallery else {
-                    return;
-                };
-                match ev.keystroke.key.as_str() {
-                    "left" => *i = i.saturating_sub(1),
-                    "right" => *i = (*i + 1).min(pages.len() - 1),
-                    _ => return,
-                }
-                cx.stop_propagation();
-                cx.notify();
-            }));
-        Some(crate::sheets::frame(
-            "gallery-full",
-            self.window_width - 48.,
-            body,
-            cx,
-        ))
     }
 }
 
@@ -316,7 +246,7 @@ impl Launcher {
                                 div()
                                     .flex_none()
                                     .px(px(6.))
-                                    .rounded(px(tokens::R_SMALL))
+                                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                                     .border_1()
                                     .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
@@ -327,7 +257,7 @@ impl Launcher {
                                 div()
                                     .flex_none()
                                     .px(px(6.))
-                                    .rounded(px(tokens::R_SMALL))
+                                    .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                                     .border_1()
                                     .border_color(c(palette().line))
                                     .text_size(px(tokens::CAPTION))
@@ -428,7 +358,7 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .gap(px(8.))
-                .rounded(px(tokens::R_CONTROL))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .border_1()
                 .border_color(c(palette().divider))
                 .text_color(c(palette().success))
@@ -485,7 +415,7 @@ impl Launcher {
                 .gap(px(6.))
                 .px(px(9.))
                 .h(px(28.))
-                .rounded(px(tokens::R_CONTROL))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .border_1()
                 .border_color(c(palette().divider))
                 .bg(c(palette().field))
@@ -685,10 +615,6 @@ impl Launcher {
             );
         let scroll = crate::frame::scrolls("project");
         let right = div()
-            .relative()
-            .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
-            .w(px(360.))
-            .flex_none()
             .flex()
             .flex_col()
             .gap(px(14.))
@@ -730,6 +656,21 @@ impl Launcher {
                     }))
             });
 
+        // A narrow window has one column: the action stays near the top. Beside the column, the
+        // panel stays in view while the page scrolls.
+        let (above, beside) = match self.content_width() < 860. {
+            true => (Some(right), None),
+            false => (
+                None,
+                Some(
+                    right
+                        .relative()
+                        .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
+                        .w(px(360.))
+                        .flex_none(),
+                ),
+            ),
+        };
         let left = div()
             .flex_1()
             .min_w_0()
@@ -737,6 +678,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(head)
+            .children(above)
             .children(gallery)
             .child(about)
             .child(
@@ -765,7 +707,7 @@ impl Launcher {
                         .gap(px(24.))
                         .items_start()
                         .child(left)
-                        .child(right),
+                        .children(beside),
                 ),
         )
         .into_any_element()

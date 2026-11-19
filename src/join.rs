@@ -11,7 +11,7 @@
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::home::{card, heading, muted};
+use crate::home::{card, muted};
 use crate::paint::palette;
 use gpui::{rgb, rgba};
 
@@ -151,7 +151,7 @@ fn server_picture(
         (Some(image), _) => gpui::img(image)
             .flex_none()
             .size(px(36.))
-            .rounded(px(tokens::R_CONTROL))
+            .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .into_any_element(),
         (None, Some(Badge::Horizon)) => horizon_mark(36.).into_any_element(),
         (None, Some(Badge::Sunrise)) => crate::mark(36.).into_any_element(),
@@ -172,7 +172,7 @@ fn tile(label: &str, side: f32) -> Div {
         .items_center()
         .justify_center()
         .size(px(side))
-        .rounded(px(tokens::R_CONTROL))
+        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
         .bg(gpui::hsla(hue, 0.28, 0.24, 1.))
         .text_size(px(side * 0.45))
         .font_weight(FontWeight::SEMIBOLD)
@@ -195,8 +195,9 @@ impl Launcher {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("join"))
-            .px(px(32.))
-            .py(px(28.))
+            .px(px(24.))
+            .pt(px(18.))
+            .pb(px(24.))
             .child(servers.max_w(px(720.)))
             .into_any_element()
     }
@@ -239,7 +240,8 @@ impl Launcher {
             }));
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
         let address = matches!(typed, Entry::Address(_));
-        let save = button("alt-server-save", tr("Save"));
+        // As tall as the address field they stand beside.
+        let save = button("alt-server-save", tr("Save")).h(px(tokens::FIELD));
         let save = if address {
             save.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.save_typed();
@@ -249,7 +251,7 @@ impl Launcher {
             save.opacity(0.4).cursor_default().tab_stop(false)
         };
         let joinable = matches!(typed, Entry::Address(_) | Entry::Invite);
-        let join = button("alt-server-join", tr("Join"));
+        let join = button("alt-server-join", tr("Join")).h(px(tokens::FIELD));
         let join = if joinable {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_typed();
@@ -304,25 +306,20 @@ impl Launcher {
                     .child(muted(tr("No saved servers."))),
             );
         }
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(heading(tr("Servers")))
-            .child(
-                card()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .p(px(12.))
-                            .child(field)
-                            .child(save)
-                            .child(join),
-                    )
-                    .child(list),
-            )
+        div().flex().flex_col().gap(px(12.)).child(
+            card()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .p(px(12.))
+                        .child(field)
+                        .child(save)
+                        .child(join),
+                )
+                .child(list),
+        )
     }
 
     fn featured_row(&mut self, i: usize, server: Featured, cx: &mut Context<Self>) -> Div {

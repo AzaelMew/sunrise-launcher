@@ -36,7 +36,6 @@ pub(crate) enum Sheet {
     Versions,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
-    Picture,
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
@@ -59,7 +58,6 @@ struct Memo {
 
 #[derive(Default)]
 pub(crate) struct SheetsState {
-    pub(super) gallery: Option<(std::rc::Rc<[String]>, usize)>,
     /// The explicit compatibility check's state; only a click on the Build sheet starts one.
     update: RefCell<Option<Memo>>,
     /// Keyboard focus of the layer over the page, so keys never reach the page under it.
@@ -157,7 +155,7 @@ fn card() -> Div {
     div()
         .flex()
         .flex_col()
-        .rounded(px(tokens::R_CARD))
+        .rounded(crate::tokens::r(crate::tokens::R_CARD))
         .border_1()
         .border_color(rgb(palette().line))
         .bg(rgb(palette().background))
@@ -181,7 +179,7 @@ fn checkbox(id: &'static str, on: bool, label: String) -> Stateful<Div> {
         .child(
             div()
                 .size(px(16.))
-                .rounded(px(tokens::R_SMALL))
+                .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                 .border_1()
                 .border_color(rgb(palette().muted))
                 .when(on, |d| d.bg(rgb(palette().accent))),
@@ -245,7 +243,7 @@ pub(crate) fn modal_frame(
                 .track_scroll(&crate::frame::scrolls("sheet"))
                 .p(px(28.))
                 .gap(px(16.))
-                .rounded(px(tokens::R_PANEL))
+                .rounded(crate::tokens::r(crate::tokens::R_PANEL))
                 .border_1()
                 .border_color(rgb(palette().line))
                 .bg(rgb(palette().raised))
@@ -337,7 +335,6 @@ impl Launcher {
             self.cancel_native_consent();
         }
         self.ui.sheet = None;
-        self.ui.sheets.gallery = None;
         self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
     }
@@ -552,7 +549,6 @@ impl Launcher {
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
-            Some(Sheet::Picture) => self.gallery_picture(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::ModBuild) => {
                 let sheet = self.build_modal(cx);
@@ -626,24 +622,26 @@ impl Launcher {
 
         // The mods, each with what can be done about it right here.
         let mut can_update = false;
+        let waiting = known.iter().filter(|(_, newer)| newer.is_none()).count();
         let mut list = div()
+            .id("alt-resolve-list")
             .flex()
             .flex_col()
-            .rounded(px(tokens::R_CARD))
+            .max_h(px(280.))
+            .overflow_y_scroll()
+            .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
             .border_color(rgb(palette().line))
             .bg(rgb(palette().background));
         for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
-            let about = match newer {
-                Some(version) => trf(
+            // Only a mod that can do something here gets a line under its name; the ones that
+            // wait for their author are said once, under the list.
+            let about = newer.as_ref().map(|version| {
+                trf(
                     "Version {version} is out. Update it, then check the game update again.",
                     &[("version", version)],
-                ),
-                None => tr(
-                    "Needs an update from its author. There is no newer version yet; when there is, it shows here and under Mods.",
                 )
-                .to_string(),
-            };
+            });
             let update = newer.as_ref().map(|_| {
                 can_update = true;
                 let id = id.clone();
@@ -665,7 +663,8 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .p(px(14.))
+                    .px(px(14.))
+                    .py(px(8.))
                     .when(n > 0, |d| d.border_t_1().border_color(rgb(palette().line)))
                     .child(
                         div()
@@ -675,11 +674,19 @@ impl Launcher {
                             .flex_col()
                             .gap(px(2.))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone()))
-                            .child(muted(about)),
+                            .children(about.map(muted)),
                     )
                     .children(update),
             );
         }
+
+        // The mods with no newer version, said once for all of them.
+        let wait_line = (waiting > 0).then(|| {
+            muted(match waiting {
+                1 => tr("It needs an update from its author; when one is out, it shows here and under Mods.").to_string(),
+                _ => tr("They need updates from their authors; when one is out, it shows here and under Mods.").to_string(),
+            })
+        });
 
         // What updating without them does, said before the button that does it.
         let without = (!blocked).then(|| {
@@ -766,7 +773,7 @@ impl Launcher {
                     .flex_col()
                     .gap(px(6.))
                     .p(px(12.))
-                    .rounded(px(tokens::R_CONTROL))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                     .bg(rgb(palette().field))
                     .font_family(crate::theme::MONO)
                     .text_size(px(tokens::CAPTION))
@@ -780,6 +787,7 @@ impl Launcher {
             .child(title(heading))
             .child(div().text_size(px(tokens::BODY)).child(lead))
             .children((!mods.is_empty()).then_some(list))
+            .children(wait_line)
             .children(without.map(muted))
             .child(
                 div()
@@ -1251,18 +1259,16 @@ impl Launcher {
         } else {
             None
         };
-        let (stable, stable_target) = {
-            let mut builds = self.stable_builds().peekable();
-            let available = builds.peek().is_some();
-            let target = builds
-                .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
-                .cloned();
-            (available, target)
-        };
+        let stable = self.stable_builds().next().is_some();
         // A different build under native mods is never activated from here: those mods have to be
         // checked against it first (the check button), and the build that follows protects worlds.
         let has_native = !native_status::enabled(&instance.home).is_empty();
-        let nightly_target = self.launcher_version().cloned();
+        let nightly_target = self
+            .target_version(None, instances::Channel::Nightly)
+            .cloned();
+        let stable_target = self
+            .target_version(None, instances::Channel::Stable)
+            .cloned();
         let gated = |target: &Option<String>| has_native && *target != plays;
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;
@@ -1275,7 +1281,7 @@ impl Launcher {
                 .flex()
                 .gap(px(12.))
                 .p(px(10.))
-                .rounded(px(tokens::R_CONTROL))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                 .cursor_pointer()
                 .when(on, |d| d.bg(rgb(palette().selected)))
                 .child(
@@ -1458,7 +1464,7 @@ impl Launcher {
                     .top(px(top))
                     .w(px(width))
                     .p(px(14.))
-                    .rounded(px(tokens::R_CARD))
+                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
                     .border_color(rgb(palette().line))
                     .bg(rgb(palette().raised))

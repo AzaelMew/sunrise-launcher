@@ -146,11 +146,7 @@ impl Run {
                     }
                 }
             }
-            Step::LeftOut(left) => {
-                if let Some(line) = self.lines.iter_mut().find(|l| l.id == left.id) {
-                    line.state = left_out(left, &self.on);
-                }
-            }
+            Step::LeftOut(left) => self.mark_left_out(left),
             // A build that runs again without a mod starts its mods over.
             Step::PrebuiltMods => {
                 for line in &mut self.lines {
@@ -179,15 +175,45 @@ impl Run {
         self.end = Some(End::Cancelled);
     }
 
-    /// The build stopped with `said`; `failed` are the mods that stopped it.
+    /// Records the actual reason, from either a progress event or the final result.
+    pub(crate) fn mark_left_out(&mut self, left: &native_mods::LeftOut) {
+        if let Some(line) = self
+            .lines
+            .iter_mut()
+            .find(|line| line.id == left.id && line.version == left.version)
+        {
+            line.state = left_out(left, &self.on);
+        }
+    }
+
+    /// The build stopped with `said`; `failed` names the mods blamed by its diagnostic.
     pub(crate) fn stopped(&mut self, said: String, failed: &[String]) {
         self.unbuild();
         for line in &mut self.lines {
-            if failed.contains(&line.id) {
-                line.state = State::Failed(did_not_build());
+            if failed.contains(&line.id) && matches!(line.state, State::Waiting) {
+                line.state = State::Failed(said.clone());
             }
         }
         self.end = Some(End::Stopped(said));
+    }
+
+    /// The build stopped before it left out `mods` (worlds use them): each line says what it
+    /// waits for, never "Waiting", since the build can't take them as they are.
+    pub(crate) fn at_stake(&mut self, mods: &[String], unbuilt: &[String]) {
+        let on = self.on.clone();
+        for line in &mut self.lines {
+            if unbuilt.contains(&line.id) {
+                line.state = State::Failed(did_not_build());
+            } else if mods.contains(&line.id) {
+                line.state = State::NeedsUpdate {
+                    why: trf(
+                        "Needs an update for {build}. It comes back when its author releases one.",
+                        &[("build", &on)],
+                    ),
+                    details: Vec::new(),
+                };
+            }
+        }
     }
 
     /// No game was installed: what compiled so far is in no game.
@@ -254,23 +280,16 @@ impl Run {
 }
 
 impl Run {
-    /// Where mod `id` stands while the build runs: its row on Mods says the same.
-    pub(crate) fn state_of(&self, id: &str) -> Option<&State> {
+    /// The Installed row follows the build for this version of the mod. An incompatibility
+    /// or compile failure remains visible after the build ends, but progress does not.
+    pub(crate) fn state_of(&self, id: &str, version: &str) -> Option<&State> {
         self.lines
             .iter()
-            .find(|l| l.id == id)
-            .map(|l| &l.state)
-            .filter(|_| self.running())
-    }
-
-    /// Whether the build ended with mod `id` at `version` not built: its row on Mods keeps
-    /// saying so once the window is closed, until that mod changes or another build runs.
-    pub(crate) fn failed(&self, id: &str, version: &str) -> bool {
-        !self.running()
-            && self
-                .lines
-                .iter()
-                .any(|l| l.id == id && l.version == version && matches!(l.state, State::Failed(_)))
+            .find(|line| line.id == id && line.version == version)
+            .map(|line| &line.state)
+            .filter(|state| {
+                self.running() || matches!(state, State::NeedsUpdate { .. } | State::Failed(_))
+            })
     }
 
     /// Which mod of those the build compiles it is at, and of how many: "2 of 3". The mods it
@@ -560,10 +579,20 @@ mod tests {
         assert_eq!(run.counts().failed, 1);
         assert_eq!(run.headline(), "The build stopped");
         // Its row on Mods says so after the window is closed, for the version that failed.
-        assert!(run.failed("zoom", "1.0.0"));
-        assert!(!run.failed("zoom", "1.0.1"), "an updated mod starts over");
-        assert!(!run.failed("minimap", "1.0.0"));
-        assert_eq!(run.state_of("zoom"), None, "nothing is live any more");
+        assert_eq!(
+            run.state_of("zoom", "1.0.0"),
+            Some(&State::Failed("Zoom couldn't be built.".into()))
+        );
+        assert_eq!(
+            run.state_of("zoom", "1.0.1"),
+            None,
+            "an updated mod starts over"
+        );
+        assert_eq!(
+            run.state_of("minimap", "1.0.0"),
+            None,
+            "progress is not live"
+        );
     }
 
     #[test]
@@ -630,5 +659,46 @@ mod tests {
         // Another profile was picked meanwhile, or this one's game changed.
         assert!(play_on_finish(Some(press_play()), &built, Some(("winter", version))).is_none());
         assert!(play_on_finish(Some(press_play()), &built, Some(("autumn", Some("v1")))).is_none());
+    }
+
+    #[test]
+    fn mods_a_stop_for_worlds_names_wait_for_an_update_not_in_line() {
+        let mut run = run(false);
+        let ids: Vec<String> = run.lines.iter().map(|l| l.id.clone()).collect();
+        run.at_stake(&ids[..1], &[]);
+        run.stopped("stop".into(), &[]);
+        assert!(matches!(run.lines[0].state, State::NeedsUpdate { .. }));
+        assert_eq!(run.counts().needs_update, 1);
+    }
+
+    #[test]
+    fn a_stopped_build_keeps_the_classified_reasons_for_the_installed_rows() {
+        let mut run = run(false);
+        let Step::LeftOut(mismatch) = unfit("jei") else {
+            unreachable!()
+        };
+        run.mark_left_out(&mismatch);
+        let compile_failure = LeftOut {
+            id: "minimap".into(),
+            why: Why::DidNotBuild,
+            detail: None,
+            ..mismatch
+        };
+        run.mark_left_out(&compile_failure);
+        run.stopped(
+            "The build stopped.".into(),
+            &["jei".into(), "minimap".into()],
+        );
+        assert!(matches!(
+            run.state_of("jei", "1.0.0"),
+            Some(State::NeedsUpdate { .. })
+        ));
+        assert!(
+            matches!(run.state_of("minimap", "1.0.0"), Some(State::Failed(why)) if !why.is_empty())
+        );
+        assert_eq!(run.state_of("jei", "1.0.1"), None);
+        assert_eq!(run.state_of("zoom", "1.0.0"), None);
+        assert_eq!(run.counts().needs_update, 1);
+        assert_eq!(run.counts().failed, 1);
     }
 }

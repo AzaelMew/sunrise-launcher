@@ -1414,6 +1414,9 @@ impl Cat {
 const ROOM: (f32, f32) = (1000., 560.);
 /// Screen pixels per pixel of the cat, at a scale factor of 1.
 const SIZE: f32 = 2.;
+/// How far the picture reaches under the cat's feet (its shadow's rows), in px: what stands it
+/// on an edge is this much below the picture's bottom.
+pub(crate) const BELOW_FEET: f32 = 3. * SIZE;
 const WIDTH: f32 = W as f32 * SIZE;
 /// A cat acting in place is drawn 12 times a second, a cat on the move 25 times.
 const FRAME: Duration = Duration::from_millis(83);
@@ -1929,10 +1932,14 @@ impl Launcher {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             let _ = this.update(cx, |this, cx| {
-                if this.ui.cat.wake == Some(at) {
-                    this.ui.cat.wake = None;
+                if this.ui.cat.wake.take_if(|due| *due == at).is_some()
+                    && cat_out(
+                        this.settings.show_cat(),
+                        this.settings.reduced_graphics() || crate::motion::still(),
+                    )
+                {
+                    cx.notify();
                 }
-                cx.notify();
             });
         })
         .detach();
