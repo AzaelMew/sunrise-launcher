@@ -33,9 +33,7 @@ pub(super) fn install(
         &held,
         &version.game,
         Side::Both,
-        // Every version counts as fitting: the planner may choose a newer native dependency than
-        // one that fits this build, and the walk has no older one to fall back to.
-        |_, _| true,
+        |_, v| super::fits_game(v, &version.game),
     );
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
         return Err(format!("{} can't be installed: {reason}", project.name));

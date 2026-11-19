@@ -1125,3 +1125,55 @@ fn a_dependency_is_installed_at_the_version_the_plan_chose() {
     assert_eq!(creatures.version, "1.1.0");
     assert!(home.join(&creatures.file).is_file());
 }
+
+#[test]
+fn a_set_whose_picks_need_conflicting_ranges_is_refused_before_anything_installs() {
+    let index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, numbers: &[&str], dependencies: Option<Vec<index::Dependency>>| {
+        let versions = numbers
+            .iter()
+            .map(|n| {
+                let mut v = base.versions[0].clone();
+                v.version = (*n).into();
+                v.dependencies = dependencies.clone();
+                v
+            })
+            .collect();
+        index::Project {
+            id: id.into(),
+            name: id.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        }
+    };
+    let need = |range: &str| {
+        Some(vec![index::Dependency {
+            id: "lib".into(),
+            version: range.into(),
+            optional: false,
+            side: None,
+        }])
+    };
+    let mut index = index;
+    index.projects = vec![
+        make("lib", &["2.0.0", "1.0.0"], None),
+        make("one", &["1.0.0"], need("^1")),
+        make("two", &["1.0.0"], need("^2")),
+        make("fine", &["1.0.0"], need("^1")),
+    ];
+    let say = |ids: &[&str]| {
+        let ids: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
+        check_set(&index, &ids, &[], GAME)
+    };
+    let plan = say(&["one", "fine"]).unwrap();
+    assert_eq!(plan.install.len(), 3, "both and the library once");
+    let refused = say(&["one", "two"]).unwrap_err();
+    assert!(
+        refused.contains("can't be installed with the others"),
+        "{refused}"
+    );
+    // A set is refused as a whole: the pick that would have been fine does not go ahead alone.
+    assert!(say(&["one", "two", "fine"]).is_err());
+}
