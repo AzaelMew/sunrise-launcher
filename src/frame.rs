@@ -506,25 +506,46 @@ impl Launcher {
                 } else {
                     self.join(cx)
                 };
-                let mut tabs = div().flex().px(px(22.)).pt(px(12.)).gap(px(6.));
-                for (dest, id, label) in [
-                    (Page::Join, "servers-join", tr("Join")),
-                    (Page::Hosting, "servers-host", tr("Host")),
-                ] {
-                    tabs = tabs.child(
-                        button(id, label)
-                            .when(page == dest, |d| d.bg(rgb(palette().selected)))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.navigate(dest);
-                                cx.notify();
-                            })),
-                    );
-                }
+                // The page's header, as Mods has it: its name, then Join and Host as one
+                // control, the chosen one filled.
+                let tabs = div()
+                    .flex()
+                    .items_center()
+                    .gap(px(20.))
+                    .px(px(24.))
+                    .pt(px(24.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens::TITLE))
+                            .font_weight(FontWeight::BOLD)
+                            .child(tr("Servers")),
+                    )
+                    .child(crate::mods::segmented(
+                        "servers-tabs",
+                        [
+                            (
+                                "servers-join",
+                                tr("Join").into(),
+                                page == Page::Join,
+                                Page::Join,
+                            ),
+                            (
+                                "servers-host",
+                                tr("Host").into(),
+                                page == Page::Hosting,
+                                Page::Hosting,
+                            ),
+                        ],
+                        Launcher::navigate,
+                        cx,
+                    ));
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .text_color(rgb(palette().text))
                     .child(tabs)
                     .child(body)
                     .into_any_element()

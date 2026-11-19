@@ -232,8 +232,9 @@ impl Launcher {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("host"))
-            .px(px(32.))
-            .py(px(24.))
+            .px(px(24.))
+            .pt(px(18.))
+            .pb(px(24.))
             .text_color(rgb(palette().text))
             .child(body.max_w(px(1180.)).flex().flex_col().gap(px(18.)))
             .into_any_element()
@@ -287,7 +288,6 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(4.))
-                    .child(title(tr("Hosting")))
                     .child(hint(tr(
                         "Host a world for your friends on this computer. Create a server, press Start, and give them the address.",
                     ))),

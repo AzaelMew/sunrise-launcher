@@ -131,6 +131,67 @@ pub(crate) fn choices(
     }))
 }
 
+/// Two views of one page side by side, the chosen one filled (`id`, `label`, chosen, its page):
+/// Mods' Discover | Installed and Servers' Join | Host. The pair is one Tab stop, and the arrow
+/// keys go to the other view, as a click on it would; `go` opens a view.
+pub(crate) fn segmented(
+    id: &'static str,
+    views: [(&'static str, SharedString, bool, Page); 2],
+    go: fn(&mut Launcher, Page),
+    cx: &mut Context<Launcher>,
+) -> Stateful<Div> {
+    let other = views
+        .iter()
+        .find(|(_, _, on, _)| !*on)
+        .map(|(_, _, _, page)| *page);
+    let mut pair = div()
+        .id(id)
+        .tab_index(0)
+        .seen()
+        .focus_visible(|s| s.border_color(c(palette().focus)))
+        .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+            if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
+                return;
+            }
+            if let Some(page) = other {
+                go(this, page);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }))
+        .flex()
+        .flex_none()
+        .p(px(3.))
+        .rounded(tokens::r(tokens::R_CARD))
+        .border_1()
+        .border_color(c(palette().line))
+        .bg(palette().card());
+    for (view, label, on, page) in views {
+        pair = pair.child(
+            div()
+                .id(view)
+                .px(px(18.))
+                .h(px(tokens::FIELD))
+                .flex()
+                .items_center()
+                .rounded(tokens::r(tokens::R_CONTROL))
+                .text_size(px(tokens::BODY))
+                .cursor_pointer()
+                .when(on, |d| {
+                    d.bg(c(palette().line)).font_weight(FontWeight::SEMIBOLD)
+                })
+                .child(label)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if !on {
+                        go(this, page);
+                    }
+                    cx.notify();
+                })),
+        );
+    }
+    pair
+}
+
 /// An on/off switch: a knob that slides across its track when it changes, the track and the
 /// knob turning to their new colours as it goes.
 pub(crate) fn switch(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {

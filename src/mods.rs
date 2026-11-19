@@ -45,7 +45,7 @@ pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, choices, field_theme, reveal, switch, Choose};
+pub(crate) use ui::{checkbox, choices, field_theme, reveal, segmented, switch, Choose};
 
 use crate::paint::palette;
 use model::{Card, Row};
@@ -847,31 +847,6 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.ui.mods.find)
         };
-        let seg = |id: &'static str,
-                   label: &'static str,
-                   on: bool,
-                   page: Page,
-                   cx: &mut Context<Self>| {
-            div()
-                .id(id)
-                .px(px(18.))
-                .h(px(tokens::FIELD))
-                .flex()
-                .items_center()
-                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                .text_size(px(tokens::BODY))
-                .cursor_pointer()
-                .when(on, |d| {
-                    d.bg(c(palette().line)).font_weight(FontWeight::SEMIBOLD)
-                })
-                .child(tr(label))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if this.ui.page != page {
-                        this.choose_view(page);
-                    }
-                    cx.notify();
-                }))
-        };
         div()
             .flex()
             .items_center()
@@ -909,52 +884,29 @@ impl Launcher {
                             })),
                     ),
             )
-            .child(
-                div()
-                    // One Tab stop for the two: the arrow keys go to the other.
-                    .id("alt-mods-tabs")
-                    .tab_index(0)
-                    .seen()
-                    .focus_visible(|s| s.border_color(c(palette().focus)))
-                    .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
-                        if !matches!(ev.keystroke.key.as_str(), "left" | "right" | "up" | "down") {
-                            return;
-                        }
-                        this.choose_view(match (packs, installed) {
-                            (true, true) => Page::PackFind,
-                            (true, false) => Page::Packs,
-                            (false, true) => Page::Discover,
-                            (false, false) => Page::Installed,
-                        });
-                        cx.stop_propagation();
-                        cx.notify();
-                    }))
-                    .flex()
-                    .flex_none()
-                    .p(px(3.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CARD))
-                    .border_1()
-                    .border_color(c(palette().line))
-                    .bg(palette().card())
-                    .child(seg(
+            .child(segmented(
+                "alt-mods-tabs",
+                [
+                    (
                         "alt-mods-tab-discover",
-                        "Discover",
+                        tr("Discover").into(),
                         !installed,
                         if packs {
                             Page::PackFind
                         } else {
                             Page::Discover
                         },
-                        cx,
-                    ))
-                    .child(seg(
+                    ),
+                    (
                         "alt-mods-tab-installed",
-                        "Installed",
+                        tr("Installed").into(),
                         installed,
                         if packs { Page::Packs } else { Page::Installed },
-                        cx,
-                    )),
-            )
+                    ),
+                ],
+                Launcher::choose_view,
+                cx,
+            ))
             .child(field)
     }
 }
