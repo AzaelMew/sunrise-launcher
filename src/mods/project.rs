@@ -615,10 +615,6 @@ impl Launcher {
             );
         let scroll = crate::frame::scrolls("project");
         let right = div()
-            .relative()
-            .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
-            .w(px(360.))
-            .flex_none()
             .flex()
             .flex_col()
             .gap(px(14.))
@@ -660,6 +656,21 @@ impl Launcher {
                     }))
             });
 
+        // A narrow window has one column: the action stays near the top. Beside the column, the
+        // panel stays in view while the page scrolls.
+        let (above, beside) = match self.content_width() < 860. {
+            true => (Some(right), None),
+            false => (
+                None,
+                Some(
+                    right
+                        .relative()
+                        .top(px(self.mods_sticky.shift(&scroll, 1, 1)))
+                        .w(px(360.))
+                        .flex_none(),
+                ),
+            ),
+        };
         let left = div()
             .flex_1()
             .min_w_0()
@@ -667,6 +678,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(head)
+            .children(above)
             .children(gallery)
             .child(about)
             .child(
@@ -695,7 +707,7 @@ impl Launcher {
                         .gap(px(24.))
                         .items_start()
                         .child(left)
-                        .child(right),
+                        .children(beside),
                 ),
         )
         .into_any_element()

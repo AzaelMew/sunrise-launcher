@@ -7,6 +7,15 @@ use crate::{
 use gpui::rgb;
 use instances::{Icon, Instance};
 
+/// How wide the sidebar is, open or closed.
+pub(crate) fn rail_width(open: bool) -> f32 {
+    if open {
+        204.
+    } else {
+        54.
+    }
+}
+
 impl Launcher {
     pub(super) fn toggle_sidebar(&mut self) {
         self.settings.sidebar_expanded = !self.settings.sidebar_expanded;
@@ -215,7 +224,7 @@ impl Launcher {
         let mut rail = div()
             .flex()
             .flex_col()
-            .w(px(if wide { 204. } else { 54. }))
+            .w(px(rail_width(wide)))
             .min_h_0()
             .flex_none()
             .gap(px(4.))
