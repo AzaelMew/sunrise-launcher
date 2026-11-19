@@ -1853,7 +1853,10 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
             continue;
         };
         // Copied beside it and renamed: an interrupted copy never looks complete.
-        let partial = to.join(format!(".{name}.partial-{}", std::process::id()));
+        // The name is this call's own, as the window's start and Play can both complete one version.
+        static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
         let copied = fs::copy(&from, &partial).and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
             let _ = fs::remove_file(&partial);
@@ -6750,6 +6753,18 @@ pub fn {f}("
         }
         assert!(!resources("v2026.10.15").join("registries.json").exists());
         assert!(!complete_reports(&versions, "v2026.10.15"));
+        // A copy that already holds the old shared temp name (another call mid-copy) does not
+        // stop this call: each call copies to a name of its own.
+        let squatted =
+            resources("v2026.10.14").join(format!(".commands.json.partial-{}", std::process::id()));
+        fs::remove_file(resources("v2026.10.14").join("commands.json")).unwrap();
+        fs::create_dir(&squatted).unwrap();
+        assert!(complete_reports(&versions, "v2026.10.14"));
+        assert_eq!(
+            fs::read_to_string(resources("v2026.10.14").join("commands.json")).unwrap(),
+            "v2026.10.13"
+        );
+        fs::remove_dir(&squatted).unwrap();
         // Once there they stay as they are, even when the scratch output is gone.
         fs::remove_dir_all(versions.join("v2026.10.13/.local/datagen")).unwrap();
         assert!(complete_reports(&versions, "v2026.10.13"));
