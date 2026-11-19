@@ -1453,5 +1453,6 @@
   "{count} mods": "{count} mods",
   "{id} ({file}, not checked against the registry)": "{id} ({file}, not checked against the registry)",
   "Reduced graphics": "Reduced graphics",
-  "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.": "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher."
+  "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.": "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.",
+  "Microsoft says this is a child account (error {code}). An adult has to add it to a Microsoft family at {url}. If it is an adult account, check its family settings there.": "Microsoft says this is a child account (error {code}). An adult has to add it to a Microsoft family at {url}. If it is an adult account, check its family settings there."
 }

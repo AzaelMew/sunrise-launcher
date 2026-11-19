@@ -336,13 +336,19 @@ fn refresh_ms(ep: &Endpoints, client_id: &str, refresh: &str) -> Result<MsTokens
 
 // ----- Xbox Live, XSTS, Minecraft ----------------------------------------------------------------
 
+const FAMILY_URL: &str = "https://account.microsoft.com/family";
+const CHILD_ACCOUNT: &str = "Microsoft says this is a child account (error {code}). An adult has to add it to a Microsoft family at {url}. If it is an adult account, check its family settings there.";
+
 /// The XSTS `XErr` codes, as the official launcher explains them.
 fn xsts_error(code: u64) -> String {
     match code {
         2148916233 => "This Microsoft account has no Xbox profile yet. Sign in once at xbox.com to create one, then try again.".into(),
         2148916235 => "Xbox Live is not available in your country or region.".into(),
         2148916236 | 2148916237 => "This account needs adult verification on xbox.com before it can play.".into(),
-        2148916238 => "This is a child account: an adult has to add it to a Microsoft family first.".into(),
+        2148916238 => crate::i18n::trf(
+            CHILD_ACCOUNT,
+            &[("code", &code.to_string()), ("url", FAMILY_URL)],
+        ),
         other => format!("Xbox Live refused the sign-in (error {other})."),
     }
 }
