@@ -330,11 +330,11 @@ impl Toolchain {
             cmd.env("TMPDIR", &tmp).env("TMP", &tmp).env("TEMP", &tmp);
         }
         if cfg!(windows) {
-            let system_root = std::env::var_os("SystemRoot");
-            let comspec = std::env::var_os("ComSpec");
-            if let Some(cmd_exe) = comspec_fix(comspec.as_deref(), system_root.as_deref()) {
-                cmd.env("ComSpec", cmd_exe);
-            }
+            set_comspec(
+                &mut cmd,
+                std::env::var_os("ComSpec").as_deref(),
+                std::env::var_os("SystemRoot").as_deref(),
+            );
         }
         for name in SCRUBBED {
             cmd.env_remove(name);
@@ -470,7 +470,6 @@ pub fn low_priority(cmd: &mut Command) -> &mut Command {
 /// preprocessor through the command interpreter `ComSpec` names, so the resource step of a
 /// build fails when it is stale or empty. `None` when it is fine, or when `system_root`
 /// (`%SystemRoot%`) gives no `cmd.exe` to put there.
-#[cfg_attr(not(windows), allow(dead_code))]
 fn comspec_fix(
     comspec: Option<&std::ffi::OsStr>,
     system_root: Option<&std::ffi::OsStr>,
@@ -480,6 +479,17 @@ fn comspec_fix(
     }
     let cmd_exe = Path::new(system_root?).join("System32").join("cmd.exe");
     cmd_exe.is_file().then_some(cmd_exe)
+}
+
+/// Sets `ComSpec` on `cmd` to the system's `cmd.exe` when `comspec_fix` offers one.
+fn set_comspec(
+    cmd: &mut Command,
+    comspec: Option<&std::ffi::OsStr>,
+    system_root: Option<&std::ffi::OsStr>,
+) {
+    if let Some(cmd_exe) = comspec_fix(comspec, system_root) {
+        cmd.env("ComSpec", cmd_exe);
+    }
 }
 
 pub const SCRUBBED: [&str; 8] = [
@@ -981,6 +991,20 @@ mod tests {
         // A ComSpec that names a file stays the player's.
         assert_eq!(comspec_fix(Some(expected.as_os_str()), Some(root_os)), None);
         assert_eq!(comspec_fix(None, None), None);
+
+        // What a build's command gets: the replacement is set, a good ComSpec is not touched.
+        let set = |comspec: Option<&std::ffi::OsStr>| {
+            let mut cmd = Command::new("tool");
+            set_comspec(&mut cmd, comspec, Some(root_os));
+            cmd.get_envs()
+                .find(|(name, _)| *name == "ComSpec")
+                .map(|(_, value)| value.map(std::ffi::OsStr::to_owned))
+        };
+        assert_eq!(
+            set(Some(missing.as_os_str())),
+            Some(Some(expected.clone().into_os_string()))
+        );
+        assert_eq!(set(Some(expected.as_os_str())), None);
     }
 
     #[test]
