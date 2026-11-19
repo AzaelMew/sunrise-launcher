@@ -768,17 +768,13 @@ impl Launcher {
                     })),
             )
             .children(open.then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .p(px(12.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .bg(rgb(palette().field))
-                    .font_family(crate::theme::MONO)
-                    .text_size(px(tokens::CAPTION))
-                    .text_color(rgb(palette().muted))
-                    .children(details)
+                crate::code_box::code_box(
+                    "alt-resolve-details-box",
+                    details.into_iter().map(Into::into).collect(),
+                    None,
+                )
+                .border_0()
+                .text_size(px(tokens::CAPTION))
             }));
 
         let body = div()

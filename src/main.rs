@@ -20,6 +20,7 @@ mod build_mode;
 mod cat;
 mod cli;
 mod cli_tools;
+mod code_box;
 mod collection;
 mod command_search;
 mod console;
