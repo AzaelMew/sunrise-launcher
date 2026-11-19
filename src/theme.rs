@@ -67,10 +67,13 @@ pub struct Theme {
     pub on_face: Hsla,
     /// The night look's own tokens (the sky, plates with their opacity), for rebuilt screens.
     pub night: Night,
+    /// The built-in scene's tint source. Local themes instead supply their own plate colours.
+    pub(crate) scene_tone: Option<u32>,
+    /// A stronger version of the default accent for the primary Home action, if authored.
+    pub(crate) play_seed: Option<u32>,
     /// The accent this look was built from, before the glass look's mixes.
     pub accent_choice: Accent,
-    /// A picture stands behind Home (the player's own, or their theme's): nothing is known
-    /// of its colours, so the plates over it are opaque.
+    /// A Home picture is configured: automatic panel opacity stays solid.
     pub photo: bool,
     pub dark: bool,
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink
@@ -127,7 +130,10 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     let mut theme = Theme::for_appearance(Appearance::Dark, accent, system);
     let mut photo = settings.background.is_some();
     theme = match themes::resolve(settings.theme.as_deref()) {
-        themes::Resolved::Twilight => theme,
+        themes::Resolved::Twilight => {
+            theme.scene_tone = Some(twilight_tone());
+            theme
+        }
         themes::Resolved::Builtin(picked) => theme.with_launcher_theme(picked),
         themes::Resolved::Local(local) => {
             photo |= local.picture.is_some();
@@ -143,6 +149,17 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     theme.with_glass(settings.glass_tint(), settings.glass_blur())
 }
 
+/// Favour the horizon, where the built-in skies are warmest or most saturated.
+pub(crate) fn sky_tone(sky: [u32; 6]) -> u32 {
+    tokens::glass::mix_oklab(sky[5], sky[3], 0.72)
+}
+
+/// Twilight draws the violet coast poster, not the flat sky in its fallback tokens.
+pub(crate) fn twilight_tone() -> u32 {
+    let sky = sunrise_launcher_scenery::coast::SUNRISE.sky;
+    tokens::glass::mix_oklab(sky[6], sky[4], 0.72)
+}
+
 impl Theme {
     /// The pinned look (`pinned_dark`: dark unless the player picked another), the system's when
     /// they asked to follow it, in the player's accent.
@@ -150,11 +167,18 @@ impl Theme {
     /// whatever the look it was asked on), keeping the player's Glass and
     /// Blur.
     pub fn with_launcher_theme(mut self, picked: &themes::Theme) -> Self {
-        let Some(night) = picked.palette else {
+        if let Some(night) = picked.palette {
+            self = self.with_night(*night);
+        } else {
             self.night.sky = picked.sky;
-            return self;
+        }
+        self.scene_tone = Some(sky_tone(picked.sky));
+        self.play_seed = match picked.id {
+            "cherry_blossom" if self.accent_choice == picked.accent.accent() => Some(0xc8297e),
+            "nord" if self.accent_choice == picked.accent.accent() => Some(0x087d95),
+            _ => None,
         };
-        self.with_night(*night)
+        self
     }
 
     /// Sunrise's own pages in `night`'s colours: a theme never changes how a page is laid out
@@ -259,6 +283,8 @@ impl Theme {
             face_lip: c(p.face_lip),
             on_face: c(p.on_face),
             night,
+            scene_tone: None,
+            play_seed: None,
             accent_choice: accent,
             photo: false,
             dark: p.dark,
