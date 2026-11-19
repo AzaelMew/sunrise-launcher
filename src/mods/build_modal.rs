@@ -176,7 +176,7 @@ impl Launcher {
         // ---- one line per mod
         let mut list = div().flex().flex_col();
         for (n, line) in run.lines.iter().enumerate() {
-            list = list.child(self.build_line_of(n, line, run.details, cx));
+            list = list.child(self.build_line_of(n, line, run.details));
         }
         let list = card().overflow_hidden().child(
             div()
@@ -278,13 +278,7 @@ impl Launcher {
     }
 
     /// One mod's line: its picture, its name and version, and where it stands.
-    fn build_line_of(
-        &mut self,
-        n: usize,
-        line: &Line,
-        details: bool,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn build_line_of(&mut self, n: usize, line: &Line, details: bool) -> Div {
         let picture = line
             .icon
             .clone()

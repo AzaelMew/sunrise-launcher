@@ -1,6 +1,6 @@
 //! Mods › Installed (mocks 05, 05b): what needs the player first, then updates, then the rest;
 //! one switch per row; bulk actions that name their count and scope.
-use super::model::{self, Group, Make, Need, Row, Show};
+use super::model::{self, Group, Make, Row, Show};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
