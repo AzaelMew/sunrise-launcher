@@ -95,6 +95,15 @@ struct Look {
 }
 
 /// A theme's preview: its page, a panel on it with both inks, and Play in its own fill.
+/// The least width of a theme's card, and the room between cards.
+const CARD_MIN: f32 = 168.;
+const GAP: f32 = 12.;
+
+thread_local! {
+    /// Where the grid of themes was last drawn, for its number of columns.
+    static THEME_GRID: gpui::ScrollHandle = gpui::ScrollHandle::new();
+}
+
 fn preview(p: &Palette) -> Div {
     let bar = |w: f32, color: u32| {
         div()
@@ -412,7 +421,18 @@ impl Launcher {
             Some(id) if missing => id.clone(),
             _ => appearance::effective_id(&self.settings),
         };
-        let mut cards = div().flex().flex_wrap().gap(px(12.));
+        // As many columns as fit at a card's least width, and the cards share the row between
+        // them: no strip of empty space on the right at any width. The row's width is the one it
+        // was last drawn at.
+        let grid = THEME_GRID.with(|g| g.clone());
+        let width = f32::from(grid.bounds().size.width);
+        let columns = (((width + GAP) / (CARD_MIN + GAP)).floor() as u16).max(1);
+        let mut cards = div()
+            .id("alt-theme-grid")
+            .track_scroll(&grid)
+            .grid()
+            .grid_cols(columns)
+            .gap(px(GAP));
         let choices = self
             .ui
             .settings
@@ -427,8 +447,7 @@ impl Launcher {
                 div()
                     .id(ElementId::named_usize("alt-theme", n))
                     .tab_index(0)
-                    .w(px(168.))
-                    .flex_none()
+                    .min_w_0()
                     .flex()
                     .flex_col()
                     .rounded(px(tokens::R_CARD))
