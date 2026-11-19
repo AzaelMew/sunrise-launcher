@@ -4,8 +4,10 @@
 //! an optional `icon` (a PNG in base64), `acceptTextures`, `acceptedCodeOfConduct` and `hidden`.
 //! The launcher only adds and removes entries: every other field of every entry is written back
 //! as it was read.
+use crate::i18n::tr;
 use base64::Engine;
 use std::fs;
+use std::net::Ipv6Addr;
 use std::path::Path;
 use sunrise_launcher_nbt::{self as nbt, Compound, JavaString, Limits, NamedTag, Tag};
 
@@ -106,6 +108,9 @@ impl List {
         if ip.is_empty() {
             return Err("A server needs an address.".into());
         }
+        if !valid_address(ip) {
+            return Err(tr("That is not a server address: use a name or IP address, then an optional port from 0 to 65535.").into());
+        }
         let name = if name.is_empty() {
             "Minecraft Server"
         } else {
@@ -155,6 +160,33 @@ impl List {
             .and_then(|()| fs::rename(&new, &current));
         written.map_err(|e| format!("Could not save the server list: {e}"))
     }
+}
+
+/// Whether `address` is a host with an optional `:port`, as the game's Add Server screen takes it:
+/// a name or IPv4 address, or an IPv6 address (in `[...]` when a port follows), and a port of
+/// digits from 0 to 65535 (none is fine).
+fn valid_address(address: &str) -> bool {
+    let (host, port, bracketed) = match address.strip_prefix('[') {
+        Some(rest) => match rest.split_once(']') {
+            Some((host, "")) => (host, "", true),
+            Some((host, after)) => match after.strip_prefix(':') {
+                Some(port) => (host, port, true),
+                None => return false,
+            },
+            None => return false,
+        },
+        None => match address.split_once(':') {
+            Some((host, port)) if !port.contains(':') => (host, port, false),
+            _ => (address, "", false),
+        },
+    };
+    let host_ok = match bracketed || host.contains(':') {
+        true => host.parse::<Ipv6Addr>().is_ok(),
+        false => !host.is_empty() && !host.contains(|c: char| c.is_whitespace() || c.is_control()),
+    };
+    let port_ok = port.is_empty()
+        || (port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok());
+    host_ok && port_ok
 }
 
 /// The shown server a command names: its position from 1, its name (any case) or its address.

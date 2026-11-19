@@ -141,3 +141,38 @@ fn a_server_without_a_name_gets_the_games_default() {
         "Minecraft Server"
     );
 }
+
+#[test]
+fn an_address_the_game_would_refuse_is_not_saved() {
+    let mut list = List {
+        entries: Vec::new(),
+    };
+    for bad in [
+        "example.com:notaport",
+        "example.com:65536",
+        "example.com:-1",
+        "example.com:+80",
+        "[::1]junk",
+        "[::1",
+        "[nothost]:25565",
+        "::zz",
+        ":25565",
+        "my server.net",
+    ] {
+        assert!(list.add("x", bad).is_err(), "{bad} should be refused");
+    }
+    assert!(list.servers().is_empty());
+    for good in [
+        "example.com",
+        "example.com:25565",
+        "example.com:0",
+        "example.com:65535",
+        "192.168.0.2:1",
+        "[::1]",
+        "[::1]:25570",
+        "fe80::1",
+    ] {
+        assert!(list.add("x", good).is_ok(), "{good} should be saved");
+    }
+    assert_eq!(list.servers().len(), 8);
+}

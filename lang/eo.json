@@ -1453,5 +1453,6 @@
   "{count} mods": "{count} mods",
   "{id} ({file}, not checked against the registry)": "{id} ({file}, not checked against the registry)",
   "Reduced graphics": "Reduced graphics",
-  "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.": "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher."
+  "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.": "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.",
+  "That is not a server address: use a name or IP address, then an optional port from 0 to 65535.": "That is not a server address: use a name or IP address, then an optional port from 0 to 65535."
 }
