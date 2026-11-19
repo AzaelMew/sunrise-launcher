@@ -1017,26 +1017,31 @@ fn a_member_another_pick_needs_is_ticked_and_counted_though_it_was_left_unticked
 }
 
 #[test]
-fn a_depended_on_mod_is_a_library_only_by_the_registrys_own_category() {
+fn a_library_is_marked_by_the_registry_and_needed_by_another_mod() {
     let mut idx = zoo();
-    // `tool` has content of its own and `jei` needs it; `lib` is marked by the registry.
-    idx.projects.push(
-        serde_json::from_value(project(
-            "tool",
-            "native-mod",
-            &[("1.0.0", GAME, A)],
-            serde_json::json!({"downloads": 5}),
-        ))
-        .unwrap(),
+    let mut add = |id: &str, extra: serde_json::Value| {
+        idx.projects.push(
+            serde_json::from_value(project(id, "native-mod", &[("1.0.0", GAME, A)], extra))
+                .unwrap(),
+        );
+    };
+    // `tool` has content of its own and is needed by `jei`; `solo` is marked a library but
+    // nothing needs it; `lib` is marked and needed by the farm's mods.
+    add("tool", serde_json::json!({"downloads": 5}));
+    add(
+        "solo",
+        serde_json::json!({"downloads": 4, "categories": ["utility", "library"]}),
     );
     idx_version(&mut idx, "jei").dependencies = needs("tool", "^1");
     let all = cards(&idx, GAME);
     let card = |id: &str| all.iter().find(|c| c.id == id).unwrap();
     assert!(card("lib").library);
+    assert!(!card("tool").library, "needed, but not marked: still a mod");
     assert!(
-        !card("tool").library,
-        "needed by another mod, but not marked: still a mod"
+        !card("solo").library,
+        "marked, but needed by nothing: a mod of its own"
     );
+    assert!(!card("cow").library);
     let f = Filters {
         sort: Sort::Name,
         ..Filters::default()
@@ -1047,8 +1052,8 @@ fn a_depended_on_mod_is_a_library_only_by_the_registrys_own_category() {
         .collect();
     assert_eq!(
         browse,
-        ["farm", "jei", "tool"],
-        "the standalone mod stays; the library goes"
+        ["farm", "jei", "solo", "tool"],
+        "only the library goes"
     );
 }
 

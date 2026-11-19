@@ -20,12 +20,31 @@ pub(in crate::mods) fn part_of(index: &Index) -> HashMap<&str, &str> {
     of
 }
 
-/// The registry's own category for a mod that exists to be depended on. Nothing is inferred
-/// from who requires it: a standalone mod that another mod happens to need stays a mod.
+/// The registry's own category for a mod that exists to be depended on.
 const LIBRARY: &str = "library";
 
-pub(in crate::mods) fn is_library(p: &index::Project) -> bool {
-    p.categories.iter().any(|k| k == LIBRARY)
+/// The libraries: mods the registry puts in the "library" category that another listed mod's
+/// newest version requires, and that no collection lists as a member. Both must hold: the
+/// category alone is an author's word and a standalone mod can carry it, and being required
+/// alone makes no library of a mod with content of its own.
+pub(in crate::mods) fn libraries(index: &Index) -> HashSet<String> {
+    let listed: HashSet<&str> = index
+        .collections
+        .iter()
+        .flat_map(|c| c.members.iter().map(|m| m.id.as_str()))
+        .collect();
+    index
+        .projects
+        .iter()
+        .filter_map(|p| p.versions.first().and_then(|v| v.dependencies.as_ref()))
+        .flatten()
+        .filter(|d| !d.optional)
+        .map(|d| d.id.as_str())
+        .filter(|id| !listed.contains(id))
+        .filter_map(|id| index.project(id))
+        .filter(|p| p.categories.iter().any(|k| k == LIBRARY))
+        .map(|p| p.id.clone())
+        .collect()
 }
 
 /// The collections' own cards for Discover: their members' downloads and newest day added up,
@@ -198,6 +217,7 @@ pub(in crate::mods) struct View {
 pub(in crate::mods) struct Base {
     refused: BTreeMap<String, String>,
     outside: Vec<String>,
+    libraries: HashSet<String>,
 }
 
 fn plan(
@@ -246,7 +266,11 @@ pub(in crate::mods) fn base(
         .into_keys()
         .filter(|id| !c.members.iter().any(|m| m.id == *id))
         .collect();
-    Base { refused, outside }
+    Base {
+        refused,
+        outside,
+        libraries: libraries(index),
+    }
 }
 
 /// What a plan depends on besides the ticks: the index read, what is installed, the build.
@@ -366,7 +390,7 @@ pub(in crate::mods) fn view(
                 .map(|v| v.version.clone())
                 .unwrap_or_default(),
             library,
-            labelled: p.is_some_and(is_library),
+            labelled: base.libraries.contains(id),
             // What another pick needs is ticked whether or not it was picked itself.
             ticked: !needed_by.is_empty() || (!library && chosen.contains(&id)),
             needed_by,
@@ -383,7 +407,7 @@ pub(in crate::mods) fn view(
     };
     for m in &now.install {
         let project = index.project(&m.id);
-        match project.is_some_and(is_library) {
+        match base.libraries.contains(&m.id) {
             true => summary.libraries += 1,
             false => summary.mods += 1,
         }
