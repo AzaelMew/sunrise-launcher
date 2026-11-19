@@ -509,10 +509,16 @@ impl Storage {
                 Err(_) => unknown_revision = true,
             }
         }
+        // One walk of each folder serves its unit size, its row's bytes and its kept size.
+        let mut trees = entries
+            .iter()
+            .map(|entry| Tree::build(&entry.path))
+            .collect::<Result<Vec<_>, Error>>()?;
         let mut seen = HashSet::new();
         let units: Vec<_> = entries
             .iter()
-            .map(|entry| {
+            .zip(&trees)
+            .map(|(entry, tree)| {
                 let last_used = entry.last_used()?;
                 let tier = if entry.relative.starts_with("rust")
                     && entry.path.file_name().is_some_and(|name| {
@@ -538,7 +544,7 @@ impl Storage {
                     let Some(unit_revision) = entry.revision() else {
                         return Ok(Unit {
                             eligible: false,
-                            bytes: walk(&entry.path, &mut seen)?,
+                            bytes: tree.size(&mut seen),
                             last_used,
                             tier: Tier::Protected,
                         });
@@ -569,7 +575,7 @@ impl Storage {
                 };
                 Ok(Unit {
                     eligible: entry.access()?.check().is_ok(),
-                    bytes: walk(&entry.path, &mut seen)?,
+                    bytes: tree.size(&mut seen),
                     last_used,
                     tier,
                 })
@@ -585,7 +591,7 @@ impl Storage {
         );
         let mut report = self.apply_retaining(Vec::new(), None, false, true)?;
         for row in &mut report.rows {
-            row.bytes = allocated(&entries, row.category)?;
+            row.bytes = allocated(&entries, &trees, row.category);
         }
         for (index, entry) in entries.iter().enumerate() {
             let row = report
@@ -600,17 +606,19 @@ impl Storage {
                     entry.clear()
                 };
                 match result {
-                    Ok(()) => {}
+                    // Only a cleared folder is walked again, to see what is left of it.
+                    Ok(()) => trees[index] = Tree::build(&entry.path)?,
+                    // A refusal comes before any deletion: the folder is as it was walked.
                     Err(
                         error @ (Error::Busy | Error::UnprovenExclusion | Error::IncompleteUnit),
                     ) => row.kept.push(Kept {
-                        bytes: allocated_bytes(&entry.path)?,
+                        bytes: trees[index].size(&mut HashSet::new()),
                         reason: native_mods::cache_error(error),
                     }),
                     Err(error) => return Err(error),
                 }
             }
-            let remaining = allocated_bytes(&entry.path)?;
+            let remaining = trees[index].size(&mut HashSet::new());
             if !selected.contains(&index) && remaining > 0 {
                 row.kept.push(Kept {
                     bytes: remaining,
@@ -629,7 +637,7 @@ impl Storage {
             }
         }
         for row in &mut report.rows {
-            row.remaining_bytes = allocated(&entries, row.category)?;
+            row.remaining_bytes = allocated(&entries, &trees, row.category);
             row.freed_bytes = row.bytes.saturating_sub(row.remaining_bytes);
         }
         report.total_bytes = report.rows.iter().map(|row| row.bytes).sum();
@@ -718,16 +726,22 @@ impl Storage {
                 kept: Vec::new(),
             })
             .collect();
-        let entries = if retain {
+        // Each folder is walked once, here: the walk validates every descendant and its sizes
+        // serve the rows and the kept lines.
+        let (entries, mut trees) = if retain {
             refused(entries, &mut rows)?
         } else {
-            entries
+            let trees = entries
+                .iter()
+                .map(|entry| Tree::build(&entry.path))
+                .collect::<Result<Vec<_>, Error>>()?;
+            (entries, trees)
         };
         for row in &mut rows {
-            row.bytes = allocated(&entries, row.category)?;
+            row.bytes = allocated(&entries, &trees, row.category);
             row.remaining_bytes = row.bytes;
         }
-        for entry in &entries {
+        for (index, entry) in entries.iter().enumerate() {
             if all || clear == Some(entry.category) {
                 let result = if entry.path == self.root.join("native/target") {
                     self.lease.clear().map(|_| ())
@@ -735,7 +749,8 @@ impl Storage {
                     entry.clear()
                 };
                 match result {
-                    Ok(()) => {}
+                    // Only a cleared folder is walked again, to see what is left of it.
+                    Ok(()) => trees[index] = Tree::build(&entry.path)?,
                     Err(
                         error @ (Error::Busy | Error::UnprovenExclusion | Error::IncompleteUnit),
                     ) if retain => {
@@ -744,7 +759,7 @@ impl Storage {
                             .find(|row| row.category == entry.category)
                             .unwrap();
                         row.kept.push(Kept {
-                            bytes: allocated_bytes(&entry.path)?,
+                            bytes: trees[index].size(&mut HashSet::new()),
                             reason: native_mods::cache_error(error),
                         });
                         // A busy build may be using subsequent build-tool units too. Stop
@@ -759,7 +774,7 @@ impl Storage {
         }
         for row in &mut rows {
             if all || clear == Some(row.category) {
-                let remaining = allocated(&entries, row.category)?;
+                let remaining = allocated(&entries, &trees, row.category);
                 row.freed_bytes = row.bytes.saturating_sub(remaining);
                 row.remaining_bytes = remaining;
             }
@@ -773,23 +788,29 @@ impl Storage {
     }
 }
 
-fn allocated(entries: &[Entry], category: Category) -> Result<u64, Error> {
+/// A row's bytes: its folders' walks, each allocated block counted once across the row.
+fn allocated(entries: &[Entry], trees: &[Tree], category: Category) -> u64 {
     let mut seen = HashSet::new();
     entries
         .iter()
-        .filter(|entry| entry.category == category)
-        .try_fold(0u64, |bytes, entry| {
-            Ok(bytes.saturating_add(walk(&entry.path, &mut seen)?))
+        .zip(trees)
+        .filter(|(entry, _)| entry.category == category)
+        .fold(0u64, |bytes, (_, tree)| {
+            bytes.saturating_add(tree.size(&mut seen))
         })
 }
 
 /// A unit holding a link or file the launcher does not expect is refused whole: it is neither
 /// counted nor cleared, and its row says so. The other units are not held up by it.
-fn refused(entries: Vec<Entry>, rows: &mut [Row]) -> Result<Vec<Entry>, Error> {
+fn refused(entries: Vec<Entry>, rows: &mut [Row]) -> Result<(Vec<Entry>, Vec<Tree>), Error> {
     let mut sound = Vec::new();
+    let mut trees = Vec::new();
     for entry in entries {
-        match allocated_bytes(&entry.path) {
-            Ok(_) => sound.push(entry),
+        match Tree::build(&entry.path) {
+            Ok(tree) => {
+                sound.push(entry);
+                trees.push(tree);
+            }
             Err(error @ Error::Unsafe(_)) => rows
                 .iter_mut()
                 .find(|row| row.category == entry.category)
@@ -802,7 +823,7 @@ fn refused(entries: Vec<Entry>, rows: &mut [Row]) -> Result<Vec<Entry>, Error> {
             Err(error) => return Err(error),
         }
     }
-    Ok(sound)
+    Ok((sound, trees))
 }
 
 fn old_logs(entries: &mut Vec<Entry>, home: &Root) -> Result<(), Error> {
@@ -1047,6 +1068,131 @@ mod eviction_tests {
         assert!(row(Category::RustCompiler).freed_bytes > 0);
         assert!(row(Category::RustCompiler).kept.is_empty());
         assert!(!good.exists());
+    }
+
+    /// The walk the eviction pass made before one walk served every figure: a fresh recursive
+    /// walk with its own set of counted blocks, as `allocated` and `allocated_bytes` made it.
+    fn legacy_walk(path: &Path, seen: &mut HashSet<(u64, u64)>) -> u64 {
+        let meta = match fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(_) => return 0,
+        };
+        let (id, bytes) = super::super::allocation(path, &meta).unwrap();
+        if !seen.insert(id) {
+            return 0;
+        }
+        let mut total = bytes;
+        if meta.is_dir() {
+            for entry in fs::read_dir(path).unwrap() {
+                total += legacy_walk(&entry.unwrap().path(), seen);
+            }
+        }
+        total
+    }
+
+    fn legacy_allocated(entries: &[Entry], category: Category) -> u64 {
+        let mut seen = HashSet::new();
+        entries
+            .iter()
+            .filter(|entry| entry.category == category)
+            .map(|entry| legacy_walk(&entry.path, &mut seen))
+            .sum()
+    }
+
+    #[test]
+    fn one_walk_per_folder_reports_what_the_repeated_walks_did() {
+        let home = crate::storage::tests::Home::new();
+        let shared = home.seed("rust/old/payload");
+        home.seed("rust/old/deep/more");
+        // A file shared by a cleared compiler folder and a kept build folder, and one shared by
+        // two folders of the same row: each row counts a block once, whatever the other rows hold.
+        fs::create_dir_all(home.0.join("native/source/not-a-revision")).unwrap();
+        fs::hard_link(&shared, home.0.join("native/source/not-a-revision/shared")).unwrap();
+        let twin = home.seed("rust/old2/own");
+        fs::hard_link(&twin, home.0.join("rust/old2/twin")).unwrap();
+        // Kept: recently used (cargo) and protected (a source folder with no revision in its name).
+        home.seed("cargo/registry/crate");
+        home.seed("native/source/not-a-revision/file");
+        let storage = Storage::at(&home.0).unwrap();
+        let before_entries = storage.entries().unwrap();
+        let count = before_entries.len();
+        let sizes: Vec<u64> = before_entries
+            .iter()
+            .map(|entry| legacy_walk(&entry.path, &mut HashSet::new()))
+            .collect();
+        let before: Vec<u64> = Category::ALL
+            .iter()
+            .map(|category| legacy_allocated(&before_entries, *category))
+            .collect();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(8 * 86400);
+        let walks_before = crate::storage::walks();
+        let report = storage.evict_inventory(later).unwrap();
+        let walked = crate::storage::walks() - walks_before;
+        let entries = storage.entries().unwrap();
+        let cleared = before_entries
+            .iter()
+            .zip(&sizes)
+            .filter(|(entry, size)| {
+                **size > 0 && legacy_walk(&entry.path, &mut HashSet::new()) != **size
+            })
+            .count();
+        // Each folder once, and once more only the folders that were cleared.
+        assert_eq!(walked, count + cleared);
+        let mut total = 0;
+        let mut kept_any = false;
+        for (row, bytes) in report.rows.iter().zip(&before) {
+            let remaining = legacy_allocated(&entries, row.category);
+            assert_eq!(row.bytes, *bytes, "{:?}", row.category);
+            assert_eq!(row.remaining_bytes, remaining, "{:?}", row.category);
+            assert_eq!(row.freed_bytes, bytes.saturating_sub(remaining));
+            // A folder left as it was (not cleared) and holding something is kept.
+            let kept: Vec<u64> = before_entries
+                .iter()
+                .zip(&sizes)
+                .filter(|(entry, _)| entry.category == row.category)
+                .map(|(entry, size)| (legacy_walk(&entry.path, &mut HashSet::new()), *size))
+                .filter(|(now, size)| now == size && *now > 0)
+                .map(|(now, _)| now)
+                .collect();
+            assert_eq!(
+                row.kept.iter().map(|kept| kept.bytes).collect::<Vec<_>>(),
+                kept,
+                "{:?}",
+                row.category
+            );
+            kept_any |= !kept.is_empty();
+            total += bytes;
+        }
+        assert_eq!(report.total_bytes, total);
+        assert!(kept_any);
+        assert!(home.0.join("cargo/registry/crate").exists());
+    }
+
+    #[test]
+    fn a_refused_unit_is_walked_once_and_a_cleared_one_twice() {
+        let home = crate::storage::tests::Home::new();
+        home.seed("rust/old/payload");
+        let storage = Storage::at(&home.0).unwrap();
+        let root = Root::open(&home.0).unwrap();
+        #[cfg(unix)]
+        {
+            home.seed("cache/payload");
+            std::os::unix::fs::symlink(home.0.join("rust"), home.0.join("cache/link")).unwrap();
+        }
+        #[cfg_attr(not(unix), allow(unused_mut))]
+        let mut entries =
+            vec![Entry::fixed(&root, Path::new("rust/old"), Category::RustCompiler).unwrap()];
+        #[cfg(unix)]
+        entries.push(Entry::fixed(&root, Path::new("cache"), Category::OtherCaches).unwrap());
+        let count = entries.len();
+        let walks = crate::storage::walks();
+        let report = storage.apply_retaining(entries, None, true, true).unwrap();
+        // The refused folder was walked once (and stopped there); the sound one once, then once
+        // more after it was cleared.
+        assert_eq!(crate::storage::walks() - walks, count + 1);
+        assert!(report.rows[3].freed_bytes > 0);
+        #[cfg(unix)]
+        assert_eq!(report.rows[4].kept.len(), 1);
     }
 
     #[cfg(target_os = "linux")]

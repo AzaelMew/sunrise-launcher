@@ -250,36 +250,82 @@ impl Storage {
 }
 
 pub fn allocated_bytes(path: &Path) -> Result<u64, Error> {
-    walk(path, &mut HashSet::new())
+    Ok(Tree::build(path)?.size(&mut HashSet::new()))
 }
 
-fn walk(path: &Path, seen: &mut HashSet<(u64, u64)>) -> Result<u64, Error> {
-    let meta = match fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(error) => return Err(error.into()),
-    };
-    if linked(&meta) {
-        // A known link holds nothing of its own, and what it points at is not this cache's.
-        return match fs::read_link(path) {
-            Ok(target) if known_link(&target) => Ok(0),
-            _ => Err(Error::Unsafe(path.to_owned())),
+// How many folders `Tree::build` has walked on this thread, so tests can prove a cleanup
+// pass walks each folder once.
+#[cfg(test)]
+thread_local! {
+    static WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(test)]
+pub(crate) fn walks() -> usize {
+    WALKS.with(|walks| walks.get())
+}
+
+/// One validated walk of a folder: every file and directory's allocated size and identity,
+/// refusing any link or file the launcher does not expect. Sizes are read from it afterwards,
+/// each with its own set of already-counted blocks, without touching the disk again.
+pub(crate) struct Tree(Option<Node>);
+
+struct Node {
+    id: (u64, u64),
+    bytes: u64,
+    children: Vec<Node>,
+}
+
+impl Tree {
+    pub(crate) fn build(path: &Path) -> Result<Self, Error> {
+        #[cfg(test)]
+        WALKS.with(|walks| walks.set(walks.get() + 1));
+        Self::node(path).map(Self)
+    }
+
+    fn node(path: &Path) -> Result<Option<Node>, Error> {
+        let meta = match fs::symlink_metadata(path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
         };
-    }
-    if !meta.is_file() && !meta.is_dir() {
-        return Err(Error::Unsafe(path.to_owned()));
-    }
-    let (id, bytes) = allocation(path, &meta)?;
-    if !seen.insert(id) {
-        return Ok(0);
-    }
-    let mut total = bytes;
-    if meta.is_dir() {
-        for entry in fs::read_dir(path)? {
-            total = total.saturating_add(walk(&entry?.path(), seen)?);
+        if linked(&meta) {
+            // A known link holds nothing of its own, and what it points at is not this cache's.
+            return match fs::read_link(path) {
+                Ok(target) if known_link(&target) => Ok(None),
+                _ => Err(Error::Unsafe(path.to_owned())),
+            };
         }
+        if !meta.is_file() && !meta.is_dir() {
+            return Err(Error::Unsafe(path.to_owned()));
+        }
+        let (id, bytes) = allocation(path, &meta)?;
+        let mut children = Vec::new();
+        if meta.is_dir() {
+            for entry in fs::read_dir(path)? {
+                children.extend(Self::node(&entry?.path())?);
+            }
+        }
+        Ok(Some(Node {
+            id,
+            bytes,
+            children,
+        }))
     }
-    Ok(total)
+
+    /// The allocated bytes not already in `seen`: a block reached twice (a hard link, or a file
+    /// shared with an earlier folder using the same set) counts once, and a directory already
+    /// counted is not entered again.
+    pub(crate) fn size(&self, seen: &mut HashSet<(u64, u64)>) -> u64 {
+        fn count(node: &Node, seen: &mut HashSet<(u64, u64)>) -> u64 {
+            if !seen.insert(node.id) {
+                return 0;
+            }
+            node.children.iter().fold(node.bytes, |total, child| {
+                total.saturating_add(count(child, seen))
+            })
+        }
+        self.0.as_ref().map_or(0, |node| count(node, seen))
+    }
 }
 
 #[cfg(unix)]
