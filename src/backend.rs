@@ -1228,6 +1228,16 @@ mod installation;
 pub(crate) use installation::install_as;
 
 pub fn remove(tag: &str) -> Result<(), String> {
+    // A native build's base keeps its prepared data, so it stays while one is installed.
+    if let Some(build) = installed()
+        .into_iter()
+        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
+    {
+        return Err(crate::i18n::trf(
+            "This version supplies resources to native build {build}. Remove that build first.",
+            &[("build", &build)],
+        ));
+    }
     let dir = version_dir(tag);
     crate::cache_cleanup::delete_version(&dir, !in_use(tag))
         .map_err(crate::native_mods::cache_error)?;
@@ -2745,15 +2755,6 @@ pub fn no_version_installed() -> String {
 pub fn remove_version(tag: &str) -> Result<(), String> {
     if !installed().iter().any(|t| t == tag) {
         return Err(format!("{tag} is not installed."));
-    }
-    if let Some(build) = installed()
-        .into_iter()
-        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
-    {
-        return Err(crate::i18n::trf(
-            "This version supplies resources to native build {build}. Remove that build first.",
-            &[("build", &build)],
-        ));
     }
     if in_use(tag) {
         return Err(format!("{tag} is running. Quit it first."));
@@ -4883,6 +4884,7 @@ pub fn {f}("
         assert_eq!(resources(&native), resources(&base));
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
+        assert!(remove(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
         fs::remove_dir_all(&base_dir).unwrap();
         let error = need_prepared(&native).unwrap_err();
