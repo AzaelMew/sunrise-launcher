@@ -1453,5 +1453,8 @@
   "{count} mods": "{count} mods",
   "{id} ({file}, not checked against the registry)": "{id} ({file}, not checked against the registry)",
   "Reduced graphics": "Reduced graphics",
-  "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.": "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher."
+  "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.": "Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher.",
+  "Checking game files…": "Checking game files…",
+  "Updating mods…": "Updating mods…",
+  "Signing in…": "Signing in…"
 }

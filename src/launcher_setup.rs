@@ -174,6 +174,7 @@ impl Launcher {
             owner: None,
             owner_screen_open: false,
             starting_client: None,
+            play_step: None,
             starting_play: None,
             play_when_prepared: None,
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),

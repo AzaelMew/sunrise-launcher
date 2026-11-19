@@ -2923,6 +2923,14 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
     }
 }
 
+/// A step Play waits on before the game starts that the window says by name (`Msg::PlayStep`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayStep {
+    Assets,
+    Mods,
+    SignIn,
+}
+
 /// Says on stderr which step Play is at, one line each: a terminal run shows where it stops when
 /// it never gets to the game (#12179).
 pub fn play_step(step: &str) {
