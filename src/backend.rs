@@ -2699,9 +2699,35 @@ pub fn server_command(tag: &str, folder: &Path) -> Command {
     cmd
 }
 
+/// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
+/// `#` and `!` lines are comments, the key ends at the first `=`, `:` or blank, spaces around the
+/// separator are free, the value runs to the end of the line (a trailing blank is part of it), the
+/// last `eula` line wins, and the value counts as true in any case.
 pub fn eula_agreed(folder: &Path) -> bool {
-    fs::read_to_string(folder.join("eula.txt"))
-        .is_ok_and(|s| s.lines().any(|l| l.trim() == "eula=true"))
+    let Ok(text) = fs::read_to_string(folder.join("eula.txt")) else {
+        return false;
+    };
+    let mut agreed = false;
+    for line in text.lines() {
+        let line = line.trim_start_matches([' ', '\t', '\x0c']);
+        if line.starts_with(['#', '!']) {
+            continue;
+        }
+        let Some(rest) = line.strip_prefix("eula") else {
+            continue;
+        };
+        // `eulas=...` is another key.
+        if !rest.is_empty() && !rest.starts_with([' ', '\t', '\x0c', '=', ':']) {
+            continue;
+        }
+        let rest = rest.trim_start_matches([' ', '\t', '\x0c']);
+        let value = rest
+            .strip_prefix(['=', ':'])
+            .unwrap_or(rest)
+            .trim_start_matches([' ', '\t', '\x0c']);
+        agreed = value.eq_ignore_ascii_case("true");
+    }
+    agreed
 }
 
 /// Writes eula.txt as vanilla's server expects it, once the player agreed in the launcher.
@@ -4422,6 +4448,10 @@ impl Settings {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "backend/eula_tests.rs"]
+mod eula_tests;
 
 #[cfg(test)]
 #[path = "backend/release_loading_tests.rs"]
