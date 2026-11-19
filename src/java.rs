@@ -171,6 +171,17 @@ pub fn minecraft_runtimes(runtime: &Path) -> Vec<PathBuf> {
     homes
 }
 
+/// The Java home inside a freshly downloaded Mojang runtime folder: macOS runtimes keep it in
+/// `jre.bundle/Contents/Home`, the others in the folder itself.
+pub fn downloaded_home(runtime: PathBuf) -> PathBuf {
+    let bundle = runtime.join("jre.bundle/Contents/Home");
+    if bundle.join("bin").join(java_program()).is_file() {
+        bundle
+    } else {
+        runtime
+    }
+}
+
 /// Java homes installed on this computer: JAVA_HOME, the PATH's, then the folders installers use,
 /// each once.
 pub fn installed() -> Vec<Runtime> {

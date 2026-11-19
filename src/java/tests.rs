@@ -149,3 +149,16 @@ fn a_java_bin_on_the_path_names_the_home_above_it() {
     assert_eq!(homes_from_path(&path), [fs::canonicalize(&home).unwrap()]);
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_downloaded_macos_runtime_is_used_from_inside_its_bundle() {
+    let dir = scratch("downloaded");
+    let bundled = fake_home(&dir.join("a/jre.bundle/Contents/Home"), "21.0.1");
+    let plain = fake_home(&dir.join("b"), "21.0.1");
+    let empty = dir.join("c");
+    fs::create_dir_all(&empty).unwrap();
+    assert_eq!(downloaded_home(dir.join("a")), bundled);
+    assert_eq!(downloaded_home(dir.join("b")), plain);
+    assert_eq!(downloaded_home(empty.clone()), empty);
+    fs::remove_dir_all(&dir).unwrap();
+}

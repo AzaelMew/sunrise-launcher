@@ -2149,7 +2149,7 @@ fn java(
         .map_err(|e| {
         format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
     })?;
-    find(major, &[home]).map(|jdk| jdk.home())
+    find(major, &[crate::java::downloaded_home(home)]).map(|jdk| jdk.home())
 }
 
 /// The dynamic loader glibc programs on x86-64 Linux start through.
