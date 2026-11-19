@@ -1877,10 +1877,17 @@ pub fn complete_assets(tag: &str) {
     });
 }
 
-/// Whether Sunrise's own asset store may hold what `missing` lists: whatever extra a prepared
-/// version lacks (languages, sounds, fonts, packs or panorama) is asked of the store's download.
-fn store_may_hold(missing: &crate::preparer::Extras) -> bool {
-    !missing.is_empty()
+/// Whether Sunrise's own store is asked to download again: it has an asset index, the version
+/// lacks some extra (any kind: the download fetches the whole asset index, which holds the
+/// sounds, languages, fonts, panorama and built-in packs) and it was not asked this run yet.
+fn refill_wanted(
+    has_index: bool,
+    missing: Option<&crate::preparer::Extras>,
+    asked: &std::sync::atomic::AtomicBool,
+) -> bool {
+    has_index
+        && missing.is_some_and(|m| !m.is_empty())
+        && !asked.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Sunrise's own download (an owner's) may have stopped before the sounds and the languages,
@@ -1892,17 +1899,16 @@ fn refill_own_store(tag: &str) {
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
-    let lacks_store_extras = crate::preparer::binary(&root)
-        .and_then(|binary| {
-            crate::preparer::missing_extras(&binary, &root, &resources)
-                .ok()
-                .flatten()
-        })
-        .is_some_and(|missing| store_may_hold(&missing));
-    if !own.join("assets/indexes").is_dir()
-        || !lacks_store_extras
-        || ASKED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
+    let missing = crate::preparer::binary(&root).and_then(|binary| {
+        crate::preparer::missing_extras(&binary, &root, &resources)
+            .ok()
+            .flatten()
+    });
+    if !refill_wanted(
+        own.join("assets/indexes").is_dir(),
+        missing.as_ref(),
+        &ASKED,
+    ) {
         return;
     }
     let Some(pins) = read_json(&version_dir(tag).join("research-lock.json"))
@@ -6723,7 +6729,8 @@ pub fn {f}("
     }
 
     #[test]
-    fn any_missing_extra_sends_the_store_refill_not_only_sounds_and_languages() {
+    fn any_missing_extra_sends_the_store_refill_once_per_run() {
+        use std::sync::atomic::AtomicBool;
         let lacks = |kinds: &[&str]| -> crate::preparer::Extras {
             kinds.iter().map(|k| (k.to_string(), "x".into())).collect()
         };
@@ -6732,10 +6739,26 @@ pub fn {f}("
             &["packs"],
             &["panorama"],
             &["sounds", "fonts"],
+            &["languages"],
         ] {
-            assert!(store_may_hold(&lacks(kinds)), "{kinds:?}");
+            let asked = AtomicBool::new(false);
+            assert!(
+                refill_wanted(true, Some(&lacks(kinds)), &asked),
+                "{kinds:?}"
+            );
+            // Asked once: the second call in the run says no.
+            assert!(
+                !refill_wanted(true, Some(&lacks(kinds)), &asked),
+                "{kinds:?}"
+            );
         }
-        assert!(!store_may_hold(&lacks(&[])));
+        // Nothing missing, no answer from the preparer, or no asset index: not asked, and a
+        // refusal does not use up the run's one ask.
+        let asked = AtomicBool::new(false);
+        assert!(!refill_wanted(true, Some(&lacks(&[])), &asked));
+        assert!(!refill_wanted(true, None, &asked));
+        assert!(!refill_wanted(false, Some(&lacks(&["fonts"])), &asked));
+        assert!(refill_wanted(true, Some(&lacks(&["fonts"])), &asked));
     }
 
     #[test]
