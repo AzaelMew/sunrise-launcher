@@ -23,8 +23,11 @@ pub enum Verdict {
     Fits { made_for: String },
     /// It changes game code or names the game's internals (`why`: the table that does, or `internals`): it works on the build it was made for only.
     Exact { made_for: String, why: String },
-    /// Its package has no uses list for its pin: it works on the build it was made for only.
-    NoList { made_for: String },
+    /// Its package's uses list cannot show a fit; older tools omit the reason.
+    NoList {
+        made_for: String,
+        why: Option<NoListReason>,
+    },
     /// Items it uses changed in this build.
     DoesNotFit {
         made_for: String,
@@ -41,7 +44,19 @@ impl Verdict {
     }
 }
 
-/// A used item that is not the same in the build: its surface id and how it changed.
+/// Why a package's uses list cannot show a fit, grouped by what the player can do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NoListReason {
+    #[serde(rename = "hook-versions", alias = "game-code")]
+    OlderTool,
+    NewerSchema,
+    /// Missing, unreadable, for another build, or a reason this launcher doesn't know.
+    #[serde(other)]
+    Other,
+}
+
+/// A used item that is not the same in the build: its id and how it changed.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Misfit {
     pub id: String,
@@ -64,12 +79,19 @@ pub enum Change {
 
 /// An item as people read it: "the hook `player_logged_in`".
 pub fn item(id: &str) -> String {
-    if let Some((kind, path)) = id.strip_prefix("game:").and_then(|id| id.split_once(':')) {
-        let name = path.rsplit("::").next().unwrap_or(path);
+    if let Some(game) = id.strip_prefix("game:") {
+        let declared = match game.split_once(':') {
+            Some(("loop", name)) => return trf("the game's loop {name}", &[("name", name)]),
+            Some(("tool", "horizon-mixins")) => return tr("the game's mixin tool").to_owned(),
+            Some(("fn", path)) => Some(("fn", path)),
+            Some(("internal", rest)) => rest.split_once(':'),
+            _ => None,
+        };
+        let (kind, name) = declared.map_or(("", game), |(kind, path)| {
+            (kind, path.rsplit("::").next().unwrap_or(path))
+        });
         return match kind {
             "fn" | "method" => trf("the game's function {name}", &[("name", name)]),
-            "loop" => trf("the game's loop {name}", &[("name", path)]),
-            "tool" if path == "horizon-mixins" => tr("the game's mixin tool").to_owned(),
             "struct" | "enum" | "trait" | "type" | "union" => {
                 trf("the game's type {name}", &[("name", name)])
             }
@@ -191,7 +213,15 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
             "Made for {made_for} only: it changes the game's own code, so it works on exactly that build.",
             &[("made_for", &made(made_for))],
         ),
-        Verdict::NoList { made_for } => trf(
+        Verdict::NoList { why: Some(NoListReason::OlderTool), .. } => trf(
+            "{mod}'s package was made with an older tool and doesn't record enough to show it fits this game. Its author can pack it again with `cargo sunrise-mod build`.",
+            &[("mod", name)],
+        ),
+        Verdict::NoList { why: Some(NoListReason::NewerSchema), .. } => trf(
+            "{mod}'s package was made with a newer tool than this game uses. Update the game to read its list.",
+            &[("mod", name)],
+        ),
+        Verdict::NoList { made_for, .. } => trf(
             "{mod} pins build {made_for} and its package carries no list of what it uses for that build, so it can't be shown to fit another build. Its author can pack it with `cargo sunrise-mod build`, which writes the list, or repin it first with `cargo sunrise-mod update --sunrise <build>`.",
             &[("mod", name), ("made_for", &sdk_cache::name_of(made_for).unwrap_or_else(|| made_for.to_owned()))],
         ),
@@ -238,7 +268,7 @@ pub fn detail(verdict: &Verdict) -> super::isolate::Detail {
             (made_for, misfits.iter().map(change).collect())
         }
         Verdict::Points { made_for, why } => (made_for, vec![why.clone()]),
-        Verdict::Exact { made_for, .. } | Verdict::NoList { made_for } => {
+        Verdict::Exact { made_for, .. } | Verdict::NoList { made_for, .. } => {
             (made_for, vec![short(verdict)])
         }
     };
@@ -279,6 +309,14 @@ pub fn short(verdict: &Verdict) -> String {
             tr("it uses the game's internals").to_owned()
         }
         Verdict::Exact { .. } => tr("it changes the game's own code").to_owned(),
+        Verdict::NoList {
+            why: Some(NoListReason::OlderTool),
+            ..
+        } => tr("its package was made with an older tool and doesn't record enough to show it fits; its author can pack it again with `cargo sunrise-mod build`").to_owned(),
+        Verdict::NoList {
+            why: Some(NoListReason::NewerSchema),
+            ..
+        } => tr("its package was made with a newer tool than this game uses; update the game to read its list").to_owned(),
         Verdict::NoList { .. } => tr("its package doesn't say what it uses").to_owned(),
         Verdict::DoesNotFit { misfits, .. } => changes(misfits),
         Verdict::Points { why, .. } => why.clone(),

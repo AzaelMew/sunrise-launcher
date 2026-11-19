@@ -24,7 +24,8 @@ fn at_most_five_changes_are_named_then_how_many_more() {
 fn game_functions_show_only_the_function_name() {
     for id in [
         "game:fn:sunrise_mod_render::render::world_drawn",
-        "game:method:sunrise_mod_render::Renderer::world_drawn",
+        "game:internal:fn:sunrise_mod_render::render::world_drawn",
+        "game:internal:method:sunrise_mod_render::Renderer::world_drawn",
     ] {
         assert_eq!(
             change(&Misfit {
@@ -71,11 +72,21 @@ fn game_internals_distinguish_types_from_other_items() {
     ] {
         assert_eq!(
             change(&Misfit {
-                id: format!("game:{kind}:sunrise_mod_render::render::World"),
+                id: format!("game:internal:{kind}:sunrise_mod_render::render::World"),
                 change: Change::Removed,
             }),
             expected,
         );
+    }
+}
+
+#[test]
+fn other_game_ids_keep_everything_after_the_game_prefix() {
+    for (id, expected) in [
+        ("game:widget:ui::Panel", "the game's item widget:ui::Panel"),
+        ("game:unknown", "the game's item unknown"),
+    ] {
+        assert_eq!(item(id), expected);
     }
 }
 
@@ -126,9 +137,11 @@ fn every_message_names_the_mod_the_builds_and_the_worlds() {
 
 #[test]
 fn a_missing_uses_list_names_the_pin_and_the_author_s_fix() {
-    let verdict = Verdict::NoList {
-        made_for: OTHER_BUILD.into(),
-    };
+    let verdict: Verdict = serde_json::from_value(serde_json::json!({
+        "kind": "no-list",
+        "made_for": OTHER_BUILD,
+    }))
+    .unwrap();
     let said = line("Greeter", &verdict, "November 20 update");
     assert!(
         said.contains(&format!("Greeter pins build {OTHER_BUILD}")),
@@ -140,6 +153,65 @@ fn a_missing_uses_list_names_the_pin_and_the_author_s_fix() {
         "{said}"
     );
     assert!(!said.contains("older tool"), "{said}");
+    assert_eq!(short(&verdict), "its package doesn't say what it uses");
+}
+
+#[test]
+fn incomplete_lists_ask_the_author_to_pack_again() {
+    for reply in [
+        serde_json::json!({
+            "kind": "no-list", "made_for": OTHER_BUILD,
+            "why": "hook-versions", "hooks": ["player_logged_in"],
+        }),
+        serde_json::json!({"kind": "no-list", "made_for": OTHER_BUILD, "why": "hook-versions"}),
+        serde_json::json!({"kind": "no-list", "made_for": OTHER_BUILD, "why": "game-code"}),
+    ] {
+        let verdict: Verdict = serde_json::from_value(reply).unwrap();
+        let said = line("Greeter", &verdict, "November 20 update");
+        assert!(said.contains("older tool"), "{said}");
+        assert!(said.contains("doesn't record enough"), "{said}");
+        assert!(said.contains("`cargo sunrise-mod build`"), "{said}");
+        assert!(!said.contains("carries no list"), "{said}");
+        let said = short(&verdict);
+        assert!(said.contains("older tool"), "{said}");
+        assert!(said.contains("doesn't record enough"), "{said}");
+        assert!(said.contains("`cargo sunrise-mod build`"), "{said}");
+    }
+}
+
+#[test]
+fn a_newer_list_format_asks_the_player_to_update_the_game() {
+    let verdict: Verdict = serde_json::from_value(serde_json::json!({
+        "kind": "no-list", "made_for": OTHER_BUILD, "why": "newer-schema",
+    }))
+    .unwrap();
+    for said in [
+        line("Greeter", &verdict, "November 20 update"),
+        short(&verdict),
+    ] {
+        assert!(said.contains("newer tool"), "{said}");
+        assert!(said.to_lowercase().contains("update the game"), "{said}");
+        assert!(!said.contains("carries no list"), "{said}");
+    }
+}
+
+#[test]
+fn absent_unusable_or_unknown_list_reasons_keep_the_default_explanation() {
+    let default: Verdict = serde_json::from_value(serde_json::json!({
+        "kind": "no-list", "made_for": OTHER_BUILD,
+    }))
+    .unwrap();
+    for why in ["missing", "unreadable", "other-build", "future-reason"] {
+        let verdict: Verdict = serde_json::from_value(serde_json::json!({
+            "kind": "no-list", "made_for": OTHER_BUILD, "why": why,
+        }))
+        .unwrap();
+        assert_eq!(
+            line("Greeter", &verdict, "Nov 20"),
+            line("Greeter", &default, "Nov 20")
+        );
+        assert_eq!(short(&verdict), short(&default));
+    }
 }
 
 #[test]
