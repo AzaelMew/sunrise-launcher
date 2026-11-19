@@ -153,6 +153,17 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
         .child(below)
 }
 
+/// What the launcher-update row says under its title when a newer launcher exists. A build that
+/// does not replace itself (a package wrapper, or `SUNRISE_LAUNCHER_NO_SELF_UPDATE`) leaves its
+/// Update button off, so the row says what to do instead.
+fn idle_update_about(version: &str, self_update_allowed: bool) -> String {
+    if self_update_allowed {
+        trf("{version} available", &[("version", version)])
+    } else {
+        tr("Update this launcher with your package manager.").to_string()
+    }
+}
+
 /// How many characters a settings text box shows at this window width. The pane is as wide as
 /// the window less the sidebar, the categories and the margins (a little over 500 px, so a
 /// guess here errs short), up to 760 px; the box takes 26 px of padding and edge, and a
@@ -1468,7 +1479,7 @@ impl Launcher {
             SelfUpdate::Idle => match &self.updates.launcher {
                 Some(release) => {
                     let version = backend::launcher_version(&release.tag).unwrap_or_default();
-                    let about = trf("{version} available", &[("version", version)]);
+                    let about = idle_update_about(version, backend::self_update_allowed());
                     let release = release.clone();
                     let get = button(
                         "alt-launcher-get",
@@ -1573,5 +1584,14 @@ mod tests {
         assert_eq!(field_chars(1280.), 91);
         assert_eq!(field_chars(900.), 44);
         assert_eq!(field_chars(300.), 21);
+    }
+
+    #[test]
+    fn a_launcher_that_does_not_update_itself_says_where_updates_come_from() {
+        assert_eq!(idle_update_about("1.2.3", true), "1.2.3 available");
+        assert_eq!(
+            idle_update_about("1.2.3", false),
+            "Update this launcher with your package manager."
+        );
     }
 }
