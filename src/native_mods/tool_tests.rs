@@ -177,6 +177,33 @@ fn the_tool_hears_the_launchers_proxy_and_github_mirror() {
 }
 
 #[test]
+fn the_tool_command_carries_the_proxy_and_mirror() {
+    let _guard = super::super::tests::scratch_state();
+    let rust = Toolchain {
+        dir: std::env::temp_dir().join("sunrise-native-tool-command"),
+        host: crate::rust_toolchain::hosts().first().unwrap(),
+    };
+    crate::proxy::announce(Some("socks5://h:2".into()));
+    std::env::set_var("SUNRISE_GITHUB_MIRROR", "https://mirror.invalid");
+    let built = command(&rust, Path::new("tool"));
+    std::env::remove_var("SUNRISE_GITHUB_MIRROR");
+    crate::proxy::announce(None);
+    let env = |name: &str| {
+        built
+            .get_envs()
+            .find(|(key, _)| *key == name)
+            .and_then(|(_, value)| value)
+            .map(|value| value.to_string_lossy().into_owned())
+    };
+    assert_eq!(env("HTTPS_PROXY").as_deref(), Some("socks5h://h:2"));
+    assert_eq!(env("HTTP_PROXY").as_deref(), Some("socks5h://h:2"));
+    assert_eq!(
+        env("SUNRISE_GITHUB_MIRROR").as_deref(),
+        Some("https://mirror.invalid")
+    );
+}
+
+#[test]
 fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
     use super::super::fit::{Change, Verdict};
     let line = r#"{"contract":2,"route":"prebuilt-api","mods":[
