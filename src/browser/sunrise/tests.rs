@@ -924,7 +924,7 @@ fn install_takes_the_newest_version_this_build_can_install() {
     newer.capabilities = vec!["game-read".to_string()].into();
     versions.insert(0, newer);
     let home = scratch("newest-installable");
-    let done = install_from(&index, true, &hud(&index), &home, GAME, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &hud(&index), &home, GAME, false, &|_, _| {}).unwrap();
     assert_eq!(done[0].version, "0.1.0");
     fs::remove_dir_all(&home).unwrap();
 }
@@ -942,7 +942,7 @@ fn install_keeps_the_takedown_reason_of_a_version_it_could_not_install_anyway() 
         date: String::new(),
     });
     let home = scratch("unsupported-and-revoked");
-    let e = install_from(&index, true, &hud(&index), &home, GAME, &|_, _| {}).unwrap_err();
+    let e = install_from(&index, true, &hud(&index), &home, GAME, false, &|_, _| {}).unwrap_err();
     assert_eq!(e, "Coordinates HUD was taken down: Test.");
     fs::remove_dir_all(&home).unwrap();
 }
