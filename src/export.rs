@@ -4,7 +4,8 @@
 //! Only what makes the instance goes in, from a fixed list ([`FILES`], [`FOLDERS`]): never logs,
 //! screenshots, backups, caches, or anything tied to the player's account. A world goes without
 //! its per-player files (`playerdata/`, `stats/`, `advancements/`) and its level.dat without the
-//! player's UUID.
+//! player's UUID. The player's server list (`servers.dat`) stays out: it is theirs, not the
+//! instance's, and an import still accepts one from an older zip.
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -39,7 +40,8 @@ pub struct Exported {
 pub fn export(home: &Path, name: &str, worlds: &[String], out: &Path) -> Result<Exported, String> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for f in FILES {
-        if home.join(f).is_file() {
+        // The server list is the player's own, and holds the addresses they play on.
+        if f != "servers.dat" && home.join(f).is_file() {
             files.push((f.to_string(), home.join(f)));
         }
     }

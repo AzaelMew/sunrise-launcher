@@ -118,11 +118,25 @@ fn an_exported_options_file_does_not_carry_the_last_server() {
 }
 
 #[test]
+fn an_exported_zip_does_not_carry_the_server_list() {
+    let home = home("server-list");
+    put(
+        &home.join("servers.dat"),
+        b"\x0a\x00\x00direct.example:25565 friends.example",
+    );
+    let out = home.join("out/Share.zip");
+    export(&home, "Share", &[], &out).unwrap();
+    assert!(!names(&out).iter().any(|n| n.starts_with("servers.dat")));
+    assert_eq!(names(&out).len(), 4);
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
 fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     let home = home("zip");
     let out = home.join("out/Hardcore.zip");
     let done = export(&home, "Hardcore", &["Base".into()], &out).unwrap();
-    assert_eq!(done.copied, 8);
+    assert_eq!(done.copied, 7);
     // Settings, packs, the mod and the picked world, without its per-player files; no logs,
     // screenshots, backups, caches, account files or the other world.
     assert_eq!(
@@ -133,7 +147,6 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
             "resourcepacks/Own.zip",
             "saves/Base/level.dat",
             "saves/Base/region/r.0.0.mca",
-            "servers.dat",
             "sunrise-graphics.txt",
             "sunrise-mods/coords/sunrise-mod.toml",
         ]
