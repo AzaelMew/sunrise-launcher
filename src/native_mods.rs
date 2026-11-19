@@ -224,6 +224,16 @@ pub fn is_native(version: &str) -> bool {
 fn logged<T, E: std::fmt::Display + From<String>>(
     build: impl FnOnce(Result<&crate::native_cache::Cache, &str>) -> Result<T, E>,
 ) -> Result<T, E> {
+    logged_then(build, |cache| {
+        crate::storage::eviction::after_build_logged(cache, append_log, log_warning)
+    })
+}
+
+/// [`logged`] with the cleanup it runs after the result line, inside the build lease.
+fn logged_then<T, E: std::fmt::Display + From<String>>(
+    build: impl FnOnce(Result<&crate::native_cache::Cache, &str>) -> Result<T, E>,
+    cleanup: impl FnOnce(&crate::native_cache::Cache),
+) -> Result<T, E> {
     // Another build or a cleanup holds the lease on the same target/: refuse. Any other
     // failure only stops cleanup for explicit builds. Automatic selection requires a held
     // cache for its catalog and can refuse instead of accessing an unsafe tree.
@@ -239,11 +249,8 @@ fn logged<T, E: std::fmt::Display + From<String>>(
         log_warning(warning);
     }
     let result = build(cache.as_ref().map_err(String::as_str));
-    // Keep this build lease through installation/export, including failed builds. It does not
-    // exclude independent game starts; automatic trimming can conservatively retain the cache.
-    if let Ok(cache) = cache {
-        crate::storage::eviction::after_build_logged(&cache, append_log, log_warning);
-    }
+    // The result is said first: the cleanup can take minutes on a big cache, and the log must
+    // not look stuck meanwhile.
     match &result {
         Ok(_) => {
             let _ = append_log("Build completed.");
@@ -251,6 +258,12 @@ fn logged<T, E: std::fmt::Display + From<String>>(
         Err(error) => {
             let _ = append_log(&format!("The build failed: {error}"));
         }
+    }
+    // Keep this build lease through installation/export and the cleanup, including failed
+    // builds. It does not exclude independent game starts; automatic trimming can
+    // conservatively retain the cache. What the cleanup frees or keeps follows the result.
+    if let Ok(cache) = cache {
+        cleanup(&cache);
     }
     result
 }
@@ -3953,16 +3966,56 @@ mod tests {
         let log = fs::read_to_string(log_path()).unwrap();
         assert!(log.starts_with("error[E0425]"), "{log}");
         assert!(
-            log.ends_with("The build failed: Could not export the engine\n"),
+            after_result(&log, "The build failed: Could not export the engine\n"),
             "{log}"
         );
         assert!(!log.contains("Build completed."), "{log}");
         let success: Result<(), String> = logged(|_| Ok(()));
         success.unwrap();
         let log = fs::read_to_string(log_path()).unwrap();
-        assert!(log.ends_with("Build completed.\n"), "{log}");
+        assert!(after_result(&log, "Build completed.\n"), "{log}");
         assert!(!log.contains("error[E0425]"), "{log}");
         assert!(!log.contains("The build failed:"), "{log}");
+        // The result is on the log before the cleanup starts, and what the cleanup frees or
+        // keeps follows it, all while the build lease is still held.
+        for (outcome, line) in [
+            (Ok(()), "Build completed.\n"),
+            (
+                Err("Could not export the engine".to_owned()),
+                "The build failed: Could not export the engine\n",
+            ),
+        ] {
+            let seen = std::cell::RefCell::new(String::new());
+            let result: Result<(), String> = logged_then(
+                |_| outcome,
+                |_cache| {
+                    *seen.borrow_mut() = fs::read_to_string(log_path()).unwrap();
+                    assert!(matches!(
+                        crate::native_cache::Cache::acquire(&backend::build_dir()),
+                        Err(crate::native_cache::Error::Busy)
+                    ));
+                    append_log("Freed 1 MiB of old caches").unwrap();
+                    log_warning("kept");
+                },
+            );
+            let _ = result;
+            assert_eq!(*seen.borrow(), line);
+            let log = fs::read_to_string(log_path()).unwrap();
+            assert_eq!(
+                log,
+                format!("{line}Freed 1 MiB of old caches\nwarning: kept\n")
+            );
+        }
+    }
+
+    /// The result line is on the log, and only what the cleanup after it said (what it freed, what
+    /// it kept as warnings) follows.
+    fn after_result(log: &str, result: &str) -> bool {
+        log.split_once(result).is_some_and(|(_, after)| {
+            after
+                .lines()
+                .all(|line| line.starts_with("warning: ") || line.starts_with("Freed "))
+        })
     }
 
     /// levzzz5154's decision (2026-10-29): a rebuild stays on the Sunrise the instance plays;
