@@ -176,3 +176,31 @@ fn an_address_the_game_would_refuse_is_not_saved() {
     }
     assert_eq!(list.servers().len(), 8);
 }
+
+#[test]
+fn a_picture_saved_without_its_padding_still_decodes() {
+    let home = scratch("icon-padding");
+    // Four bytes encode to "iVBORw==" with padding, "iVBORw" without it.
+    let png = [0x89, b'P', b'N', b'G'];
+    for icon in ["iVBORw==", "iVBORw"] {
+        let root = NamedTag {
+            name: "".into(),
+            tag: Tag::compound([(
+                "servers",
+                Tag::List(vec![Tag::compound([
+                    ("name", s("A")),
+                    ("ip", s("a.example")),
+                    ("icon", s(icon)),
+                ])]),
+            )]),
+        };
+        fs::write(
+            home.join(FILE),
+            nbt::write_named(&root, Limits::default()).unwrap(),
+        )
+        .unwrap();
+        let servers = List::load(&home).servers();
+        assert_eq!(servers[0].icon.as_deref(), Some(&png[..]), "{icon}");
+    }
+    fs::remove_dir_all(home).unwrap();
+}

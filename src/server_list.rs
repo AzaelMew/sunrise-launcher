@@ -5,6 +5,9 @@
 //! The launcher only adds and removes entries: every other field of every entry is written back
 //! as it was read.
 use crate::i18n::tr;
+use base64::alphabet::STANDARD as ALPHABET;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
+use base64::engine::DecodePaddingMode;
 use base64::Engine;
 use std::fs;
 use std::net::Ipv6Addr;
@@ -12,6 +15,11 @@ use std::path::Path;
 use sunrise_launcher_nbt::{self as nbt, Compound, JavaString, Limits, NamedTag, Tag};
 
 const FILE: &str = "servers.dat";
+/// Base64 as Java's decoder reads it: the trailing `=` may be there or not.
+const ICON_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &ALPHABET,
+    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Server {
     pub name: String,
@@ -97,7 +105,7 @@ impl List {
                 ip: text(e, "ip"),
                 icon: Some(text(e, "icon"))
                     .filter(|s| !s.is_empty())
-                    .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok()),
+                    .and_then(|s| ICON_BASE64.decode(s).ok()),
             })
             .collect()
     }
