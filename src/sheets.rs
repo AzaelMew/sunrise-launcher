@@ -175,6 +175,14 @@ impl Held {
     }
 }
 
+/// Keep the producer's message text and order, dropping only exact duplicates and blank lines.
+fn notice_messages(text: &str) -> Vec<&str> {
+    let mut seen = std::collections::HashSet::new();
+    text.lines()
+        .filter(|line| !line.trim().is_empty() && seen.insert(*line))
+        .collect()
+}
+
 fn card() -> Div {
     div()
         .flex()
@@ -838,16 +846,10 @@ impl Launcher {
         bounded_frame("alt-resolve", 580., body, cx)
     }
 
-    /// What went wrong, in full: each paragraph on its own, with one way out.
+    /// What went wrong, in full: each distinct diagnostic in order, with one way out.
     fn notice_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let paragraphs: Vec<Div> = self
-            .ui
-            .sheets
-            .notice
-            .split('\n')
-            .filter(|p| !p.trim().is_empty())
-            .map(|p| div().text_size(px(tokens::LABEL)).child(p.to_owned()))
-            .collect();
+        let paragraphs = notice_messages(&self.ui.sheets.notice);
+        let count = paragraphs.len();
         let main = |label: SharedString| crate::frame::primary("alt-notice-way-out", label);
         let way_out = self.ui.sheets.way_out.map(|way| match way {
             WayOut::MinecraftFolder => main(tr("Choose Minecraft folder").into()).on_click(
@@ -871,28 +873,61 @@ impl Launcher {
                 cx.notify();
             })),
         });
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(title(tr("What went wrong").into()))
-            .child(div().flex().flex_col().gap(px(10.)).children(paragraphs))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(
-                        button("alt-notice-close", tr("Close")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.close_sheet();
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .children(way_out),
-            );
-        frame("alt-notice", 560., body, cx)
+        let body =
+            div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .flex_none()
+                        .child(title(tr("What went wrong").into()))
+                        .children((count > 1).then(|| {
+                            muted(trf("{count} messages", &[("count", &count.to_string())]))
+                        })),
+                )
+                .child(
+                    div()
+                        .id("notice-diagnostics")
+                        .min_h_0()
+                        .max_h(px(320.))
+                        .overflow_y_scroll()
+                        .track_scroll(&crate::frame::scrolls("notice-diagnostics"))
+                        .child(
+                            div()
+                                .w_full()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap(px(10.))
+                                .text_size(px(tokens::LABEL))
+                                .children(
+                                    paragraphs
+                                        .into_iter()
+                                        .map(|p| crate::selectable::selectable(p.to_owned())),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap(px(8.))
+                        .child(
+                            button("alt-notice-close", tr("Close")).on_click(cx.listener(
+                                |this, _: &ClickEvent, _, cx| {
+                                    this.close_sheet();
+                                    cx.notify();
+                                },
+                            )),
+                        )
+                        .children(way_out),
+                );
+        bounded_frame("alt-notice", 560., body, cx)
     }
 
     // ---- Consent ----
@@ -1612,6 +1647,16 @@ mod tests {
         assert_eq!(held.to, "Nov 19");
         assert_eq!(held.plays.as_deref(), Some("Nov 18"));
         assert_eq!(held.stay_label(), "Stay on Nov 18 for now");
+    }
+
+    #[test]
+    fn notice_keeps_distinct_diagnostics_verbatim_and_in_order() {
+        let long = "/some/path".repeat(100);
+        let body = format!("first\n\n  indented\nfirst\n{long}\nlast");
+        assert_eq!(
+            notice_messages(&body),
+            ["first", "  indented", &long, "last"]
+        );
     }
 
     #[test]
