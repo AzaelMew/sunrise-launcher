@@ -42,6 +42,8 @@ pub(super) fn install(
         &held,
         &version.game,
         Side::Both,
+        // Every version counts as fitting: the planner may choose a newer native dependency than
+        // one that fits this build, and the walk has no older one to fall back to.
         |_, _| true,
     );
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
@@ -188,6 +190,8 @@ impl Plan<'_> {
             .versions
             .iter()
             .filter(|v| v.game == game && matches(&v.version));
+        // Only a mod the plan names is held to the planned version: one it doesn't list (its owner
+        // carried no claim, or the plan kept an installed copy) takes the first version in range.
         let mut candidates = candidates
             .filter(|v| v.capabilities.unknown().is_empty())
             .filter(|v| {

@@ -1057,3 +1057,71 @@ fn a_project_is_starred_on_the_repository_its_source_is_in() {
         assert_eq!(repo(source), None, "{source:?}");
     }
 }
+
+/// A dependency listed with an older and a newer version, the plan choosing the newer: the file
+/// that lands is the planned version, not the first one the walk finds in range.
+#[test]
+fn a_dependency_is_installed_at_the_version_the_plan_chose() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let mut make = |id: &str, title: &str, number: &str, extra: &str| {
+        let manifest = format!("id='{id}'\nname='{title}'\nversion='{number}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}");
+        let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &[]).unwrap();
+        let name = format!("{id}-{number}.smod");
+        let file = dir.path().join(&name);
+        fs::write(&file, &bytes).unwrap();
+        let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
+        let mut version = base.versions[0].clone();
+        version.version = number.into();
+        version.api = facts.api;
+        version.side = facts.side;
+        version.requires.clear();
+        version.file = index::File {
+            name,
+            url: format!("file://{}", file.display()),
+            size: bytes.len() as u64,
+            sha256: index::sha256(&bytes),
+            signature: None,
+        };
+        version
+    };
+    let mut fireflies = make(
+        "fireflies",
+        "Fireflies",
+        "1.0.0",
+        "[dependencies]\nsunrise_creatures = '^1'",
+    );
+    fireflies.dependencies = Some(vec![index::Dependency {
+        id: "sunrise_creatures".into(),
+        version: "^1".into(),
+        optional: false,
+        side: None,
+    }]);
+    // The older version is listed first: only the plan says the newer one is wanted.
+    let creatures = vec![
+        make("sunrise_creatures", "Sunrise Creatures", "1.0.0", ""),
+        make("sunrise_creatures", "Sunrise Creatures", "1.1.0", ""),
+    ];
+    for (id, title, versions) in [
+        ("fireflies", "Fireflies", vec![fireflies]),
+        ("sunrise_creatures", "Sunrise Creatures", creatures),
+    ] {
+        index.projects.push(index::Project {
+            id: id.into(),
+            name: title.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        });
+    }
+    let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+    let home = dir.path().join("profile");
+    let done = install_from(&index, true, &project, &home, GAME, false, &|_, _| {}).unwrap();
+    let creatures = done
+        .iter()
+        .find(|e| e.project == "sunrise_creatures")
+        .unwrap();
+    assert_eq!(creatures.version, "1.1.0");
+    assert!(home.join(&creatures.file).is_file());
+}
