@@ -398,7 +398,7 @@ pub(super) struct Row {
     pub(super) dependency: bool,
     /// The player chose this version (`sunrise::chosen`): a batch leaves it alone.
     pub(super) pinned: bool,
-    /// Not installed by the browser: read-only here.
+    /// Not installed by the registry; no registry update or removal.
     pub(super) local: Option<Local>,
     pub(super) icon: Option<String>,
     pub(super) entry: Option<Entry>,
@@ -493,7 +493,7 @@ pub(super) struct Cells {
     /// The status opens the "needs an update" popover.
     pub(super) popover: bool,
     pub(super) action: Option<RowAction>,
-    /// The switch can be flipped (a local file's or a taken-down mod's is drawn dim).
+    /// The switch can be flipped (a taken-down mod's is drawn dim).
     pub(super) switch: bool,
 }
 
@@ -618,8 +618,8 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
             },
             Tone::Muted,
             match local.github {
-                true => tr("From GitHub, not the registry: read-only here").into(),
-                false => tr("A local file, not from the registry: read-only here").into(),
+                true => tr("Get updates from GitHub, not the registry.").into(),
+                false => tr("Replace the local file to update this mod.").into(),
             },
         );
     }
@@ -642,7 +642,7 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<InBuild>) -
             (_, Some(_)) => Some(RowAction::Update),
             _ => None,
         },
-        switch: row.local.is_none() && !matches!(row.need, Some(Need::TakenDown(_))),
+        switch: !matches!(row.need, Some(Need::TakenDown(_))),
     }
 }
 
@@ -686,7 +686,7 @@ pub(super) struct World<'a> {
 }
 
 /// A `.smod` in the game folder that the registry browser didn't install (a local file or a
-/// GitHub install): where it came from isn't verified, so it is listed and left alone.
+/// GitHub install): it can be turned on or off but is not managed by the registry.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Local {
     pub(super) id: String,
