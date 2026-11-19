@@ -473,18 +473,11 @@ impl Launcher {
                         .child(crate::selectable::selectable(tr(
                             "Your access controls are your own, so Sunrise leaves them alone. To keep shared friends to Minecraft, add this rule in the admin console:",
                         )))
-                        .child(
-                            div()
-                                .p(px(12.))
-                                .rounded(tokens::r(tokens::R_CONTROL))
-                                .bg(rgb(palette().field))
-                                .border_1()
-                                .border_color(rgb(palette().divider))
-                                .font_family(theme::MONO)
-                                .text_size(px(12.))
-                                .text_color(rgb(palette().muted))
-                                .child(snippet.clone()),
-                        )
+                        .child(crate::code_box::code_box(
+                            "share-acl-snippet",
+                            vec![snippet.clone().into()],
+                            None,
+                        ))
                         .child(
                             div()
                                 .flex()

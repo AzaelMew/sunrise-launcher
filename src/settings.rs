@@ -1144,22 +1144,11 @@ impl Launcher {
                 .gap(px(10.))
                 .child(yours)
                 .child(hint(what))
-                .child(
-                    div()
-                        .id("alt-data-json")
-                        .max_h(px(220.))
-                        .overflow_y_scroll()
-                        .on_scroll(own_wheel)
-                        .p(px(12.))
-                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                        .bg(rgb(palette().field))
-                        .border_1()
-                        .border_color(rgb(palette().divider))
-                        .font_family(theme::MONO)
-                        .text_size(px(tokens::SMALL))
-                        .text_color(rgb(palette().muted))
-                        .children(json.lines().map(|l| div().child(l.to_string()))),
-                );
+                .child(crate::code_box::code_box(
+                    "alt-data-json",
+                    vec![json.into()],
+                    Some(220.),
+                ));
         }
         if let Some(note) = self.collection.note.clone() {
             yours = div()

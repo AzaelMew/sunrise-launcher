@@ -389,19 +389,14 @@ impl Launcher {
                     ),
             )
             .children((!technical.is_empty()).then(|| {
-                div()
-                    .mx(px(14.))
-                    .mb(px(12.))
-                    .p(px(10.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .bg(c(palette().field))
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .text_size(px(tokens::SMALL))
-                    .font_family(crate::theme::MONO)
-                    .text_color(c(palette().muted))
-                    .children(technical)
+                crate::code_box::code_box(
+                    SharedString::from(format!("build-line-technical-{n}")),
+                    technical.into_iter().map(Into::into).collect(),
+                    None,
+                )
+                .mx(px(14.))
+                .mb(px(12.))
+                .border_0()
             }))
     }
 }
