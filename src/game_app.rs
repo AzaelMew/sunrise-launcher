@@ -15,6 +15,9 @@ pub const APP: &str = "Sunrise.app";
 /// The game, then sunrise-ctl, which the game looks for beside itself (Copy Connection Details).
 const PROGRAMS: [&str; 2] = ["sunrise-client", "sunrise-ctl"];
 
+/// The wasm mods' standard library, shipped in the version folder.
+const WASM_STD: &str = "sunrise-wasm-std.wasm";
+
 const ICON: &[u8] = include_bytes!("../assets/icons/sunrise.icns");
 
 /// Its own identifier, so macOS keeps it apart from the launcher (net.playsunrise.launcher); the
@@ -80,18 +83,18 @@ pub fn ensure(version: &Path) -> io::Result<PathBuf> {
             fs::hard_link(&from, &to)?;
         }
     }
-    // Native builds read both companions beside current_exe(), including on a reused bundle.
-    let (from, to) = (
-        version.join("native-mods.json"),
-        programs.join("native-mods.json"),
-    );
-    match fs::metadata(&from) {
-        Ok(_) if !same_file(&from, &to) => {
-            replace_link(&to, |temp| fs::hard_link(fs::canonicalize(&from)?, temp))?;
+    // Native builds read both companions beside current_exe(), including on a reused bundle; the
+    // game reads the wasm standard library there too.
+    for name in ["native-mods.json", WASM_STD] {
+        let (from, to) = (version.join(name), programs.join(name));
+        match fs::metadata(&from) {
+            Ok(_) if !same_file(&from, &to) => {
+                replace_link(&to, |temp| fs::hard_link(fs::canonicalize(&from)?, temp))?;
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => remove_if_present(&to)?,
+            Err(e) => return Err(e),
         }
-        Ok(_) => {}
-        Err(e) if e.kind() == io::ErrorKind::NotFound => remove_if_present(&to)?,
-        Err(e) => return Err(e),
     }
     for name in ["native-data", "native-content", "sunrise-native-mods"] {
         sync_native_directory(version, &programs, name)?;
@@ -195,6 +198,24 @@ mod tests {
         fs::create_dir_all(&version).unwrap();
         fs::write(version.join("sunrise-client"), "unchanged signed game").unwrap();
         version
+    }
+
+    #[test]
+    fn the_wasm_standard_library_sits_beside_the_bundled_game() {
+        let version = native_version("wasm-std");
+        let beside = version.join("Sunrise.app/Contents/MacOS/sunrise-wasm-std.wasm");
+        fs::write(version.join("sunrise-wasm-std.wasm"), b"std 1").unwrap();
+        ensure(&version).unwrap();
+        assert_eq!(fs::read(&beside).unwrap(), b"std 1");
+        // A reinstall replaces the file: the bundle follows it. Removed, the link goes too.
+        fs::remove_file(version.join("sunrise-wasm-std.wasm")).unwrap();
+        fs::write(version.join("sunrise-wasm-std.wasm"), b"std 2").unwrap();
+        ensure(&version).unwrap();
+        assert_eq!(fs::read(&beside).unwrap(), b"std 2");
+        fs::remove_file(version.join("sunrise-wasm-std.wasm")).unwrap();
+        ensure(&version).unwrap();
+        assert!(!beside.exists());
+        fs::remove_dir_all(version).unwrap();
     }
 
     #[test]
