@@ -239,7 +239,8 @@ impl Launcher {
             }));
         let field = line_edit::mouse(field, cx, |this| &mut this.friend_code);
         let address = matches!(typed, Entry::Address(_));
-        let save = button("alt-server-save", tr("Save"));
+        // As tall as the address field they stand beside.
+        let save = button("alt-server-save", tr("Save")).h(px(tokens::FIELD));
         let save = if address {
             save.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.save_typed();
@@ -249,7 +250,7 @@ impl Launcher {
             save.opacity(0.4).cursor_default().tab_stop(false)
         };
         let joinable = matches!(typed, Entry::Address(_) | Entry::Invite);
-        let join = button("alt-server-join", tr("Join"));
+        let join = button("alt-server-join", tr("Join")).h(px(tokens::FIELD));
         let join = if joinable {
             join.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.join_typed();

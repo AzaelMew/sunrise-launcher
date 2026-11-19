@@ -710,7 +710,8 @@ impl Launcher {
                 cx.stop_propagation();
                 cx.notify();
             }));
-        let reset = button("alt-accent-reset", tr("Use theme accent"));
+        // As tall as the colour and the field beside it.
+        let reset = button("alt-accent-reset", tr("Use theme accent")).h(px(tokens::FIELD));
         let reset = if own || missing {
             off(reset)
         } else {

@@ -58,9 +58,9 @@ impl Launcher {
     ) -> Stateful<Div> {
         let focused = self.servers.has_focus(f);
         self.field(f, placeholder, width, cx)
-            .h(px(36.))
+            .h(px(tokens::FIELD))
             .px(px(12.))
-            .rounded(px(8.))
+            .rounded(px(tokens::R_CONTROL))
             .border_1()
             .border_color(rgb(if focused {
                 palette().focus
@@ -78,7 +78,7 @@ impl Launcher {
             .flex_col()
             .gap(px(10.))
             .p(px(16.))
-            .rounded(px(12.))
+            .rounded(px(tokens::R_CARD))
             .border_1()
             .border_color(rgb(palette().divider))
             .bg(palette().card())
@@ -468,7 +468,7 @@ impl Launcher {
                         .child(
                             div()
                                 .p(px(12.))
-                                .rounded(px(8.))
+                                .rounded(px(tokens::R_CONTROL))
                                 .bg(rgb(palette().field))
                                 .border_1()
                                 .border_color(rgb(palette().divider))
