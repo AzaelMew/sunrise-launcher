@@ -442,14 +442,16 @@ impl Launcher {
             }
             list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
         }
-        if self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading) {
+        let reading = self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading);
+        if reading {
             list = list.child(
                 div()
                     .p(px(16.))
                     .child(muted(tr("Reading the mods you added by hand…"))),
             );
         }
-        if visible.is_empty() {
+        // Hand-added mods may still arrive, so an empty list isn't final while reading.
+        if visible.is_empty() && !reading {
             list = list.child(
                 div()
                     .p(px(16.))
