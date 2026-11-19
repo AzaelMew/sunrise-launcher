@@ -1877,6 +1877,12 @@ pub fn complete_assets(tag: &str) {
     });
 }
 
+/// Whether Sunrise's own asset store may hold what `missing` lists: whatever extra a prepared
+/// version lacks (languages, sounds, fonts, packs or panorama) is asked of the store's download.
+fn store_may_hold(missing: &crate::preparer::Extras) -> bool {
+    !missing.is_empty()
+}
+
 /// Sunrise's own download (an owner's) may have stopped before the sounds and the languages,
 /// and the copies of `complete_assets` read them from its store: asked again, once per run, through
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
@@ -1892,11 +1898,7 @@ fn refill_own_store(tag: &str) {
                 .ok()
                 .flatten()
         })
-        .is_some_and(|missing| {
-            missing
-                .iter()
-                .any(|(kind, _)| matches!(kind.as_str(), "languages" | "sounds"))
-        });
+        .is_some_and(|missing| store_may_hold(&missing));
     if !own.join("assets/indexes").is_dir()
         || !lacks_store_extras
         || ASKED.swap(true, std::sync::atomic::Ordering::Relaxed)
@@ -6705,6 +6707,22 @@ pub fn {f}("
         // A folder without the preparer's sources has no number.
         assert_eq!(output_version_in(&versions.join("missing"), &legacy), None);
         let _ = fs::remove_dir_all(&versions);
+    }
+
+    #[test]
+    fn any_missing_extra_sends_the_store_refill_not_only_sounds_and_languages() {
+        let lacks = |kinds: &[&str]| -> crate::preparer::Extras {
+            kinds.iter().map(|k| (k.to_string(), "x".into())).collect()
+        };
+        for kinds in [
+            &["fonts"][..],
+            &["packs"],
+            &["panorama"],
+            &["sounds", "fonts"],
+        ] {
+            assert!(store_may_hold(&lacks(kinds)), "{kinds:?}");
+        }
+        assert!(!store_may_hold(&lacks(&[])));
     }
 
     #[test]
