@@ -41,7 +41,6 @@ mod packs;
 mod project;
 mod search;
 mod ui;
-pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -69,9 +68,6 @@ enum Confirm {
     /// (mod id, project id, title)
     Remove(Vec<(String, String, String)>),
     Update(model::UpdatePlan),
-    /// Saved worlds hold content of these mods: which worlds and which mods. Nothing has been
-    /// changed; continuing backs each world up and checks the backup first.
-    Stake(actions::Action, Vec<(String, Vec<String>)>),
 }
 
 struct Open {
@@ -102,7 +98,6 @@ enum Event {
     /// A resource or data pack install ended: what it said.
     PackDone(Result<String, String>),
     /// Worlds would be affected: nothing was changed, the player decides.
-    Stake(PathBuf, actions::Action, Vec<(String, Vec<String>)>),
     /// The batch was refused before changing anything.
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
@@ -476,14 +471,6 @@ impl Launcher {
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
-                Event::Stake(home, action, worlds) => {
-                    m.busy = None;
-                    // Only for the folder still shown: a worker's answer for another setup is dropped.
-                    if m.snapshot.as_ref().is_some_and(|s| s.home == home) {
-                        m.reviewed_home = Some(home);
-                        m.confirm = Some(Confirm::Stake(action, worlds));
-                    }
-                }
                 Event::Checked(title, found) => self.checked(title, found),
                 Event::Refused(why) => {
                     m.busy = None;
@@ -493,22 +480,19 @@ impl Launcher {
                     m.busy = None;
                     m.errors.clear();
                     m.errors.extend(failed.iter().cloned());
-                    m.notice = Some(match failed.is_empty() {
-                        true => Ok(said),
-                        false => Err(format!(
-                            "{said} {}",
-                            trf(
-                                "Not done: {list}",
-                                &[(
-                                    "list",
-                                    &failed
-                                        .iter()
-                                        .map(|(id, why)| format!("{id}: {why}"))
-                                        .collect::<Vec<_>>()
-                                        .join("; ")
-                                )]
-                            )
-                        )),
+                    m.notice = Some(match failed.len() {
+                        0 => Ok(said),
+                        count => {
+                            let failed_count =
+                                trf("{count} failed", &[("count", &count.to_string())]);
+                            let details = failed
+                                .iter()
+                                .map(|(id, why)| format!("{id}: {why}"))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let (summary, rest) = said.split_once('\n').unwrap_or((&said, ""));
+                            Err(format!("{summary} · {failed_count}\n{rest}\n{details}"))
+                        }
                     });
                     // The list is read again by the next refresh (the files' times moved).
                 }
@@ -717,7 +701,7 @@ impl Launcher {
             .or_else(|| self.mods.message.clone())
     }
 
-    fn dismiss_notice(&mut self) {
+    pub(super) fn dismiss_notice(&mut self) {
         self.ui.mods.notice = None;
         self.mods.message = None;
     }
@@ -738,7 +722,7 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .child(div().text_size(px(tokens::LABEL)).child(line))
+                    .child(div().text_size(px(tokens::LABEL)).truncate().child(line))
                     .child(
                         div()
                             .h(px(4.))
@@ -759,8 +743,18 @@ impl Launcher {
             Ok(t) => (t, palette().text),
             Err(t) => (t, palette().warning),
         };
+        let summary = text.lines().next().unwrap_or_default().to_owned();
+        let details = (text != summary || summary.chars().count() > 60).then(|| {
+            crate::frame::button("alt-mods-details", tr("Details…")).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.open_notice(text.clone(), None);
+                    cx.notify();
+                },
+            ))
+        });
         Some(
             div()
+                .flex_none()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -771,11 +765,14 @@ impl Launcher {
                         .min_w_0()
                         .text_size(px(tokens::LABEL))
                         .text_color(c(color))
-                        .child(text),
+                        .line_clamp(2)
+                        .child(summary),
                 )
+                .children(details)
                 .child(
                     muted(tr("Dismiss"))
                         .id("alt-mods-dismiss")
+                        .flex_none()
                         .reach()
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {

@@ -256,131 +256,6 @@ impl Launcher {
             bar
         };
 
-        // ---- the confirmation, when one is open: names, counts, nothing started yet
-        let confirm = self.ui.mods.confirm.as_ref().map(|confirm| {
-            let panel = card().m(px(12.)).p(px(16.)).flex().flex_col().gap(px(10.)).border_color(c(palette().warning));
-            match confirm {
-                Confirm::Remove(chosen) => {
-                    let ids: HashSet<String> = chosen.iter().map(|(id, ..)| id.clone()).collect();
-                    let index = sunrise::fetched_index();
-                    let dependents = model::dependents(&rows, &ids, index.as_deref());
-                    let names = chosen.iter().map(|(_, _, t)| t.as_str()).take(12).collect::<Vec<_>>().join(", ");
-                    let more = chosen.len().saturating_sub(12);
-                    let items = chosen.clone();
-                    panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Remove {count} mods?", &[("count", &chosen.len().to_string())])))
-                        .child(div().text_size(px(tokens::LABEL)).child(match more {
-                            0 => names,
-                            n => trf("{names} and {more} more", &[("names", &names), ("more", &n.to_string())]),
-                        }))
-                        .children(dependents.into_iter().map(|(who, needed)| {
-                            div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                                "{who} needs {needed}: it may stop working.",
-                                &[("who", &who), ("needed", &needed.join(", "))],
-                            )))
-                        }))
-                        .child(muted(tr("Their files are deleted. Worlds saved with them may lose what they added.")))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
-                                .child(
-                                    crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
-                                        .text_color(c(palette().danger))
-                                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Remove(items.clone()), false);
-                                            cx.notify();
-                                        })),
-                                ),
-                        )
-                }
-                Confirm::Stake(action, worlds) => {
-                    let action = action.clone();
-                    let n = worlds.len();
-                    panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::selectable::selectable(trf(
-                            "{count} of your worlds were saved with these mods",
-                            &[("count", &n.to_string())],
-                        ))))
-                        .children(worlds.iter().map(|(world, mods)| {
-                            div().text_size(px(tokens::LABEL)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
-                        }))
-                        .child(div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                            "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
-                            &[("what", action.consequence())],
-                        ))))
-                        .child(muted(tr("Sunrise backs up each of these worlds first (a zip in backups/) and reads the backup back. If one can't be made or checked, nothing is changed.")))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
-                                .child(primary("alt-confirm-backup", trf("Back up {count} worlds and continue", &[("count", &n.to_string())])).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.run(action.clone(), true);
-                                    cx.notify();
-                                }))),
-                        )
-                }
-                Confirm::Update(plan) => {
-                    let included = plan.included.clone();
-                    let natives = included.iter().filter(|i| i.native).count();
-                    panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Update {count} mods?", &[("count", &included.len().to_string())])))
-                        .children(included.iter().take(14).map(|i| {
-                            div().text_size(px(tokens::LABEL)).child(crate::selectable::selectable(trf(
-                                "{title} {from} → {to}{native}",
-                                &[
-                                    ("title", &i.title),
-                                    ("from", &i.from),
-                                    ("to", &i.to),
-                                    ("native", &if i.native { trf("  ({code})", &[("code", tr("native code"))]) } else { String::new() }),
-                                ],
-                            )))
-                        }))
-                        .children((included.len() > 14).then(|| muted(trf("and {count} more", &[("count", &(included.len() - 14).to_string())]))))
-                        .children((!plan.skipped.is_empty()).then(|| {
-                            div().flex().flex_col().gap(px(2.)).child(muted(tr("Left out:"))).children(plan.skipped.iter().map(|(t, why)| {
-                                div().text_size(px(tokens::SMALL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf("{title}: {why}", &[("title", t), ("why", why)])))
-                            }))
-                        }))
-                        .child(muted(tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off.")))
-                        .children((natives > 0).then(|| {
-                            div().text_size(px(tokens::SMALL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                                "{count} of these run native code. A new build is made only when you Play or choose Build…, after the usual checks.",
-                                &[("count", &natives.to_string())],
-                            )))
-                        }))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
-                                .child({
-                                    let b = primary("alt-confirm-update", trf("Update {count} mods", &[("count", &included.len().to_string())]));
-                                    if included.is_empty() || busy {
-                                        dim(b)
-                                    } else {
-                                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Update(included.clone()), false);
-                                            cx.notify();
-                                        }))
-                                    }
-                                }),
-                        )
-                }
-            }
-        });
-
         // ---- rows, in three groups
         let mut list = div().flex().flex_col();
         let mut last: Option<Group> = None;
@@ -463,7 +338,6 @@ impl Launcher {
             .flex_col()
             .overflow_hidden()
             .child(toolbar)
-            .children(confirm)
             .child(div().id("alt-installed-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&crate::frame::scrolls("installed")).child(list))
             .children((hidden > 0).then(|| {
                 div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(palette().divider)).child(muted(trf(
@@ -743,6 +617,213 @@ impl Launcher {
     }
 
     /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
+    pub(crate) fn dismiss_mod_batch(&mut self) {
+        self.ui.mods.confirm = None;
+        self.ui.mods.reviewed_home = None;
+    }
+
+    /// Render the same reviewed selection in a focus-trapped sheet, not above the row list.
+    pub(crate) fn mod_batch_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        use crate::frame::button;
+        let rows = self.rows();
+        let busy = self.mods_busy();
+        let confirm = self.ui.mods.confirm.as_ref()?;
+        let heading = |label, n: usize| {
+            muted(trf(
+                "{label} · {count}",
+                &[("label", label), ("count", &n.to_string())],
+            ))
+            .flex_none()
+            .px(px(12.))
+            .py(px(6.))
+        };
+        let line = |n, name: &str, id: &str, detail: &str, full: &str| {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .min_h(px(32.))
+                .px(px(12.))
+                .gap(px(12.))
+                .border_t_1()
+                .border_color(c(palette().divider))
+                .text_size(px(tokens::LABEL))
+                .child(
+                    div()
+                        .id(("batch-name", n))
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .tooltip(crate::glass_ui::tip(format!("{name} · {id}")))
+                        .child(name.to_owned()),
+                )
+                .children((!detail.is_empty()).then(|| {
+                    div()
+                        .id(("batch-version", n))
+                        .max_w(px(190.))
+                        .truncate()
+                        .text_color(c(palette().muted))
+                        .tooltip(crate::glass_ui::tip(full.to_owned()))
+                        .child(detail.to_owned())
+                }))
+        };
+        let mut inventory = card().flex_none();
+        let (title, warning, native, go) = match confirm {
+            Confirm::Remove(chosen) => {
+                let count = chosen.len();
+                let ids: HashSet<String> = chosen.iter().map(|(id, ..)| id.clone()).collect();
+                let index = sunrise::fetched_index();
+                let dependents = model::dependents(&rows, &ids, index.as_deref());
+                inventory = inventory.child(heading(tr("Selected"), count)).children(
+                    chosen
+                        .iter()
+                        .enumerate()
+                        .map(|(n, (id, _, name))| line(n, name, id, "", "")),
+                );
+                if !dependents.is_empty() {
+                    inventory = inventory
+                        .child(heading(tr("May stop working"), dependents.len()))
+                        .children(dependents.iter().enumerate().map(|(n, (name, needed))| {
+                            let mut short = needed
+                                .iter()
+                                .take(2)
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            if needed.len() > 2 {
+                                short = trf(
+                                    "{names} and {count} more",
+                                    &[
+                                        ("names", &short),
+                                        ("count", &(needed.len() - 2).to_string()),
+                                    ],
+                                );
+                            }
+                            line(count + n, name, name, &short, &needed.join(", "))
+                        }));
+                }
+                let items = chosen.clone();
+                let go = button(
+                    "alt-confirm-remove",
+                    trf("Remove {count}", &[("count", &count.to_string())]),
+                )
+                .text_color(c(palette().danger));
+                let go = if busy {
+                    dim(go)
+                } else {
+                    go.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.run(actions::Action::Remove(items.clone()));
+                        this.close_sheet();
+                        cx.notify();
+                    }))
+                };
+                let title = if count == 1 {
+                    tr("Remove 1 mod?").into()
+                } else {
+                    trf("Remove {count} mods?", &[("count", &count.to_string())])
+                };
+                (title, tr("Their files are deleted. Worlds saved with them may permanently lose what they added."), None, go)
+            }
+            Confirm::Update(plan) => {
+                let included = plan.included.clone();
+                let count = included.len();
+                let natives = included.iter().filter(|i| i.native).count();
+                inventory = inventory.child(heading(tr("Included"), count)).children(
+                    included.iter().enumerate().map(|(n, i)| {
+                        let version = trf("{from} → {to}", &[("from", &i.from), ("to", &i.to)]);
+                        line(n, &i.title, &i.id, &version, &version)
+                    }),
+                );
+                if !plan.skipped.is_empty() {
+                    let mut groups = std::collections::BTreeMap::<&str, Vec<&str>>::new();
+                    for (title, why) in &plan.skipped {
+                        groups.entry(why).or_default().push(title);
+                    }
+                    inventory = inventory.child(heading(tr("Left out"), plan.skipped.len()));
+                    let mut n = count;
+                    for (why, names) in groups {
+                        inventory = inventory
+                            .child(muted(why.to_owned()).flex_none().px(px(12.)).py(px(4.)));
+                        for name in names {
+                            inventory = inventory.child(line(n, name, name, "", ""));
+                            n += 1;
+                        }
+                    }
+                }
+                let native = match natives {
+                    0 => None,
+                    1 => Some(
+                        tr("1 mod runs native code. The next build runs the usual checks.").into(),
+                    ),
+                    n => Some(trf(
+                        "{count} mods run native code. The next build runs the usual checks.",
+                        &[("count", &n.to_string())],
+                    )),
+                };
+                let label = if count == 1 {
+                    tr("Update 1 mod").into()
+                } else {
+                    trf("Update {count} mods", &[("count", &count.to_string())])
+                };
+                let go = primary("alt-confirm-update", label);
+                let go = if busy || included.is_empty() {
+                    dim(go)
+                } else {
+                    go.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.run(actions::Action::Update(included.clone()));
+                        this.close_sheet();
+                        cx.notify();
+                    }))
+                };
+                let title = if count == 1 {
+                    tr("Update 1 mod?").into()
+                } else {
+                    trf("Update {count} mods?", &[("count", &count.to_string())])
+                };
+                (title, tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off."), native, go)
+            }
+        };
+        let max = (self.window_height * 0.4 - 64.).clamp(176., 256.);
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(crate::sheets::title(title).flex_none())
+            .child(
+                div()
+                    .id("batch-inventory")
+                    .min_h_0()
+                    .max_h(px(max))
+                    .overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("batch-inventory"))
+                    .child(inventory),
+            )
+            .child(muted(warning).flex_none())
+            .children(native.map(|text| muted(text).flex_none()))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(10.))
+                    .child(
+                        button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.close_sheet();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(go),
+            );
+        Some(crate::sheets::bounded_frame(
+            "batch-confirm",
+            580.,
+            body,
+            cx,
+        ))
+    }
+
     /// a "?" that says why in one sentence, the changed items for its author, and the way on.
     fn unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
         use crate::frame::button;
@@ -808,7 +889,7 @@ impl Launcher {
                                 12.,
                                 c(palette().muted),
                             ))
-                            .child(tr("Details"))
+                            .child(trf("Details · {count} changes", &[("count", &unfit.changes.len().to_string())]))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.ui.mods.unfit_details = !this.ui.mods.unfit_details;
                                 cx.stop_propagation();
@@ -816,27 +897,18 @@ impl Launcher {
                             })),
                     )
                     .children(details.then(|| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.))
-                            .children(unfit.changes.iter().map(|change| {
-                                div()
-                                    .text_size(px(tokens::SMALL))
-                                    .font_family(crate::theme::MONO)
-                                    .text_color(c(palette().muted))
-                                    .child(change.clone())
-                            }))
+                        div().id("unfit-changes").min_h_0().max_h(px(176.))
+                            .overflow_y_scroll().track_scroll(&crate::frame::scrolls("unfit-changes"))
+                            .child(div().flex().flex_col().gap(px(4.)).text_size(px(tokens::SMALL))
+                                .font_family(crate::theme::MONO).text_color(c(palette().muted))
+                                .children(unfit.changes.iter().cloned().map(crate::selectable::selectable)))
                     }))
             });
             // One way on: a version that fits when the registry has a newer one, else back to
             // the build it was made for when that build is still here.
             let action = match (&r.update, &unfit.made_for) {
                 (Some(_), _) => {
-                    let b = button(
-                        "alt-unfit-update",
-                        trf("Update {mod}", &[("mod", &r.title)]),
-                    );
+                    let b = button("alt-unfit-update", tr("Update mod")).tooltip(crate::glass_ui::tip(r.title.clone()));
                     let row = r.clone();
                     Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.ui.mods.unfit_open = None;
