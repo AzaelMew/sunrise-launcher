@@ -51,6 +51,7 @@ pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
             program.is_absolute().then(|| program.parent()).flatten()
         });
     let mut paths = Vec::new();
+    let preserved = override_value(command, GAME).flatten().is_some();
     if let Some(encoded) = override_value(command, GAME).flatten() {
         let words: Vec<std::ffi::OsString> = serde_json::from_str(
             encoded
@@ -121,8 +122,10 @@ pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
     // Native clients read prepared data from a different installed version. Hold that
     // tree explicitly as well as the executable's tree for the child's entire lifetime.
     // prepare_command also runs non-game commands (including hooks and tools), whose
-    // arguments must not be interpreted by the game's parser.
-    if command.get_args().any(|argument| argument == "--resources") {
+    // arguments must not be interpreted by the game's parser. A wrapped game (GameMode,
+    // a custom wrapper) already had its resources read from the preserved game command
+    // above; its wrapper command's words are not game arguments.
+    if !preserved && command.get_args().any(|argument| argument == "--resources") {
         let arguments = sunrise_launcher_smod::selection::LaunchArguments::for_command(command)?;
         for argument in arguments.rest {
             if let sunrise_launcher_smod::selection::Argument::Value(flag, resources) = argument {
