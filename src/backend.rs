@@ -2149,6 +2149,17 @@ fn java(
         .map_err(|e| {
         format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
     })?;
+    after_download(find, major, home)
+}
+
+/// The Java home of a runtime just downloaded into `home`: `find` looks inside its macOS
+/// `jre.bundle` when it has one, where `bin/java` is.
+fn after_download(
+    find: impl Fn(i64, &[PathBuf]) -> Result<crate::jdk::Jdk, String>,
+    major: i64,
+    home: PathBuf,
+) -> Result<PathBuf, String> {
+    let home = crate::java::home_in(&home).unwrap_or(home);
     find(major, &[home]).map(|jdk| jdk.home())
 }
 
