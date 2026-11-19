@@ -11,7 +11,7 @@ use sunrise_launcher::browser::images;
 const PAGE: usize = 48;
 
 /// A dropdown line: its label, whether it is the current choice, and what picking it does.
-type MenuOption = (&'static str, bool, Box<dyn Fn(&mut Launcher)>);
+type MenuOption = (SharedString, bool, Box<dyn Fn(&mut Launcher)>);
 
 impl Launcher {
     pub(super) fn discover(
@@ -79,27 +79,7 @@ impl Launcher {
         let adding = self.mods.busy.as_ref().map(|b| b.0.clone());
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
 
-        // Category chips, then the three controls.
-        let all: Choose = Rc::new(|this, _| this.ui.mods.filters.category = None);
-        let chips = std::iter::once((tr("All").into(), f.category.is_none(), all))
-            .chain(categories.iter().take(8).map(|k| {
-                let key = k.clone();
-                let pick: Choose = Rc::new(move |this, _| {
-                    let filters = &mut this.ui.mods.filters;
-                    filters.category =
-                        (filters.category.as_ref() != Some(&key)).then(|| key.clone());
-                });
-                (
-                    category_label(k).into(),
-                    f.category.as_ref() == Some(k),
-                    pick,
-                )
-            }))
-            .collect();
-        let chips = div()
-            .flex()
-            .flex_1()
-            .child(choices("alt-cat", chips, cx).gap(px(8.)));
+        // The filters: category and kind as dropdowns, fits my game, and the order.
         let fits = div()
             .id("alt-fits")
             .reach()
@@ -116,21 +96,25 @@ impl Launcher {
                 f.fits_only = !f.fits_only;
                 cx.notify();
             }));
-        let open_menu = |which: Menu, this: &Launcher| {
-            matches!(
-                (&this.ui.mods.menu, &which),
-                (Some(Menu::Make), Menu::Make) | (Some(Menu::Sort), Menu::Sort)
-            )
-        };
-        let make_open = open_menu(Menu::Make, self);
-        let sort_open = open_menu(Menu::Sort, self);
+        let open = self.ui.mods.menu;
+        let (category_open, make_open, sort_open) = (
+            open == Some(Menu::Category),
+            open == Some(Menu::Make),
+            open == Some(Menu::Sort),
+        );
+        let category_now = f.category.as_deref().map_or_else(
+            || tr("All categories").to_string(),
+            |k| category_label(k).to_string(),
+        );
         let make_label = f.make.map_or(tr("Any kind"), Make::label);
-        let popover = |options: Vec<MenuOption>, cx: &mut Context<Self>| {
+        // A menu opens under its dropdown, from the side the dropdown sits on.
+        let popover = |options: Vec<MenuOption>, from_left: bool, cx: &mut Context<Self>| {
             deferred(
                 div()
                     .absolute()
                     .top(px(38.))
-                    .right(px(0.))
+                    .when(from_left, |d| d.left(px(0.)))
+                    .when(!from_left, |d| d.right(px(0.)))
                     .w(px(200.))
                     .p(px(6.))
                     .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
@@ -183,26 +167,37 @@ impl Launcher {
                 // shut this one just before its click opened it again.
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    let same = matches!(
-                        (&this.ui.mods.menu, &which),
-                        (Some(Menu::Make), Menu::Make) | (Some(Menu::Sort), Menu::Sort)
-                    );
-                    this.ui.mods.menu = (!same).then_some(match which {
-                        Menu::Make => Menu::Make,
-                        Menu::Sort => Menu::Sort,
-                    });
+                    let same = this.ui.mods.menu == Some(which);
+                    this.ui.mods.menu = (!same).then_some(which);
                     cx.notify();
                 }))
         };
+        let category_options: Vec<MenuOption> = std::iter::once((
+            tr("All categories").into(),
+            f.category.is_none(),
+            Box::new(|this: &mut Launcher| this.ui.mods.filters.category = None)
+                as Box<dyn Fn(&mut Launcher)>,
+        ))
+        .chain(categories.iter().map(|k| {
+            let key = k.clone();
+            (
+                category_label(k).into(),
+                f.category.as_ref() == Some(k),
+                Box::new(move |this: &mut Launcher| {
+                    this.ui.mods.filters.category = Some(key.clone())
+                }) as Box<dyn Fn(&mut Launcher)>,
+            )
+        }))
+        .collect();
         let make_options: Vec<MenuOption> = std::iter::once((
-            tr("Any kind"),
+            tr("Any kind").into(),
             f.make.is_none(),
             Box::new(|this: &mut Launcher| this.ui.mods.filters.make = None)
                 as Box<dyn Fn(&mut Launcher)>,
         ))
         .chain(Make::ALL.into_iter().map(|m| {
             (
-                m.label(),
+                m.label().into(),
                 f.make == Some(m),
                 Box::new(move |this: &mut Launcher| this.ui.mods.filters.make = Some(m))
                     as Box<dyn Fn(&mut Launcher)>,
@@ -213,37 +208,48 @@ impl Launcher {
             .into_iter()
             .map(|s| {
                 (
-                    s.label(),
+                    s.label().into(),
                     f.sort == s,
                     Box::new(move |this: &mut Launcher| this.ui.mods.filters.sort = s)
                         as Box<dyn Fn(&mut Launcher)>,
                 )
             })
             .collect();
-        let controls = div()
+        // What narrows the list on the left, what orders it on the right.
+        let filters = div()
             .flex()
             .items_center()
             .gap(px(18.))
-            .child(fits)
             .child(
                 div()
                     .relative()
-                    .child(dropdown("alt-make-menu", make_label, Menu::Make, cx))
-                    .children(make_open.then(|| popover(make_options, cx))),
+                    .child(dropdown(
+                        "alt-category-menu",
+                        &category_now,
+                        Menu::Category,
+                        cx,
+                    ))
+                    .children(category_open.then(|| popover(category_options, true, cx))),
             )
             .child(
                 div()
                     .relative()
-                    .child(dropdown("alt-sort-menu", f.sort.label(), Menu::Sort, cx))
-                    .children(sort_open.then(|| popover(sort_options, cx))),
-            );
+                    .child(dropdown("alt-make-menu", make_label, Menu::Make, cx))
+                    .children(make_open.then(|| popover(make_options, true, cx))),
+            )
+            .child(fits);
+        let order = div()
+            .relative()
+            .child(dropdown("alt-sort-menu", f.sort.label(), Menu::Sort, cx))
+            .children(sort_open.then(|| popover(sort_options, false, cx)));
         page = page.child(
             div()
                 .flex()
-                .items_start()
-                .gap(px(16.))
-                .child(chips)
-                .child(controls),
+                .items_center()
+                .justify_between()
+                .gap(px(18.))
+                .child(filters)
+                .child(order),
         );
 
         // The cards.
