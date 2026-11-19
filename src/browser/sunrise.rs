@@ -76,6 +76,19 @@ pub fn refreshed_index() -> Result<Arc<Index>, String> {
     index()
 }
 
+/// The registry mods `entries` hold, as the install planner reads them.
+pub fn held_mods(entries: &[installed::Entry]) -> Vec<index::resolve::InstalledMod> {
+    entries
+        .iter()
+        .filter(|e| e.source == SourceId::Sunrise)
+        .map(|e| index::resolve::InstalledMod {
+            id: e.project.clone(),
+            version: e.version.clone(),
+            sha256: e.checksum.strip_prefix("SHA-256:").map(str::to_owned),
+        })
+        .collect()
+}
+
 /// The index read last in this run, without asking the network: for what must not wait.
 pub fn known_index() -> Option<Arc<Index>> {
     LOADED.lock().unwrap().as_ref().map(|l| l.index.clone())

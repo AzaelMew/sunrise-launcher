@@ -1065,7 +1065,7 @@ fn a_dependency_is_installed_at_the_version_the_plan_chose() {
     let dir = tempfile::tempdir().unwrap();
     let mut index = sample();
     let base = index.project("coords_hud").unwrap().clone();
-    let mut make = |id: &str, title: &str, number: &str, extra: &str| {
+    let make = |id: &str, title: &str, number: &str, extra: &str| {
         let manifest = format!("id='{id}'\nname='{title}'\nversion='{number}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}");
         let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &[]).unwrap();
         let name = format!("{id}-{number}.smod");

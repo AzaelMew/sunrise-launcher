@@ -783,3 +783,205 @@ fn the_build_button_is_only_counted_as_drawn_when_its_group_is_shown() {
         None
     );
 }
+
+// ---------------------------------------------------------------- collections
+
+fn needs(id: &str, range: &str) -> Option<Vec<index::Dependency>> {
+    Some(vec![index::Dependency {
+        id: id.into(),
+        version: range.into(),
+        optional: false,
+        side: None,
+    }])
+}
+
+/// A collection of `cow`, `pig` and `owl`, with `owl` needing `cow`, and `cow` and `pig` needing
+/// `lib`, which no collection lists; and `jei`, which belongs to none.
+fn zoo() -> Index {
+    let mut idx = index(
+        ["lib", "cow", "pig", "owl", "jei"]
+            .map(|id| {
+                project(
+                    id,
+                    "native-mod",
+                    &[("1.0.0", GAME, A)],
+                    serde_json::json!({"downloads": 10}),
+                )
+            })
+            .to_vec(),
+        vec![],
+    );
+    let mut dependencies = |id: &str, dep: Option<Vec<index::Dependency>>| {
+        idx_version(&mut idx, id).dependencies = dep;
+    };
+    dependencies("cow", needs("lib", "^1"));
+    dependencies("pig", needs("lib", "^1"));
+    dependencies("owl", needs("cow", "^1"));
+    idx.collections = vec![serde_json::from_value(serde_json::json!({
+        "id": "farm", "name": "Farm", "summary": "Animals.", "owners": ["Someone"],
+        "icon": "https://example.test/farm.png",
+        "members": [{"id": "cow"}, {"id": "pig"}, {"id": "owl", "default": false}],
+    }))
+    .unwrap()];
+    idx
+}
+
+fn idx_version<'a>(idx: &'a mut Index, id: &str) -> &'a mut index::Version {
+    &mut idx
+        .projects
+        .iter_mut()
+        .find(|p| p.id == id)
+        .unwrap()
+        .versions[0]
+}
+
+fn ticked(ids: &[&str]) -> BTreeSet<String> {
+    ids.iter().map(|id| (*id).to_owned()).collect()
+}
+
+fn farm(idx: &Index, picks: &[&str]) -> collection::View {
+    let c = idx.collection("farm").unwrap();
+    collection::view(idx, c, &ticked(picks), &[], GAME)
+}
+
+#[test]
+fn discover_folds_members_into_the_collection_and_hides_libraries_until_searched() {
+    let idx = zoo();
+    let all = cards(&idx, GAME);
+    let names = |f: &Filters| -> Vec<String> {
+        discover(&all, f)
+            .into_iter()
+            .map(|i| all[i].id.clone())
+            .collect()
+    };
+    let mut f = Filters {
+        sort: Sort::Name,
+        ..Filters::default()
+    };
+    assert_eq!(
+        names(&f),
+        ["farm", "jei"],
+        "the card, not its three mods or the library"
+    );
+    let farm = all.iter().find(|c| c.id == "farm").unwrap();
+    assert_eq!(farm.members, Some(3));
+    assert_eq!(farm.downloads, 30, "its mods' downloads added up");
+    assert!(all.iter().find(|c| c.id == "lib").unwrap().library);
+    assert!(!all.iter().find(|c| c.id == "jei").unwrap().library);
+    // A search finds a member and a library like any other mod.
+    f.text = "cow".into();
+    assert_eq!(names(&f), ["cow"]);
+    f.text = "lib".into();
+    assert_eq!(names(&f), ["lib"]);
+    f.text = "farm".into();
+    assert_eq!(names(&f), ["farm"]);
+}
+
+#[test]
+fn a_member_says_which_collection_it_is_part_of() {
+    let idx = zoo();
+    let all = cards(&idx, GAME);
+    let part = |id: &str| all.iter().find(|c| c.id == id).unwrap().part_of.clone();
+    assert_eq!(part("cow").as_deref(), Some("Farm"));
+    assert_eq!(part("owl").as_deref(), Some("Farm"));
+    assert_eq!(part("lib"), None, "a library is in no collection");
+    assert_eq!(part("jei"), None);
+    assert_eq!(part("farm"), None);
+}
+
+#[test]
+fn the_header_box_is_empty_dashed_or_ticked_by_how_many_members_are() {
+    assert_eq!(collection::ticks(0, 3), collection::Ticks::None);
+    assert_eq!(collection::ticks(1, 3), collection::Ticks::Some);
+    assert_eq!(collection::ticks(3, 3), collection::Ticks::All);
+    let idx = zoo();
+    assert_eq!(farm(&idx, &[]).header, collection::Ticks::None);
+    assert_eq!(farm(&idx, &["pig"]).header, collection::Ticks::Some);
+    assert_eq!(
+        farm(&idx, &["cow", "pig", "owl"]).header,
+        collection::Ticks::All
+    );
+
+    // Clicking it ticks all but a library, or clears them all.
+    let v = farm(&idx, &["pig"]);
+    let mut t = ticked(&["pig"]);
+    v.flip_all(&mut t);
+    assert_eq!(t, ticked(&["cow", "pig", "owl"]));
+    farm(&idx, &["cow", "pig", "owl"]).flip_all(&mut t);
+    assert!(t.is_empty());
+}
+
+#[test]
+fn what_a_ticked_mod_needs_is_ticked_and_locked_while_it_is_needed() {
+    let idx = zoo();
+    let v = farm(&idx, &["cow", "pig", "owl"]);
+    let line =
+        |v: &collection::View, id: &str| v.lines.iter().find(|l| l.id == id).unwrap().clone();
+    assert_eq!(
+        v.lines.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
+        ["cow", "pig", "owl", "lib"],
+        "the members in order, then the library"
+    );
+    let lib = line(&v, "lib");
+    assert!(lib.library && lib.ticked);
+    assert_eq!(
+        lib.needed_by,
+        ["COW", "PIG", "OWL"],
+        "in the collection's order, and including what needs it through another pick"
+    );
+    let cow = line(&v, "cow");
+    assert!(
+        cow.ticked && cow.locked(),
+        "a member another pick needs is locked too"
+    );
+    assert_eq!(cow.needed_by, ["OWL"]);
+    assert!(!line(&v, "owl").locked());
+
+    // A locked box does not flip; its dependent's does, and the lock goes with it.
+    let mut t = ticked(&["cow", "pig", "owl"]);
+    v.flip(&mut t, "cow");
+    v.flip(&mut t, "lib");
+    assert_eq!(t, ticked(&["cow", "pig", "owl"]));
+    v.flip(&mut t, "owl");
+    let v = farm(&idx, &["cow", "pig"]);
+    assert!(!line(&v, "cow").locked());
+    assert_eq!(line(&v, "lib").needed_by, ["COW", "PIG"]);
+    let v = farm(&idx, &[]);
+    let lib = line(&v, "lib");
+    assert!(!lib.ticked && !lib.locked(), "nothing ticked needs it");
+}
+
+#[test]
+fn the_plan_line_counts_the_plans_mods_and_libraries() {
+    let say = |mods, libraries, updates| {
+        collection::Summary {
+            mods,
+            libraries,
+            updates,
+            bytes: 0,
+        }
+        .line()
+    };
+    assert_eq!(say(8, 1, 0), "Installs 8 mods and 1 library");
+    assert_eq!(say(1, 0, 0), "Installs 1 mod");
+    assert_eq!(say(0, 2, 0), "Installs 2 libraries");
+    assert_eq!(
+        say(2, 1, 1),
+        "Installs 2 mods and 1 library. Updates 1 installed mod"
+    );
+    assert_eq!(say(0, 0, 0), "Everything you picked is installed.");
+
+    // From a real plan: two members, their library once, and nothing once they are held.
+    let idx = zoo();
+    let v = farm(&idx, &["cow", "pig"]);
+    assert_eq!(v.summary.line(), "Installs 2 mods and 1 library");
+    assert_eq!(v.summary.bytes, 3 * 2048);
+    let held = ["cow", "pig", "lib"].map(|id| index::resolve::InstalledMod {
+        id: id.into(),
+        version: "1.0.0".into(),
+        sha256: Some(A.into()),
+    });
+    let c = idx.collection("farm").unwrap();
+    let v = collection::view(&idx, c, &ticked(&["cow", "pig"]), &held, GAME);
+    assert!(v.summary.nothing(), "{:?}", v.summary);
+}

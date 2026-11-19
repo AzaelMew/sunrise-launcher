@@ -76,6 +76,7 @@ impl Launcher {
             .as_ref()
             .map(|s| s.entries.iter().map(|e| e.project.clone()).collect())
             .unwrap_or_default();
+        let index = sunrise::known_index();
         let adding = self.mods.busy.as_ref().map(|b| b.0.clone());
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
 
@@ -264,7 +265,13 @@ impl Launcher {
                 .icon
                 .clone()
                 .and_then(|url| self.mods_image(&url, images::ICON));
-            let is_added = added.contains(&id);
+            let is_added = match card_data.members {
+                Some(_) => index
+                    .as_ref()
+                    .and_then(|i| i.collection(&id))
+                    .is_some_and(|c| c.members.iter().all(|m| added.contains(&m.id))),
+                None => added.contains(&id),
+            };
             let working = adding.as_deref() == Some(id.as_str());
             let note = card_data.fit.reason().filter(|_| !is_added);
             let control = if is_added {
@@ -277,6 +284,7 @@ impl Launcher {
                     working,
                     needs_ok || card_data.builds_locally && card_data.make == Make::Native,
                 ) {
+                    _ if card_data.members.is_some() => tr("Choose mods"),
                     (true, _) => tr("Installing…"),
                     (_, true) => tr("Install…"),
                     _ => tr("Install"),
@@ -284,6 +292,16 @@ impl Launcher {
                 let b = crate::frame::button(("alt-add", n), label);
                 Some(match working {
                     true => dim(b).into_any_element(),
+                    // A collection's button only opens its page, where the mods are picked.
+                    false if card_data.members.is_some() => {
+                        let id = id.clone();
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.mods_show_project(id.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }
                     false => {
                         let id = id.clone();
                         let name = card_data.name.clone();
@@ -296,10 +314,23 @@ impl Launcher {
                     }
                 })
             };
-            let mut facts = vec![
-                tag(card_data.make.label()),
-                muted(model::downloads(card_data.downloads)),
-            ];
+            let mut facts = match card_data.members {
+                Some(count) => vec![
+                    badge(tr("Collection")),
+                    muted(trf("{count} mods", &[("count", &count.to_string())])),
+                    muted(model::downloads(card_data.downloads)),
+                ],
+                None => vec![
+                    tag(card_data.make.label()),
+                    muted(model::downloads(card_data.downloads)),
+                ],
+            };
+            if card_data.library {
+                facts.insert(1, badge(tr("Library")));
+            }
+            if let Some(name) = &card_data.part_of {
+                facts.push(muted(trf("Part of {collection}", &[("collection", name)])));
+            }
             if card_data.builds_locally && card_data.fit.fits() {
                 facts.push(muted(tr("Builds on this computer")));
             }

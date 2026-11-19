@@ -4,7 +4,7 @@ use semver::{Version, VersionReq};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use sunrise_launcher_smod::index::resolve::{self, InstalledMod, Request, RequestResult};
+use sunrise_launcher_smod::index::resolve::{self, Request, RequestResult};
 use sunrise_launcher_smod::manifest::Side;
 use sunrise_launcher_smod::mod_list::FILE as ENABLED;
 
@@ -23,16 +23,7 @@ pub(super) fn install(
     let installed = installed::Installed::load(home);
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
-    let held: Vec<_> = installed
-        .entries
-        .iter()
-        .filter(|e| e.source == SourceId::Sunrise)
-        .map(|e| InstalledMod {
-            id: e.project.clone(),
-            version: e.version.clone(),
-            sha256: e.checksum.strip_prefix("SHA-256:").map(str::to_owned),
-        })
-        .collect();
+    let held = super::held_mods(&installed.entries);
     let planned = resolve::install(
         install.index,
         &[Request {
