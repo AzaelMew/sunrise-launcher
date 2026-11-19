@@ -45,8 +45,8 @@ fn run_launcher() {
         );
         std::process::exit(1);
     }
-    // Windows setup: `setup --quiet` / `uninstall --quiet` run here without a window, and never
-    // reach the CLI parser below (so neither the MCP tools nor the completions list them).
+    // Windowless Windows installer commands, including the new binary's notice refresh, never
+    // reach the CLI parser (so neither the MCP tools nor the completions list them).
     #[cfg(windows)]
     if let Some(code) = sunrise_launcher::installer::run_quiet() {
         std::process::exit(code);
@@ -79,6 +79,10 @@ fn run_launcher() {
     let setup_window = sunrise_launcher::installer::window_mode();
     #[cfg(not(windows))]
     let setup_window: Option<sunrise_launcher::setup_args::Mode> = None;
+    #[cfg(windows)]
+    if !cfg!(debug_assertions) && setup_window.is_none() {
+        let _ = sunrise_launcher::installer::ensure_notices();
+    }
     if setup_window.is_none() {
         if let Some(code) = cli::run() {
             std::process::exit(code);

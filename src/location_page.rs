@@ -9,18 +9,23 @@ fn env_value(key: &str) -> Option<String> {
         .map(|value| value.to_string_lossy().into_owned())
 }
 
-pub(super) fn startup_error() -> Option<String> {
-    sunrise_launcher::data_location::startup_error()
-        .map(|error| {
-            trf(
-                "Could not open the data folder: {error}",
-                &[("error", &error)],
-            )
-        })
-        .or_else(|| {
-            env_value("SUNRISE_RELOCATION_ERROR")
-                .map(|error| trf("Data move failed: {error}", &[("error", &error)]))
-        })
+/// The startup notice and whether the configured data actually failed to open. A failed
+/// move still leaves the old folder in use and does not block actions there.
+pub(super) fn startup_location() -> (Option<String>, bool) {
+    startup_location_status(
+        sunrise_launcher::data_location::startup_error().as_deref(),
+        env_value("SUNRISE_RELOCATION_ERROR").as_deref(),
+    )
+}
+
+fn startup_location_status(open: Option<&str>, relocation: Option<&str>) -> (Option<String>, bool) {
+    match open {
+        Some(error) => (Some(open_error(error)), true),
+        None => (
+            relocation.map(|error| trf("Data move failed: {error}", &[("error", error)])),
+            false,
+        ),
+    }
 }
 
 fn open_error(error: &str) -> String {
@@ -272,5 +277,39 @@ impl Launcher {
             );
         }
         body
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failed_move_does_not_block_play_or_profile_switching_but_unavailable_data_does() {
+        use crate::launch_state::{location_allows_action, Facts, Main};
+
+        for (open, relocation, available) in [
+            (None, None, true),
+            (None, Some("disk full"), true),
+            (Some("not mounted"), Some("disk full"), false),
+        ] {
+            let (notice, unavailable) = startup_location_status(open, relocation);
+            assert_eq!(!unavailable, available);
+            assert_eq!(notice.is_some(), open.is_some() || relocation.is_some());
+            if let Some(error) = open.or(relocation) {
+                assert!(notice.is_some_and(|notice| notice.contains(error)));
+            }
+            let play = Facts {
+                signed_in: true,
+                installed: true,
+                located: !unavailable,
+                ..Facts::default()
+            }
+            .view();
+            assert_eq!(play.main, Main::Play);
+            assert_eq!(play.enabled, available);
+            assert_eq!(location_allows_action(!unavailable, false), available);
+            assert!(!location_allows_action(!unavailable, true));
+        }
     }
 }

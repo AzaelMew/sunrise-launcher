@@ -1,7 +1,7 @@
-//! The licence notices of what the launcher embeds (fonts, icons) and derives from, for the
-//! routes that write files themselves: Windows Setup and a self-update of its install.
-//! `packaging/notices.txt` lists the same files for every other route; the test below keeps the
-//! two lists, and the scripts that read the second, in step.
+//! The licence notices of what the launcher embeds and derives from. Packaging ships them in
+//! each archive, AppImage and app bundle; Windows Setup writes them into its install. Only a
+//! registered install refreshes them at runtime, using the running version's own notices.
+//! `packaging/notices.txt` and these embedded notices must agree.
 
 /// File name in the `LICENSES` folder, and the notice.
 pub const FILES: &[(&str, &str)] = &[
@@ -36,12 +36,104 @@ pub const FILES: &[(&str, &str)] = &[
 ];
 
 /// Writes every notice into `dir/LICENSES`.
-#[cfg(any(windows, test))]
 pub fn write_into(dir: &std::path::Path) -> std::io::Result<()> {
     let folder = dir.join("LICENSES");
     std::fs::create_dir_all(&folder)?;
     for (name, text) in FILES {
         std::fs::write(folder.join(name), text)?;
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+};
+
+/// The install record must name this exact executable. Neither the setup copy, a portable
+/// executable with the same name, nor a symlink to an executable proves ownership.
+#[cfg(any(windows, test))]
+pub(crate) fn installed_dir(exe: &Path, registered: Option<&Path>, setup: bool) -> Option<PathBuf> {
+    let registered = registered?;
+    if setup
+        || !registered.is_absolute()
+        || !fs::symlink_metadata(registered).ok()?.is_file()
+        || !fs::symlink_metadata(exe).ok()?.is_file()
+    {
+        return None;
+    }
+    let installed = registered.canonicalize().ok()?;
+    if exe.canonicalize().ok()? != installed {
+        return None;
+    }
+    Some(installed.parent()?.to_path_buf())
+}
+
+/// Replaces the registered install's notices with this binary's exact set, or does nothing if
+/// the folder already contains that set. The replacement is staged before touching the old set.
+#[cfg(any(windows, test))]
+pub(crate) fn refresh_installed(
+    exe: &Path,
+    registered: Option<&Path>,
+    setup: bool,
+) -> io::Result<()> {
+    let Some(dir) = installed_dir(exe, registered, setup) else {
+        return Ok(());
+    };
+    let folder = dir.join("LICENSES");
+    let exists = match fs::symlink_metadata(&folder) {
+        Ok(meta) if meta.is_dir() => {
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+                if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                    return Err(io::Error::other("LICENSES is a reparse point"));
+                }
+            }
+            let mut matching = 0;
+            for entry in fs::read_dir(&folder)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let meta = entry.metadata()?;
+                match FILES.iter().find(|(file, _)| name == *file) {
+                    Some((_, text))
+                        if meta.is_file()
+                            && meta.len() == text.len() as u64
+                            && fs::read(entry.path())? == text.as_bytes() =>
+                    {
+                        matching += 1
+                    }
+                    _ => {
+                        matching = 0;
+                        break;
+                    }
+                }
+            }
+            if matching == FILES.len() {
+                return Ok(());
+            }
+            true
+        }
+        Ok(_) => return Err(io::Error::other("LICENSES is not a regular directory")),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+        Err(e) => return Err(e),
+    };
+    let stage = tempfile::Builder::new()
+        .prefix(".sunrise-notices-")
+        .tempdir_in(&dir)?;
+    write_into(stage.path())?;
+    let previous = stage.path().join("previous");
+    if exists {
+        fs::rename(&folder, &previous)?;
+    }
+    if let Err(e) = fs::rename(stage.path().join("LICENSES"), &folder) {
+        if exists && fs::rename(&previous, &folder).is_err() {
+            // Don't discard the previous notices if even the rollback is refused.
+            let _ = stage.keep();
+        }
+        return Err(e);
     }
     Ok(())
 }
@@ -66,6 +158,68 @@ pub fn remove_from(dir: &std::path::Path) -> Vec<String> {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn setup_does_not_write_notices_beside_itself() {
+        let download = tempfile::tempdir().unwrap();
+        let exe = download.path().join(crate::identity::WINDOWS_EXECUTABLE);
+        fs::write(&exe, "launcher started in Setup mode").unwrap();
+        // Even the installed binary can be started in Setup mode. Setup takes precedence.
+        refresh_installed(&exe, Some(&exe), true).unwrap();
+        assert!(!download.path().join("LICENSES").exists());
+    }
+
+    #[test]
+    fn portable_binaries_leave_their_folders_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let registered = root.path().join(crate::identity::WINDOWS_EXECUTABLE);
+        fs::write(&registered, "registered launcher").unwrap();
+        for path in ["Downloads", ".local/bin", "bin", ".cargo/bin"] {
+            let dir = root.path().join(path);
+            fs::create_dir_all(&dir).unwrap();
+            let exe = dir.join(crate::identity::WINDOWS_EXECUTABLE);
+            fs::write(&exe, "portable launcher").unwrap();
+            refresh_installed(&exe, None, false).unwrap();
+            refresh_installed(&exe, Some(&registered), false).unwrap();
+            assert!(!dir.join("LICENSES").exists(), "{path}");
+        }
+        assert!(!root.path().join("LICENSES").exists());
+    }
+
+    #[test]
+    fn the_new_installed_binary_replaces_its_notices_with_its_exact_set() {
+        let install = tempfile::tempdir().unwrap();
+        let exe = install.path().join(crate::identity::WINDOWS_EXECUTABLE);
+        let folder = install.path().join("LICENSES");
+        fs::write(&exe, "new launcher").unwrap();
+        write_into(install.path()).unwrap();
+        fs::write(folder.join(FILES[0].0), "superseded licence text").unwrap();
+        fs::write(folder.join("removed-dependency.txt"), "old notice").unwrap();
+        refresh_installed(&exe, Some(&exe), false).unwrap();
+        let assert_exact = || {
+            assert_eq!(fs::read_dir(&folder).unwrap().count(), FILES.len());
+            for (name, text) in FILES {
+                assert_eq!(fs::read_to_string(folder.join(name)).unwrap(), *text);
+            }
+        };
+        assert_exact();
+        // An extra stale notice alone is enough to refresh the set.
+        fs::write(folder.join("removed-dependency.txt"), "old notice").unwrap();
+        refresh_installed(&exe, Some(&exe), false).unwrap();
+        assert_exact();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_registered_install_does_not_follow_a_notices_symlink() {
+        let install = tempfile::tempdir().unwrap();
+        let unrelated = tempfile::tempdir().unwrap();
+        let exe = install.path().join(crate::identity::WINDOWS_EXECUTABLE);
+        fs::write(&exe, "installed launcher").unwrap();
+        std::os::unix::fs::symlink(unrelated.path(), install.path().join("LICENSES")).unwrap();
+        assert!(refresh_installed(&exe, Some(&exe), false).is_err());
+        assert_eq!(fs::read_dir(unrelated.path()).unwrap().count(), 0);
+    }
 
     fn root() -> &'static Path {
         Path::new(env!("CARGO_MANIFEST_DIR"))

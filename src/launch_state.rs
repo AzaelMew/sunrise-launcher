@@ -25,7 +25,7 @@ pub(crate) struct Facts {
     pub signed_in: bool,
     /// The selected profile has an installed build to play.
     pub installed: bool,
-    /// The launcher's data is where it should be (`location_error` is none).
+    /// The configured data folder could be opened, regardless of any move notice.
     pub located: bool,
     pub client_error: Option<String>,
     /// The game's own files were not found.
@@ -272,7 +272,7 @@ impl Facts {
             (said.is_none() && !self.building && self.mods_off > 0).then_some(self.mods_off);
         View {
             main,
-            enabled: !busy && self.located,
+            enabled: location_allows_action(self.located, busy),
             said,
             failed,
             act,
@@ -365,6 +365,12 @@ impl View {
     }
 }
 
+/// A data-folder notice is not a lock. Play and profile switching require access to the
+/// configured data and no work that would be interrupted by the action.
+pub(crate) fn location_allows_action(located: bool, busy: bool) -> bool {
+    located && !busy
+}
+
 impl Launcher {
     /// The selected profile's channel, when its last build failed because the build it stays on
     /// has no mod tools any more and another build is the way on (`sdk_cache::way_on`).
@@ -395,7 +401,7 @@ impl Launcher {
             signed_in: self.accounts.selected().is_some()
                 || sunrise_launcher::developer_offline::selected(),
             installed: active.and_then(|i| self.version_of(i)).is_some(),
-            located: self.location_error.is_none(),
+            located: !self.location_unavailable,
             client_error: self.client_error.clone(),
             prepare_error: self.prepare_error.clone(),
             native_error: self.native_error.clone(),
