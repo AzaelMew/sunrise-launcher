@@ -179,6 +179,9 @@ impl Launcher {
                 .text_size(px(tokens::LABEL))
                 .child(label.to_owned())
                 .child(blocks::icon("chevron-down", 13., c(palette().muted)))
+                // A press here is the dropdown's: the page closing any open menu on a press would
+                // shut this one just before its click opened it again.
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let same = matches!(
                         (&this.ui.mods.menu, &which),
