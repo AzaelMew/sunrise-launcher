@@ -23,9 +23,9 @@ pub(crate) struct State {
     pick: Option<String>,
     /// The list's scroll, which the arrow keys move to the row they land on.
     scroll: gpui::UniformListScrollHandle,
-    /// The keyboard focus of each row, by line: a row that is not drawn has no element, so the
+    /// The keyboard focus of each row, by tag: a row that is not drawn has no element, so the
     /// handles live here for the arrow keys to land on a row before it is on screen.
-    rows: std::collections::HashMap<usize, FocusHandle>,
+    rows: std::collections::HashMap<String, FocusHandle>,
 }
 
 /// The line the Up or Down key lands on from line `from` (None: no row has the keyboard):
@@ -186,6 +186,7 @@ impl Launcher {
         v.find.set(String::new());
         v.pick = pinned;
         v.rows.clear();
+        v.scroll = Default::default();
     }
 
     /// Reads whether the field has the keyboard, before the sheet is drawn.
@@ -205,9 +206,8 @@ impl Launcher {
             .flex_1()
             .min_h_0()
             .p(px(24.))
-            .gap(px(12.))
-            .overflow_y_scroll()
-            .track_scroll(&crate::frame::scrolls("versions-page"))
+            .gap(px(10.))
+            .overflow_hidden()
     }
 
     fn versions_content(&mut self, sheet: bool, cx: &mut Context<Self>) -> Div {
@@ -225,9 +225,14 @@ impl Launcher {
         let current = pinned.as_deref().or(plays.as_deref());
         let query = self.ui.sheets.versions.find.text().to_owned();
         let list = Rc::new(lines(releases, &self.installed, current, &query));
-        let count = match list.iter().filter(|l| matches!(l, Line::Build(_))).count() {
-            1 => tr("1 build").to_owned(),
-            count => trf("{count} builds", &[("count", &count.to_string())]),
+        let count = list
+            .iter()
+            .filter(|line| matches!(line, Line::Build(_)))
+            .count();
+        let count = if count == 1 {
+            tr("1 build").into()
+        } else {
+            trf("{count} builds", &[("count", &count.to_string())])
         };
         let pick = self.ui.sheets.versions.pick.clone();
 
@@ -260,11 +265,16 @@ impl Launcher {
                 cx.notify();
             }))
             .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                match line_edit::handle(&mut this.ui.sheets.versions.find, ev, cx) {
+                let v = &mut this.ui.sheets.versions;
+                let old = v.find.text().to_owned();
+                match line_edit::handle(&mut v.find, ev, cx) {
                     // Escape leaves the field first; the sheet closes on the next one.
                     line_edit::Key::Escape => window.blur(cx),
                     line_edit::Key::Pass => return,
                     _ => {}
+                }
+                if old != v.find.text() {
+                    v.scroll = Default::default();
                 }
                 cx.stop_propagation();
                 cx.notify();
@@ -274,10 +284,11 @@ impl Launcher {
         let shown = Rc::clone(&list);
         let (now, chosen) = (plays.clone(), pick.clone());
         let scroll = self.ui.sheets.versions.scroll.clone();
+        let about_room = self.content_width() >= 650. && !sheet;
         let rows = gpui::uniform_list(
             "alt-versions-list",
             list.len(),
-            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+            cx.processor(move |this, range: std::ops::Range<usize>, window, cx| {
                 range
                     .map(|n| match &shown[n] {
                         Line::Head(text) => div()
@@ -300,11 +311,38 @@ impl Launcher {
                                 .sheets
                                 .versions
                                 .rows
-                                .entry(n)
+                                .entry(b.tag.clone())
                                 .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
                                 .clone();
+                            let tip = trf("Build: {tag}", &[("tag", &b.tag)]);
+                            let long = b.name.chars().count() > 44;
+                            let focus_tip = (long
+                                && window.last_input_was_keyboard()
+                                && handle.is_focused(window))
+                            .then(|| {
+                                gpui::deferred(
+                                    div().absolute().left(px(32.)).top_full().child(
+                                        gpui::anchored().snap_to_window_with_margin(px(8.)).child(
+                                            div()
+                                                .max_w(px(420.))
+                                                .px(px(10.))
+                                                .py(px(8.))
+                                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                                                .border_1()
+                                                .border_color(rgb(palette().divider))
+                                                .bg(rgb(palette().raised))
+                                                .text_size(px(tokens::LABEL))
+                                                .child(tip.clone()),
+                                        ),
+                                    ),
+                                )
+                            });
                             div()
-                                .id(("alt-version", n))
+                                .id(SharedString::from(format!("alt-version:{}", b.tag)))
+                                .relative()
+                                .aria_label(tip.clone())
+                                .tooltip(crate::glass_ui::tip(tip))
+                                .children(focus_tip)
                                 .w_full()
                                 .h(px(LINE_H))
                                 .px(px(14.))
@@ -313,11 +351,6 @@ impl Launcher {
                                 .gap(px(12.))
                                 .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                                 .when(on, |d| d.bg(rgb(palette().selected)))
-                                .tooltip(crate::glass_ui::tip(if b.tag == b.name {
-                                    b.tag.clone()
-                                } else {
-                                    format!("{} · {}", b.name, b.tag)
-                                }))
                                 .child(
                                     div()
                                         .size(px(14.))
@@ -333,21 +366,18 @@ impl Launcher {
                                 )
                                 .child(
                                     div()
-                                        .min_w_0()
-                                        .max_w(relative(0.65))
-                                        .truncate()
-                                        .text_size(px(tokens::BODY))
-                                        .child(b.name.clone()),
-                                )
-                                .child(
-                                    div()
                                         .flex_1()
                                         .min_w_0()
+                                        .text_size(px(tokens::BODY))
+                                        .truncate()
+                                        .child(b.name.clone()),
+                                )
+                                .children((about_room && !long && !b.about.is_empty()).then(|| {
+                                    muted(b.about.clone())
+                                        .max_w(px(150.))
                                         .truncate()
                                         .text_size(px(tokens::SMALL))
-                                        .text_color(rgb(palette().muted))
-                                        .child(b.about.clone()),
-                                )
+                                }))
                                 .children(playing.then(|| {
                                     muted(tr("Playing now"))
                                         .flex_none()
@@ -377,12 +407,12 @@ impl Launcher {
             }),
         )
         .track_scroll(&scroll)
-        .min_h_0()
-        // As tall as what it lists, reserving room for compatibility, a failed pin and the footer.
-        .h(px((list.len() as f32 * LINE_H).min(
-            (self.window_height - 330. - if has_native { 128. } else { 0. })
-                .clamp(LINE_H * 3., LINE_H * 9.),
-        )));
+        .when(sheet, |rows| {
+            rows.h(px((list.len() as f32 * LINE_H).min(
+                (self.window_height - 362.).clamp(LINE_H * 3., LINE_H * 9.),
+            )))
+        })
+        .when(!sheet, |rows| rows.flex_1().min_h_0());
         let nothing = list.is_empty().then(|| {
             muted(match (&self.releases, query.trim().is_empty()) {
                 (Load::Loading, _) => tr("Reading the list of builds…"),
@@ -418,21 +448,22 @@ impl Launcher {
         };
         // Said once, and only when it stops a choice: with the check that lifts it.
         let native = has_native.then(|| {
-            div()
-                .id("alt-versions-compatibility")
-                .flex_none()
-                .flex()
-                .flex_col()
-                .min_h_0()
-                .max_h(px(112.))
-                .overflow_y_scroll()
-                .track_scroll(&crate::frame::scrolls("alt-versions-compatibility"))
-                .on_scroll(|_, _, cx| cx.stop_propagation())
-                .child(muted(tr(
-                    "Your native mods are made for the build you play. Another build needs them checked first.",
-                ))
-                .text_size(px(tokens::SMALL)))
-                .children(self.native_check_block(cx))
+            let check = match self.check_state() {
+                CheckState::Failed(_, error) => Some(div().flex().items_center().gap(px(8.))
+                    .child(muted(tr("The compatibility check failed.")).min_w_0())
+                    .child(button("versions-native-details", tr("Details…")).on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_notice(error.clone(), None);
+                        cx.notify();
+                    })))
+                    .child(button("versions-native-retry", tr("Check again")).on_click(cx.listener(|this, _, _, cx| {
+                        this.check_native(cx);
+                        cx.notify();
+                    })))),
+                _ => self.native_check_block(cx),
+            };
+            div().flex_none().flex().flex_col().child(muted(tr(
+                "Your native mods are made for the build you play. Another build needs them checked first.",
+            )).text_size(px(tokens::SMALL))).children(check)
         });
         // Up and Down move through the builds, from the field or from a row: the list scrolls to
         // the row and the row takes the keyboard.
@@ -447,18 +478,20 @@ impl Launcher {
                     _ => return,
                 };
                 let v = &mut this.ui.sheets.versions;
-                let from = v
-                    .rows
-                    .iter()
-                    .find(|(_, h)| h.is_focused(window))
-                    .map(|(n, _)| *n);
+                let from = all.iter().position(|line| {
+                    matches!(line, Line::Build(b)
+                    if v.rows.get(&b.tag).is_some_and(|handle| handle.is_focused(window)))
+                });
                 let usable =
                     |b: &Build| !blocked_by_native || playing.as_deref() == Some(b.tag.as_str());
                 if let Some(to) = next_row(&all, from, down, usable) {
+                    let Line::Build(build) = &all[to] else {
+                        return;
+                    };
                     v.scroll.scroll_to_item(to, gpui::ScrollStrategy::Nearest);
                     let row = v
                         .rows
-                        .entry(to)
+                        .entry(build.tag.clone())
                         .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
                         .clone();
                     window.focus(&row, cx);
@@ -481,36 +514,51 @@ impl Launcher {
                     .items_center()
                     .gap(px(12.))
                     .child(field.flex_1().min_w_0())
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(rgb(palette().muted))
-                            .child(count),
-                    ),
+                    .child(muted(count).flex_none()),
             )
             .children(native)
             .child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .min_h_0()
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
                     .border_color(rgb(palette().line))
                     .p(px(4.))
-                    .child(rows)
-                    .children(nothing),
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .when(!sheet, |d| d.flex_1())
+                    .when(sheet, |d| d.flex_none())
+                    .when(list.is_empty(), |d| {
+                        d.when(!sheet, |d| d.items_center().justify_center())
+                            .children(nothing)
+                    })
+                    .when(!list.is_empty(), |d| d.child(rows)),
             )
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
-                    .id("alt-versions-error")
                     .flex_none()
-                    .text_color(rgb(palette().danger))
-                    .text_size(px(tokens::SMALL))
-                    .line_clamp(2)
-                    .tooltip(crate::glass_ui::tip(e.clone()))
-                    .child(e)
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .line_clamp(2)
+                            .text_ellipsis()
+                            .text_color(rgb(palette().danger))
+                            .text_size(px(tokens::SMALL))
+                            .child(e.clone()),
+                    )
+                    .child(
+                        button("versions-error-details", tr("Details…")).on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.open_notice(e.clone(), None);
+                                cx.notify();
+                            },
+                        )),
+                    )
             }))
             .child(
                 div()

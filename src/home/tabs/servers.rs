@@ -24,9 +24,10 @@ impl Launcher {
         if count == 0 {
             items = empty(
                 tr("No saved servers"),
-                button("home-no-servers", tr("Open Servers")).on_click(cx.listener(
+                button("home-no-servers", tr("Add server")).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.navigate(Page::Join);
+                        this.open_add_server(cx);
                         cx.notify();
                     },
                 )),
