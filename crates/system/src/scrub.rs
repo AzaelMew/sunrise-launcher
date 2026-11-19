@@ -69,7 +69,8 @@ impl Scrubber {
 
 /// The game's `Connecting to <host>, <port>` log line (vanilla's, which other launchers read to offer
 /// the server again): the host becomes [`PRIVATE`], unless another rule already replaced it, and the
-/// port stays. Only that exact shape matches: a comma and digits to the end of the line.
+/// port stays. Only that exact shape matches: one word, a comma and a port (digits, or what a known
+/// term already replaced) to the end of the line.
 fn connecting_host(text: &str) -> String {
     const HEAD: &str = "Connecting to ";
     let mut out = String::with_capacity(text.len());
@@ -79,9 +80,11 @@ fn connecting_host(text: &str) -> String {
         out.push_str(&rest[..from]);
         let after = &rest[from..];
         let line = after.find(['\r', '\n']).unwrap_or(after.len());
-        let comma = after[..line].rfind(", ").filter(|comma| {
+        let comma = after[..line].rfind(", ").filter(|&comma| {
             let port = after[comma + 2..line].trim_end();
-            !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())
+            !after[..comma].contains(char::is_whitespace)
+                && (port == PRIVATE
+                    || (!port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())))
         });
         match comma {
             Some(comma) => {
@@ -357,6 +360,18 @@ mod tests {
         assert_eq!(
             s.scrub("Connecting to the Realm, please wait"),
             "Connecting to the Realm, please wait"
+        );
+        // A sentence that happens to end in a comma and a number is not a connection record.
+        assert_eq!(
+            s.scrub("Connecting to the server failed on attempt, 3"),
+            "Connecting to the server failed on attempt, 3"
+        );
+        // A known term that is the port (a save folder named 25565) must not hide the host's rule.
+        assert_eq!(
+            Scrubber::bare()
+                .term("25565")
+                .scrub("Connecting to play.example.net, 25565"),
+            "Connecting to <private>, <private>"
         );
         // Two lines, one of them without a port.
         assert_eq!(
