@@ -19,6 +19,8 @@ pub(super) enum Page {
     Project,
     Join,
     Hosting,
+    /// The Skins tab (`skins_page`): for now, the account's capes.
+    Skins,
     Settings,
 }
 
@@ -405,6 +407,10 @@ impl Launcher {
                 self.ui.last_server = Some(page);
                 self.ui.page = page;
             }
+            Page::Skins => {
+                self.skins_open();
+                self.ui.page = page;
+            }
             _ => self.ui.page = page,
         }
         if self.ui.page != before {
@@ -428,6 +434,7 @@ impl Launcher {
             (Page::Discover, "nav-mods", "puzzle", tr("Mods")),
             (Page::Packs, "nav-packs", "package", tr("Packs")),
             (Page::Join, "nav-servers", "server", tr("Servers")),
+            (Page::Skins, "nav-skins", "shirt", tr("Skins")),
         ] {
             let on = active == dest;
             let colour = if on { p.chrome_text } else { p.chrome_muted };
@@ -541,6 +548,7 @@ impl Launcher {
         let header = self.header(cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),
+            Page::Skins => self.skins_page(cx).into_any_element(),
             Page::Home => self.home(window, cx),
             Page::Join | Page::Hosting => {
                 let body = if page == Page::Hosting {
