@@ -66,6 +66,24 @@ fn every_message_names_the_mod_the_builds_and_the_worlds() {
 }
 
 #[test]
+fn a_missing_uses_list_names_the_pin_and_the_author_s_fix() {
+    let verdict = Verdict::NoList {
+        made_for: OTHER_BUILD.into(),
+    };
+    let said = line("Greeter", &verdict, "November 20 update");
+    assert!(
+        said.contains(&format!("Greeter pins build {OTHER_BUILD}")),
+        "{said}"
+    );
+    assert!(said.contains("`cargo sunrise-mod build`"), "{said}");
+    assert!(
+        said.contains("`cargo sunrise-mod update --sunrise <build>`"),
+        "{said}"
+    );
+    assert!(!said.contains("older tool"), "{said}");
+}
+
+#[test]
 fn an_update_says_how_many_mods_fit_and_which_will_be_switched_off() {
     let build = "nightly-2026-11-20 (9a8b7c6)";
     assert_eq!(

@@ -32,7 +32,6 @@ pub(super) fn classify(
     if found.is_empty() {
         return Ok(result);
     }
-    let ids: Vec<&str> = found.iter().map(|b| b.manifest.id.as_str()).collect();
     let unchecked = |result: &mut Routes, why: &str| {
         for (id, route) in &mut result.mods {
             *route = Route::Unchecked {
@@ -78,7 +77,7 @@ pub(super) fn classify(
             *slot = route;
         }
     };
-    match check_all(folder, &ids, &sdk, &sdk_base, cancellation) {
+    match check_projects(folder, &found, &sdk, &sdk_base, cancellation) {
         Ok(checks) => {
             for (id, why) in checks.refusals {
                 let reason = refusal_text(&id, &why);
@@ -103,6 +102,31 @@ pub(super) fn classify(
         Err(refusal) => unchecked(&mut result, &refusal.to_string()),
     }
     Ok(result)
+}
+
+/// Check a read-only set of projects. Older SDK tools need an explicit mixins pin, so resolve
+/// omitted pins in a temporary copy rather than modifying these projects.
+fn check_projects(
+    folder: &Path,
+    mods: &[Bundle],
+    sdk: &sdk_cache::Sdk,
+    base: &sdk_cache::Base,
+    cancellation: &Cancellation,
+) -> Result<Checks, sdk_cache::Refusal> {
+    let ids: Vec<&str> = mods.iter().map(|b| b.manifest.id.as_str()).collect();
+    let scratch;
+    let folder = if mods.iter().any(|b| b.native().mixins.is_none()) {
+        let refused = |why| sdk_cache::Refusal::Refused {
+            build: sdk.shown(),
+            why,
+        };
+        let pins = mixins::pins(mods, Some(sdk), base, None).map_err(refused)?;
+        scratch = mixins::check_inputs(mods, &pins).map_err(refused)?;
+        scratch.path()
+    } else {
+        folder
+    };
+    check_all(folder, &ids, sdk, base, cancellation)
 }
 
 /// The mods an update leaves out: the unfit, then every mod that needs one of them. A mod the tool refuses can't be built on any build, so it stops the update as it stops a build, by name.
@@ -171,13 +195,12 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
         .into_iter()
         .filter(|bundle| bundle.manifest.native.is_some())
         .collect();
-    let ids: Vec<&str> = found.iter().map(|b| b.manifest.id.as_str()).collect();
     let revision = build_revision(to, None)?;
     let sdk_base = sdk_cache::Base::from_env();
     let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO);
     let sdk = sdk_cache::index(&sdk_base, &revision, &keys).map_err(|r| r.to_string())?;
     let checks = match &folder {
-        Some(folder) => check_all(folder, &ids, &sdk, &sdk_base, &Cancellation::default())
+        Some(folder) => check_projects(folder, &found, &sdk, &sdk_base, &Cancellation::default())
             .map_err(|r| r.to_string())?,
         None => Checks::default(),
     };

@@ -584,7 +584,7 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
         });
         assert!(failed.is_err());
         assert!(!home.join(OWN).join("skyblock").exists());
-        assert!(!home.join(STAGING).exists());
+        assert!(fs::read_dir(home.join(STAGING)).unwrap().next().is_none());
         assert_eq!(files(&home), before, "nothing of the attempt stays");
     }
     fs::remove_dir(data.join(FILE)).unwrap();
@@ -608,12 +608,79 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
     assert_eq!(made.version.as_deref(), Some("nightly-2026-11-13-aaaaaaa"));
     assert_eq!(fs::read(made.home.join(PICTURE)).unwrap(), b"png");
     assert!(made.home.join("saves/World/level.dat").is_file());
-    assert!(!home.join(STAGING).exists());
+    assert!(fs::read_dir(home.join(STAGING)).unwrap().next().is_none());
     // A copy asked to have no picture doesn't keep the one it copied.
     let plain = create_whole_in(&home, &data, "Plain", Some(&made), Some(None), |_| {}).unwrap();
     assert!(!plain.home.join(PICTURE).exists());
     assert!(made.home.join(PICTURE).is_file());
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn creation_does_not_reuse_or_remove_another_attempts_temporary_paths() {
+    let root = scratch("creation-owns-only-its-stage");
+    let (home, data) = (root.join("home"), root.join("data"));
+    let older_stage = home
+        .join(STAGING)
+        .join(format!("skyblock.{}", std::process::id()));
+    let older_choices = data.join(format!("{FILE}.{}.part", std::process::id()));
+    put(&older_stage.join("options.txt"), "somebody else's stage");
+    put(&older_choices, "somebody else's choices");
+
+    fs::create_dir(data.join(FILE)).unwrap();
+    assert!(create_whole_in(&home, &data, "Skyblock", None, None, |_| {}).is_err());
+    assert!(!home.join(OWN).join("skyblock").exists());
+    fs::remove_dir(data.join(FILE)).unwrap();
+    assert!(create_whole_in(&home, &data, "Skyblock", None, None, |_| {}).is_ok());
+    assert_eq!(
+        fs::read_to_string(older_stage.join("options.txt")).unwrap(),
+        "somebody else's stage"
+    );
+    assert_eq!(
+        fs::read_to_string(older_choices).unwrap(),
+        "somebody else's choices"
+    );
+    assert_eq!(fs::read_dir(home.join(STAGING)).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(&data).unwrap().count(), 2);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn creation_refuses_linked_staging_and_destination_parents() {
+    let root = scratch("creation-parent-links");
+    let (home, data, outside) = (root.join("home"), root.join("data"), root.join("outside"));
+    fs::create_dir(&home).unwrap();
+    put(
+        &outside.join(format!("skyblock.{}/keep.txt", std::process::id())),
+        "keep me",
+    );
+    for parent in [STAGING, OWN] {
+        let linked = home.join(parent);
+        let _ = fs::remove_dir(&linked);
+        std::os::unix::fs::symlink(&outside, &linked).unwrap();
+        assert!(create_whole_in(&home, &data, "Skyblock", None, None, |_| {}).is_err());
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+        assert!(outside
+            .join(format!("skyblock.{}/keep.txt", std::process::id()))
+            .is_file());
+        fs::remove_file(linked).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn profile_publication_does_not_replace_an_empty_destination() {
+    let root = scratch("creation-no-clobber");
+    let (source, dest) = (root.join("source"), root.join("dest"));
+    put(&source.join("options.txt"), "new");
+    fs::create_dir(&dest).unwrap();
+    assert!(publish_new_folder(&source, &dest).is_err());
+    assert!(source.join("options.txt").is_file());
+    assert!(fs::read_dir(&dest).unwrap().next().is_none());
+    fs::remove_dir(dest).unwrap();
+    assert!(publish_new_folder(&source, &root.join("dest")).is_ok());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

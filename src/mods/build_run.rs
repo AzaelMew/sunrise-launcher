@@ -2,6 +2,7 @@
 //! the whole build is, and how it ended. Nothing here draws or touches a file: the build's own
 //! steps (`native_mods::Step`) and its result go in, and the window reads the answer.
 use crate::i18n::{tr, trf};
+use crate::launcher_play::PlayIntent;
 use crate::native_mods::{self, Stage, Step, Why};
 use std::time::{Duration, Instant};
 
@@ -334,28 +335,21 @@ impl Run {
 /// however the build ends. A build that had already finished its last check for a cancel, or
 /// had not started checking yet, can still end well; `wanted` (the profile Play was pressed
 /// for) is forgotten here, at the press, so that result starts nothing.
-pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<PlayAfterBuild>) {
+pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<PlayIntent>) {
     *wanted = None;
     if let Some(run) = run {
         run.for_play = false;
     }
 }
 
-/// The profile and account that asked to Play before a build. A sign-in or sign-out already
-/// under way can finish during the build, so the start must not read the selection again.
-pub(crate) struct PlayAfterBuild {
-    pub instance: String,
-    pub account: Option<String>,
-}
-
 /// Selects the Play handoff when a `Native` result completes. Resume only on the profile that
 /// asked, still playing the game just built. A skipped mod doesn't stop this: the build still
 /// gave a game. Keep the original account.
 pub(crate) fn play_on_finish(
-    wanted: Option<PlayAfterBuild>,
+    wanted: Option<PlayIntent>,
     result: &Result<String, native_mods::Failed>,
     plays: Option<(&str, Option<&str>)>,
-) -> Option<PlayAfterBuild> {
+) -> Option<PlayIntent> {
     let play = wanted?;
     let built = result.as_deref().ok()?;
     let (selected, version) = plays?;
@@ -599,7 +593,7 @@ mod tests {
     fn plays_build_says_so_and_the_game_starts_when_it_worked() {
         let run = run(true);
         assert_eq!(run.headline(), "Getting ready to play");
-        let press_play = || PlayAfterBuild {
+        let press_play = || PlayIntent {
             instance: "autumn".into(),
             account: Some("original-account".into()),
         };

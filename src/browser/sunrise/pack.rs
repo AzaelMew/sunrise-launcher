@@ -167,7 +167,7 @@ fn install_version_in(
 }
 
 /// Turns the game's command into the pack's profile: its own game folder (the player's
-/// options.txt copied in when the pack brings none), its taken-down mods turned off first.
+/// options.txt copied in when the pack brings none).
 pub fn apply(cmd: &mut Command, work: &Path) -> Result<(), String> {
     if !is_pack(work) {
         return Err(format!("{} is not an installed modpack.", work.display()));
@@ -179,7 +179,6 @@ pub fn apply(cmd: &mut Command, work: &Path) -> Result<(), String> {
     if !options.exists() && own.is_file() {
         let _ = fs::copy(own, &options);
     }
-    super::before_play(&home);
     cmd.current_dir(&home).env("SUNRISE_HOME", &home);
     Ok(())
 }

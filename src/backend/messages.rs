@@ -40,6 +40,9 @@ pub enum Msg {
     },
     JarClient {
         run: Option<String>,
+        account: Option<String>,
+        session_file: Option<PathBuf>,
+        registry_notices: Vec<String>,
         prepared: Box<Result<Command, String>>,
     },
     /// The native packages read for the consent request identified by this folder Arc.

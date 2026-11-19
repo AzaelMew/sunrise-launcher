@@ -168,6 +168,37 @@ fn a_signed_index_is_read_kept_and_used_offline() {
 }
 
 #[test]
+fn a_source_mod_inherits_the_revision_of_its_verified_sdk() {
+    let fixture = Fixture::new();
+    let base = fixture.scratch.path().join("base");
+    let tag = tag(COMMIT);
+    let mixins = "b".repeat(40);
+    let mut index = index_of(&[], rust_toolchain::VERSION);
+    index.mixins.rev.clone_from(&mixins);
+    publish(
+        &base,
+        &tag,
+        &tag,
+        &fixture.key,
+        index.to_json().as_bytes(),
+        &[],
+    );
+    let sdk = index_in(&fixture.kept(), &fixture.base(), COMMIT, &fixture.keys()).unwrap();
+
+    let project = fixture.scratch.path().join("project");
+    super::super::tests::write_bundle(&project, "implicit", "");
+    fs::write(
+        project.join(super::super::NATIVE_MANIFEST),
+        format!("id='implicit'\nname='Implicit'\nversion='0.3.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{COMMIT}'\n"),
+    ).unwrap();
+    let mods = super::super::bundles(&project).unwrap();
+    assert_eq!(
+        super::super::mixins::pins(&mods, Some(&sdk), &fixture.base(), None).unwrap(),
+        [mixins]
+    );
+}
+
+#[test]
 fn an_index_is_refused_by_name_when_its_signature_or_contents_do_not_hold() {
     let fixture = Fixture::new();
     let base = fixture.scratch.path().join("base");

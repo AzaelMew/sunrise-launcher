@@ -584,8 +584,8 @@ impl Launcher {
         });
     }
 
-    /// The installed mods as rows. Reads the index already in memory
-    /// and the native build state's memo; never asks the network and never writes.
+    /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
+    /// names and statuses. Never asks the network or writes.
     fn rows(&self) -> Vec<Row> {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
@@ -607,7 +607,7 @@ impl Launcher {
             }
             false => HashSet::new(),
         };
-        let index = sunrise::known_index();
+        let index = sunrise::fetched_index();
         let game = self.mods_game();
         let mut rows = model::rows(
             &snap.entries,
