@@ -290,6 +290,13 @@ impl Launcher {
 
     /// Opens a section, leaving no question from another one standing.
     pub(super) fn settings_open(&mut self, section: Section) {
+        // Another section starts at its top, with its list of sections back in place: the old
+        // section's scroll would cut the new one's title off, and the list would hold on to
+        // where the old one had pushed it.
+        if self.ui.settings.section != section {
+            crate::frame::scrolls("settings").set_offset(gpui::point(px(0.), px(0.)));
+            self.settings_sticky.reset();
+        }
         let view = &mut self.ui.settings;
         view.section = section;
         view.languages = false;
