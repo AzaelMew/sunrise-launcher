@@ -71,9 +71,6 @@ enum Confirm {
     /// (mod id, project id, title)
     Remove(Vec<(String, String, String)>),
     Update(model::UpdatePlan),
-    /// Saved worlds hold content of these mods: which worlds and which mods. Nothing has been
-    /// changed; continuing backs each world up and checks the backup first.
-    Stake(actions::Action, Vec<(String, Vec<String>)>),
 }
 
 struct Open {
@@ -105,8 +102,6 @@ enum Event {
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
     PackDone(Result<String, String>),
-    /// Worlds would be affected: nothing was changed, the player decides.
-    Stake(PathBuf, actions::Action, Vec<(String, Vec<String>)>),
     /// The batch was refused before changing anything.
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
@@ -456,14 +451,6 @@ impl Launcher {
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
-                Event::Stake(home, action, worlds) => {
-                    m.busy = None;
-                    // Only for the folder still shown: a worker's answer for another setup is dropped.
-                    if m.snapshot.as_ref().is_some_and(|s| s.home == home) {
-                        m.reviewed_home = Some(home);
-                        m.confirm = Some(Confirm::Stake(action, worlds));
-                    }
-                }
                 Event::Checked(title, found) => self.checked(title, found),
                 Event::Refused(why) => {
                     m.busy = None;
