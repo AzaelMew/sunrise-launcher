@@ -843,8 +843,7 @@ impl Step {
                 ],
             ),
             Self::ToolsKept { .. } => tr("Using the mod tools already downloaded").into(),
-            // The log keeps the backup destination and the full compatibility report. Neither
-            // belongs in the shared Play header while the remaining mods are being built.
+            // The full compatibility report stays in the log while the other mods build.
             Self::LeftOut(left) => trf("Leaving out {mod} for this build", &[("mod", &left.id)]),
             Self::Compile { .. } => tr("Building the game with your mods").into(),
             Self::Mod { id, done, total } => trf(

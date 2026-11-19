@@ -51,17 +51,31 @@ impl Launcher {
                     .gap(px(4.))
                     .child(crate::sheets::title(run.headline()))
                     .child({
-                        let context = trf(
-                            "{profile} · Sunrise {build}",
-                            &[("profile", &run.profile), ("build", &run.on)],
-                        );
+                        let build = trf("Sunrise {build}", &[("build", &run.on)]);
                         div()
-                            .id("build-context")
-                            .truncate()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
                             .text_size(px(tokens::LABEL))
                             .text_color(c(palette().muted))
-                            .tooltip(crate::glass_ui::tip(context.clone()))
-                            .child(context)
+                            .child(
+                                div()
+                                    .id("build-profile")
+                                    .min_w_0()
+                                    .truncate()
+                                    .tooltip(crate::glass_ui::tip(run.profile.clone()))
+                                    .child(run.profile.clone()),
+                            )
+                            .child(div().flex_none().child("·"))
+                            .child(
+                                div()
+                                    .id("build-context")
+                                    .max_w(px(148.))
+                                    .flex_none()
+                                    .truncate()
+                                    .tooltip(crate::glass_ui::tip(build.clone()))
+                                    .child(build),
+                            )
                     }),
             )
             .child(close);
@@ -439,6 +453,7 @@ impl Launcher {
                                     .child(
                                         div()
                                             .id(("build-mod-version", n))
+                                            .flex_none()
                                             .max_w(px(96.))
                                             .truncate()
                                             .tooltip(crate::glass_ui::tip(line.version.clone()))
