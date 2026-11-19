@@ -338,12 +338,12 @@ pub const INSTALLED: &str = sunrise_launcher_smod::mod_list::NATIVE_DIR;
 /// The native mods turned on in the game folder `home`, unpacked into a folder [`build`] takes.
 /// Each flat `.smod` passes the registry's shared package boundary; no code is run.
 pub fn installed_mods(home: &Path) -> Result<PathBuf, String> {
-    stage_installed(home, root().join("installed.incoming"))?.ok_or_else(|| {
-        format!(
-            "No native mod is turned on in {}: install one from the Mods page first.",
-            home.join(INSTALLED).display()
-        )
-    })
+    stage_installed(home, root().join("installed.incoming"))?.ok_or_else(no_mods_to_build)
+}
+
+/// What a build says when the profile's mods folder holds nothing to build.
+fn no_mods_to_build() -> String {
+    tr("There are no mods to build. Add a mod to this profile's mods folder first.").into()
 }
 
 /// [`installed_mods`] into `out`, which it empties first.
@@ -379,10 +379,7 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
         count += 1;
     }
     if count == 0 {
-        return Err(format!(
-            "No native mod is turned on in {}: install one from the Mods page first.",
-            home.join(INSTALLED).display()
-        ));
+        return Err(no_mods_to_build());
     }
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     Ok(Some(out))
@@ -3178,6 +3175,11 @@ mod tests {
         };
         pack("veinminer.smod", None);
         assert!(installed_mods(&home).is_err(), "off until turned on");
+        // With nothing in the mods folder the error says so, never an empty line.
+        assert_eq!(
+            installed_mods(&home).unwrap_err(),
+            "There are no mods to build. Add a mod to this profile's mods folder first."
+        );
         crate::browser::mod_list::set_enabled(&home, "veinminer", true).unwrap();
         let out = installed_mods(&home).unwrap();
         let found = bundles(&out).unwrap();
