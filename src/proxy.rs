@@ -34,10 +34,21 @@ pub fn spec_for(url: &str) -> Option<String> {
 /// Puts the launcher's network settings in `command`'s environment, as the programs it starts (the porter, the native build tool) read them: its proxy setting in `HTTPS_PROXY`/`HTTP_PROXY` (the environment's own, and `NO_PROXY`, pass through), and the GitHub mirror.
 pub fn child_env(command: &mut std::process::Command) {
     if let Some(spec) = setting() {
+        let spec = for_curl(spec);
         command.env("HTTPS_PROXY", &spec).env("HTTP_PROXY", spec);
     }
     if let Some(mirror) = crate::github::mirror_named() {
         command.env("SUNRISE_GITHUB_MIRROR", mirror);
+    }
+}
+
+/// `spec` as Cargo's curl reads it: a bare `socks://` or `socks5://` would be SOCKS4 or resolve
+/// names locally there, so both become `socks5h://`, SOCKS5 with the proxy resolving names, which
+/// is what the launcher's own downloads already do.
+fn for_curl(spec: String) -> String {
+    match spec.split_once("://") {
+        Some(("socks" | "socks5", address)) => format!("socks5h://{address}"),
+        _ => spec,
     }
 }
 
@@ -135,6 +146,19 @@ mod tests {
             .to_string();
         // The port is closed, so it fails reaching the proxy: never for want of SOCKS in the build.
         assert!(!error.contains("SOCKS feature disabled"), "{error}");
+    }
+
+    #[test]
+    fn a_socks_proxy_reaches_a_child_as_socks5_with_remote_names() {
+        let spec = |s: &str| for_curl(s.to_owned());
+        assert_eq!(spec("socks://10.0.0.2:1080"), "socks5h://10.0.0.2:1080");
+        assert_eq!(
+            spec("socks5://u:p@10.0.0.2:1080"),
+            "socks5h://u:p@10.0.0.2:1080"
+        );
+        assert_eq!(spec("socks5h://10.0.0.2:1080"), "socks5h://10.0.0.2:1080");
+        assert_eq!(spec("http://10.0.0.2:3128"), "http://10.0.0.2:3128");
+        assert_eq!(spec("10.0.0.2:3128"), "10.0.0.2:3128");
     }
 
     #[test]
