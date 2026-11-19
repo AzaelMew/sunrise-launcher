@@ -548,6 +548,7 @@ impl Launcher {
         }
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
+        rows.push(self.scenery_row(cx));
         let layout = self.settings.world_layout;
         let layouts = [
             (backend::WorldLayout::Rows, "Rows"),
@@ -836,11 +837,19 @@ impl Launcher {
         } else {
             off(theirs)
         };
+        self.wide_row(
+            tr("Home background"),
+            about,
+            div().child(choose).child(theirs),
+        )
+    }
+
+    /// Whether Home shows its background at all: a row of its own, its switch on the right like
+    /// every other switch on the page.
+    fn scenery_row(&mut self, cx: &mut Context<Self>) -> Div {
         let on = self.settings.scenery();
-        let show = switch("alt-scenery", on)
-            .seen()
-            .tooltip(crate::glass_ui::tip(tr("Show background")))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        let show = switch("alt-scenery", on).seen().on_click(cx.listener(
+            move |this, _: &ClickEvent, window, cx| {
                 this.appearance_change(
                     |s| {
                         s.scenery_on = Some(!on);
@@ -849,15 +858,8 @@ impl Launcher {
                     window,
                 );
                 cx.notify();
-            }));
-        self.wide_row(
-            tr("Home background"),
-            about,
-            div()
-                .child(choose)
-                .child(theirs)
-                .child(hint(tr("Show background")))
-                .child(show),
-        )
+            },
+        ));
+        row(tr("Show background"), "", div().child(show))
     }
 }
