@@ -488,25 +488,61 @@ impl Launcher {
                 } else {
                     self.join(cx)
                 };
-                let mut tabs = div().flex().px(px(22.)).pt(px(12.)).gap(px(6.));
-                for (dest, id, label) in [
-                    (Page::Join, "servers-join", tr("Join")),
-                    (Page::Hosting, "servers-host", tr("Host")),
-                ] {
-                    tabs = tabs.child(
-                        button(id, label)
-                            .when(page == dest, |d| d.bg(rgb(palette().selected)))
+                // The page's header, as Mods has it: its name, then Join and Host as one
+                // control, the chosen one filled.
+                let seg =
+                    |dest: Page, id: &'static str, label: SharedString, cx: &mut Context<Self>| {
+                        let on = page == dest;
+                        div()
+                            .id(id)
+                            .reach()
+                            .px(px(18.))
+                            .h(px(tokens::FIELD))
+                            .flex()
+                            .items_center()
+                            .rounded(px(tokens::R_CONTROL))
+                            .text_size(px(tokens::BODY))
+                            .cursor_pointer()
+                            .when(on, |d| {
+                                d.bg(rgb(palette().line)).font_weight(FontWeight::SEMIBOLD)
+                            })
+                            .child(label)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.navigate(dest);
                                 cx.notify();
-                            })),
+                            }))
+                    };
+                let tabs = div()
+                    .flex()
+                    .items_center()
+                    .gap(px(20.))
+                    .px(px(24.))
+                    .pt(px(24.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens::TITLE))
+                            .font_weight(FontWeight::BOLD)
+                            .child(tr("Servers")),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .p(px(3.))
+                            .rounded(px(tokens::R_CARD))
+                            .border_1()
+                            .border_color(rgb(palette().line))
+                            .bg(palette().card())
+                            .child(seg(Page::Join, "servers-join", tr("Join").into(), cx))
+                            .child(seg(Page::Hosting, "servers-host", tr("Host").into(), cx)),
                     );
-                }
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_h_0()
+                    .text_color(rgb(palette().text))
                     .child(tabs)
                     .child(body)
                     .into_any_element()

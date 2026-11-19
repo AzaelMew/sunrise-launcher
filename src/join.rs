@@ -11,7 +11,7 @@
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::home::{card, heading, muted};
+use crate::home::{card, muted};
 use crate::paint::palette;
 use gpui::{rgb, rgba};
 
@@ -195,8 +195,9 @@ impl Launcher {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("join"))
-            .px(px(32.))
-            .py(px(28.))
+            .px(px(24.))
+            .pt(px(18.))
+            .pb(px(24.))
             .child(servers.max_w(px(720.)))
             .into_any_element()
     }
@@ -304,25 +305,20 @@ impl Launcher {
                     .child(muted(tr("No saved servers."))),
             );
         }
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(heading(tr("Servers")))
-            .child(
-                card()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.))
-                            .p(px(12.))
-                            .child(field)
-                            .child(save)
-                            .child(join),
-                    )
-                    .child(list),
-            )
+        div().flex().flex_col().gap(px(12.)).child(
+            card()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.))
+                        .p(px(12.))
+                        .child(field)
+                        .child(save)
+                        .child(join),
+                )
+                .child(list),
+        )
     }
 
     fn featured_row(&mut self, i: usize, server: Featured, cx: &mut Context<Self>) -> Div {
