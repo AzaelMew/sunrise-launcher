@@ -221,9 +221,12 @@ impl Launcher {
             let choice = Icon::Colour(format!("#{colour:06x}"));
             icons = icons.child(
                 button(ElementId::named_usize("new-colour", idx), "")
+                    // Round, and as tall as the Sunrise and Picture buttons on either side: one row, one
+                    // height.
                     .px_0()
-                    .w(px(22.))
-                    .h(px(22.))
+                    .w(px(tokens::CONTROL))
+                    .h(px(tokens::CONTROL))
+                    .rounded_full()
                     .bg(rgb(colour))
                     .when(icon.as_ref() == Some(&choice), |d| {
                         d.border_2().border_color(rgb(p.text))
