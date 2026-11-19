@@ -821,7 +821,6 @@
   "Installed {mods}, checksums checked. Turn it on under Installed.": "Installed {mods}, checksums checked. Turn it on under Installed.",
   "Installing · {percent}%": "Installing · {percent}%",
   "Installs after you sign in": "Installs after you sign in",
-  "It is turned off. Turn it on first: an update never switches a mod on.": "It is turned off. Turn it on first: an update never switches a mod on.",
   "It runs native code. Allow native mods first (Allow… on its row), then update it.": "It runs native code. Allow native mods first (Allow… on its row), then update it.",
   "Its first errors and the end of its output": "Its first errors and the end of its output",
   "Its resources are prepared.": "Its resources are prepared.",
@@ -1122,8 +1121,6 @@
   "the {day} update": "the {day} update",
   "the {day}, {time} UTC update": "the {day}, {time} UTC update",
   "them": "them",
-  "turned off: left as it is": "turned off: left as it is",
-  "turned off: turn it on first, then update": "turned off: turn it on first, then update",
   "warning: {text}": "warning: {text}",
   "you chose its version: update it on its own": "you chose its version: update it on its own",
   "your Sunrise version": "your Sunrise version",
@@ -1486,5 +1483,6 @@
   "Updates 1 installed mod": "Updates 1 installed mod",
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
-  "Some picks can't be installed together.": "Some picks can't be installed together."
+  "Some picks can't be installed together.": "Some picks can't be installed together.",
+  "Version {version} is out. {why}": "Version {version} is out. {why}"
 }

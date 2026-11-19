@@ -636,7 +636,16 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
             "refresh",
             trf("{version} is out", &[("version", to)]),
             Tone::Info,
-            trf("Version {version} is out", &[("version", to)]),
+            match row.pinned {
+                true => trf(
+                    "Version {version} is out. {why}",
+                    &[
+                        ("version", to),
+                        ("why", &update_refusal(row, true).unwrap_or_default()),
+                    ],
+                ),
+                false => trf("Version {version} is out", &[("version", to)]),
+            },
         );
     }
     if let Some(local) = &row.local {
@@ -917,6 +926,17 @@ pub(super) struct Included {
     pub(super) native: bool,
 }
 
+/// Why a batch leaves out `r`'s update, if it does.
+pub(super) fn update_refusal(r: &Row, native_allowed: bool) -> Option<String> {
+    if r.pinned {
+        Some(tr("you chose its version: update it on its own").to_string())
+    } else if r.native() && !native_allowed {
+        Some(tr("native code: allow it first, then update this mod on its own").to_string())
+    } else {
+        None
+    }
+}
+
 /// The whole pack's compatible updates, not only the visible rows. Native code is only updated
 /// with the player's permission, and a version the player chose stays. A mod taken down is
 /// updated: the new file is checked like any install and replaces the one that was taken down.
@@ -924,22 +944,10 @@ pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
     let mut plan = UpdatePlan::default();
     for r in rows.iter().filter(|r| r.local.is_none()) {
         let Some(to) = &r.update else { continue };
-        if !r.on {
-            // An update never switches a mod on, even for a moment: a mod that is off waits.
-            plan.skipped.push((
-                r.title.clone(),
-                tr("turned off: turn it on first, then update").to_string(),
-            ));
-        } else if r.pinned {
-            plan.skipped.push((
-                r.title.clone(),
-                tr("you chose its version: update it on its own").to_string(),
-            ));
-        } else if r.native() && !native_allowed {
-            plan.skipped.push((
-                r.title.clone(),
-                tr("native code: allow it first, then update this mod on its own").to_string(),
-            ));
+        // A mod that is off is updated like any other and stays off: downloading a newer checked
+        // file never switches a mod on, and a native mod that is off builds when it is turned on.
+        if let Some(why) = update_refusal(r, native_allowed) {
+            plan.skipped.push((r.title.clone(), why));
         } else {
             plan.included.push(Included {
                 id: r.id.clone(),
@@ -951,6 +959,12 @@ pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
         }
     }
     plan
+}
+
+/// The count on the "Update N mods" button: what [`plan_updates`] would really include, and no
+/// button (`None`) when that is nothing.
+pub(super) fn update_all_button(rows: &[Row], native_allowed: bool) -> Option<usize> {
+    Some(plan_updates(rows, native_allowed).included.len()).filter(|n| *n > 0)
 }
 
 /// Which of the chosen mods can be turned on now, and which can't (and why).

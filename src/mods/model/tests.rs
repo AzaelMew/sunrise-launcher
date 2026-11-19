@@ -374,26 +374,52 @@ fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
 }
 
 #[test]
-fn an_update_never_switches_a_turned_off_mod_on() {
+fn a_mod_that_is_off_is_in_the_plan() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom".to_string()].into();
     let none = HashSet::new();
     let r = rows(&entries, &world(&idx, &on, &none, true));
-    let plan = plan_updates(&r, true);
-    assert_eq!(
-        plan.included
-            .iter()
-            .map(|i| i.id.as_str())
-            .collect::<Vec<_>>(),
-        ["zoom"]
-    );
-    let off: Vec<&str> = plan
-        .skipped
+    assert!(r
         .iter()
-        .filter(|(_, why)| why.contains("turned off"))
-        .map(|(t, _)| t.as_str())
-        .collect();
-    assert_eq!(off, ["BAD", "DEEP"]);
+        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
+    let plan = plan_updates(&r, true);
+    let mut ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, ["bad", "deep", "zoom"]);
+    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+}
+
+#[test]
+fn the_update_button_counts_only_what_the_plan_includes() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
+    let none = HashSet::new();
+    let r = rows(&entries, &world(&idx, &on, &none, false));
+    // "deep" is native and not allowed: it is left out, so the button counts two, not three.
+    assert_eq!(r.iter().filter(|r| r.update.is_some()).count(), 3);
+    assert_eq!(update_all_button(&r, false), Some(2));
+    assert_eq!(update_all_button(&r, true), Some(3));
+    // Nothing the plan can update: no button at all, not "Update 0 mods".
+    let only_deep: Vec<Row> = r.into_iter().filter(|r| r.id == "deep").collect();
+    assert_eq!(update_all_button(&only_deep, false), None);
+    assert_eq!(update_all_button(&[], true), None);
+}
+
+#[test]
+fn a_row_the_plan_cannot_update_says_why() {
+    let (idx, entries) = pack();
+    let on: HashSet<String> = ["zoom"].map(String::from).into();
+    let none = HashSet::new();
+    let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
+    let w = World {
+        chosen: &pins,
+        ..world(&idx, &on, &none, true)
+    };
+    let r = rows(&entries, &w);
+    let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
+    assert!(update_refusal(zoom, true).is_some_and(|w| w.contains("you chose")));
+    let tip = cells(zoom, None, None).status.expect("says something").tip;
+    assert!(tip.contains("you chose its version"), "{tip}");
 }
 
 #[test]
