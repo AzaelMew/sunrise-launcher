@@ -12,6 +12,7 @@ pub(super) struct Multiplayer {
     /// The game folder the list is of, and the list as last read with each picture decoded.
     home: Option<PathBuf>,
     pub(super) list: Vec<(Server, Option<Arc<Image>>)>,
+    pub(super) keys: Arc<[SavedKey]>,
     fresh: bool,
     /// The profile bound when the Add form opened, not whichever profile is selected later.
     pub(super) adding: Option<PathBuf>,
@@ -19,6 +20,7 @@ pub(super) struct Multiplayer {
     pub(super) selected: BTreeSet<SavedKey>,
     pub(super) remove: Option<BTreeSet<SavedKey>>,
     pub(super) focuses: BTreeMap<SavedKey, FocusHandle>,
+    pub(super) thumb: crate::scrollbar::Thumb,
     /// What each address answered to the status ping, asked once per list.
     pub(super) reach: HashMap<String, Reach>,
     /// The picture each address sent with that answer, for a server the game hasn't saved one
@@ -125,6 +127,7 @@ impl Launcher {
         let keys = SavedKey::of_list(self.multiplayer.list.iter().map(|(s, _)| s));
         self.multiplayer.selected.retain(|key| keys.contains(key));
         self.multiplayer.focuses.retain(|key, _| keys.contains(key));
+        self.multiplayer.keys = keys.into();
         self.multiplayer.fresh = true;
     }
 

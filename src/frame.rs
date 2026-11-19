@@ -346,6 +346,9 @@ impl Launcher {
     }
 
     pub(super) fn navigate(&mut self, page: Page) {
+        if !matches!(page, Page::Join | Page::Hosting) {
+            self.clear_home_server_target();
+        }
         match page {
             Page::Discover => self.open_mods(),
             Page::Packs => self.open_packs(),
@@ -497,6 +500,7 @@ impl Launcher {
                 // The page's header, as Mods has it: its name, then Join and Host as one
                 // control, the chosen one filled.
                 let tabs = div()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(20.))
@@ -527,7 +531,15 @@ impl Launcher {
                         ],
                         Launcher::navigate,
                         cx,
-                    ));
+                    ))
+                    .when(self.returning_to_home_server(), |tabs| {
+                        tabs.child(button("servers-back-home", tr("Back to Home")).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.navigate(Page::Home);
+                                cx.notify();
+                            }),
+                        ))
+                    });
                 div()
                     .flex()
                     .flex_col()

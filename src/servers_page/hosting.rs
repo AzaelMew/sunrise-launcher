@@ -9,13 +9,6 @@ use crate::settings::{danger, group, hint, off, row, warning};
 use gpui::rgb;
 use std::rc::Rc;
 
-fn title(text: impl Into<SharedString>) -> Div {
-    div()
-        .text_size(px(tokens::DISPLAY))
-        .font_weight(FontWeight::BOLD)
-        .child(crate::selectable::selectable(text))
-}
-
 fn label(text: &'static str) -> Div {
     caption(tr(text))
 }
@@ -549,7 +542,7 @@ impl Launcher {
                     .child(unregister),
             );
         }
-        collection::table(controls, list.into_any_element())
+        collection::table(controls, list, "host-list", &self.servers.host_thumb, cx)
     }
 
     fn host_server(&mut self, dir: &Path, cx: &mut Context<Self>) -> Div {
@@ -604,9 +597,11 @@ impl Launcher {
             },
         );
         let folder = dir.to_path_buf();
+        let narrow = self.servers_narrow();
         let head = div()
             .flex()
-            .items_center()
+            .when(narrow, |d| d.flex_col().items_start())
+            .when(!narrow, |d| d.items_center())
             .gap(px(12.))
             .child(
                 div()
@@ -615,7 +610,16 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(4.))
-                    .child(title(name))
+                    .max_w_full()
+                    .child(
+                        div()
+                            .id("host-title")
+                            .truncate()
+                            .text_size(px(tokens::DISPLAY))
+                            .font_weight(FontWeight::BOLD)
+                            .tooltip(crate::glass_ui::tip(name.clone()))
+                            .child(name),
+                    )
                     .child(
                         div()
                             .flex()
@@ -645,9 +649,8 @@ impl Launcher {
                             .text_size(px(tokens::BODY)),
                     ),
             );
-        let mut page = div();
-        if self.servers.list.len() > 1 {
-            page = page.child(
+        let mut page = div()
+            .child(
                 div().flex().child(
                     div()
                         .id("host-back")
@@ -668,9 +671,8 @@ impl Launcher {
                             cx.notify();
                         })),
                 ),
-            );
-        }
-        page = page.child(head);
+            )
+            .child(head);
         if status.crashes > 0 {
             let last = status
                 .last_crash

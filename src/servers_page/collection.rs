@@ -14,7 +14,14 @@ impl Launcher {
     }
 }
 
-pub(crate) fn table(controls: Div, rows: AnyElement) -> Div {
+pub(crate) fn table(
+    controls: Div,
+    rows: Stateful<Div>,
+    scroll_name: &'static str,
+    thumb: &crate::scrollbar::Thumb,
+    cx: &mut Context<Launcher>,
+) -> Div {
+    let scroll = crate::frame::scrolls(scroll_name);
     div()
         .flex_1()
         .min_h_0()
@@ -30,7 +37,17 @@ pub(crate) fn table(controls: Div, rows: AnyElement) -> Div {
                 .flex()
                 .flex_col()
                 .child(controls)
-                .child(rows),
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .pr(px(11.))
+                        .child(rows.track_scroll(&scroll))
+                        .child(thumb.draw(&scroll, cx).right_0()),
+                ),
         )
 }
 
@@ -51,7 +68,6 @@ pub(crate) fn rows(id: &'static str) -> Stateful<Div> {
         .flex()
         .flex_col()
         .overflow_y_scroll()
-        .track_scroll(&crate::frame::scrolls(id))
 }
 
 pub(crate) fn row(narrow: bool) -> Div {

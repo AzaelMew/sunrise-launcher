@@ -218,9 +218,7 @@ impl Launcher {
         self.ping_featured(cx);
         let narrow = self.servers_narrow();
         let saved = self.multiplayer.list.clone();
-        let keys = sunrise_launcher::server_list::SavedKey::of_list(
-            saved.iter().map(|(server, _)| server),
-        );
+        let keys = self.multiplayer.keys.clone();
         let toolbar = self.join_toolbar(cx);
         let selection = if let Some(remove) = &self.multiplayer.remove {
             collection::confirmation(
@@ -305,7 +303,9 @@ impl Launcher {
                     .child(muted(tr("No saved servers"))),
             );
         }
-        for (i, ((server, icon), key)) in saved.iter().cloned().zip(keys).enumerate() {
+        for (i, ((server, icon), key)) in
+            saved.iter().cloned().zip(keys.iter().cloned()).enumerate()
+        {
             list = list.child(self.server_row(i, server, icon, key, narrow, cx));
         }
         for (i, server) in featured().into_iter().enumerate() {
@@ -318,7 +318,7 @@ impl Launcher {
             }
             list = list.child(self.featured_row(i, server, narrow, cx));
         }
-        collection::table(controls, list.into_any_element()).into_any_element()
+        collection::table(controls, list, "join", &self.multiplayer.thumb, cx).into_any_element()
     }
 
     fn join_toolbar(&mut self, cx: &mut Context<Self>) -> Div {
@@ -489,7 +489,7 @@ impl Launcher {
             .entry(key.clone())
             .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
-        let reveal = self.home_server_target(&server.ip, &join_focus);
+        let reveal = self.home_server_target(&key, &join_focus);
         let select = collection::check(
             ("join-select", i),
             checked,
@@ -574,11 +574,12 @@ impl Launcher {
         }
     }
 
-    fn open_add_server(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn open_add_server(&mut self, cx: &mut Context<Self>) {
         use crate::servers_page::Field;
         let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
             return;
         };
+        self.load_servers(home.clone());
         let address = match entry(self.friend_code.text()) {
             Entry::Address(address) => address,
             _ => String::new(),
