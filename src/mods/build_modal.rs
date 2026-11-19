@@ -307,7 +307,7 @@ impl Launcher {
                 tr("Needs an update").into(),
             ),
             State::Skipped(_) => ("minus-sign", palette().muted, tr("Skipped").into()),
-            State::Failed(_) => ("cancel-01", palette().danger, tr("Didn't build").into()),
+            State::Failed(_) => ("cancel-01", palette().danger, tr("Failed").into()),
         };
         // "Needs an update" says it on the right, and the summary above says why for all of
         // them: no sentence repeated under each one.
@@ -335,35 +335,6 @@ impl Launcher {
             glyph.into_any_element()
         };
         let waiting = line.state == State::Waiting;
-        let check = match (&line.state, self.ui.mods.build.as_ref()) {
-            // Checking for updates is the Mods page's, once for every mod; not a link per row.
-            (State::NeedsUpdate { .. }, Some(run)) if false && !run.running() => {
-                let id = line.id.clone();
-                Some(
-                    div()
-                        .id(("build-line-check", n))
-                        .reach()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .mt(px(2.))
-                        .text_size(px(tokens::SMALL))
-                        .text_color(c(palette().accent_ink))
-                        .cursor_pointer()
-                        .child(crate::glass_ui::icon(
-                            "refresh",
-                            12.,
-                            c(palette().accent_ink),
-                        ))
-                        .child(tr("Check for update"))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.check_mod_update(&id);
-                            cx.notify();
-                        })),
-                )
-            }
-            _ => None,
-        };
         div()
             .flex()
             .flex_col()
@@ -409,8 +380,7 @@ impl Launcher {
                                             .child(line.version.clone()),
                                     ),
                             )
-                            .children(said.map(muted))
-                            .children(check.map(|check| div().flex().child(check))),
+                            .children(said.map(muted)),
                     )
                     .child(
                         div()

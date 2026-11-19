@@ -291,9 +291,6 @@ impl Launcher {
                             }
                             self.keep_stop(stake);
                         }
-                        if let native_mods::Failed::Mods { left, .. } = e {
-                            self.native_failed_mods = left.iter().map(|l| l.id.clone()).collect();
-                        }
                         // Read against the mods this build was given, not the instance now
                         // selected.
                         let built = std::mem::take(&mut self.native_built_mods);
@@ -312,6 +309,11 @@ impl Launcher {
                                 error.clone().unwrap_or_default(),
                                 &self.native_failed_mods,
                             ),
+                        }
+                        if let Err(native_mods::Failed::Mods { left, .. }) = &result {
+                            for reason in left {
+                                run.mark_left_out(reason);
+                            }
                         }
                         if !shown {
                             run.said_at = Some(Instant::now());

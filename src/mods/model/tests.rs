@@ -582,12 +582,14 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
     ];
     mark_left_out(&mut r, &list, "Nov 17", |tag| format!("name of {tag}"));
     let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
-    assert!(row("lib").left_out.as_deref().unwrap().contains("lib"));
-    assert!(row("addon")
-        .left_out
-        .as_deref()
-        .unwrap()
-        .contains("needs lib"));
+    let failed = cells(row("lib"), None, None);
+    let status = failed.status.unwrap();
+    assert_eq!(status.label, "Failed");
+    assert!(status.tip.contains("lib"));
+    assert!(failed.unavailable);
+    assert!(
+        matches!(&row("addon").left_out, Some(Omission::Skipped(why)) if why.contains("needs lib"))
+    );
     assert!(row("lib").unfit.is_none() && row("lib").need.is_none());
     let old = row("old").unfit.as_ref().unwrap();
     assert_eq!(
@@ -658,14 +660,36 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         "Needs a build"
     );
     for (at, label, tone) in [
-        (InBuild::Waiting, "Waiting", Tone::Muted),
-        (InBuild::Building, "Building", Tone::Accent),
-        (InBuild::Built, "Built", Tone::Success),
-        // The build ended without it: the card says so, not "Needs a build" again.
-        (InBuild::Failed, "Didn't build", Tone::Warning),
+        (BuildState::Waiting, "Waiting", Tone::Muted),
+        (BuildState::Building, "Building", Tone::Accent),
+        (BuildState::Built, "Built", Tone::Success),
+        (
+            BuildState::Failed("Missing hook".into()),
+            "Failed",
+            Tone::Warning,
+        ),
+        (
+            BuildState::NeedsUpdate {
+                why: "No build for this game".into(),
+                details: Vec::new(),
+            },
+            "Needs an update",
+            Tone::Warning,
+        ),
     ] {
-        let status = cells(addon, None, Some(at)).status.unwrap();
+        let cells = cells(addon, None, Some(&at));
+        let status = cells.status.unwrap();
         assert_eq!((status.label.as_str(), status.tone), (label, tone));
+        match at {
+            BuildState::Failed(why) | BuildState::NeedsUpdate { why, .. } => {
+                assert!(status.tip.contains(&why));
+                assert!(
+                    cells.unavailable && cells.switch,
+                    "can still turn the mod off"
+                );
+            }
+            _ => assert!(!cells.unavailable),
+        }
     }
     // A row with nothing pressing says where it is from, quietly; its cells are still there.
     let fine = cells(row("fine"), None, None);
