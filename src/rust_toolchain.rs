@@ -329,6 +329,13 @@ impl Toolchain {
         if fs::create_dir_all(&tmp).is_ok() {
             cmd.env("TMPDIR", &tmp).env("TMP", &tmp).env("TEMP", &tmp);
         }
+        if cfg!(windows) {
+            let system_root = std::env::var_os("SystemRoot");
+            let comspec = std::env::var_os("ComSpec");
+            if let Some(cmd_exe) = comspec_fix(comspec.as_deref(), system_root.as_deref()) {
+                cmd.env("ComSpec", cmd_exe);
+            }
+        }
         for name in SCRUBBED {
             cmd.env_remove(name);
         }
@@ -457,6 +464,22 @@ pub fn low_priority(cmd: &mut Command) -> &mut Command {
         cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
     }
     cmd
+}
+
+/// The `ComSpec` a build tool needs when the player's names no file: `windres` runs its
+/// preprocessor through the command interpreter `ComSpec` names, so the resource step of a
+/// build fails when it is stale or empty. `None` when it is fine, or when `system_root`
+/// (`%SystemRoot%`) gives no `cmd.exe` to put there.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn comspec_fix(
+    comspec: Option<&std::ffi::OsStr>,
+    system_root: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    if comspec.is_some_and(|c| Path::new(c).is_file()) {
+        return None;
+    }
+    let cmd_exe = Path::new(system_root?).join("System32").join("cmd.exe");
+    cmd_exe.is_file().then_some(cmd_exe)
 }
 
 pub const SCRUBBED: [&str; 8] = [
@@ -934,6 +957,31 @@ pub fn remove() -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_comspec_naming_no_file_is_replaced_by_the_system_cmd() {
+        let root = tempfile::tempdir().unwrap();
+        let system32 = root.path().join("System32");
+        fs::create_dir_all(&system32).unwrap();
+        let root_os = root.path().as_os_str();
+        let missing = root.path().join("gone.exe");
+        // No cmd.exe under the system root: nothing to offer.
+        assert_eq!(comspec_fix(Some(missing.as_os_str()), Some(root_os)), None);
+        fs::write(system32.join("cmd.exe"), b"").unwrap();
+        let expected = system32.join("cmd.exe");
+        assert_eq!(
+            comspec_fix(Some(missing.as_os_str()), Some(root_os)),
+            Some(expected.clone())
+        );
+        assert_eq!(comspec_fix(None, Some(root_os)), Some(expected.clone()));
+        assert_eq!(
+            comspec_fix(Some("".as_ref()), Some(root_os)),
+            Some(expected.clone())
+        );
+        // A ComSpec that names a file stays the player's.
+        assert_eq!(comspec_fix(Some(expected.as_os_str()), Some(root_os)), None);
+        assert_eq!(comspec_fix(None, None), None);
+    }
 
     #[test]
     fn archive_download_checks_pinned_length_as_well_as_hash() {
