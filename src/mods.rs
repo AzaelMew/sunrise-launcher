@@ -81,6 +81,23 @@ struct Open {
     page: Option<Result<Box<model::Page>, String>>,
 }
 
+/// The ids switched on among the registry entries and the hand-placed packages.
+fn enabled_ids(home: &Path, entries: &[Entry], local: &[model::Local]) -> HashSet<String> {
+    let mut enabled: HashSet<String> = entries
+        .iter()
+        .filter_map(|e| sunrise::mod_id(e))
+        .filter(|id| mod_list::is_enabled(home, id))
+        .map(str::to_owned)
+        .collect();
+    enabled.extend(
+        local
+            .iter()
+            .filter(|l| mod_list::is_enabled(home, &l.id))
+            .map(|l| l.id.clone()),
+    );
+    enabled
+}
+
 struct Snapshot {
     key: String,
     home: PathBuf,
@@ -453,12 +470,7 @@ impl Launcher {
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
                 Event::Local(key, local) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        snap.enabled.extend(
-                            local
-                                .iter()
-                                .filter(|l| mod_list::is_enabled(&snap.home, &l.id))
-                                .map(|l| l.id.clone()),
-                        );
+                        snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
                         snap.local = local;
                         snap.reading = false;
                     }
@@ -556,18 +568,7 @@ impl Launcher {
             std::thread::spawn(move || {
                 let _ = tx.send(Event::Local(worker_key, read_local(&worker_home)));
             });
-            let mut enabled: HashSet<String> = entries
-                .iter()
-                .filter_map(|e| sunrise::mod_id(e))
-                .filter(|id| mod_list::is_enabled(&home, id))
-                .map(str::to_owned)
-                .collect();
-            enabled.extend(
-                local
-                    .iter()
-                    .filter(|l| mod_list::is_enabled(&home, &l.id))
-                    .map(|l| l.id.clone()),
-            );
+            let enabled = enabled_ids(&home, &entries, &local);
             let chosen = sunrise::chosen(&home);
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
@@ -947,5 +948,30 @@ impl Launcher {
                 cx,
             ))
             .child(field)
+    }
+}
+
+#[cfg(test)]
+mod enabled_tests {
+    use super::*;
+
+    #[test]
+    fn enabled_ids_come_from_the_current_packages_only() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("sunrise-mods.txt"),
+            "mod.kept: true\nmod.gone: true\nmod.off: false\n",
+        )
+        .unwrap();
+        let local = |id: &str| model::Local {
+            id: id.into(),
+            name: id.into(),
+            version: String::new(),
+            github: false,
+            native: false,
+        };
+        // "gone" was a package of the list known before and is no longer there.
+        let got = enabled_ids(home.path(), &[], &[local("kept"), local("off")]);
+        assert_eq!(got, HashSet::from(["kept".to_string()]));
     }
 }
