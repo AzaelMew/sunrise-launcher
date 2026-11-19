@@ -518,7 +518,7 @@ impl Launcher {
                     .children(act)
                     .child(says),
             )
-            .child(lane.ml(px(12.)).mb(px(-GAP)))
+            .child(lane.ml(px(12.)).mb(px(-GAP - crate::cat::BELOW_FEET)))
     }
 
     /// The build the profile plays. Press to see how it follows new ones.
