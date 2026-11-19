@@ -18,6 +18,8 @@ pub(super) enum PendingConsent {
     /// The project to install by id, the project when the page had it, and the name the page or
     /// card that asked was showing for it.
     Install(SourceId, String, Option<Project>, Option<String>),
+    /// The registry mods of a collection to install together, and the collection's name.
+    Collection(Vec<String>, String),
     Github(Resolved, Option<String>),
 }
 
@@ -45,6 +47,7 @@ impl PendingConsent {
                 .or_else(|| project.as_ref().map(|p| p.title.clone()))
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| id.clone()),
+            Self::Collection(_, name) => name.clone(),
             Self::Github(found, _) => found.label(),
         }
     }
@@ -130,6 +133,7 @@ pub(super) fn resolve(
             }
             PendingConsent::ReadingBuild(_)
             | PendingConsent::Install(..)
+            | PendingConsent::Collection(..)
             | PendingConsent::Github(..) => {}
         }
     }

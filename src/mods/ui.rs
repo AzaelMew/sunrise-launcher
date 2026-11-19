@@ -22,6 +22,22 @@ pub(super) fn tag(label: &'static str) -> Div {
         .child(label)
 }
 
+/// What kind of thing a card or page is, where a plain tag would not stand out: "Collection",
+/// "Library".
+pub(super) fn badge(label: &'static str) -> Div {
+    div()
+        .flex_none()
+        .px(px(6.))
+        .py(px(1.))
+        .rounded(crate::tokens::r(crate::tokens::R_SMALL))
+        .border_1()
+        .border_color(c(palette().accent_ink))
+        .text_size(px(tokens::CAPTION))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(c(palette().accent_ink))
+        .child(label)
+}
+
 pub(super) fn muted(text: impl Into<SharedString>) -> Div {
     div()
         .text_size(px(tokens::SMALL))
@@ -278,6 +294,19 @@ fn mix(a: Hsla, b: Hsla, v: f32) -> Hsla {
 }
 
 pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
+    checkbox_of(id, on, false)
+}
+
+/// A box over a set: ticked when all of it is, a dash when only some is, empty when none is.
+pub(super) fn checkbox_of_set(
+    id: impl Into<ElementId>,
+    ticks: model::collection::Ticks,
+) -> Stateful<Div> {
+    use model::collection::Ticks;
+    checkbox_of(id, ticks != Ticks::None, ticks == Ticks::Some)
+}
+
+fn checkbox_of(id: impl Into<ElementId>, on: bool, dash: bool) -> Stateful<Div> {
     div()
         .id(id)
         .flex_none()
@@ -301,7 +330,14 @@ pub(crate) fn checkbox(id: impl Into<ElementId>, on: bool) -> Stateful<Div> {
         .items_center()
         .justify_center()
         .cursor_pointer()
-        .children(on.then(|| blocks::icon("check", 12., c(palette().background))))
+        .children((on && !dash).then(|| blocks::icon("check", 12., c(palette().background))))
+        .children(dash.then(|| {
+            div()
+                .w(px(8.))
+                .h(px(2.))
+                .rounded(crate::tokens::r(1.))
+                .bg(c(palette().background))
+        }))
 }
 
 pub(super) use crate::mod_icons::tile;

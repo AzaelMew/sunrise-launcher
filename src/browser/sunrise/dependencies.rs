@@ -1,8 +1,11 @@
 //! A manual registry install stages and verifies the whole set before changing the profile.
 use super::{fs, index, installed, mod_list, Install, SourceId};
 use semver::{Version, VersionReq};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use sunrise_launcher_smod::index::resolve::{self, Request, RequestResult};
+use sunrise_launcher_smod::manifest::Side;
 use sunrise_launcher_smod::mod_list::FILE as ENABLED;
 
 pub(super) fn install(
@@ -17,12 +20,37 @@ pub(super) fn install(
         .prefix(".installed-mods-")
         .tempdir_in(home)
         .map_err(|e| format!("{}: {e}", home.display()))?;
+    let installed = installed::Installed::load(home);
+    // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
+    // reason before anything downloads, and each dependency is fetched at the version it chose.
+    let held = super::held_mods(&installed.entries);
+    let planned = resolve::install(
+        install.index,
+        &[Request {
+            id: project.id.clone(),
+            version: Some(version.version.clone()),
+        }],
+        &held,
+        &version.game,
+        Side::Both,
+        |_, v| super::fits_game(v, &version.game),
+    );
+    if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
+        return Err(format!("{} can't be installed: {reason}", project.name));
+    }
+    let chosen: BTreeMap<String, String> = planned
+        .install
+        .into_iter()
+        .map(|m| (m.id, m.version))
+        .chain(planned.update.into_iter().map(|u| (u.id, u.to)))
+        .collect();
     let mut plan = Plan {
         install,
         staged: staged.path(),
-        installed: installed::Installed::load(home),
+        installed,
         selected: Vec::new(),
         native_allowed,
+        chosen,
     };
     plan.add(project, version, 0)?;
 
@@ -81,6 +109,8 @@ struct Plan<'a> {
     installed: installed::Installed,
     selected: Vec<(installed::Entry, Option<PathBuf>)>,
     native_allowed: bool,
+    /// The version the index plan chose for each mod it installs or updates.
+    chosen: BTreeMap<String, String>,
 }
 
 impl Plan<'_> {
@@ -149,7 +179,15 @@ impl Plan<'_> {
             .versions
             .iter()
             .filter(|v| v.game == game && matches(&v.version));
-        let mut candidates = candidates.filter(|v| v.capabilities.unknown().is_empty());
+        // Only a mod the plan names is held to the planned version: one it doesn't list (its owner
+        // carried no claim, or the plan kept an installed copy) takes the first version in range.
+        let mut candidates = candidates
+            .filter(|v| v.capabilities.unknown().is_empty())
+            .filter(|v| {
+                self.chosen
+                    .get(id)
+                    .is_none_or(|chosen| *chosen == v.version)
+            });
         let v = if let Some(old) = self.installed.find(SourceId::Sunrise, id) {
             let v = candidates
                 .find(|v| v.version == old.version)

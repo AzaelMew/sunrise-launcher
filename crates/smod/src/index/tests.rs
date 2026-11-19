@@ -503,3 +503,60 @@ fn installing_a_wasm_mod_checks_its_runtime_files_against_the_manifest() {
     let error = refused.unwrap_err();
     assert!(error.contains("runtime/nav.bin"), "{error}");
 }
+
+/// The facts of a file that is exactly what `v` lists, with the manifest's dependencies `deps`.
+fn facts_of(p: &Project, v: &Version, deps: &[(&str, &str)]) -> Facts {
+    Facts {
+        id: Some(p.id.clone()),
+        version: Some(v.version.clone()),
+        api: v.api.clone(),
+        side: v.side,
+        capabilities: v.capabilities.known().to_vec(),
+        game: Some(v.game.clone()),
+        requires: v.requires.clone(),
+        dependencies: deps
+            .iter()
+            .map(|(id, range)| {
+                (
+                    (*id).to_owned(),
+                    crate::manifest::Dependency::Version(range.parse().unwrap()),
+                )
+            })
+            .collect(),
+    }
+}
+
+#[test]
+fn a_listed_dependency_claim_must_be_what_the_manifest_declares() {
+    let mut index = sample();
+    let p = index.project("coords_hud").unwrap().clone();
+    let listed = |index: &mut Index, claim: Option<Vec<Dependency>>| {
+        index.projects[0].versions[0].dependencies = claim;
+        index.projects[0].versions[0].clone()
+    };
+    let row = |id: &str, range: &str| Dependency {
+        id: id.into(),
+        version: range.into(),
+        optional: false,
+        side: None,
+    };
+    let manifest = [("lib", "^0.1")];
+
+    // No claim in the index (schema 1, or an index that omits it): nothing to compare.
+    let v = listed(&mut index, None);
+    assert_eq!(facts_of(&p, &v, &manifest).matches(&p, &v), Ok(()));
+    // A claim equal to the manifest's dependencies.
+    let v = listed(&mut index, Some(vec![row("lib", "^0.1")]));
+    assert_eq!(facts_of(&p, &v, &manifest).matches(&p, &v), Ok(()));
+    assert!(facts_of(&p, &v, &[]).matches(&p, &v).is_err());
+    // A claim that differs: another range, another id, or an empty list against a manifest
+    // that has dependencies.
+    for claim in [vec![row("lib", "^0.2")], vec![row("other", "^0.1")], vec![]] {
+        let v = listed(&mut index, Some(claim));
+        let refused = facts_of(&p, &v, &manifest).matches(&p, &v).unwrap_err();
+        assert!(
+            refused.contains("dependencies aren't what the index lists"),
+            "{refused}"
+        );
+    }
+}

@@ -31,6 +31,7 @@ use sunrise_launcher::browser::{
 mod actions;
 mod build_modal;
 pub(crate) mod build_run;
+mod collection;
 mod data_packs;
 mod discover;
 mod installed_view;
@@ -42,6 +43,7 @@ mod project;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
+pub(crate) use model::collection::{needs_consent, run_in_order};
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -79,6 +81,8 @@ struct Open {
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
+    /// The collection's page this mod's was opened from: Back returns to it.
+    parent: Option<String>,
 }
 
 struct Snapshot {
@@ -156,6 +160,8 @@ pub(crate) struct ModsState {
     reviewed_home: Option<PathBuf>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
+    /// The collection whose page is open and the members ticked on it.
+    picks: Option<collection::Picks>,
     /// My own batch (update or remove): its line and fraction.
     busy: Option<(String, f32)>,
     notice: Option<Result<String, String>>,
@@ -209,6 +215,7 @@ impl Default for ModsState {
             reviewed_home: None,
             snapshot: None,
             open: None,
+            picks: None,
             busy: None,
             notice: None,
             errors: HashMap::new(),
@@ -266,8 +273,24 @@ impl Launcher {
             Page::Installed => Page::Installed,
             _ => Page::Discover,
         };
+        // A collection's page opened from a list starts from its defaults again.
+        if self.is_collection(&id) && self.ui.page != Page::Project {
+            self.ui.mods.picks = None;
+        }
+        let parent = (self.ui.page == Page::Project)
+            .then(|| self.ui.mods.open.as_ref().map(|o| o.id.clone()))
+            .flatten()
+            .filter(|open| self.is_collection(open));
         self.ui.page = Page::Project;
         self.mods_load_page(id, from);
+        if let Some(open) = self.ui.mods.open.as_mut() {
+            open.parent = parent;
+        }
+    }
+
+    fn is_collection(&self, id: &str) -> bool {
+        matches!(&self.ui.mods.catalog, Catalog::Ready(cards, _)
+            if cards.iter().any(|c| c.id == id && c.members.is_some()))
     }
 
     /// The installed mods `ids` as people read them: each one's name, and the newer version the
@@ -581,7 +604,12 @@ impl Launcher {
             id: id.clone(),
             from,
             page: None,
+            parent: None,
         });
+        // A collection's page reads the index when it draws.
+        if self.is_collection(&id) {
+            return;
+        }
         let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
         let instance = instances::selected();
         std::thread::spawn(move || {

@@ -383,6 +383,70 @@ impl Launcher {
     }
 }
 
+impl Launcher {
+    /// A collection's one Install: the registry mods `ids` planned together, then installed one
+    /// after another, each with what it needs, as the mod page's Install does one. A failure
+    /// stops the rest and names the mod; the ones before it stay installed. `shown` is the
+    /// collection's name.
+    pub(super) fn mods_install_many(&mut self, ids: Vec<String>, shown: String) {
+        if self.mods.busy.is_some() || ids.is_empty() {
+            return;
+        }
+        if crate::mods::needs_consent(
+            &ids,
+            self.settings.native_mods_allowed_at.is_some(),
+            sunrise::is_native_mod,
+        ) {
+            self.pending_consent = Some(PendingConsent::Collection(ids, shown));
+            self.content_scroll
+                .handle
+                .set_offset(gpui::point(px(0.), px(0.)));
+            return;
+        }
+        self.mods.message = None;
+        self.mods.busy = Some((
+            shown.clone(),
+            tr("Asking the Sunrise registry…").to_string(),
+            0.,
+        ));
+        let (tx, home, game) = (self.mods.tx.clone(), self.mods.home(), self.mods_game());
+        std::thread::spawn(move || {
+            let result = (|| -> Result<String, String> {
+                // The whole set is planned once first: a conflict between picks refuses all of
+                // them before anything downloads. Each is then installed with what it needs.
+                let index = sunrise::fetched_index().ok_or_else(|| {
+                    tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
+                        .to_string()
+                })?;
+                let held = sunrise::held_mods(&installed::Installed::load(&home).entries);
+                sunrise::check_set(&index, &ids, &held, &game)?;
+                let source = browser::source(SourceId::Sunrise);
+                let total = ids.len() as f32;
+                let mut names = crate::mods::run_in_order(&ids, |i, id| {
+                    let p = source.project(id)?;
+                    let progress = |line: &str, f: f32| {
+                        let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
+                    };
+                    installed::install(&*source, &p, false, &home, &game, &progress)
+                        .map(|done| done.into_iter().map(|e| e.title).collect())
+                        .map_err(|why| {
+                            trf(
+                                "{mod} didn't install: {why}",
+                                &[("mod", &p.title), ("why", &why)],
+                            )
+                        })
+                })?;
+                names.dedup();
+                Ok(trf(
+                    "Installed {mods}.",
+                    &[("mods", &crate::mods::names(&names))],
+                ))
+            })();
+            let _ = tx.send(Event::Done(result));
+        });
+    }
+}
+
 /// An instance whose registry projects may update.
 pub(super) struct AutoTarget {
     pub(super) instance: instances::Instance,

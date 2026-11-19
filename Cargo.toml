@@ -1,6 +1,6 @@
 [package]
 name = "sunrise-launcher"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 license = "PolyForm-Shield-1.0.0"
 description = "Downloads, prepares and starts Sunrise builds"

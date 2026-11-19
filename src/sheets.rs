@@ -1039,6 +1039,7 @@ impl Launcher {
                     PendingConsent::Install(source, id, known, _) => {
                         self.mods_install(source, id, known, None)
                     }
+                    PendingConsent::Collection(ids, name) => self.mods_install_many(ids, name),
                     PendingConsent::Github(found, only) => self.github_install(found, only),
                 }
             }
