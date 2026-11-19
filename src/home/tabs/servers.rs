@@ -12,6 +12,7 @@ impl Launcher {
         &mut self,
         instance: &instances::Instance,
         compact: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Content {
         self.load_servers(instance.home.clone());
@@ -54,6 +55,7 @@ impl Launcher {
                     server.name,
                     (!compact || status.is_none()).then(|| address.clone()),
                     status,
+                    window,
                     cx,
                     move |this| {
                         this.ui.home.tabs.server = Some(Target {
