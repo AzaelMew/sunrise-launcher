@@ -429,6 +429,13 @@ pub fn pick<'a>(
     usable.find(|v| everything && support(kind, &v.game_versions, &v.loaders, game).installable())
 }
 
+/// A source's file name with the characters Windows forbids in a file name (`:` `*` `?` `"` `<` `>`
+/// `|`) swapped for `-`, so a pack called "Yet Another Bingo: Ultimate.mrpack" is saved as
+/// "Yet Another Bingo- Ultimate.mrpack". Folders, `..` and the rest still go to [`safe_name`].
+pub fn plain_name(name: &str) -> String {
+    name.replace([':', '*', '?', '"', '<', '>', '|'], "-")
+}
+
 /// A file name from a source, kept only when it is one plain name: no folders, no `..`, no
 /// hidden file, nothing a file system would read as something else.
 pub fn safe_name(name: &str) -> Option<&str> {
