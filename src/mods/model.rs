@@ -538,7 +538,12 @@ pub(super) mod column {
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
 /// applies, most pressing first; whatever else applies is in its tooltip.
-pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState>) -> Cells {
+pub(super) fn cells(
+    row: &Row,
+    error: Option<&str>,
+    building: Option<&BuildState>,
+    native_allowed: bool,
+) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -636,15 +641,12 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
             "refresh",
             trf("{version} is out", &[("version", to)]),
             Tone::Info,
-            match row.pinned {
-                true => trf(
+            match update_refusal(row, native_allowed) {
+                Some(why) => trf(
                     "Version {version} is out. {why}",
-                    &[
-                        ("version", to),
-                        ("why", &update_refusal(row, true).unwrap_or_default()),
-                    ],
+                    &[("version", to), ("why", &why)],
                 ),
-                false => trf("Version {version} is out", &[("version", to)]),
+                None => trf("Version {version} is out", &[("version", to)]),
             },
         );
     }

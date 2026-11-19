@@ -533,7 +533,12 @@ impl Launcher {
             .filter(|_| r.on)
             .and_then(|run| run.state_of(&r.id, &r.version));
         let failed = matches!(building, Some(State::Failed(_)));
-        let cells = model::cells(&r, error.as_deref(), building);
+        let cells = model::cells(
+            &r,
+            error.as_deref(),
+            building,
+            self.settings.native_mods_allowed_at.is_some(),
+        );
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,
