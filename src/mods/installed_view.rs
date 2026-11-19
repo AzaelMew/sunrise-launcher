@@ -7,6 +7,96 @@ use crate::paint::palette;
 use std::rc::Rc;
 use sunrise_launcher::browser::images;
 
+#[derive(Clone, Copy)]
+enum Item {
+    Group(Group, usize),
+    Mod(usize),
+}
+
+struct Results {
+    rows: Rc<Vec<Row>>,
+    filter: model::RowFilter,
+    items: Vec<Item>,
+    selectable: Vec<String>,
+    shown: usize,
+    builds: Option<usize>,
+    updates: usize,
+    on: usize,
+    native: usize,
+    content: usize,
+}
+
+impl Results {
+    fn new(rows: Rc<Vec<Row>>, filter: model::RowFilter) -> Self {
+        let visible = model::visible(&rows, &filter);
+        let builds = model::build_in_head(&rows, &visible);
+        let mut items = Vec::new();
+        let mut selectable = Vec::new();
+        for group in [Group::NeedsYou, Group::Updates, Group::Rest] {
+            let count = visible
+                .iter()
+                .filter(|&&n| rows[n].group() == group)
+                .count();
+            if count == 0 {
+                continue;
+            }
+            items.push(Item::Group(group, count));
+            for &n in visible.iter().filter(|&&n| rows[n].group() == group) {
+                items.push(Item::Mod(n));
+                if rows[n].local.is_none() {
+                    selectable.push(rows[n].id.clone());
+                }
+            }
+        }
+        Self {
+            shown: visible.len(),
+            updates: rows.iter().filter(|r| r.update.is_some()).count(),
+            on: rows.iter().filter(|r| r.on).count(),
+            native: rows.iter().filter(|r| r.make == Some(Make::Native)).count(),
+            content: rows
+                .iter()
+                .filter(|r| r.make == Some(Make::Content))
+                .count(),
+            rows,
+            filter,
+            items,
+            selectable,
+            builds,
+        }
+    }
+
+    fn row(&self, at: usize) -> Option<&Row> {
+        let Item::Mod(n) = *self.items.get(at)? else {
+            return None;
+        };
+        Some(&self.rows[n])
+    }
+}
+
+#[derive(Default)]
+pub(super) struct InstalledView {
+    results: Option<Rc<Results>>,
+    scroll: gpui::UniformListScrollHandle,
+    focus: HashMap<String, FocusHandle>,
+}
+
+fn select_mod(mods: &mut ModsState, selectable: &[String], id: &str, range: bool) {
+    let anchor = range.then_some(mods.anchor.as_ref()).flatten();
+    let a = anchor.and_then(|a| selectable.iter().position(|id| id == a));
+    let b = a.and_then(|_| selectable.iter().position(|current| current == id));
+    match (a, b) {
+        (Some(a), Some(b)) => mods
+            .selection
+            .extend(selectable[a.min(b)..=a.max(b)].iter().cloned()),
+        _ => {
+            if !mods.selection.remove(id) {
+                mods.selection.insert(id.to_owned());
+            }
+        }
+    }
+    mods.anchor = Some(id.to_owned());
+}
+
 impl Launcher {
     pub(super) fn installed(
         &mut self,
@@ -26,7 +116,7 @@ impl Launcher {
             .children(self.strip(cx));
 
         self.ui.mods.build_button_drawn = false;
-        let rows = self.rows();
+        let rows = self.installed_rows();
         if rows.is_empty() {
             return page
                 .child(
@@ -51,34 +141,42 @@ impl Launcher {
                 .into_any_element();
         }
 
-        let filter = self.ui.mods.row_filter.clone();
-        let visible = model::visible(&rows, &filter);
-        // Whether this page draws the Build button, and with it a running build's bar: the
-        // status strip, drawn after the page, leaves its own bar out only then.
-        let build = model::build_in_head(&rows, &visible);
-        self.ui.mods.build_button_drawn = build.is_some();
-        let shown_ids: Rc<Vec<String>> = Rc::new(
-            visible
-                .iter()
-                .filter(|&&i| rows[i].local.is_none())
-                .map(|&i| rows[i].id.clone())
-                .collect(),
-        );
-        let selected: Vec<&Row> = rows
-            .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
-            .collect();
+        let view = &mut self.ui.mods.installed_view;
+        let filter = &self.ui.mods.row_filter;
+        if view
+            .results
+            .as_ref()
+            .is_none_or(|old| !Rc::ptr_eq(&old.rows, &rows) || &old.filter != filter)
+        {
+            if view
+                .results
+                .as_ref()
+                .is_some_and(|old| &old.filter != filter)
+            {
+                view.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
+            }
+            view.results = Some(Rc::new(Results::new(rows.clone(), filter.clone())));
+        }
+        let results = view.results.as_ref().expect("computed above").clone();
+        let filter = &results.filter;
+        self.ui.mods.build_button_drawn = results.builds.is_some();
+        let selected: Vec<&Row> = if self.ui.mods.selection.is_empty() {
+            Vec::new()
+        } else {
+            rows.iter()
+                .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+                .collect()
+        };
 
         // ---- what to show: the same row of chips Discover filters with
-        let count = |f: &dyn Fn(&Row) -> bool| rows.iter().filter(|r| f(r)).count();
         let counted = |label: &str, n: usize| {
             trf("{label} · {n}", &[("label", label), ("n", &n.to_string())])
         };
         let mut chips = div().flex().flex_wrap().items_center().gap(px(8.));
         let shown = [
             (tr("All"), rows.len(), Show::All),
-            (tr("Turned on"), count(&|r| r.on), Show::On),
-            (tr("Turned off"), count(&|r| !r.on), Show::Off),
+            (tr("Turned on"), results.on, Show::On),
+            (tr("Turned off"), rows.len() - results.on, Show::Off),
         ]
         .into_iter()
         .map(|(label, n, which)| {
@@ -93,8 +191,13 @@ impl Launcher {
         .collect();
         chips = chips.child(choices("alt-show", shown, cx).gap(px(8.)));
         chips = chips.child(div().flex_none().w(px(1.)).h(px(20.)).bg(c(palette().line)));
-        for (i, make) in [Make::Native, Make::Content].into_iter().enumerate() {
-            let n = count(&|r| r.make == Some(make));
+        for (i, (make, n)) in [
+            (Make::Native, results.native),
+            (Make::Content, results.content),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             chips = chips.child(
                 // Two switches, not one choice: each is its own Tab stop.
                 chip(
@@ -118,11 +221,12 @@ impl Launcher {
         page = page.child(chips);
 
         // ---- toolbar: select-all and the bulk actions, naming their scope
-        let selected_here = shown_ids
+        let selected_here = results
+            .selectable
             .iter()
             .filter(|id| self.ui.mods.selection.contains(*id))
             .count();
-        let all_on = selected_here > 0 && selected_here == shown_ids.len();
+        let all_on = selected_here > 0 && selected_here == results.selectable.len();
         let n_sel = selected.len();
         let busy = self.mods_busy();
         let with_update = selected.iter().filter(|r| r.update.is_some()).count();
@@ -140,7 +244,7 @@ impl Launcher {
             }
         };
         let toolbar = {
-            let ids = shown_ids.clone();
+            let scope = results.clone();
             let select_all = checkbox("alt-select-all", all_on)
                 .when(selected_here > 0 && !all_on, |d| {
                     d.bg(c(palette().text))
@@ -149,9 +253,12 @@ impl Launcher {
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     let m = &mut this.ui.mods;
-                    match ids.iter().all(|id| m.selection.contains(id)) {
-                        true => m.selection.clear(),
-                        false => m.selection.extend(ids.iter().cloned()),
+                    if scope.selectable.iter().all(|id| m.selection.contains(id)) {
+                        for id in &scope.selectable {
+                            m.selection.remove(id);
+                        }
+                    } else {
+                        m.selection.extend(scope.selectable.iter().cloned());
                     }
                     m.anchor = None;
                     cx.notify();
@@ -161,53 +268,50 @@ impl Launcher {
                 .items_center()
                 .gap(px(10.))
                 .px(px(14.))
-                .h(px(48.))
-                .border_b_1()
-                .border_color(c(palette().divider))
+                .min_h(px(40.))
+                .py(px(2.))
                 .child(select_all);
             if n_sel == 0 {
                 bar = bar.child(muted(trf(
                     "{shown} of {total} mods shown",
                     &[
-                        ("shown", &shown_ids.len().to_string()),
+                        ("shown", &results.shown.to_string()),
                         ("total", &rows.len().to_string()),
                     ],
                 )));
             } else {
-                let on = bulk(
-                    "alt-bulk-on",
-                    trf("Turn on {count}", &[("count", &n_sel.to_string())]),
-                    true,
-                    false,
-                );
-                let off = bulk(
-                    "alt-bulk-off",
-                    trf("Turn off {count}", &[("count", &n_sel.to_string())]),
-                    true,
-                    false,
-                );
+                let narrow = self.content_width() < 860.;
+                let on = bulk("alt-bulk-on", tr("Turn on").into(), true, false);
+                let off = bulk("alt-bulk-off", tr("Turn off").into(), true, false);
                 let upd = bulk(
                     "alt-bulk-update",
-                    trf("Update {count}", &[("count", &with_update.to_string())]),
+                    tr("Update").into(),
                     with_update > 0,
                     false,
                 );
-                let rm = bulk(
-                    "alt-bulk-remove",
-                    trf("Remove {count}…", &[("count", &n_sel.to_string())]),
-                    true,
-                    true,
-                );
-                bar =
-                    bar.child(div().text_size(px(tokens::LABEL)).child(
-                        crate::selectable::selectable(trf(
-                            "{count} selected of {shown} shown",
-                            &[
-                                ("count", &n_sel.to_string()),
-                                ("shown", &shown_ids.len().to_string()),
-                            ],
-                        )),
-                    ))
+                let rm = bulk("alt-bulk-remove", tr("Remove…").into(), true, true);
+                bar = bar
+                    .child(muted(trf(
+                        "{count} selected",
+                        &[("count", &n_sel.to_string())],
+                    )))
+                    .child(div().flex_1())
+                    .child(
+                        muted(tr("Clear"))
+                            .id("alt-selection-clear")
+                            .reach()
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.ui.mods.selection.clear();
+                                this.ui.mods.anchor = None;
+                                cx.notify();
+                            })),
+                    );
+                let actions = div()
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(6.))
+                    .items_center()
                     .child(if !busy {
                         on.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.bulk_on();
@@ -239,91 +343,104 @@ impl Launcher {
                         }))
                     } else {
                         rm
-                    })
-                    .child(div().flex_1())
-                    .child(
-                        muted(tr("Clear"))
-                            .id("alt-selection-clear")
-                            .reach()
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.ui.mods.selection.clear();
-                                this.ui.mods.anchor = None;
-                                cx.notify();
-                            })),
-                    );
+                    });
+                bar = if narrow {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(bar)
+                        .child(actions.px(px(14.)).pb(px(8.)))
+                } else {
+                    bar.child(actions)
+                };
             }
-            bar
+            let current_actions = div().flex().flex_wrap().gap(px(6.)).items_center();
+            let build = results.builds.map(|n| self.build_button(n, busy, cx));
+            let update = (results.updates > 0).then(|| {
+                let b = crate::frame::button(
+                    "alt-update-all",
+                    trf(
+                        "Update {count} mods",
+                        &[("count", &results.updates.to_string())],
+                    ),
+                );
+                if busy {
+                    dim(b)
+                } else {
+                    b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.ask_update(false);
+                        cx.notify();
+                    }))
+                }
+            });
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .border_b_1()
+                .border_color(c(palette().divider))
+                .child(bar)
+                .children((build.is_some() || update.is_some()).then(|| {
+                    current_actions
+                        .px(px(14.))
+                        .pb(px(8.))
+                        .children(build)
+                        .children(update)
+                }))
         };
 
-        // ---- rows, in three groups
-        let mut list = div().flex().flex_col();
-        let mut last: Option<Group> = None;
-        let mut position = 0;
-        let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
-        let updates_total = rows.iter().filter(|r| r.update.is_some()).count();
-        for (n, &i) in visible.iter().enumerate() {
-            let r = rows[i].clone();
-            let g = r.group();
-            if last != Some(g) {
-                last = Some(g);
-                let (title, count) = match g {
-                    Group::NeedsYou => (tr("NEEDS YOU"), group_counts(g)),
-                    Group::Updates => (tr("UPDATES"), group_counts(g)),
-                    Group::Rest => (tr("EVERYTHING ELSE"), group_counts(g)),
-                };
-                let mut head = div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .px(px(14.))
-                    .min_h(px(tokens::FIELD))
-                    .bg(c(palette().background))
-                    .child(
-                        div()
-                            .text_size(px(tokens::CAPTION))
-                            .text_color(c(palette().muted))
-                            .child(crate::selectable::selectable(trf(
-                                "{title} · {count}",
-                                &[("title", title), ("count", &count.to_string())],
-                            ))),
-                    );
-                if let Some(waiting) = build.filter(|_| g == Group::NeedsYou) {
-                    // The button has as much room above and below as beside it.
-                    head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
+        let scroll = self.ui.mods.installed_view.scroll.clone();
+        crate::frame::scrolls_with(&scroll.0.borrow().base_handle);
+        if !self.ui.mods.revealed.get() {
+            if let Some(search::Reveal::Mod(id)) = &self.ui.mods.reveal {
+                if let Some(at) = (0..results.items.len())
+                    .find(|&at| results.row(at).is_some_and(|r| &r.id == id))
+                {
+                    scroll.scroll_to_item(at, gpui::ScrollStrategy::Nearest);
+                    self.ui.mods.revealed.set(true);
                 }
-                if g == Group::Updates {
-                    let b = crate::frame::button(
-                        "alt-update-all",
-                        trf(
-                            "Update {count} mods",
-                            &[("count", &updates_total.to_string())],
-                        ),
-                    );
-                    head = head.child(if !busy {
-                        b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.ask_update(false);
-                            cx.notify();
-                        }))
-                    } else {
-                        dim(b)
-                    });
-                }
-                list = list.child(head);
             }
-            let pos = position;
-            if r.local.is_none() {
-                position += 1;
-            }
-            list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
         }
-        if visible.is_empty() {
-            list = list.child(
-                div()
-                    .p(px(16.))
-                    .child(muted(tr("No mods match this search or filter."))),
-            );
-        }
+        let height = if self.content_width() >= 860. {
+            56.
+        } else {
+            72.
+        };
+        let displayed = results.clone();
+        let list = gpui::uniform_list(
+            "alt-installed-scroll",
+            results.items.len(),
+            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                range
+                    .map(|at| match displayed.items[at] {
+                        Item::Group(group, count) => {
+                            let title = match group {
+                                Group::NeedsYou => tr("NEEDS YOU"),
+                                Group::Updates => tr("UPDATES"),
+                                Group::Rest => tr("EVERYTHING ELSE"),
+                            };
+                            div()
+                                .id(("installed-group", at))
+                                .h(px(height))
+                                .px(px(14.))
+                                .flex()
+                                .items_center()
+                                .bg(c(palette().background))
+                                .text_size(px(tokens::CAPTION))
+                                .text_color(c(palette().muted))
+                                .child(trf(
+                                    "{title} · {count}",
+                                    &[("title", title), ("count", &count.to_string())],
+                                ))
+                        }
+                        Item::Mod(n) => this.row(n, displayed.clone(), busy, cx).h(px(height)),
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(&scroll)
+        .flex_1()
+        .min_h_0();
         let hidden = self
             .ui
             .mods
@@ -338,7 +455,39 @@ impl Launcher {
             .flex_col()
             .overflow_hidden()
             .child(toolbar)
-            .child(div().id("alt-installed-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&crate::frame::scrolls("installed")).child(list))
+            .when(results.items.is_empty(), |d| d.child(div().p(px(16.)).child(muted(tr("No mods match this search or filter.")))))
+            .when(!results.items.is_empty(), |d| d.child(list))
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
+                let views = &mut this.ui.mods.installed_view;
+                let at = (0..results.items.len()).find(|&at| results.row(at).is_some_and(|row| {
+                    views.focus.get(&row.id).is_some_and(|h| h.contains_focused(window, cx))
+                }));
+                let Some(at) = at else { return; };
+                let next = match ev.keystroke.key.as_str() {
+                    "up" => (0..at).rev().find(|&n| results.row(n).is_some()),
+                    "down" => (at + 1..results.items.len()).find(|&n| results.row(n).is_some()),
+                    "home" => (0..results.items.len()).find(|&n| results.row(n).is_some()),
+                    "end" => (0..results.items.len()).rev().find(|&n| results.row(n).is_some()),
+                    "space" => {
+                        let row = results.row(at).expect("focused row");
+                        if row.local.is_none() && views.focus.get(&row.id).is_some_and(|h| h.is_focused(window)) {
+                            select_mod(&mut this.ui.mods, &results.selectable, &row.id, ev.keystroke.modifiers.shift);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                        return;
+                    }
+                    _ => return,
+                };
+                if let Some(next) = next {
+                    let row = results.row(next).expect("selecting only rows");
+                    views.scroll.scroll_to_item(next, gpui::ScrollStrategy::Nearest);
+                    let focus = views.focus.entry(row.id.clone()).or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true)).clone();
+                    window.focus(&focus, cx);
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
             .children((hidden > 0).then(|| {
                 div().px(px(14.)).py(px(8.)).border_t_1().border_color(c(palette().divider)).child(muted(trf(
                     "{count} other files the launcher installed (packs, or from other sources) aren't listed here.",
@@ -349,16 +498,22 @@ impl Launcher {
         page.into_any_element()
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn row(
         &mut self,
         n: usize,
-        pos: usize,
-        r: Row,
-        ids: Rc<Vec<String>>,
+        results: Rc<Results>,
         busy: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        let r = &results.rows[n];
+        let focus = self
+            .ui
+            .mods
+            .installed_view
+            .focus
+            .entry(r.id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
+            .clone();
         let selected = self.ui.mods.selection.contains(&r.id);
         let picture = r
             .icon
@@ -369,23 +524,16 @@ impl Launcher {
 
         let check = {
             let id = r.id.clone();
+            let results = results.clone();
             checkbox(("alt-row-check", n), selected).on_click(cx.listener(
                 move |this, ev: &ClickEvent, _, cx| {
                     cx.stop_propagation();
-                    let m = &mut this.ui.mods;
-                    match (ev.modifiers().shift, m.anchor) {
-                        (true, Some(a)) => {
-                            let (lo, hi) = (a.min(pos), a.max(pos));
-                            m.selection
-                                .extend(ids[lo..=hi.min(ids.len() - 1)].iter().cloned());
-                        }
-                        _ => {
-                            if !m.selection.remove(&id) {
-                                m.selection.insert(id.clone());
-                            }
-                        }
-                    }
-                    m.anchor = Some(pos);
+                    select_mod(
+                        &mut this.ui.mods,
+                        &results.selectable,
+                        &id,
+                        ev.modifiers().shift,
+                    );
                     cx.notify();
                 },
             ))
@@ -402,7 +550,7 @@ impl Launcher {
             .filter(|_| r.on)
             .and_then(|run| run.state_of(&r.id, &r.version));
         let failed = matches!(building, Some(State::Failed(_)));
-        let cells = model::cells(&r, error.as_deref(), building);
+        let cells = model::cells(r, error.as_deref(), building);
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,
@@ -412,7 +560,7 @@ impl Launcher {
         };
         let status_cell: AnyElement = match (&cells.status, r.unfit.clone()) {
             (Some(_), Some(unfit)) if cells.popover => {
-                self.unfit(n, &r, unfit, cx).into_any_element()
+                self.unfit(n, r, unfit, cx).into_any_element()
             }
             // A mod the last build could not build: its status opens that build's window
             // again, where Details and the build log are.
@@ -480,6 +628,7 @@ impl Launcher {
                 .flex()
                 .items_baseline()
                 .gap(px(8.))
+                .tooltip(crate::glass_ui::tip(format!("{} · {}", r.title, r.id)))
                 .child(
                     div()
                         .min_w_0()
@@ -532,6 +681,8 @@ impl Launcher {
         };
         let version = |width: f32| {
             div()
+                .id(("row-version", n))
+                .tooltip(crate::glass_ui::tip(cells.version.clone()))
                 .w(px(width))
                 .flex_none()
                 .truncate()
@@ -539,32 +690,31 @@ impl Launcher {
                 .font_family(crate::theme::MONO)
                 .child(cells.version.clone())
         };
-        let row = div()
-            .id(("alt-row", n))
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .px(px(14.))
-            .min_h(px(52.))
-            .border_t_1()
-            .border_color(c(palette().divider))
-            .when(selected, |d| d.bg(c(palette().selected)))
-            // The mod another page opened Installed at.
-            .when(
-                self.ui.mods.reveal == Some(search::Reveal::Mod(r.id.clone())),
-                |d| {
-                    d.bg(c(palette().hover)).child(super::ui::reveal(
-                        crate::frame::scrolls("installed"),
-                        self.ui.mods.revealed.clone(),
-                        None,
-                    ))
-                },
-            )
-            .child(match r.local {
-                Some(_) => div().flex_none().w(px(18.)),
-                None => div().flex_none().child(check),
-            })
-            .child(tile(picture, &r.id, &r.title, 32.));
+        let row =
+            div()
+                .id(SharedString::from(format!("installed-row-{}", r.id)))
+                .track_focus(&focus)
+                .focus_visible(|d| d.shadow(crate::frame::focus_ring(palette().focus)))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .px(px(14.))
+                .min_h(px(52.))
+                .border_t_1()
+                .border_color(c(palette().divider))
+                .when(selected, |d| d.bg(c(palette().selected)))
+                // The mod another page opened Installed at.
+                .when(
+                    self.ui.mods.reveal.as_ref().is_some_and(
+                        |reveal| matches!(reveal, search::Reveal::Mod(id) if id == &r.id),
+                    ),
+                    |d| d.bg(c(palette().hover)),
+                )
+                .child(match r.local {
+                    Some(_) => div().flex_none().w(px(18.)),
+                    None => div().flex_none().child(check),
+                })
+                .child(tile(picture, &r.id, &r.title, 32.));
         let row = if wide {
             row.child(title.flex_1().min_w(px(140.)))
                 .child(kind(column::KIND))
@@ -616,7 +766,6 @@ impl Launcher {
         )
     }
 
-    /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
     pub(crate) fn dismiss_mod_batch(&mut self) {
         self.ui.mods.confirm = None;
         self.ui.mods.reviewed_home = None;
@@ -989,5 +1138,26 @@ impl Launcher {
             Ok(_) => self.reload_instances(),
             Err(e) => self.ui.mods.notice = Some(Err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shifted_selection_uses_the_current_order_and_stable_anchor() {
+        let mut mods = ModsState::default();
+        let before = ["first", "moved", "last"].map(String::from);
+        select_mod(&mut mods, &before, "moved", false);
+        let after = ["moved", "first", "last"].map(String::from);
+        select_mod(&mut mods, &after, "last", true);
+        assert_eq!(mods.selection, after.into_iter().collect());
+        let filtered = ["moved".to_string()];
+        select_mod(&mut mods, &filtered, "moved", true);
+        assert!(
+            !mods.selection.contains("moved"),
+            "an anchor filtered away is not an index"
+        );
     }
 }

@@ -163,7 +163,7 @@ mod tests {
     fn left_behind() -> ModsState {
         let mut m = ModsState {
             selection: ["lantern", "trail"].map(String::from).into(),
-            anchor: Some(1),
+            anchor: Some("trail".into()),
             confirm: Some(Confirm::Remove(vec![(
                 "lantern".into(),
                 "lantern".into(),

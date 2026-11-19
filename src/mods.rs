@@ -71,6 +71,16 @@ enum Confirm {
     Update(model::UpdatePlan),
 }
 
+/// Inputs that can change the Installed row model independently of scrolling or selection.
+struct RowsMemo {
+    snapshot_key: String,
+    index: Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
+    version: Option<String>,
+    kept: String,
+    native_allowed: bool,
+    rows: Rc<Vec<Row>>,
+}
+
 struct Open {
     id: String,
     /// The screen Back returns to.
@@ -98,7 +108,6 @@ enum Event {
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
     PackDone(Result<String, String>),
-    /// Worlds would be affected: nothing was changed, the player decides.
     /// The batch was refused before changing anything.
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
@@ -145,8 +154,10 @@ pub(crate) struct ModsState {
     /// The worlds' data packs and the world picker (`data_packs`).
     data: data_packs::DataState,
     selection: BTreeSet<String>,
-    /// The row last clicked, for Shift-click ranges (an index into the visible rows).
-    anchor: Option<usize>,
+    /// The stable ID of the last selected row, for Shift ranges even after list reordering.
+    anchor: Option<String>,
+    installed_rows: std::cell::RefCell<Option<RowsMemo>>,
+    installed_view: installed_view::InstalledView,
     confirm: Option<Confirm>,
     /// The folder the open confirmation was made for.
     reviewed_home: Option<PathBuf>,
@@ -201,6 +212,8 @@ impl Default for ModsState {
             data: Default::default(),
             selection: BTreeSet::new(),
             anchor: None,
+            installed_rows: Default::default(),
+            installed_view: Default::default(),
             confirm: None,
             reviewed_home: None,
             snapshot: None,
@@ -618,9 +631,32 @@ impl Launcher {
     /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
     /// names and statuses. Never asks the network or writes.
     fn rows(&self) -> Vec<Row> {
+        self.installed_rows().as_ref().clone()
+    }
+
+    fn installed_rows(&self) -> Rc<Vec<Row>> {
         let Some(snap) = &self.ui.mods.snapshot else {
-            return Vec::new();
+            return Rc::default();
         };
+        let index = sunrise::fetched_index();
+        let version = self.selected_instance().and_then(|i| self.version_of(i));
+        let kept = native_mods::kept_stamp(&snap.home);
+        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let mut cache = self.ui.mods.installed_rows.borrow_mut();
+        if let Some(memo) = cache.as_ref().filter(|memo| {
+            let same_index = match (&index, &memo.index) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            memo.snapshot_key == snap.key
+                && memo.native_allowed == native_allowed
+                && memo.version.as_ref() == version
+                && memo.kept == kept
+                && same_index
+        }) {
+            return memo.rows.clone();
+        }
         let unbuilt: HashSet<String> = match !snap.local.is_empty()
             || snap
                 .entries
@@ -638,7 +674,6 @@ impl Launcher {
             }
             false => HashSet::new(),
         };
-        let index = sunrise::fetched_index();
         let game = self.mods_game();
         let mut rows = model::rows(
             &snap.entries,
@@ -647,7 +682,7 @@ impl Launcher {
                 game: &game,
                 enabled: &snap.enabled,
                 unbuilt: &unbuilt,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
+                native_allowed,
                 chosen: &snap.chosen,
                 local: &snap.local,
             },
@@ -664,6 +699,15 @@ impl Launcher {
             // A row that no longer needs the player moves out of that group.
             model::sort(&mut rows);
         }
+        let rows = Rc::new(rows);
+        *cache = Some(RowsMemo {
+            snapshot_key: snap.key.clone(),
+            index,
+            version: version.cloned(),
+            kept,
+            native_allowed,
+            rows: rows.clone(),
+        });
         rows
     }
 
@@ -805,6 +849,7 @@ impl Launcher {
         } else {
             &self.ui.mods.find
         };
+        let narrow = self.content_width() < 680.;
         let field = crate::frame::input(focused)
             .id(if installed {
                 "alt-mods-have"
@@ -813,9 +858,9 @@ impl Launcher {
             })
             .track_focus(focus)
             .seen()
-            .flex_1()
-            .min_w(px(120.))
-            .h(px(tokens::ACTION))
+            .min_w_0()
+            .when(narrow, |d| d.w_full().flex_none().h(px(36.)))
+            .when(!narrow, |d| d.flex_1().h(px(tokens::ACTION)))
             .px(px(16.))
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .text_size(px(tokens::BODY))
@@ -866,10 +911,12 @@ impl Launcher {
         } else {
             line_edit::mouse(field, cx, |this: &mut Launcher| &mut this.ui.mods.find)
         };
-        div()
+        let head = div()
             .flex()
+            .flex_wrap()
             .items_center()
-            .gap(px(20.))
+            .min_w_0()
+            .gap(px(if narrow { 12. } else { 20. }))
             .child(
                 div()
                     .flex()
@@ -925,7 +972,23 @@ impl Launcher {
                 ],
                 Launcher::choose_view,
                 cx,
-            ))
-            .child(field)
+            ));
+        if narrow {
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .gap(px(8.))
+                .child(head)
+                .child(field)
+        } else {
+            div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(20.))
+                .child(head)
+                .child(field)
+        }
     }
 }
