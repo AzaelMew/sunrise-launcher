@@ -58,7 +58,8 @@ pub(crate) fn chip(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(tokens::R_PANEL))
+        // A button's corners: a choice is a row of buttons, not of pills.
+        .rounded(px(tokens::R_CONTROL))
         .border_1()
         .border_color(if on {
             c(palette().text)
