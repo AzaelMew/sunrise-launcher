@@ -43,6 +43,7 @@ mod project;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
+pub(crate) use model::collection::{needs_consent, run_in_order};
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -160,7 +161,7 @@ pub(crate) struct ModsState {
     snapshot: Option<Snapshot>,
     open: Option<Open>,
     /// The collection whose page is open and the members ticked on it.
-    picks: Option<(String, BTreeSet<String>)>,
+    picks: Option<collection::Picks>,
     /// My own batch (update or remove): its line and fraction.
     busy: Option<(String, f32)>,
     notice: Option<Result<String, String>>,
@@ -272,6 +273,10 @@ impl Launcher {
             Page::Installed => Page::Installed,
             _ => Page::Discover,
         };
+        // A collection's page opened from a list starts from its defaults again.
+        if self.is_collection(&id) && self.ui.page != Page::Project {
+            self.ui.mods.picks = None;
+        }
         let parent = (self.ui.page == Page::Project)
             .then(|| self.ui.mods.open.as_ref().map(|o| o.id.clone()))
             .flatten()

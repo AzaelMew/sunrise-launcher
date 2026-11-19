@@ -112,7 +112,6 @@ pub(super) fn fit_of(index: &Index, p: &index::Project, game: &str) -> Fit {
 /// Every mod and native mod of the registry, for the build `game`. Packs are left out.
 pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
     let part_of = collection::part_of(index);
-    let libraries = collection::libraries(index);
     let mut cards: Vec<Card> = index
         .projects
         .iter()
@@ -150,7 +149,7 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                         .is_some_and(|v| v.native_binaries.is_empty()),
                 members: None,
                 part_of: part_of.get(p.id.as_str()).map(|name| (*name).to_owned()),
-                library: libraries.contains(&p.id),
+                library: collection::is_library(p),
             })
         })
         .collect();

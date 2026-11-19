@@ -3,9 +3,10 @@
 //! plan is the registry planner's own (`index::resolve`).
 use super::{Card, Fit, Make};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher_smod::index::resolve::{self, InstallPlan, InstalledMod, RequestResult};
-use sunrise_launcher_smod::index::{Collection, Index};
+use sunrise_launcher_smod::index::{self, Collection, Index};
 use sunrise_launcher_smod::manifest::Side;
 
 /// The first collection that lists each member, by name: what a member's card says it is part of.
@@ -19,26 +20,12 @@ pub(in crate::mods) fn part_of(index: &Index) -> HashMap<&str, &str> {
     of
 }
 
-/// The registry marks no library, so the rule is: a mod that another listed mod's newest version
-/// requires, and that no collection lists as a member. A member a collection's own mods need
-/// (the creature guide, say) stays a member of its collection, on that collection's page.
-pub(in crate::mods) fn libraries(index: &Index) -> HashSet<String> {
-    let listed: HashSet<&str> = index
-        .collections
-        .iter()
-        .flat_map(|c| c.members.iter().map(|m| m.id.as_str()))
-        .collect();
-    index
-        .projects
-        .iter()
-        .filter_map(|p| p.versions.first().and_then(|v| v.dependencies.as_ref()))
-        .flatten()
-        .filter(|d| !d.optional)
-        .map(|d| d.id.as_str())
-        .filter(|id| !listed.contains(id))
-        .filter(|id| index.project(id).and_then(super::make_of).is_some())
-        .map(str::to_owned)
-        .collect()
+/// The registry's own category for a mod that exists to be depended on. Nothing is inferred
+/// from who requires it: a standalone mod that another mod happens to need stays a mod.
+const LIBRARY: &str = "library";
+
+pub(in crate::mods) fn is_library(p: &index::Project) -> bool {
+    p.categories.iter().any(|k| k == LIBRARY)
 }
 
 /// The collections' own cards for Discover: their members' downloads and newest day added up,
@@ -120,13 +107,18 @@ pub(in crate::mods) struct Line {
     pub(in crate::mods) summary: String,
     pub(in crate::mods) icon: Option<String>,
     pub(in crate::mods) version: String,
+    /// Needed by the picks and not one of the collection's mods: it can't be picked itself.
     pub(in crate::mods) library: bool,
+    /// The registry's own "library" category: what the badge says.
+    pub(in crate::mods) labelled: bool,
     pub(in crate::mods) ticked: bool,
     /// The ticked mods that need this one: it can't be unticked while there are any.
     pub(in crate::mods) needed_by: Vec<String>,
     pub(in crate::mods) installed: bool,
     /// Why this build can't install it.
     pub(in crate::mods) refused: Option<String>,
+    /// Why it can't be installed together with the other picks.
+    pub(in crate::mods) conflict: Option<String>,
 }
 
 impl Line {
@@ -196,21 +188,16 @@ pub(in crate::mods) struct View {
     pub(in crate::mods) ticked: usize,
     pub(in crate::mods) header: Ticks,
     pub(in crate::mods) summary: Summary,
+    /// Picks the planner can't install together, with its reason.
+    pub(in crate::mods) conflict: Option<String>,
 }
 
-/// The members a collection's page starts with ticked: its defaults, minus any this build
-/// refuses.
-pub(in crate::mods) fn initial(
-    index: &Index,
-    c: &Collection,
-    held: &[InstalledMod],
-    game: &str,
-) -> BTreeSet<String> {
-    let refused = refusals(index, c, held, game);
-    c.default_members()
-        .filter(|id| !refused.contains_key(*id))
-        .map(str::to_owned)
-        .collect()
+/// What a collection's page needs from the planner whatever is ticked, asked once for every
+/// member: the ones this build refuses, and the mods outside the collection they need.
+#[derive(Clone, Debug, PartialEq)]
+pub(in crate::mods) struct Base {
+    refused: BTreeMap<String, String>,
+    outside: Vec<String>,
 }
 
 fn plan(
@@ -226,50 +213,123 @@ fn plan(
         held,
         game,
         Side::Both,
-        |_, _| true,
+        |_, v| sunrise_launcher::browser::sunrise::fits_game(v, game),
     )
 }
 
-/// The members the planner refuses when asked for every one, with its reason.
-fn refusals(
+pub(in crate::mods) fn base(
     index: &Index,
     c: &Collection,
     held: &[InstalledMod],
     game: &str,
-) -> BTreeMap<String, String> {
+) -> Base {
     let all: Vec<&str> = c.members.iter().map(|m| m.id.as_str()).collect();
-    plan(index, c, &all, held, game)
-        .requested
-        .into_iter()
-        .filter_map(|(id, r)| match r {
-            RequestResult::Refused { reason } => Some((id, reason)),
-            _ => None,
-        })
+    // Each member alone: what this build refuses outright, as against what only conflicts with
+    // another pick (`view` says that).
+    let refused: BTreeMap<String, String> = all
+        .iter()
+        .filter_map(
+            |id| match plan(index, c, &[id], held, game).requested.remove(*id)? {
+                RequestResult::Refused { reason } => Some(((*id).to_owned(), reason)),
+                _ => None,
+            },
+        )
+        .collect();
+    // Without the refused: what they would have needed is not asked of the player.
+    let fine: Vec<&str> = all
+        .iter()
+        .copied()
+        .filter(|id| !refused.contains_key(*id))
+        .collect();
+    let outside = plan(index, c, &fine, held, game)
+        .required_by
+        .into_keys()
+        .filter(|id| !c.members.iter().any(|m| m.id == *id))
+        .collect();
+    Base { refused, outside }
+}
+
+/// What a plan depends on besides the ticks: the index read, what is installed, the build.
+#[derive(Clone, PartialEq)]
+struct Key {
+    index: usize,
+    held: Vec<InstalledMod>,
+    game: String,
+}
+
+/// A collection page's plans, kept: the planner runs again only when the ticks, what is
+/// installed, the index or the build change, not on every draw.
+#[derive(Default)]
+pub(in crate::mods) struct Planned {
+    base: Option<(Key, Base)>,
+    view: Option<((Key, BTreeSet<String>), View)>,
+    /// How many times each was worked out: for the tests.
+    pub(in crate::mods) worked: (usize, usize),
+}
+
+impl Planned {
+    pub(in crate::mods) fn base(
+        &mut self,
+        index: &Arc<Index>,
+        c: &Collection,
+        held: &[InstalledMod],
+        game: &str,
+    ) -> &Base {
+        let key = Key {
+            index: Arc::as_ptr(index) as usize,
+            held: held.to_vec(),
+            game: game.to_owned(),
+        };
+        if self.base.as_ref().is_none_or(|(k, _)| *k != key) {
+            self.worked.0 += 1;
+            self.base = Some((key, base(index, c, held, game)));
+        }
+        &self.base.as_ref().expect("just set").1
+    }
+
+    pub(in crate::mods) fn view(
+        &mut self,
+        index: &Arc<Index>,
+        c: &Collection,
+        ticked: &BTreeSet<String>,
+        held: &[InstalledMod],
+        game: &str,
+    ) -> &View {
+        let base = self.base(index, c, held, game).clone();
+        let key = self.base.as_ref().expect("just set").0.clone();
+        let wanted = (key, ticked.clone());
+        if self.view.as_ref().is_none_or(|(k, _)| *k != wanted) {
+            self.worked.1 += 1;
+            self.view = Some((wanted, view(index, c, &base, ticked, held, game)));
+        }
+        &self.view.as_ref().expect("just set").1
+    }
+}
+
+/// The members a collection's page starts with ticked: its defaults, minus any this build
+/// refuses.
+pub(in crate::mods) fn initial(c: &Collection, base: &Base) -> BTreeSet<String> {
+    c.default_members()
+        .filter(|id| !base.refused.contains_key(*id))
+        .map(str::to_owned)
         .collect()
 }
 
 pub(in crate::mods) fn view(
     index: &Index,
     c: &Collection,
+    base: &Base,
     ticked: &BTreeSet<String>,
     held: &[InstalledMod],
     game: &str,
 ) -> View {
-    let refused = refusals(index, c, held, game);
-    let all: Vec<&str> = c
+    let chosen: Vec<&str> = c
         .members
         .iter()
         .map(|m| m.id.as_str())
-        .filter(|id| !refused.contains_key(*id))
-        .collect();
-    let chosen: Vec<&str> = all
-        .iter()
-        .copied()
-        .filter(|id| ticked.contains(*id))
+        .filter(|id| ticked.contains(*id) && !base.refused.contains_key(*id))
         .collect();
     let now = plan(index, c, &chosen, held, game);
-    // Libraries come from asking for everything, so their lines stay when nothing needs them.
-    let everything = plan(index, c, &all, held, game);
     let named = |id: &str| {
         index
             .project(id)
@@ -285,8 +345,17 @@ pub(in crate::mods) fn view(
             .collect()
     };
     let have = |id: &str| held.iter().any(|h| h.id == id);
+    let conflicts: BTreeMap<&str, &str> = now
+        .requested
+        .iter()
+        .filter_map(|(id, r)| match r {
+            RequestResult::Refused { reason } => Some((id.as_str(), reason.as_str())),
+            _ => None,
+        })
+        .collect();
     let line = |id: &str, library: bool| {
         let p = index.project(id);
+        let needed_by = needed_by(id);
         Line {
             id: id.to_owned(),
             name: named(id),
@@ -297,46 +366,41 @@ pub(in crate::mods) fn view(
                 .map(|v| v.version.clone())
                 .unwrap_or_default(),
             library,
-            ticked: if library {
-                !needed_by(id).is_empty()
-            } else {
-                chosen.contains(&id)
-            },
-            needed_by: needed_by(id),
+            labelled: p.is_some_and(is_library),
+            // What another pick needs is ticked whether or not it was picked itself.
+            ticked: !needed_by.is_empty() || (!library && chosen.contains(&id)),
+            needed_by,
             installed: have(id),
-            refused: refused.get(id).cloned(),
+            refused: base.refused.get(id).cloned(),
+            conflict: conflicts.get(id).map(|why| (*why).to_owned()),
         }
     };
     let mut lines: Vec<Line> = c.members.iter().map(|m| line(&m.id, false)).collect();
-    let member = |id: &str| c.members.iter().any(|m| m.id == id);
-    lines.extend(
-        everything
-            .required_by
-            .keys()
-            .filter(|id| !member(id))
-            .map(|id| line(id, true)),
-    );
-    let libs = libraries(index);
+    lines.extend(base.outside.iter().map(|id| line(id, true)));
     let mut summary = Summary {
         updates: now.update.len(),
         ..Summary::default()
     };
     for m in &now.install {
-        match libs.contains(&m.id) {
+        let project = index.project(&m.id);
+        match project.is_some_and(is_library) {
             true => summary.libraries += 1,
             false => summary.mods += 1,
         }
-        summary.bytes += index
-            .project(&m.id)
+        summary.bytes += project
             .and_then(|p| p.versions.iter().find(|v| v.version == m.version))
             .map_or(0, |v| v.file.size);
     }
+    let selectable = c.members.len() - base.refused.len();
+    let ticked_members = lines.iter().filter(|l| !l.library && l.ticked).count();
+    let conflict = lines.iter().find_map(|l| l.conflict.clone());
     View {
-        members: c.members.len() - refused.len(),
-        ticked: chosen.len(),
-        header: ticks(chosen.len(), c.members.len() - refused.len()),
+        members: selectable,
+        ticked: ticked_members,
+        header: ticks(ticked_members, selectable),
         lines,
         summary,
+        conflict,
     }
 }
 
@@ -367,4 +431,50 @@ impl View {
             );
         }
     }
+
+    /// What Install is given: the ticked members not yet installed. Libraries and what is
+    /// refused are never asked for; the planner brings what a member needs.
+    pub(in crate::mods) fn to_install(&self) -> Vec<String> {
+        self.lines
+            .iter()
+            .filter(|l| !l.library && l.ticked && !l.installed && l.refused.is_none())
+            .map(|l| l.id.clone())
+            .collect()
+    }
+}
+
+/// Whether a collection's card reads "Installed": every member that is picked by default and
+/// can be installed on this build is. A member left unticked by default, or one this build
+/// can't take, never keeps it from saying so.
+pub(in crate::mods) fn installed(c: &Collection, cards: &[Card], have: &HashSet<String>) -> bool {
+    let wanted: Vec<&str> = c
+        .members
+        .iter()
+        .filter(|m| m.default)
+        .map(|m| m.id.as_str())
+        .filter(|id| cards.iter().any(|card| card.id == *id && card.fit.fits()))
+        .collect();
+    !wanted.is_empty() && wanted.iter().all(|id| have.contains(*id))
+}
+
+/// Whether installing `ids` first asks for permission to run native code.
+pub(crate) fn needs_consent(
+    ids: &[String],
+    allowed: bool,
+    is_native: impl Fn(&str) -> bool,
+) -> bool {
+    !allowed && ids.iter().any(|id| is_native(id))
+}
+
+/// Runs `one` for each of `ids` in order, with its position, collecting what each says it
+/// installed. The first failure stops the rest and is returned; the ones before it stay done.
+pub(crate) fn run_in_order(
+    ids: &[String],
+    mut one: impl FnMut(usize, &str) -> Result<Vec<String>, String>,
+) -> Result<Vec<String>, String> {
+    let mut done = Vec::new();
+    for (i, id) in ids.iter().enumerate() {
+        done.extend(one(i, id)?);
+    }
+    Ok(done)
 }

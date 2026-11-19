@@ -269,7 +269,7 @@ impl Launcher {
                 Some(_) => index
                     .as_ref()
                     .and_then(|i| i.collection(&id))
-                    .is_some_and(|c| c.members.iter().all(|m| added.contains(&m.id))),
+                    .is_some_and(|c| model::collection::installed(c, &cards, &added)),
                 None => added.contains(&id),
             };
             let working = adding.as_deref() == Some(id.as_str());

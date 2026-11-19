@@ -1476,5 +1476,6 @@
   "{a} and {b}": "{a} and {b}",
   "Updates 1 installed mod": "Updates 1 installed mod",
   "Updates {count} installed mods": "Updates {count} installed mods",
-  "Everything you picked is installed.": "Everything you picked is installed."
+  "Everything you picked is installed.": "Everything you picked is installed.",
+  "Some picks can't be installed together.": "Some picks can't be installed together."
 }

@@ -5,14 +5,22 @@ use super::project::{about_row, prose};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
+use std::sync::Arc;
 use sunrise_launcher::browser::images;
+use sunrise_launcher_smod::index::{Collection, Index};
+
+/// The picks made on the open collection's page, and what the planner said about them.
+pub(super) struct Picks {
+    id: String,
+    ticked: BTreeSet<String>,
+    planned: plan::Planned,
+}
+
+type Shown = (Arc<Index>, Collection, plan::View);
 
 impl Launcher {
-    /// The collection's page for the picks made so far, with the registry index read last.
-    fn collection_view(
-        &mut self,
-        id: &str,
-    ) -> Option<(sunrise_launcher_smod::index::Collection, plan::View)> {
+    /// The collection's page for the picks made so far.
+    fn collection_view(&mut self, id: &str) -> Option<Shown> {
         let index = sunrise::known_index()?;
         let collection = index.collection(id)?.clone();
         let held = sunrise::held_mods(
@@ -23,47 +31,48 @@ impl Launcher {
                 .map_or(&[][..], |s| s.entries.as_slice()),
         );
         let game = self.mods_game();
-        let picks = &mut self.ui.mods.picks;
-        if picks.as_ref().is_none_or(|(open, _)| open != id) {
-            *picks = Some((
-                id.to_owned(),
-                plan::initial(&index, &collection, &held, &game),
-            ));
+        let slot = &mut self.ui.mods.picks;
+        if slot.as_ref().is_none_or(|p| p.id != id) {
+            let mut planned = plan::Planned::default();
+            let ticked =
+                plan::initial(&collection, planned.base(&index, &collection, &held, &game));
+            *slot = Some(Picks {
+                id: id.to_owned(),
+                ticked,
+                planned,
+            });
         }
-        let ticked = &picks.as_ref()?.1;
-        let view = plan::view(&index, &collection, ticked, &held, &game);
-        Some((collection, view))
+        let picks = slot.as_mut()?;
+        let view = picks
+            .planned
+            .view(&index, &collection, &picks.ticked, &held, &game)
+            .clone();
+        Some((index, collection, view))
     }
 
     fn collection_flip(&mut self, id: &str, line: Option<&str>) {
-        let Some((_, view)) = self.collection_view(id) else {
+        let Some((_, _, view)) = self.collection_view(id) else {
             return;
         };
-        let Some((_, ticked)) = self.ui.mods.picks.as_mut() else {
+        let Some(picks) = self.ui.mods.picks.as_mut() else {
             return;
         };
         match line {
-            Some(line) => view.flip(ticked, line),
-            None => view.flip_all(ticked),
+            Some(line) => view.flip(&mut picks.ticked, line),
+            None => view.flip_all(&mut picks.ticked),
         }
     }
 
-    /// Install what is ticked and not yet installed, each with what it needs.
+    /// Install what is ticked and not yet installed, planned together.
     fn collection_install(&mut self, id: &str) {
-        let Some((collection, view)) = self.collection_view(id) else {
+        let Some((_, collection, view)) = self.collection_view(id) else {
             return;
         };
-        if !self.guard() {
+        if view.conflict.is_some() || !self.guard() {
             return;
         }
         self.ui.mods.notice = None;
-        let ids = view
-            .lines
-            .iter()
-            .filter(|l| !l.library && l.ticked && !l.installed && l.refused.is_none())
-            .map(|l| l.id.clone())
-            .collect();
-        self.mods_install_many(ids, collection.name);
+        self.mods_install_many(view.to_install(), collection.name);
     }
 
     pub(super) fn collection_page(
@@ -75,13 +84,12 @@ impl Launcher {
         let Some(id) = self.ui.mods.open.as_ref().map(|o| o.id.clone()) else {
             return page.child(header).into_any_element();
         };
-        let Some((collection, view)) = self.collection_view(&id) else {
+        let Some((index, collection, view)) = self.collection_view(&id) else {
             return page
                 .child(header)
                 .child(muted(tr("This collection can't be shown.")))
                 .into_any_element();
         };
-        let index = sunrise::known_index().expect("the view read it");
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let busy = self.mods_busy();
         let owners = collection.owners.join(", ");
@@ -152,7 +160,7 @@ impl Launcher {
         // The side panel: the one Install, and what it does.
         let summary = &view.summary;
         let done = view.ticked > 0 && summary.nothing();
-        let ready = view.ticked > 0 && !summary.nothing() && !busy;
+        let ready = view.ticked > 0 && !summary.nothing() && !busy && view.conflict.is_none();
         let wants_ok = !native_allowed
             && view
                 .lines
@@ -194,6 +202,8 @@ impl Launcher {
         };
         let plan_line = if view.ticked == 0 {
             tr("Pick the mods you want.").to_string()
+        } else if view.conflict.is_some() {
+            tr("Some picks can't be installed together.").to_string()
         } else {
             summary.line()
         };
@@ -398,7 +408,7 @@ impl Launcher {
                     cx.notify();
                 }))
         });
-        if line.library {
+        if line.labelled {
             name = name.child(badge(tr("Library")));
         }
         let mut text = div()
@@ -432,7 +442,7 @@ impl Launcher {
         } else if line.library {
             text = text.child(muted(tr("Not needed by your picks")));
         }
-        if let Some(why) = &line.refused {
+        if let Some(why) = line.refused.as_ref().or(line.conflict.as_ref()) {
             text = text.child(div().truncate().child(muted(why.clone())));
         }
         let right = if line.installed {
