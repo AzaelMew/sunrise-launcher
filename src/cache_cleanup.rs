@@ -366,10 +366,24 @@ pub(crate) fn delete_game_unit_observed(
     path: &Path,
     after_classification: impl FnOnce(),
 ) -> Result<(), Error> {
+    delete_unit(path, false, after_classification)
+}
+
+/// Removes an installed version folder. A build from before runtime leases carries no lease
+/// marker and can never take one, so the caller, having found no program running from the
+/// folder, vouches for it with `idle` instead.
+pub(crate) fn delete_version(path: &Path, idle: bool) -> Result<(), Error> {
+    delete_unit(path, idle, || {})
+}
+
+fn delete_unit(path: &Path, idle: bool, after_classification: impl FnOnce()) -> Result<(), Error> {
     use sunrise_launcher_smod::{locks::Release, runtime_leases::Registry};
     let registry = Registry::with_release(&crate::backend::data_dir(), Release::Close)?;
     registry.remove_unit(path, |directory, is_directory| {
-        Access::for_unit(path)?.check()?;
+        match Access::for_unit(path)? {
+            Access::UninstrumentedGame if idle => {}
+            access => access.check()?,
+        }
         after_classification();
         if is_directory && contains_operational_locks(directory)? {
             return Err(Error::IncompleteUnit);

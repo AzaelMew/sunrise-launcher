@@ -1229,7 +1229,8 @@ pub(crate) use installation::install_as;
 
 pub fn remove(tag: &str) -> Result<(), String> {
     let dir = version_dir(tag);
-    crate::cache_cleanup::delete_game_unit(&dir).map_err(crate::native_mods::cache_error)?;
+    crate::cache_cleanup::delete_version(&dir, !in_use(tag))
+        .map_err(crate::native_mods::cache_error)?;
     forget_prepared();
     Ok(())
 }
@@ -4570,6 +4571,20 @@ mod tests {
         })
         .unwrap();
         assert!(!dir.exists());
+    }
+
+    /// A build from before runtime leases has no lease marker in its client; with nothing
+    /// running from it, removing it must still work.
+    #[test]
+    fn a_version_without_the_lease_marker_can_be_removed_when_idle() {
+        let dir = version_dir("v0.0.1-preleases");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(COMPLETE), b"").unwrap();
+        fs::write(dir.join(CLIENT), b"a client from before leases").unwrap();
+        assert!(installed().contains(&"v0.0.1-preleases".to_string()));
+        remove("v0.0.1-preleases").unwrap();
+        assert!(!dir.exists());
+        assert!(!installed().contains(&"v0.0.1-preleases".to_string()));
     }
 
     /// A canonical path loses Windows' verbatim prefix on a drive (horizon-mixins' output
