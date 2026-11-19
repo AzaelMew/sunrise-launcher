@@ -52,6 +52,13 @@ pub(crate) enum WayOut {
     Newest(instances::Channel),
 }
 
+#[derive(Clone, Copy, Default)]
+enum NoticeKind {
+    #[default]
+    Details,
+    Problem(Option<WayOut>),
+}
+
 /// The update check for one instance and newer game, while it runs (`None`) and once it ended.
 struct Memo {
     key: String,
@@ -77,9 +84,9 @@ pub(crate) struct SheetsState {
     error: Option<String>,
     /// The Resolve sheet shows what the check said word for word.
     details: bool,
-    /// What the Notice sheet says, and the way out it offers.
+    /// What the Notice sheet says, and whether it describes a problem or a result.
     notice: String,
-    way_out: Option<WayOut>,
+    notice_kind: NoticeKind,
     versions: versions::State,
 }
 
@@ -368,9 +375,17 @@ impl Launcher {
 
     /// Opens a problem's whole text as a sheet, with the way out of it when there is one.
     pub(crate) fn open_notice(&mut self, text: String, way_out: Option<WayOut>) {
+        self.show_notice(text, NoticeKind::Problem(way_out));
+    }
+
+    pub(crate) fn open_details(&mut self, text: String) {
+        self.show_notice(text, NoticeKind::Details);
+    }
+
+    fn show_notice(&mut self, text: String, kind: NoticeKind) {
         self.open_sheet(Sheet::Notice);
         self.ui.sheets.notice = text;
-        self.ui.sheets.way_out = way_out;
+        self.ui.sheets.notice_kind = kind;
     }
 
     /// The worker asks before dependency build programs run. The sheet answers `reply`; losing the
@@ -871,12 +886,19 @@ impl Launcher {
         bounded_frame("alt-resolve", 580., body, cx)
     }
 
-    /// What went wrong, in full: each distinct diagnostic in order, with one way out.
+    /// The full result or diagnostics, with one recovery action where available.
     fn notice_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         let paragraphs = notice_messages(&self.ui.sheets.notice);
-        let count = paragraphs.len();
+        let (heading, diagnostic_count, way_out) = match self.ui.sheets.notice_kind {
+            NoticeKind::Details => (tr("Details"), None, None),
+            NoticeKind::Problem(way_out) => (
+                tr("What went wrong"),
+                (paragraphs.len() > 1).then_some(paragraphs.len()),
+                way_out,
+            ),
+        };
         let main = |label: SharedString| crate::frame::primary("alt-notice-way-out", label);
-        let way_out = self.ui.sheets.way_out.map(|way| match way {
+        let way_out = way_out.map(|way| match way {
             WayOut::MinecraftFolder => main(tr("Choose Minecraft folder").into()).on_click(
                 cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.close_sheet();
@@ -898,60 +920,59 @@ impl Launcher {
                 cx.notify();
             })),
         });
-        let body =
-            div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.))
-                        .flex_none()
-                        .child(title(tr("What went wrong").into()))
-                        .children((count > 1).then(|| {
-                            muted(trf("{count} messages", &[("count", &count.to_string())]))
-                        })),
-                )
-                .child(
-                    div()
-                        .id("notice-diagnostics")
-                        .min_h_0()
-                        .max_h(px(320.))
-                        .overflow_y_scroll()
-                        .track_scroll(&crate::frame::scrolls("notice-diagnostics"))
-                        .child(
-                            div()
-                                .w_full()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(10.))
-                                .text_size(px(tokens::LABEL))
-                                .children(
-                                    paragraphs
-                                        .into_iter()
-                                        .map(|p| crate::selectable::selectable(p.to_owned())),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_none()
-                        .flex_wrap()
-                        .justify_end()
-                        .gap(px(8.))
-                        .child(
-                            button("alt-notice-close", tr("Close")).on_click(cx.listener(
-                                |this, _: &ClickEvent, _, cx| {
-                                    this.close_sheet();
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .children(way_out),
-                );
+        let body = div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .flex_none()
+                    .child(title(heading.into()))
+                    .children(diagnostic_count.map(|count| {
+                        muted(trf("{count} messages", &[("count", &count.to_string())]))
+                    })),
+            )
+            .child(
+                div()
+                    .id("notice-diagnostics")
+                    .min_h_0()
+                    .max_h(px(320.))
+                    .overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("notice-diagnostics"))
+                    .child(
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(10.))
+                            .text_size(px(tokens::LABEL))
+                            .children(
+                                paragraphs
+                                    .into_iter()
+                                    .map(|p| crate::selectable::selectable(p.to_owned())),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        button("alt-notice-close", tr("Close")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.close_sheet();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .children(way_out),
+            );
         bounded_frame("alt-notice", 560., body, cx)
     }
 

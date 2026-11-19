@@ -783,15 +783,18 @@ impl Launcher {
             );
         }
         let notice = self.notice()?;
-        let (text, color) = match notice {
+        let (text, color) = match &notice {
             Ok(t) => (t, palette().text),
             Err(t) => (t, palette().warning),
         };
         let summary = text.lines().next().unwrap_or_default().to_owned();
-        let details = (text != summary || summary.chars().count() > 60).then(|| {
+        let details = (text != &summary || summary.chars().count() > 60).then(|| {
             crate::frame::button("alt-mods-details", tr("Details…")).on_click(cx.listener(
                 move |this, _, _, cx| {
-                    this.open_notice(text.clone(), None);
+                    match &notice {
+                        Ok(text) => this.open_details(text.clone()),
+                        Err(text) => this.open_notice(text.clone(), None),
+                    }
                     cx.notify();
                 },
             ))

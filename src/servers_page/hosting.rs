@@ -724,7 +724,7 @@ impl Launcher {
                         true,
                         cx,
                         move |this, _| {
-                            this.open_notice(detail.clone(), None);
+                            this.open_details(detail.clone());
                         },
                     ))
                     .child(self.host_button(

@@ -31,7 +31,7 @@ impl Launcher {
                 .child(
                     button("play-registry-details", tr("Details…")).on_click(cx.listener(
                         |this, _, _, cx| {
-                            this.open_notice(this.play_registry_notices.join("\n"), None);
+                            this.open_details(this.play_registry_notices.join("\n"));
                             cx.notify();
                         },
                     )),
