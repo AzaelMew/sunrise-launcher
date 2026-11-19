@@ -29,15 +29,26 @@ pub(super) fn install(
 
     let mut changes = Vec::new();
     let mut done = Vec::new();
+    // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
+    let mut stale = Vec::new();
     let mut enable = vec![project.id.clone()];
     for (entry, file) in plan.selected {
         if let Some(file) = file {
             if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
-                if old.file != entry.file {
+                // A file that is gone or no longer parses is replaced wherever the new one goes
+                // (a native mod and a plain one live in different places); a good one is not.
+                let old_path = old.path(home);
+                let replaceable = old_path.as_ref().is_some_and(|path| {
+                    plan.unreadable.contains(path) || path.try_exists().is_ok_and(|there| !there)
+                });
+                if old.file != entry.file && !replaceable {
                     return Err(format!(
                         "{} is installed in a different location: remove it first.",
                         entry.title
                     ));
+                }
+                if old.file != entry.file {
+                    stale.extend(old_path.filter(|path| plan.unreadable.contains(path)));
                 }
             }
             changes.push((file, home.join(&entry.file)));
@@ -78,6 +89,9 @@ pub(super) fn install(
         changes.push((next, saved));
     }
     publish(staged, changes)?;
+    for path in stale {
+        let _ = fs::remove_file(path);
+    }
     Ok(done)
 }
 

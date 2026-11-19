@@ -416,6 +416,108 @@ fn update_replaces_an_entry_whose_file_is_gone() {
     fs::remove_dir_all(home).unwrap();
 }
 
+/// The sample's `coords_hud` as a native mod, its file written under `home`.
+fn native_sample(home: &Path) -> Index {
+    use std::io::Write;
+    let archive = home.join("source.smod");
+    let (a, b) = ("a".repeat(40), "b".repeat(40));
+    let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+    for (name, text) in [
+        ("Cargo.toml", "[package]\nname='coords_hud'\nversion='0.1.0'\n".to_string()),
+        ("src/lib.rs", "fn hook() {}".to_string()),
+        ("sunrise-mod.toml", format!("id='coords_hud'\nname='HUD'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{GAME}'\nsunrise='{a}'\nmixins='{b}'\n")),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(text.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+    let bytes = fs::read(&archive).unwrap();
+    let mut index = sample();
+    let p = &mut index.projects[0];
+    p.kind = index::Kind::NativeMod;
+    p.key = None;
+    let v = &mut p.versions[0];
+    v.api = format!("native-1/{a}/{b}");
+    v.version = "0.1.0".into();
+    v.game = GAME.into();
+    v.side = None;
+    v.requires.clear();
+    v.capabilities = Default::default();
+    v.file.name = "coords_hud.smod".into();
+    v.file.url = format!("file://{}", archive.display());
+    v.file.size = bytes.len() as u64;
+    v.file.sha256 = index::sha256(&bytes);
+    v.file.signature = None;
+    index
+}
+
+#[test]
+fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file() {
+    for gone in [false, true] {
+        let home = scratch(if gone { "flip-gone" } else { "flip-unreadable" });
+        let plain = sample();
+        put(&plain, true, &home).unwrap();
+        let old = home.join("sunrise-mods/coords_hud.smod");
+        if gone {
+            fs::remove_file(&old).unwrap();
+        } else {
+            fs::write(&old, b"not a zip").unwrap();
+        }
+        let mut list = installed::Installed::load(&home);
+        list.entries[0].version = "0.0.1".into();
+        list.save(&home).unwrap();
+        let index = native_sample(&home);
+        let p = &index.projects[0];
+        let install = Install {
+            index: &index,
+            local: true,
+            home: &home,
+            progress: &|_, _| {},
+        };
+        let done = dependencies::install(&install, p, &p.versions[0], true).unwrap();
+        assert_eq!(done[0].file, "sunrise-native-mods/coords_hud.smod");
+        assert!(home.join("sunrise-native-mods/coords_hud.smod").is_file());
+        assert!(!old.exists());
+        let list = installed::Installed::load(&home);
+        assert_eq!(list.entries.len(), 1);
+        assert_eq!(list.entries[0].file, "sunrise-native-mods/coords_hud.smod");
+        let aside = home.join("mod-browser/unreadable");
+        if gone {
+            assert!(!aside.exists());
+        } else {
+            let kept: Vec<_> = fs::read_dir(aside)
+                .unwrap()
+                .map(|e| fs::read(e.unwrap().path()).unwrap())
+                .collect();
+            assert_eq!(kept, [b"not a zip".to_vec()]);
+        }
+        fs::remove_dir_all(home).unwrap();
+    }
+}
+
+#[test]
+fn a_mod_install_with_dependencies_replaces_an_entry_whose_file_is_gone() {
+    let index = sample();
+    let home = scratch("gone-with-deps");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::remove_file(&path).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    dependencies::install(&install, p, &p.versions[0], false).unwrap();
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    assert!(!home.join("mod-browser/unreadable").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
 #[test]
 fn removing_native_mod_does_not_remove_a_separate_content_file() {
     let index = sample();
