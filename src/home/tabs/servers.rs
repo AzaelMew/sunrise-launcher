@@ -32,7 +32,7 @@ impl Launcher {
         } else {
             for (server, saved) in rows {
                 let status = match self.multiplayer.reach.get(&server.ip) {
-                    Some(multiplayer_page::Reach::Online { players, max }) => Some(trf(
+                    Some(multiplayer_page::Reach::Online { players, max, .. }) => Some(trf(
                         "{online} of {max}",
                         &[("online", &players.to_string()), ("max", &max.to_string())],
                     )),
@@ -79,7 +79,6 @@ impl Launcher {
     }
 
     /// Attach inside the saved row in Join. An offline row can pass its own focus handle.
-    #[allow(dead_code)] // The Servers rollup wires the canonical Join row to this handoff.
     pub(crate) fn home_server_target(
         &self,
         address: &str,
