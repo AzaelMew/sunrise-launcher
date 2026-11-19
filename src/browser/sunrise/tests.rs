@@ -399,6 +399,33 @@ fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
 }
 
 #[test]
+fn a_failed_install_with_dependencies_leaves_no_copy_of_the_unreadable_file() {
+    let index = sample();
+    let home = scratch("failed-with-deps");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::write(&path, b"not a zip").unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    // The list of enabled mods can't be read, so turning the mod on fails before anything lands.
+    let enabled = home.join(sunrise_launcher_smod::mod_list::FILE);
+    let _ = fs::remove_file(&enabled);
+    fs::create_dir(&enabled).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    assert!(dependencies::install(&install, p, &p.versions[0], false).is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"not a zip");
+    assert!(!home.join("mod-browser/unreadable").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn update_replaces_an_entry_whose_file_is_gone() {
     let index = sample();
     let home = scratch("gone-installed");

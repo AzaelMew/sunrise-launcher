@@ -64,10 +64,13 @@ pub(super) fn install(
             done.push(entry);
         }
     }
-    // Publishing drops what it replaces, so a file that no longer parses is copied aside first.
-    for broken in &plan.unreadable {
-        let to = super::unreadable_slot(home, broken)?;
-        fs::copy(broken, &to).map_err(|e| format!("{}: {e}", broken.display()))?;
+    // Publishing drops what it replaces, so a file that no longer parses is copied into the
+    // staging folder first, and kept in `mod-browser/unreadable` only once publishing worked.
+    let mut aside = Vec::new();
+    for (n, broken) in plan.unreadable.iter().enumerate() {
+        let copy = staged.path().join(format!("aside-{n}"));
+        fs::copy(broken, &copy).map_err(|e| format!("{}: {e}", broken.display()))?;
+        aside.push((broken.clone(), copy));
     }
     if !changes.is_empty() {
         plan.installed.save(staged.path())?;
@@ -88,7 +91,11 @@ pub(super) fn install(
         mod_list::set_all_enabled(staged.path(), &ids, true)?;
         changes.push((next, saved));
     }
-    publish(staged, changes)?;
+    let _staged = publish(staged, changes)?;
+    for (broken, copy) in aside {
+        let to = super::unreadable_slot(home, &broken)?;
+        fs::copy(copy, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+    }
     for path in stale {
         let _ = fs::remove_file(path);
     }
@@ -211,7 +218,10 @@ impl Plan<'_> {
 
 /// Same-filesystem moves with an undo list; even a failed metadata write restores old files.
 /// The profile lock keeps another launcher or game start from seeing an intermediate state.
-fn publish(staged: tempfile::TempDir, changes: Vec<(PathBuf, PathBuf)>) -> Result<(), String> {
+fn publish(
+    staged: tempfile::TempDir,
+    changes: Vec<(PathBuf, PathBuf)>,
+) -> Result<tempfile::TempDir, String> {
     let mut undo = Vec::new();
     for (i, (from, to)) in changes.into_iter().enumerate() {
         let result = (|| -> io::Result<()> {
@@ -257,5 +267,5 @@ fn publish(staged: tempfile::TempDir, changes: Vec<(PathBuf, PathBuf)>) -> Resul
             });
         }
     }
-    Ok(())
+    Ok(staged)
 }
