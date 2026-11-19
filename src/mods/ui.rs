@@ -58,7 +58,8 @@ pub(crate) fn chip(
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(tokens::R_PANEL))
+        // A button's corners: a choice is a row of buttons, not of pills.
+        .rounded(px(tokens::R_CONTROL))
         .border_1()
         .border_color(if on {
             c(palette().text)
@@ -104,7 +105,7 @@ pub(crate) fn choices(
         // Room for the ring, taken back so the chips stay where they were.
         .p(px(3.))
         .m(px(-4.))
-        .rounded(px(tokens::R_PANEL + 4.))
+        .rounded(px(tokens::R_CONTROL + 4.))
         .border_1()
         .border_color(gpui::transparent_black())
         .focus_visible(|s| s.border_color(c(palette().focus)));

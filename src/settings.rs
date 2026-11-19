@@ -986,7 +986,8 @@ impl Launcher {
             });
             div()
                 .flex()
-                .items_start()
+                // The switch in the middle of its row, as everywhere else in Settings.
+                .items_center()
                 .gap(px(16.))
                 .child(
                     div()
