@@ -451,3 +451,22 @@ fn the_copy_list_names_worlds_as_the_game_does_and_orders_by_last_played() {
     assert_eq!(first, home.join("saves/played-today"));
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn the_copy_list_leaves_out_folders_without_a_readable_level_dat() {
+    let home = scratch("player-worlds-broken");
+    saved_world(&home, "good", "Good", 1_000_000_000_000);
+    std::thread::sleep(Duration::from_millis(20));
+    // Both newer by file time than the good world, so either would be preselected if listed.
+    let old_only = home.join("saves/old-only");
+    fs::create_dir_all(&old_only).unwrap();
+    fs::write(old_only.join("level.dat_old"), b"not nbt").unwrap();
+    std::thread::sleep(Duration::from_millis(20));
+    let garbage = home.join("saves/garbage");
+    fs::create_dir_all(&garbage).unwrap();
+    fs::write(garbage.join("level.dat"), b"not nbt").unwrap();
+    let listed = player_worlds(&home);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].1, home.join("saves/good"));
+    fs::remove_dir_all(home).unwrap();
+}

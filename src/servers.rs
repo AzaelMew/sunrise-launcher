@@ -794,6 +794,9 @@ fn ports_taken() -> Vec<u16> {
 pub fn player_worlds(home: &Path) -> Vec<(String, PathBuf)> {
     worlds::list(home)
         .into_iter()
+        // Only a readable level.dat is a world to copy; the Worlds page also keeps folders with
+        // just a level.dat_old or a damaged level.dat, so they can be backed up.
+        .filter(|w| worlds::has_readable_level_dat(&w.path))
         .map(|w| (w.name, w.path))
         .collect()
 }

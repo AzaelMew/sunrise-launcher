@@ -90,6 +90,12 @@ pub fn list(home: &Path) -> Vec<World> {
     worlds.into_iter().map(|s| s.world).collect()
 }
 
+/// Whether `folder` has a level.dat file the game's reader can read (no recovery from level.dat_old).
+pub(crate) fn has_readable_level_dat(folder: &Path) -> bool {
+    let dat = folder.join("level.dat");
+    dat.is_file() && level_dat(&dat).is_some()
+}
+
 /// level.dat: gzip, as vanilla writes it, or plain. Read with the limits the game reads a world's
 /// `.dat` files with ([`Limits::saved`]: its depth, no cap on the tag count, and a size bound), so
 /// a level.dat the game loads is never taken for an unreadable one.
