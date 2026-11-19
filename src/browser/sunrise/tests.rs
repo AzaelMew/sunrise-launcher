@@ -321,6 +321,23 @@ fn corrupt_installed_archive_is_not_treated_as_content() {
 }
 
 #[test]
+fn update_replaces_an_entry_whose_file_is_gone() {
+    let index = sample();
+    let home = scratch("gone-installed");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::remove_file(&path).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn removing_native_mod_does_not_remove_a_separate_content_file() {
     let index = sample();
     let home = scratch("native-remove");

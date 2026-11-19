@@ -1113,8 +1113,9 @@ impl Install<'_> {
         let old = list.entries.iter().find(|e| ours(e)).cloned();
         if let Some(old) = &old {
             let mut different = old.kind != project.kind;
-            if !different && project.kind == Kind::Mod {
-                let path = self.home.join(&old.file);
+            let path = self.home.join(&old.file);
+            // A file that is gone has no kind to compare: the update replaces its entry.
+            if !different && project.kind == Kind::Mod && path.exists() {
                 let installed_native = index::native::holds(&path);
                 let kind = if installed_native {
                     index::Kind::NativeMod
