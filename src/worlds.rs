@@ -81,7 +81,12 @@ pub fn list(home: &Path) -> Vec<World> {
         .flatten()
         .filter_map(|e| scanned_world(&e.path()).ok().flatten())
         .collect();
-    worlds.sort_by_key(|s| std::cmp::Reverse(s.played));
+    // Worlds played at the same moment go by folder name, not by the order the disk lists them.
+    worlds.sort_by(|a, b| {
+        b.played
+            .cmp(&a.played)
+            .then_with(|| a.world.folder.cmp(&b.world.folder))
+    });
     worlds.into_iter().map(|s| s.world).collect()
 }
 

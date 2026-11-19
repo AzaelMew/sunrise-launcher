@@ -338,3 +338,23 @@ fn last_played_hardcore_and_game_type_read_any_number_tag() {
     assert_eq!(by("float").mode, "Hardcore");
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn worlds_played_at_the_same_moment_are_ordered_by_folder_name() {
+    let home = scratch("same-moment");
+    for folder in ["delta", "alpha", "charlie", "bravo"] {
+        world(
+            &home,
+            folder,
+            vec![("LastPlayed", Tag::Long(1_700_000_000_000))],
+        );
+    }
+    world(
+        &home,
+        "newest",
+        vec![("LastPlayed", Tag::Long(1_800_000_000_000))],
+    );
+    let folders: Vec<String> = list(&home).into_iter().map(|w| w.folder).collect();
+    assert_eq!(folders, ["newest", "alpha", "bravo", "charlie", "delta"]);
+    fs::remove_dir_all(home).unwrap();
+}
