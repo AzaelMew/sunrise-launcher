@@ -268,7 +268,8 @@ impl Launcher {
                 .on_click(cx.listener(|this, _, _, cx| {
                     if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                         d.icon = None;
-                        d.picture = None;
+                        // An explicit Sunrise mark displaces even a picture inherited by a copy.
+                        d.picture = Some(None);
                     }
                     cx.notify();
                 })),
@@ -292,7 +293,7 @@ impl Launcher {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
                             d.icon = Some(choice.clone());
-                            d.picture = None;
+                            d.picture = Some(None);
                         }
                         cx.notify();
                     })),

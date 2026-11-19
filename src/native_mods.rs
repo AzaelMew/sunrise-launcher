@@ -31,6 +31,7 @@ mod tool;
 pub use internals_sync::catalog;
 pub mod fit;
 mod isolate;
+mod mixins;
 mod picker;
 pub mod sdk_cache;
 
@@ -398,79 +399,6 @@ fn tool_for(folder: &Path) -> Result<PathBuf, String> {
     let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO);
     let sdk = sdk_cache::index(&base, &bundle.native().sunrise, &keys).map_err(refused)?;
     sdk_cache::tool(&sdk, &base, &|_| {}).map_err(refused)
-}
-
-/// The one value the bundles pin for `which` (each mod's `get`), else `fallback`; mods that pin
-/// different ones can't be built together, and the error says which.
-fn agreed(
-    bundles: &[Bundle],
-    which: &str,
-    get: impl Fn(&Bundle) -> Option<&String>,
-    fallback: impl FnOnce() -> Result<String, String>,
-) -> Result<String, String> {
-    let mut pins: Vec<(&String, &str)> = bundles
-        .iter()
-        .filter_map(|b| get(b).map(|r| (r, b.manifest.id.as_str())))
-        .collect();
-    pins.sort();
-    let revision = match pins.first() {
-        None => fallback()?,
-        Some((first, _)) if pins.iter().all(|(r, _)| r == first) => (*first).clone(),
-        Some(_) => {
-            let list: Vec<String> = pins
-                .iter()
-                .map(|(r, id)| format!("{id} → {}", &r[..r.len().min(7)]))
-                .collect();
-            return Err(format!(
-                "These mods were made for different {which} revisions and can't be built together: {}. Install versions made for the same Nightly.",
-                list.join(", ")
-            ));
-        }
-    };
-    if !is_revision(&revision) {
-        return Err(format!(
-            "{revision} is not a {which} commit (40 hex digits)."
-        ));
-    }
-    Ok(revision)
-}
-
-/// The revision `bundles` build on for `which` when their pins differ: the newest of the pins and
-/// `also` (the launcher's own horizon-mixins), by its commit's time (`date`), so no mod gets an
-/// older one than it was made for. With one pin or none, it is [`agreed`]'s.
-fn newest(
-    bundles: &[Bundle],
-    which: &str,
-    get: impl Fn(&Bundle) -> Option<&String>,
-    fallback: impl FnOnce() -> Result<String, String>,
-    also: Option<&str>,
-    date: impl Fn(&str) -> Result<String, String>,
-) -> Result<String, String> {
-    let mut pins: Vec<&str> = bundles
-        .iter()
-        .filter_map(|b| get(b).map(String::as_str))
-        .collect();
-    pins.sort();
-    pins.dedup();
-    if pins.len() < 2 {
-        return agreed(bundles, which, get, fallback);
-    }
-    if let Some(bad) = pins.iter().find(|p| !is_revision(p)) {
-        return Err(format!("{bad} is not a {which} commit (40 hex digits)."));
-    }
-    pins.extend(also.filter(|a| !pins.contains(a)));
-    let mut dated = Vec::new();
-    for pin in pins {
-        let when = date(pin).map_err(|e| {
-            format!("Can't tell which of the mods' {which} revisions is newest: {e}")
-        })?;
-        dated.push((when, pin));
-    }
-    Ok(dated
-        .into_iter()
-        .max()
-        .map(|(_, p)| p.to_owned())
-        .unwrap_or_default())
 }
 
 /// When commit `revision` of GitHub's `repo` was made (ISO 8601, so it sorts), from the dates kept
@@ -1416,6 +1344,9 @@ fn pipeline(
     }
     let revision = build_revision(base, built_on.as_ref())?;
     let developer = crate::developer_install::is_developer(origin);
+    let local_sdk = developer
+        .then(|| std::env::var_os(sdk_cache::DEVELOPER_SDK).map(PathBuf::from))
+        .flatten();
     let sdk_base = sdk_cache::Base::from_env();
     let keys = sunrise_launcher_release_verify::sdk_keys_for(backend::GAME_REPO);
     // A developer install's checkout has no published surface to test against: its mods are
@@ -1428,12 +1359,32 @@ fn pipeline(
     } else {
         Some(sdk_cache::index(&sdk_base, &revision, &keys).map_err(refused)?)
     };
+    let mixins_pins = mixins::pins(&mods, sdk.as_ref(), &sdk_base, local_sdk.as_deref())?;
+    // Give older SDK tools the exact pin they require, and hash the same inputs we build.
+    // Only the incoming copies change; the recorded source digests still name the originals.
+    for (bundle, pin) in mods.iter().zip(&mixins_pins) {
+        mixins::materialize(bundle, &bundle.dir, pin)?;
+    }
+    let check_inputs = requested
+        .iter()
+        .any(|b| {
+            b.manifest
+                .native
+                .as_ref()
+                .is_some_and(|n| n.mixins.is_none())
+                && left_out.iter().any(|left| left.id == b.manifest.id)
+        })
+        .then(|| mixins::check_inputs(&mods, &mixins_pins))
+        .transpose()?;
+    let check_folder = check_inputs
+        .as_ref()
+        .map_or(incoming.as_path(), |dir| dir.path());
     let mut fitted: Vec<String> = Vec::new();
     let mut route = None;
     if let Some(sdk) = &sdk {
         progress(Step::Checking(ids.len()));
-        let checks =
-            check_all(&incoming, &ids, sdk, &sdk_base, cancellation).map_err(|r| r.to_string())?;
+        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
+            .map_err(|r| r.to_string())?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1530,17 +1481,12 @@ fn pipeline(
             compiling: true,
         }
     };
-    let mixins = newest(
-        &mods,
-        "horizon-mixins",
-        |b| Some(&b.native().mixins),
-        || Ok(MIXINS_REV.into()),
-        Some(MIXINS_REV),
-        |r| committed("horizon-rust/horizon-mixins", r),
-    )?;
+    let mixins = mixins::for_key(&mixins_pins, |r| {
+        committed("horizon-rust/horizon-mixins", r)
+    })?;
     // Keep developer provenance distinct from a signed base at the same source commit.
-    let developer_key = crate::developer_install::is_developer(origin)
-        .then(|| format!("{}:{origin}", platform.cache_key().unwrap_or_default()));
+    let developer_key =
+        developer.then(|| format!("{}:{origin}", platform.cache_key().unwrap_or_default()));
     let version = version_for(
         &revision,
         &mixins,
@@ -1566,12 +1512,7 @@ fn pipeline(
     let prebuilt = if exists {
         None
     } else {
-        let local = developer_key
-            .is_some()
-            .then(|| std::env::var_os(sdk_cache::DEVELOPER_SDK))
-            .flatten()
-            .map(PathBuf::from);
-        let package = match (local, &sdk) {
+        let package = match (local_sdk, &sdk) {
             (Some(local), _) => {
                 let program = sdk_cache::developer_tool(true).ok_or_else(|| {
                         trf(
@@ -1615,7 +1556,7 @@ fn pipeline(
                 let route = match route.clone() {
                     Some(route) => route,
                     None => {
-                        let checks = check_all(&incoming, &ids, sdk, &sdk_base, cancellation)
+                        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
                             .map_err(refused)?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
@@ -3163,7 +3104,7 @@ mod tests {
         assert_eq!(found[1].manifest.id, "veinminer");
         assert_eq!(found[1].dir, d.join("veinminer"));
         assert_eq!(found[1].native().sunrise, A);
-        assert_eq!(found[1].native().mixins, B);
+        assert_eq!(found[1].native().mixins.as_deref(), Some(B));
         assert_eq!(found[0].native().sunrise, A);
     }
 

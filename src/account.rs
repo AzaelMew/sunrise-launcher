@@ -2248,6 +2248,16 @@ pub fn discard_unread_sessions() {
     }
 }
 
+/// Discard only the session prepared for the launch that was refused.
+pub fn discard_launch_session(file: Option<PathBuf>) {
+    if let Some(file) = file {
+        if let Ok(mut unread) = UNREAD.lock() {
+            unread.retain(|p| p != &file);
+        }
+        let _ = std::fs::remove_file(file);
+    }
+}
+
 /// Called under the account-operation lock, after the final profile is known. Rejected or
 /// cancelled sign-ins must not save a credential, add another identity, or change selection.
 fn accept_sign_in(
@@ -2419,6 +2429,15 @@ fn launch_accepted(
     accounts: &mut Accounts,
     accepted: &str,
 ) -> Result<Launch, NoOwner> {
+    check_launch_account(accounts, accepted)?;
+    let chosen = accounts.selected.replace(accepted.to_owned());
+    let pass = launch_for_game(ep, client_id, store, accounts);
+    accounts.selected = chosen;
+    pass
+}
+
+/// The accepted UUID must still be signed in, independent of who is selected now.
+pub fn check_launch_account(accounts: &Accounts, accepted: &str) -> Result<(), NoOwner> {
     if !accounts.accounts.iter().any(|a| a.uuid == accepted) {
         return Err(NoOwner {
             keyring: Some(
@@ -2429,10 +2448,7 @@ fn launch_accepted(
             ),
         });
     }
-    let chosen = accounts.selected.replace(accepted.to_owned());
-    let pass = launch_for_game(ep, client_id, store, accounts);
-    accounts.selected = chosen;
-    pass
+    Ok(())
 }
 
 /// [`session_for_game`] for one launch as `who` (`play --account`, a signed-in account): who

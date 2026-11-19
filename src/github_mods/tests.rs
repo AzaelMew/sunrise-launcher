@@ -276,15 +276,18 @@ fn a_flat_smod_keeps_its_pins_and_ships_only_selected_files() {
     project(&root, "zoom", SHA);
     write(&root.join("assets/zoom/lang/en_us.json"), "{}");
     let bundle = &find_mods(&root).unwrap()[0];
-    assert_eq!(bundle.manifest.native.as_ref().unwrap().mixins, SHA2);
+    assert_eq!(
+        bundle.manifest.native.as_ref().unwrap().mixins.as_deref(),
+        Some(SHA2)
+    );
     let packed = checked(&pack(bundle).unwrap(), &tree("unpacked-out")).unwrap();
     let read = sunrise_launcher_smod::index::native::Bundle::read(&packed.file).unwrap();
     assert_eq!(read.manifest.id, "zoom");
     assert!(read.files.contains_key("assets/zoom/lang/en_us.json"));
     let native = read.manifest.native.unwrap();
     assert_eq!(
-        (native.sunrise.as_str(), native.mixins.as_str()),
-        (SHA, SHA2)
+        (native.sunrise.as_str(), native.mixins.as_deref()),
+        (SHA, Some(SHA2))
     );
     write(&root.join("assets/minecraft/lang/en_us.json"), "{}");
     assert!(pack(bundle).is_err());

@@ -253,7 +253,7 @@ struct Launcher {
     /// The first build's one-time download (the compiler), in bytes; `None` once it is there.
     first_build: Option<u64>,
     /// Play is waiting for a build, with the profile and account that pressed it.
-    play_after_build: Option<mods::build_run::PlayAfterBuild>,
+    play_after_build: Option<launcher_play::PlayIntent>,
     native_error: Option<String>,
     /// The mods that stopped the last build (`native_mods::Failed::Mods`): their rows say Failed,
     /// the others keep their own state.
@@ -291,6 +291,8 @@ struct Launcher {
     prepare_error: Option<String>,
     client: Option<Running>,
     client_error: Option<String>,
+    /// The latest Play's registry warnings, shown until dismissed or a new Play is accepted.
+    play_registry_notices: Vec<String>,
     /// When the running client started, to tell its crash report from older ones.
     client_started: Option<std::time::SystemTime>,
     /// The folder the running game keeps its settings in: the game home, or a modpack's.
@@ -329,12 +331,10 @@ struct Launcher {
     owner_screen_open: bool,
     /// The game is waiting for its session (a token renewal), before it starts.
     starting_client: Option<String>,
-    starting_instance: Option<String>,
-    /// The account selected when the game's start was accepted: the one that plays, whoever
-    /// is selected when its session is read.
-    starting_account: Option<String>,
+    /// The accepted Play the session worker is answering.
+    starting_play: Option<launcher_play::PlayIntent>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.
-    play_when_prepared: Option<(String, String)>,
+    play_when_prepared: Option<(String, launcher_play::PlayIntent)>,
     /// Join a friend: the code typed on the Play page, and the one the game
     /// starting now joins.
     friend_code: line_edit::LineEdit,

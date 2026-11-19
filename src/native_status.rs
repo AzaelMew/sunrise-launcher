@@ -58,36 +58,24 @@ pub fn state(enabled: &[Mod], built: Option<&[Mod]>) -> State {
     }
 }
 
-/// Why a build with native mods must not start for a profile now.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Refused {
-    /// The player hasn't allowed native mods, or took the permission back.
-    NoPermission,
-    /// It runs a mod this profile doesn't have turned on, or can't say which mods it runs.
-    NotThisProfiles,
+/// Check at acceptance and again after session and jar preparation, just before handing off
+/// the game command. An allowed Play is not permission cached for the duration of preparation.
+pub fn check_permission(version: &str) -> Result<(), String> {
+    check_permission_in(version, &backend::data_dir())
 }
 
-/// The last check before the game starts, whatever led there (a pinned version, a picker, a
-/// build kept on disk from before the permission went): a build compiled with mods' native code
-/// (`native`; `built` is what it says it holds) starts only while native mods are `allowed` and
-/// every mod in it is one of the profile's `enabled` ones. A game as released always may.
-pub fn launch_refusal(
-    native: bool,
-    allowed: bool,
-    enabled: &[Mod],
-    built: Option<&[Mod]>,
-) -> Option<Refused> {
-    if !native {
-        return None;
+fn check_permission_in(version: &str, data: &Path) -> Result<(), String> {
+    if native_mods::is_native(version)
+        && backend::Settings::load_from(data)
+            .native_mods_allowed_at
+            .is_none()
+    {
+        return Err(crate::i18n::tr(
+            "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
+        )
+        .into());
     }
-    if !allowed {
-        return Some(Refused::NoPermission);
-    }
-    let on = |m: &Mod| enabled.iter().any(|e| e.0 == m.0);
-    match built {
-        Some(built) if built.iter().all(on) => None,
-        _ => Some(Refused::NotThisProfiles),
-    }
+    Ok(())
 }
 
 /// A `.smod`'s digest as a build records it: its files without the uses table, which the
@@ -422,6 +410,73 @@ pub fn built(version: &str) -> Option<Vec<Mod>> {
     Some(parse_built(&record(version)?))
 }
 
+/// A mod actually linked into a build, not one the build left out.
+#[derive(serde::Deserialize)]
+pub(crate) struct Included {
+    pub id: String,
+    pub version: String,
+    pub sha256: String,
+}
+
+#[derive(serde::Deserialize)]
+struct IncludedRecord {
+    mods: Vec<Included>,
+}
+
+/// The mods in the selected binary. Unlike [`built`], these exclude `left_out`.
+pub(crate) fn included(version: &str) -> Result<Vec<Included>, String> {
+    if !native_mods::is_native(version) {
+        return Ok(Vec::new());
+    }
+    record(version).and_then(parse_included).ok_or_else(|| {
+        crate::i18n::tr(
+            "This native build doesn't say exactly which mods it includes. Rebuild the mods or choose another game build.",
+        )
+        .into()
+    })
+}
+
+fn parse_included(record: serde_json::Value) -> Option<Vec<Included>> {
+    let IncludedRecord { mods } = serde_json::from_value(record).ok()?;
+    let mut ids = std::collections::HashSet::new();
+    if mods.is_empty()
+        || !mods.iter().all(|m| {
+            !m.id.is_empty()
+                && !m.version.is_empty()
+                && ids.insert(&m.id)
+                && m.sha256.len() == 64
+                && m.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        })
+    {
+        return None;
+    }
+    Some(mods)
+}
+
+/// Only linked mods need to match; skipped entries do not run. Compare the exact enabled
+/// version and source digest, not just the package id. A plain build has nothing to check.
+pub(crate) fn check_compiled_profile(included: &[Included], home: &Path) -> Result<(), String> {
+    if !included.is_empty() && !compiled_match(included, &enabled(home)) {
+        return Err(crate::i18n::tr(
+            "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.",
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn compiled_match(included: &[Included], enabled: &[Mod]) -> bool {
+    included.iter().all(|m| {
+        let mut same_id = enabled.iter().filter(|(id, ..)| id == &m.id);
+        same_id.next().is_some_and(|(_, version, sha)| {
+            version == &m.version
+                && sha
+                    .as_ref()
+                    .is_some_and(|sha| sha.eq_ignore_ascii_case(&m.sha256))
+        }) && same_id.next().is_none()
+    })
+}
+
 /// Native build `version`'s `native-mods.json`.
 fn record(version: &str) -> Option<serde_json::Value> {
     if !native_mods::is_native(version) {
@@ -533,33 +588,15 @@ mod tests {
     }
 
     #[test]
-    fn a_native_build_starts_only_with_permission_and_for_a_profile_with_its_mods() {
-        let a: Mod = ("a".into(), "1.0".into(), None);
-        let b: Mod = ("b".into(), "1.0".into(), None);
-        let built = [a.clone(), b.clone()];
-        let refusal =
-            |allowed, enabled: &[Mod]| launch_refusal(true, allowed, enabled, Some(&built));
-        assert_eq!(refusal(true, &[a.clone(), b.clone()]), None);
-        // An empty profile pinned to someone's build reads NoMods, so nothing else stops it.
-        assert_eq!(state(&[], Some(&built)), State::NoMods);
-        assert_eq!(refusal(true, &[]), Some(Refused::NotThisProfiles));
-        assert_eq!(
-            refusal(true, std::slice::from_ref(&a)),
-            Some(Refused::NotThisProfiles)
-        );
-        // The permission taken back: the build is still on disk, and stays unstarted.
-        assert_eq!(
-            refusal(false, &[a.clone(), b.clone()]),
-            Some(Refused::NoPermission)
-        );
-        assert_eq!(refusal(false, &[]), Some(Refused::NoPermission));
-        // A native build that can't say what it holds is nobody's.
-        assert_eq!(
-            launch_refusal(true, true, std::slice::from_ref(&a), None),
-            Some(Refused::NotThisProfiles)
-        );
-        // A game as released needs neither.
-        assert_eq!(launch_refusal(false, false, &[], None), None);
+    fn permission_taken_back_while_preparing_blocks_native_spawn() {
+        let data = tempfile::tempdir().unwrap();
+        let settings = data.path().join("settings.json");
+        fs::write(&settings, r#"{"native_mods_allowed_at":123}"#).unwrap();
+        assert_eq!(check_permission_in("native-test", data.path()), Ok(()));
+
+        fs::write(&settings, "{}").unwrap();
+        assert!(check_permission_in("native-test", data.path()).is_err());
+        assert_eq!(check_permission_in("v1.2.3", data.path()), Ok(()));
     }
 
     #[test]
@@ -1008,6 +1045,46 @@ mod tests {
         let on = [m("zoom", "2.1"), d("hitbox_plus", "1.3.0", "bb")];
         assert_eq!(state(&on, Some(build.as_slice())), State::Outdated);
         assert_eq!(built("v0.1.0"), None, "not a native build");
+    }
+
+    #[test]
+    fn launch_requires_a_complete_inventory_and_an_exact_enabled_match() {
+        use serde_json::json;
+        let hash = "a".repeat(64);
+        let linked = json!({"id": "zoom", "version": "2.1", "sha256": hash});
+        let included = parse_included(json!({
+            "mods": [linked],
+            "left_out": [{"id": "hitbox_plus", "version": "1.3.0"}],
+        }))
+        .unwrap();
+        // Left-out mods don't run, so they don't need to be installed or enabled.
+        assert_eq!(included.len(), 1);
+        assert!(compiled_match(
+            &included,
+            &[("zoom".into(), "2.1".into(), Some(hash.clone()))]
+        ));
+        // An empty profile, missing digest, or wrong version or digest must not play the binary.
+        assert!(!compiled_match(&included, &[]));
+        for (version, sha) in [
+            ("2.1", None),
+            ("2.2", Some(hash)),
+            ("2.1", Some("b".repeat(64))),
+        ] {
+            assert!(!compiled_match(
+                &included,
+                &[("zoom".into(), version.into(), sha)]
+            ));
+        }
+        for record in [
+            json!({}),
+            json!({"mods": []}),
+            json!({"mods": [{"id": "zoom", "version": "2.1"}]}),
+            json!({"mods": [{"id": "zoom", "version": "2.1", "sha256": "xyz"}]}),
+            json!({"mods": [linked, linked]}),
+            json!({"mods": [linked, null]}),
+        ] {
+            assert!(parse_included(record).is_none());
+        }
     }
 
     #[test]

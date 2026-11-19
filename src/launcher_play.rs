@@ -1,6 +1,21 @@
 //! Installing and removing builds, preparing and starting the game, and the accounts' sign-in.
 use super::*;
 
+/// Who and what Play was accepted for, before any install, preparation or build.
+pub(crate) struct PlayIntent {
+    pub instance: String,
+    pub account: Option<String>,
+}
+
+impl PlayIntent {
+    pub fn new(instance: String, selected: Option<&account::Account>) -> Self {
+        Self {
+            instance,
+            account: selected.map(|a| a.uuid.clone()),
+        }
+    }
+}
+
 impl Launcher {
     /// After a crash with no report: when the game's output ends while its Vulkan renderer
     /// started, a native crash in the graphics driver (#746), switches the game to
@@ -118,7 +133,7 @@ impl Launcher {
         self.download_seen = None;
     }
 
-    pub(crate) fn play(&mut self, accepted: Option<String>) {
+    pub(super) fn play(&mut self, intent: PlayIntent) {
         // A press that starts nothing says why, where Play's errors show: the button can look
         // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
         let Some(tag) = self.selected().cloned() else {
@@ -130,11 +145,7 @@ impl Launcher {
             return;
         }
         self.starting_pack = None;
-        self.start_client(
-            tag,
-            self.selected_instance().map(|i| i.id.clone()),
-            accepted,
-        );
+        self.start_client(tag, intent);
     }
 
     /// Why `tag` cannot start now, as the player reads it; None when it can ([`Self::can_start`]).
@@ -162,39 +173,13 @@ impl Launcher {
 
     /// Starts the game: the session first (a network round trip when the token needs
     /// renewing), then `drain` starts the process when it arrives.
-    fn start_client(&mut self, tag: String, instance_id: Option<String>, accepted: Option<String>) {
+    fn start_client(&mut self, tag: String, intent: PlayIntent) {
         self.client_error = None;
         self.crash = None;
-        // Every way to Play ends here, so this is where a build with native code is held to
-        // the permission as it stands now and to the profile about to play it.
-        let home = self
-            .instances
-            .list
-            .iter()
-            .find(|i| Some(&i.id) == instance_id.as_ref())
-            .map(|i| i.home.clone());
-        let native = native_mods::is_native(&tag);
-        let refused = native_status::launch_refusal(
-            native,
-            backend::Settings::load().native_mods_allowed_at.is_some(),
-            &home
-                .filter(|_| native)
-                .map(|home| native_status::enabled(&home))
-                .unwrap_or_default(),
-            native_status::built(&tag).as_deref(),
-        );
-        if let Some(refused) = refused {
-            self.client_error = Some(
-                match refused {
-                    native_status::Refused::NoPermission => tr(
-                        "This profile plays a build made with native mods, and native mods are turned off. Choose another game build for it in Versions.",
-                    ),
-                    native_status::Refused::NotThisProfiles => tr(
-                        "This profile plays a build made with mods it doesn't have turned on. Choose another game build for it in Versions.",
-                    ),
-                }
-                .into(),
-            );
+        // Refuse revoked permission early as well as at spawn. The prepared command's
+        // compiled inventory is checked off-thread once its actual profile has been applied.
+        if let Err(error) = native_status::check_permission(&tag) {
+            self.client_error = Some(error);
             self.starting_pack = None;
             self.joining = None;
             self.quick_play = None;
@@ -208,15 +193,14 @@ impl Launcher {
         // round trip when the token needs renewing) come first; `drain` starts the game when the
         // session arrives.
         self.starting_client = Some(tag.clone());
-        self.starting_instance = instance_id.clone();
-        self.starting_account = accepted.clone();
+        let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
         let auto = self
             .instances
             .list
             .iter()
-            .find(|i| Some(&i.id) == instance_id.as_ref())
+            .find(|i| i.id == intent.instance)
             .filter(|_| self.starting_pack.is_none())
             .map(|i| mods_page::AutoTarget {
                 instance: i.clone(),
@@ -224,6 +208,7 @@ impl Launcher {
             });
         let mods_tx = self.mods.tx.clone();
         let auto_enabled = self.settings.auto_updates_mods();
+        self.starting_play = Some(intent);
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
@@ -241,7 +226,7 @@ impl Launcher {
             } else {
                 match &accepted {
                     Some(uuid) => account::session_for_game_accepted(&backend::game_home(), uuid),
-                    None => account::session_for_game(&backend::game_home()),
+                    None => Err(account::NoOwner::default()),
                 }
                 .map(Some)
             };
@@ -311,8 +296,8 @@ impl Launcher {
 
     /// Whether who plays is settled for now: from an accepted Play until the game has started
     /// (installing, preparing, building, signing in), the account can't be switched, signed out
-    /// or joined by a new one. The start reads the accepted account either way
-    /// (`starting_account`); this keeps the chip showing the account that is about to play.
+    /// or joined by a new one. The start only reads the account in its Play intent; this keeps
+    /// the chip showing the account that is about to play.
     pub(crate) fn account_locked(&self) -> bool {
         self.launch_busy()
             || self.ui.after_install.is_some()
@@ -385,5 +370,32 @@ impl Launcher {
             }
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_deferred_play_keeps_the_uuid_captured_before_preparation() {
+        let mut accounts = Accounts::default();
+        for uuid in ["first", "second"] {
+            accounts.accounts.push(account::Account {
+                uuid: uuid.into(),
+                name: uuid.into(),
+                skin: None,
+                cape: None,
+            });
+        }
+        accounts.selected = Some("first".into());
+        let intent = PlayIntent::new("sunrise".into(), accounts.selected());
+        // A sign-out in flight when Play was pressed completes during preparation.
+        accounts.accounts.remove(0);
+        accounts.selected = Some("second".into());
+        let accepted = intent.account.as_deref().unwrap();
+        assert_eq!(accepted, "first");
+        assert!(account::check_launch_account(&accounts, accepted).is_err());
+        assert_eq!(accounts.selected().unwrap().uuid, "second");
     }
 }
