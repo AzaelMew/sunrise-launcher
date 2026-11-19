@@ -227,9 +227,20 @@ impl Launcher {
             }
         }
         let stop = match &run.end {
-            Some(End::Stopped(said)) => {
-                Some(muted(said.clone()).flex_none().px(px(14.)).py(px(10.)))
-            }
+            Some(End::Stopped(said)) => Some(
+                muted(if run.details {
+                    said.clone()
+                } else {
+                    said.lines()
+                        .find(|line| !line.trim().is_empty())
+                        .unwrap_or_default()
+                        .to_owned()
+                })
+                .flex_none()
+                .px(px(14.))
+                .py(px(10.))
+                .when(!run.details, |d| d.line_clamp(2)),
+            ),
             _ => None,
         };
         let list = div()
@@ -244,7 +255,8 @@ impl Launcher {
         let has_details =
             run.lines.iter().any(
                 |l| matches!(&l.state, State::NeedsUpdate { details, .. } if !details.is_empty()),
-            ) || counts.failed > 0;
+            ) || counts.failed > 0
+                || matches!(&run.end, Some(End::Stopped(text)) if !text.is_empty());
         let details = (!running && has_details).then(|| {
             div()
                 .id("build-details")

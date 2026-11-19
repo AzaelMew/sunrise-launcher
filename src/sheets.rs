@@ -788,54 +788,56 @@ impl Launcher {
 
         let open = self.ui.sheets.details;
         let more = div()
+            .id("alt-resolve-details")
+            .reach()
             .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(
-                div()
-                    .id("alt-resolve-details")
-                    .tab_index(0)
-                    .seen()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().muted))
-                    .cursor_pointer()
-                    .child(blocks::icon(
-                        if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        },
-                        11.,
-                        rgb(palette().muted).into(),
-                    ))
-                    .child(tr("Details"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.ui.sheets.details = !this.ui.sheets.details;
-                        cx.notify();
-                    })),
-            )
-            .children(open.then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .p(px(12.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .bg(rgb(palette().field))
-                    .font_family(crate::theme::MONO)
-                    .text_size(px(tokens::CAPTION))
-                    .text_color(rgb(palette().muted))
-                    .children(details.into_iter().map(crate::selectable::selectable))
+            .items_center()
+            .gap(px(6.))
+            .text_size(px(tokens::SMALL))
+            .text_color(rgb(palette().muted))
+            .cursor_pointer()
+            .child(blocks::icon(
+                if open {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                },
+                11.,
+                rgb(palette().muted).into(),
+            ))
+            .child(tr("Details"))
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.ui.sheets.details = !this.ui.sheets.details;
+                // The evidence sits above the list; reveal it even if you were at the end.
+                let scroll = crate::frame::scrolls("alt-resolve-list");
+                scroll.set_offset(gpui::point(px(0.), px(0.)));
+                cx.notify();
             }));
+        let diagnostics = open.then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .p(px(12.))
+                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                .bg(rgb(palette().field))
+                .font_family(crate::theme::MONO)
+                .text_size(px(tokens::CAPTION))
+                .text_color(rgb(palette().muted))
+                .children(details.into_iter().map(crate::selectable::selectable))
+        });
 
         let body = div()
             .flex()
             .flex_col()
             .child(title(heading).flex_none().line_clamp(2))
-            .child(div().flex_none().text_size(px(tokens::BODY)).child(lead))
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(tokens::BODY))
+                    .child(lead)
+                    .children(wait_line),
+            )
             .child(
                 div()
                     .id("alt-resolve-list")
@@ -848,9 +850,8 @@ impl Launcher {
                             .flex()
                             .flex_col()
                             .gap(px(8.))
-                            .children((!mods.is_empty()).then_some(list))
-                            .children(wait_line)
-                            .child(more),
+                            .children(diagnostics)
+                            .children((!mods.is_empty()).then_some(list)),
                     ),
             )
             .children(without.map(|text| muted(text).flex_none()))
@@ -860,7 +861,10 @@ impl Launcher {
                     .flex_none()
                     .flex_wrap()
                     .justify_end()
+                    .items_center()
                     .gap(px(8.))
+                    .child(more)
+                    .child(div().flex_1())
                     .children(go)
                     .child(stay),
             );
