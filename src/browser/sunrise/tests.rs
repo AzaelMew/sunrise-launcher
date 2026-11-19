@@ -84,6 +84,27 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     assert!(!home.join(installed::MANIFEST).exists());
     assert!(!home.join("sunrise-mods.txt").exists());
 
+    // The index's own dependency claim is planned before anything downloads: no version of
+    // sunrise_creatures satisfies ^2, so the install is refused with the planner's reason.
+    let mut claimed = index.clone();
+    let fireflies = claimed
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "fireflies")
+        .unwrap();
+    fireflies.versions[0].dependencies = Some(vec![index::Dependency {
+        id: "sunrise_creatures".into(),
+        version: "^2".into(),
+        optional: false,
+        side: None,
+    }]);
+    let refused = run(&claimed).unwrap_err();
+    assert!(
+        refused.contains("Fireflies can't be installed"),
+        "{refused}"
+    );
+    assert!(!home.join(installed::MANIFEST).exists());
+
     // A failure after moving the mod files must also leave none behind.
     fs::create_dir(home.join(installed::MANIFEST)).unwrap();
     assert!(run(&index).is_err());
@@ -1035,4 +1056,124 @@ fn a_project_is_starred_on_the_repository_its_source_is_in() {
     ] {
         assert_eq!(repo(source), None, "{source:?}");
     }
+}
+
+/// A dependency listed with an older and a newer version, the plan choosing the newer: the file
+/// that lands is the planned version, not the first one the walk finds in range.
+#[test]
+fn a_dependency_is_installed_at_the_version_the_plan_chose() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, title: &str, number: &str, extra: &str| {
+        let manifest = format!("id='{id}'\nname='{title}'\nversion='{number}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}");
+        let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &[]).unwrap();
+        let name = format!("{id}-{number}.smod");
+        let file = dir.path().join(&name);
+        fs::write(&file, &bytes).unwrap();
+        let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
+        let mut version = base.versions[0].clone();
+        version.version = number.into();
+        version.api = facts.api;
+        version.side = facts.side;
+        version.requires.clear();
+        version.file = index::File {
+            name,
+            url: format!("file://{}", file.display()),
+            size: bytes.len() as u64,
+            sha256: index::sha256(&bytes),
+            signature: None,
+        };
+        version
+    };
+    let mut fireflies = make(
+        "fireflies",
+        "Fireflies",
+        "1.0.0",
+        "[dependencies]\nsunrise_creatures = '^1'",
+    );
+    fireflies.dependencies = Some(vec![index::Dependency {
+        id: "sunrise_creatures".into(),
+        version: "^1".into(),
+        optional: false,
+        side: None,
+    }]);
+    // The older version is listed first: only the plan says the newer one is wanted.
+    let creatures = vec![
+        make("sunrise_creatures", "Sunrise Creatures", "1.0.0", ""),
+        make("sunrise_creatures", "Sunrise Creatures", "1.1.0", ""),
+    ];
+    for (id, title, versions) in [
+        ("fireflies", "Fireflies", vec![fireflies]),
+        ("sunrise_creatures", "Sunrise Creatures", creatures),
+    ] {
+        index.projects.push(index::Project {
+            id: id.into(),
+            name: title.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        });
+    }
+    let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+    let home = dir.path().join("profile");
+    let done = install_from(&index, true, &project, &home, GAME, false, &|_, _| {}).unwrap();
+    let creatures = done
+        .iter()
+        .find(|e| e.project == "sunrise_creatures")
+        .unwrap();
+    assert_eq!(creatures.version, "1.1.0");
+    assert!(home.join(&creatures.file).is_file());
+}
+
+#[test]
+fn a_set_whose_picks_need_conflicting_ranges_is_refused_before_anything_installs() {
+    let index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, numbers: &[&str], dependencies: Option<Vec<index::Dependency>>| {
+        let versions = numbers
+            .iter()
+            .map(|n| {
+                let mut v = base.versions[0].clone();
+                v.version = (*n).into();
+                v.dependencies = dependencies.clone();
+                v
+            })
+            .collect();
+        index::Project {
+            id: id.into(),
+            name: id.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        }
+    };
+    let need = |range: &str| {
+        Some(vec![index::Dependency {
+            id: "lib".into(),
+            version: range.into(),
+            optional: false,
+            side: None,
+        }])
+    };
+    let mut index = index;
+    index.projects = vec![
+        make("lib", &["2.0.0", "1.0.0"], None),
+        make("one", &["1.0.0"], need("^1")),
+        make("two", &["1.0.0"], need("^2")),
+        make("fine", &["1.0.0"], need("^1")),
+    ];
+    let say = |ids: &[&str]| {
+        let ids: Vec<String> = ids.iter().map(|id| (*id).to_owned()).collect();
+        check_set(&index, &ids, &[], GAME)
+    };
+    let plan = say(&["one", "fine"]).unwrap();
+    assert_eq!(plan.install.len(), 3, "both and the library once");
+    let refused = say(&["one", "two"]).unwrap_err();
+    assert!(
+        refused.contains("can't be installed with the others"),
+        "{refused}"
+    );
+    // A set is refused as a whole: the pick that would have been fine does not go ahead alone.
+    assert!(say(&["one", "two", "fine"]).is_err());
 }

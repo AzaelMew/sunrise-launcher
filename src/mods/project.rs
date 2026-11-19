@@ -96,7 +96,7 @@ pub(super) fn prose(theme: crate::theme::Theme, text: &str) -> AnyElement {
 }
 
 /// "‹ Discover": the way back from a page.
-pub(super) fn back(label: &'static str) -> Stateful<Div> {
+pub(super) fn back(label: impl Into<SharedString>) -> Stateful<Div> {
     div()
         .id("alt-project-back")
         .reach()
@@ -108,7 +108,7 @@ pub(super) fn back(label: &'static str) -> Stateful<Div> {
         .text_color(c(palette().muted))
         .cursor_pointer()
         .child("‹")
-        .child(label)
+        .child(label.into())
 }
 
 /// One line of a page's About card.
@@ -149,9 +149,15 @@ impl Launcher {
             .open
             .as_ref()
             .map_or(Page::Discover, |o| o.from);
-        let back_label = match back_to {
-            Page::Installed => tr("Installed"),
-            _ => tr("Discover"),
+        let parent = self.ui.mods.open.as_ref().and_then(|o| o.parent.clone());
+        let parent_name = parent.as_ref().and_then(|id| match &self.ui.mods.catalog {
+            Catalog::Ready(cards, _) => cards.iter().find(|c| c.id == *id).map(|c| c.name.clone()),
+            _ => None,
+        });
+        let back_label = match (back_to, &parent_name) {
+            (_, Some(name)) => name.clone(),
+            (Page::Installed, _) => tr("Installed").to_string(),
+            _ => tr("Discover").to_string(),
         };
         // The back link scrolls away with the page, above the side panel.
         let header = div()
@@ -160,7 +166,10 @@ impl Launcher {
             .gap(px(14.))
             .child(
                 back(back_label).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.ui.page = back_to;
+                    match &parent {
+                        Some(collection) => this.mods_load_page(collection.clone(), back_to),
+                        None => this.ui.page = back_to,
+                    }
                     cx.notify();
                 })),
             )
@@ -172,6 +181,15 @@ impl Launcher {
             .gap(px(14.))
             .p(px(24.))
             .text_color(c(palette().text));
+        if self
+            .ui
+            .mods
+            .open
+            .as_ref()
+            .is_some_and(|o| self.is_collection(&o.id))
+        {
+            return self.collection_page(header, page, cx);
+        }
         let loaded = self.ui.mods.open.as_ref().map(|o| o.page.clone());
         let p = match loaded {
             None => {

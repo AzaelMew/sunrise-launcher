@@ -76,6 +76,60 @@ pub fn refreshed_index() -> Result<Arc<Index>, String> {
     index()
 }
 
+/// The registry mods `entries` hold, as the install planner reads them.
+pub fn held_mods(entries: &[installed::Entry]) -> Vec<index::resolve::InstalledMod> {
+    entries
+        .iter()
+        .filter(|e| e.source == SourceId::Sunrise)
+        .map(|e| index::resolve::InstalledMod {
+            id: e.project.clone(),
+            version: e.version.clone(),
+            sha256: e.checksum.strip_prefix("SHA-256:").map(str::to_owned),
+        })
+        .collect()
+}
+
+/// Whether the registry's `version` is one this build can install for the Minecraft version
+/// `game`: made for it, and asking for no capability this build doesn't know. The planner's
+/// native fit decision.
+pub fn fits_game(version: &index::Version, game: &str) -> bool {
+    version.game == game && version.capabilities.unknown().is_empty()
+}
+
+/// Plans every one of `ids` together, once, and refuses the whole set with the planner's reason
+/// if any of them can't be installed with the others: nothing is downloaded before that.
+pub fn check_set(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+) -> Result<index::resolve::InstallPlan, String> {
+    let requests: Vec<_> = ids
+        .iter()
+        .map(|id| index::resolve::Request {
+            id: id.clone(),
+            version: None,
+        })
+        .collect();
+    let plan = index::resolve::install(
+        index,
+        &requests,
+        held,
+        game,
+        sunrise_launcher_smod::manifest::Side::Both,
+        |_, v| fits_game(v, game),
+    );
+    for id in ids {
+        if let Some(index::resolve::RequestResult::Refused { reason }) = plan.requested.get(id) {
+            let name = index.project(id).map_or(id.as_str(), |p| p.name.as_str());
+            return Err(format!(
+                "{name} can't be installed with the others: {reason}"
+            ));
+        }
+    }
+    Ok(plan)
+}
+
 /// The index read last in this run, without asking the network: for what must not wait.
 pub fn known_index() -> Option<Arc<Index>> {
     LOADED.lock().unwrap().as_ref().map(|l| l.index.clone())

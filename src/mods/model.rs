@@ -8,6 +8,8 @@ use sunrise_launcher::native_mods;
 use sunrise_launcher_smod::index::{self, Index};
 use sunrise_launcher_smod::manifest::Side;
 
+pub(super) mod collection;
+
 /// What a mod is made of, as the registry knows it: a native source bundle, or content only (the
 /// registry's `mod` kind is "a `.smod` of content only"; it has no wasm kind to show).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -68,6 +70,13 @@ pub(super) struct Card {
     pub(super) fit: Fit,
     /// A native mod with no prebuilt binary for this game: it is built on this computer.
     pub(super) builds_locally: bool,
+    /// A collection's card: how many mods it lists.
+    pub(super) members: Option<usize>,
+    /// The collection that lists this mod, by name: it shows in Discover only as that card.
+    pub(super) part_of: Option<String>,
+    /// A library (`collection::libraries`): found by
+    /// searching, never in the browse list.
+    pub(super) library: bool,
 }
 
 pub(super) fn make_of(p: &index::Project) -> Option<Make> {
@@ -102,7 +111,9 @@ pub(super) fn fit_of(index: &Index, p: &index::Project, game: &str) -> Fit {
 
 /// Every mod and native mod of the registry, for the build `game`. Packs are left out.
 pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
-    index
+    let part_of = collection::part_of(index);
+    let libraries = collection::libraries(index);
+    let mut cards: Vec<Card> = index
         .projects
         .iter()
         .filter_map(|p| {
@@ -137,9 +148,15 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                     && index
                         .installable(p, game)
                         .is_some_and(|v| v.native_binaries.is_empty()),
+                members: None,
+                part_of: part_of.get(p.id.as_str()).map(|name| (*name).to_owned()),
+                library: libraries.contains(&p.id),
             })
         })
-        .collect()
+        .collect();
+    let collections = collection::cards(index, &cards);
+    cards.extend(collections);
+    cards
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,6 +212,9 @@ pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
                 && f.category.as_ref().is_none_or(|k| c.categories.contains(k))
                 && f.make.is_none_or(|m| c.make == m)
                 && (!f.fits_only || c.fit.fits())
+                // Browsing shows a collection's card for its mods and no libraries; a search
+                // finds each of them.
+                && (!f.text.is_empty() || (c.part_of.is_none() && !c.library))
         })
         .collect();
     match f.sort {
