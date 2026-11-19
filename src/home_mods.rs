@@ -157,6 +157,7 @@ impl FromIterator<Item> for Collections {
 /// never called while drawing.
 pub(crate) fn read(home: &Path) -> Vec<Item> {
     let image = |png: Vec<u8>| Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, png));
+    let enabled = mod_list::enabled_ids(home);
     let mut mods: Vec<Item> = installed::Installed::load(home)
         .entries
         .iter()
@@ -172,7 +173,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
                 kind: Kind::Mod,
                 picture: Picture::Project(e.project.clone()),
                 open: Open::Project(e.project.clone()),
-                on: mod_list::is_enabled(home, id),
+                on: enabled.contains(id),
                 mod_version: Some(e.number.clone()),
             })
         })
@@ -183,7 +184,7 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
         .chain(native_status::untracked_wasm(home));
     mods.extend(by_hand.map(|file| {
         Item {
-            on: mod_list::is_enabled(home, &file.id),
+            on: enabled.contains(&file.id),
             mod_version: Some(file.version),
             name: file.name,
             kind: Kind::Mod,
@@ -393,7 +394,7 @@ struct ModFacts {
     source: Arc<Snapshot>,
     index: Option<Arc<sunrise_launcher_smod::index::Index>>,
     native_allowed: bool,
-    rows: HashMap<String, crate::mods::HomeModFacts>,
+    rows: crate::mods::HomeModRows,
 }
 
 impl Launcher {
@@ -485,7 +486,12 @@ impl Launcher {
     }
 
     /// Home reads the same row facts as Installed, once per inventory or registry change.
-    pub(crate) fn home_installed_tab(&mut self, packs: bool, cx: &mut Context<Self>) -> Content {
+    pub(crate) fn home_installed_tab(
+        &mut self,
+        packs: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Content {
         use crate::mods::Installed;
         let manage = if packs {
             button("home-manage-resource", tr("Manage resource packs")).on_click(cx.listener(
@@ -573,7 +579,7 @@ impl Launcher {
                         _ => true,
                     }
             }) {
-                let rows = self.home_mod_facts();
+                let rows = self.home_mod_rows();
                 self.ui.home.mods.mod_facts = Some(ModFacts {
                     source: snapshot.clone(),
                     index,
@@ -620,9 +626,9 @@ impl Launcher {
                     .mods
                     .mod_facts
                     .as_ref()
-                    .and_then(|facts| facts.rows.get(&item.id));
-                let kind = fact.map_or(tr("Content"), |fact| fact.kind);
-                (Some(kind.into()), fact.and_then(|fact| fact.status.clone()))
+                    .and_then(|facts| self.home_mod_facts(&facts.rows, &item.id));
+                let kind = fact.as_ref().map_or(tr("Content"), |fact| fact.kind);
+                (Some(kind.into()), fact.and_then(|fact| fact.status))
             };
             let open = item.open.clone();
             rows = rows.child(self.home_overview_row(
@@ -631,6 +637,7 @@ impl Launcher {
                 item.name.clone(),
                 detail,
                 state,
+                window,
                 cx,
                 move |this| this.open_home_item(open.clone()),
             ));

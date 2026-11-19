@@ -483,7 +483,7 @@ impl Launcher {
                             .min_w_0()
                             .h(px(tokens::PLAY))
                             .child(play)
-                            .child(self.build_picker(instance, cx))
+                            .child(self.build_picker(instance, compact, cx))
                             .child(mods)
                             .child(folder)
                             .children(act)
@@ -498,6 +498,7 @@ impl Launcher {
     fn build_picker(
         &mut self,
         instance: &instances::Instance,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let version = self.profile_target(instance);
@@ -526,10 +527,11 @@ impl Launcher {
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
-            .when_some(version.cloned(), |d, tag| {
-                d.tooltip(crate::glass_ui::tip(tag))
-            })
-            .flex_none()
+            .tooltip(crate::glass_ui::tip(
+                version.cloned().unwrap_or_else(|| build.clone()),
+            ))
+            .min_w_0()
+            .max_w(px(if compact { 184. } else { 300. }))
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()
             .border_color(palette().input_edge())
@@ -548,6 +550,8 @@ impl Launcher {
                     .text_size(px(tokens::BODY))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(rgb(palette().text))
+                    .min_w_0()
+                    .truncate()
                     .child(build),
             )
             .child(blocks::icon(
@@ -651,9 +655,9 @@ impl Launcher {
         tabs::row(SharedString::from(format!("alt-world:{}", world.folder)))
             .tooltip(crate::glass_ui::tip(format!("{title} · {facts}")))
             .child(self.world_icon(world, WORLD_ICON))
-            .child(tabs::row_name(title))
+            .child(tabs::row_name(title).flex_1())
             .when(!compact, |d| {
-                d.child(muted(facts).truncate().max_w(px(190.)))
+                d.child(muted(facts).flex_none().truncate().max_w(px(190.)))
             })
             .child(
                 div()
