@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn the_displayed_digest_has_every_digit_and_the_reply_is_boolean() {
         let digest = "0123456789abcdef".repeat(8);
-        let jar = JarRef::new("fabric:example".into(), "1.0".into(), digest.clone()).unwrap();
+        let jar = JarRef::new("example".into(), "1.0".into(), digest.clone()).unwrap();
         let displayed = digest_lines(&jar);
         assert_eq!(
             displayed.lines().map(str::len).collect::<Vec<_>>(),
