@@ -245,22 +245,27 @@ impl Launcher {
         }
         form = form.child(channels).child(versions);
         let mut start = row();
+        let copy_lock = self.profile_copy_lock();
         for (id, duplicate, label) in [
             ("new-empty", false, tr("Start empty")),
             ("new-copy", true, tr("Copy selected profile")),
         ] {
-            start = start.child(
-                button(id, label)
-                    .when(copy == duplicate, |d| {
-                        d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
-                    })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.copy = duplicate;
-                        }
-                        cx.notify();
-                    })),
-            );
+            let option = button(id, label).when(copy == duplicate, |d| {
+                d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
+            });
+            start = start.child(match copy_lock.filter(|_| duplicate) {
+                Some(why) => option
+                    .opacity(0.45)
+                    .tab_stop(false)
+                    .cursor_default()
+                    .tooltip(crate::glass_ui::tip(why)),
+                None => option.on_click(cx.listener(move |this, _, _, cx| {
+                    if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                        d.copy = duplicate;
+                    }
+                    cx.notify();
+                })),
+            });
         }
         let mut icons = row().flex_wrap().child(
             button("new-mark", tr("Sunrise"))

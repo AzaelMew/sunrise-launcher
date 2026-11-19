@@ -350,11 +350,7 @@ impl Launcher {
     }
 
     pub(super) fn launch_busy(&self) -> bool {
-        self.mutating()
-            || self.installing.is_some()
-            || self.preparing
-            || self.native_step.is_some()
-            || self.starting_client.is_some()
+        self.launch_activity().busy()
     }
 
     pub(super) fn navigate(&mut self, page: Page) {

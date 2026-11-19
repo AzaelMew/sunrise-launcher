@@ -128,6 +128,12 @@ impl Launcher {
         }
     }
 
+    pub(super) fn profile_copy_lock(&self) -> Option<&'static str> {
+        let selected = self.selected_instance()?;
+        (self.client_home.as_ref() == Some(&selected.home) && self.client.is_some())
+            .then(|| tr("Stop the game before copying the profile it is using."))
+    }
+
     /// Creates or changes the instance as the dialog says. A copy can be gigabytes of worlds, so
     /// the work runs in the background.
     pub(super) fn save_instance(&mut self, cx: &mut Context<Self>) {
@@ -156,6 +162,12 @@ impl Launcher {
                 return;
             }
         };
+        if let Some(why) = self.profile_copy_lock() {
+            if let Some(d) = self.instances.dialog.as_mut().filter(|d| d.copy) {
+                d.error = Some(why.into());
+                return;
+            }
+        }
         let selected = self.selected_instance().map(|i| i.id.clone());
         let name = self.servers.value(Field::InstanceName).trim().to_string();
         let group = Some(self.servers.value(Field::InstanceGroup).to_string());

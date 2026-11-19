@@ -7,23 +7,46 @@ use crate::{
 use gpui::rgb;
 use instances::{Icon, Instance};
 
+fn profile_lock_reason(
+    work: &crate::launch_state::Facts,
+    located: bool,
+    pending: bool,
+) -> Option<&'static str> {
+    if !located {
+        Some(tr(
+            "Fix the data folder in Settings before changing profiles.",
+        ))
+    } else if work.busy() {
+        Some(tr(
+            "Wait for the current operation to finish before changing profiles.",
+        ))
+    } else if pending {
+        Some(tr(
+            "Finish or cancel the pending launch before changing profiles.",
+        ))
+    } else {
+        None
+    }
+}
+
 impl Launcher {
     pub(super) fn toggle_sidebar(&mut self) {
         self.settings.sidebar_expanded = !self.settings.sidebar_expanded;
         self.save_settings();
     }
 
-    fn profile_locked(&self) -> bool {
-        let busy = self.launch_busy()
-            || self.client.is_some()
-            || self.pending_consent.is_some()
-            || self.ui.after_sign_in.is_some()
-            || self.ui.after_install.is_some();
-        !crate::launch_state::location_allows_action(!self.location_unavailable, busy)
+    fn profile_lock(&self) -> Option<&'static str> {
+        profile_lock_reason(
+            &self.launch_activity(),
+            !self.location_unavailable,
+            self.pending_consent.is_some()
+                || self.ui.after_sign_in.is_some()
+                || self.ui.after_install.is_some(),
+        )
     }
 
     pub(super) fn switch_profile(&mut self, instance: &Instance, cx: &mut Context<Self>) {
-        if self.profile_locked() {
+        if self.profile_lock().is_some() {
             return;
         }
         if !self
@@ -103,6 +126,7 @@ impl Launcher {
     pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let wide = self.settings.sidebar_expanded;
         let p = palette();
+        let lock = self.profile_lock();
         let row = |id: ElementId, label: String, on: bool| {
             div()
                 .id(id)
@@ -122,9 +146,11 @@ impl Launcher {
                 .items_center()
                 .when(wide, |d| d.px(px(8.)).gap(px(10.)))
                 .when(!wide, |d| d.justify_center())
-                .cursor_pointer()
-                .hover(|d| d.bg(rgb(p.chrome_raised)))
-                .tooltip(crate::glass_ui::tip(label))
+                .when(lock.is_none(), |d| {
+                    d.cursor_pointer().hover(|d| d.bg(rgb(p.chrome_raised)))
+                })
+                .when(lock.is_some(), |d| d.opacity(0.45).tab_stop(false))
+                .tooltip(crate::glass_ui::tip(lock.map_or(label, str::to_owned)))
         };
         let txt = |s: String| {
             div()
@@ -174,14 +200,12 @@ impl Launcher {
                         cx.notify();
                     })),
             );
-        let locked = self.profile_locked();
         let add = row("sidebar-create".into(), tr("New profile").into(), false)
             .child(blocks::icon("plus", 20., rgb(p.chrome_text).into()))
             .when(wide, |d| d.child(txt(tr("New profile").into())))
-            .when(locked, |d| d.opacity(0.45).tab_stop(false))
-            .when(!locked, |d| {
+            .when(lock.is_none(), |d| {
                 d.on_click(cx.listener(|this, _, _, cx| {
-                    if !this.profile_locked() {
+                    if this.profile_lock().is_none() {
                         this.new_profile(cx);
                     }
                 }))
@@ -206,10 +230,9 @@ impl Launcher {
                 )
                 .child(self.profile_mark(&i, 28.))
                 .when(wide, |d| d.child(txt(i.name.clone())))
-                .when(!locked, |d| {
+                .when(lock.is_none(), |d| {
                     d.on_click(cx.listener(move |this, _, _, cx| this.switch_profile(&i, cx)))
-                })
-                .when(locked, |d| d.tab_stop(false).cursor_default()),
+                }),
             );
         }
         let mut rail = div()
@@ -270,5 +293,25 @@ impl Launcher {
             );
         }
         rail
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::launch_state::Facts;
+
+    #[test]
+    fn profiles_unlock_when_starting_finishes_even_while_the_game_runs() {
+        let mut work = Facts {
+            starting: true,
+            ..Facts::default()
+        };
+        assert!(profile_lock_reason(&work, true, false).is_some());
+        work.running = true;
+        work.starting = false;
+        assert_eq!(profile_lock_reason(&work, true, false), None);
+        assert!(profile_lock_reason(&work, false, false).is_some());
+        assert!(profile_lock_reason(&work, true, true).is_some());
     }
 }

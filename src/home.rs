@@ -466,6 +466,12 @@ impl Launcher {
             (p.text, p.warning, p.accent_ink)
         };
         let status_ink = if view.failed { warning } else { text };
+        let other_running = self
+            .client_run
+            .as_ref()
+            .filter(|(id, _)| id != &instance.id)
+            .and_then(|(id, _)| self.instances.list.iter().find(|profile| &profile.id == id))
+            .map(|profile| trf("Playing: {profile}", &[("profile", &profile.name)]));
         let says = div()
             // As wide as what it says: the rest of the row is the cat's.
             .min_w_0()
@@ -476,6 +482,7 @@ impl Launcher {
             .text_ellipsis()
             .children(self.build_line(true, cx))
             .children(self.build_said())
+            .children(other_running)
             .children(view.said.clone())
             // Nothing to act on here: the row under Mods says why and what to do.
             .children(view.mods_off.map(|count| {
