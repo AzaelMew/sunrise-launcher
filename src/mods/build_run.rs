@@ -190,6 +190,25 @@ impl Run {
         self.end = Some(End::Stopped(said));
     }
 
+    /// The build stopped before it left out `mods` (worlds use them): each line says what it
+    /// waits for, never "Waiting", since the build can't take them as they are.
+    pub(crate) fn at_stake(&mut self, mods: &[String], unbuilt: &[String]) {
+        let on = self.on.clone();
+        for line in &mut self.lines {
+            if unbuilt.contains(&line.id) {
+                line.state = State::Failed(did_not_build());
+            } else if mods.contains(&line.id) {
+                line.state = State::NeedsUpdate {
+                    why: trf(
+                        "Needs an update for {build}. It comes back when its author releases one.",
+                        &[("build", &on)],
+                    ),
+                    details: Vec::new(),
+                };
+            }
+        }
+    }
+
     /// No game was installed: what compiled so far is in no game.
     fn unbuild(&mut self) {
         for line in &mut self.lines {
@@ -630,5 +649,15 @@ mod tests {
         // Another profile was picked meanwhile, or this one's game changed.
         assert!(play_on_finish(Some(press_play()), &built, Some(("winter", version))).is_none());
         assert!(play_on_finish(Some(press_play()), &built, Some(("autumn", Some("v1")))).is_none());
+    }
+
+    #[test]
+    fn mods_a_stop_for_worlds_names_wait_for_an_update_not_in_line() {
+        let mut run = run(false);
+        let ids: Vec<String> = run.lines.iter().map(|l| l.id.clone()).collect();
+        run.at_stake(&ids[..1], &[]);
+        run.stopped("stop".into(), &[]);
+        assert!(matches!(run.lines[0].state, State::NeedsUpdate { .. }));
+        assert_eq!(run.counts().needs_update, 1);
     }
 }

@@ -289,7 +289,15 @@ impl Launcher {
             .icon
             .clone()
             .and_then(|url| self.mods_image(&url, images::ROW));
+        // A build that ended never reaches the mods still waiting: they weren't built.
+        let ended = self
+            .ui
+            .mods
+            .build
+            .as_ref()
+            .is_some_and(|run| run.end.is_some());
         let (icon, color, label): (&'static str, u32, String) = match &line.state {
+            State::Waiting if ended => ("minus-sign", palette().muted, tr("Not built").into()),
             State::Waiting => ("clock", palette().muted, tr("Waiting").into()),
             State::Building => ("hammer", palette().accent_ink, tr("Building").into()),
             State::Built => ("tick-02", palette().success, tr("Built").into()),
@@ -301,8 +309,9 @@ impl Launcher {
             State::Skipped(_) => ("minus-sign", palette().muted, tr("Skipped").into()),
             State::Failed(_) => ("cancel-01", palette().danger, tr("Didn't build").into()),
         };
+        // "Needs an update" says it on the right, and the summary above says why for all of
+        // them: no sentence repeated under each one.
         let said = match &line.state {
-            State::NeedsUpdate { why, .. } => Some(why.clone()),
             State::Skipped(why) | State::Failed(why) => Some(why.clone()),
             _ => None,
         };
@@ -327,7 +336,8 @@ impl Launcher {
         };
         let waiting = line.state == State::Waiting;
         let check = match (&line.state, self.ui.mods.build.as_ref()) {
-            (State::NeedsUpdate { .. }, Some(run)) if !run.running() => {
+            // Checking for updates is the Mods page's, once for every mod; not a link per row.
+            (State::NeedsUpdate { .. }, Some(run)) if false && !run.running() => {
                 let id = line.id.clone();
                 Some(
                     div()

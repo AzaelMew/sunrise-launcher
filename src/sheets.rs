@@ -622,24 +622,26 @@ impl Launcher {
 
         // The mods, each with what can be done about it right here.
         let mut can_update = false;
+        let waiting = known.iter().filter(|(_, newer)| newer.is_none()).count();
         let mut list = div()
+            .id("alt-resolve-list")
             .flex()
             .flex_col()
+            .max_h(px(280.))
+            .overflow_y_scroll()
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .border_1()
             .border_color(rgb(palette().line))
             .bg(rgb(palette().background));
         for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
-            let about = match newer {
-                Some(version) => trf(
+            // Only a mod that can do something here gets a line under its name; the ones that
+            // wait for their author are said once, under the list.
+            let about = newer.as_ref().map(|version| {
+                trf(
                     "Version {version} is out. Update it, then check the game update again.",
                     &[("version", version)],
-                ),
-                None => tr(
-                    "Needs an update from its author. There is no newer version yet; when there is, it shows here and under Mods.",
                 )
-                .to_string(),
-            };
+            });
             let update = newer.as_ref().map(|_| {
                 can_update = true;
                 let id = id.clone();
@@ -661,7 +663,8 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .p(px(14.))
+                    .px(px(14.))
+                    .py(px(8.))
                     .when(n > 0, |d| d.border_t_1().border_color(rgb(palette().line)))
                     .child(
                         div()
@@ -671,11 +674,19 @@ impl Launcher {
                             .flex_col()
                             .gap(px(2.))
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone()))
-                            .child(muted(about)),
+                            .children(about.map(muted)),
                     )
                     .children(update),
             );
         }
+
+        // The mods with no newer version, said once for all of them.
+        let wait_line = (waiting > 0).then(|| {
+            muted(match waiting {
+                1 => tr("It needs an update from its author; when one is out, it shows here and under Mods.").to_string(),
+                _ => tr("They need updates from their authors; when one is out, it shows here and under Mods.").to_string(),
+            })
+        });
 
         // What updating without them does, said before the button that does it.
         let without = (!blocked).then(|| {
@@ -776,6 +787,7 @@ impl Launcher {
             .child(title(heading))
             .child(div().text_size(px(tokens::BODY)).child(lead))
             .children((!mods.is_empty()).then_some(list))
+            .children(wait_line)
             .children(without.map(muted))
             .child(
                 div()

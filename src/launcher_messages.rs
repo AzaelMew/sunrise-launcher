@@ -286,6 +286,9 @@ impl Launcher {
                     }
                     if let (Err(e), false) = (&result, cancelled || no_consent) {
                         if let native_mods::Failed::Worlds(stake) = e {
+                            if let Some(run) = &mut self.ui.mods.build {
+                                run.at_stake(&stake.mods, &stake.unbuilt);
+                            }
                             self.keep_stop(stake);
                         }
                         if let native_mods::Failed::Mods { left, .. } = e {

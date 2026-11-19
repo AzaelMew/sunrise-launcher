@@ -376,6 +376,43 @@ pub fn worlds_at_stake(name: &str, build: &str, worlds: &[String]) -> String {
     format!("{headline}\n{}", worlds_body(name, worlds))
 }
 
+/// [`worlds_at_stake`] for several mods at once: one headline naming them, then the worlds that use
+/// them, so the build window says it in two sentences however many mods there are.
+pub fn mods_at_stake(names: &[String], build: &str, worlds: &[String]) -> String {
+    // At most five names; the build window's rows list every one.
+    let mods = match names.len() {
+        0..=5 => list(names.iter().cloned()),
+        n => trf(
+            "{first} and {count} more",
+            &[
+                ("first", &names[..5].join(", ")),
+                ("count", &(n - 5).to_string()),
+            ],
+        ),
+    };
+    let headline = trf(
+        "{count} mods don't work with {build} yet: {mods}.",
+        &[
+            ("count", &names.len().to_string()),
+            ("build", build),
+            ("mods", &mods),
+        ],
+    );
+    let named = list(worlds.iter().map(|world| format!("“{world}”")));
+    let body = if worlds.len() == 1 {
+        trf(
+            "Your world {worlds} uses them. Opening it without them removes their blocks and what they hold, for good.",
+            &[("worlds", &named)],
+        )
+    } else {
+        trf(
+            "Your worlds {worlds} use them. Opening those without them removes their blocks and what they hold, for good.",
+            &[("worlds", &named)],
+        )
+    };
+    format!("{headline}\n{body}")
+}
+
 /// [`worlds_at_stake`] for a mod judged to fit `build` whose compile against it failed.
 pub fn worlds_at_stake_unbuilt(name: &str, build: &str, worlds: &[String]) -> String {
     let headline = trf(
