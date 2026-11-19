@@ -39,6 +39,8 @@ pub(crate) enum Sheet {
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
+    /// Installed mods: review a batch remove or update for this profile.
+    ModBatch,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -379,6 +381,9 @@ impl Launcher {
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
         }
+        if self.ui.sheet == Some(Sheet::ModBatch) {
+            self.dismiss_mod_batch();
+        }
         self.ui.sheet = None;
         self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
@@ -585,6 +590,7 @@ impl Launcher {
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
+            Some(Sheet::ModBatch) => self.mod_batch_sheet(cx),
             Some(Sheet::ModBuild) => {
                 let sheet = self.build_modal(cx);
                 if sheet.is_none() {
