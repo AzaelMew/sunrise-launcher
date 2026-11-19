@@ -490,28 +490,6 @@ impl Launcher {
                 };
                 // The page's header, as Mods has it: its name, then Join and Host as one
                 // control, the chosen one filled.
-                let seg =
-                    |dest: Page, id: &'static str, label: SharedString, cx: &mut Context<Self>| {
-                        let on = page == dest;
-                        div()
-                            .id(id)
-                            .reach()
-                            .px(px(18.))
-                            .h(px(tokens::FIELD))
-                            .flex()
-                            .items_center()
-                            .rounded(px(tokens::R_CONTROL))
-                            .text_size(px(tokens::BODY))
-                            .cursor_pointer()
-                            .when(on, |d| {
-                                d.bg(rgb(palette().line)).font_weight(FontWeight::SEMIBOLD)
-                            })
-                            .child(label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.navigate(dest);
-                                cx.notify();
-                            }))
-                    };
                 let tabs = div()
                     .flex()
                     .items_center()
@@ -525,18 +503,25 @@ impl Launcher {
                             .font_weight(FontWeight::BOLD)
                             .child(tr("Servers")),
                     )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_none()
-                            .p(px(3.))
-                            .rounded(px(tokens::R_CARD))
-                            .border_1()
-                            .border_color(rgb(palette().line))
-                            .bg(palette().card())
-                            .child(seg(Page::Join, "servers-join", tr("Join").into(), cx))
-                            .child(seg(Page::Hosting, "servers-host", tr("Host").into(), cx)),
-                    );
+                    .child(crate::mods::segmented(
+                        "servers-tabs",
+                        [
+                            (
+                                "servers-join",
+                                tr("Join").into(),
+                                page == Page::Join,
+                                Page::Join,
+                            ),
+                            (
+                                "servers-host",
+                                tr("Host").into(),
+                                page == Page::Hosting,
+                                Page::Hosting,
+                            ),
+                        ],
+                        Launcher::navigate,
+                        cx,
+                    ));
                 div()
                     .flex()
                     .flex_col()
