@@ -45,7 +45,7 @@ pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
-pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};
+pub(crate) use ui::{checkbox, choices, field_theme, reveal, switch, Choose};
 
 use crate::paint::palette;
 use model::{Card, Row};

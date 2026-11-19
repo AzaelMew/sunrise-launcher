@@ -3,7 +3,7 @@
 use super::*;
 use crate::frame::button;
 use crate::frame::Reach as _;
-use crate::mods::{chip, choices, switch, Choose};
+use crate::mods::{choices, switch, Choose};
 use crate::paint::palette;
 use gpui::rgb;
 use std::rc::Rc;
@@ -191,11 +191,52 @@ fn corner_px(value: f32) -> u8 {
     (value * f32::from(backend::MAX_CORNER_RADIUS)).round() as u8
 }
 
+/// A cache limit as its field shows it: a number of GB, or nothing for no limit.
+pub(crate) fn cache_limit_text(limit: Option<u64>) -> String {
+    match limit.unwrap_or(25) {
+        0 => String::new(),
+        gb => gb.to_string(),
+    }
+}
+
+impl Launcher {
+    /// Keep at most `gib` of downloads (0: no limit), and say so in its field.
+    fn set_cache_limit(&mut self, gib: u64) {
+        self.settings.cache_limit_gib = Some(gib);
+        self.cache_input
+            .set(cache_limit_text(self.settings.cache_limit_gib));
+        if let Err(error) = self.settings.save() {
+            self.storage_error = Some(error);
+        }
+    }
+
+    /// The limit as typed, once its field is left: a whole number of GB; empty or 0 is no
+    /// limit; anything else puts the limit back as it was.
+    fn apply_cache_limit(&mut self) {
+        let typed = self.cache_input.text().trim();
+        match if typed.is_empty() {
+            Ok(0)
+        } else {
+            typed.parse::<u64>()
+        } {
+            Ok(gib) => self.set_cache_limit(gib),
+            Err(_) => self
+                .cache_input
+                .set(cache_limit_text(self.settings.cache_limit_gib)),
+        }
+    }
+}
+
 impl Launcher {
     pub(super) fn settings(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
         self.corners_focused = self.corners_focus.is_focused(window);
+        let was_typing_limit = self.cache_focused;
+        self.cache_focused = self.cache_focus.is_focused(window);
+        if was_typing_limit && !self.cache_focused {
+            self.apply_cache_limit();
+        }
         let section = self.ui.settings.section;
         let scroll = crate::frame::scrolls("settings");
         let mut nav = div()
@@ -771,41 +812,35 @@ impl Launcher {
                     ),
             );
         }
-        let limit = self.settings.cache_limit_gib.unwrap_or(25);
-        let mut limits = div();
-        for (n, (value, label)) in [
-            (10u64, "10 GB"),
-            (25, "25 GB"),
-            (50, "50 GB"),
-            (100, "100 GB"),
-            (0, "No limit"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            limits = limits.child(
-                // Each its own Tab stop, pressed with Enter or Space: a smaller limit clears
-                // downloads, which an arrow key passing over it must not do.
-                chip(
-                    ElementId::named_usize("alt-storage-limit", n),
-                    tr(label),
-                    value == limit,
-                )
-                .tab_index(0)
-                .seen()
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.settings.cache_limit_gib = Some(value);
-                    if let Err(error) = this.settings.save() {
-                        this.storage_error = Some(error);
-                    }
-                    cx.notify();
-                })),
-            );
-        }
-        cache.push(self.wide_row(
+        let typed = self
+            .settings_field(
+                "alt-storage-limit-gb",
+                self.cache_focus.clone(),
+                self.cache_focused,
+                &self.cache_input,
+                "No limit",
+                |this| &mut this.cache_input,
+                |_| {},
+                cx,
+            )
+            .w(px(96.));
+        // "GB" after a number, not after the empty field's "No limit".
+        let unit = (!self.cache_input.text().trim().is_empty()).then(|| {
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().muted))
+                .child(tr("GB"))
+        });
+        let field = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(typed)
+            .children(unit);
+        cache.push(row(
             tr("Keep at most"),
             tr("Past this, the oldest downloads are cleared by themselves."),
-            limits,
+            field,
         ));
         for (n, category) in Category::ALL.into_iter().enumerate() {
             let found = self
@@ -1422,7 +1457,7 @@ impl Launcher {
             .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, window, cx| {
                 match line_edit::handle(get(this), ev, cx) {
                     line_edit::Key::Pass => return,
-                    line_edit::Key::Escape => window.blur(cx),
+                    line_edit::Key::Escape | line_edit::Key::Enter => window.blur(cx),
                     line_edit::Key::Edited => edited(this),
                     _ => {}
                 }
