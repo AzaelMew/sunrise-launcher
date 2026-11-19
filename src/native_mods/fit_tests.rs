@@ -21,6 +21,65 @@ fn at_most_five_changes_are_named_then_how_many_more() {
 }
 
 #[test]
+fn game_functions_show_only_the_function_name() {
+    for id in [
+        "game:fn:sunrise_mod_render::render::world_drawn",
+        "game:method:sunrise_mod_render::Renderer::world_drawn",
+    ] {
+        assert_eq!(
+            change(&Misfit {
+                id: id.into(),
+                change: Change::Changed,
+            }),
+            "the game's function world_drawn (changed)",
+        );
+    }
+}
+
+#[test]
+fn game_loops_keep_the_full_loop_name() {
+    assert_eq!(
+        change(&Misfit {
+            id: "game:loop:block_entities.tick".into(),
+            change: Change::Removed,
+        }),
+        "the game's loop block_entities.tick (removed)",
+    );
+}
+
+#[test]
+fn the_game_mixin_tool_is_named_without_its_id() {
+    assert_eq!(
+        change(&Misfit {
+            id: "game:tool:horizon-mixins".into(),
+            change: Change::Changed,
+        }),
+        "the game's mixin tool (changed)",
+    );
+}
+
+#[test]
+fn game_internals_distinguish_types_from_other_items() {
+    for (kind, expected) in [
+        ("struct", "the game's type World (removed)"),
+        ("enum", "the game's type World (removed)"),
+        ("trait", "the game's type World (removed)"),
+        ("type", "the game's type World (removed)"),
+        ("union", "the game's type World (removed)"),
+        ("field", "the game's item World (removed)"),
+        ("internal", "the game's item World (removed)"),
+    ] {
+        assert_eq!(
+            change(&Misfit {
+                id: format!("game:{kind}:sunrise_mod_render::render::World"),
+                change: Change::Removed,
+            }),
+            expected,
+        );
+    }
+}
+
+#[test]
 fn every_message_names_the_mod_the_builds_and_the_worlds() {
     let made_for = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
     let misfit = Verdict::DoesNotFit {

@@ -64,6 +64,18 @@ pub enum Change {
 
 /// An item as people read it: "the hook `player_logged_in`".
 pub fn item(id: &str) -> String {
+    if let Some((kind, path)) = id.strip_prefix("game:").and_then(|id| id.split_once(':')) {
+        let name = path.rsplit("::").next().unwrap_or(path);
+        return match kind {
+            "fn" | "method" => trf("the game's function {name}", &[("name", name)]),
+            "loop" => trf("the game's loop {name}", &[("name", path)]),
+            "tool" if path == "horizon-mixins" => tr("the game's mixin tool").to_owned(),
+            "struct" | "enum" | "trait" | "type" | "union" => {
+                trf("the game's type {name}", &[("name", name)])
+            }
+            _ => trf("the game's item {name}", &[("name", name)]),
+        };
+    }
     let Some((kind, name)) = uses::item(id) else {
         return id.to_owned();
     };
