@@ -41,6 +41,7 @@ mod packs;
 mod project;
 mod search;
 mod ui;
+pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 use std::rc::Rc;
 pub(crate) use ui::{checkbox, chip, choices, field_theme, reveal, switch, Choose};

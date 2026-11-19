@@ -41,6 +41,81 @@ fn put(index: &Index, local: bool, home: &Path) -> Result<Vec<installed::Entry>,
 }
 
 #[test]
+fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    for (id, title, extra) in [
+        ("fireflies", "Fireflies", "[dependencies]\nsunrise_creatures = '^1'\noptional_mod = { version = '*', optional = true }"),
+        ("sunrise_creatures", "Sunrise Creatures", ""),
+    ] {
+        let manifest = format!("id='{id}'\nname='{title}'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}");
+        let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &[]).unwrap();
+        let name = format!("{id}-1.0.0.smod");
+        let file = dir.path().join(&name);
+        fs::write(&file, &bytes).unwrap();
+        let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
+        let mut version = base.versions[0].clone();
+        version.version = "1.0.0".into();
+        version.api = facts.api;
+        version.side = facts.side;
+        version.requires.clear();
+        version.file = index::File {
+            name,
+            url: format!("file://{}", file.display()),
+            size: bytes.len() as u64,
+            sha256: index::sha256(&bytes),
+            signature: None,
+        };
+        index.projects.push(index::Project {
+            id: id.into(), name: title.into(), key: None,
+            versions: vec![version], ..base.clone()
+        });
+    }
+    let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+    let home = dir.path().join("profile");
+    let run = |index: &Index| install_from(index, true, &project, &home, GAME, false, &|_, _| {});
+    let mut bad = index.clone();
+    bad.projects.last_mut().unwrap().versions[0].file.sha256 = "0".repeat(64);
+    assert!(run(&bad)
+        .unwrap_err()
+        .contains("Fireflies requires sunrise_creatures"));
+    assert!(!home.join(mod_list::MODS_DIR).exists());
+    assert!(!home.join(installed::MANIFEST).exists());
+    assert!(!home.join("sunrise-mods.txt").exists());
+
+    // A failure after moving the mod files must also leave none behind.
+    fs::create_dir(home.join(installed::MANIFEST)).unwrap();
+    assert!(run(&index).is_err());
+    assert!(fs::read_dir(home.join(mod_list::MODS_DIR))
+        .unwrap()
+        .next()
+        .is_none());
+    assert!(!home.join("sunrise-mods.txt").exists());
+    fs::remove_dir(home.join(installed::MANIFEST)).unwrap();
+
+    let done = run(&index).unwrap();
+    assert_eq!(
+        done.iter().map(|e| e.project.as_str()).collect::<Vec<_>>(),
+        ["fireflies", "sunrise_creatures"]
+    );
+    assert!(!done[0].dependency);
+    assert!(done[1].dependency);
+    for entry in &done {
+        assert!(home.join(&entry.file).is_file());
+        assert!(mod_list::is_enabled(&home, &entry.project));
+    }
+    let before = fs::read(home.join(installed::MANIFEST)).unwrap();
+    fs::remove_file(dir.path().join("sunrise_creatures-1.0.0.smod")).unwrap();
+    assert_eq!(run(&index).unwrap(), done[..1]);
+    assert_eq!(fs::read(home.join(installed::MANIFEST)).unwrap(), before);
+    assert_eq!(
+        fs::read_dir(home.join(mod_list::MODS_DIR)).unwrap().count(),
+        2
+    );
+}
+
+#[test]
 fn native_registry_entries_are_mods_that_say_they_run_native_code() {
     assert_eq!(kind_of(&index::Kind::NativeMod), Some(Kind::Mod));
     let mut index = sample();
@@ -377,7 +452,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         .collect();
     assert_eq!(found, ["lanterns"]);
     // Not into the game folder: into a world.
-    assert!(install_from(&index, true, &p, &dir.join("home"), GAME, &|_, _| {}).is_err());
+    assert!(install_from(&index, true, &p, &dir.join("home"), GAME, false, &|_, _| {}).is_err());
     let (zip, number) =
         fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
     assert_eq!(number, "1.0.0");
@@ -539,9 +614,9 @@ fn installs_checked_turns_on_and_removes() {
     let home = scratch("install");
     let p = hud(&index);
     // An instance on another build's Minecraft version gets that version's file, or none.
-    let other = install_from(&index, true, &p, &home, "26.9", &|_, _| {}).unwrap_err();
+    let other = install_from(&index, true, &p, &home, "26.9", false, &|_, _| {}).unwrap_err();
     assert!(other.contains("no version for 26.9"), "{other}");
-    let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, false, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
@@ -551,12 +626,13 @@ fn installs_checked_turns_on_and_removes() {
     assert!(home.join("sunrise-mods/coords_hud.smod").is_file());
     let list = fs::read_to_string(home.join("sunrise-mods.txt")).unwrap();
     assert_eq!(list, "mod.coords_hud:true\n");
-    assert_eq!(
-        fs::read_dir(home.join("mod-browser/downloads"))
+    assert!(fs::read_dir(&home).unwrap().all(|file| {
+        !file
             .unwrap()
-            .count(),
-        0
-    );
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".installed-mods-")
+    }));
     // Installed already: nothing to do.
     let again = put(&index, true, &home).unwrap();
     assert_eq!(again, done);
@@ -618,7 +694,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     let home = scratch("shader");
     let p = project_of(&index, index.project("glow").unwrap(), GAME).unwrap();
     assert_eq!(p.support(GAME), super::super::Support::Works);
-    let done = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, false, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.sshader");
     assert_eq!(done[0].kind, Kind::Shader);
     assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
@@ -639,7 +715,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
     // A file of the same name the registry didn't put there is left alone.
     fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = install_from(&index, true, &p, &home, GAME, &|_, _| {}).unwrap_err();
+    let e = install_from(&index, true, &p, &home, GAME, false, &|_, _| {}).unwrap_err();
     assert_eq!(
         e,
         "shaderpacks/glow-1.0.0.sshader is already there: move it away first."

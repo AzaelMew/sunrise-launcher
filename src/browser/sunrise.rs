@@ -892,22 +892,58 @@ pub fn install(
     game: &str,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
-    install_from(&*index()?, local(), project, home, game, progress)
+    let index = index()?;
+    let index = if index
+        .project(&project.id)
+        .is_some_and(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
+    {
+        fetched_index().ok_or_else(|| {
+            tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
+                .to_string()
+        })?
+    } else {
+        index
+    };
+    install_from(
+        &index,
+        local(),
+        project,
+        home,
+        game,
+        crate::backend::Settings::load()
+            .native_mods_allowed_at
+            .is_some(),
+        progress,
+    )
 }
 
-/// [`install`] from `index`.
+/// [`install`] from a trusted `index`.
 fn install_from(
     index: &Index,
     local: bool,
     project: &Project,
     home: &Path,
     game: &str,
+    native_allowed: bool,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let p = index
         .project(&project.id)
         .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
     let v = newest(index, p, game)?;
+    if matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod) {
+        return dependencies::install(
+            &Install {
+                index,
+                local,
+                home,
+                progress,
+            },
+            p,
+            v,
+            native_allowed,
+        );
+    }
     install_version(index, local, p, v, home, progress).map(|e| vec![e])
 }
 
@@ -995,112 +1031,138 @@ fn install_version_guarded(
     guard: &dyn Fn(&Path) -> Result<(), String>,
     progress: &dyn Fn(&str, f32),
 ) -> Result<installed::Entry, String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let project = project_of(index, p, &v.game)
-        .ok_or_else(|| format!("{} can't be installed here.", p.name))?;
-    if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
-        return Err(format!("{} was taken down: {}", p.name, r.reason));
-    }
-    let native = p.kind == index::Kind::NativeMod;
-    let relative = match native {
-        true => format!("{}/{}.smod", crate::native_mods::INSTALLED, p.id),
-        false => relative(project.kind, &p.id, &v.file.name)?,
-    };
+    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     let mut list = installed::Installed::load(home);
-    let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
-    let old = list.entries.iter().find(|e| ours(e)).cloned();
-    if let Some(old) = &old {
-        let mut different = old.kind != project.kind;
-        if !different && project.kind == Kind::Mod {
-            let path = home.join(&old.file);
-            let installed_native = index::native::holds(&path);
-            let kind = if installed_native {
-                index::Kind::NativeMod
-            } else {
-                index::Kind::Mod
-            };
-            index::inspect(&kind, &path)
-                .map_err(|e| format!("Cannot inspect installed {}: {e}", p.name))?;
-            different = installed_native != native;
-        }
-        if different {
-            return Err(format!(
-                "{} has a different installed kind: remove it before installing this version.",
-                p.name
-            ));
-        }
-    }
-    if old.as_ref().is_some_and(|o| o.version == v.version) {
-        return Ok(old.expect("checked"));
-    }
-    let target = home.join(&relative);
-    let taken_by = list.entries.iter().find(|e| !ours(e) && e.file == relative);
-    let folder_mod = home.join(mod_list::MODS_DIR).join(&p.id);
-    if let Some(other) = taken_by {
-        return Err(format!(
-            "{relative} belongs to {}: remove it first.",
-            other.title
-        ));
-    }
-    let clash = target.exists() && old.as_ref().is_none_or(|o| o.file != relative);
-    if project.kind == Kind::Mod && (clash || (!native && folder_mod.exists())) {
-        return Err(format!(
-            "A mod with the id {} is already in {}: move it away first.",
-            p.id,
-            mod_list::MODS_DIR
-        ));
-    }
-    if clash {
-        return Err(format!("{relative} is already there: move it away first."));
-    }
-    let line = format!("{} {}", p.name, v.version);
-    let file = &version_of(index, p, v).files[0];
-    let staging = home.join("mod-browser/downloads");
-    let path = fetch(file, &staging, local, &|f| progress(&line, f))?;
-    let checked = index::check_file(index, p, v, &path).and_then(|trust| {
-        // Only Rust and TOML sources, for the mod the index names: nothing in it runs here.
-        match native {
-            true => index::native::Bundle::read(&path).and_then(|b| match b.manifest.id == p.id {
-                true => Ok(trust),
-                false => Err(format!("it is {}, not {}", b.manifest.id, p.id)),
-            }),
-            false => Ok(trust),
-        }
-    });
-    let trust = checked
-        .and_then(|t| guard(&path).map(|()| t))
-        .inspect_err(|_| {
-            let _ = fs::remove_file(&path);
-        })?;
+    let install = Install {
+        index,
+        local,
+        home,
+        progress,
+    };
+    let (entry, file) = install.prepare(p, v, &list, &home.join("mod-browser/downloads"))?;
+    let Some((path, _)) = file else {
+        return Ok(entry);
+    };
+    guard(&path).inspect_err(|_| {
+        let _ = fs::remove_file(&path);
+    })?;
+    let target = home.join(&entry.file);
     if let Some(dir) = target.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     fs::rename(&path, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-    if let Some(old) = old
-        .as_ref()
-        .filter(|o| o.file != relative)
-        .and_then(|o| o.path(home))
+    if let Some(old) = list
+        .find(SourceId::Sunrise, &p.id)
+        .filter(|old| old.file != entry.file)
+        .and_then(|old| old.path(home))
     {
         let _ = fs::remove_file(old);
     }
-    let entry = installed::Entry {
-        source: SourceId::Sunrise,
-        project: p.id.clone(),
-        slug: p.id.clone(),
-        title: p.name.clone(),
-        kind: project.kind,
-        version: v.version.clone(),
-        number: v.version.clone(),
-        file: relative,
-        checksum: format!("SHA-256:{}", v.file.sha256),
-        page: project.page.clone(),
-        dependency: false,
-        verdict: Some(trust_label(trust).into()),
-    };
-    list.entries.retain(|e| !ours(e));
+    list.entries
+        .retain(|e| !(e.source == SourceId::Sunrise && e.project == p.id));
     list.entries.push(entry.clone());
     list.save(home)?;
     Ok(entry)
+}
+
+struct Install<'a> {
+    index: &'a Index,
+    local: bool,
+    home: &'a Path,
+    progress: &'a dyn Fn(&str, f32),
+}
+
+/// A checked download and its manifest, or the already-installed entry with no download.
+type Prepared = (installed::Entry, Option<(PathBuf, index::Facts)>);
+
+impl Install<'_> {
+    fn prepare(
+        &self,
+        p: &index::Project,
+        v: &index::Version,
+        list: &installed::Installed,
+        staging: &Path,
+    ) -> Result<Prepared, String> {
+        let index = self.index;
+        let project = project_of(index, p, &v.game)
+            .ok_or_else(|| format!("{} can't be installed here.", p.name))?;
+        if let Some(r) = index.revoked(&p.id, &v.file.sha256) {
+            return Err(format!("{} was taken down: {}", p.name, r.reason));
+        }
+        let native = p.kind == index::Kind::NativeMod;
+        let relative = match native {
+            true => format!("{}/{}.smod", crate::native_mods::INSTALLED, p.id),
+            false => relative(project.kind, &p.id, &v.file.name)?,
+        };
+        let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
+        let old = list.entries.iter().find(|e| ours(e)).cloned();
+        if let Some(old) = &old {
+            let mut different = old.kind != project.kind;
+            if !different && project.kind == Kind::Mod {
+                let path = self.home.join(&old.file);
+                let installed_native = index::native::holds(&path);
+                let kind = if installed_native {
+                    index::Kind::NativeMod
+                } else {
+                    index::Kind::Mod
+                };
+                index::inspect(&kind, &path)
+                    .map_err(|e| format!("Cannot inspect installed {}: {e}", p.name))?;
+                different = installed_native != native;
+            }
+            if different {
+                return Err(format!(
+                    "{} has a different installed kind: remove it before installing this version.",
+                    p.name
+                ));
+            }
+        }
+        if old.as_ref().is_some_and(|o| o.version == v.version) {
+            return Ok((old.expect("checked"), None));
+        }
+        let target = self.home.join(&relative);
+        let taken_by = list.entries.iter().find(|e| !ours(e) && e.file == relative);
+        let folder_mod = self.home.join(mod_list::MODS_DIR).join(&p.id);
+        if let Some(other) = taken_by {
+            return Err(format!(
+                "{relative} belongs to {}: remove it first.",
+                other.title
+            ));
+        }
+        let clash = target.exists() && old.as_ref().is_none_or(|o| o.file != relative);
+        if project.kind == Kind::Mod && (clash || (!native && folder_mod.exists())) {
+            return Err(format!(
+                "A mod with the id {} is already in {}: move it away first.",
+                p.id,
+                mod_list::MODS_DIR
+            ));
+        }
+        if clash {
+            return Err(format!("{relative} is already there: move it away first."));
+        }
+        let line = format!("{} {}", p.name, v.version);
+        let file = &version_of(index, p, v).files[0];
+        let path = fetch(file, staging, self.local, &|f| (self.progress)(&line, f))?;
+        let (trust, facts) =
+            index::check_file_with_facts(index, p, v, &path).inspect_err(|_| {
+                let _ = fs::remove_file(&path);
+            })?;
+        let entry = installed::Entry {
+            source: SourceId::Sunrise,
+            project: p.id.clone(),
+            slug: p.id.clone(),
+            title: p.name.clone(),
+            kind: project.kind,
+            version: v.version.clone(),
+            number: v.version.clone(),
+            file: relative,
+            checksum: format!("SHA-256:{}", v.file.sha256),
+            page: project.page.clone(),
+            dependency: false,
+            verdict: Some(trust_label(trust).into()),
+        };
+        Ok((entry, Some((path, facts))))
+    }
 }
 
 /// The mod id of an installed mod (`sunrise-mods/<id>`, `sunrise-mods/<id>.smod` or
@@ -1182,6 +1244,7 @@ pub fn before_play(home: &Path) {
 }
 
 pub mod auto;
+mod dependencies;
 pub mod pack;
 #[cfg(test)]
 mod tests;

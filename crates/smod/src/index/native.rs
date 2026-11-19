@@ -69,6 +69,7 @@ impl Bundle {
             version: Some(self.manifest.version.clone()),
             api: format!("native-1/{}/{}", native.sunrise, native.mixins),
             game: Some(native.game.clone()),
+            dependencies: self.manifest.dependencies.clone(),
             ..Facts::default()
         }
     }
