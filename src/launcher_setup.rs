@@ -129,6 +129,13 @@ impl Launcher {
                 44,
             ),
             proxy_focused: false,
+            cache_input: line_edit::LineEdit::new(
+                crate::settings::cache_limit_text(settings.cache_limit_gib),
+                5,
+                6,
+            ),
+            cache_focused: false,
+            cache_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             proxy_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             settings,
             settings_save_error: None,
