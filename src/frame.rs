@@ -288,21 +288,11 @@ impl Launcher {
         let tag = self.version_of(&instance).cloned();
         let Some(tag) = tag else {
             let release = match &self.releases {
-                Load::Ready(rows) => rows
-                    .iter()
-                    .find(|r| {
-                        r.asset.is_some()
-                            && expected.map_or_else(
-                                || match instance.channel {
-                                    instances::Channel::Stable => !r.prerelease,
-                                    instances::Channel::Nightly => {
-                                        sunrise_launcher::nightly::date_of(&r.tag).is_some()
-                                    }
-                                },
-                                |tag| tag == &r.tag,
-                            )
-                    })
-                    .cloned(),
+                Load::Ready(rows) => match expected {
+                    Some(tag) => rows.iter().find(|r| r.asset.is_some() && &r.tag == tag),
+                    None => instance.channel.following(rows).builds(rows).next(),
+                }
+                .cloned(),
                 _ => None,
             };
             if let Some(release) = release {
@@ -610,7 +600,7 @@ impl Launcher {
             .flatten();
         let sheet = self.live_sheet(cx);
         let sign_in = self.owner_screen_open.then(|| self.owner_screen(cx));
-        let profile = self.profile_dialog(cx);
+        let profile = self.profile_dialog(window, cx);
         let mut layers: Vec<_> = [create, profile, sheet, sign_in]
             .into_iter()
             .flatten()

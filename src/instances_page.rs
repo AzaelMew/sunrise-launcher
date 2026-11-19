@@ -17,11 +17,12 @@ pub(super) struct InstanceDialog {
     pub(super) icon: Option<Icon>,
     /// A picture chosen since it opened (None in it: the instance's is removed on Save).
     pub(super) picture: Option<Option<instance_icons::Chosen>>,
+    pub(super) picture_focus: FocusHandle,
     pub(super) error: Option<String>,
     pub(super) busy: bool,
     /// The Sunrise version it keeps (`Instance::version`); None follows the launcher's.
     pub(super) pin: Option<String>,
-    /// The builds "latest" follows (`Instance::channel`); a new instance starts on Stable.
+    /// The builds "latest" follows (`Instance::channel`).
     pub(super) channel: instances::Channel,
     /// The sheet was closed with edits not saved: asking whether to drop them.
     pub(super) discarding: bool,
@@ -67,14 +68,12 @@ impl Launcher {
     pub(super) fn version_of(&self, instance: &Instance) -> Option<&String> {
         match &instance.version {
             Some(own) => self.installed.iter().find(|t| *t == own),
-            // Latest of its channel: the newest installed Stable build, or the launcher's
-            // version (which follows the newest Nightly; also what is left offline).
-            None => match instance.channel {
+            // Play Nightly while the catalogue has no Stable download. Keep the saved
+            // channel so the profile switches when Stable becomes available.
+            None => match self.followed_channel(instance.channel) {
                 instances::Channel::Stable => self
                     .stable_builds()
-                    .iter()
-                    .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
-                    .or_else(|| self.launcher_version()),
+                    .find_map(|b| self.installed.iter().find(|t| **t == b.tag)),
                 instances::Channel::Nightly => self.launcher_version(),
             },
         }

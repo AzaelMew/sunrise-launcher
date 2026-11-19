@@ -2,7 +2,7 @@
 //! instance creation/copy transaction as the launcher; the dialog doesn't write game files.
 use super::*;
 use crate::{
-    frame::{button, primary},
+    frame::{button, button_base, primary},
     instances_page::InstanceDialog,
     paint::palette,
     servers_page::Field,
@@ -16,21 +16,27 @@ impl Launcher {
         self.servers.text(Field::InstanceGroup).set(String::new());
         self.focus_handle(Field::InstanceName, cx);
         self.servers.focus_soon = Some(Field::InstanceName);
+        let channel = self.followed_channel(Channel::Stable);
         self.instances.dialog = Some(InstanceDialog {
             editing: None,
             copy: false,
             icon: None,
             picture: None,
+            picture_focus: cx.focus_handle().tab_index(0).tab_stop(true),
             error: None,
             busy: false,
             pin: None,
-            channel: Channel::Stable,
+            channel,
             discarding: false,
         });
         cx.notify();
     }
 
-    pub(super) fn profile_dialog(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn profile_dialog(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         let d = self.instances.dialog.as_ref()?;
         let (busy, copy, icon, channel, pin, error) = (
             d.busy,
@@ -40,6 +46,8 @@ impl Launcher {
             d.pin.clone(),
             d.error.clone(),
         );
+        let picture_focus = d.picture_focus.clone();
+        let picture_focused = picture_focus.is_focused(window);
         let picture = d
             .picture
             .as_ref()
@@ -47,7 +55,17 @@ impl Launcher {
             .map(|c| c.preview.clone());
         let p = palette();
         let name = self.servers.value(Field::InstanceName).trim().to_owned();
-        let ready = !name.is_empty() && !busy;
+        let (stable_available, tags) = {
+            let mut stable = self.stable_builds().peekable();
+            let available = stable.peek().is_some();
+            let tags: Vec<String> = match channel {
+                Channel::Stable => stable.map(|r| r.tag.clone()).collect(),
+                Channel::Nightly => self.sunrise_choices(),
+            };
+            (available, tags)
+        };
+        let channel_available = channel != Channel::Stable || stable_available;
+        let ready = !name.is_empty() && !busy && channel_available;
         let current = pin
             .as_deref()
             .map(|tag| self.version_label(tag))
@@ -59,6 +77,7 @@ impl Launcher {
                 .into()
             });
         let preview = div()
+            .id("new-picture-preview")
             .flex()
             .flex_col()
             .items_center()
@@ -68,7 +87,20 @@ impl Launcher {
             .p(px(14.))
             .gap(px(12.))
             .rounded(px(tokens::R_CARD))
+            .border_1()
+            .border_color(p.input_edge())
             .bg(p.card())
+            .when(!busy, |d| {
+                d.group("new-picture-preview")
+                    .track_focus(&picture_focus)
+                    .cursor_pointer()
+                    .hover(|s| s.bg(rgb(p.hover)).border_color(rgb(p.line)))
+                    .focus_visible(|s| s.border_color(rgb(p.focus)))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.choose_profile_picture(cx);
+                        cx.notify();
+                    }))
+            })
             .child(if let Some(image) = picture {
                 div()
                     .size(px(64.))
@@ -111,6 +143,14 @@ impl Launcher {
                     .text_size(px(tokens::SMALL))
                     .text_color(rgb(p.muted))
                     .child(current),
+            )
+            .child(
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(p.accent_ink))
+                    .opacity(if picture_focused && !busy { 1. } else { 0. })
+                    .group_hover("new-picture-preview", |s| s.opacity(1.))
+                    .child(tr("Change picture")),
             );
         let row = || div().flex().items_center().gap(px(8.));
         let mut form = div()
@@ -138,24 +178,39 @@ impl Launcher {
             ("new-stable", Channel::Stable, tr("Stable")),
             ("new-nightly", Channel::Nightly, tr("Nightly")),
         ] {
-            channels = channels.child(
+            let available = c != Channel::Stable || stable_available;
+            let choice = if available {
                 button(id, label)
-                    .when(c == channel, |d| {
+            } else {
+                button_base(id, label)
+            };
+            channels = channels.child(
+                choice
+                    .when(available && c == channel, |d| {
                         d.bg(rgb(p.selected)).border_color(rgb(p.accent_ink))
                     })
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
-                            d.channel = c;
-                            d.pin = None;
-                        }
-                        cx.notify();
-                    })),
+                    .when(!available, |d| {
+                        d.opacity(0.5).cursor_default().tab_stop(false)
+                    })
+                    .when(available, |d| {
+                        d.on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(d) = this.instances.dialog.as_mut().filter(|d| !d.busy) {
+                                d.channel = c;
+                                d.pin = None;
+                            }
+                            cx.notify();
+                        }))
+                    }),
             );
         }
-        let tags = match channel {
-            Channel::Stable => self.stable_builds().into_iter().map(|b| b.tag).collect(),
-            Channel::Nightly => self.sunrise_choices(),
-        };
+        if !stable_available {
+            channels = channels.child(
+                div()
+                    .text_size(px(tokens::SMALL))
+                    .text_color(rgb(p.muted))
+                    .child(tr("No stable release yet")),
+            );
+        }
         let mut versions = div()
             .id("new-versions")
             .max_h(px(94.))
@@ -164,7 +219,9 @@ impl Launcher {
             .gap(px(3.))
             .overflow_y_scroll()
             .track_scroll(&crate::frame::scrolls("new-versions"));
-        for (idx, tag) in std::iter::once(None)
+        for (idx, tag) in channel_available
+            .then_some(None)
+            .into_iter()
             .chain(tags.into_iter().map(Some))
             .enumerate()
         {
@@ -205,7 +262,7 @@ impl Launcher {
                     })),
             );
         }
-        let mut icons = row().child(
+        let mut icons = row().flex_wrap().child(
             button("new-mark", tr("Sunrise"))
                 .when(icon.is_none(), |d| d.border_color(rgb(p.accent_ink)))
                 .on_click(cx.listener(|this, _, _, cx| {
@@ -241,12 +298,6 @@ impl Launcher {
                     })),
             );
         }
-        icons = icons.child(button("new-picture", tr("Picture…")).on_click(cx.listener(
-            |this, _, _, cx| {
-                this.choose_profile_picture(cx);
-                cx.notify();
-            },
-        )));
         let body = div()
             .flex()
             .flex_col()

@@ -5,7 +5,7 @@
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
 
-use sunrise_launcher::instances::{stable_builds, Channel, StableBuild};
+use sunrise_launcher::instances::Channel;
 
 impl Launcher {
     /// The Sunrise version an instance plays: the one it keeps, else the one it follows.
@@ -22,33 +22,33 @@ impl Launcher {
                 .cloned()
                 .or_else(|| self.sunrise_choices().into_iter().next())
         };
-        match channel {
-            Channel::Stable => self
-                .stable_builds()
-                .into_iter()
-                .next()
-                .map(|b| b.tag)
-                .or_else(nightly),
+        match self.followed_channel(channel) {
+            Channel::Stable => self.stable_builds().next().map(|b| b.tag.clone()),
             Channel::Nightly => nightly(),
         }
     }
 
-    /// The Stable channel's builds, newest first (none until the release list is here).
-    pub(super) fn stable_builds(&self) -> Vec<StableBuild> {
+    fn game_releases(&self) -> &[Release] {
         match &self.releases {
-            Load::Ready(r) => stable_builds(r),
-            _ => Vec::new(),
+            Load::Ready(releases) => releases,
+            _ => &[],
         }
+    }
+
+    /// The channel the profile actually follows, without changing its saved preference.
+    pub(super) fn followed_channel(&self, channel: Channel) -> Channel {
+        channel.following(self.game_releases())
+    }
+
+    /// The Stable channel's builds, newest first (none until the release list is here).
+    pub(super) fn stable_builds(&self) -> impl Iterator<Item = &Release> {
+        Channel::Stable.builds(self.game_releases())
     }
 
     /// The Sunrise versions the dialog offers (the mockup's `data.nightlies`): see
     /// [`sunrise_choices`].
     pub(super) fn sunrise_choices(&self) -> Vec<String> {
-        let releases = match &self.releases {
-            Load::Ready(r) => r.as_slice(),
-            _ => &[],
-        };
-        sunrise_choices(releases, &self.installed)
+        sunrise_choices(self.game_releases(), &self.installed)
     }
 
     /// The release to download for the Sunrise version `tag`, when it isn't installed.
@@ -68,10 +68,7 @@ impl Launcher {
 /// it on Create. Never a build made with mods (as on Versions): that is one profile's, made from
 /// its mods with the player's permission, not a game to start another profile on.
 pub(super) fn sunrise_choices(releases: &[Release], installed: &[String]) -> Vec<String> {
-    let published = releases
-        .iter()
-        .filter(|r| r.nightly.is_some() && r.asset.is_some())
-        .map(|r| &r.tag);
+    let published = Channel::Nightly.builds(releases).map(|r| &r.tag);
     let games = installed.iter().filter(|t| !native_mods::is_native(t));
     let mut out: Vec<String> = Vec::new();
     for tag in published.chain(games) {
@@ -141,36 +138,59 @@ mod tests {
     }
 
     #[test]
-    fn stable_is_a_build_a_week_until_real_releases_exist() {
-        // 2026-11-09 is a Monday, 2026-11-08 the Sunday before it.
+    fn stable_requires_a_versioned_non_prerelease_for_this_platform() {
         let mut releases = vec![
-            release("nightly-2026-11-13-aaaaaaa", true, true),
-            release("nightly-2026-11-12-bbbbbbb", true, true),
-            release("nightly-2026-11-10-ccccccc", true, true),
-            release("nightly-2026-11-08-ddddddd", true, true),
-            release("nightly-2026-11-03-eeeeeee", true, true),
-            // No build for this platform: not a candidate.
-            release("nightly-2026-11-14-fffffff", true, false),
+            release("nightly", false, true),
+            // The rolling release after catalogue normalization. Its flag is false so updates
+            // can follow it, not because the build is stable.
+            release("nightly-2026-11-17-aaaaaaa", true, true),
+            Release {
+                prerelease: true,
+                ..release("v1.1.0", false, true)
+            },
+            Release {
+                prerelease: true,
+                ..release("nightly-2026-11-16-bbbbbbb", true, true)
+            },
         ];
-        let weekly = |tag: &str, week: &str| StableBuild {
-            tag: tag.into(),
-            week: Some(week.into()),
+        assert!(Channel::Stable.builds(&releases).next().is_none());
+        assert_eq!(Channel::Nightly.builds(&releases).count(), 3);
+
+        releases.push(release("v1.0.1", false, false));
+        releases.push(release("v1.0.0", false, true));
+        assert_eq!(
+            Channel::Stable
+                .builds(&releases)
+                .map(|r| r.tag.as_str())
+                .collect::<Vec<_>>(),
+            ["v1.0.0"]
+        );
+    }
+
+    #[test]
+    fn a_stable_profile_follows_the_newest_nightly_until_a_stable_release_exists() {
+        let stable = Channel::Stable;
+        let mut releases = vec![
+            release("nightly-2026-11-17-aaaaaaa", true, true),
+            release("nightly-2026-11-16-bbbbbbb", true, true),
+            Release {
+                prerelease: true,
+                ..release("v1.1.0", false, true)
+            },
+        ];
+        let plays = |releases: &[Release]| {
+            stable
+                .following(releases)
+                .builds(releases)
+                .next()
+                .map(|r| r.tag.clone())
         };
         assert_eq!(
-            stable_builds(&releases),
-            [
-                weekly("nightly-2026-11-13-aaaaaaa", "2026-11-09"),
-                weekly("nightly-2026-11-08-ddddddd", "2026-11-02"),
-            ]
+            plays(&releases).as_deref(),
+            Some("nightly-2026-11-17-aaaaaaa")
         );
-        releases.insert(0, release("v0.3.0", false, true));
-        assert_eq!(
-            stable_builds(&releases),
-            [StableBuild {
-                tag: "v0.3.0".into(),
-                week: None
-            }]
-        );
+        releases.push(release("v1.0.0", false, true));
+        assert_eq!(plays(&releases).as_deref(), Some("v1.0.0"));
     }
 
     #[test]
