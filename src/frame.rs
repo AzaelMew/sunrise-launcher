@@ -455,7 +455,12 @@ impl Launcher {
         self.scale = window.scale_factor();
         self.scale_factor = self.scale;
         self.window_long_side = self.window_width.max(self.window_height);
-        crate::paint::begin(&self.settings, &self.theme);
+        let page = self.ui.page;
+        // Tint the frame from the very same decoded picture that will be drawn behind Home.
+        let photo = (page == Page::Home)
+            .then(|| self.home_photo(window, cx))
+            .flatten();
+        crate::paint::begin(&self.settings, &self.theme, photo.as_ref());
         scrolls_begin();
         crate::selectable::begin();
         self.modal_before(window, cx);
@@ -465,7 +470,6 @@ impl Launcher {
         if window.focused(cx).is_none() {
             window.focus(&self.root_focus, cx);
         }
-        let page = self.ui.page;
         let rail = self.sidebar(cx);
         let header = self.header(cx);
         let content = match page {
@@ -608,10 +612,6 @@ impl Launcher {
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
         self.pictures.free_retired(window);
-        // A picture, the player's or their theme's, stands behind Home only.
-        let photo = (page == Page::Home)
-            .then(|| self.home_photo(window, cx))
-            .flatten();
         let scenery = self
             .ui
             .backdrop
@@ -620,6 +620,10 @@ impl Launcher {
             .relative()
             .size_full()
             .child(scenery)
+            .children(
+                (page == Page::Home && self.settings.scenery())
+                    .then(|| self.ui.home.profile_scrim()),
+            )
             .child(frame)
             .children(titlebar::resize_handles(window))
     }
