@@ -41,7 +41,6 @@ mod packs;
 mod project;
 mod search;
 mod ui;
-pub(crate) use data_packs::names;
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -469,22 +468,19 @@ impl Launcher {
                     m.busy = None;
                     m.errors.clear();
                     m.errors.extend(failed.iter().cloned());
-                    m.notice = Some(match failed.is_empty() {
-                        true => Ok(said),
-                        false => Err(format!(
-                            "{said} {}",
-                            trf(
-                                "Not done: {list}",
-                                &[(
-                                    "list",
-                                    &failed
-                                        .iter()
-                                        .map(|(id, why)| format!("{id}: {why}"))
-                                        .collect::<Vec<_>>()
-                                        .join("; ")
-                                )]
-                            )
-                        )),
+                    m.notice = Some(match failed.len() {
+                        0 => Ok(said),
+                        count => {
+                            let failed_count =
+                                trf("{count} failed", &[("count", &count.to_string())]);
+                            let details = failed
+                                .iter()
+                                .map(|(id, why)| format!("{id}: {why}"))
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            let (summary, rest) = said.split_once('\n').unwrap_or((&said, ""));
+                            Err(format!("{summary} · {failed_count}\n{rest}\n{details}"))
+                        }
                     });
                     // The list is read again by the next refresh (the files' times moved).
                 }
@@ -704,7 +700,7 @@ impl Launcher {
             .or_else(|| self.mods.message.clone())
     }
 
-    fn dismiss_notice(&mut self) {
+    pub(super) fn dismiss_notice(&mut self) {
         self.ui.mods.notice = None;
         self.mods.message = None;
     }
@@ -725,7 +721,7 @@ impl Launcher {
                     .flex()
                     .flex_col()
                     .gap(px(6.))
-                    .child(div().text_size(px(tokens::LABEL)).child(line))
+                    .child(div().text_size(px(tokens::LABEL)).truncate().child(line))
                     .child(
                         div()
                             .h(px(4.))
@@ -746,8 +742,18 @@ impl Launcher {
             Ok(t) => (t, palette().text),
             Err(t) => (t, palette().warning),
         };
+        let summary = text.lines().next().unwrap_or_default().to_owned();
+        let details = (text != summary || summary.chars().count() > 60).then(|| {
+            crate::frame::button("alt-mods-details", tr("Details…")).on_click(cx.listener(
+                move |this, _, _, cx| {
+                    this.open_notice(text.clone(), None);
+                    cx.notify();
+                },
+            ))
+        });
         Some(
             div()
+                .flex_none()
                 .flex()
                 .items_center()
                 .justify_between()
@@ -758,11 +764,14 @@ impl Launcher {
                         .min_w_0()
                         .text_size(px(tokens::LABEL))
                         .text_color(c(color))
-                        .child(text),
+                        .line_clamp(2)
+                        .child(summary),
                 )
+                .children(details)
                 .child(
                     muted(tr("Dismiss"))
                         .id("alt-mods-dismiss")
+                        .flex_none()
                         .reach()
                         .cursor_pointer()
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
