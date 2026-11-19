@@ -301,17 +301,9 @@ impl Launcher {
         else {
             return;
         };
-        let expected = instance.version.as_ref();
-        let tag = self.version_of(&instance).cloned();
-        let Some(tag) = tag else {
-            let release = match &self.releases {
-                Load::Ready(rows) => match expected {
-                    Some(tag) => rows.iter().find(|r| r.asset.is_some() && &r.tag == tag),
-                    None => instance.channel.following(rows).builds(rows).next(),
-                }
-                .cloned(),
-                _ => None,
-            };
+        let target = self.profile_target(&instance);
+        let Some(tag) = target.filter(|tag| self.installed.contains(tag)).cloned() else {
+            let release = target.and_then(|tag| self.release_to_install(tag));
             if let Some(release) = release {
                 self.ui.after_install = Some((intent, release.tag.clone()));
                 self.install(&release);
@@ -350,11 +342,7 @@ impl Launcher {
     }
 
     pub(super) fn launch_busy(&self) -> bool {
-        self.mutating()
-            || self.installing.is_some()
-            || self.preparing
-            || self.native_step.is_some()
-            || self.starting_client.is_some()
+        self.launch_activity().busy()
     }
 
     pub(super) fn navigate(&mut self, page: Page) {

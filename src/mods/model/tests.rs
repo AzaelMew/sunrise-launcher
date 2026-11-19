@@ -1,5 +1,5 @@
 use super::*;
-use sunrise_launcher::browser::installed::Entry;
+use sunrise_launcher::browser::{installed::Entry, mod_list};
 
 const GAME: &str = "26.3";
 
@@ -442,6 +442,49 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
 }
 
 #[test]
+fn turning_on_a_local_native_file_exposes_permission_then_build() {
+    let home = tempfile::tempdir().unwrap();
+    let on_list = home.path();
+    let id = "example";
+    let local = [Local {
+        id: id.into(),
+        name: "Example".into(),
+        version: "1.0".into(),
+        github: false,
+        native: true,
+    }];
+    let unbuilt = HashSet::from([id.into()]);
+    let row = |allowed| {
+        let enabled = if mod_list::is_enabled(on_list, id) {
+            HashSet::from([id.into()])
+        } else {
+            HashSet::new()
+        };
+        rows(
+            &[],
+            &World {
+                index: None,
+                game: GAME,
+                enabled: &enabled,
+                unbuilt: &unbuilt,
+                native_allowed: allowed,
+                chosen: &NO_PINS,
+                local: &local,
+            },
+        )
+        .remove(0)
+    };
+    let off = row(false);
+    assert!(!off.on);
+    assert!(cells(&off, None, None).switch);
+    mod_list::set_enabled(on_list, id, true).unwrap();
+    let needs_permission = row(false);
+    assert!(needs_permission.on);
+    assert_eq!(needs_permission.need, Some(Need::Permission));
+    assert_eq!(row(true).need, Some(Need::Build));
+}
+
+#[test]
 fn turning_on_skips_what_is_taken_down_or_needs_permission() {
     let (idx, entries) = pack();
     let none = HashSet::new();
@@ -628,10 +671,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
     let fine = cells(row("fine"), None, None);
     assert_eq!(fine.status.as_ref().unwrap().tone, Tone::Muted);
     assert_eq!(fine.action, None);
-    assert!(
-        !fine.switch,
-        "a local file's switch is drawn dim, in its place"
-    );
+    assert!(fine.switch, "local files can be switched on and off");
     // A registry row with nothing to say: empty status and action cells, a live switch.
     let plain = r
         .iter()

@@ -115,32 +115,43 @@ impl Launcher {
         }
     }
 
-    /// One mod on or off. On: the existing switch, with its native-permission and taken-down
-    /// checks. Off: like any change that could take content out of a world, after the worlds
-    /// check.
+    /// Turn one mod on, or check its worlds before turning it off. For files installed
+    /// outside the registry, switching on records the choice; the native consent and build
+    /// gates still decide whether the game can use it.
     pub(super) fn toggle(&mut self, row: &Row) {
-        if row.local.is_some() || !self.guard() {
+        if !self.guard() {
             return;
         }
-        let Some(entry) = row.entry.clone() else {
-            return;
-        };
         if row.on {
             self.run(
                 Action::TurnOff(vec![(row.id.clone(), row.title.clone())]),
                 false,
             );
-            return;
-        }
-        self.mods.message = None;
-        self.mods_switch(&entry);
-        if let Some(Err(e)) = self.mods.message.take() {
-            self.ui.mods.notice = Some(Err(e));
+        } else if let Some(entry) = &row.entry {
+            self.mods.message = None;
+            self.mods_switch(entry);
+            if let Some(Err(e)) = self.mods.message.take() {
+                self.ui.mods.notice = Some(Err(e));
+            }
+        } else if let Some(snapshot) = &mut self.ui.mods.snapshot {
+            let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
+                self.ui.mods.notice =
+                    Some(Err(tr("Wait for the current operation to finish.").into()));
+                return;
+            };
+            self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, &row.id, true) {
+                Ok(()) => {
+                    snapshot.key.clear();
+                    None
+                }
+                Err(e) => Some(Err(e)),
+            };
         }
     }
 
-    /// Turn the chosen mods on in one rewrite of the list. A mod that can't be turned on (taken
-    /// down, or native code with no permission) stays as it is and its row says why.
+    /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods
+    /// have individual switches only: they aren't selectable for registry bulk actions.
+    /// A mod that can't be turned on stays as it is and its row says why.
     pub(super) fn bulk_on(&mut self) {
         if !self.guard() {
             return;

@@ -466,6 +466,12 @@ impl Launcher {
             (p.text, p.warning, p.accent_ink)
         };
         let status_ink = if view.failed { warning } else { text };
+        let other_running = self
+            .client_run
+            .as_ref()
+            .filter(|(id, _)| id != &instance.id)
+            .and_then(|(id, _)| self.instances.list.iter().find(|profile| &profile.id == id))
+            .map(|profile| trf("Playing: {profile}", &[("profile", &profile.name)]));
         let says = div()
             // As wide as what it says: the rest of the row is the cat's.
             .min_w_0()
@@ -476,6 +482,7 @@ impl Launcher {
             .text_ellipsis()
             .children(self.build_line(true, cx))
             .children(self.build_said())
+            .children(other_running)
             .children(view.said.clone())
             // Nothing to act on here: the row under Mods says why and what to do.
             .children(view.mods_off.map(|count| {
@@ -527,23 +534,35 @@ impl Launcher {
         instance: &instances::Instance,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let version = self.version_of(instance);
-        // A game built with mods reads as the build it was made from, like any other.
+        let version = self.profile_target(instance);
+        // A game built with mods reads as the build it was made from; the tooltip names
+        // the actual tag, including when a pin isn't installed yet.
         let made_from = version
             .filter(|t| native_mods::is_native(t))
             .and_then(|t| crate::glass_instance::native_base(t));
-        let nightly = |t: &str| sunrise_launcher::nightly::date_of(t).is_some();
         let build = match version {
-            Some(t) if nightly(made_from.as_deref().unwrap_or(t)) => trf(
-                "Sunrise · {build}",
-                &[("build", &crate::sheets::build_name(t))],
-            ),
-            Some(t) => self.version_label(t),
+            Some(tag) => {
+                let base = made_from.as_ref().unwrap_or(tag);
+                match sunrise_launcher::nightly::date_of(base) {
+                    Some(date) => {
+                        let time =
+                            sunrise_launcher::nightly::same_day_time(base).unwrap_or_default();
+                        trf(
+                            "Sunrise · {build}",
+                            &[("build", &crate::glass_versions::published(date, &time))],
+                        )
+                    }
+                    None => self.version_label(tag),
+                }
+            }
             None => tr("Sunrise").into(),
         };
         let at = self.ui.home.picker.clone();
         div()
             .id("alt-build")
+            .when_some(version.cloned(), |d, tag| {
+                d.tooltip(crate::glass_ui::tip(tag))
+            })
             .flex_none()
             .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
             .border_1()

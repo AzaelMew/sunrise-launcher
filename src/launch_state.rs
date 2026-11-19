@@ -385,12 +385,7 @@ impl Launcher {
         .then_some(instance.channel)
     }
 
-    pub(crate) fn launch_facts(&self) -> Facts {
-        let active = self.selected_instance();
-        let launch = self.ui.home.mods.launch();
-        let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
-        let follows_nightly =
-            active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
+    pub(super) fn launch_activity(&self) -> Facts {
         Facts {
             installing: self.installing.as_ref().map(|(_, progress)| *progress),
             preparing: self.preparing,
@@ -398,6 +393,17 @@ impl Launcher {
             starting: self.starting_client.is_some(),
             mutating: self.mutating(),
             running: self.client.is_some(),
+            ..Facts::default()
+        }
+    }
+
+    pub(crate) fn launch_facts(&self) -> Facts {
+        let active = self.selected_instance();
+        let launch = self.ui.home.mods.launch();
+        let held = self.held_for_launch(launch.and_then(|summary| summary.update_check.as_deref()));
+        let follows_nightly =
+            active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
+        Facts {
             signed_in: self.accounts.selected().is_some()
                 || sunrise_launcher::developer_offline::selected(),
             installed: active.and_then(|i| self.version_of(i)).is_some(),
@@ -416,6 +422,7 @@ impl Launcher {
                 .filter(|_| follows_nightly)
                 .map(|r| crate::sheets::build_name(&r.tag)),
             mods_off: launch.map_or(0, |summary| summary.mods_off),
+            ..self.launch_activity()
         }
     }
 

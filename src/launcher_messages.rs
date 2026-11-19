@@ -412,12 +412,19 @@ impl Launcher {
                             self.screenshots.stale();
                             self.game_packs.stale();
                             let vars = std::mem::take(&mut self.client_vars);
+                            let mut other_profile = None;
                             if let Some((id, started)) = self.client_run.take() {
                                 if let Err(e) = instances::record_play(&id, started.elapsed()) {
                                     eprintln!("Play time not saved: {e}");
                                 }
                                 if let Some(i) = instances::list().into_iter().find(|i| i.id == id)
                                 {
+                                    if self
+                                        .selected_instance()
+                                        .is_some_and(|selected| selected.id != id)
+                                    {
+                                        other_profile = Some(i.name);
+                                    }
                                     sunrise_launcher::launch::run_after_exit(
                                         &i.launch, &i.home, &vars,
                                     );
@@ -458,6 +465,13 @@ impl Launcher {
                                         })
                                     })
                                     .unwrap_or_default();
+                                let summary = match other_profile {
+                                    Some(profile) => trf(
+                                        "The game stopped in {profile}. {reason}",
+                                        &[("profile", &profile), ("reason", &summary)],
+                                    ),
+                                    None => summary,
+                                };
                                 self.crash = Some(Crash { summary });
                             }
                         }

@@ -87,7 +87,7 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
-    /// Mod files the browser didn't install: listed, never changed from here.
+    /// Mod files the registry didn't install: on/off is editable, the files are not.
     local: Vec<model::Local>,
 }
 
