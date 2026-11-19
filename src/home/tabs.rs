@@ -241,9 +241,9 @@ impl Launcher {
             extra,
             items,
         } = match active {
-            Tab::Servers => self.home_servers(instance, compact, cx),
+            Tab::Servers => self.home_servers(instance, compact, window, cx),
             Tab::Worlds => self.home_worlds(instance, compact, window, cx),
-            Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, cx),
+            Tab::Packs | Tab::Mods => self.home_installed_tab(active == Tab::Packs, window, cx),
         };
         let view = &self.ui.home.tabs.views[active.index()];
         let scroll = view.scroll.clone();
@@ -276,6 +276,7 @@ impl Launcher {
             .border_1()
             .border_color(rgb(palette().divider))
             .px(px(inset - 1.))
+            .pb(px(8.))
             .child(strip)
             .child(
                 div()
@@ -344,6 +345,7 @@ impl Launcher {
         title: String,
         detail: Option<String>,
         tail: Option<String>,
+        window: &Window,
         cx: &mut Context<Self>,
         open: impl Fn(&mut Self) + 'static,
     ) -> Stateful<Div> {
@@ -352,12 +354,35 @@ impl Launcher {
             .chain(&tail)
             .fold(title.clone(), |label, next| format!("{label} · {next}"));
         let focus = self.ui.home.tabs.focus_for(id.clone(), cx);
+        let keyboard_title = (focus.is_focused(window)
+            && window.last_input_was_keyboard()
+            && title.chars().count() > 50)
+            .then(|| {
+                gpui::deferred(
+                    div().absolute().left(px(42.)).bottom_full().child(
+                        gpui::anchored().snap_to_window_with_margin(px(8.)).child(
+                            div()
+                                .max_w(px(380.))
+                                .px(px(10.))
+                                .py(px(7.))
+                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                                .border_1()
+                                .border_color(rgb(palette().divider))
+                                .bg(rgb(palette().raised))
+                                .text_size(px(tokens::LABEL))
+                                .child(full.clone()),
+                        ),
+                    ),
+                )
+            });
         row(id)
             .track_focus(&focus)
+            .aria_label(full.clone())
             .reach()
             .cursor_pointer()
             .pr(px(12.))
             .tooltip(crate::glass_ui::tip(full))
+            .children(keyboard_title)
             .child(picture)
             .child(
                 div()
@@ -391,5 +416,25 @@ impl Launcher {
     ) -> (std::ops::Range<usize>, impl FnOnce(Div) -> Div + use<>) {
         let view = &self.ui.home.tabs.views[if packs { Tab::Packs } else { Tab::Mods }.index()];
         view.near.list(&view.scroll, count, 1, ROW, 0.)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_new_profile_starts_at_servers_with_fresh_scroll_handles() {
+        let mut tabs = Tabs::default();
+        tabs.select_profile("juniper");
+        tabs.selected = Tab::Packs;
+        let saved = &tabs.views[Tab::Packs.index()].scroll;
+        saved.set_offset(gpui::point(px(0.), px(-480.)));
+        tabs.select_profile("juniper");
+        assert!(tabs.selected == Tab::Packs);
+        assert_eq!(tabs.views[Tab::Packs.index()].scroll.offset().y, px(-480.));
+        tabs.select_profile("birch");
+        assert!(tabs.selected == Tab::Servers);
+        assert_eq!(tabs.views[Tab::Packs.index()].scroll.offset().y, px(0.));
     }
 }

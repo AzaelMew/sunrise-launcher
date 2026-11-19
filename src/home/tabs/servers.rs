@@ -11,12 +11,19 @@ impl Launcher {
         &mut self,
         instance: &instances::Instance,
         compact: bool,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Content {
         self.load_servers(instance.home.clone());
         let count = self.multiplayer.list.len();
         let view = &self.ui.home.tabs.views[Tab::Servers.index()];
         let (built, place) = view.near.list(&view.scroll, count, 1, ROW, 0.);
+        // A manually edited servers.dat can repeat an address. Distinguish its
+        // occurrences without keying a row by its displayed title or its list index.
+        let mut seen = HashMap::<String, u32>::new();
+        for (server, _) in &self.multiplayer.list[..built.start] {
+            *seen.entry(server.ip.clone()).or_default() += 1;
+        }
         let rows = self.multiplayer.list[built].to_vec();
         let mut items = div().flex().flex_col();
         if count == 0 {
@@ -39,7 +46,9 @@ impl Launcher {
                     Some(multiplayer_page::Reach::Offline) => Some(tr("No answer").into()),
                     _ => None,
                 };
-                let id = SharedString::from(format!("home-server:{}:{}", server.ip, server.name));
+                let occurrence = seen.entry(server.ip.clone()).or_default();
+                let id = SharedString::from(format!("home-server:{}:{}", server.ip, occurrence));
+                *occurrence += 1;
                 let icon = saved.or_else(|| self.multiplayer.icons.get(&server.ip).cloned());
                 let picture =
                     crate::mod_icons::tile(icon, &server.ip, &server.name, 30.).into_any_element();
@@ -51,6 +60,7 @@ impl Launcher {
                     server.name,
                     (!compact || status.is_none()).then(|| address.clone()),
                     status,
+                    window,
                     cx,
                     move |this| {
                         this.ui.home.tabs.server = Some(Target {

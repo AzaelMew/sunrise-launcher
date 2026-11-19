@@ -229,6 +229,8 @@ impl Default for ModsState {
 }
 
 /// The read-only Home view uses the same Installed classification as the full rows.
+pub(crate) struct HomeModRows(std::collections::HashMap<String, Row>);
+
 pub(crate) struct HomeModFacts {
     pub(crate) kind: &'static str,
     pub(crate) status: Option<String>,
@@ -269,7 +271,7 @@ impl Launcher {
                 .open
                 .as_ref()
                 .map_or(Page::Discover, |o| o.from),
-            Page::Installed => Page::Installed,
+            Page::Home | Page::Installed => self.ui.page,
             _ => Page::Discover,
         };
         self.ui.page = Page::Project;
@@ -309,28 +311,38 @@ impl Launcher {
         }
     }
 
-    pub(crate) fn home_mod_facts(&mut self) -> std::collections::HashMap<String, HomeModFacts> {
+    pub(crate) fn home_mod_rows(&mut self) -> HomeModRows {
         self.mods_refresh();
-        self.rows()
-            .into_iter()
-            .filter(|row| row.on)
-            .map(|row| {
-                let error = self.ui.mods.errors.get(&row.id).map(String::as_str);
-                let cells = model::cells(&row, error, None);
-                let kind = if cells.kind.is_empty() {
-                    tr("Content")
-                } else {
-                    cells.kind
-                };
-                let status = cells.status.map(|state| state.label);
-                (row.id, HomeModFacts { kind, status })
-            })
-            .collect()
+        HomeModRows(
+            self.rows()
+                .into_iter()
+                .filter(|row| row.on)
+                .map(|row| (row.id.clone(), row))
+                .collect(),
+        )
+    }
+
+    pub(crate) fn home_mod_facts(&self, rows: &HomeModRows, id: &str) -> Option<HomeModFacts> {
+        let row = rows.0.get(id)?;
+        let error = self.ui.mods.errors.get(id).map(String::as_str);
+        let building = self
+            .build_here()
+            .and_then(|run| run.state_of(id, &row.version));
+        let cells = model::cells(row, error, building);
+        let kind = if cells.kind.is_empty() {
+            tr("Content")
+        } else {
+            cells.kind
+        };
+        Some(HomeModFacts {
+            kind,
+            status: cells.status.map(|state| state.label),
+        })
     }
 
     pub(crate) fn show_resource_pack_discover(&mut self) {
         self.leave_section(true);
-        self.pack_scope(pack_discover::Scope::Resource);
+        self.ui.mods.shelf = Shelf::Resource;
         self.choose_view(Page::PackFind);
     }
 
@@ -549,18 +561,7 @@ impl Launcher {
                         .map(local(false)),
                 )
                 .collect();
-            let mut enabled: HashSet<String> = entries
-                .iter()
-                .filter_map(|e| sunrise::mod_id(e))
-                .filter(|id| mod_list::is_enabled(&home, id))
-                .map(str::to_owned)
-                .collect();
-            enabled.extend(
-                local
-                    .iter()
-                    .filter(|l| mod_list::is_enabled(&home, &l.id))
-                    .map(|l| l.id.clone()),
-            );
+            let enabled = mod_list::enabled_ids(&home);
             let chosen = sunrise::chosen(&home);
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
