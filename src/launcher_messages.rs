@@ -287,7 +287,12 @@ impl Launcher {
                     if let (Err(e), false) = (&result, cancelled || no_consent) {
                         if let native_mods::Failed::Worlds(stake) = e {
                             if let Some(run) = &mut self.ui.mods.build {
-                                run.at_stake(&stake.mods, &stake.unbuilt);
+                                let incompatible = if stake.incompatible {
+                                    &stake.mods[..]
+                                } else {
+                                    &[]
+                                };
+                                run.at_stake(incompatible, &stake.unbuilt);
                             }
                             self.keep_stop(stake);
                         }
@@ -299,6 +304,8 @@ impl Launcher {
                     // The build window's build ends as the build did. With its window closed,
                     // the strip says how it went for a moment.
                     let shown = self.ui.sheet == Some(crate::sheets::Sheet::ModBuild);
+                    let resolve =
+                        shown && self.native_worlds.is_some() && self.held_update().is_some();
                     if no_consent {
                         self.ui.mods.build = None;
                     } else if let Some(run) = &mut self.ui.mods.build {
@@ -322,6 +329,9 @@ impl Launcher {
                                 crate::wake::wake();
                             });
                         }
+                    }
+                    if resolve {
+                        self.open_sheet(crate::sheets::Sheet::Resolve);
                     }
                     // The build the instance plays now: its own, or its channel's when every mod
                     // was left out and it follows one.
