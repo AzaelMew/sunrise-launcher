@@ -473,13 +473,12 @@ impl Launcher {
         let badge = bar >= BADGE_FROM;
         let keys = keys("K");
         let glass = blocks::icon("search", 16., rgb(palette().chrome_muted).into());
-        // As tall as the account chip beside it, so the bar's two controls line up.
         let button = div()
             .id("search-open")
             .flex_none()
             .flex()
             .items_center()
-            .h(px(tokens::ACTION))
+            .h(px(tokens::FIELD))
             .rounded(px(tokens::R_CONTROL))
             .border_1()
             .border_color(palette().input_edge())
@@ -493,7 +492,7 @@ impl Launcher {
             }));
         if compact {
             return button
-                .w(px(tokens::ACTION))
+                .w(px(tokens::FIELD))
                 .justify_center()
                 .child(glass)
                 .tooltip(crate::glass_ui::tip(tr("Search")));
