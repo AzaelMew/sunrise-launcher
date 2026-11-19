@@ -1801,12 +1801,15 @@ impl Launcher {
                 .text_color(rgb(palette().text))
                 .on_scroll(|_, _, cx| cx.stop_propagation())
                 .child(
+                    // Solid, like every other dialog: a card's fill is see-through, made to lie on
+                    // the page, and the page showed through the form.
                     card()
                         .w(px(620.))
                         .max_w_full()
                         .max_h_full()
                         .rounded(px(tokens::R_PANEL))
                         .border_color(rgb(palette().line))
+                        .bg(rgb(palette().raised))
                         .overflow_hidden()
                         .child(body)
                         .child(foot),
