@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher_smod::index::resolve::{self, InstallPlan, InstalledMod, RequestResult};
-use sunrise_launcher_smod::index::{self, Collection, Index};
+use sunrise_launcher_smod::index::{Collection, Index};
 use sunrise_launcher_smod::manifest::Side;
 
 /// The first collection that lists each member, by name: what a member's card says it is part of.
