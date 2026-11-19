@@ -1532,27 +1532,40 @@ impl Launcher {
         } else if worlds.is_empty() {
             hint(tr("No single-player world yet. Choose New world."))
         } else {
-            let mut list = div().flex().flex_col().gap(px(2.));
-            for (i, (name, path)) in worlds.into_iter().take(8).enumerate() {
+            let count = worlds.len();
+            let mut list = div()
+                .id("host-create-worlds")
+                .flex_none()
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .max_h(px(144.))
+                .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("host-create-worlds"))
+                .on_scroll(|_, _, cx| cx.stop_propagation());
+            for (i, (name, path)) in worlds.into_iter().enumerate() {
                 let chosen = copy.as_ref() == Some(&path);
                 list = list.child(
                     div()
                         .id(ElementId::named_usize("host-create-copy", i))
+                        .flex_none()
                         .tab_index(0)
                         .seen()
+                        .tooltip(crate::glass_ui::tip(name.clone()))
                         .border_1()
                         .border_color(gpui::transparent_black())
                         .focus_visible(|s| s.border_color(rgb(palette().focus)))
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .h(px(tokens::CONTROL))
+                        .h(px(32.))
                         .px(px(10.))
                         .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                         .cursor_pointer()
                         .when(chosen, |d| d.bg(rgb(palette().selected)))
                         .child(
                             div()
+                                .flex_none()
                                 .size(px(12.))
                                 .rounded(crate::tokens::r(crate::tokens::R_SMALL))
                                 .border_1()
@@ -1563,7 +1576,7 @@ impl Launcher {
                                 }))
                                 .when(chosen, |d| d.bg(rgb(palette().text))),
                         )
-                        .child(name)
+                        .child(div().flex_1().min_w_0().truncate().child(name))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(c) = &mut this.servers.create {
                                 c.copy = Some(path.clone());
@@ -1572,9 +1585,18 @@ impl Launcher {
                         })),
                 );
             }
-            list.child(hint(tr(
-                "The server gets a copy: your single-player world stays as it is.",
-            )))
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(caption(&trf(
+                    "Your worlds · {count}",
+                    &[("count", &count.to_string())],
+                )))
+                .child(list)
+                .child(hint(tr(
+                    "The server gets a copy: your single-player world stays as it is.",
+                )))
         };
         let step = |id: &'static str, sign: &'static str, delta: i32, cx: &mut Context<Self>| {
             button(id, sign).w(px(32.)).px(px(0.)).on_click(cx.listener(
@@ -1611,6 +1633,7 @@ impl Launcher {
             cx,
         ));
         if friends_only {
+            let count = friends.len();
             let mut names = div().flex().flex_wrap().items_center().gap(px(6.));
             for (i, friend) in friends.into_iter().enumerate() {
                 names = names.child(
@@ -1627,8 +1650,15 @@ impl Launcher {
                         .border_color(rgb(palette().line))
                         .text_size(px(tokens::LABEL))
                         .cursor_pointer()
-                        .child(friend)
-                        .child(div().text_color(rgb(palette().muted)).child("×"))
+                        .max_w_full()
+                        .tooltip(crate::glass_ui::tip(friend.clone()))
+                        .child(div().min_w_0().truncate().child(friend))
+                        .child(
+                            div()
+                                .flex_none()
+                                .text_color(rgb(palette().muted))
+                                .child("×"),
+                        )
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(c) = &mut this.servers.create {
                                 if i < c.friends.len() {
@@ -1640,12 +1670,21 @@ impl Launcher {
                 );
             }
             who = who
-                .child(names.child(self.host_field(
-                    Field::Players,
-                    tr("A player's name, then Enter"),
-                    240.,
-                    cx,
+                .child(caption(&trf(
+                    "Invited players · {count}",
+                    &[("count", &count.to_string())],
                 )))
+                .children((count > 0).then(|| {
+                    div()
+                        .id("host-create-invites")
+                        .min_h_0()
+                        .max_h(px(104.))
+                        .overflow_y_scroll()
+                        .track_scroll(&crate::frame::scrolls("host-create-invites"))
+                        .on_scroll(|_, _, cx| cx.stop_propagation())
+                        .child(names)
+                }))
+                .child(self.host_field(Field::Players, tr("A player's name, then Enter"), 240., cx))
                 .child(hint(tr(
                     "The first one becomes an operator. Add more later under Players.",
                 )));
@@ -1737,12 +1776,31 @@ impl Launcher {
             ))
             .child(part("Most players at once", players))
             .child(part("Who can join", who))
-            .child(eula_line);
+            .child(eula_line)
+            .children(self.servers.problem.as_ref().filter(|_| !creating).map(|p| {
+                div()
+                    .id("host-create-problem")
+                    .flex_none()
+                    .min_h_0()
+                    .max_h(px(96.))
+                    .overflow_y_scroll()
+                    .track_scroll(&crate::frame::scrolls("host-create-problem"))
+                    .on_scroll(|_, _, cx| cx.stop_propagation())
+                    .child(warning(p.message.clone()))
+            }));
         let said = if creating {
             let last = self.servers.job_log.back().cloned().unwrap_or_default();
-            hint(format!("{} {last}", tr("Creating…")))
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().muted))
+                .line_clamp(2)
+                .child(format!("{} {last}", tr("Creating…")))
         } else if let Some(p) = &self.servers.problem {
-            warning(p.message.clone())
+            div()
+                .text_size(px(tokens::LABEL))
+                .text_color(rgb(palette().danger))
+                .line_clamp(2)
+                .child(p.message.clone())
         } else if eula_missing {
             warning(tr("Tick the EULA box to create the server."))
         } else {
