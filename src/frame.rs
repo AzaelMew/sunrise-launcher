@@ -548,7 +548,7 @@ impl Launcher {
         let header = self.header(cx);
         let content = match page {
             Page::Settings => self.settings(window, cx),
-            Page::Skins => self.skins_page(cx).into_any_element(),
+            Page::Skins => self.skins_page(window, cx).into_any_element(),
             Page::Home => self.home(window, cx),
             Page::Join | Page::Hosting => {
                 let body = if page == Page::Hosting {
