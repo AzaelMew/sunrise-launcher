@@ -450,12 +450,14 @@ impl Launcher {
                     .flex()
                     .items_center()
                     .gap(px(6.))
+                    // One height along the row: Start is the field's height, so are the rest.
                     .child(
                         button("host-folder", tr("Open folder"))
+                            .h(px(tokens::FIELD))
                             .on_click(move |_, _, cx| crate::glass_toast::open(cx, &folder)),
                     )
-                    .child(panel)
-                    .child(restart)
+                    .child(panel.h(px(tokens::FIELD)))
+                    .child(restart.h(px(tokens::FIELD)))
                     .child(
                         start
                             .h(px(tokens::FIELD))
@@ -921,9 +923,11 @@ impl Launcher {
             .gap(px(8.))
             .child(self.host_field(Field::AddPlayer, tr("A player's name"), 240., cx))
             .child(
+                // As tall as the name field beside it.
                 self.host_button("host-let-in", tr("Let in"), idle, cx, |this, _| {
                     this.add_player()
-                }),
+                })
+                .h(px(tokens::FIELD)),
             )
             .children(refused.map(|e| warning(tr(e))));
         allowed.push(add);
@@ -1801,12 +1805,15 @@ impl Launcher {
                 .text_color(rgb(palette().text))
                 .on_scroll(|_, _, cx| cx.stop_propagation())
                 .child(
+                    // Solid, like every other dialog: a card's fill is see-through, made to lie on
+                    // the page, and the page showed through the form.
                     card()
                         .w(px(620.))
                         .max_w_full()
                         .max_h_full()
                         .rounded(px(tokens::R_PANEL))
                         .border_color(rgb(palette().line))
+                        .bg(rgb(palette().raised))
                         .overflow_hidden()
                         .child(body)
                         .child(foot),
