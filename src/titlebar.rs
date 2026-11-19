@@ -42,12 +42,24 @@ pub fn render(_theme: &Theme, _window: &Window) -> Option<Div> {
     None
 }
 
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+fn label() -> Div {
+    use gpui::{div, px, FontWeight, ParentElement, Styled};
+
+    div()
+        .font_weight(FontWeight::MEDIUM)
+        .text_size(px(13.))
+        .line_height(px(16.))
+        .child(sunrise_launcher::i18n::tr(
+            sunrise_launcher::identity::WINDOW_TITLE,
+        ))
+}
+
 /// Draw the launcher's Linux title bar when the platform uses client-side decorations.
 #[cfg(target_os = "linux")]
 pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
-    use crate::glass;
-    use crate::{blocks, mark};
-    use gpui::{div, prelude::*, px, Decorations, FontWeight, MouseButton};
+    use crate::{blocks, glass, mark};
+    use gpui::{div, prelude::*, px, Decorations, MouseButton};
 
     if matches!(window.window_decorations(), Decorations::Server) {
         return None;
@@ -64,11 +76,7 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
         .px(px(12.))
         .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
         .child(mark(16.))
-        .child(
-            blocks::pixel(13., FontWeight::MEDIUM).child(sunrise_launcher::i18n::tr(
-                sunrise_launcher::identity::WINDOW_TITLE,
-            )),
-        );
+        .child(label());
 
     let mut bar = div()
         .relative()
@@ -76,6 +84,7 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
         .flex_none()
         .items_center()
         .h(px(32.))
+        .font_family(sunrise_launcher_theme::glass::FONT)
         .when(theme.glass, |bar| bar.child(glass::backdrop(0.)))
         .when(!theme.glass, |bar| bar.bg(theme.side))
         .text_color(theme.muted)
@@ -306,7 +315,7 @@ mod windows {
     use crate::glass;
     use crate::glass_ui::{color, hover_edge, white};
     use crate::{blocks, mark};
-    use gpui::{div, prelude::*, px, FontWeight, Hsla, SharedString, Stateful, WindowControlArea};
+    use gpui::{div, prelude::*, px, Hsla, SharedString, Stateful, WindowControlArea};
 
     const HEIGHT: f32 = 32.;
     const BUTTON_WIDTH: f32 = 30.;
@@ -442,11 +451,7 @@ mod windows {
             .px(px(12.))
             .window_control_area(WindowControlArea::Drag)
             .child(mark(16.))
-            .child(
-                blocks::pixel(13., FontWeight::MEDIUM).child(sunrise_launcher::i18n::tr(
-                    sunrise_launcher::identity::WINDOW_TITLE,
-                )),
-            );
+            .child(label());
         Some(
             div()
                 .relative()
@@ -454,6 +459,7 @@ mod windows {
                 .flex_none()
                 .items_center()
                 .h(px(HEIGHT))
+                .font_family(sunrise_launcher_theme::glass::FONT)
                 // Control hit tests run before native edge resizing in GPUI 0.2.2.
                 .when(!window.is_maximized(), |bar| {
                     bar.pt(px(RESIZE_INSET)).px(px(RESIZE_INSET))
