@@ -93,7 +93,9 @@ impl Launcher {
                 }
                 Msg::Playing(playing) => self.playing = playing,
                 Msg::Session(session) => self.handle_game_session(session),
-                Msg::JarConsent { jars, reply } => jar_launch::consent(window, jars, reply, cx),
+                Msg::JarConsent { jars, reply } => {
+                    self.ask_jars(jar_launch::Consent::new(jars, reply))
+                }
                 Msg::JarClient {
                     run,
                     account: accepted,

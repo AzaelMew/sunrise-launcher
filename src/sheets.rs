@@ -71,6 +71,7 @@ pub(crate) struct SheetsState {
     before: Option<FocusHandle>,
     pub(super) layered: bool,
     registry: Option<(Consent, Sender<bool>)>,
+    jars: Option<crate::jar_launch::Consent>,
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
     error: Option<String>,
@@ -351,6 +352,7 @@ impl Launcher {
     /// another dialog's answer merely because the search is still underneath it.
     pub(crate) fn blocking_dialog(&self) -> bool {
         self.ui.sheets.registry.is_some()
+            || self.ui.sheets.jars.is_some()
             || self.pending_consent.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()
@@ -380,6 +382,18 @@ impl Launcher {
         self.ui.sheets.ticked.1 = false;
     }
 
+    pub(super) fn ask_jars(&mut self, question: crate::jar_launch::Consent) {
+        if let Some(previous) = self.ui.sheets.jars.replace(question) {
+            previous.answer(false);
+        }
+    }
+
+    pub(super) fn answer_jars(&mut self, allow: bool) {
+        if let Some(question) = self.ui.sheets.jars.take() {
+            question.answer(allow);
+        }
+    }
+
     /// Closes the sheet on screen the way Escape or a press outside does. Nothing is allowed,
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
@@ -388,6 +402,9 @@ impl Launcher {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
+        } else if self.ui.sheets.jars.is_some() {
+            self.answer_jars(false);
+            return;
         }
         if self.ui.sheet == Some(Sheet::ModBatch) {
             self.dismiss_mod_batch();
@@ -400,6 +417,7 @@ impl Launcher {
     /// Escape: true when a sheet was open and is closed now.
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let open = self.ui.sheets.registry.is_some()
+            || self.ui.sheets.jars.is_some()
             || self.pending_consent.is_some()
             || self.ui.sheet.is_some();
         if open {
@@ -591,6 +609,9 @@ impl Launcher {
         }
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));
+        }
+        if let Some(question) = &self.ui.sheets.jars {
+            return Some(question.sheet(cx));
         }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
@@ -1169,26 +1190,70 @@ impl Launcher {
             .registry
             .as_ref()
             .expect("shown only while a question is pending");
-        let mut names: Vec<&String> = inventory
-            .build_scripts
+        let mut scripts: Vec<&str> = inventory.build_scripts.iter().map(String::as_str).collect();
+        let mut macros: Vec<&str> = inventory.proc_macros.iter().map(String::as_str).collect();
+        scripts.sort_unstable();
+        scripts.dedup();
+        macros.sort_unstable();
+        macros.dedup();
+        let count = scripts
             .iter()
-            .chain(&inventory.proc_macros)
-            .collect();
-        names.sort();
-        names.dedup();
-        let count = names.len();
-        let heading = inventory.label();
-        let rows = card()
-            .child(fact(
-                tr("Build scripts"),
-                list_or_none(&inventory.build_scripts),
-                false,
-            ))
-            .child(fact(
-                tr("Proc macros"),
-                list_or_none(&inventory.proc_macros),
-                true,
-            ));
+            .chain(&macros)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let heading = if count == 1 {
+            tr("Allow 1 library to run while building?").into()
+        } else {
+            trf(
+                "Allow {count} libraries to run while building?",
+                &[("count", &count.to_string())],
+            )
+        };
+        let group = |role, label, names: Vec<&str>| {
+            div()
+                .flex()
+                .flex_col()
+                .flex_none()
+                .child(
+                    muted(trf(
+                        "{role} · {count}",
+                        &[("role", label), ("count", &names.len().to_string())],
+                    ))
+                    .px(px(16.))
+                    .py(px(6.)),
+                )
+                .children(names.into_iter().enumerate().map(|(n, name)| {
+                    div()
+                        .id((role, n))
+                        .h(px(30.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .px(px(16.))
+                        .border_t_1()
+                        .border_color(rgb(palette().divider))
+                        .tooltip(crate::glass_ui::tip(name.to_owned()))
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(tokens::LABEL))
+                                .child(name.to_owned()),
+                        )
+                }))
+        };
+        let rows = div()
+            .id("library-inventory")
+            .min_h_0()
+            .max_h(px(240.))
+            .overflow_y_scroll()
+            .track_scroll(&crate::frame::scrolls("library-inventory"))
+            .child(
+                card()
+                    .flex_none()
+                    .child(group("library-script", tr("Build scripts"), scripts))
+                    .child(group("library-macro", tr("Proc macros"), macros)),
+            );
         let ticked = self.ui.sheets.ticked.1;
         let go = button("alt-libraries-allow", tr("Allow and continue"));
         let go = if ticked {
@@ -1205,10 +1270,10 @@ impl Launcher {
         let body = div()
             .flex()
             .flex_col()
-            .child(title(heading))
+            .child(title(heading).flex_none())
             .child(muted(tr(
                 "Registry dependencies are native code. Their build scripts and proc macros run during compilation, before the game starts, with the same access to your files as the launcher has.",
-            )))
+            )).flex_none())
             .child(rows)
             .child(
                 checkbox(
@@ -1219,7 +1284,7 @@ impl Launcher {
                         &[("count", &count.to_string())],
                     ),
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                .flex_none().on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.ui.sheets.ticked.1 ^= true;
                     cx.notify();
                 })),
@@ -1234,7 +1299,7 @@ impl Launcher {
                 )),
                 go,
             ));
-        frame("alt-libraries", 760., body, cx)
+        bounded_frame("alt-libraries", 760., body, cx)
     }
 
     // ---- Game build ----
@@ -1588,14 +1653,6 @@ impl Launcher {
                         cx.stop_propagation()
                     }),
             )
-    }
-}
-
-fn list_or_none(names: &[String]) -> String {
-    if names.is_empty() {
-        tr("None").into()
-    } else {
-        names.join(", ")
     }
 }
 
