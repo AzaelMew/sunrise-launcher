@@ -153,6 +153,24 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
         .child(below)
 }
 
+/// What the launcher's own update row says when no update is found: the failure (a retry is
+/// offered beside it), "checked just now" for a minute after an explicit check, or just "up to
+/// date" once any check has run.
+fn launcher_check_line(
+    error: Option<&str>,
+    checked_now: Option<Instant>,
+    checked_before: bool,
+) -> (String, bool) {
+    match error {
+        Some(error) => (trf("Not checked: {error}", &[("error", error)]), true),
+        None if checked_now.is_some_and(|at| at.elapsed() < Duration::from_secs(60)) => {
+            (tr("up to date · checked just now").to_string(), false)
+        }
+        None if checked_before => (tr("up to date").to_string(), false),
+        None => (String::new(), false),
+    }
+}
+
 impl Launcher {
     /// A [`row`] whose controls are wide: in a narrow window they would leave the words a
     /// column a syllable wide, so there they go under the words.
@@ -1483,17 +1501,11 @@ impl Launcher {
                     false,
                 ),
                 None => {
-                    let (about, bad) = match &self.updates.launcher_error {
-                        Some(error) => (trf("Not checked: {error}", &[("error", error)]), true),
-                        None if self
-                            .launcher_checked_now
-                            .is_some_and(|checked| checked.elapsed() < Duration::from_secs(60)) =>
-                        {
-                            (tr("up to date · checked just now").to_string(), false)
-                        }
-                        None if self.checked.is_some() => (tr("up to date").to_string(), false),
-                        None => (String::new(), false),
-                    };
+                    let (about, bad) = launcher_check_line(
+                        self.updates.launcher_error.as_deref(),
+                        self.launcher_checked_now,
+                        self.checked.is_some(),
+                    );
                     let check = button("alt-launcher-check", tr("Check now")).on_click(
                         cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.check_updates(UpdateCheck::ManualLauncher);
@@ -1577,5 +1589,27 @@ mod tests {
         assert!(startup_section(true, false) == Some(Section::Storage));
         assert!(startup_section(false, true) == Some(Section::Storage));
         assert!(startup_section(false, false).is_none());
+    }
+
+    #[test]
+    fn the_launcher_row_says_what_its_check_found() {
+        let now = Some(Instant::now());
+        // A failure is shown as one and is retryable (the row keeps its button); it is never
+        // passed off as up to date, even right after a check.
+        let (line, bad) = launcher_check_line(Some("offline"), now, true);
+        assert!(bad && line.contains("offline"), "{line}");
+        assert_eq!(
+            launcher_check_line(None, now, true),
+            ("up to date · checked just now".into(), false)
+        );
+        let long_ago = Instant::now().checked_sub(Duration::from_secs(120));
+        assert_eq!(
+            launcher_check_line(None, long_ago, true),
+            ("up to date".into(), false)
+        );
+        assert_eq!(
+            launcher_check_line(None, None, false),
+            (String::new(), false)
+        );
     }
 }

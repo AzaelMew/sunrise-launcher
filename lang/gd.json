@@ -1477,9 +1477,9 @@
   "Some picks can't be installed together.": "Some picks can't be installed together.",
   "Version {version} is out. {why}": "Version {version} is out. {why}",
   "Check now": "Check now",
-  "Sunrise Launcher {version} is ready": "Sunrise Launcher {version} is ready",
   "Hide until the launcher restarts": "Hide until the launcher restarts",
   "Not checked: {error}": "Not checked: {error}",
   "up to date · checked just now": "up to date · checked just now",
-  "Check for updates": "Check for updates"
+  "Check for updates": "Thoir sùil airson ùrachaidhean",
+  "Sunrise Launcher {version} available": "Sunrise Launcher {version} available"
 }

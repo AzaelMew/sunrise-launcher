@@ -78,7 +78,7 @@ pub(super) fn install(
                 .entries
                 .retain(|e| e.source != SourceId::Sunrise || e.project != entry.project);
             plan.installed.entries.push(entry.clone());
-            if entry.project != project.id {
+            if turn_on && entry.project != project.id {
                 enable.push(entry.project.clone());
             }
             done.push(entry);

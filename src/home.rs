@@ -266,6 +266,30 @@ pub(crate) fn muted(text: impl Into<SharedString>) -> Div {
         .child(text.into())
 }
 
+/// Whether Home shows the launcher-update notice, and for which version: one that is downloaded
+/// and ready (`None`: Update applies it), or one the last check found that this copy can fetch
+/// (`Some`: Update starts the download). Dismissed, mid-download, failed or not allowed: none.
+fn launcher_notice(
+    hidden: bool,
+    state: &SelfUpdate,
+    found: Option<&Release>,
+    allowed: bool,
+) -> Option<(String, Option<Release>)> {
+    if hidden {
+        return None;
+    }
+    match (state, found) {
+        (SelfUpdate::Ready(version), _) => Some((version.clone(), None)),
+        (SelfUpdate::Idle, Some(release)) if allowed => Some((
+            backend::launcher_version(&release.tag)
+                .unwrap_or_default()
+                .to_string(),
+            Some(release.clone()),
+        )),
+        _ => None,
+    }
+}
+
 impl Launcher {
     pub(crate) fn home(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         self.ui.home.hero.set(None);
@@ -316,19 +340,12 @@ impl Launcher {
     /// A quiet line under the profile when a launcher update is ready: its version and Update,
     /// and a close that hides it until the launcher restarts. Settings keeps the same action.
     fn launcher_update_notice(&mut self, cx: &mut Context<Self>) -> Option<Div> {
-        if self.launcher_notice_hidden {
-            return None;
-        }
-        let (version, release) = match (&self.self_update, &self.updates.launcher) {
-            (SelfUpdate::Ready(version), _) => (version.clone(), None),
-            (SelfUpdate::Idle, Some(release)) if backend::self_update_allowed() => (
-                backend::launcher_version(&release.tag)
-                    .unwrap_or_default()
-                    .to_string(),
-                Some(release.clone()),
-            ),
-            _ => return None,
-        };
+        let (version, release) = launcher_notice(
+            self.launcher_notice_hidden,
+            &self.self_update,
+            self.updates.launcher.as_ref(),
+            backend::self_update_allowed(),
+        )?;
         let update = button("alt-home-launcher-update", tr("Update")).on_click(cx.listener(
             move |this, _: &ClickEvent, _, cx| {
                 match &release {
@@ -370,7 +387,7 @@ impl Launcher {
                             .text_size(px(tokens::LABEL))
                             .text_color(rgb(palette().text))
                             .child(crate::selectable::selectable(trf(
-                                "Sunrise Launcher {version} is ready",
+                                "Sunrise Launcher {version} available",
                                 &[("version", &version)],
                             ))),
                     )

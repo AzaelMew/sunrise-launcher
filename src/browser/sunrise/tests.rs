@@ -127,6 +127,25 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
         assert!(home.join(&entry.file).is_file());
         assert!(mod_list::is_enabled(&home, &entry.project));
     }
+    // Updating a mod that is off installs what it newly needs off too.
+    let fresh = dir.path().join("profile-off");
+    let off = install_from(
+        &index,
+        true,
+        &project,
+        &fresh,
+        GAME,
+        false,
+        false,
+        &|_, _| {},
+    )
+    .unwrap();
+    assert_eq!(off.len(), 2);
+    assert!(off.iter().all(|e| fresh.join(&e.file).is_file()));
+    assert!(off
+        .iter()
+        .all(|e| !mod_list::is_enabled(&fresh, &e.project)));
+
     let before = fs::read(home.join(installed::MANIFEST)).unwrap();
     fs::remove_file(dir.path().join("sunrise_creatures-1.0.0.smod")).unwrap();
     assert_eq!(run(&index).unwrap(), done[..1]);
