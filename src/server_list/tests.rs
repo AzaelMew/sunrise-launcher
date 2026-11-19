@@ -204,3 +204,42 @@ fn a_picture_saved_without_its_padding_still_decodes() {
     }
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn saving_writes_the_shown_servers_before_the_hidden_ones() {
+    let home = scratch("save-order");
+    let entry_of = |name: &str, hidden: i8| {
+        Tag::compound([
+            ("name", s(name)),
+            ("ip", s("x.example")),
+            ("hidden", Tag::Byte(hidden)),
+        ])
+    };
+    let root = NamedTag {
+        name: "".into(),
+        tag: Tag::compound([(
+            "servers",
+            Tag::List(vec![
+                entry_of("direct-1", 1),
+                entry_of("one", 0),
+                entry_of("direct-2", 1),
+                entry_of("two", 0),
+            ]),
+        )]),
+    };
+    fs::write(
+        home.join(FILE),
+        nbt::write_named(&root, Limits::default()).unwrap(),
+    )
+    .unwrap();
+    List::load(&home).save(&home).unwrap();
+    let names: Vec<String> = entries(&home)
+        .iter()
+        .map(|e| match e.get("name") {
+            Some(Tag::String(n)) => n.to_string_lossy(),
+            other => panic!("no name: {other:?}"),
+        })
+        .collect();
+    assert_eq!(names, ["one", "two", "direct-1", "direct-2"]);
+    fs::remove_dir_all(home).unwrap();
+}
