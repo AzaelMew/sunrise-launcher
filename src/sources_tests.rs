@@ -613,3 +613,30 @@ fn each_system_has_its_launcher_folders() {
     );
     assert!(java_only_folders(Os::Linux, &windows).is_empty());
 }
+
+#[test]
+fn the_junction_command_names_variables_and_never_holds_a_path() {
+    let target = Path::new("C:/Games/50%PATH%&(x)^");
+    let link = Path::new("C:/Users/r/%USERPROFILE%/link");
+    let got = junction_command(target, link);
+    assert_eq!(got.plain, ["/D", "/C", "mklink", "/J"]);
+    // The link comes first, as mklink wants it; each is a quoted variable name for cmd to expand.
+    assert_eq!(
+        got.raw,
+        [
+            "\"%SUNRISE_JUNCTION_LINK%\"",
+            "\"%SUNRISE_JUNCTION_TARGET%\""
+        ]
+    );
+    assert_eq!(
+        got.env,
+        [
+            ("SUNRISE_JUNCTION_LINK", link.to_path_buf()),
+            ("SUNRISE_JUNCTION_TARGET", target.to_path_buf()),
+        ]
+    );
+    // No path text reaches the command line.
+    for arg in got.plain.iter().chain(&got.raw) {
+        assert!(!arg.contains("Games") && !arg.contains("Users"), "{arg}");
+    }
+}

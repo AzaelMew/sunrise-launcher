@@ -550,28 +550,53 @@ fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
     junction(target, link)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 const JUNCTION_LINK: &str = "SUNRISE_JUNCTION_LINK";
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 const JUNCTION_TARGET: &str = "SUNRISE_JUNCTION_TARGET";
+
+/// What `cmd` is run with to make a junction: the arguments cmd gets as they are (`plain`),
+/// the ones written to its command line unquoted-by-Rust (`raw`) and the environment.
+///
+/// `/D` skips cmd's AutoRun registry command (for example, ANSICon), which can otherwise
+/// change or fail the junction command before it runs. The paths travel in environment
+/// variables, never in the command line: cmd reads `&`, `^` or `(` in a path (a user folder
+/// may have them) as its own syntax, and expands `%NAME%` even inside quotes, but it does
+/// not read what a variable holds again.
+#[cfg(any(windows, test))]
+struct JunctionCommand {
+    plain: Vec<String>,
+    raw: Vec<String>,
+    env: Vec<(&'static str, PathBuf)>,
+}
+
+#[cfg(any(windows, test))]
+fn junction_command(target: &Path, link: &Path) -> JunctionCommand {
+    JunctionCommand {
+        plain: ["/D", "/C", "mklink", "/J"].map(String::from).into(),
+        raw: vec![
+            format!("\"%{JUNCTION_LINK}%\""),
+            format!("\"%{JUNCTION_TARGET}%\""),
+        ],
+        env: vec![
+            (JUNCTION_LINK, link.to_path_buf()),
+            (JUNCTION_TARGET, target.to_path_buf()),
+        ],
+    }
+}
 
 /// Makes `link` a junction to the folder `target` (no admin rights needed, unlike a symlink). The
 /// error carries cmd's own message ("Access is denied", "The system cannot find the path…").
 #[cfg(windows)]
 pub(crate) fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
-    // `/D` skips cmd's AutoRun registry command (for example, ANSICon), which
-    // can otherwise change or fail the junction command before it runs.
-    // The paths travel in environment variables, never in the command line: cmd reads `&`, `^`
-    // or `(` in a path (a user folder may have them) as its own syntax, and expands `%NAME%`
-    // even inside quotes, but it does not read what a variable holds again.
-    let out = crate::process::command("cmd")
-        .args(["/D", "/C", "mklink", "/J"])
-        .raw_arg(format!("\"%{JUNCTION_LINK}%\""))
-        .raw_arg(format!("\"%{JUNCTION_TARGET}%\""))
-        .env(JUNCTION_LINK, link)
-        .env(JUNCTION_TARGET, target)
-        .output()?;
+    let line = junction_command(target, link);
+    let mut cmd = crate::process::command("cmd");
+    cmd.args(&line.plain);
+    for arg in &line.raw {
+        cmd.raw_arg(arg);
+    }
+    let out = cmd.envs(line.env).output()?;
     if out.status.success() {
         return Ok(());
     }
