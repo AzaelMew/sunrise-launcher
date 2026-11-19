@@ -545,6 +545,11 @@ fn make_link(target: &Path, link: &Path) -> std::io::Result<()> {
     junction(target, link)
 }
 
+#[cfg(windows)]
+const JUNCTION_LINK: &str = "SUNRISE_JUNCTION_LINK";
+#[cfg(windows)]
+const JUNCTION_TARGET: &str = "SUNRISE_JUNCTION_TARGET";
+
 /// Makes `link` a junction to the folder `target` (no admin rights needed, unlike a symlink). The
 /// error carries cmd's own message ("Access is denied", "The system cannot find the path…").
 #[cfg(windows)]
@@ -552,19 +557,15 @@ pub(crate) fn junction(target: &Path, link: &Path) -> std::io::Result<()> {
     use std::os::windows::process::CommandExt;
     // `/D` skips cmd's AutoRun registry command (for example, ANSICon), which
     // can otherwise change or fail the junction command before it runs.
-    // Always quoted: cmd reads `&`, `^` or `(` in an unquoted path (a user
-    // folder may have them) as its own syntax. A Windows path never holds a
-    // quote.
-    let quoted = |path: &Path| {
-        let mut arg = std::ffi::OsString::from("\"");
-        arg.push(path);
-        arg.push("\"");
-        arg
-    };
+    // The paths travel in environment variables, never in the command line: cmd reads `&`, `^`
+    // or `(` in a path (a user folder may have them) as its own syntax, and expands `%NAME%`
+    // even inside quotes, but it does not read what a variable holds again.
     let out = crate::process::command("cmd")
         .args(["/D", "/C", "mklink", "/J"])
-        .raw_arg(quoted(link))
-        .raw_arg(quoted(target))
+        .raw_arg(format!("\"%{JUNCTION_LINK}%\""))
+        .raw_arg(format!("\"%{JUNCTION_TARGET}%\""))
+        .env(JUNCTION_LINK, link)
+        .env(JUNCTION_TARGET, target)
         .output()?;
     if out.status.success() {
         return Ok(());
