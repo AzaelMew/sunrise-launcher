@@ -78,6 +78,7 @@ mod settings;
 mod setup_page;
 mod sheets;
 mod shell;
+mod slider;
 mod status_strip;
 mod sticky;
 mod switch_page;

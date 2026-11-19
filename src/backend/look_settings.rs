@@ -1,6 +1,5 @@
-//! The launcher look's part of `settings.json`: the accent kept per theme, reduced motion and the cat,
-//! each dropped alone when it isn't one, an old light appearance moved to the Taiga theme, and
-//! the indigo theme once saved as "sunrise" read as Twilight.
+//! The launcher look's part of `settings.json`: malformed choices dropped alone, an old light
+//! appearance moved to Taiga, and the indigo theme once saved as "sunrise" read as Twilight.
 use super::{Appearance, Settings};
 use serde_json::{Map, Value};
 
@@ -27,6 +26,13 @@ pub(super) fn tidy(fields: &mut Map<String, Value>) {
             accents.entry(TWILIGHT).or_insert(kept);
         }
     }
+    // An opacity outside the percentage scale, or not a whole number, loses only itself.
+    if fields
+        .get("panel_opacity")
+        .is_some_and(|value| !value.is_null() && !matches!(value.as_u64(), Some(0..=100)))
+    {
+        fields.remove("panel_opacity");
+    }
     // A switch that isn't on or off is as if never set, not a reason to lose the rest.
     for key in ["reduce_motion", "cat"] {
         if fields
@@ -47,6 +53,7 @@ pub(super) fn settle(settings: &mut Settings) {
             crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
     }
     settings.appearance = Appearance::Dark;
+    settings.set_panel_opacity(settings.panel_opacity);
 
     // Old Dawn saved its pink default like a picked accent. If it wasn't saved under
     // the theme as a choice, follow the updated default instead of keeping the old one.
@@ -86,6 +93,33 @@ mod tests {
         ] {
             assert_eq!(Settings::parse(json).accent.rgb(), expected);
         }
+    }
+
+    #[test]
+    fn panel_opacity_defaults_on_bad_values_without_losing_other_settings() {
+        use super::super::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
+        for bad in [
+            "null", "true", "{}", "\"82\"", "-1", "80.5", "101", "256", "1e128",
+        ] {
+            let parsed = Settings::parse(&format!(
+                r#"{{"panel_opacity":{bad}, "theme":"cherry_blossom", "game_args":"--x"}}"#
+            ));
+            assert_eq!(parsed.panel_opacity, None, "{bad}");
+            assert_eq!(parsed.theme.as_deref(), Some("cherry_blossom"), "{bad}");
+            assert_eq!(parsed.game_args, "--x", "{bad}");
+        }
+        let old = Settings::parse(r#"{"game_args":"--x"}"#);
+        assert_eq!(old.panel_opacity, None);
+        assert!(serde_json::to_value(&old)
+            .unwrap()
+            .get("panel_opacity")
+            .is_none());
+        let clamped = Settings::parse(r#"{"panel_opacity":0,"game_args":"--x"}"#);
+        assert_eq!(clamped.panel_opacity, Some(PANEL_OPACITY_MIN));
+        let maximum = Settings::parse(r#"{"panel_opacity":100,"game_args":"--x"}"#);
+        assert_eq!(maximum.panel_opacity, Some(PANEL_OPACITY_MAX));
+        let saved = serde_json::to_string(&maximum).unwrap();
+        assert_eq!(Settings::parse(&saved).panel_opacity, maximum.panel_opacity);
     }
 
     /// A wrong accent under one theme, or a motion choice that isn't one, loses only itself.

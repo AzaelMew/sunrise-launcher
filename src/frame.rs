@@ -460,7 +460,12 @@ impl Launcher {
         let photo = (page == Page::Home)
             .then(|| self.home_photo(window, cx))
             .flatten();
-        crate::paint::begin(&self.settings, &self.theme, photo.as_ref());
+        crate::paint::begin(
+            &self.settings,
+            &self.theme,
+            photo.as_ref(),
+            self.panel_opacity_preview(),
+        );
         scrolls_begin();
         crate::selectable::begin();
         self.modal_before(window, cx);
