@@ -1180,3 +1180,75 @@ fn installed_card(
 ) -> bool {
     collection::installed(c, cards, have)
 }
+
+/// The farm where `cow`, a member, is itself a library: `owl` needs it, and it needs `lib`.
+fn zoo_with_a_member_library() -> Index {
+    let mut idx = zoo();
+    idx.projects
+        .iter_mut()
+        .find(|p| p.id == "cow")
+        .unwrap()
+        .categories = vec!["library".into()];
+    idx
+}
+
+#[test]
+fn the_plan_line_and_the_header_count_the_same_picks_in_the_same_words() {
+    let idx = zoo_with_a_member_library();
+    let say = |picks: &[&str]| {
+        let v = farm(&idx, picks);
+        (
+            v.plan_line(),
+            v.can_install(),
+            format!("{} of {}", v.ticked, v.members),
+        )
+    };
+    // One pick whose library is locked in: the library is a library, however it got in.
+    assert_eq!(
+        say(&["pig"]),
+        ("Installs 1 mod and 1 library".into(), true, "1 of 3".into())
+    );
+    // A member that is a library, pulled in by the pick that needs it, counts as selected.
+    assert_eq!(
+        say(&["owl"]),
+        (
+            "Installs 1 mod and 2 libraries".into(),
+            true,
+            "2 of 3".into()
+        )
+    );
+    // All picked: the member library and the pulled-in one are libraries, the rest mods.
+    assert_eq!(
+        say(&["cow", "pig", "owl"]),
+        (
+            "Installs 2 mods and 2 libraries".into(),
+            true,
+            "3 of 3".into()
+        )
+    );
+    // The member library alone.
+    assert_eq!(
+        say(&["cow"]),
+        ("Installs 2 libraries".into(), true, "1 of 3".into())
+    );
+    // None picked: the card says so, and Install is off.
+    assert_eq!(
+        say(&[]),
+        ("Pick the mods you want.".into(), false, "0 of 3".into())
+    );
+}
+
+#[test]
+fn install_is_off_when_everything_picked_is_installed() {
+    let idx = zoo();
+    let c = idx.collection("farm").unwrap();
+    let held = ["cow", "pig", "lib"].map(|id| index::resolve::InstalledMod {
+        id: id.into(),
+        version: "1.0.0".into(),
+        sha256: Some(A.into()),
+    });
+    let base = collection::base(&idx, c, &held, GAME);
+    let v = collection::view(&idx, c, &base, &ticked(&["cow", "pig"]), &held, GAME);
+    assert_eq!(v.plan_line(), "Everything you picked is installed.");
+    assert!(v.done() && !v.can_install());
+}

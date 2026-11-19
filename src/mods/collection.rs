@@ -159,8 +159,8 @@ impl Launcher {
 
         // The side panel: the one Install, and what it does.
         let summary = &view.summary;
-        let done = view.ticked > 0 && summary.nothing();
-        let ready = view.ticked > 0 && !summary.nothing() && !busy && view.conflict.is_none();
+        let done = view.done();
+        let ready = view.can_install() && !busy;
         let wants_ok = !native_allowed
             && view
                 .lines
@@ -200,13 +200,7 @@ impl Launcher {
                 dim(b).into_any_element()
             }
         };
-        let plan_line = if view.ticked == 0 {
-            tr("Pick the mods you want.").to_string()
-        } else if view.conflict.is_some() {
-            tr("Some picks can't be installed together.").to_string()
-        } else {
-            summary.line()
-        };
+        let plan_line = view.plan_line();
         let fact = |icon: &'static str, label: String| {
             div()
                 .flex_none()

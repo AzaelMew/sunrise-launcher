@@ -24,15 +24,11 @@ pub(in crate::mods) fn part_of(index: &Index) -> HashMap<&str, &str> {
 const LIBRARY: &str = "library";
 
 /// The libraries: mods the registry puts in the "library" category that another listed mod's
-/// newest version requires, and that no collection lists as a member. Both must hold: the
-/// category alone is an author's word and a standalone mod can carry it, and being required
-/// alone makes no library of a mod with content of its own.
+/// newest version requires. Both must hold: the category alone is an author's word and a
+/// standalone mod can carry it (JEI does), and being required alone makes no library of a mod
+/// with content of its own. A collection's member can be one (the Sunrise Creatures library
+/// is): it stays a member on its page, counted and badged as a library.
 pub(in crate::mods) fn libraries(index: &Index) -> HashSet<String> {
-    let listed: HashSet<&str> = index
-        .collections
-        .iter()
-        .flat_map(|c| c.members.iter().map(|m| m.id.as_str()))
-        .collect();
     index
         .projects
         .iter()
@@ -40,7 +36,6 @@ pub(in crate::mods) fn libraries(index: &Index) -> HashSet<String> {
         .flatten()
         .filter(|d| !d.optional)
         .map(|d| d.id.as_str())
-        .filter(|id| !listed.contains(id))
         .filter_map(|id| index.project(id))
         .filter(|p| p.categories.iter().any(|k| k == LIBRARY))
         .map(|p| p.id.clone())
@@ -454,6 +449,27 @@ impl View {
                     .map(|l| l.id.clone()),
             );
         }
+    }
+
+    /// What the Install card says it does: the plan, or why there is nothing to do.
+    pub(in crate::mods) fn plan_line(&self) -> String {
+        if self.ticked == 0 {
+            tr("Pick the mods you want.").to_string()
+        } else if self.conflict.is_some() {
+            tr("Some picks can't be installed together.").to_string()
+        } else {
+            self.summary.line()
+        }
+    }
+
+    /// Whether Install does anything: something is picked, the plan has work, nothing conflicts.
+    pub(in crate::mods) fn can_install(&self) -> bool {
+        self.ticked > 0 && !self.summary.nothing() && self.conflict.is_none()
+    }
+
+    /// Whether everything picked is installed already.
+    pub(in crate::mods) fn done(&self) -> bool {
+        self.ticked > 0 && self.summary.nothing()
     }
 
     /// What Install is given: the ticked members not yet installed. Libraries and what is
