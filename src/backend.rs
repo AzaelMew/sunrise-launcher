@@ -516,7 +516,7 @@ pub(crate) fn get_unless_missing(url: &str) -> Result<Option<ureq::Response>, St
     }
 }
 
-/// A Sunrise game tag: `v` then a digit (`v2026.10.13`). Launcher tags never match.
+/// A Sunrise game tag: `v` then a digit (`v2026.10.13`); a launcher `vX.Y.Z` matches too, but only the game repository's list is checked, and its launcher releases are `launcher@X.Y.Z`.
 pub fn is_game_tag(tag: &str) -> bool {
     tag.strip_prefix('v')
         .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
