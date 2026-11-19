@@ -1,17 +1,16 @@
 //! Settings › Appearance: the theme (the built-in ones, then the player's own files), the
 //! accent under it, what is behind Home, and the themes folder.
 //!
-//! Every choice here is one of `sunrise_launcher::appearance`'s operations, the same the
-//! command line calls. A choice is painted only once it is saved: one that can't be saved is
-//! taken back and said, and what a choice replaced (an older kept picture) goes only after
-//! the save. The themes folder is read when the launcher starts and on Reload, never while a
-//! frame is drawn; a theme's picture is decoded off the window's thread.
+//! Appearance changes use the same settings as the command line. The opacity slider only
+//! previews during a drag; a failed save on release uses the ordinary Retry notice. The themes
+//! folder is read at startup and on Reload, and its pictures decode off the window's thread.
 use super::*;
 use crate::paint::Palette;
 use gpui::RenderImage;
 use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::appearance::{self, Behind};
+use sunrise_launcher::backend::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
 use sunrise_launcher::theme_files::{self, Entry};
 use sunrise_launcher::themes::{self, Accent};
 
@@ -78,6 +77,7 @@ pub(crate) struct State {
     choices: Option<Vec<Choice>>,
     accent: line_edit::LineEdit,
     accent_focus: Option<FocusHandle>,
+    panel_opacity: crate::slider::Slider,
     /// The keyboard's place on "Worlds on Home", and the search's request to be taken to it:
     /// whether that was done yet.
     worlds_focus: Option<FocusHandle>,
@@ -105,6 +105,7 @@ impl Default for State {
             choices: None,
             accent: line_edit::LineEdit::new(String::new(), 32, 18),
             accent_focus: None,
+            panel_opacity: crate::slider::Slider::default(),
             worlds_focus: None,
             worlds_asked: None,
             error: None,
@@ -219,7 +220,26 @@ fn preview(p: &Palette) -> Div {
         )
 }
 
+const OPACITY_SPAN: f32 = (PANEL_OPACITY_MAX - PANEL_OPACITY_MIN) as f32;
+
+fn opacity_percent(value: f32) -> u8 {
+    PANEL_OPACITY_MIN + (value * OPACITY_SPAN).round() as u8
+}
+
 impl Launcher {
+    /// The frame previews a held slider, but navigation away discards it without saving.
+    pub(crate) fn panel_opacity_preview(&self) -> Option<u8> {
+        let slider = &self.ui.settings.appearance.panel_opacity;
+        if self.ui.page == crate::frame::Page::Settings
+            && self.ui.settings.section == Section::Appearance
+        {
+            slider.preview().map(opacity_percent)
+        } else {
+            slider.cancel();
+            None
+        }
+    }
+
     fn look(&self) -> Look {
         Look {
             theme: self.settings.theme.clone(),
@@ -592,7 +612,7 @@ impl Launcher {
                 .children(gone)
                 .child(cards),
         );
-        let mut rows = vec![theme];
+        let mut rows = vec![self.panel_opacity_row(cx), theme];
         if !bad.is_empty() {
             rows.push(div().flex().flex_col().gap(px(10.)).children(bad));
         }
@@ -700,6 +720,58 @@ impl Launcher {
             .gap(px(10.))
             .child(group(rows))
             .children(said)
+    }
+
+    fn panel_opacity_row(&self, cx: &mut Context<Self>) -> Div {
+        let saved = self.settings.panel_opacity();
+        let control = &self.ui.settings.appearance.panel_opacity;
+        let actual = (palette().alpha * 100.).round() as u8;
+        let chosen = control.preview().map(opacity_percent).or(saved);
+        let percent = chosen.unwrap_or(actual);
+        let thumb = (f32::from(percent) - f32::from(PANEL_OPACITY_MIN)) / OPACITY_SPAN;
+        let slider = control.render(
+            "panel-opacity",
+            thumb.clamp(0., 1.),
+            1. / OPACITY_SPAN,
+            |this, value, cx| {
+                this.settings
+                    .set_panel_opacity(Some(opacity_percent(value)));
+                this.save_settings();
+                cx.notify();
+            },
+            cx,
+        );
+        let reset = button("panel-opacity-reset", tr("Use default"));
+        let reset = if saved.is_none() {
+            off(reset)
+        } else {
+            reset.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.settings.set_panel_opacity(None);
+                this.save_settings();
+                cx.notify();
+            }))
+        };
+        let about = if !self.settings.scenery() {
+            tr("Turn on scenery to see how the backdrop shows through panels.")
+        } else if chosen.is_some() && actual > percent {
+            tr("This theme stays more opaque so its text remains readable.")
+        } else {
+            tr("How much of the backdrop shows through cards and panels.")
+        };
+        self.wide_row(
+            tr("Panel opacity"),
+            about,
+            div()
+                .child(slider)
+                .child(
+                    div()
+                        .min_w(px(44.))
+                        .text_size(px(tokens::LABEL))
+                        .text_center()
+                        .child(format!("{percent}%")),
+                )
+                .child(reset),
+        )
     }
 
     /// The accent: its colour, one field that takes a name, a hue or `#rrggbb`, and the way

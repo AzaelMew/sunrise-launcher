@@ -4080,6 +4080,10 @@ impl WhilePlaying {
 pub const MAX_CORNERS: u8 = 24;
 pub const DEFAULT_CORNERS: u8 = 4;
 
+/// Custom panel opacity, in whole percentages. Unset keeps the theme's existing opacity.
+pub const PANEL_OPACITY_MIN: u8 = 82;
+pub const PANEL_OPACITY_MAX: u8 = 100;
+
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     pub selected: Option<String>,
@@ -4160,6 +4164,9 @@ pub struct Settings {
     /// the mockup's 24.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub blur: Option<f32>,
+    /// Explicit glass panel opacity; unset preserves the theme's existing material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel_opacity: Option<u8>,
     /// The launcher theme (`themes::theme`): its sky behind the light appearance. Unset is Dawn;
     /// the indigo one is `themes::TWILIGHT`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4211,6 +4218,17 @@ impl Settings {
     /// The look's corner radius in px: the player's, else [`DEFAULT_CORNERS`].
     pub fn corners(&self) -> u8 {
         self.corners_px.unwrap_or(DEFAULT_CORNERS).min(MAX_CORNERS)
+    }
+
+    /// The saved panel opacity override. `None` keeps the theme's default paint.
+    pub fn panel_opacity(&self) -> Option<u8> {
+        self.panel_opacity
+    }
+
+    /// Choose a custom panel opacity, within the safe range, or reset to the theme's default.
+    pub fn set_panel_opacity(&mut self, opacity: Option<u8>) {
+        self.panel_opacity =
+            opacity.map(|percent| percent.clamp(PANEL_OPACITY_MIN, PANEL_OPACITY_MAX));
     }
 
     /// Whether Home shows its scenery: on unless the player turned it off.

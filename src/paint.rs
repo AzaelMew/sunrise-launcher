@@ -10,8 +10,9 @@
 //!
 //! Every `u32` is an opaque `0xRRGGBB`, so a field, a menu, a selection or a tooltip reads on
 //! its own, whatever is behind it. Only the plates are see-through: [`Palette::card`] and
-//! [`Palette::chrome_plate`] take the scene or photo's tint. Their opacity ([`Palette::alpha`])
-//! is solid over photos or without scenery, and otherwise guards text over the theme's sky.
+//! [`Palette::chrome_plate`] take the scene or photo's tint. Automatic opacity guards against
+//! the theme's sky and stays solid over a photo. An explicit opacity fits ink against the worst
+//! possible backdrop instead. Without scenery the plates stay solid.
 use crate::{settings::HomePhoto, theme::Theme};
 use gpui::{rgb, Hsla};
 use std::cell::Cell;
@@ -132,7 +133,23 @@ fn hue_colour(turn: f32) -> u32 {
 }
 
 impl Inputs {
-    fn of(settings: &Settings, theme: &Theme, photo: Option<&HomePhoto>) -> Inputs {
+    fn of(
+        settings: &Settings,
+        theme: &Theme,
+        photo: Option<&HomePhoto>,
+        preview: Option<u8>,
+    ) -> Inputs {
+        // Backdrop renders either a decoded picture or a scene, even in performance mode;
+        // a missing picture falls back to a scene. Only turning scenery off removes both.
+        let plates = if !settings.scenery() {
+            Plates::Opaque
+        } else if let Some(percent) = preview.or(settings.panel_opacity()) {
+            Plates::Custom(percent)
+        } else if theme.photo || settings.performance() {
+            Plates::Opaque
+        } else {
+            Plates::Automatic
+        };
         Inputs {
             night: theme.night,
             scene_tone: theme.scene_tone,
@@ -140,7 +157,7 @@ impl Inputs {
             accent: theme.accent_choice.rgb(),
             play_seed: theme.play_seed,
             tint: settings.glass_tint(),
-            scenery: settings.scenery() && !theme.photo && !settings.performance(),
+            plates,
         }
     }
 }
@@ -149,7 +166,7 @@ thread_local! {
     static CURRENT: Cell<(Inputs, Palette)> = Cell::new({
         let settings = Settings::default();
         let theme = crate::theme::from_settings(&settings, gpui::WindowAppearance::Dark);
-        let inputs = Inputs::of(&settings, &theme, None);
+        let inputs = Inputs::of(&settings, &theme, None, None);
         (inputs, inputs.palette())
     });
 }
@@ -160,8 +177,13 @@ pub(crate) fn palette() -> Palette {
 }
 
 /// Starts a frame: the palette its screens draw with, computed again only for new inputs.
-pub(crate) fn begin(settings: &Settings, theme: &Theme, photo: Option<&HomePhoto>) {
-    let inputs = Inputs::of(settings, theme, photo);
+pub(crate) fn begin(
+    settings: &Settings,
+    theme: &Theme,
+    photo: Option<&HomePhoto>,
+    preview: Option<u8>,
+) {
+    let inputs = Inputs::of(settings, theme, photo, preview);
     if CURRENT.get().0 != inputs {
         CURRENT.set((inputs, inputs.palette()));
     }
@@ -201,6 +223,13 @@ fn reads_over(ink: f32, plate: f32, lighter: bool, min: f32) -> bool {
     (light + 0.05) / (dark + 0.05) >= min
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Plates {
+    Opaque,
+    Automatic,
+    Custom(u8),
+}
+
 /// Everything a palette depends on: it is computed again only when one of these changes.
 #[derive(Clone, Copy, PartialEq)]
 struct Inputs {
@@ -211,12 +240,10 @@ struct Inputs {
     accent: u32,
     play_seed: Option<u32>,
     tint: f32,
-    scenery: bool,
+    plates: Plates,
 }
 
 impl Inputs {
-    /// The palette of the theme's night (its own colours, or Dawn's), at the player's accent
-    /// and Glass, and with or without the scenery behind the plates.
     fn palette(&self) -> Palette {
         let Inputs {
             night: n,
@@ -225,7 +252,7 @@ impl Inputs {
             accent: raw,
             play_seed,
             tint,
-            scenery,
+            plates,
         } = *self;
         // Light text on dark surfaces fits lighter; dark text on light ones fits darker.
         let lighter = n.dark;
@@ -274,21 +301,53 @@ impl Inputs {
             .find(|&s| contrast(n.ink, s) >= TEXT)
             .unwrap_or(hover);
         let surfaces = [background, card_color, raised, field, hover, selected];
-        let text = fit(n.ink, lighter, reads(&surfaces, TEXT));
-        let muted = fit(n.muted, lighter, reads(&surfaces, TEXT));
-        let line = fit(
-            over(n.ink, 0.4, card_color),
-            lighter,
-            reads(&surfaces[..4], MARK),
-        );
-        let divider = over(n.stroke, n.rule_alpha, card_color);
-
         let chrome = veil(chrome_base);
         let chrome_raised = over(n.ink, fill::ACTIVE, chrome);
         let on_chrome = [chrome, chrome_raised];
-        let chrome_text = fit(n.ink, lighter, reads(&on_chrome, TEXT));
-        let chrome_muted = fit(n.muted, lighter, reads(&on_chrome, TEXT));
-        let chrome_line = fit(over(n.ink, 0.4, chrome), lighter, reads(&on_chrome, MARK));
+        let everywhere = [
+            background,
+            card_color,
+            raised,
+            field,
+            hover,
+            selected,
+            chrome,
+            chrome_raised,
+        ];
+
+        // Solid fills blend encoded sRGB (`over`); white and black bound all possible backdrop
+        // pixels, including scenery. Use that bound rather than trusting the picture's wash.
+        let backdrop = if lighter { 0xffffff } else { 0 };
+        let ink_end = if lighter { 1. } else { 0. };
+        let custom = if let Plates::Custom(percent) = plates {
+            // An installed local theme can need more opacity than any built-in palette does.
+            (percent..=100).find_map(|percent| {
+                let alpha = f32::from(percent) / 100.;
+                let card = luminance(over(card_color, alpha, backdrop));
+                let chrome = luminance(over(chrome, alpha, backdrop));
+                let worst = if lighter {
+                    card.max(chrome)
+                } else {
+                    card.min(chrome)
+                };
+                reads_over(ink_end, worst, lighter, TEXT).then_some((alpha, worst))
+            })
+        } else {
+            None
+        };
+        let ink = |color, solid: &[u32], min| {
+            fit(color, lighter, |c| {
+                reads(solid, min)(c)
+                    && custom.is_none_or(|(_, plate)| reads_over(luminance(c), plate, lighter, min))
+            })
+        };
+        let text = ink(n.ink, &surfaces, TEXT);
+        let muted = ink(n.muted, &surfaces, TEXT);
+        let line = ink(over(n.ink, 0.4, card_color), &surfaces[..4], MARK);
+        let divider = over(n.stroke, n.rule_alpha, card_color);
+        let chrome_text = ink(n.ink, &on_chrome, TEXT);
+        let chrome_muted = ink(n.muted, &on_chrome, TEXT);
+        let chrome_line = ink(over(n.ink, 0.4, chrome), &on_chrome, MARK);
 
         // Keep as much of the original control's quarter-white lift as the label allows.
         // On bright accents, shade the accent itself instead of first washing it out with white.
@@ -307,10 +366,9 @@ impl Inputs {
         let dark = fit(play_glow, false, |c| {
             contrast(accent_on, c) >= contrast(accent_on, light) + 1.5
         });
-        let accent_ink = fit(raw, lighter, reads(&surfaces[..5], TEXT));
-        let everywhere = [surfaces.as_slice(), on_chrome.as_slice()].concat();
-        let focus = fit(raw, lighter, reads(&everywhere, MARK));
-        let status = |c: u32| fit(c, lighter, reads(&surfaces[..5], TEXT));
+        let accent_ink = ink(raw, &surfaces[..5], TEXT);
+        let focus = ink(raw, &everywhere, MARK);
+        let status = |c: u32| ink(c, &surfaces[..5], TEXT);
         let warning = status(n.warn);
 
         // On a pale photo, a light feather and dark type leave much more of the picture
@@ -331,9 +389,10 @@ impl Inputs {
             shade,
         };
 
-        // Opaque without scenery; with it, as see-through as text over the sky's worst band
-        // allows.
-        let alpha = if scenery {
+        // Keep the legacy automatic path unchanged. An unsatisfiable local override stays solid.
+        let alpha = if let Some((alpha, _)) = custom {
+            alpha
+        } else if plates == Plates::Automatic {
             let base = tint + (1. - tint) * PLATE_BASE;
             let holds = |a: f32| {
                 n.sky.iter().all(|&sky| {
@@ -410,7 +469,7 @@ impl Palette {
             accent,
             play_seed: None,
             tint,
-            scenery: false,
+            plates: Plates::Opaque,
         }
         .palette()
     }
@@ -418,7 +477,7 @@ impl Palette {
     /// The palette `begin` would set for these settings and this theme.
     #[cfg(test)]
     pub(crate) fn of(settings: &Settings, theme: &Theme) -> Palette {
-        Inputs::of(settings, theme, None).palette()
+        Inputs::of(settings, theme, None, None).palette()
     }
 
     /// What stands in for the picture of a mod or pack that has none: a quiet colour of its own
@@ -943,11 +1002,11 @@ accent = "#101010""##,
             )])),
             tone: None,
         };
-        let transparent = Inputs::of(&settings, &theme, Some(&photo)).palette();
+        let transparent = Inputs::of(&settings, &theme, Some(&photo), None).palette();
         assert_eq!(transparent.card_color, scene.card_color);
         assert_eq!(transparent.chrome, scene.chrome);
         photo.tone = Some(0xe0ebf8);
-        let shown = Inputs::of(&settings, &theme, Some(&photo)).palette();
+        let shown = Inputs::of(&settings, &theme, Some(&photo), None).palette();
         assert_ne!(shown.card_color, scene.card_color);
         assert_ne!(shown.chrome, scene.chrome);
         assert_eq!(shown.play_stops, scene.play_stops);
@@ -963,6 +1022,121 @@ accent = "#101010""##,
         let theme = from_settings(&off, WindowAppearance::Dark);
         assert!(!theme.photo);
         assert_eq!(Palette::of(&off, &theme).alpha, 1.);
+    }
+
+    /// Any wallpaper pixel lies between black and white. Include the actual sky stops and the
+    /// opaque interactive fills too, so tuning transparency can't break the rest of the palette.
+    #[test]
+    fn panel_opacity_contrast_matrix() {
+        use sunrise_launcher::backend::{PANEL_OPACITY_MAX, PANEL_OPACITY_MIN};
+        let ids = std::iter::once(themes::TWILIGHT).chain(themes::THEMES.map(|t| t.id));
+        let mut photo = HomePhoto {
+            image: std::sync::Arc::new(gpui::RenderImage::new([image::Frame::new(
+                image::RgbaImage::new(1, 1),
+            )])),
+            tone: None,
+        };
+        // The source changes both plates, while any backdrop pixel still lies within the bounds.
+        let photo_tones = [
+            0xe5e9ef, 0x15223b, 0xfefefe, 0xed2424, 0x35eb56, 0xffff00, 0x2754fc,
+        ];
+        for id in ids {
+            let own = themes::own_accent(Some(id));
+            let accents = [own, Accent::from_rgb(0x000000), Accent::from_rgb(0xffffff)]
+                .into_iter()
+                .chain(Accent::ALL);
+            for accent in accents {
+                for tint in [0., 6., 16.] {
+                    let (mut settings, theme) = look(Some(id), accent, tint, true);
+                    for percent in [PANEL_OPACITY_MIN, PANEL_OPACITY_MAX] {
+                        settings.set_panel_opacity(Some(percent));
+                        for tone in std::iter::once(None).chain(photo_tones.map(Some)) {
+                            photo.tone = tone;
+                            let shown = tone.map(|_| &photo);
+                            let p = Inputs::of(&settings, &theme, shown, None).palette();
+                            let name = format!("{id}, {accent:?}, photo {tone:06x?}, Glass {tint}, opacity {percent}%");
+                            assert_eq!(p.alpha, f32::from(percent) / 100., "{name}");
+                            assert_eq!(p.card().a, p.alpha);
+                            assert_eq!(p.chrome_plate().a, p.alpha);
+                            let check = |surface: u32, ink: u32, min: f32, role: &str| {
+                                let ratio = contrast(ink, surface);
+                                assert!(
+                                    ratio >= min,
+                                    "{name}: {role} {ink:06x} on {surface:06x}: {ratio:.3}"
+                                );
+                            };
+                            for behind in [0, 0xffffff, 0x808080].into_iter().chain(theme.night.sky)
+                            {
+                                for plate in [p.card_color, p.chrome] {
+                                    let surface = over(plate, p.alpha, behind);
+                                    for (ink, role) in [
+                                        (p.text, "body"),
+                                        (p.muted, "muted"),
+                                        (p.accent_ink, "accent"),
+                                    ] {
+                                        check(surface, ink, TEXT, role);
+                                    }
+                                    for (ink, role) in
+                                        [(p.focus, "focus"), (p.line, "control edge")]
+                                    {
+                                        check(surface, ink, MARK, role);
+                                    }
+                                }
+                                let chrome = over(p.chrome, p.alpha, behind);
+                                check(chrome, p.chrome_text, TEXT, "chrome body");
+                                check(chrome, p.chrome_muted, TEXT, "chrome muted");
+                                check(chrome, p.chrome_line, MARK, "chrome edge");
+                            }
+                            for surface in [p.raised, p.field, p.hover] {
+                                for (ink, role) in [
+                                    (p.text, "body"),
+                                    (p.muted, "muted"),
+                                    (p.accent_ink, "accent"),
+                                ] {
+                                    check(surface, ink, TEXT, role);
+                                }
+                                check(surface, p.focus, MARK, "focus");
+                            }
+                            for ink in [p.text, p.muted] {
+                                check(p.selected, ink, TEXT, "selection");
+                            }
+                            check(p.chrome_raised, p.chrome_text, TEXT, "raised chrome body");
+                            check(p.chrome_raised, p.chrome_muted, TEXT, "raised chrome muted");
+                            check(p.chrome_raised, p.focus, MARK, "raised chrome focus");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn panel_opacity_preview_reset_and_backdrop_follow_the_frame() {
+        use sunrise_launcher::backend::PANEL_OPACITY_MIN;
+        let floor = f32::from(PANEL_OPACITY_MIN) / 100.;
+        let mut settings = Settings::default();
+        let theme = from_settings(&settings, WindowAppearance::Dark);
+        let automatic = Palette::of(&settings, &theme);
+        begin(&settings, &theme, None, Some(PANEL_OPACITY_MIN));
+        assert_eq!(palette().alpha, floor);
+        assert_eq!(settings.panel_opacity(), None, "preview is not a setting");
+        begin(&settings, &theme, None, None);
+        assert_eq!(palette(), automatic);
+        settings.set_panel_opacity(Some(PANEL_OPACITY_MIN));
+        assert_eq!(Palette::of(&settings, &theme).alpha, floor);
+        settings.set_panel_opacity(None);
+        assert_eq!(Palette::of(&settings, &theme), automatic);
+
+        settings.background = Some("background-0123456789ab.png".into());
+        settings.performance = Some(true);
+        let photo = from_settings(&settings, WindowAppearance::Dark);
+        assert_eq!(Palette::of(&settings, &photo).alpha, 1.);
+        settings.set_panel_opacity(Some(PANEL_OPACITY_MIN));
+        assert_eq!(Palette::of(&settings, &photo).alpha, floor);
+        // The renderer can substitute a scene for an unavailable picture, even in performance.
+        assert_eq!(Palette::of(&settings, &theme).alpha, floor);
+        settings.scenery_on = Some(false);
+        assert_eq!(Palette::of(&settings, &photo).alpha, 1.);
     }
 
     #[test]
@@ -1067,12 +1241,12 @@ accent = "#101010""##,
             pb.play_stops[0], pb.accent,
             "pale frost cannot hold white text"
         );
-        begin(&nord, &b, None);
+        begin(&nord, &b, None, None);
         assert_eq!(palette(), pb);
         let kept = CURRENT.get().1;
-        begin(&nord, &b, None);
+        begin(&nord, &b, None, None);
         assert_eq!(CURRENT.get().1, kept);
-        begin(&violet, &a, None);
+        begin(&violet, &a, None, None);
         assert_eq!(palette(), pa);
         assert_eq!(pa.accent, glass::ACCENT);
     }

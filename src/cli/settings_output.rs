@@ -39,6 +39,7 @@ fn settings_json_with_paths(
         "theme_choice": s.theme,
         "accent": sunrise_launcher::appearance::accent(s).name(),
         "scenery": s.scenery(),
+        "panel_opacity": s.panel_opacity(),
         "themes_dir": themes.display().to_string(),
         "background": background.map(|kept| kept.display().to_string()),
         "cache_limit_gib": s.cache_limit_gib.unwrap_or(sunrise_launcher::storage::policy::DEFAULT_LIMIT_GIB),

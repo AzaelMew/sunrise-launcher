@@ -771,7 +771,8 @@ enum Cmd {
     /// violet|blue|teal|green|amber|red|pink|#rrggbb|DEGREES (a named accent, any colour, or any
     /// hue; "theme" goes back to the theme's own), background PATH (your picture behind Home;
     /// "default" goes back to the theme's), scenery on|off (whether anything is behind the
-    /// pages), cache-limit-gib N (managed cache limit
+    /// pages), panel-opacity PERCENT|default (glass panels over Home's background),
+    /// cache-limit-gib N (managed cache limit
     /// in GiB: 10, 25 (default), 50, 100; 0 disables automatic cleanup)
     #[command(after_help = tr("worlds rows|tiles: how Home lists the worlds under Continue playing."))]
     Settings {
@@ -919,7 +920,7 @@ pub fn command() -> clap::Command {
 pub const AI_COMMANDS: [&str; 1] = ["mcp"];
 
 /// The keys `settings` sets.
-const SETTING_KEYS: [&str; 18] = [
+const SETTING_KEYS: [&str; 19] = [
     "selected-version",
     "minecraft-dir",
     "server-dir",
@@ -937,6 +938,7 @@ const SETTING_KEYS: [&str; 18] = [
     "accent",
     "background",
     "scenery",
+    "panel-opacity",
     "cache-limit-gib",
 ];
 
@@ -1004,6 +1006,19 @@ fn set_setting(s: &mut backend::Settings, key: &str, value: &str) -> Result<(), 
             )?,
         },
         "scenery" => s.scenery_on = Some(on_off(value)?),
+        "panel-opacity" => {
+            let percent =
+                match value.trim() {
+                    "default" => None,
+                    value => Some(value.parse::<u8>().ok().filter(|n| *n <= 100).ok_or_else(
+                        || {
+                            tr("Enter a whole panel opacity percentage from 0 to 100, or default.")
+                                .to_string()
+                        },
+                    )?),
+                };
+            s.set_panel_opacity(percent);
+        }
         "language" => {
             use sunrise_launcher::i18n::Language;
             s.language = match value.trim() {
@@ -3177,6 +3192,27 @@ mod tests {
         );
         assert_eq!(shown["scenery"], true);
         assert!(shown["themes_dir"].as_str().unwrap().ends_with("themes"));
+    }
+
+    #[test]
+    fn panel_opacity_sets_a_clamped_percent_and_can_reset() {
+        let mut settings = backend::Settings::default();
+        assert!(settings_json(&settings)["panel_opacity"].is_null());
+        let cli = Cli::try_parse_from(["sunrise-launcher", "settings", "panel-opacity", "0"]);
+        assert!(cli.is_ok());
+        set_setting(&mut settings, "panel-opacity", "0").unwrap();
+        assert_eq!(
+            settings_json(&settings)["panel_opacity"],
+            backend::PANEL_OPACITY_MIN
+        );
+        set_setting(&mut settings, "panel-opacity", "100").unwrap();
+        assert_eq!(settings.panel_opacity, Some(backend::PANEL_OPACITY_MAX));
+        for bad in ["-1", "101", "80.5", "opaque"] {
+            assert!(set_setting(&mut settings, "panel-opacity", bad).is_err());
+            assert_eq!(settings.panel_opacity, Some(backend::PANEL_OPACITY_MAX));
+        }
+        set_setting(&mut settings, "panel-opacity", "default").unwrap();
+        assert!(settings_json(&settings)["panel_opacity"].is_null());
     }
 
     #[test]
