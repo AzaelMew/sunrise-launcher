@@ -401,10 +401,50 @@ impl Index {
             #[serde(default)]
             collections: Vec<serde_json::Value>,
         }
+        // A version whose dependency rows don't read is left out with its reason: dropping just
+        // the bad row would leave a version that claims fewer requirements than it has.
+        let mut value: serde_json::Value =
+            serde_json::from_str(text).map_err(|e| format!("mod index: {e}"))?;
+        let mut unreadable = Vec::new();
+        let projects = value
+            .get_mut("projects")
+            .and_then(serde_json::Value::as_array_mut);
+        for project in projects.into_iter().flatten() {
+            let id = project
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("?")
+                .to_owned();
+            let versions = project
+                .get_mut("versions")
+                .and_then(serde_json::Value::as_array_mut);
+            if let Some(versions) = versions {
+                versions.retain(|version| {
+                    let Some(rows) = version.get("dependencies") else {
+                        return true;
+                    };
+                    let Err(error) =
+                        serde_json::from_value::<Option<Vec<Dependency>>>(rows.clone())
+                    else {
+                        return true;
+                    };
+                    unreadable.push(LeftOut {
+                        id: id.clone(),
+                        version: version
+                            .get("version")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned),
+                        reason: format!("invalid dependencies: {error}"),
+                    });
+                    false
+                });
+            }
+        }
         let ReadIndex {
             mut index,
             collections,
-        } = serde_json::from_str(text).map_err(|e| format!("mod index: {e}"))?;
+        } = serde_json::from_value(value).map_err(|e| format!("mod index: {e}"))?;
+        index.left_out.extend(unreadable);
         for (position, row) in collections.into_iter().enumerate() {
             let id = row
                 .get("id")

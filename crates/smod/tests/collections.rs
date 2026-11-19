@@ -205,3 +205,61 @@ fn an_unsatisfiable_range_is_refused_with_a_reason() {
     assert!(reason.contains("creature"), "{reason}");
     assert!(plan.install.is_empty());
 }
+
+#[test]
+fn a_version_with_a_malformed_dependency_row_is_left_out_without_dropping_the_rest() {
+    let projects = vec![
+        project("creature", vec![version("0.1.0", json!([]))]),
+        project(
+            "butterflies",
+            vec![
+                version(
+                    "0.2.0",
+                    json!([{"id": "creature", "version": "^0.1", "optional": "yes"}]),
+                ),
+                version("0.1.0", json!([{"id": "creature", "version": "^0.1"}])),
+            ],
+        ),
+        project(
+            "vulture",
+            vec![version("0.1.0", json!([{"id": 7, "version": "^0.1"}]))],
+        ),
+        project(
+            "fairies",
+            vec![version(
+                "0.1.0",
+                json!([{"id": "creature", "version": "^0.1", "side": "sideways"}]),
+            )],
+        ),
+    ];
+    let text = json!({"schema": 1, "projects": projects}).to_string();
+    let index = Index::parse(&text).unwrap();
+    let kept: Vec<_> = index.projects.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(
+        kept,
+        ["creature", "butterflies"],
+        "a project left with no version goes"
+    );
+    let versions: Vec<_> = index
+        .project("butterflies")
+        .unwrap()
+        .versions
+        .iter()
+        .map(|v| v.version.as_str())
+        .collect();
+    assert_eq!(versions, ["0.1.0"]);
+    let left: Vec<_> = index
+        .left_out
+        .iter()
+        .map(|l| (l.id.as_str(), l.version.as_deref()))
+        .collect();
+    assert!(left.contains(&("butterflies", Some("0.2.0"))), "{left:?}");
+    assert!(left.contains(&("vulture", Some("0.1.0"))), "{left:?}");
+    assert!(left.contains(&("fairies", Some("0.1.0"))), "{left:?}");
+    assert!(
+        index
+            .left_out
+            .iter()
+            .all(|l| l.reason.starts_with("invalid dependencies") || l.version.is_none())
+    );
+}
