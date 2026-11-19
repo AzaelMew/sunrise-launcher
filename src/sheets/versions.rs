@@ -225,6 +225,10 @@ impl Launcher {
         let current = pinned.as_deref().or(plays.as_deref());
         let query = self.ui.sheets.versions.find.text().to_owned();
         let list = Rc::new(lines(releases, &self.installed, current, &query));
+        let count = match list.iter().filter(|l| matches!(l, Line::Build(_))).count() {
+            1 => tr("1 build").to_owned(),
+            count => trf("{count} builds", &[("count", &count.to_string())]),
+        };
         let pick = self.ui.sheets.versions.pick.clone();
 
         let focus = self
@@ -309,6 +313,11 @@ impl Launcher {
                                 .gap(px(12.))
                                 .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
                                 .when(on, |d| d.bg(rgb(palette().selected)))
+                                .tooltip(crate::glass_ui::tip(if b.tag == b.name {
+                                    b.tag.clone()
+                                } else {
+                                    format!("{} · {}", b.name, b.tag)
+                                }))
                                 .child(
                                     div()
                                         .size(px(14.))
@@ -324,16 +333,20 @@ impl Launcher {
                                 )
                                 .child(
                                     div()
-                                        .flex_none()
+                                        .min_w_0()
+                                        .max_w(relative(0.65))
+                                        .truncate()
                                         .text_size(px(tokens::BODY))
                                         .child(b.name.clone()),
                                 )
                                 .child(
-                                    muted(b.about.clone())
+                                    div()
                                         .flex_1()
                                         .min_w_0()
                                         .truncate()
-                                        .text_size(px(tokens::SMALL)),
+                                        .text_size(px(tokens::SMALL))
+                                        .text_color(rgb(palette().muted))
+                                        .child(b.about.clone()),
                                 )
                                 .children(playing.then(|| {
                                     muted(tr("Playing now"))
@@ -364,9 +377,12 @@ impl Launcher {
             }),
         )
         .track_scroll(&scroll)
-        // As tall as what it lists, up to the room the window has; past that it scrolls.
-        .h(px((list.len() as f32 * LINE_H)
-            .min((self.window_height - 330.).clamp(LINE_H * 4., LINE_H * 9.))));
+        .min_h_0()
+        // As tall as what it lists, reserving room for compatibility, a failed pin and the footer.
+        .h(px((list.len() as f32 * LINE_H).min(
+            (self.window_height - 330. - if has_native { 128. } else { 0. })
+                .clamp(LINE_H * 3., LINE_H * 9.),
+        )));
         let nothing = list.is_empty().then(|| {
             muted(match (&self.releases, query.trim().is_empty()) {
                 (Load::Loading, _) => tr("Reading the list of builds…"),
@@ -403,8 +419,15 @@ impl Launcher {
         // Said once, and only when it stops a choice: with the check that lifts it.
         let native = has_native.then(|| {
             div()
+                .id("alt-versions-compatibility")
+                .flex_none()
                 .flex()
                 .flex_col()
+                .min_h_0()
+                .max_h(px(112.))
+                .overflow_y_scroll()
+                .track_scroll(&crate::frame::scrolls("alt-versions-compatibility"))
+                .on_scroll(|_, _, cx| cx.stop_propagation())
                 .child(muted(tr(
                     "Your native mods are made for the build you play. Another build needs them checked first.",
                 ))
@@ -451,10 +474,27 @@ impl Launcher {
                 }
                 .into(),
             ))
-            .child(field)
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(field.flex_1().min_w_0())
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_size(px(tokens::SMALL))
+                            .text_color(rgb(palette().muted))
+                            .child(count),
+                    ),
+            )
             .children(native)
             .child(
                 div()
+                    .flex()
+                    .flex_col()
+                    .min_h_0()
                     .rounded(crate::tokens::r(crate::tokens::R_CARD))
                     .border_1()
                     .border_color(rgb(palette().line))
@@ -464,12 +504,17 @@ impl Launcher {
             )
             .children(self.ui.sheets.error.clone().map(|e| {
                 div()
+                    .id("alt-versions-error")
+                    .flex_none()
                     .text_color(rgb(palette().danger))
                     .text_size(px(tokens::SMALL))
+                    .line_clamp(2)
+                    .tooltip(crate::glass_ui::tip(e.clone()))
                     .child(e)
             }))
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .justify_end()
                     .gap(px(8.))

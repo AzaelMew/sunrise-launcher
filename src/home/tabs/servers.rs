@@ -1,8 +1,9 @@
 use super::*;
+use sunrise_launcher::server_list::SavedKey;
 
 pub(super) struct Target {
     profile: String,
-    address: String,
+    key: SavedKey,
     revealed: Rc<Cell<bool>>,
 }
 
@@ -11,19 +12,13 @@ impl Launcher {
         &mut self,
         instance: &instances::Instance,
         compact: bool,
-        window: &Window,
         cx: &mut Context<Self>,
     ) -> Content {
         self.load_servers(instance.home.clone());
         let count = self.multiplayer.list.len();
         let view = &self.ui.home.tabs.views[Tab::Servers.index()];
         let (built, place) = view.near.list(&view.scroll, count, 1, ROW, 0.);
-        // A manually edited servers.dat can repeat an address. Distinguish its
-        // occurrences without keying a row by its displayed title or its list index.
-        let mut seen = HashMap::<String, u32>::new();
-        for (server, _) in &self.multiplayer.list[..built.start] {
-            *seen.entry(server.ip.clone()).or_default() += 1;
-        }
+        let keys = self.multiplayer.keys[built.clone()].to_vec();
         let rows = self.multiplayer.list[built].to_vec();
         let mut items = div().flex().flex_col();
         if count == 0 {
@@ -37,18 +32,16 @@ impl Launcher {
                 )),
             );
         } else {
-            for (server, saved) in rows {
+            for ((server, saved), key) in rows.into_iter().zip(keys) {
                 let status = match self.multiplayer.reach.get(&server.ip) {
-                    Some(multiplayer_page::Reach::Online { players, max }) => Some(trf(
+                    Some(multiplayer_page::Reach::Online { players, max, .. }) => Some(trf(
                         "{online} of {max}",
                         &[("online", &players.to_string()), ("max", &max.to_string())],
                     )),
                     Some(multiplayer_page::Reach::Offline) => Some(tr("No answer").into()),
                     _ => None,
                 };
-                let occurrence = seen.entry(server.ip.clone()).or_default();
-                let id = SharedString::from(format!("home-server:{}:{}", server.ip, occurrence));
-                *occurrence += 1;
+                let id = SharedString::from(format!("home-server:{key:?}"));
                 let icon = saved.or_else(|| self.multiplayer.icons.get(&server.ip).cloned());
                 let picture =
                     crate::mod_icons::tile(icon, &server.ip, &server.name, 30.).into_any_element();
@@ -60,12 +53,11 @@ impl Launcher {
                     server.name,
                     (!compact || status.is_none()).then(|| address.clone()),
                     status,
-                    window,
                     cx,
                     move |this| {
                         this.ui.home.tabs.server = Some(Target {
                             profile: profile.clone(),
-                            address: address.clone(),
+                            key: key.clone(),
                             revealed: Default::default(),
                         });
                         this.navigate(Page::Join);
@@ -88,15 +80,22 @@ impl Launcher {
         }
     }
 
+    pub(crate) fn returning_to_home_server(&self) -> bool {
+        self.ui.home.tabs.server.is_some()
+    }
+
+    pub(crate) fn clear_home_server_target(&mut self) {
+        self.ui.home.tabs.server = None;
+    }
+
     /// Attach inside the saved row in Join. An offline row can pass its own focus handle.
-    #[allow(dead_code)] // The Servers rollup wires the canonical Join row to this handoff.
     pub(crate) fn home_server_target(
         &self,
-        address: &str,
+        key: &SavedKey,
         focus: &FocusHandle,
     ) -> Option<impl IntoElement + use<>> {
         let target = self.ui.home.tabs.server.as_ref()?;
-        if target.address != address
+        if &target.key != key
             || self.selected_instance()?.id != target.profile
             || target.revealed.get()
         {

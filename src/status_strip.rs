@@ -10,7 +10,14 @@ use gpui::rgb;
 impl Launcher {
     /// A registry warning can coexist with progress, Stop, or a separate launch error.
     pub(super) fn registry_notice_strip(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let line = self.play_registry_notices.first()?.clone();
+        let line = match self.play_registry_notices.as_slice() {
+            [] => return None,
+            [notice] => notice.clone(),
+            notices => trf(
+                "{count} registry notices",
+                &[("count", &notices.len().to_string())],
+            ),
+        };
         Some(
             strip()
                 .child(
@@ -20,17 +27,15 @@ impl Launcher {
                         .rounded_full()
                         .bg(rgb(palette().warning)),
                 )
-                .child(div().flex_1().min_w_0().child(line))
-                .when(self.play_registry_notices.len() > 1, |d| {
-                    d.child(
-                        button("play-registry-details", tr("Details…")).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                this.open_notice(this.play_registry_notices.join("\n"), None);
-                                cx.notify();
-                            },
-                        )),
-                    )
-                })
+                .child(div().flex_1().min_w_0().truncate().child(line))
+                .child(
+                    button("play-registry-details", tr("Details…")).on_click(cx.listener(
+                        |this, _, _, cx| {
+                            this.open_notice(this.play_registry_notices.join("\n"), None);
+                            cx.notify();
+                        },
+                    )),
+                )
                 .child(
                     button("play-registry-dismiss", tr("Dismiss")).on_click(cx.listener(
                         |this, _, _, cx| {
