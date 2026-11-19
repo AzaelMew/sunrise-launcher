@@ -458,10 +458,7 @@ impl Element for Selectable {
                     a.probe = Some((ev.position, visible.top()));
                     // Below the shown part, the head stays on its last shown line until the box
                     // scrolls more into view.
-                    let at = gpui::point(
-                        ev.position.x,
-                        y.min(visible.bottom() - gpui::px(1.)),
-                    );
+                    let at = gpui::point(ev.position.x, y.min(visible.bottom() - gpui::px(1.)));
                     let head = Place {
                         block: mine.clone(),
                         ix: index(&drag, at),

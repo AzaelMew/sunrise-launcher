@@ -133,7 +133,11 @@ pub(crate) fn copy_button(id: SharedString, whole: String) -> impl IntoElement {
         })
         .cursor_pointer()
         .hover(|d| d.bg(Hsla::from(rgb(palette().divider)).opacity(0.6)))
-        .tooltip(crate::glass_ui::tip(crate::i18n::tr(if shown.is_some() { "Copied" } else { "Copy" })))
+        .tooltip(crate::glass_ui::tip(crate::i18n::tr(if shown.is_some() {
+            "Copied"
+        } else {
+            "Copy"
+        })))
         .child(glyph)
         .on_click(move |_: &ClickEvent, window: &mut Window, cx| {
             let n = COPIED.with_borrow_mut(|m| {
