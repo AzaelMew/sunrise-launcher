@@ -353,6 +353,52 @@ fn a_mod_install_with_dependencies_keeps_the_unreadable_file_it_replaces() {
 }
 
 #[test]
+fn an_installed_file_that_cannot_be_read_is_refused_not_moved_aside() {
+    let index = sample();
+    let home = scratch("unreadable-io");
+    put(&index, true, &home).unwrap();
+    // A directory where the file was: it exists, but reading it as a file fails.
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let error = install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap_err();
+    assert!(error.contains("not a regular file"), "{error}");
+    assert!(path.is_dir());
+    assert!(!home.join("mod-browser/unreadable").exists());
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
+    let index = sample();
+    let home = scratch("escaping-entry");
+    put(&index, true, &home).unwrap();
+    let outside = home.parent().unwrap().join("escaped-by-entry.smod");
+    fs::write(&outside, b"not a zip").unwrap();
+    let name = format!("../{}", outside.file_name().unwrap().to_string_lossy());
+    // The manifest loader drops such an entry; a list built in memory still must not reach it.
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.entries[0].file = name;
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    let result = install.prepare(p, &p.versions[0], &list, &home.join("staging"));
+    assert!(result.is_err());
+    assert_eq!(fs::read(&outside).unwrap(), b"not a zip");
+    fs::remove_file(outside).unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn update_replaces_an_entry_whose_file_is_gone() {
     let index = sample();
     let home = scratch("gone-installed");

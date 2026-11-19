@@ -1146,20 +1146,35 @@ impl Install<'_> {
         let mut unreadable = None;
         if let Some(old) = &old {
             let mut different = old.kind != project.kind;
-            let path = self.home.join(&old.file);
             // A file that is gone has no kind to compare, and one that no longer parses is
             // never read as content: the update replaces both, the second after the install
-            // moves it aside.
-            if !different && project.kind == Kind::Mod && path.exists() {
-                let installed_native = index::native::holds(&path);
-                let kind = if installed_native {
-                    index::Kind::NativeMod
-                } else {
-                    index::Kind::Mod
-                };
-                match index::inspect(&kind, &path) {
-                    Ok(_) => different = installed_native != native,
-                    Err(_) => unreadable = Some(path),
+            // moves it aside. A file that exists but can't be opened (a transient IO or
+            // permission error) is not a broken one: the update refuses and leaves it.
+            if !different && project.kind == Kind::Mod {
+                let path = old.path(self.home).ok_or_else(|| {
+                    trf(
+                        "{name} is recorded outside the mod folders: remove it before installing this version.",
+                        &[("name", &p.name)],
+                    )
+                })?;
+                match fs::File::open(&path).and_then(|f| f.metadata()) {
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("{}: {e}", path.display())),
+                    Ok(m) if !m.is_file() => {
+                        return Err(format!("{}: not a regular file", path.display()));
+                    }
+                    Ok(_) => {
+                        let installed_native = index::native::holds(&path);
+                        let kind = if installed_native {
+                            index::Kind::NativeMod
+                        } else {
+                            index::Kind::Mod
+                        };
+                        match index::inspect(&kind, &path) {
+                            Ok(_) => different = installed_native != native,
+                            Err(_) => unreadable = Some(path),
+                        }
+                    }
                 }
             }
             if different {
