@@ -120,7 +120,7 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 17] = [
+const SETTINGS_ROWS: [(&str, Section); 16] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Remove old game builds", Section::Game),
@@ -133,7 +133,6 @@ const SETTINGS_ROWS: [(&str, Section); 17] = [
     ("Show the cat", Section::Appearance),
     ("Native code", Section::Mods),
     ("Game files and worlds", Section::Storage),
-    ("World backups", Section::Storage),
     ("Downloads kept for reuse", Section::Storage),
     ("Keep at most", Section::Storage),
     ("Your data", Section::Privacy),
