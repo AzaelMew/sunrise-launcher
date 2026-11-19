@@ -153,6 +153,15 @@ fn stacked(title: impl Into<SharedString>, about: impl Into<SharedString>, below
         .child(below)
 }
 
+/// How many characters a settings text box shows at this window width. The pane is as wide as
+/// the window less the sidebar, the categories and the margins (a little over 500 px, so a
+/// guess here errs short), up to 760 px; the box takes 26 px of padding and edge, and a
+/// character of its 13 px mono is about 8 px.
+fn field_chars(window_width: f32) -> usize {
+    let pane = (window_width - 520.).clamp(200., 760.);
+    ((pane - 26.) / 8.) as usize
+}
+
 impl Launcher {
     /// A [`row`] whose controls are wide: in a narrow window they would leave the words a
     /// column a syllable wide, so there they go under the words.
@@ -1370,6 +1379,7 @@ impl Launcher {
             "",
             div().relative().child(opener).children(menu),
         );
+        self.proxy_input.show(field_chars(self.window_width));
         let refused = (!self.proxy_focused)
             .then(|| sunrise_launcher::proxy::refuse(self.proxy_input.text()))
             .flatten();
@@ -1556,5 +1566,12 @@ mod tests {
         assert!(startup_section(true, false) == Some(Section::Storage));
         assert!(startup_section(false, true) == Some(Section::Storage));
         assert!(startup_section(false, false).is_none());
+    }
+
+    #[test]
+    fn a_text_box_shows_as_much_as_its_pane_is_wide() {
+        assert_eq!(field_chars(1280.), 91);
+        assert_eq!(field_chars(900.), 44);
+        assert_eq!(field_chars(300.), 21);
     }
 }

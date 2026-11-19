@@ -115,6 +115,8 @@ impl LineEdit {
     /// How many characters the box shows.
     pub(super) fn show(&mut self, visible: usize) {
         self.visible = visible;
+        // A wider box shows what a narrower one had scrolled past.
+        self.scroll = self.scroll.min(self.len().saturating_sub(visible));
         self.reveal();
     }
 
@@ -608,6 +610,21 @@ mod tests {
             let ch = c.to_string();
             e.key(key, (c != ' ').then_some(ch.as_str()), false, false);
         }
+    }
+
+    #[test]
+    fn a_box_shown_as_wide_as_its_text_shows_all_of_it() {
+        let proxy =
+            "http://127.0.0.1:7890,http://127.0.0.1:7891,http://127.0.0.1:7892,http://[::1]:1";
+        assert_eq!(proxy.chars().count(), 80);
+        let mut e = edit(proxy);
+        e.show(91);
+        let (before, selected, after, _) = e.view(false);
+        assert_eq!(format!("{before}{selected}{after}"), proxy);
+        // The old fixed window showed 44 characters from the caret's side.
+        e.show(44);
+        let (before, selected, after, _) = e.view(false);
+        assert_eq!(format!("{before}{selected}{after}").chars().count(), 44);
     }
 
     #[test]
