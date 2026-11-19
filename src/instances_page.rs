@@ -64,19 +64,15 @@ impl Launcher {
         list.iter().find(|i| i.id == id).or(list.first())
     }
 
-    /// The installed version `instance` plays: its own, else the launcher's.
+    /// The profile's Play target, including a build Play will have to install first.
+    pub(super) fn profile_target<'a>(&'a self, instance: &'a Instance) -> Option<&'a String> {
+        self.target_version(instance.version.as_ref(), instance.channel)
+    }
+
+    /// The profile's Play target if it is installed.
     pub(super) fn version_of(&self, instance: &Instance) -> Option<&String> {
-        match &instance.version {
-            Some(own) => self.installed.iter().find(|t| *t == own),
-            // Play Nightly while the catalogue has no Stable download. Keep the saved
-            // channel so the profile switches when Stable becomes available.
-            None => match self.followed_channel(instance.channel) {
-                instances::Channel::Stable => self
-                    .stable_builds()
-                    .find_map(|b| self.installed.iter().find(|t| **t == b.tag)),
-                instances::Channel::Nightly => self.launcher_version(),
-            },
-        }
+        let target = self.profile_target(instance)?;
+        self.installed.iter().find(|tag| *tag == target)
     }
 
     /// The Minecraft version `instance`'s own build plays: what its mods and packs are for.

@@ -1251,18 +1251,16 @@ impl Launcher {
         } else {
             None
         };
-        let (stable, stable_target) = {
-            let mut builds = self.stable_builds().peekable();
-            let available = builds.peek().is_some();
-            let target = builds
-                .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
-                .cloned();
-            (available, target)
-        };
+        let stable = self.stable_builds().next().is_some();
         // A different build under native mods is never activated from here: those mods have to be
         // checked against it first (the check button), and the build that follows protects worlds.
         let has_native = !native_status::enabled(&instance.home).is_empty();
-        let nightly_target = self.launcher_version().cloned();
+        let nightly_target = self
+            .target_version(None, instances::Channel::Nightly)
+            .cloned();
+        let stable_target = self
+            .target_version(None, instances::Channel::Stable)
+            .cloned();
         let gated = |target: &Option<String>| has_native && *target != plays;
         let follow_nightly = pinned.is_none() && instance.channel == instances::Channel::Nightly;
         let follow_stable = pinned.is_none() && instance.channel == instances::Channel::Stable;

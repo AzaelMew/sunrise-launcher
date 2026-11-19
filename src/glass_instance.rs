@@ -14,18 +14,26 @@ impl Launcher {
         d.pin.clone().or_else(|| self.followed_version(d.channel))
     }
 
-    /// The version an instance that keeps none plays: on Stable the newest stable build (Create
-    /// installs it), on Nightly the launcher's, or with none installed yet, the newest Nightly.
+    /// Create installs the newest Stable build. Nightly uses the same target as Play.
     fn followed_version(&self, channel: Channel) -> Option<String> {
-        let nightly = || {
-            self.launcher_version()
-                .cloned()
-                .or_else(|| self.sunrise_choices().into_iter().next())
-        };
         match self.followed_channel(channel) {
             Channel::Stable => self.stable_builds().next().map(|b| b.tag.clone()),
-            Channel::Nightly => nightly(),
+            Channel::Nightly => self.target_version(None, Channel::Nightly).cloned(),
         }
+    }
+
+    pub(super) fn target_version<'a>(
+        &'a self,
+        pin: Option<&'a String>,
+        channel: Channel,
+    ) -> Option<&'a String> {
+        profile_target(
+            pin,
+            channel,
+            self.game_releases(),
+            &self.installed,
+            self.launcher_version(),
+        )
     }
 
     fn game_releases(&self) -> &[Release] {
@@ -61,6 +69,32 @@ impl Launcher {
             .flatten()
             .cloned()
     }
+}
+
+/// Pick one tag for both the Home picker and Play. A pin is never replaced by another
+/// build just because it isn't installed yet. Channel release lists are newest first.
+fn profile_target<'a>(
+    pin: Option<&'a String>,
+    channel: Channel,
+    releases: &'a [Release],
+    installed: &'a [String],
+    launcher_version: Option<&'a String>,
+) -> Option<&'a String> {
+    pin.or_else(|| match channel.following(releases) {
+        Channel::Stable => {
+            // Keep the existing policy: prefer an installed Stable build.
+            Channel::Stable
+                .builds(releases)
+                .find(|r| installed.contains(&r.tag))
+                .or_else(|| Channel::Stable.builds(releases).next())
+                .map(|r| &r.tag)
+        }
+        Channel::Nightly => Channel::Nightly
+            .builds(releases)
+            .next()
+            .map(|r| &r.tag)
+            .or(launcher_version),
+    })
 }
 
 /// Every Nightly published with a build for this platform, newest first, then the installed
@@ -123,6 +157,40 @@ pub(crate) fn native_base(tag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nightly_follows_the_newest_download_for_this_platform_then_falls_back_offline() {
+        let old = "nightly-2026-11-16-aaaaaaa".to_owned();
+        let latest = "nightly-2026-11-18-ccccccc";
+        let releases = [
+            release("nightly-2026-11-19-ddddddd", true, false),
+            release(latest, true, true),
+            release(&old, true, true),
+        ];
+        let installed = [old.clone()];
+        let target = |releases: &[Release]| {
+            profile_target(None, Channel::Nightly, releases, &installed, Some(&old)).cloned()
+        };
+        assert_eq!(target(&releases).as_deref(), Some(latest));
+        assert_eq!(target(&[]), Some(old));
+    }
+
+    #[test]
+    fn a_pin_names_the_play_target_even_before_installing_it() {
+        let pin = "nightly-2026-11-17-bbbbbbb".to_owned();
+        let old = "nightly-2026-11-16-aaaaaaa".to_owned();
+        let releases = [release("nightly-2026-11-18-ccccccc", true, true)];
+        assert_eq!(
+            profile_target(
+                Some(&pin),
+                Channel::Nightly,
+                &releases,
+                std::slice::from_ref(&old),
+                Some(&old)
+            ),
+            Some(&pin),
+        );
+    }
 
     fn release(tag: &str, nightly: bool, asset: bool) -> Release {
         Release {
