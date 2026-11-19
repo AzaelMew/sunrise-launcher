@@ -442,6 +442,13 @@ impl Launcher {
             }
             list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
         }
+        if self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading) {
+            list = list.child(
+                div()
+                    .p(px(16.))
+                    .child(muted(tr("Reading the mods you added by hand…"))),
+            );
+        }
         if visible.is_empty() {
             list = list.child(
                 div()
