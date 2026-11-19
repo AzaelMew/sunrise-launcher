@@ -139,8 +139,12 @@ fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
     let field = |key: &str| data.and_then(|d| d.get(key));
     let number = |tag: Option<&Tag>| match tag {
         Some(Tag::Byte(v)) => i64::from(*v),
+        Some(Tag::Short(v)) => i64::from(*v),
         Some(Tag::Int(v)) => i64::from(*v),
         Some(Tag::Long(v)) => *v,
+        // As the game's numeric tags give a long: a float rounds down (a NaN is 0).
+        Some(Tag::Float(bits)) => f64::from(f32::from_bits(*bits)).floor() as i64,
+        Some(Tag::Double(bits)) => f64::from_bits(*bits).floor() as i64,
         _ => 0,
     };
     let text = |tag: Option<&Tag>| match tag {

@@ -299,3 +299,42 @@ fn worlds_played_past_the_clamp_keep_the_newest_first() {
     assert_eq!(find(&home, "twin").unwrap().folder, "B");
     fs::remove_dir_all(home).unwrap();
 }
+
+#[test]
+fn last_played_hardcore_and_game_type_read_any_number_tag() {
+    let home = scratch("number-tags");
+    // 1_700_000_000_000.9 ms, as a Double and as a Float (which holds it only roughly).
+    world(
+        &home,
+        "double",
+        vec![
+            ("LastPlayed", Tag::Double(1_700_000_000_000.9f64.to_bits())),
+            ("GameType", Tag::Double(2.0f64.to_bits())),
+        ],
+    );
+    world(
+        &home,
+        "short",
+        vec![
+            ("LastPlayed", Tag::Short(30_000)),
+            ("GameType", Tag::Short(3)),
+        ],
+    );
+    world(
+        &home,
+        "float",
+        vec![
+            ("LastPlayed", Tag::Float(2_000_000.0f32.to_bits())),
+            ("hardcore", Tag::Float(1.0f32.to_bits())),
+        ],
+    );
+    let at = |millis: u64| UNIX_EPOCH + Duration::from_millis(millis);
+    let by = |folder: &str| find(&home, folder).unwrap();
+    assert_eq!(by("double").last_played, at(1_700_000_000_000));
+    assert_eq!(by("double").mode, "Adventure");
+    assert_eq!(by("short").last_played, at(30_000));
+    assert_eq!(by("short").mode, "Spectator");
+    assert_eq!(by("float").last_played, at(2_000_000));
+    assert_eq!(by("float").mode, "Hardcore");
+    fs::remove_dir_all(home).unwrap();
+}
