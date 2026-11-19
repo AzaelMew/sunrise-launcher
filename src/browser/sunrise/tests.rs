@@ -304,19 +304,51 @@ fn installed_kind_comes_from_the_archive_not_its_folder() {
 }
 
 #[test]
-fn corrupt_installed_archive_is_not_treated_as_content() {
+fn corrupt_installed_archive_is_moved_aside_by_its_update() {
     let index = sample();
     let home = scratch("corrupt-installed");
     put(&index, true, &home).unwrap();
     let path = home.join("sunrise-mods/coords_hud.smod");
     fs::write(&path, b"not a zip").unwrap();
-    let before = fs::read(&path).unwrap();
-    let modified = fs::metadata(&path).unwrap().modified().unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
     let p = index.project("coords_hud").unwrap();
-    let error = install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap_err();
-    assert!(error.contains("Cannot inspect installed"), "{error}");
-    assert_eq!(fs::read(&path).unwrap(), before);
-    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+    install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
+    // The new file is a real package, and the broken bytes are kept, not deleted.
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    let kept: Vec<_> = fs::read_dir(home.join("mod-browser/unreadable"))
+        .unwrap()
+        .map(|e| fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(kept, [b"not a zip".to_vec()]);
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn a_mod_install_with_dependencies_keeps_the_unreadable_file_it_replaces() {
+    let index = sample();
+    let home = scratch("corrupt-with-deps");
+    put(&index, true, &home).unwrap();
+    let path = home.join("sunrise-mods/coords_hud.smod");
+    fs::write(&path, b"not a zip").unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries[0].version = "0.0.1".into();
+    list.save(&home).unwrap();
+    let p = index.project("coords_hud").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    dependencies::install(&install, p, &p.versions[0], false).unwrap();
+    assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
+    let kept: Vec<_> = fs::read_dir(home.join("mod-browser/unreadable"))
+        .unwrap()
+        .map(|e| fs::read(e.unwrap().path()).unwrap())
+        .collect();
+    assert_eq!(kept, [b"not a zip".to_vec()]);
     fs::remove_dir_all(home).unwrap();
 }
 
@@ -334,6 +366,7 @@ fn update_replaces_an_entry_whose_file_is_gone() {
     install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap();
     assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
     assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    assert!(!home.join("mod-browser/unreadable").exists());
     fs::remove_dir_all(home).unwrap();
 }
 

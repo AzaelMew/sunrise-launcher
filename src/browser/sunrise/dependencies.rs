@@ -22,6 +22,7 @@ pub(super) fn install(
         staged: staged.path(),
         installed: installed::Installed::load(home),
         selected: Vec::new(),
+        unreadable: Vec::new(),
         native_allowed,
     };
     plan.add(project, version, 0)?;
@@ -52,6 +53,11 @@ pub(super) fn install(
             done.push(entry);
         }
     }
+    // Publishing drops what it replaces, so a file that no longer parses is copied aside first.
+    for broken in &plan.unreadable {
+        let to = super::unreadable_slot(home, broken)?;
+        fs::copy(broken, &to).map_err(|e| format!("{}: {e}", broken.display()))?;
+    }
     if !changes.is_empty() {
         plan.installed.save(staged.path())?;
         changes.push((
@@ -80,6 +86,8 @@ struct Plan<'a> {
     staged: &'a Path,
     installed: installed::Installed,
     selected: Vec<(installed::Entry, Option<PathBuf>)>,
+    /// Installed files that no longer parse and are about to be replaced.
+    unreadable: Vec<PathBuf>,
     native_allowed: bool,
 }
 
@@ -88,9 +96,10 @@ impl Plan<'_> {
         if depth > installed::MAX_DEPTH {
             return Err(format!("{}'s dependencies go too deep.", p.name));
         }
-        let (mut entry, download) =
+        let (mut entry, download, unreadable) =
             self.install
                 .prepare(p, v, &self.installed, &self.staged.join(&p.id))?;
+        self.unreadable.extend(unreadable);
         let (path, facts) = match download {
             Some((path, facts)) => {
                 entry.dependency = depth != 0

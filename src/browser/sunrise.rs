@@ -1054,7 +1054,8 @@ fn install_version_guarded(
         home,
         progress,
     };
-    let (entry, file) = install.prepare(p, v, &list, &home.join("mod-browser/downloads"))?;
+    let (entry, file, unreadable) =
+        install.prepare(p, v, &list, &home.join("mod-browser/downloads"))?;
     let Some((path, _)) = file else {
         return Ok(entry);
     };
@@ -1065,7 +1066,22 @@ fn install_version_guarded(
     if let Some(dir) = target.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    fs::rename(&path, &target).map_err(|e| format!("{}: {e}", target.display()))?;
+    let aside = unreadable
+        .map(|broken| {
+            let to = unreadable_slot(home, &broken)?;
+            fs::rename(&broken, &to).map_err(|e| format!("{}: {e}", broken.display()))?;
+            Ok::<_, String>((broken, to))
+        })
+        .transpose()
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&path);
+        })?;
+    if let Err(e) = fs::rename(&path, &target) {
+        if let Some((broken, to)) = aside {
+            let _ = fs::rename(to, broken);
+        }
+        return Err(format!("{}: {e}", target.display()));
+    }
     if let Some(old) = list
         .find(SourceId::Sunrise, &p.id)
         .filter(|old| old.file != entry.file)
@@ -1080,6 +1096,17 @@ fn install_version_guarded(
     Ok(entry)
 }
 
+/// Where an installed file that no longer parses is kept when its update replaces it.
+fn unreadable_slot(home: &Path, broken: &Path) -> Result<PathBuf, String> {
+    let dir = home.join("mod-browser/unreadable");
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let name = broken.file_name().unwrap_or_default().to_string_lossy();
+    Ok((0..)
+        .map(|n| dir.join(format!("{name}.{n}")))
+        .find(|to| !to.exists())
+        .expect("an unused name"))
+}
+
 struct Install<'a> {
     index: &'a Index,
     local: bool,
@@ -1087,8 +1114,13 @@ struct Install<'a> {
     progress: &'a dyn Fn(&str, f32),
 }
 
-/// A checked download and its manifest, or the already-installed entry with no download.
-type Prepared = (installed::Entry, Option<(PathBuf, index::Facts)>);
+/// A checked download and its manifest, or the already-installed entry with no download; and
+/// the installed file that no longer parses, which the install moves aside.
+type Prepared = (
+    installed::Entry,
+    Option<(PathBuf, index::Facts)>,
+    Option<PathBuf>,
+);
 
 impl Install<'_> {
     fn prepare(
@@ -1111,10 +1143,13 @@ impl Install<'_> {
         };
         let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
         let old = list.entries.iter().find(|e| ours(e)).cloned();
+        let mut unreadable = None;
         if let Some(old) = &old {
             let mut different = old.kind != project.kind;
             let path = self.home.join(&old.file);
-            // A file that is gone has no kind to compare: the update replaces its entry.
+            // A file that is gone has no kind to compare, and one that no longer parses is
+            // never read as content: the update replaces both, the second after the install
+            // moves it aside.
             if !different && project.kind == Kind::Mod && path.exists() {
                 let installed_native = index::native::holds(&path);
                 let kind = if installed_native {
@@ -1122,9 +1157,10 @@ impl Install<'_> {
                 } else {
                     index::Kind::Mod
                 };
-                index::inspect(&kind, &path)
-                    .map_err(|e| format!("Cannot inspect installed {}: {e}", p.name))?;
-                different = installed_native != native;
+                match index::inspect(&kind, &path) {
+                    Ok(_) => different = installed_native != native,
+                    Err(_) => unreadable = Some(path),
+                }
             }
             if different {
                 return Err(format!(
@@ -1134,7 +1170,7 @@ impl Install<'_> {
             }
         }
         if old.as_ref().is_some_and(|o| o.version == v.version) {
-            return Ok((old.expect("checked"), None));
+            return Ok((old.expect("checked"), None, None));
         }
         let target = self.home.join(&relative);
         let taken_by = list.entries.iter().find(|e| !ours(e) && e.file == relative);
@@ -1177,7 +1213,7 @@ impl Install<'_> {
             dependency: false,
             verdict: Some(trust_label(trust).into()),
         };
-        Ok((entry, Some((path, facts))))
+        Ok((entry, Some((path, facts)), unreadable))
     }
 }
 
