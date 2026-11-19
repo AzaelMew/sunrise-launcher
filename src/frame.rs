@@ -462,6 +462,11 @@ impl Launcher {
     }
 
     pub(super) fn frame(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        crate::clock::set_preference(
+            self.settings.reduce_motion,
+            self.settings.reduced_graphics(),
+        );
+        cx.set_reduce_motion(crate::motion::still());
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_height = f32::from(size.height);

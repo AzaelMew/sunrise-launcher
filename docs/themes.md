@@ -60,4 +60,8 @@ sunrise-launcher settings accent theme           # back to the theme's own
 sunrise-launcher settings background ~/shore.png # your own picture behind Home
 sunrise-launcher settings background default     # back to the theme's
 sunrise-launcher settings scenery off
+sunrise-launcher settings reduced-graphics on    # keep the background, reduce effects and motion
 ```
+
+**Reduced graphics** in Settings › Appearance leaves your chosen background in place. The
+separate **Show background** switch controls whether you see it.

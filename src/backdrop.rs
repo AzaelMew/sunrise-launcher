@@ -26,7 +26,6 @@ impl Backdrop {
     ) -> Div {
         let page: gpui::Hsla = gpui::rgb(crate::paint::palette().background).into();
         let back = div().absolute().inset_0().overflow_hidden().bg(page);
-        sunrise_launcher_scenery::clock::set_preference(settings.reduce_motion);
         if !settings.scenery() {
             return back;
         }

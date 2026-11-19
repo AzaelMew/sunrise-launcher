@@ -1929,10 +1929,14 @@ impl Launcher {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(after).await;
             let _ = this.update(cx, |this, cx| {
-                if this.ui.cat.wake == Some(at) {
-                    this.ui.cat.wake = None;
+                if this.ui.cat.wake.take_if(|due| *due == at).is_some()
+                    && cat_out(
+                        this.settings.show_cat(),
+                        this.settings.reduced_graphics() || crate::motion::still(),
+                    )
+                {
+                    cx.notify();
                 }
-                cx.notify();
             });
         })
         .detach();

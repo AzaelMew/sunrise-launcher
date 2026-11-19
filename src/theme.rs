@@ -142,8 +142,8 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
         themes::Resolved::Missing => theme.with_launcher_theme(&themes::DAWN_THEME),
     };
     theme.photo = photo && settings.scenery();
-    // Performance mode keeps a painted sky's colours and drops what drifts over it.
-    if settings.performance() {
+    // Reduced graphics keeps the sky's colours and drops its decorative effects.
+    if settings.reduced_graphics() {
         theme.night.art.mood = night::Mood::Plain;
     }
     theme.with_glass(settings.glass_tint(), settings.glass_blur())

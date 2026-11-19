@@ -133,6 +133,7 @@ struct Look {
     accents: std::collections::BTreeMap<String, Accent>,
     background: Option<String>,
     scenery: Option<bool>,
+    reduced_graphics: Option<bool>,
 }
 
 /// A theme's preview: its page, a panel on it with both inks, and Play in its own fill.
@@ -247,6 +248,7 @@ impl Launcher {
             accents: self.settings.theme_accents.clone(),
             background: self.settings.background.clone(),
             scenery: self.settings.scenery_on,
+            reduced_graphics: self.settings.reduced_graphics,
         }
     }
 
@@ -269,12 +271,14 @@ impl Launcher {
                 accents,
                 background,
                 scenery,
+                reduced_graphics,
             } = before;
             self.settings.theme = theme;
             self.settings.accent = accent;
             self.settings.theme_accents = accents;
             self.settings.background = background;
             self.settings.scenery_on = scenery;
+            self.settings.reduced_graphics = reduced_graphics;
             return;
         }
         self.appearance_changed(window);
@@ -619,6 +623,26 @@ impl Launcher {
         rows.push(self.accent_row(missing, window, cx));
         rows.push(self.background_row(cx));
         rows.push(self.scenery_row(cx));
+        let reduced = self.settings.reduced_graphics();
+        rows.push(row(
+            tr("Reduced graphics"),
+            tr("Turns off glass blur and keeps the scenery and cat still. Also reduces motion in the launcher."),
+            div().child(
+                switch("alt-reduced-graphics", reduced)
+                    .seen()
+                    .tooltip(crate::glass_ui::tip(tr("Reduced graphics")))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.appearance_change(
+                            |s| {
+                                s.reduced_graphics = Some(!reduced);
+                                Ok(())
+                            },
+                            window,
+                        );
+                        cx.notify();
+                    })),
+            ),
+        ));
         let layout = self.settings.world_layout;
         let layouts = [
             (backend::WorldLayout::Rows, "Rows"),

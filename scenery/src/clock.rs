@@ -14,17 +14,50 @@ pub enum Motion {
     Always,
 }
 
-/// The player's choice (`Settings::reduce_motion`): 0 follows the system, 1 still, 2 moves.
-static PREFERENCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum Preference {
+    System = 0,
+    Still = 1,
+    Full = 2,
+    ReducedGraphics = 3,
+}
 
-/// Takes the player's choice: `None` follows the system, `Some(true)` holds everything still.
-pub fn set_preference(reduce: Option<bool>) {
-    let v = match reduce {
-        None => 0,
-        Some(true) => 1,
-        Some(false) => 2,
-    };
-    PREFERENCE.store(v, std::sync::atomic::Ordering::Relaxed);
+impl Preference {
+    fn choose(reduce: Option<bool>, reduced_graphics: bool) -> Self {
+        match (reduce, reduced_graphics) {
+            (_, true) => Self::ReducedGraphics,
+            (None, false) => Self::System,
+            (Some(true), false) => Self::Still,
+            (Some(false), false) => Self::Full,
+        }
+    }
+
+    fn resolve(self, forced: Option<Motion>, system: impl FnOnce() -> bool) -> Motion {
+        if matches!(self, Self::ReducedGraphics) {
+            return Motion::Still;
+        }
+        if let Some(forced) = forced {
+            return forced;
+        }
+        if matches!(self, Self::Still) || (matches!(self, Self::System) && system()) {
+            Motion::Still
+        } else {
+            Motion::InFront
+        }
+    }
+}
+
+static PREFERENCE: std::sync::atomic::AtomicU8 =
+    std::sync::atomic::AtomicU8::new(Preference::System as u8);
+
+/// Sets the player's choices. Reduced graphics takes precedence over the motion preference
+/// and diagnostic overrides. Otherwise `None` follows the system.
+pub fn set_preference(reduce: Option<bool>, reduced_graphics: bool) {
+    PREFERENCE.store(
+        Preference::choose(reduce, reduced_graphics) as u8,
+        std::sync::atomic::Ordering::Relaxed,
+    );
 }
 
 pub fn motion() -> Motion {
@@ -37,19 +70,13 @@ pub fn motion() -> Motion {
                 _ => None,
             },
         );
-    if let Some(forced) = *FORCED {
-        return forced;
-    }
-    let still = match PREFERENCE.load(std::sync::atomic::Ordering::Relaxed) {
-        1 => true,
-        2 => false,
-        _ => system_reduces_motion(),
+    let preference = match PREFERENCE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => Preference::Still,
+        2 => Preference::Full,
+        3 => Preference::ReducedGraphics,
+        _ => Preference::System,
     };
-    if still {
-        Motion::Still
-    } else {
-        Motion::InFront
-    }
+    preference.resolve(*FORCED, system_reduces_motion)
 }
 
 /// The system's reduced motion, asked again at most every 2 s, so turning it on or off applies
@@ -147,6 +174,31 @@ impl Clock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reduced_graphics_overrides_motion_without_changing_its_precedence_when_off() {
+        for reduce in [None, Some(false), Some(true)] {
+            for forced in [None, Some(Motion::Always), Some(Motion::InFront)] {
+                let reduced = Preference::choose(reduce, true);
+                assert_eq!(reduced.resolve(forced, || unreachable!()), Motion::Still);
+            }
+        }
+        let system = Preference::choose(None, false);
+        assert_eq!(system.resolve(None, || true), Motion::Still);
+        assert_eq!(system.resolve(None, || false), Motion::InFront);
+        let still = Preference::choose(Some(true), false);
+        assert_eq!(still.resolve(None, || unreachable!()), Motion::Still);
+        assert_eq!(
+            still.resolve(Some(Motion::Always), || unreachable!()),
+            Motion::Always
+        );
+        let full = Preference::choose(Some(false), false);
+        assert_eq!(full.resolve(None, || unreachable!()), Motion::InFront);
+        assert_eq!(
+            full.resolve(Some(Motion::Still), || unreachable!()),
+            Motion::Still
+        );
+    }
 
     #[test]
     fn the_clock_stops_and_resumes_without_a_jump() {
