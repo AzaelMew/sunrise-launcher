@@ -23,6 +23,7 @@ pub(super) fn progress(label: String) -> impl Fn(f32) {
 pub(super) fn native_progress(tty: bool) -> impl Fn(native_mods::Step) -> Option<String> {
     use native_mods::Step;
     let previous = std::cell::RefCell::new(None);
+    let shown = std::cell::RefCell::new(String::new());
     move |step| {
         let show = tty
             || match (&step, previous.borrow().as_ref()) {
@@ -39,7 +40,14 @@ pub(super) fn native_progress(tty: bool) -> impl Fn(native_mods::Step) -> Option
                 }
                 _ => true,
             };
-        let label = show.then(|| step.label());
+        // A line already on screen is never printed again: a download reports every chunk, and
+        // most of them land on the same whole percent or megabyte.
+        let label = show
+            .then(|| step.label())
+            .filter(|label| *shown.borrow() != *label);
+        if let Some(label) = &label {
+            shown.replace(label.clone());
+        }
         *previous.borrow_mut() = Some(step);
         label
     }
@@ -78,16 +86,17 @@ mod tests {
     fn native_progress_keeps_detailed_terminal_downloads() {
         let progress = native_progress(true);
         for (done, percent) in [
-            (0.0, 0),
-            (0.97, 97),
-            (0.971, 97),
-            (0.974, 97),
-            (0.98, 98),
-            (1.0, 100),
+            (0.0, Some(0)),
+            (0.97, Some(97)),
+            (0.971, None),
+            (0.974, None),
+            (0.98, Some(98)),
+            (1.0, Some(100)),
+            (1.0, None),
         ] {
             assert_eq!(
                 progress(native_mods::Step::Rust(done)),
-                Some(format!(
+                percent.map(|percent| format!(
                     "Downloading Rust {} (once): {percent}%",
                     sunrise_launcher::rust_toolchain::VERSION
                 ))
@@ -146,6 +155,31 @@ mod tests {
             progress(tools("third", 100_000_000, 100_000_000)),
             Some("Getting the mod tools for third: 100 of 100 MB".into())
         );
+    }
+
+    #[test]
+    fn native_progress_never_repeats_the_line_just_shown() {
+        let compile = |name: &str| native_mods::Step::Compile {
+            done: 3,
+            total: Some(9),
+            name: name.into(),
+            profile: Default::default(),
+        };
+        for tty in [false, true] {
+            let progress = native_progress(tty);
+            let labels: Vec<_> = ["a", "a", "a", "b", "b"]
+                .into_iter()
+                .filter_map(|name| progress(compile(name)))
+                .collect();
+            assert_eq!(
+                labels,
+                [
+                    "Compiling the game (optimized): 3 of 9 crates, now a",
+                    "Compiling the game (optimized): 3 of 9 crates, now b",
+                ],
+                "tty: {tty}"
+            );
+        }
     }
 
     #[test]
