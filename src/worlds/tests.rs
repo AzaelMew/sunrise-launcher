@@ -328,8 +328,21 @@ fn last_played_hardcore_and_game_type_read_any_number_tag() {
             ("hardcore", Tag::Float(1.0f32.to_bits())),
         ],
     );
+    // The game's float `longValue` truncates toward zero (-0.5 is 0); a double's floors (-0.5 is -1).
+    world(
+        &home,
+        "float-negative",
+        vec![("hardcore", Tag::Float((-0.5f32).to_bits()))],
+    );
+    world(
+        &home,
+        "double-negative",
+        vec![("hardcore", Tag::Double((-0.5f64).to_bits()))],
+    );
     let at = |millis: u64| UNIX_EPOCH + Duration::from_millis(millis);
     let by = |folder: &str| find(&home, folder).unwrap();
+    assert_eq!(by("float-negative").mode, "Survival");
+    assert_eq!(by("double-negative").mode, "Hardcore");
     assert_eq!(by("double").last_played, at(1_700_000_000_000));
     assert_eq!(by("double").mode, "Adventure");
     assert_eq!(by("short").last_played, at(30_000));

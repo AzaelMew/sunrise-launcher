@@ -153,8 +153,9 @@ fn scanned_world(path: &Path) -> std::io::Result<Option<Scanned>> {
         Some(Tag::Short(v)) => i64::from(*v),
         Some(Tag::Int(v)) => i64::from(*v),
         Some(Tag::Long(v)) => *v,
-        // As the game's numeric tags give a long: a float rounds down (a NaN is 0).
-        Some(Tag::Float(bits)) => f64::from(f32::from_bits(*bits)).floor() as i64,
+        // As the game's numeric tags give a long: a float's `longValue` casts, so it truncates
+        // toward zero (-0.5 is 0), while a double's floors (-0.5 is -1). A NaN is 0.
+        Some(Tag::Float(bits)) => f64::from(f32::from_bits(*bits)).trunc() as i64,
         Some(Tag::Double(bits)) => f64::from_bits(*bits).floor() as i64,
         _ => 0,
     };
