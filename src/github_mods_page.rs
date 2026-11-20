@@ -5,11 +5,11 @@
 use super::line_edit::LineEdit;
 use super::*;
 use std::path::{Path, PathBuf};
-use sunrise_launcher::github_mods::{self, Packed, Resolved};
+use sunrise_launcher::github_mods::{self, Packed, Prepared, Resolved};
 
 enum Event {
     /// The mods of a source, fetched and checked, when there is a choice to make.
-    Fetched(Result<Vec<Packed>, String>),
+    Fetched(Result<Prepared, String>),
     Installed(Result<String, String>),
 }
 
@@ -113,14 +113,17 @@ impl Launcher {
         let tx = self.github.tx.clone();
         let home = self.mods.home();
         std::thread::spawn(move || {
-            let fetched = github_mods::fetch(&found);
-            let result = match fetched {
-                Ok(mods) if mods.len() == 1 || only.is_some() => {
-                    let done = finish(&home, &found, &mods, only.as_deref(), false);
-                    github_mods::discard(&found);
-                    Event::Installed(done)
+            let result = match github_mods::fetch(found) {
+                Ok(prepared) if prepared.mods().len() == 1 || only.is_some() => {
+                    Event::Installed(finish(
+                        &home,
+                        prepared.source(),
+                        prepared.mods(),
+                        only.as_deref(),
+                        false,
+                    ))
                 }
-                other => Event::Fetched(other),
+                other => Event::Fetched(other.map_err(String::from)),
             };
             let _ = tx.send(result);
         });

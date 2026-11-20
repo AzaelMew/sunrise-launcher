@@ -18,16 +18,11 @@ pub(super) fn github_native(
     println!("Source, to read: {}", found.source_url());
     eprintln!("{}", github_mods::WARNING);
     native_permission(trust)?;
-    let mods = github_mods::fetch(found)?;
-    let chosen = github_mods::choose(&mods, only, all);
-    let done = chosen.and_then(|chosen| {
-        chosen
-            .into_iter()
-            .map(|p| github_mods::install(home, found, p))
-            .collect::<Result<Vec<_>, _>>()
-    });
-    github_mods::discard(found);
-    let done = done?;
+    let ready = github_mods::fetch(found.clone())?;
+    let done = github_mods::choose(ready.mods(), only, all)?
+        .into_iter()
+        .map(|p| github_mods::install(home, ready.source(), p))
+        .collect::<Result<Vec<_>, _>>()?;
     for o in done {
         println!(
             "Installed {} {} from GitHub ({}), sha256 {}.",
