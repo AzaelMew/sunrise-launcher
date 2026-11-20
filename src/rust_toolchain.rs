@@ -310,6 +310,23 @@ impl Toolchain {
     /// opens no console window: cargo is a console program, and the launcher has none to share, so
     /// each build showed an empty one for as long as it ran (#4770).
     pub fn command(&self, program: &Path) -> Command {
+        self.command_with(
+            program,
+            cfg!(windows),
+            std::env::var_os("ComSpec").as_deref(),
+            std::env::var_os("SystemRoot").as_deref(),
+        )
+    }
+
+    /// [`Toolchain::command`] with the platform and the player's `ComSpec` and `SystemRoot`
+    /// passed in, so the `ComSpec` repair can be tested on any platform.
+    fn command_with(
+        &self,
+        program: &Path,
+        windows: bool,
+        comspec: Option<&std::ffi::OsStr>,
+        system_root: Option<&std::ffi::OsStr>,
+    ) -> Command {
         let mut cmd = crate::process::command(program);
         let path = std::env::var_os("PATH").unwrap_or_default();
         let mingw = self.host.c_toolchain.map(|_| self.mingw_bin());
@@ -329,12 +346,8 @@ impl Toolchain {
         if fs::create_dir_all(&tmp).is_ok() {
             cmd.env("TMPDIR", &tmp).env("TMP", &tmp).env("TEMP", &tmp);
         }
-        if cfg!(windows) {
-            set_comspec(
-                &mut cmd,
-                std::env::var_os("ComSpec").as_deref(),
-                std::env::var_os("SystemRoot").as_deref(),
-            );
+        if windows {
+            set_comspec(&mut cmd, comspec, system_root);
         }
         for name in SCRUBBED {
             cmd.env_remove(name);
@@ -992,19 +1005,32 @@ mod tests {
         assert_eq!(comspec_fix(Some(expected.as_os_str()), Some(root_os)), None);
         assert_eq!(comspec_fix(None, None), None);
 
-        // What a build's command gets: the replacement is set, a good ComSpec is not touched.
-        let set = |comspec: Option<&std::ffi::OsStr>| {
-            let mut cmd = Command::new("tool");
-            set_comspec(&mut cmd, comspec, Some(root_os));
+        // What a build's command gets, through `command_with`: the replacement is set on
+        // Windows only, a good ComSpec is not touched, and the scrubbing still applies.
+        let toolchain = Toolchain {
+            dir: root.path().join("toolchain"),
+            host: &HOSTS[0],
+        };
+        let comspec_of = |windows: bool, comspec: Option<&std::ffi::OsStr>| {
+            let cmd = toolchain.command_with(Path::new("tool"), windows, comspec, Some(root_os));
             cmd.get_envs()
                 .find(|(name, _)| *name == "ComSpec")
                 .map(|(_, value)| value.map(std::ffi::OsStr::to_owned))
         };
         assert_eq!(
-            set(Some(missing.as_os_str())),
+            comspec_of(true, Some(missing.as_os_str())),
             Some(Some(expected.clone().into_os_string()))
         );
-        assert_eq!(set(Some(expected.as_os_str())), None);
+        assert_eq!(
+            comspec_of(true, None),
+            Some(Some(expected.clone().into_os_string()))
+        );
+        assert_eq!(comspec_of(true, Some(expected.as_os_str())), None);
+        assert_eq!(comspec_of(false, Some(missing.as_os_str())), None);
+        let cmd = toolchain.command_with(Path::new("tool"), true, None, Some(root_os));
+        assert!(cmd
+            .get_envs()
+            .any(|(name, value)| name == "RUSTFLAGS" && value.is_none()));
     }
 
     #[test]
