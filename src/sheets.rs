@@ -35,6 +35,8 @@ pub(crate) enum Sheet {
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
     Search,
+    /// A GitHub link or the mods that link yielded.
+    GithubAdd,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
 }
@@ -260,6 +262,9 @@ impl Launcher {
 
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
+        if self.ui.sheet == Some(Sheet::GithubAdd) && sheet != Sheet::GithubAdd {
+            self.github.close();
+        }
         self.ui.sheets.error = None;
         self.ui.sheet = Some(sheet);
     }
@@ -292,7 +297,9 @@ impl Launcher {
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
         }
-        self.ui.sheet = None;
+        if self.ui.sheet.take() == Some(Sheet::GithubAdd) {
+            self.github.close();
+        }
         self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
     }
@@ -456,7 +463,11 @@ impl Launcher {
 
     /// The sheet on screen, if any: a pending library question, a pending permission, then the
     /// sheet asked for.
-    pub(crate) fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(crate) fn live_sheet(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
@@ -482,6 +493,7 @@ impl Launcher {
             Some(Sheet::SwitchBuild) => Some(self.switch_build_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
+            Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
             Some(Sheet::ModBuild) => {
                 let sheet = self.build_modal(cx);
                 if sheet.is_none() {
@@ -685,6 +697,7 @@ impl Launcher {
             .cloned()
             .expect("shown only while mods are listed");
         let names: Vec<String> = removal.items.iter().map(|i| i.title.clone()).collect();
+        let github_unfit = removal.items.iter().any(|i| i.github_unfit);
         let log = removal.log();
         let why = removal.why.then(|| {
             let items = removal
@@ -700,7 +713,14 @@ impl Launcher {
             .gap(px(12.))
             .child(title(removal.heading()))
             .child(muted(names.join(" · ")))
+            .children(removal.items.iter().filter(|i| i.github_unfit).map(|i| {
+                muted(trf(
+                    "{mod}: Not available for your version",
+                    &[("mod", &i.title)],
+                ))
+            }))
             .children(why)
+            .children(removal.error.map(muted))
             .child(
                 div()
                     .flex()
@@ -712,6 +732,8 @@ impl Launcher {
                             "alt-removal-why",
                             if removal.why {
                                 tr("Hide why")
+                            } else if github_unfit {
+                                tr("Details")
                             } else {
                                 tr("Show why")
                             },
@@ -756,7 +778,7 @@ impl Launcher {
             .unwrap_or_default();
         let installing = matches!(
             self.mods.world_ask.as_ref().map(|ask| &ask.then),
-            Some(crate::mods_page::Then::Install(_))
+            Some(crate::mods_page::Then::Install(_) | crate::mods_page::Then::Retry(_))
         );
         let entries = self
             .instances
@@ -1128,7 +1150,7 @@ impl Launcher {
                         self.mods_install(source, id, known, None)
                     }
                     PendingConsent::Collection(ids, name) => self.mods_install_many(ids, name),
-                    PendingConsent::Github(found, only) => self.github_install(found, only),
+                    PendingConsent::Github(_) => self.resume_install(),
                 }
             }
         }

@@ -4,7 +4,6 @@ use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
     browser::{installed::Entry, mod_list, Project, SourceId},
-    github_mods::Resolved,
     native_status::{BuildInput, Registry},
 };
 
@@ -23,7 +22,8 @@ pub(super) enum PendingConsent {
     Install(SourceId, String, Option<Project>, Option<String>),
     /// The registry mods of a collection to install together, and the collection's name.
     Collection(Vec<String>, String),
-    Github(Resolved, Option<String>),
+    /// A prepared GitHub install in the shared queue's consent slot.
+    Github(String),
 }
 
 impl PendingConsent {
@@ -52,7 +52,7 @@ impl PendingConsent {
                 .filter(|title| !title.is_empty())
                 .unwrap_or_else(|| id.clone()),
             Self::Collection(_, name) => name.clone(),
-            Self::Github(found, _) => found.label(),
+            Self::Github(name) => name.clone(),
         }
     }
 

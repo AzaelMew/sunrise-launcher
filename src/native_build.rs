@@ -63,6 +63,9 @@ impl Launcher {
         let Some(base) = base else {
             let error = tr("Install Sunrise first.").to_string();
             self.native_log_preflight(&error);
+            if let Err(restore) = self.undo_unstarted_installs(&instance.id) {
+                self.mods.message = Some(Err(restore));
+            }
             self.native_error = Some(error);
             self.play_after_build = None;
             return;

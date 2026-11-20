@@ -24,6 +24,13 @@ pub(crate) enum Request {
         /// Installed registry mods this install removes with it (the ones it can't live with).
         replacing: Vec<sunrise_launcher::browser::installed::Approval>,
     },
+    /// One selected set from a GitHub link, ready to stage as a single attempt.
+    Github {
+        target: Target,
+        link: String,
+        prepared: Box<sunrise_launcher::github_mods::Prepared>,
+        approvals: Vec<sunrise_launcher::browser::installed::Approval>,
+    },
     /// A collection's mods, the collection's name and what the player approved.
     Many(
         Target,
@@ -37,7 +44,9 @@ impl Request {
     /// The profile and game it is for.
     pub(crate) fn target(&self) -> &Target {
         match self {
-            Request::One { target, .. } | Request::Many(target, ..) => target,
+            Request::One { target, .. }
+            | Request::Many(target, ..)
+            | Request::Github { target, .. } => target,
         }
     }
 
@@ -48,7 +57,8 @@ impl Request {
             replacing: approvals,
             ..
         }
-        | Request::Many(_, _, _, approvals)) = &mut self;
+        | Request::Many(_, _, _, approvals)
+        | Request::Github { approvals, .. }) = &mut self;
         approvals.extend(mods.iter().map(|id| {
             sunrise_launcher::browser::installed::Approval::DropContent { id: id.clone() }
         }));
@@ -163,6 +173,7 @@ mod tests {
         match step {
             Some(Step::Install(Request::One { id, .. })) => id,
             Some(Step::Install(Request::Many(..))) => "many".into(),
+            Some(Step::Install(Request::Github { .. })) => "github".into(),
             Some(Step::Build(ids)) => format!("build {}", ids.join(",")),
             None => "nothing".into(),
         }

@@ -10,6 +10,7 @@ pub(crate) struct Item {
     pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) reason: String,
+    pub(crate) github_unfit: bool,
     /// Set when the mod's own compile failed.
     pub(crate) log: Option<String>,
     /// The checksum of the installed file when it was listed: the mod goes only if it is still
@@ -22,6 +23,9 @@ pub(crate) struct Removal {
     /// The instance whose profile the mods are in.
     pub(crate) instance: String,
     pub(crate) items: Vec<Item>,
+    /// Attempt IDs awaiting the removal decision, so a crash still undoes the install.
+    pub(crate) sealed: Vec<String>,
+    pub(crate) error: Option<String>,
     /// "Show why" is open.
     pub(crate) why: bool,
 }
@@ -58,6 +62,12 @@ impl Pending {
         }));
     }
 
+    pub(super) fn seal(&mut self, instance: &str, attempts: Vec<String>) {
+        if let Some(removal) = self.0.iter_mut().find(|r| r.instance == instance) {
+            removal.sealed = attempts;
+        }
+    }
+
     pub(crate) fn first(&self) -> Option<&Removal> {
         self.0.first()
     }
@@ -73,6 +83,12 @@ impl Pending {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    pub(super) fn includes(&self, instance: &str, id: &str) -> bool {
+        self.0
+            .iter()
+            .any(|r| r.instance == instance && r.items.iter().any(|item| item.id == id))
     }
 }
 
@@ -96,6 +112,7 @@ impl Removal {
                 id: r.id,
                 title: r.title,
                 reason: r.reason,
+                github_unfit: false,
                 log: None,
                 checksum: String::new(),
             })
@@ -138,6 +155,7 @@ mod tests {
             id: id.into(),
             title: id.to_uppercase(),
             reason: "r".into(),
+            github_unfit: false,
             log: log.map(str::to_owned),
             checksum: String::new(),
         }

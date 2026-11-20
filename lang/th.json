@@ -1551,5 +1551,16 @@
   "Removing mods…": "Removing mods…",
   "Replace the local file to update this mod.": "Replace the local file to update this mod.",
   "Updates from GitHub": "Updates from GitHub",
-  "{mod} changed since you reviewed it. Choose again.": "{mod} changed since you reviewed it. Choose again."
+  "{mod} changed since you reviewed it. Choose again.": "{mod} changed since you reviewed it. Choose again.",
+  "Checking GitHub…": "Checking GitHub…",
+  "Choose mods to install": "Choose mods to install",
+  "Enter a GitHub link.": "Enter a GitHub link.",
+  "GitHub lookup stopped.": "GitHub lookup stopped.",
+  "Native mods aren’t available on this computer.": "Native mods aren’t available on this computer.",
+  "No Sunrise mods were found at this link.": "No Sunrise mods were found at this link.",
+  "No Sunrise mods were found in this release.": "No Sunrise mods were found in this release.",
+  "Paste a link to a repository, release, tag, branch or commit.": "Paste a link to a repository, release, tag, branch or commit.",
+  "Restart the launcher and try again.": "Restart the launcher and try again.",
+  "This release wasn’t found.": "This release wasn’t found.",
+  "{mod}: Not available for your version": "{mod}: Not available for your version"
 }

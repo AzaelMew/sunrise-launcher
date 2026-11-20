@@ -654,7 +654,7 @@ impl Launcher {
         };
         let index = sunrise::fetched_index();
         let game = self.mods_game();
-        model::rows(
+        let mut rows = model::rows(
             &snap.entries,
             &model::World {
                 index: index.as_deref(),
@@ -664,7 +664,13 @@ impl Launcher {
                 waiting: &snap.waiting,
                 local: &snap.local,
             },
-        )
+        );
+        if let Some(instance) = self.selected_instance() {
+            rows.retain(|row| {
+                row.origin().is_none() || !self.mods.github_pending(&instance.id, &row.id)
+            });
+        }
+        rows
     }
 
     /// Whether another install or update holds the folder right now.
@@ -782,6 +788,7 @@ impl Launcher {
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
         let placeholder: SharedString = match (packs, installed) {
             (false, false) => tr("Search mods"),
+            (false, true) if self.content_width() < 860. => tr("Search mods"),
             (false, true) => tr("Search your mods"),
             (true, false) => match self.ui.mods.packs.scope {
                 pack_discover::Scope::Resource => tr("Search resource packs"),
@@ -809,9 +816,9 @@ impl Launcher {
             .track_focus(focus)
             .seen()
             .flex_1()
-            .min_w(px(120.))
+            .min_w(px(if installed && !packs { 96. } else { 120. }))
             .h(px(tokens::ACTION))
-            .px(px(16.))
+            .px(px(if installed && !packs { 12. } else { 16. }))
             .rounded(crate::tokens::r(crate::tokens::R_CARD))
             .text_size(px(tokens::BODY))
             .cursor_text()
@@ -863,8 +870,9 @@ impl Launcher {
         };
         div()
             .flex()
+            .when(installed && !packs, |d| d.flex_wrap().gap_y(px(10.)))
             .items_center()
-            .gap(px(20.))
+            .gap_x(px(if installed && !packs { 12. } else { 20. }))
             .child(
                 div()
                     .flex_none()
@@ -895,7 +903,19 @@ impl Launcher {
                 Launcher::choose_view,
                 cx,
             ))
-            .child(field)
+            .child(if installed && !packs {
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w(px(233.))
+                    .items_center()
+                    .gap(px(8.))
+                    .child(field)
+                    .child(self.github_add_button(cx))
+                    .into_any_element()
+            } else {
+                field.into_any_element()
+            })
     }
 }
 

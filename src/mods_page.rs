@@ -11,7 +11,7 @@ use sunrise_launcher::browser::{
 };
 use sunrise_launcher::native_status;
 
-mod queue;
+pub(super) mod queue;
 pub(crate) mod removal;
 
 /// How a build ended, for the install behind it.
@@ -175,6 +175,8 @@ pub(super) struct Mods {
     /// A build switch whose mods are being moved first: the profile, and the pin it will get.
     /// The profile the install that runs was asked for.
     running: Option<queue::Target>,
+    /// The link and IDs of the GitHub request publishing now, before its build takes up the IDs.
+    running_github: Option<(String, Vec<String>)>,
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
     /// is removed until it is answered, and the answer defaults to Stay.
     pub(crate) world_ask: Option<WorldAsk>,
@@ -273,6 +275,31 @@ impl Mods {
             || self.queue.will_build(instance, id)
     }
 
+    /// Don't show a GitHub row before its install and build succeeded, or while it is named on
+    /// the shared failure/removal sheet.
+    pub(super) fn github_pending(&self, instance: &str, id: &str) -> bool {
+        (self
+            .running
+            .as_ref()
+            .is_some_and(|t| t.instance == instance)
+            && self
+                .running_github
+                .as_ref()
+                .is_some_and(|(_, ids)| ids.iter().any(|i| i == id)))
+            || self.builds(instance, id)
+            || self.removal.includes(instance, id)
+    }
+
+    fn release_idle(&mut self, instance: &str) {
+        if self
+            .install_owners
+            .get(instance)
+            .is_some_and(|lease| !lease.outstanding())
+        {
+            self.install_owners.remove(instance);
+        }
+    }
+
     /// Whether the install of mod `id` waits for its turn.
     pub(crate) fn waiting(&self, id: &str) -> bool {
         self.queue.waits(id)
@@ -304,6 +331,7 @@ impl Mods {
             queue: Default::default(),
             install_owners: HashMap::new(),
             running: None,
+            running_github: None,
             updating: false,
             consent_request: None,
             building: Default::default(),
@@ -335,6 +363,7 @@ impl Launcher {
         let mut done = false;
         let mut native = Vec::new();
         let mut native_in = None;
+        let mut github_error = None;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
@@ -348,6 +377,9 @@ impl Launcher {
                 Event::NeedsConsent(ask, request) => {
                     m.busy = None;
                     m.running = None;
+                    if m.running_github.take().is_some() {
+                        m.release_idle(&request.target().instance);
+                    }
                     // The exact request waits, whole: the answer starts it again, and the
                     // queue behind it does not move until then (`consent_request`).
                     m.consent_request = Some(*request);
@@ -360,10 +392,11 @@ impl Launcher {
                     m.busy = None;
                     m.running = None;
                     let instance = request.target().instance.clone();
+                    let github = m.running_github.take().is_some();
                     match sunrise_launcher::worlds::question(&request.target().home, &mods) {
                         Ok(Some(question)) => {
                             m.world_ask = Some(WorldAsk {
-                                instance,
+                                instance: instance.clone(),
                                 question,
                                 then: Then::Retry(request),
                             })
@@ -371,18 +404,22 @@ impl Launcher {
                         Ok(None) => m.message = Some(Err(tr("Try the install again.").to_string())),
                         Err(e) => m.message = Some(Err(e)),
                     }
+                    if github && m.world_ask.is_none() {
+                        m.release_idle(&instance);
+                    }
                 }
                 Event::Done(result) => {
                     done = true;
                     let id = m.busy.take().map(|(id, ..)| id);
-                    native_in = m.running.take().map(|t| t.instance);
+                    let target = m.running.take();
+                    let github = m.running_github.take();
+                    if let (Some((link, _)), Some(target), Err(error)) = (&github, &target, &result)
+                    {
+                        github_error = Some((link.clone(), target.clone(), error.clone()));
+                    }
+                    native_in = target.map(|t| t.instance);
                     if let Some(instance) = &native_in {
-                        if m.install_owners
-                            .get(instance)
-                            .is_some_and(|lease| !lease.outstanding())
-                        {
-                            m.install_owners.remove(instance);
-                        }
+                        m.release_idle(instance);
                     }
                     m.card_error = match (&result, &id) {
                         (Err(why), Some(id)) => Some(CardError {
@@ -444,6 +481,9 @@ impl Launcher {
                     }
                 }
             }
+        }
+        if let Some((link, target, error)) = github_error {
+            self.github_install_error(link, target, &error);
         }
         if done {
             // A data pack put into a world shows in its list on Home.
@@ -621,7 +661,7 @@ impl Launcher {
     }
 
     /// The profile an install asked for now is bound to.
-    fn queue_target(&self) -> queue::Target {
+    pub(super) fn queue_target(&self) -> queue::Target {
         queue::Target {
             instance: self
                 .selected_instance()
@@ -642,7 +682,14 @@ impl Launcher {
             || self.pending_consent.is_some()
             || self.mods.world_ask.is_some()
             || !self.mods.removal.is_empty()
-            || self.mods_lock() == Some(crate::mods::Lock::Updating);
+            || matches!(
+                self.mods_lock(),
+                Some(
+                    crate::mods::Lock::Updating
+                        | crate::mods::Lock::GameRunning
+                        | crate::mods::Lock::Preparing
+                )
+            );
         if let Some(request) = self.mods.queue.submit(request, busy) {
             self.start_install(request);
         }
@@ -650,6 +697,28 @@ impl Launcher {
 
     fn start_install(&mut self, request: queue::Request) {
         let target = request.target();
+        if let queue::Request::Github { link, .. } = &request {
+            let ready = self
+                .instances
+                .list
+                .iter()
+                .find(|i| i.id == target.instance && i.home == target.home)
+                .and_then(|i| self.version_of(i));
+            let unavailable = if sunrise_launcher::rust_toolchain::host().is_none() {
+                Some(tr("Native mods aren’t available on this computer."))
+            } else if ready.is_none() {
+                Some(tr("Install Sunrise first."))
+            } else {
+                None
+            };
+            if let Some(line) = unavailable {
+                let instance = &target.instance;
+                self.mods.release_idle(instance);
+                self.mods.message = Some(Err(line.into()));
+                self.github_install_failure(link.clone(), target.clone(), line.into(), line.into());
+                return;
+            }
+        }
         let (lease, fresh) = match self.mods.install_owners.get(&target.instance) {
             Some(lease) => (lease.clone(), false),
             None => match sunrise::txn::Lease::acquire(&target.home) {
@@ -661,7 +730,10 @@ impl Launcher {
                     (lease, true)
                 }
                 Err(error) => {
-                    self.mods.message = Some(Err(error));
+                    self.mods.message = Some(Err(error.clone()));
+                    if let queue::Request::Github { target, link, .. } = request {
+                        self.github_install_error(link, target, &error.into());
+                    }
                     return;
                 }
             },
@@ -684,7 +756,90 @@ impl Launcher {
             queue::Request::Many(target, ids, shown, approvals) => {
                 self.start_install_many(target, (lease, fresh), ids, shown, approvals)
             }
+            queue::Request::Github {
+                target,
+                link,
+                prepared,
+                approvals,
+            } => {
+                self.start_install_github(target, (lease, fresh), link, prepared, approvals);
+            }
         }
+    }
+
+    pub(super) fn mods_install_github(
+        &mut self,
+        target: queue::Target,
+        link: String,
+        prepared: sunrise_launcher::github_mods::Prepared,
+    ) {
+        self.submit_install(queue::Request::Github {
+            target,
+            link,
+            prepared: Box::new(prepared),
+            approvals: Vec::new(),
+        });
+    }
+
+    fn start_install_github(
+        &mut self,
+        target: queue::Target,
+        (lease, fresh): (Arc<sunrise::txn::Lease>, bool),
+        link: String,
+        prepared: Box<sunrise_launcher::github_mods::Prepared>,
+        approvals: Vec<installed::Approval>,
+    ) {
+        let Some(first) = prepared.mods().first() else {
+            self.mods.release_idle(&target.instance);
+            return;
+        };
+        let name = match prepared.mods().len() {
+            1 => first.name.clone(),
+            count => trf("{count} mods", &[("count", &count.to_string())]),
+        };
+        self.mods.message = None;
+        self.mods.card_error = None;
+        self.mods.busy = Some((first.id.clone(), tr("Installing…").into(), 0.));
+        self.mods.running = Some(target.clone());
+        self.mods.running_github = Some((
+            link.clone(),
+            prepared.mods().iter().map(|m| m.id.clone()).collect(),
+        ));
+        let tx = self.mods.tx.clone();
+        std::thread::spawn(move || {
+            let progress = |line: &str, fraction| {
+                let _ = tx.send(Event::Progress(line.into(), fraction));
+            };
+            let result = (|| {
+                if fresh {
+                    lease.recover_abandoned()?;
+                }
+                lease.install_github(&prepared, &approvals, &progress)
+            })();
+            drop(lease);
+            let request = || {
+                Box::new(queue::Request::Github {
+                    target,
+                    link,
+                    prepared,
+                    approvals,
+                })
+            };
+            let _ = tx.send(match result {
+                Err(installed::InstallError::NeedsNativeConsent { .. }) => {
+                    Event::NeedsConsent(Box::new(PendingConsent::Github(name)), request())
+                }
+                Err(installed::InstallError::NeedsWorlds { mods }) => {
+                    Event::NeedsWorlds(mods, request())
+                }
+                other => Event::Done(other.map(|native| Finished {
+                    said: None,
+                    native,
+                    also: Vec::new(),
+                    updated: Vec::new(),
+                })),
+            });
+        });
     }
 
     fn start_install_one(
@@ -874,6 +1029,10 @@ impl Launcher {
             return;
         };
         if answer == sunrise_launcher::worlds::Answer::Stay {
+            if matches!(&ask.then, Then::Retry(request) if matches!(**request, queue::Request::Github { .. }))
+            {
+                self.mods.release_idle(&ask.instance);
+            }
             if matches!(ask.then, Then::Build(_)) && self.native_attempts.is_some() {
                 self.install_build_ended(BuildEnd::Stopped(native_mods::CANCELLED.into()));
             }
@@ -887,7 +1046,13 @@ impl Launcher {
             Then::Install(ask) => self.install_replacing(*ask, &allow),
             Then::Retry(request) => {
                 let mods: Vec<String> = allow.into_iter().collect();
-                self.submit_install(request.approving(&mods));
+                let next = request.approving(&mods);
+                if matches!(next, queue::Request::Github { .. }) {
+                    // This was in front of the queue when it asked; keep its lease and turn.
+                    self.start_install(next);
+                } else {
+                    self.submit_install(next);
+                }
             }
             Then::Update => self.migrate_mods(&ask.instance, allow),
         }
@@ -930,6 +1095,19 @@ impl Launcher {
         });
     }
 
+    /// The base disappeared between installing and starting its build. Nothing was sealed,
+    /// but this launcher still owns the unbuilt install batch and can restore it.
+    pub(super) fn undo_unstarted_installs(&mut self, instance: &str) -> Result<(), String> {
+        if let Some(lease) = self.mods.install_owners.get(instance) {
+            lease.recover_abandoned()?;
+            self.mods.install_owners.remove(instance);
+            self.mods.building = Default::default();
+            self.mods.reload_installed();
+            self.mods.installed_list.reset();
+        }
+        Ok(())
+    }
+
     /// A build ended. The mods it left out because they didn't compile or don't fit are
     /// listed to go (`continue_removal`); the build already went on without them. If it stopped
     /// for another reason, every mod it touched is put back as it was, and the ones it added go
@@ -953,9 +1131,36 @@ impl Launcher {
                     BuildEnd::Stopped(why) => Some(why),
                     _ => None,
                 };
+                let github = native_status::untracked(&instance.home)
+                    .into_iter()
+                    .filter_map(|m| Some((m.id, (m.name, m.origin?.sha256))))
+                    .collect::<HashMap<_, _>>();
+                let mut github_unfit = std::collections::HashSet::new();
                 let failures = match &stopped {
                     Some(_) => Vec::new(),
-                    None => native_mods::build_failures(&self.native_left_out_of(instance)),
+                    None => {
+                        let left = self.native_left_out_of(instance);
+                        let mut failures = native_mods::build_failures(&left);
+                        for excluded in left.iter().filter(|m| github.contains_key(&m.id)) {
+                            if matches!(
+                                excluded.why,
+                                native_mods::Why::OtherVersion | native_mods::Why::Unfit(_)
+                            ) {
+                                github_unfit.insert(excluded.id.clone());
+                            }
+                            if matches!(
+                                excluded.why,
+                                native_mods::Why::OtherVersion | native_mods::Why::Clash(_)
+                            ) {
+                                failures.push(native_mods::BuildFailure {
+                                    id: excluded.id.clone(),
+                                    reason: excluded.label(),
+                                    log: String::new(),
+                                });
+                            }
+                        }
+                        failures
+                    }
                 };
                 match build_cost(&brought, stopped.is_some(), failures) {
                     BuildCost::Nothing => lease.done(&attempts),
@@ -969,21 +1174,44 @@ impl Launcher {
                         self.mods.reload_installed();
                         result
                     }
-                    BuildCost::Failures(failures) => lease.done(&attempts).map(|()| {
+                    BuildCost::Failures(failures) => {
                         let entries = installed::Installed::load(&instance.home).entries;
-                        let titles: HashMap<String, String> = entries
-                            .iter()
-                            .map(|e| (e.project.clone(), e.title.clone()))
-                            .collect();
-                        let items = failures.into_iter().map(|f| removal::Item {
-                            title: titles.get(&f.id).cloned().unwrap_or_else(|| f.id.clone()),
-                            id: f.id,
-                            reason: f.reason,
-                            log: Some(f.log),
-                            checksum: String::new(),
+                        let keep_sealed = !attempts.is_empty()
+                            && failures.iter().any(|f| github.contains_key(&f.id));
+                        let items = failures.into_iter().filter_map(|f| {
+                            let registered = entries.iter().find(|e| e.project == f.id);
+                            let local = github.get(&f.id);
+                            if keep_sealed && registered.is_none() && local.is_none() {
+                                // Hand-copied mods aren't ours to remove.
+                                return None;
+                            }
+                            Some(removal::Item {
+                                title: registered
+                                    .map(|e| e.title.clone())
+                                    .or_else(|| local.map(|(name, _)| name.clone()))
+                                    .unwrap_or_else(|| f.id.clone()),
+                                github_unfit: github_unfit.contains(&f.id),
+                                id: f.id,
+                                reason: f.reason,
+                                log: Some(f.log),
+                                checksum: local.map_or_else(String::new, |(_, hash)| {
+                                    format!("SHA-256:{hash}")
+                                }),
+                            })
                         });
-                        self.mods.removal.add(&instance_id, &entries, items);
-                    }),
+                        if keep_sealed {
+                            self.mods.removal.add(&instance_id, &entries, items);
+                            self.mods.removal.seal(&instance_id, attempts);
+                            self.mods
+                                .install_owners
+                                .insert(instance_id.clone(), lease.clone());
+                            Ok(())
+                        } else {
+                            lease
+                                .done(&attempts)
+                                .map(|()| self.mods.removal.add(&instance_id, &entries, items))
+                        }
+                    }
                 }
             }
         };
@@ -1001,7 +1229,7 @@ impl Launcher {
     /// Continue on the removal sheet: the listed mods go. Those whose build failed are
     /// remembered for the cards.
     pub(crate) fn continue_removal(&mut self) {
-        let Some(removal) = self.mods.removal.take_first() else {
+        let Some(removal) = self.mods.removal.first() else {
             return;
         };
         let Some(home) = self
@@ -1009,32 +1237,54 @@ impl Launcher {
             .list
             .iter()
             .find(|i| i.id == removal.instance)
-            .map(|i| i.home.clone())
+            .map(|i| &i.home)
         else {
+            self.mods.removal.take_first();
             return;
         };
-        // One transaction under the profile's lock, and only the files that are still the ones
-        // listed: a crash in it is undone at the next start like an install's.
         let wanted: Vec<(String, String)> = removal
             .items
             .iter()
             .map(|item| (item.id.clone(), item.checksum.clone()))
             .collect();
-        let mut failed = Vec::new();
-        match sunrise::remove_checked(&home, &wanted) {
-            Ok(gone) => {
-                for item in removal.items.iter().filter(|i| gone.contains(&i.id)) {
-                    if let Some(log) = &item.log {
-                        failed.push(native_mods::BuildFailure {
-                            id: item.id.clone(),
-                            reason: item.reason.clone(),
-                            log: log.clone(),
-                        });
-                    }
+        let removed = if removal.sealed.is_empty() {
+            sunrise::remove_checked(home, &wanted)
+        } else {
+            self.mods
+                .install_owners
+                .get(&removal.instance)
+                .ok_or_else(|| tr("Restart the launcher and try again.").to_string())
+                .and_then(|lease| lease.remove_after_build(&wanted, &removal.sealed))
+        };
+        let gone = match removed {
+            Ok(gone) => gone,
+            Err(e) if !removal.sealed.is_empty() => {
+                if let Some(removal) = self.mods.removal.first_mut() {
+                    removal.error = Some(e);
                 }
+                return;
             }
-            Err(e) => self.mods.message = Some(Err(e)),
-        }
+            Err(e) => {
+                self.mods.message = Some(Err(e));
+                Vec::new()
+            }
+        };
+        let Some(removal) = self.mods.removal.take_first() else {
+            return;
+        };
+        self.mods.release_idle(&removal.instance);
+        let failed: Vec<_> = removal
+            .items
+            .into_iter()
+            .filter(|item| gone.contains(&item.id))
+            .filter_map(|item| {
+                Some(native_mods::BuildFailure {
+                    id: item.id,
+                    reason: item.reason,
+                    log: item.log?,
+                })
+            })
+            .collect();
         if !failed.is_empty() {
             self.mods.failed = Some(InstallFailure::ModsDidNotBuild(failed));
         }
