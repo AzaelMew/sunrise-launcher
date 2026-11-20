@@ -1024,6 +1024,7 @@ pub fn install(
     project: &Project,
     home: &Path,
     game: &str,
+    replacing: &[String],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let index = index()?;
@@ -1048,6 +1049,7 @@ pub fn install(
             .native_mods_allowed_at
             .is_some(),
         true,
+        replacing,
         progress,
     )
 }
@@ -1075,6 +1077,7 @@ pub fn update_native(
             .native_mods_allowed_at
             .is_some(),
         turn_on,
+        &[],
         progress,
     )
 }
@@ -1089,6 +1092,7 @@ fn install_from(
     game: &str,
     native_allowed: bool,
     turn_on: bool,
+    replacing: &[String],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, String> {
     let p = index
@@ -1101,6 +1105,7 @@ fn install_from(
                 index,
                 local,
                 home,
+                replacing,
                 progress,
             },
             p,
@@ -1204,6 +1209,7 @@ fn install_version_guarded(
         index,
         local,
         home,
+        replacing: &[],
         progress,
     };
     let (entry, file, unreadable) =
@@ -1263,6 +1269,8 @@ struct Install<'a> {
     index: &'a Index,
     local: bool,
     home: &'a Path,
+    /// Installed registry mods removed by this install, in the same transaction.
+    replacing: &'a [String],
     progress: &'a dyn Fn(&str, f32),
 }
 

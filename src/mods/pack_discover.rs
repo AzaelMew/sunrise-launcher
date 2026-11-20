@@ -549,7 +549,7 @@ fn install(
     })?;
     match project.kind {
         Kind::ResourcePack | Kind::Shader => {
-            let done = installed::install(&*source, project, false, home, game, progress)?;
+            let done = installed::install(&*source, project, false, home, game, &[], progress)?;
             let names: Vec<String> = done
                 .iter()
                 .map(|e| format!("{} {}", e.title, e.number))

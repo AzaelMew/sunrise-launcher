@@ -131,7 +131,7 @@ fn installs_with_dependencies_then_updates_and_removes() {
     fake.release("addon", "1", &["base"], b"addon pack", false);
     let addon = fake.project("addon").unwrap();
 
-    let done = install(&fake, &addon, false, &home, GAME, NONE).unwrap();
+    let done = install(&fake, &addon, false, &home, GAME, &[], NONE).unwrap();
     let files: Vec<&str> = done.iter().map(|e| e.file.as_str()).collect();
     assert_eq!(
         files,
@@ -147,7 +147,7 @@ fn installs_with_dependencies_then_updates_and_removes() {
 
     // Installing again with nothing new downloads nothing.
     fs::remove_file(home.join("resourcepacks/base-1.zip")).unwrap();
-    install(&fake, &addon, false, &home, GAME, NONE).unwrap();
+    install(&fake, &addon, false, &home, GAME, &[], NONE).unwrap();
     assert!(!home.join("resourcepacks/base-1.zip").exists());
 
     // An update replaces the old file.
@@ -157,7 +157,7 @@ fn installs_with_dependencies_then_updates_and_removes() {
         update_for(&fake, &entry, GAME).unwrap().unwrap().number,
         "2"
     );
-    install(&fake, &addon, false, &home, GAME, NONE).unwrap();
+    install(&fake, &addon, false, &home, GAME, &[], NONE).unwrap();
     assert!(!home.join("resourcepacks/addon-1.zip").exists());
     assert_eq!(
         fs::read(home.join("resourcepacks/addon-2.zip")).unwrap(),
@@ -195,6 +195,7 @@ fn nothing_is_installed_when_a_check_fails() {
         false,
         &home,
         GAME,
+        &[],
         NONE,
     )
     .unwrap_err();
@@ -205,6 +206,7 @@ fn nothing_is_installed_when_a_check_fails() {
         false,
         &home,
         GAME,
+        &[],
         NONE,
     )
     .unwrap_err();
@@ -224,6 +226,7 @@ fn nothing_is_installed_when_a_check_fails() {
         false,
         &home,
         GAME,
+        &[],
         NONE,
     )
     .unwrap_err();

@@ -21,6 +21,8 @@ pub(super) enum Request {
         source: SourceId,
         id: String,
         known: Option<Box<Project>>,
+        /// Installed registry mods this install removes with it (the ones it can't live with).
+        replacing: Vec<String>,
     },
     /// A collection's mods, and the collection's name.
     Many(Target, Vec<String>, String),
@@ -125,6 +127,7 @@ mod tests {
             source: SourceId::Sunrise,
             id: id.into(),
             known: None,
+            replacing: Vec::new(),
         }
     }
 

@@ -74,8 +74,19 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     }
     let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
     let home = dir.path().join("profile");
-    let run =
-        |index: &Index| install_from(index, true, &project, &home, GAME, false, true, &|_, _| {});
+    let run = |index: &Index| {
+        install_from(
+            index,
+            true,
+            &project,
+            &home,
+            GAME,
+            false,
+            true,
+            &[],
+            &|_, _| {},
+        )
+    };
     let mut bad = index.clone();
     bad.projects.last_mut().unwrap().versions[0].file.sha256 = "0".repeat(64);
     assert!(run(&bad)
@@ -137,6 +148,7 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
         GAME,
         false,
         false,
+        &[],
         &|_, _| {},
     )
     .unwrap();
@@ -158,8 +170,18 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     // A mod the player turned off is updated like any other and stays off, even though what it
     // requires is off too; a manual install of it still asks for the dependency to be on.
     mod_list::set_all_enabled(&home, &["fireflies", "sunrise_creatures"], false).unwrap();
-    let refused =
-        install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {}).unwrap_err();
+    let refused = install_from(
+        &index,
+        true,
+        &project,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap_err();
     assert!(refused.contains("installed but off"), "{refused}");
     let kept = install_from(
         &index,
@@ -169,6 +191,7 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
         GAME,
         false,
         false,
+        &[],
         &|_, _| {},
     )
     .unwrap();
@@ -402,6 +425,7 @@ fn a_mod_install_with_dependencies_keeps_the_unreadable_file_it_replaces() {
         index: &index,
         local: true,
         home: &home,
+        replacing: &[],
         progress: &|_, _| {},
     };
     dependencies::install(&install, p, &p.versions[0], false, true).unwrap();
@@ -453,6 +477,7 @@ fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
         index: &index,
         local: true,
         home: &home,
+        replacing: &[],
         progress: &|_, _| {},
     };
     let result = install.prepare(p, &p.versions[0], &list, &home.join("staging"));
@@ -481,6 +506,7 @@ fn a_failed_install_with_dependencies_leaves_no_copy_of_the_unreadable_file() {
         index: &index,
         local: true,
         home: &home,
+        replacing: &[],
         progress: &|_, _| {},
     };
     assert!(dependencies::install(&install, p, &p.versions[0], false, true).is_err());
@@ -616,6 +642,7 @@ fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_n
         index: &index,
         local: true,
         home: &home,
+        replacing: &[],
         progress: &|_, _| {},
     };
     let refused = dependencies::install(&install, p, &p.versions[0], false, true).unwrap_err();
@@ -718,6 +745,7 @@ fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file(
             index: &index,
             local: true,
             home: &home,
+            replacing: &[],
             progress: &|_, _| {},
         };
         let done = dependencies::install(&install, p, &p.versions[0], true, true).unwrap();
@@ -756,6 +784,7 @@ fn a_mod_install_with_dependencies_replaces_an_entry_whose_file_is_gone() {
         index: &index,
         local: true,
         home: &home,
+        replacing: &[],
         progress: &|_, _| {},
     };
     dependencies::install(&install, p, &p.versions[0], false, true).unwrap();
@@ -904,6 +933,7 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         GAME,
         false,
         true,
+        &[],
         &|_, _| {}
     )
     .is_err());
@@ -1068,9 +1098,20 @@ fn installs_checked_turns_on_and_removes() {
     let home = scratch("install");
     let p = hud(&index);
     // An instance on another build's Minecraft version gets that version's file, or none.
-    let other = install_from(&index, true, &p, &home, "26.9", false, true, &|_, _| {}).unwrap_err();
+    let other = install_from(
+        &index,
+        true,
+        &p,
+        &home,
+        "26.9",
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap_err();
     assert!(other.contains("no version for 26.9"), "{other}");
-    let done = install_from(&index, true, &p, &home, GAME, false, true, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, false, true, &[], &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
@@ -1233,7 +1274,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     let home = scratch("shader");
     let p = project_of(&index, index.project("glow").unwrap(), GAME).unwrap();
     assert_eq!(p.support(GAME), super::super::Support::Works);
-    let done = install_from(&index, true, &p, &home, GAME, false, true, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, false, true, &[], &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.sshader");
     assert_eq!(done[0].kind, Kind::Shader);
     assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
@@ -1254,7 +1295,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
     // A file of the same name the registry didn't put there is left alone.
     fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = install_from(&index, true, &p, &home, GAME, false, true, &|_, _| {}).unwrap_err();
+    let e = install_from(&index, true, &p, &home, GAME, false, true, &[], &|_, _| {}).unwrap_err();
     assert_eq!(
         e,
         "shaderpacks/glow-1.0.0.sshader is already there: move it away first."
@@ -1389,6 +1430,7 @@ fn install_takes_the_newest_version_this_build_can_install() {
         GAME,
         false,
         true,
+        &[],
         &|_, _| {},
     )
     .unwrap();
@@ -1417,6 +1459,7 @@ fn install_keeps_the_takedown_reason_of_a_version_it_could_not_install_anyway() 
         GAME,
         false,
         true,
+        &[],
         &|_, _| {},
     )
     .unwrap_err();
@@ -1573,7 +1616,18 @@ fn a_dependency_is_installed_at_the_version_the_plan_chose() {
     }
     let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
     let home = dir.path().join("profile");
-    let done = install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {}).unwrap();
+    let done = install_from(
+        &index,
+        true,
+        &project,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
     let creatures = done
         .iter()
         .find(|e| e.project == "sunrise_creatures")
@@ -1631,11 +1685,33 @@ fn a_dependency_the_plan_moves_to_a_newer_version_is_updated_and_stays_off_when_
     }
     let home = dir.path().join("profile");
     let first = project_of(&index, index.project("creatures").unwrap(), GAME).unwrap();
-    install_from(&index, true, &first, &home, GAME, false, true, &|_, _| {}).unwrap();
+    install_from(
+        &index,
+        true,
+        &first,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
     mod_list::set_enabled(&home, "creatures", false).unwrap();
     let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
 
-    let done = install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {}).unwrap();
+    let done = install_from(
+        &index,
+        true,
+        &project,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
 
     let creatures = done.iter().find(|e| e.project == "creatures").unwrap();
     assert_eq!(creatures.version, "2.0.0", "the plan's update is installed");
@@ -1645,6 +1721,179 @@ fn a_dependency_the_plan_moves_to_a_newer_version_is_updated_and_stays_off_when_
         "an off dependency stays off"
     );
     assert!(mod_list::is_enabled(&home, "fireflies"));
+}
+
+/// An index with `creatures` 1.0.0 and 2.0.0, `lamps` needing `creatures ^1` and `fireflies`
+/// needing `creatures ^2`, every file written under `dir`.
+fn conflict_index(dir: &Path) -> Index {
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, number: &str, needs: Option<&str>| {
+        let extra = needs.map_or(String::new(), |r| {
+            format!("[dependencies]\ncreatures = '{r}'")
+        });
+        let manifest = format!("id='{id}'\nname='{id}'\nversion='{number}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}");
+        let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &[]).unwrap();
+        let name = format!("{id}-{number}.smod");
+        let file = dir.join(&name);
+        fs::write(&file, &bytes).unwrap();
+        let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
+        let mut version = base.versions[0].clone();
+        version.version = number.into();
+        version.api = facts.api;
+        version.side = facts.side;
+        version.requires.clear();
+        version.dependencies = needs.map(|range| {
+            vec![index::Dependency {
+                id: "creatures".into(),
+                version: range.into(),
+                optional: false,
+                side: None,
+            }]
+        });
+        version.file = index::File {
+            name,
+            url: format!("file://{}", file.display()),
+            size: bytes.len() as u64,
+            sha256: index::sha256(&bytes),
+            signature: None,
+        };
+        version
+    };
+    for (id, versions) in [
+        (
+            "creatures",
+            vec![
+                make("creatures", "1.0.0", None),
+                make("creatures", "2.0.0", None),
+            ],
+        ),
+        ("lamps", vec![make("lamps", "1.0.0", Some("^1"))]),
+        ("fireflies", vec![make("fireflies", "1.0.0", Some("^2"))]),
+    ] {
+        index.projects.push(index::Project {
+            id: id.into(),
+            name: id.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        });
+    }
+    index
+}
+
+#[test]
+fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = conflict_index(dir.path());
+    let home = dir.path().join("profile");
+    let lamps = project_of(&index, index.project("lamps").unwrap(), GAME).unwrap();
+    install_from(
+        &index,
+        true,
+        &lamps,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    let fireflies = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+    // Without removing lamps the plan refuses.
+    assert!(install_from(
+        &index,
+        true,
+        &fireflies,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {}
+    )
+    .is_err());
+
+    let replacing = ["lamps".to_string()];
+    install_from(
+        &index,
+        true,
+        &fireflies,
+        &home,
+        GAME,
+        false,
+        true,
+        &replacing,
+        &|_, _| {},
+    )
+    .unwrap();
+
+    let list = installed::Installed::load(&home);
+    assert!(list.find(SourceId::Sunrise, "lamps").is_none());
+    assert_eq!(
+        list.find(SourceId::Sunrise, "creatures").unwrap().version,
+        "2.0.0"
+    );
+    assert!(list.find(SourceId::Sunrise, "fireflies").is_some());
+    assert!(!home.join("sunrise-mods/lamps.smod").exists());
+    assert!(!mod_list::is_enabled(&home, "lamps"));
+    assert!(mod_list::is_enabled(&home, "fireflies"));
+    assert!(!home.join("mod-browser/install-journal.json").exists());
+}
+
+#[test]
+fn an_install_that_replaces_a_mod_and_then_fails_leaves_that_mod_installed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = conflict_index(dir.path());
+    let home = dir.path().join("profile");
+    let lamps = project_of(&index, index.project("lamps").unwrap(), GAME).unwrap();
+    install_from(
+        &index,
+        true,
+        &lamps,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    // The new mod's file is gone: the download fails after the plan said yes.
+    let broken = index
+        .projects
+        .iter_mut()
+        .find(|p| p.id == "fireflies")
+        .unwrap();
+    broken.versions[0].file.url = format!("file://{}", dir.path().join("missing.smod").display());
+    let fireflies = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+
+    let replacing = ["lamps".to_string()];
+    assert!(install_from(
+        &index,
+        true,
+        &fireflies,
+        &home,
+        GAME,
+        false,
+        true,
+        &replacing,
+        &|_, _| {}
+    )
+    .is_err());
+
+    let list = installed::Installed::load(&home);
+    assert!(
+        list.find(SourceId::Sunrise, "lamps").is_some(),
+        "lamps was not removed"
+    );
+    assert_eq!(
+        list.find(SourceId::Sunrise, "creatures").unwrap().version,
+        "1.0.0"
+    );
+    assert!(home.join("sunrise-mods/lamps.smod").is_file());
+    assert!(mod_list::is_enabled(&home, "lamps"));
 }
 
 #[test]
