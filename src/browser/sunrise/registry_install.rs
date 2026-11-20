@@ -38,6 +38,7 @@ pub enum InstallError {
     Refused(String),
     Unproved(String),
     Download(String),
+    Compile(BuildNotice),
     Cancelled,
 }
 
@@ -45,6 +46,7 @@ impl std::fmt::Display for InstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Refused(text) | Self::Unproved(text) | Self::Download(text) => f.write_str(text),
+            Self::Compile(failure) => f.write_str(&failure.detail),
             Self::Cancelled => f.write_str(tr("Install cancelled.")),
         }
     }
@@ -62,16 +64,25 @@ pub struct NativeQuestion {
     pub reviewed: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct BuildNotice {
+    /// A matched compiler diagnostic, not a transport, preflight or tooling failure.
+    pub mods: Vec<String>,
+    pub detail: String,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InstalledBatch {
     pub added: Vec<installed::Entry>,
     pub updated: Vec<(String, installed::Entry)>,
+    pub failure: Option<BuildNotice>,
 }
 
 pub struct InstallHooks<'a> {
     pub progress: &'a dyn Fn(InstallProgress),
     pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
+    pub continue_after_failure: &'a dyn Fn(&BuildNotice) -> bool,
 }
 
 /// Profile selection is captured at the click. A saved active/pending build wins over the
@@ -311,6 +322,48 @@ pub fn install_registry(
                 last_sdk_refusal = Some(error);
                 continue;
             }
+            Err(native_mods::Failed::Mods {
+                left,
+                error,
+                compiling: true,
+            }) => {
+                let mut failed = BTreeSet::new();
+                for failure in left {
+                    match failure.why {
+                        native_mods::Why::Needs(_) => (),
+                        native_mods::Why::DidNotBuild
+                            if entries
+                                .get(&failure.id)
+                                .is_some_and(|entry| entry.version == failure.version) =>
+                        {
+                            failed.insert(failure.id);
+                        }
+                        _ => return Err(InstallError::Unproved(error)),
+                    }
+                }
+                if failed.is_empty() {
+                    return Err(InstallError::Unproved(error));
+                }
+                let notice = BuildNotice {
+                    mods: failed.iter().map(|id| entries[id].title.clone()).collect(),
+                    detail: error,
+                };
+                if !(hooks.continue_after_failure)(&notice) {
+                    return Err(InstallError::Compile(notice));
+                }
+                restore_or_disable(
+                    old.path(),
+                    next.path(),
+                    &before,
+                    &mut entries,
+                    &mut doc,
+                    failed,
+                    &notice,
+                )?;
+                validate_enabled(next.path(), &catalogue)?;
+                result.failure = Some(notice);
+                prove().map_err(|e| InstallError::Unproved(e.into()))?
+            }
             Err(error) => return Err(InstallError::Unproved(error.into())),
         };
         // Refuse definition loss until the shared Update/Remove world approval is present.
@@ -452,6 +505,7 @@ fn stage_package(
         page: shown.page,
         dependency: false,
         verdict: Some(trust_label(checked).into()),
+        compile_failure: None,
     })
 }
 
@@ -512,6 +566,50 @@ fn validate_enabled(home: &Path, catalogue: &index::Index) -> Result<(), Install
         }
     }
     Ok(())
+}
+
+fn restore_or_disable(
+    original: &Path,
+    candidate: &Path,
+    before: &Inventory,
+    entries: &mut BTreeMap<String, installed::Entry>,
+    doc: &mut Document,
+    failed: BTreeSet<String>,
+    notice: &BuildNotice,
+) -> Result<(), String> {
+    let old = Document::read(original)?;
+    let mut remaining = failed;
+    loop {
+        if remaining.is_empty() {
+            break;
+        }
+        for id in std::mem::take(&mut remaining) {
+            let entry = entries.get_mut(&id).ok_or_else(unproved_mods)?;
+            if let Some(previous) = before.get(&id) {
+                let target = candidate.join(&entry.file);
+                fs::copy(&previous.package.path, &target).map_err(|e| at(&target, e))?;
+                doc.set(&id, old.row(&id)?.ok_or_else(unproved_mods)?.clone())?;
+                entries.remove(&id);
+            } else {
+                mod_list::set_enabled(candidate, &id, false)?;
+                entry.compile_failure = Some(notice.detail.clone());
+                doc.replace(entry)?;
+            }
+        }
+        let packages = inventory(candidate)?;
+        let enabled: BTreeMap<_, _> = packages
+            .iter()
+            .filter(|(id, _)| mod_list::is_enabled(candidate, id))
+            .map(|(id, p)| (id.as_str(), &p.package.manifest))
+            .collect();
+        remaining.extend(
+            enabled
+                .iter()
+                .filter(|(_, p)| !required_satisfied(p, &enabled))
+                .map(|(id, _)| (*id).to_owned()),
+        );
+    }
+    doc.write(candidate)
 }
 
 fn guard_replacements(
@@ -592,6 +690,7 @@ impl Document {
             Some(_) => return Err(unproved_mods()),
             None => Map::new(),
         };
+        fields.remove("launcher_compile_failure");
         fields.remove("verdict");
         let Value::Object(encoded) = encoded else {
             unreachable!("Entry serializes as an object")

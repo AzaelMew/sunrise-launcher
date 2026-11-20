@@ -94,6 +94,13 @@ pub struct Entry {
     /// What a Sunrise mod's trust was when it was installed (`trust_label`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verdict: Option<String>,
+    /// A retained install's verified source stays off until the player can address this failure.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "launcher_compile_failure"
+    )]
+    pub compile_failure: Option<String>,
 }
 
 /// Whether `file` names something inside one of the folders the browser installs into, made of
@@ -367,6 +374,7 @@ pub(super) fn put(
             // Asked for by the player once: it stays theirs.
             dependency: step.dependency && old.as_ref().is_none_or(|o| o.dependency),
             verdict: None,
+            compile_failure: None,
         };
         debug_assert!(path.ends_with(name));
         installed

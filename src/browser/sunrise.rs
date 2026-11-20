@@ -1345,6 +1345,7 @@ impl Install<'_> {
             page: project.page.clone(),
             dependency: false,
             verdict: Some(trust_label(trust).into()),
+            compile_failure: None,
         };
         Ok((entry, Some((path, facts)), unreadable))
     }
@@ -1486,7 +1487,8 @@ mod dependencies;
 pub mod pack;
 mod registry_install;
 pub use registry_install::{
-    install_registry, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
+    install_registry, BuildNotice, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+    NativeQuestion,
 };
 #[cfg(test)]
 mod tests;
