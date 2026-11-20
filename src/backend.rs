@@ -1054,6 +1054,14 @@ pub fn installed() -> Vec<String> {
     installed_in(&versions_dir())
 }
 
+/// Installed versions and the newest installed Nightly known to be current, for Play.
+pub fn play_installations(selected: Option<&str>) -> (Vec<String>, Option<String>) {
+    let versions = versions_dir();
+    let installed = installed_in(&versions);
+    let nightly = crate::nightly::known_install(&versions, &installed, selected).cloned();
+    (installed, nightly)
+}
+
 fn installed_in(versions: &Path) -> Vec<String> {
     let mut tags: Vec<String> = fs::read_dir(versions)
         .into_iter()
@@ -1062,6 +1070,8 @@ fn installed_in(versions: &Path) -> Vec<String> {
         .filter(|e| e.path().join(COMPLETE).exists())
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
+    // Keep the display and inventory order deterministic. Play uses the rolling receipt instead
+    // of comparing same-day hashes.
     tags.sort_by(|a, b| compare_game_versions(b, a).then_with(|| b.cmp(a)));
     tags
 }

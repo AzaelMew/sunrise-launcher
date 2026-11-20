@@ -25,6 +25,7 @@ impl Launcher {
             channel,
             self.game_releases(),
             &self.installed,
+            self.known_nightly.as_ref(),
             self.launcher_version(),
         )
     }
@@ -99,9 +100,10 @@ fn profile_target<'a>(
     channel: Channel,
     releases: &'a [Release],
     installed: &'a [String],
+    nightly: Option<&'a String>,
     launcher_version: Option<&'a String>,
 ) -> Option<&'a String> {
-    pin.or_else(|| channel.play_target(releases, installed, launcher_version))
+    pin.or_else(|| channel.play_target(releases, installed, nightly, launcher_version))
 }
 
 /// Every Nightly published with a build for this platform, newest first, then the installed
@@ -170,11 +172,19 @@ mod tests {
         ];
         let installed = [old.clone()];
         let target = |releases: &[Release]| {
-            profile_target(None, Channel::Nightly, releases, &installed, Some(&old)).cloned()
+            profile_target(
+                None,
+                Channel::Nightly,
+                releases,
+                &installed,
+                Some(&old),
+                Some(&old),
+            )
+            .cloned()
         };
         assert_eq!(target(&releases), Some(old.clone()));
         assert_eq!(
-            profile_target(None, Channel::Nightly, &releases, &[], None).map(String::as_str),
+            profile_target(None, Channel::Nightly, &releases, &[], None, None).map(String::as_str),
             Some(latest)
         );
         assert_eq!(target(&[]), Some(old));
@@ -191,6 +201,7 @@ mod tests {
                 Channel::Nightly,
                 &releases,
                 std::slice::from_ref(&old),
+                Some(&old),
                 Some(&old)
             ),
             Some(&pin),

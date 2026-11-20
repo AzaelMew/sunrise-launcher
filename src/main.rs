@@ -224,6 +224,7 @@ struct Launcher {
     bar: (f32, f32),
     releases: Load<Vec<Release>>,
     installed: Vec<String>,
+    known_nightly: Option<String>,
     installing: Option<(String, f32)>,
     /// The versions being deleted on background threads. Each is already out of `installed`, so
     /// nothing can launch, select or prepare it, and its row can't install or remove it again.

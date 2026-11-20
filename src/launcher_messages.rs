@@ -2,6 +2,11 @@
 use super::*;
 
 impl Launcher {
+    fn refresh_installed(&mut self) {
+        (self.installed, self.known_nightly) =
+            backend::play_installations(self.settings.selected.as_deref());
+    }
+
     pub(crate) fn drain(&mut self, window: gpui::AnyWindowHandle, cx: &mut Context<Self>) {
         let mut changed = false;
         self.perf.tick();
@@ -46,7 +51,7 @@ impl Launcher {
                 }
                 Msg::Links(links) => self.links = links,
                 // The page reads is_prepared when drawn; `changed` redraws it.
-                Msg::Reused(_) => self.installed = backend::installed(),
+                Msg::Reused(_) => self.refresh_installed(),
                 Msg::Keychain(said) => self.keychain = said,
                 Msg::Owner(owns) => self.owner = Some(owns),
                 Msg::AccountHead(uuid, url, face, failed) => {
@@ -175,7 +180,7 @@ impl Launcher {
                 Msg::Installed(tag, result) => {
                     self.installing = None;
                     self.bar = (0., 0.);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     let as_update = self.update_install.take().filter(|t| *t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
@@ -241,7 +246,7 @@ impl Launcher {
                 }
                 Msg::Removed(tag, result) => {
                     self.removing.retain(|t| *t != tag);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     let selected = if self.settings_save_error.is_some() {
                         self.settings.selected.take()
                     } else {
@@ -256,7 +261,7 @@ impl Launcher {
                 Msg::Storage(result) => self.storage_arrived(result),
                 Msg::Imported(result) => {
                     self.importing_build = false;
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     match result {
                         // `build_import::import` saved the selection; this keeps the window's copy.
                         Ok(tag) => self.settings.selected = Some(tag),
@@ -265,7 +270,7 @@ impl Launcher {
                 }
                 Msg::Pruned(gone) => {
                     if !gone.is_empty() {
-                        self.installed = backend::installed();
+                        self.refresh_installed();
                     }
                 }
                 Msg::Updates(updates) => {
@@ -320,7 +325,7 @@ impl Launcher {
                     // have been picked, or its version changed, meanwhile).
                     let wanted = self.play_after_build.take();
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
-                    self.installed = backend::installed();
+                    self.refresh_installed();
                     self.reload_instances();
                     // No permission: the question is the answer, not the refusal's words.
                     let no_consent = matches!(result, Err(native_mods::Failed::NoConsent));

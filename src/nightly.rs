@@ -67,6 +67,65 @@ pub fn day(date: &str) -> String {
 /// (`HH:MM` UTC) each came out: [`same_day_time`] reads it for every screen that names a version.
 static SAME_DAY: std::sync::RwLock<Vec<(String, String)>> = std::sync::RwLock::new(Vec::new());
 
+const CURRENT_INSTALL: &str = ".nightly-current";
+
+/// Record the verified rolling build on install, independently of the global or profile selection.
+/// A concurrent reader sees the previous choice or the complete new one, never a partial tag.
+pub(crate) fn record_current(versions: &Path, tag: &str) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut part = tempfile::NamedTempFile::new_in(versions)?;
+    part.write_all(tag.as_bytes())?;
+    part.persist(versions.join(CURRENT_INSTALL))?;
+    Ok(())
+}
+
+/// The newest installed Nightly we can identify without assuming that commit hashes are ordered.
+/// The saved rolling install breaks a tie on the newest date. Older installs may instead prove the
+/// order with a full set of publication times and a unique latest time; otherwise keep a saved choice.
+pub(crate) fn known_install<'a>(
+    versions: &Path,
+    installed: &'a [String],
+    selected: Option<&str>,
+) -> Option<&'a String> {
+    let mut nightlies = installed
+        .iter()
+        .filter_map(|tag| Some((date_of(tag)?, tag)));
+    let (newest_date, first) = nightlies.next()?;
+    let mut same_day = nightlies.take_while(|(date, _)| *date == newest_date);
+    let Some((_, second)) = same_day.next() else {
+        return Some(first);
+    };
+    let candidates: Vec<_> = [first, second]
+        .into_iter()
+        .chain(same_day.map(|(_, tag)| tag))
+        .collect();
+    if let Ok(current) = fs::read_to_string(versions.join(CURRENT_INSTALL)) {
+        if let Some(tag) = candidates.iter().copied().find(|tag| **tag == current) {
+            return Some(tag);
+        }
+    }
+    let mut timed: Vec<_> = candidates
+        .iter()
+        .map(|tag| {
+            let time = fs::read_to_string(versions.join(tag).join(INSTALLED_TIME)).ok()?;
+            Some((
+                chrono::NaiveTime::parse_from_str(time.trim(), "%H:%M").ok()?,
+                *tag,
+            ))
+        })
+        .collect::<Option<_>>()
+        .unwrap_or_default();
+    timed.sort_unstable_by_key(|(time, _)| *time);
+    if let [.., (prior, _), (latest, tag)] = timed.as_slice() {
+        if latest > prior {
+            return Some(tag);
+        }
+    }
+    candidates
+        .into_iter()
+        .find(|tag| Some(tag.as_str()) == selected)
+}
+
 /// The publication time kept beside an installed Nightly so it survives a launcher restart.
 pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
 

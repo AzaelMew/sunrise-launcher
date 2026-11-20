@@ -49,13 +49,18 @@ impl Launcher {
                 let _ = sunrise_launcher::desktop::repair(backend::exe_path());
             });
         }
-        let installed = backend::installed();
+        let (installed, known_nightly) = backend::play_installations(settings.selected.as_deref());
         if settings
             .selected
             .as_ref()
             .is_none_or(|s| !installed.contains(s))
         {
-            settings.selected = installed.first().cloned();
+            settings.selected = known_nightly.clone().or_else(|| {
+                installed
+                    .iter()
+                    .find(|tag| sunrise_launcher::nightly::date_of(tag).is_none())
+                    .cloned()
+            });
         }
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
@@ -88,6 +93,7 @@ impl Launcher {
             bar: (0., 0.),
             releases: Load::Loading,
             installed,
+            known_nightly,
             installing: None,
             removing: Vec::new(),
             disk: Vec::new(),

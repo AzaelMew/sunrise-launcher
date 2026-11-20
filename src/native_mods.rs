@@ -1913,15 +1913,14 @@ fn finish_profile_build(
     // and keeps which mods wait and why.
     if let Err(Failed::Mods { left, .. }) = &built {
         let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
-        let installed = backend::installed();
-        let selected = backend::Settings::load()
-            .selected
-            .filter(|s| installed.contains(s));
+        let selected = backend::Settings::load().selected;
+        let (installed, nightly) = backend::play_installations(selected.as_deref());
         let pin = plain_pin(
             instance.channel,
             &plain,
             selected.as_deref(),
             &installed,
+            nightly.as_ref(),
             catalogue,
             || cancellation.check(),
         )?;
@@ -1975,13 +1974,14 @@ fn plain_pin(
     plain: &str,
     selected: Option<&str>,
     installed: &[String],
+    nightly: Option<&String>,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
     cancelled: impl FnOnce() -> Result<(), String>,
 ) -> Result<Option<String>, String> {
     let selected = installed.iter().find(|tag| Some(tag.as_str()) == selected);
     let target = |releases: &[backend::Release]| {
         channel
-            .play_target(releases, installed, selected)
+            .play_target(releases, installed, nightly, selected)
             .map(String::as_str)
             == Some(plain)
     };
@@ -2615,6 +2615,7 @@ mod tests {
             "26.3-0.1.0",
             Some("26.3-0.1.0"),
             &installed,
+            None,
             || {
                 // A cancel that came while the lookup ran.
                 cancelled.set(true);
@@ -2634,6 +2635,7 @@ mod tests {
             "26.3-0.1.0",
             Some("26.3-0.1.0"),
             &installed,
+            None,
             || None,
             || Ok(()),
         );
@@ -2661,6 +2663,7 @@ mod tests {
             "26.3-0.1.0",
             Some("26.3-0.1.0"),
             &installed,
+            None,
             || {
                 asked += 1;
                 Some(vec![release("26.3-0.1.0")])
@@ -2674,6 +2677,7 @@ mod tests {
             "26.3-0.1.0",
             Some("26.3-0.1.0"),
             &installed,
+            None,
             || None,
             || Ok(()),
         );
@@ -2700,6 +2704,7 @@ mod tests {
                 nightly,
                 Some(nightly),
                 &installed,
+                Some(&installed[0]),
                 || Some(releases),
                 || Ok(()),
             )

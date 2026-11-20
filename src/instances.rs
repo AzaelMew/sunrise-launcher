@@ -245,10 +245,15 @@ impl Channel {
         self,
         releases: &'a [backend::Release],
         installed: &'a [String],
+        nightly: Option<&'a String>,
         selected: Option<&'a String>,
     ) -> Option<&'a String> {
         let latest = self.builds(releases).next().map(|release| &release.tag);
-        match (self.newest_installed(installed), latest) {
+        let have = match self {
+            Self::Stable => self.newest_installed(installed),
+            Self::Nightly => nightly,
+        };
+        match (have, latest) {
             // The rolling build wins a same-day tie once it is actually on disk.
             (Some(have), Some(latest))
                 if installed.contains(latest)
@@ -259,9 +264,9 @@ impl Channel {
             (Some(have), _) => Some(have),
             (None, Some(latest)) => Some(latest),
             (None, None) if self == Self::Stable => {
-                Self::Nightly.play_target(releases, installed, selected)
+                Self::Nightly.play_target(releases, installed, nightly, selected)
             }
-            (None, None) => selected,
+            (None, None) => selected.filter(|tag| Self::of_build(tag) != Some(Self::Nightly)),
         }
     }
 
@@ -461,12 +466,16 @@ impl Instance {
             }),
             (Some(tag), _) => backend::resolve_version(Some(tag)),
             (None, None) => {
-                let installed = backend::installed();
-                let selected = backend::Settings::load()
-                    .selected
-                    .filter(|tag| installed.contains(tag));
+                let selected = backend::Settings::load().selected;
+                let (installed, nightly) = backend::play_installations(selected.as_deref());
+                let selected = selected.filter(|tag| installed.contains(tag));
                 self.channel
-                    .play_target(&[], &installed, selected.as_ref().or(installed.first()))
+                    .play_target(
+                        &[],
+                        &installed,
+                        nightly.as_ref(),
+                        selected.as_ref().or(installed.first()),
+                    )
                     .cloned()
                     .ok_or_else(backend::no_version_installed)
             }

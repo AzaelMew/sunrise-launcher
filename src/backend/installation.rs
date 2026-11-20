@@ -54,6 +54,9 @@ pub(crate) fn install_as(
     fs::rename(&top, &target).map_err(|e| e.to_string())?;
     crate::nightly::record_install_time(&target, release).map_err(|e| e.to_string())?;
     crate::run_leases::publish(&target).map_err(crate::native_mods::cache_error)?;
+    if release.nightly.as_deref() == Some(sunrise_launcher_release_verify::NIGHTLY) {
+        crate::nightly::record_current(&root, tag).map_err(|e| e.to_string())?;
+    }
     fs::write(target.join(COMPLETE), "").map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&partial);
     reuse_prepared_for(tag);
