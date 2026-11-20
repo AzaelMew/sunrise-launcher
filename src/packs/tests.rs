@@ -750,6 +750,29 @@ fn a_resource_pack_file_is_listed_only_when_its_name_ends_in_zip() {
     zip_file(&drops.join("Dropped.ZIP"), &[("pack.mcmeta", META)]);
     assert!(add(&home, &drops.join("Dropped.ZIP")).is_err());
     assert!(!rp.join("Dropped.ZIP").exists());
+    let refused = add_local(&home, Kind::Resource, &drops.join("Dropped.ZIP")).unwrap_err();
+    assert!(refused.contains("Dropped.ZIP"), "{refused}");
+    assert!(!refused.contains(".sunrise-add-"), "{refused}");
+    zip_file(
+        &drops.join("Bare.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"pack_format":15}}"#)],
+    );
+    assert!(add_local(&home, Kind::Resource, &drops.join("Bare.zip")).is_err());
+    let left: Vec<String> = fs::read_dir(&rp)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| {
+            n.starts_with(".sunrise-add-") || n.starts_with("Dropped") || n.starts_with("Bare")
+        })
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    zip_file(&drops.join("Lower.zip"), &[("pack.mcmeta", META)]);
+    assert_eq!(
+        add_local(&home, Kind::Resource, &drops.join("Lower.zip"))
+            .unwrap()
+            .file,
+        "Lower.zip"
+    );
     fs::remove_dir_all(&home).unwrap();
 }
 
