@@ -178,10 +178,10 @@ impl Session {
                 ))
             }
             "server_command" => {
-                let server = self.running_server()?;
-                let before = server.log.lock().unwrap().len();
                 let command = arg_str(args, "command").ok_or("command is required")?;
                 let command = console_line(command)?;
+                let server = self.running_server()?;
+                let before = server.log.lock().unwrap().len();
                 server.running.send(command);
                 std::thread::sleep(Duration::from_millis(700));
                 let log = server.log.lock().unwrap();
@@ -374,6 +374,28 @@ mod tests {
         assert!(console_line("list\nstop").is_err());
         assert!(console_line("list\rstop").is_err());
         assert!(console_line("say hi\r\n").is_err());
+    }
+
+    #[test]
+    fn the_server_command_tool_refuses_a_line_break_before_it_reaches_a_server() {
+        let mut session = Session {
+            server: None,
+            client: None,
+            sign_in: None,
+            game: None,
+        };
+        let refused = session
+            .call("server_command", &json!({ "command": "list\nstop" }))
+            .unwrap_err();
+        assert_eq!(
+            refused,
+            "A server command is one line: it can't contain a line break."
+        );
+        // A one-line command gets past the check and only then finds no server.
+        let one_line = session
+            .call("server_command", &json!({ "command": "list" }))
+            .unwrap_err();
+        assert_ne!(one_line, refused);
     }
 
     #[test]
