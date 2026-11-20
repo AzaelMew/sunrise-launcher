@@ -164,7 +164,7 @@ fn install_in(
             let mut installed = stage_pack(index, local, p, version, &staged_home, None, progress)?;
             let owner = Arc::new(txn::Lease::admit(&staged_home)?);
             let active = txn::seal_private_profile(
-                owner.clone(),
+                owner,
                 target.base(),
                 native_mods::Profile::Optimized,
                 steps,
@@ -274,7 +274,48 @@ fn stage_pack(
     Ok(record)
 }
 
+/// The same external owner is inherited by every launcher/game operation on this pack.
+/// A private candidate has no live pack ID and uses the ordinary private profile owner.
+pub(super) fn owner_file(home: &Path) -> Result<Option<PathBuf>, String> {
+    let normalized = home.canonicalize();
+    let home = normalized.as_deref().unwrap_or(home);
+    let Some(work) = home
+        .parent()
+        .filter(|_| home.file_name() == Some("home".as_ref()))
+    else {
+        return Ok(None);
+    };
+    let Some(id) = work
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .filter(|id| idx::valid_id(id))
+    else {
+        return Ok(None);
+    };
+    let Some(directory) = work.parent() else {
+        return Ok(None);
+    };
+    let canonical = directory.canonicalize();
+    let directory = canonical.as_deref().unwrap_or(directory);
+    if directory.file_name() != Some("sunrise-packs".as_ref()) {
+        return Ok(None);
+    }
+    gate_file(directory, &format!("{id}.owner")).map(Some)
+}
+
 fn pack_gate(directory: &Path, id: &str) -> Result<locks::Locked, String> {
+    let file = gate_file(directory, id)?;
+    let opened = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&file)
+        .map_err(|e| at(&file, e))?;
+    locks::locked(opened, LockMode::Exclusive).map_err(|e| e.to_string())
+}
+
+fn gate_file(directory: &Path, id: &str) -> Result<PathBuf, String> {
     if crate::browser::safe_name(id) != Some(id) {
         return Err(pack_unavailable());
     }
@@ -299,14 +340,7 @@ fn pack_gate(directory: &Path, id: &str) -> Result<locks::Locked, String> {
     {
         return Err(pack_unavailable());
     }
-    let opened = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&file)
-        .map_err(|e| at(&file, e))?;
-    locks::locked(opened, LockMode::Exclusive).map_err(|e| e.to_string())
+    Ok(file)
 }
 
 fn pack_unavailable() -> String {
@@ -635,6 +669,11 @@ mod tests {
         let packs = dir.join("sunrise-packs");
         let registry = registry(&dir, false, "");
         let old = install_fixture(&registry, "cozy", &packs).unwrap();
+        let pack_home = home(&old.work);
+        let playing = txn::Lease::admit(&pack_home).unwrap();
+        assert!(remove_in(&packs, &old.work, |_| panic!("pack is in use")).is_err());
+        assert!(old.work.is_dir());
+        drop(playing);
         let payload = txn::crash_process(
             "browser::sunrise::pack::tests::detach_worker",
             &old.work,
@@ -655,6 +694,11 @@ mod tests {
             },
         );
         assert!(payload.is_dir());
+        assert!(txn::Lease::admit(&pack_home).is_err());
+        assert!(
+            !old.work.exists(),
+            "a stale Play must not recreate the pack"
+        );
         let next = install_fixture(&registry, "cozy", &packs).unwrap();
         assert!(!payload.exists());
         assert_eq!(next.work, old.work);
