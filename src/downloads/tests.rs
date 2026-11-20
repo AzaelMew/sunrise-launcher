@@ -637,7 +637,10 @@ async fn socks_proxy_resolves_hostnames_remotely_like_the_previous_transport() {
         });
         let client = Client::builder()
             .no_proxy()
-            .proxy(reqwest::Proxy::all(proxy_address(format!("{scheme}://{address}"))).unwrap())
+            .proxy(
+                reqwest::Proxy::all(crate::proxy::address(format!("{scheme}://{address}")))
+                    .unwrap(),
+            )
             .build()
             .unwrap();
         assert_eq!(

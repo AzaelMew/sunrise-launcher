@@ -11,7 +11,7 @@ fn ask(folder: &Path, command: &str, mut plan: Value) -> Result<Value, String> {
     plan["toolchain"] = tool::toolchain(&rust);
     plan["mods"] = json!(folder);
     tool::ask(
-        rust.command(&program),
+        tool::command(&rust, &program),
         command,
         &plan,
         &super::Cancellation::default(),

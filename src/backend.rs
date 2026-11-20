@@ -1228,8 +1228,19 @@ mod installation;
 pub(crate) use installation::install_as;
 
 pub fn remove(tag: &str) -> Result<(), String> {
+    // A native build's base keeps its prepared data, so it stays while one is installed.
+    if let Some(build) = installed()
+        .into_iter()
+        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
+    {
+        return Err(crate::i18n::trf(
+            "This version supplies resources to native build {build}. Remove that build first.",
+            &[("build", &build)],
+        ));
+    }
     let dir = version_dir(tag);
-    crate::cache_cleanup::delete_game_unit(&dir).map_err(crate::native_mods::cache_error)?;
+    crate::cache_cleanup::delete_version(&dir, !in_use(tag))
+        .map_err(crate::native_mods::cache_error)?;
     forget_prepared();
     Ok(())
 }
@@ -2744,15 +2755,6 @@ pub fn no_version_installed() -> String {
 pub fn remove_version(tag: &str) -> Result<(), String> {
     if !installed().iter().any(|t| t == tag) {
         return Err(format!("{tag} is not installed."));
-    }
-    if let Some(build) = installed()
-        .into_iter()
-        .find(|version| crate::native_mods::about(version).is_some_and(|about| about.base == tag))
-    {
-        return Err(crate::i18n::trf(
-            "This version supplies resources to native build {build}. Remove that build first.",
-            &[("build", &build)],
-        ));
     }
     if in_use(tag) {
         return Err(format!("{tag} is running. Quit it first."));
@@ -4572,6 +4574,20 @@ mod tests {
         assert!(!dir.exists());
     }
 
+    /// A build from before runtime leases has no lease marker in its client; with nothing
+    /// running from it, removing it must still work.
+    #[test]
+    fn a_version_without_the_lease_marker_can_be_removed_when_idle() {
+        let dir = version_dir("v0.0.1-preleases");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(COMPLETE), b"").unwrap();
+        fs::write(dir.join(CLIENT), b"a client from before leases").unwrap();
+        assert!(installed().contains(&"v0.0.1-preleases".to_string()));
+        remove("v0.0.1-preleases").unwrap();
+        assert!(!dir.exists());
+        assert!(!installed().contains(&"v0.0.1-preleases".to_string()));
+    }
+
     /// A canonical path loses Windows' verbatim prefix on a drive (horizon-mixins' output
     /// check stats `\\?\C:`, the volume itself, which Windows refuses, os error 1), and keeps
     /// it where there is no drive form.
@@ -4868,6 +4884,7 @@ pub fn {f}("
         assert_eq!(resources(&native), resources(&base));
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
+        assert!(remove(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
         fs::remove_dir_all(&base_dir).unwrap();
         let error = need_prepared(&native).unwrap_err();
