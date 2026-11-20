@@ -5921,6 +5921,17 @@ pub fn {f}("
     }
 
     #[test]
+    fn the_retired_auto_install_setting_is_ignored_on_a_normal_settings_round_trip() {
+        let settings = Settings::parse(
+            r#"{"install_new_versions":true,"selected":"26.3-0.1.0","skip_opening":true}"#,
+        );
+        let saved = serde_json::to_value(settings).unwrap();
+        assert_eq!(saved["selected"], "26.3-0.1.0");
+        assert_eq!(saved["skip_opening"], true);
+        assert!(saved.get("install_new_versions").is_none());
+    }
+
+    #[test]
     fn the_game_architecture_defaults_to_auto_and_persists_manual_choices() {
         assert_eq!(
             Settings::parse("{}").game_architecture,

@@ -1,11 +1,6 @@
-//! Nightly (docs/release-flow.md): the only build Sunrise ships since 2026-10-28, main plus the pull
-//! requests the trusted reviewers picked, published as the `nightly` pre-release a few times a day.
-//! Every launcher installs it as its update (`backend::sunrise_update`), as its own version
-//! `nightly-<date>-<commit>`, beside the player's worlds, which it never touches. Its checksums must
-//! be signed for the nightly channel (`signed::build_digest`).
-//!
-//! Before that it was opt-in and played in its own "Nightly" instance (`instances/nightly/`):
-//! that instance, and its worlds, stay, and keep following the Nightly.
+//! The rolling Nightly channel, alongside Stable. The game repository publishes it as `nightly`;
+//! each build installs under its own `nightly-<date>-<commit>` name after version-bound signature
+//! verification. Updating that channel is explicit; an exact profile pin remains exact.
 use crate::backend::{self, Release};
 use crate::instances;
 use std::{fs, path::Path};
@@ -220,20 +215,6 @@ pub fn short_commit(version: &str) -> String {
     }
 }
 
-/// A Nightly's version as a player reads it: `Nightly · 4baa571` for `nightly-2026-10-29-4baa571`,
-/// or None for anything that is not one. The date is already on the row beside it.
-pub fn label(version: &str) -> Option<String> {
-    if let Some(label) = crate::developer_install::label(version) {
-        return Some(label);
-    }
-    date_of(version)?;
-    let commit = version.strip_prefix("nightly-")?.get(11..);
-    Some(match commit {
-        Some(commit) if !commit.is_empty() => format!("Nightly · {commit}"),
-        _ => "Nightly".to_owned(),
-    })
-}
-
 fn is_date(text: &str) -> bool {
     text.len() == 10
         && text.chars().enumerate().all(|(i, c)| {
@@ -410,16 +391,6 @@ mod tests {
         let full = "b1ff51d9e0123456789abcdef0123456789abcde";
         assert_eq!(short_commit(full), "b1ff51d9e…");
         assert_eq!(short_commit("v0.2.97"), "v0.2.97");
-    }
-
-    #[test]
-    fn a_nightly_reads_as_its_commit() {
-        assert_eq!(
-            label("nightly-2026-10-29-4baa571").as_deref(),
-            Some("Nightly · 4baa571")
-        );
-        assert_eq!(label("nightly-2026-10-29").as_deref(), Some("Nightly"));
-        assert_eq!(label("v0.2.97"), None);
     }
 
     #[test]
