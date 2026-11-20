@@ -19,7 +19,9 @@
 use crate::browser::installed::Approval;
 use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 mod durable;
@@ -78,14 +80,12 @@ impl Lease {
     /// A freshly acquired lease can clean up an abandoned batch before doing new work.
     pub fn recover_abandoned(&self) -> Result<(), String> {
         let _lock = locked(&self.home)?;
+        let mut record = read(&self.home)?.unwrap_or_default();
         reconcile_legacy(&self.home)?;
-        let ids: Vec<String> = read(&self.home)?
-            .unwrap_or_default()
-            .attempts
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
-        undo(&self.home, &ids)
+        while !record.attempts.is_empty() {
+            undo_last(&self.home, &mut record)?;
+        }
+        Ok(())
     }
 
     pub fn outstanding(&self) -> bool {
@@ -109,7 +109,38 @@ impl Lease {
 #[derive(Clone, Serialize, Deserialize)]
 struct Step {
     to: PathBuf,
-    /// Whether a file was there before: it moves to `backup` first.
+    before: Image,
+    after: Image,
+    backup: PathBuf,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Image {
+    Missing,
+    Sha256([u8; 32]),
+}
+
+impl Image {
+    fn at(path: &Path) -> Result<Self, String> {
+        let inspect = || -> io::Result<Self> {
+            match fs::symlink_metadata(path) {
+                Ok(meta) if meta.is_file() => {}
+                Ok(_) => return Err(io::Error::from(io::ErrorKind::InvalidData)),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::Missing),
+                Err(e) => return Err(e),
+            }
+            let mut hash = Sha256::new();
+            io::copy(&mut fs::File::open(path)?, &mut hash)?;
+            Ok(Self::Sha256(hash.finalize().into()))
+        };
+        inspect().map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+#[derive(Deserialize)]
+struct LegacyStep {
+    to: PathBuf,
     existed: bool,
     backup: PathBuf,
 }
@@ -134,6 +165,9 @@ struct Attempt {
     approvals: Vec<Approval>,
     /// The build tag it waits for, once that build began.
     build: Option<String>,
+    /// Reverse steps still owed. The current step is `undo - 1`, until its barrier and the
+    /// record update both finish. The source phase distinguishes a half-published step.
+    undo: Option<usize>,
 }
 
 /// What the record's attempts are of: one kind in a file.
@@ -186,9 +220,25 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
             tr("another version of the launcher made it").to_string(),
         ));
     }
-    serde_json::from_value(value)
-        .map(Some)
-        .map_err(|e| kept(e.to_string()))
+    let record: Record = serde_json::from_value(value).map_err(|e| kept(e.to_string()))?;
+    use std::path::Component;
+    let inside = |path: &Path| {
+        !path.as_os_str().is_empty() && path.components().all(|c| matches!(c, Component::Normal(_)))
+    };
+    if record.attempts.iter().enumerate().any(|(i, a)| {
+        !inside(&a.staging)
+            || a.staging.components().count() != 1
+            || !a.id.starts_with(".installed-mods-")
+            || a.staging.as_os_str() != a.id.as_str()
+            || a.undo
+                .is_some_and(|next| next > a.steps.len() || i + 1 != record.attempts.len())
+            || a.steps.iter().enumerate().any(|(n, step)| {
+                !inside(&step.to) || step.backup != a.staging.join(format!("old-{n}"))
+            })
+    }) {
+        return Err(kept(unsettled()));
+    }
+    Ok(Some(record))
 }
 
 /// Writes the full record before replacing the old one. An empty one retires the live file.
@@ -210,14 +260,14 @@ fn write(home: &Path, record: &Record) -> Result<(), String> {
 pub(super) fn begin(
     home: &Path,
     staged: &Path,
-    changes: &[PathBuf],
+    changes: &[(Option<PathBuf>, PathBuf)],
     approvals: &[Approval],
 ) -> Result<String, String> {
     let mut record = read(home)?.unwrap_or_default();
     if record
         .attempts
         .iter()
-        .any(|a| a.state == State::Pending || a.build.is_some())
+        .any(|a| a.state == State::Pending || a.build.is_some() || a.undo.is_some())
     {
         return Err(unsettled());
     }
@@ -232,10 +282,20 @@ pub(super) fn begin(
     let steps = changes
         .iter()
         .enumerate()
-        .map(|(i, to)| {
+        .map(|(i, (from, to))| {
+            let after = match from {
+                Some(from) => match Image::at(from)? {
+                    Image::Missing => {
+                        return Err(format!("{}: {}", from.display(), io::ErrorKind::NotFound))
+                    }
+                    image => image,
+                },
+                None => Image::Missing,
+            };
             Ok(Step {
+                before: Image::at(to)?,
+                after,
                 to: relative(to)?,
-                existed: fs::symlink_metadata(to).is_ok(),
                 backup: relative(&staged.join(format!("old-{i}")))?,
             })
         })
@@ -252,79 +312,97 @@ pub(super) fn begin(
         steps,
         approvals: approvals.to_vec(),
         build: None,
+        undo: None,
     });
     write(home, &record)?;
     Ok(id)
-}
-
-/// For tests of callers: an attempt begun and left cut off.
-#[cfg(test)]
-pub(super) fn begin_for_test(home: &Path, staged: &Path, changes: &[PathBuf]) {
-    begin(home, staged, changes, &[]).unwrap();
 }
 
 pub(in crate::browser) fn unsettled() -> String {
     tr("An earlier install is still being undone. Restart the launcher and try again.").to_string()
 }
 
-/// The files of `attempt` are put back, newest step first; true when all are. The staging
-/// folder goes only then.
-fn restore(home: &Path, attempt: &Attempt) -> bool {
-    let mut undone = true;
-    for step in attempt.steps.iter().rev() {
-        let (to, backup) = (home.join(&step.to), home.join(&step.backup));
-        let result = match (step.existed, backup.is_file()) {
-            // Moved aside, and the new file may or may not have come: the old one returns.
-            (true, true) => fs::rename(&backup, &to),
-            // Never reached: the old file is still there.
-            (true, false) => Ok(()),
-            (false, _) if to.is_file() => fs::remove_file(&to),
-            (false, _) => Ok(()),
-        };
-        if let Err(e) = result {
-            eprintln!("Couldn't undo {}: {e}", to.display());
-            undone = false;
-        }
+/// Restore a single recorded step. A resumed frontier accepts exact restored bytes (including
+/// recorded absence), not the absence of a backup. Only Pending may also be between the two
+/// publication renames: no target yet, but an exact backup.
+fn restore_step(home: &Path, attempt: &Attempt, index: usize) -> Result<(), String> {
+    let step = attempt.steps.get(index).ok_or_else(unsettled)?;
+    let to = home.join(&step.to);
+    let image = Image::at(&to)?;
+    let backup = home.join(&step.backup);
+    if image == step.before {
+        return durable::sync_restored(&to, &backup, image == Image::Missing)
+            .map_err(|e| format!("{}: {e}", to.display()));
     }
-    if undone {
-        let _ = fs::remove_dir_all(home.join(&attempt.staging));
+    let diverged = || {
+        trf(
+            "{file} doesn't match either version of the interrupted install. Nothing further was undone.",
+            &[("file", &to.display().to_string())],
+        )
+    };
+    if image != step.after && !(attempt.state == State::Pending && image == Image::Missing) {
+        return Err(diverged());
     }
-    undone
+    if step.before != Image::Missing && Image::at(&backup)? != step.before {
+        return Err(diverged());
+    }
+    let from = if step.before == Image::Missing {
+        // Remove the new file by renaming it into our staging folder. If interrupted after
+        // the rename, the recorded absent preimage proves the restored state at this frontier.
+        to.as_path()
+    } else {
+        backup.as_path()
+    };
+    let discarded = home
+        .join(&attempt.staging)
+        .join(format!("discarded-{index}"));
+    let dest = if step.before == Image::Missing {
+        &discarded
+    } else {
+        &to
+    };
+    durable::restore_move(from, dest).map_err(|e| format!("{}: {e}", to.display()))
 }
 
-/// The attempt `id` was undone on the spot (its publish failed and the files are back): it
-/// leaves the record.
-pub(super) fn abandon(home: &Path, id: &str) -> Result<(), String> {
-    let mut record = read(home)?.unwrap_or_default();
-    record.attempts.retain(|a| a.id != id);
-    write(home, &record)
+/// The newest attempt is the only one allowed to advance the frontier. Retire its record
+/// before discarding its staging folder; an older attempt can then restore the same path again.
+fn undo_last(home: &Path, record: &mut Record) -> Result<(), String> {
+    let last = record.attempts.last_mut().expect("undo has an attempt");
+    if last.undo.is_none() {
+        last.undo = Some(last.steps.len());
+        write(home, record)?;
+    }
+    while let Some(last) = record.attempts.last().filter(|a| a.undo != Some(0)) {
+        let next = last
+            .undo
+            .ok_or_else(unsettled)?
+            .checked_sub(1)
+            .ok_or_else(unsettled)?;
+        restore_step(home, last, next)?;
+        record.attempts.last_mut().expect("same attempt").undo = Some(next);
+        write(home, record)?;
+    }
+    let staging = home.join(record.attempts.pop().expect("undo has an attempt").staging);
+    write(home, record)?;
+    let _ = fs::remove_dir_all(staging);
+    Ok(())
 }
 
-/// An install failed with `message` after (or while) its files moved: the attempt is undone on
-/// the spot. When that works the message is returned as it is; when it doesn't, the record and
-/// the staging folder (the backups) stay, and the message says to restart.
+/// A publish failed partway through. Keep its staging folder even if rollback itself is
+/// interrupted, and resume from the persisted frontier just like startup recovery.
 pub(super) fn rollback(
     home: &Path,
     id: &str,
     staged: tempfile::TempDir,
     message: String,
 ) -> String {
-    let attempt = read(home)
-        .ok()
-        .flatten()
-        .and_then(|r| r.attempts.into_iter().find(|a| a.id == id));
-    match attempt {
-        Some(a) if restore(home, &a) => match abandon(home, id) {
-            Ok(()) => message,
-            Err(e) => format!("{message}; {e}"),
-        },
-        _ => {
-            let _ = staged.keep();
-            format!(
-                "{message}. {}",
-                tr("Putting the files back failed too: restart the launcher to try again.")
-            )
-        }
+    let _ = staged.keep();
+    match undo(home, &[id.to_owned()]) {
+        Ok(()) => message,
+        Err(error) => format!(
+            "{message}. {} ({error})",
+            tr("Putting the files back failed too: restart the launcher to try again.")
+        ),
     }
 }
 
@@ -339,10 +417,13 @@ pub(super) fn commit(
     brings_native: bool,
 ) -> Result<(), String> {
     let result = read(home).and_then(|record| {
-        let mut record = record.unwrap_or_default();
-        if let Some(a) = record.attempts.iter_mut().find(|a| a.id == id) {
-            a.state = State::Published;
-        }
+        let mut record = record.ok_or_else(unsettled)?;
+        let a = record
+            .attempts
+            .last_mut()
+            .filter(|a| a.id == id && a.undo.is_none())
+            .ok_or_else(unsettled)?;
+        a.state = State::Published;
         let waits = brings_native || record.attempts.len() > 1;
         if !waits {
             record.attempts.clear();
@@ -401,7 +482,7 @@ fn reconcile_legacy(home: &Path) -> Result<(), String> {
     }
     let journal = home.join("mod-browser/install-journal.json");
     if journal.exists() {
-        let steps: Vec<Step> = fs::read_to_string(&journal)
+        let steps: Vec<LegacyStep> = fs::read_to_string(&journal)
             .map_err(|e| e.to_string())
             .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
             .map_err(|e| kept(&journal, e))?;
@@ -421,17 +502,18 @@ fn reconcile_legacy(home: &Path) -> Result<(), String> {
                     tr("its backups are not where the launcher keeps them").to_string(),
                 ));
             }
-            let attempt = Attempt {
-                id: staging.display().to_string(),
-                state: State::Pending,
-                staging,
-                steps,
-                approvals: Vec::new(),
-                build: None,
-            };
-            if !restore(home, &attempt) {
-                return Err(unsettled());
+            // Legacy records predate images and the frontier. Do not use their weaker
+            // inference for a current transaction.
+            for step in steps.iter().rev() {
+                let (to, backup) = (home.join(&step.to), home.join(&step.backup));
+                match (step.existed, backup.is_file()) {
+                    (true, true) => fs::rename(backup, &to),
+                    (false, _) if to.is_file() => fs::remove_file(&to),
+                    _ => Ok(()),
+                }
+                .map_err(|e| kept(&journal, e.to_string()))?;
             }
+            let _ = fs::remove_dir_all(home.join(staging));
         }
         fs::remove_file(&journal).map_err(|e| format!("{}: {e}", journal.display()))?;
     }
@@ -448,20 +530,16 @@ fn reconcile_legacy(home: &Path) -> Result<(), String> {
 /// folder) and returns the error: the profile takes no new install until it is.
 fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
     let _lock = locked(home)?;
-    reconcile_legacy(home)?;
     let mut record = read(home)?.unwrap_or_default();
+    reconcile_legacy(home)?;
     let named = |a: &Attempt| ids.contains(&a.id);
     if let Some(first) = record.attempts.iter().position(named) {
         if record.attempts[first..].iter().any(|a| !named(a)) {
             return Err(unsettled());
         }
     }
-    while let Some(attempt) = record.attempts.last().filter(|a| named(a)) {
-        if !restore(home, attempt) {
-            return Err(unsettled());
-        }
-        record.attempts.pop();
-        write(home, &record)?;
+    while record.attempts.last().is_some_and(named) {
+        undo_last(home, &mut record)?;
     }
     Ok(())
 }
@@ -477,14 +555,14 @@ pub(super) fn settle(home: &Path) -> Result<(), String> {
 /// Repairs a partial publish; the install entry point already holds the owner lease.
 pub(super) fn settle_owned(home: &Path) -> Result<(), String> {
     let _lock = locked(home)?;
-    reconcile_legacy(home)?;
     let mut record = read(home)?.unwrap_or_default();
-    while let Some(attempt) = record.attempts.last().filter(|a| a.state == State::Pending) {
-        if !restore(home, attempt) {
-            return Err(unsettled());
-        }
-        record.attempts.pop();
-        write(home, &record)?;
+    reconcile_legacy(home)?;
+    while record
+        .attempts
+        .last()
+        .is_some_and(|a| a.state == State::Pending || a.undo.is_some())
+    {
+        undo_last(home, &mut record)?;
     }
     Ok(())
 }
@@ -516,6 +594,7 @@ fn mark_build(home: &Path, tag: &str) -> Result<Vec<String>, String> {
     let mut changed = false;
     for attempt in &mut record.attempts {
         if attempt.state != State::Published
+            || attempt.undo.is_some()
             || attempt.build.as_deref().is_some_and(|base| base != tag)
         {
             return Err(unsettled());
@@ -612,13 +691,20 @@ mod tests {
         }
 
         fn begin(&self, staged: &tempfile::TempDir) -> String {
-            begin(
-                self.home(),
-                staged.path(),
-                &[self.dep.clone(), self.list.clone(), self.added.clone()],
-                &[],
-            )
-            .unwrap()
+            let changes = [
+                (&self.dep, "flywheel 0.4"),
+                (&self.list, "new list"),
+                (&self.added, "lumen"),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, (target, bytes))| {
+                let source = staged.path().join(format!("new-{i}"));
+                fs::write(&source, bytes).unwrap();
+                (Some(source), target.clone())
+            })
+            .collect::<Vec<_>>();
+            begin(self.home(), staged.path(), &changes, &[]).unwrap()
         }
 
         /// What publishing does, as far as `steps` of it went.
@@ -725,10 +811,17 @@ mod tests {
         // while the native one waits, so a crash returns the profile to one consistent state.
         let second = staging(scene.home());
         let plain = scene.home().join("sunrise-mods/plain.smod");
+        let next = second.path().join("new-list");
+        fs::write(&next, "newer list").unwrap();
+        let new_plain = second.path().join("new-plain");
+        fs::write(&new_plain, "plain").unwrap();
         let id = begin(
             scene.home(),
             second.path(),
-            &[scene.list.clone(), plain.clone()],
+            &[
+                (Some(next), scene.list.clone()),
+                (Some(new_plain), plain.clone()),
+            ],
             &[],
         )
         .unwrap();
@@ -768,26 +861,15 @@ mod tests {
         assert!(kept.join("old-0").is_file(), "the backups stay");
         assert!(scene.home().join(FILE).is_file(), "and so does the record");
         let next = staging(scene.home());
-        let refused = begin(
-            scene.home(),
-            next.path(),
-            std::slice::from_ref(&scene.dep),
-            &[],
-        )
-        .unwrap_err();
+        let refused =
+            begin(scene.home(), next.path(), &[(None, scene.dep.clone())], &[]).unwrap_err();
         assert!(refused.contains("still being undone"), "{refused}");
         assert!(settle(scene.home()).is_err());
         // Cleared: the restore works, and the profile takes installs again.
         fs::remove_dir_all(&scene.dep).unwrap();
         assert!(recover(scene.home()));
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
-        assert!(begin(
-            scene.home(),
-            next.path(),
-            std::slice::from_ref(&scene.dep),
-            &[]
-        )
-        .is_ok());
+        assert!(begin(scene.home(), next.path(), &[(None, scene.dep.clone())], &[]).is_ok());
     }
 
     #[test]
@@ -799,7 +881,7 @@ mod tests {
         assert!(begin(
             scene.home(),
             staged.path(),
-            std::slice::from_ref(&scene.dep),
+            &[(None, scene.dep.clone())],
             &[]
         )
         .is_err());
@@ -818,7 +900,7 @@ mod tests {
         assert!(begin(
             scene.home(),
             staged.path(),
-            std::slice::from_ref(&scene.dep),
+            &[(None, scene.dep.clone())],
             &[]
         )
         .is_err());
@@ -877,11 +959,13 @@ mod tests {
         assert_eq!(build, std::slice::from_ref(&first));
         let second = staging(scene.home());
         let newer = scene.home().join("sunrise-mods/newer.smod");
+        let source = second.path().join("new");
+        fs::write(&source, "newer").unwrap();
         let begin_second = || {
             begin(
                 scene.home(),
                 second.path(),
-                std::slice::from_ref(&newer),
+                &[(Some(source.clone()), newer.clone())],
                 &[],
             )
         };
@@ -904,42 +988,22 @@ mod tests {
         assert!(!newer.exists() && !lease.outstanding());
     }
 
-    // Invoked by the cross-process test. Wait on stdin as a build would wait on an answer.
-    #[test]
-    fn live_owner_process() {
-        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
-            return;
-        };
-        let home = Path::new(&home);
-        let lease = Lease::acquire(home).unwrap();
-        let staged = staging(home);
-        let file = home.join("sunrise-mods/added.smod");
-        let id = begin(home, staged.path(), std::slice::from_ref(&file), &[]).unwrap();
-        fs::write(file, b"new mod").unwrap();
-        commit(home, &id, staged, true).unwrap();
-        lease.mark_build("tag").unwrap();
+    fn wait_to_be_killed() {
         use std::io::Write;
-        let mut out = std::io::stdout().lock();
+        let mut out = io::stdout().lock();
         writeln!(out, "owner ready").unwrap();
         out.flush().unwrap();
         let mut answer = String::new();
-        std::io::stdin().read_line(&mut answer).unwrap();
+        io::stdin().read_line(&mut answer).unwrap();
         assert!(answer.is_empty());
     }
 
-    #[test]
-    #[ignore = "daily"]
-    fn startup_skips_another_live_owner_and_recovers_after_it_is_killed() {
+    /// Drives a child up to a durable boundary, then kills it without Rust destructors.
+    fn crash_process<T>(test: &str, home: &Path, inspect: impl FnOnce() -> T) -> T {
         use std::io::{BufRead, BufReader};
         use std::process::{Command, Stdio};
-        let scene = scene();
-        let home = scene.home();
         let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "browser::sunrise::txn::tests::live_owner_process",
-                "--nocapture",
-            ])
+            .args(["--exact", test, "--nocapture"])
             .env("SUNRISE_TEST_INSTALL_OWNER", home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -954,24 +1018,135 @@ mod tests {
             let _ = tx.send(ready);
         });
         let ready = rx.recv_timeout(std::time::Duration::from_secs(10)) == Ok(true);
-        let file = home.join("sunrise-mods/added.smod");
-        let skipped = ready && !recover(home) && file.is_file() && home.join(FILE).is_file();
-        let refused = ready && matches!(Lease::try_acquire(home), Ok(None));
+        let result = ready.then(inspect);
         let killed = child.kill();
         let status = child.wait().unwrap();
         reader.join().unwrap();
-        assert!(
-            ready,
-            "the first launcher published its install and waited for an answer"
+        assert!(ready, "the child reached its crash boundary");
+        killed.unwrap();
+        assert!(!status.success());
+        result.unwrap()
+    }
+
+    // Invoked by the cross-process test. Wait on stdin as a build would wait on an answer.
+    #[test]
+    fn live_owner_process() {
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = Path::new(&home);
+        let lease = Lease::acquire(home).unwrap();
+        let staged = staging(home);
+        let file = home.join("sunrise-mods/added.smod");
+        let source = staged.path().join("new");
+        fs::write(&source, b"new mod").unwrap();
+        let id = begin(home, staged.path(), &[(Some(source), file.clone())], &[]).unwrap();
+        fs::write(file, b"new mod").unwrap();
+        commit(home, &id, staged, true).unwrap();
+        lease.mark_build("tag").unwrap();
+        wait_to_be_killed();
+    }
+
+    #[test]
+    #[ignore = "daily"]
+    fn startup_skips_another_live_owner_and_recovers_after_it_is_killed() {
+        let scene = scene();
+        let home = scene.home();
+        let file = home.join("sunrise-mods/added.smod");
+        let (skipped, refused) = crash_process(
+            "browser::sunrise::txn::tests::live_owner_process",
+            home,
+            || {
+                (
+                    !recover(home) && file.is_file() && home.join(FILE).is_file(),
+                    matches!(Lease::try_acquire(home), Ok(None)),
+                )
+            },
         );
         assert!(
             skipped && refused,
             "startup did not touch the live batch or acquire its lease"
         );
-        killed.unwrap();
-        assert!(!status.success());
         assert!(recover(home));
         assert!(!file.exists() && !home.join(FILE).exists());
+    }
+
+    // Kill recovery after carrying out a reverse move, before writing its next frontier.
+    #[test]
+    fn live_undo_process() {
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = Path::new(&home);
+        let _lease = Lease::acquire(home).unwrap();
+        let mut record = read(home).unwrap().unwrap();
+        undo_last(home, &mut record).unwrap(); // C -> B, and retire this attempt.
+        record.attempts.last_mut().unwrap().undo = Some(2);
+        write(home, &record).unwrap();
+        restore_step(home, record.attempts.last().unwrap(), 1).unwrap(); // B -> A
+        wait_to_be_killed();
+    }
+
+    #[test]
+    #[ignore = "daily"]
+    fn interrupted_stacked_undo_resumes_at_the_exact_restored_image() {
+        let scene = scene();
+        let home = scene.home();
+        let first = staging(home);
+        let list = first.path().join("list-b");
+        let dep = first.path().join("dep-b");
+        fs::write(&list, "list B").unwrap();
+        fs::write(&dep, "B").unwrap();
+        let id = begin(
+            home,
+            first.path(),
+            &[
+                (Some(list.clone()), scene.list.clone()),
+                (Some(dep.clone()), scene.dep.clone()),
+            ],
+            &[],
+        )
+        .unwrap();
+        fs::rename(&scene.list, first.path().join("old-0")).unwrap();
+        fs::rename(&scene.dep, first.path().join("old-1")).unwrap();
+        fs::rename(list, &scene.list).unwrap();
+        fs::rename(dep, &scene.dep).unwrap();
+        commit(home, &id, first, true).unwrap();
+        let second = staging(home);
+        let newer = second.path().join("dep-c");
+        fs::write(&newer, "C").unwrap();
+        let next = begin(
+            home,
+            second.path(),
+            &[(Some(newer.clone()), scene.dep.clone())],
+            &[],
+        )
+        .unwrap();
+        fs::rename(&scene.dep, second.path().join("old-0")).unwrap();
+        fs::rename(newer, &scene.dep).unwrap();
+        commit(home, &next, second, true).unwrap();
+        crash_process(
+            "browser::sunrise::txn::tests::live_undo_process",
+            home,
+            || (),
+        );
+        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
+        assert_eq!(fs::read_to_string(&scene.list).unwrap(), "list B");
+        assert_eq!(read(home).unwrap().unwrap().attempts[0].undo, Some(2));
+        assert!(recover(home));
+        scene.is_as_it_was();
+        assert!(!home.join(FILE).exists());
+    }
+
+    #[test]
+    fn a_missing_backup_is_not_evidence_of_a_restored_output() {
+        let scene = scene();
+        let id = waiting(&scene);
+        fs::remove_file(scene.home().join(&id).join("old-0")).unwrap();
+        assert!(!recover(scene.home()));
+        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
+        let record = read(scene.home()).unwrap().unwrap();
+        assert_eq!(record.attempts[0].undo, Some(1));
     }
 
     #[test]
@@ -982,11 +1157,11 @@ mod tests {
         assert!(begin(
             scene.home(),
             staged.path(),
-            std::slice::from_ref(&scene.dep),
+            &[(None, scene.dep.clone())],
             &[]
         )
         .is_err());
-        abandon(scene.home(), &id).unwrap();
+        undo(scene.home(), &[id]).unwrap();
         // A switch's record (a later kind) or a newer layout is neither guessed at nor removed.
         let file = scene.home().join(FILE);
         fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -1000,7 +1175,7 @@ mod tests {
             assert!(begin(
                 scene.home(),
                 staged.path(),
-                std::slice::from_ref(&scene.dep),
+                &[(None, scene.dep.clone())],
                 &[]
             )
             .is_err());
