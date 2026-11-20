@@ -1484,5 +1484,9 @@
   "Downloading the {version} server jar from Mojang": "Downloading the {version} server jar from Mojang",
   "The server jar from Mojang is not the one its version file names (sha1 {sha1})": "The server jar from Mojang is not the one its version file names (sha1 {sha1})",
   "The version file has no server download": "The version file has no server download",
-  "{name} is recorded outside the mod folders: remove it before installing this version.": "{name} is recorded outside the mod folders: remove it before installing this version."
+  "{name} is recorded outside the mod folders: remove it before installing this version.": "{name} is recorded outside the mod folders: remove it before installing this version.",
+  "Checking game files…": "Checking game files…",
+  "Updating mods…": "Updating mods…",
+  "Signing in…": "Signing in…",
+  "Reading the mods you added by hand…": "Reading the mods you added by hand…"
 }

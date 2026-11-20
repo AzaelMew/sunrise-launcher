@@ -48,6 +48,31 @@ fn play_says_each_state_in_the_order_they_win() {
 }
 
 #[test]
+fn play_names_the_step_it_is_at_while_the_game_starts() {
+    let starting = |step| Facts {
+        starting: true,
+        step,
+        ..idle()
+    };
+    for (step, label) in [
+        (None, "Starting…"),
+        (Some(backend::PlayStep::Assets), "Checking game files…"),
+        (Some(backend::PlayStep::Mods), "Updating mods…"),
+        (Some(backend::PlayStep::SignIn), "Signing in…"),
+    ] {
+        let view = starting(step).view();
+        assert_eq!(view.main.label(), label);
+        assert!(!view.enabled, "{label}");
+    }
+    // A step left over once the start is over says nothing.
+    let done = Facts {
+        step: Some(backend::PlayStep::Mods),
+        ..idle()
+    };
+    assert_eq!(done.view().main, Main::Play);
+}
+
+#[test]
 fn play_can_be_pressed_unless_something_is_under_way_or_the_data_is_lost() {
     assert!(idle().view().enabled);
     // Stop, sign-in and the first install are presses too.

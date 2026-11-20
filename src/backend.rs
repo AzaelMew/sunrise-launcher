@@ -1864,7 +1864,10 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
             continue;
         };
         // Copied beside it and renamed: an interrupted copy never looks complete.
-        let partial = to.join(format!(".{name}.partial-{}", std::process::id()));
+        // The name is this call's own, as the window's start and Play can both complete one version.
+        static COPIES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COPIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let partial = to.join(format!(".{name}.partial-{}-{n}", std::process::id()));
         let copied = fs::copy(&from, &partial).and_then(|_| fs::rename(&partial, to.join(name)));
         if copied.is_err() {
             let _ = fs::remove_file(&partial);
@@ -1885,6 +1888,19 @@ pub fn complete_assets(tag: &str) {
     });
 }
 
+/// Whether Sunrise's own store is asked to download again: it has an asset index, the version
+/// lacks some extra (any kind: the download fetches the whole asset index, which holds the
+/// sounds, languages, fonts, panorama and built-in packs) and it was not asked this run yet.
+fn refill_wanted(
+    has_index: bool,
+    missing: Option<&crate::preparer::Extras>,
+    asked: &std::sync::atomic::AtomicBool,
+) -> bool {
+    has_index
+        && missing.is_some_and(|m| !m.is_empty())
+        && !asked.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Sunrise's own download (an owner's) may have stopped before the sounds and the languages,
 /// and the copies of `complete_assets` read them from its store: asked again, once per run, through
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
@@ -1894,21 +1910,16 @@ fn refill_own_store(tag: &str) {
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
-    let lacks_store_extras = crate::preparer::binary(&root)
-        .and_then(|binary| {
-            crate::preparer::missing_extras(&binary, &root, &resources)
-                .ok()
-                .flatten()
-        })
-        .is_some_and(|missing| {
-            missing
-                .iter()
-                .any(|(kind, _)| matches!(kind.as_str(), "languages" | "sounds"))
-        });
-    if !own.join("assets/indexes").is_dir()
-        || !lacks_store_extras
-        || ASKED.swap(true, std::sync::atomic::Ordering::Relaxed)
-    {
+    let missing = crate::preparer::binary(&root).and_then(|binary| {
+        crate::preparer::missing_extras(&binary, &root, &resources)
+            .ok()
+            .flatten()
+    });
+    if !refill_wanted(
+        own.join("assets/indexes").is_dir(),
+        missing.as_ref(),
+        &ASKED,
+    ) {
         return;
     }
     let Some(pins) = read_json(&version_dir(tag).join("research-lock.json"))
@@ -2333,6 +2344,11 @@ pub fn preparer(
             .unwrap_or_default()
             .into_iter()
             .map(|(_, dir)| dir),
+    );
+    games.extend(
+        sources::Folders::current()
+            .map(|f| sources::java_only_folders(sources::Os::current(), &f))
+            .unwrap_or_default(),
     );
     set_prepare_step(PrepareStep::Java);
     let java_home = java(major, needs.jdk, &games, &manifest, log)?;
@@ -2995,6 +3011,14 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
             v = game_version(tag)
         ))
     }
+}
+
+/// A step Play waits on before the game starts that the window says by name (`Msg::PlayStep`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayStep {
+    Assets,
+    Mods,
+    SignIn,
 }
 
 /// Says on stderr which step Play is at, one line each: a terminal run shows where it stops when
@@ -6850,6 +6874,39 @@ pub fn {f}("
     }
 
     #[test]
+    fn any_missing_extra_sends_the_store_refill_once_per_run() {
+        use std::sync::atomic::AtomicBool;
+        let lacks = |kinds: &[&str]| -> crate::preparer::Extras {
+            kinds.iter().map(|k| (k.to_string(), "x".into())).collect()
+        };
+        for kinds in [
+            &["fonts"][..],
+            &["packs"],
+            &["panorama"],
+            &["sounds", "fonts"],
+            &["languages"],
+        ] {
+            let asked = AtomicBool::new(false);
+            assert!(
+                refill_wanted(true, Some(&lacks(kinds)), &asked),
+                "{kinds:?}"
+            );
+            // Asked once: the second call in the run says no.
+            assert!(
+                !refill_wanted(true, Some(&lacks(kinds)), &asked),
+                "{kinds:?}"
+            );
+        }
+        // Nothing missing, no answer from the preparer, or no asset index: not asked, and a
+        // refusal does not use up the run's one ask.
+        let asked = AtomicBool::new(false);
+        assert!(!refill_wanted(true, Some(&lacks(&[])), &asked));
+        assert!(!refill_wanted(true, None, &asked));
+        assert!(!refill_wanted(false, Some(&lacks(&["fonts"])), &asked));
+        assert!(refill_wanted(true, Some(&lacks(&["fonts"])), &asked));
+    }
+
+    #[test]
     fn prepared_versions_get_the_run_time_reports_without_preparing_again() {
         let versions = std::env::temp_dir().join(format!(
             "sunrise-launcher-reports-test-{}",
@@ -6895,6 +6952,18 @@ pub fn {f}("
         }
         assert!(!resources("v2026.10.15").join("registries.json").exists());
         assert!(!complete_reports(&versions, "v2026.10.15"));
+        // A copy that already holds the old shared temp name (another call mid-copy) does not
+        // stop this call: each call copies to a name of its own.
+        let squatted =
+            resources("v2026.10.14").join(format!(".commands.json.partial-{}", std::process::id()));
+        fs::remove_file(resources("v2026.10.14").join("commands.json")).unwrap();
+        fs::create_dir(&squatted).unwrap();
+        assert!(complete_reports(&versions, "v2026.10.14"));
+        assert_eq!(
+            fs::read_to_string(resources("v2026.10.14").join("commands.json")).unwrap(),
+            "v2026.10.13"
+        );
+        fs::remove_dir(&squatted).unwrap();
         // Once there they stay as they are, even when the scratch output is gone.
         fs::remove_dir_all(versions.join("v2026.10.13/.local/datagen")).unwrap();
         assert!(complete_reports(&versions, "v2026.10.13"));

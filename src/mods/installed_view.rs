@@ -442,7 +442,16 @@ impl Launcher {
             }
             list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
         }
-        if visible.is_empty() {
+        let reading = self.ui.mods.snapshot.as_ref().is_some_and(|s| s.reading);
+        if reading {
+            list = list.child(
+                div()
+                    .p(px(16.))
+                    .child(muted(tr("Reading the mods you added by hand…"))),
+            );
+        }
+        // Hand-added mods may still arrive, so an empty list isn't final while reading.
+        if visible.is_empty() && !reading {
             list = list.child(
                 div()
                     .p(px(16.))
