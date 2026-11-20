@@ -264,6 +264,10 @@ impl Active {
         &self.base.tag
     }
 
+    pub(super) fn same_base_artifact(&self, other: &Self) -> bool {
+        self.base == other.base
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }

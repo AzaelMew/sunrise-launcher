@@ -120,6 +120,30 @@ pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// Flush a private complete profile before its directory is made visible in one step.
+pub(super) fn flush_tree(path: &Path) -> io::Result<()> {
+    let meta = fs::symlink_metadata(path)?;
+    if !super::build::regular(&meta) {
+        return Err(io::ErrorKind::InvalidData.into());
+    }
+    if meta.is_dir() {
+        for entry in fs::read_dir(path)? {
+            flush_tree(&entry?.path())?;
+        }
+        #[cfg(not(windows))]
+        sync_directory(path)?;
+        Ok(())
+    } else if meta.is_file() {
+        #[cfg(windows)]
+        let file = File::options().write(true).open(path)?;
+        #[cfg(not(windows))]
+        let file = File::open(path)?;
+        flush(&file)
+    } else {
+        Err(io::ErrorKind::InvalidData.into())
+    }
+}
+
 /// Rename a prepared directory into an absent destination, or undo that move.
 pub(super) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(not(windows))]

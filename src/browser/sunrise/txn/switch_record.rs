@@ -67,14 +67,17 @@ pub(super) struct Journal {
 }
 
 impl Journal {
-    pub(super) fn validate(&self) -> Result<(), String> {
+    pub(super) fn validate(&self, same_base: bool) -> Result<(), String> {
         let before = build::parse(&self.before)?;
         build::validate_tag(&self.target)?;
         let mut destinations = BTreeSet::new();
-        if !self
-            .staging
-            .strip_prefix(".install-txn-")
-            .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()))
+        if (before.base() == self.target) != same_base
+            || !self
+                .staging
+                .strip_prefix(".install-txn-")
+                .is_some_and(|name| {
+                    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric())
+                })
             || self.frontier > self.steps() + 1
             || self
                 .directories
@@ -100,6 +103,7 @@ impl Journal {
                 if after.profile != before.profile
                     || after.generation.checked_sub(1) != Some(before.generation)
                     || after.base() != self.target
+                    || (same_base && !before.same_base_artifact(&after))
                     || (self.phase == Phase::Ready && self.frontier != 0)
                     || (self.phase == Phase::Committed && self.frontier != self.steps() + 1)
                 {
@@ -181,10 +185,11 @@ fn valid_destination(path: &Path) -> bool {
     match second {
         None => first == FILE || first == crate::browser::installed::MANIFEST,
         Some(Normal(file)) => {
-            (first == DIR || first == NATIVE_DIR)
-                && file.to_str().is_some_and(|name| {
-                    name.ends_with(".smod") && crate::browser::safe_name(name).is_some()
-                })
+            (first == "mod-browser" && matches!(file.to_str(), Some("pack.json" | "pack.spack")))
+                || ((first == DIR || first == NATIVE_DIR)
+                    && file.to_str().is_some_and(|name| {
+                        name.ends_with(".smod") && crate::browser::safe_name(name).is_some()
+                    }))
         }
         _ => false,
     }
@@ -207,6 +212,19 @@ impl Lease {
     /// Reserve this profile before producing any candidate files. The private directory stays
     /// named in the record if the process dies; the next admission cancels it before Play.
     pub(super) fn reserve_switch(&self, prior: &Active, target: &str) -> Result<PathBuf, String> {
+        self.reserve_staged(prior, target, false)
+    }
+
+    pub(crate) fn reserve_install_set(&self, prior: &Active) -> Result<PathBuf, String> {
+        self.reserve_staged(prior, prior.base(), true)
+    }
+
+    fn reserve_staged(
+        &self,
+        prior: &Active,
+        target: &str,
+        same_base: bool,
+    ) -> Result<PathBuf, String> {
         let home = self.home();
         let _lock = super::locked(home)?;
         let _publication =
@@ -238,22 +256,29 @@ impl Lease {
             files: Vec::new(),
             frontier: 0,
         };
-        journal.validate()?;
+        journal.validate(same_base)?;
+        let operation = Box::new(journal);
+        let intent = if same_base {
+            Intent::Install {
+                bootstrap: None,
+                staged: Some(operation),
+            }
+        } else {
+            Intent::Switch { operation }
+        };
         // A reported flush error can still leave the record visible. Keep its directory.
         let path = dir.keep();
         write(
             home,
             &Record {
-                intent: Intent::Switch {
-                    operation: Box::new(journal),
-                },
+                intent,
                 ..Record::default()
             },
         )?;
         Ok(path)
     }
 
-    pub(super) fn seal_switch(
+    pub(crate) fn seal_staged_set(
         &self,
         next: &Active,
         files: &[(PathBuf, Option<PathBuf>)],
@@ -263,6 +288,7 @@ impl Lease {
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let mut record = read(home)?.ok_or_else(unsettled)?;
+        let same_base = matches!(record.intent, Intent::Install { .. });
         let journal = operation(&mut record)?;
         if journal.phase != Phase::Staging {
             return Err(unsettled());
@@ -329,11 +355,11 @@ impl Lease {
         }
         journal.after = Some(serde_json::to_vec(next).map_err(|e| e.to_string())?);
         journal.phase = Phase::Ready;
-        journal.validate()?;
+        journal.validate(same_base)?;
         write(home, &record)
     }
 
-    pub(super) fn publish_switch(
+    pub(crate) fn publish_staged_set(
         &self,
         cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
@@ -354,8 +380,12 @@ impl Lease {
 
 fn operation(record: &mut Record) -> Result<&mut Journal, String> {
     match &mut record.intent {
-        Intent::Switch { operation } => Ok(operation),
-        Intent::Install { .. } => Err(unsettled()),
+        Intent::Switch { operation }
+        | Intent::Install {
+            staged: Some(operation),
+            ..
+        } => Ok(operation),
+        Intent::Install { staged: None, .. } => Err(unsettled()),
     }
 }
 
@@ -561,6 +591,7 @@ mod tests {
             return;
         };
         let boundary = std::env::var("SUNRISE_TEST_LIVE_PROFILE_WORKER").unwrap();
+        let (kind, boundary) = boundary.split_once('-').unwrap();
         let home = PathBuf::from(home);
         let owner = Lease::admit(&home).unwrap();
         let prior = Bootstrap::bind(&home, Target::legacy("nightly-original").unwrap())
@@ -568,14 +599,24 @@ mod tests {
             .test_active()
             .test_receipt(1);
         build::publish(&home, &prior).unwrap();
-        let stage = owner.reserve_switch(&prior, "nightly-new").unwrap();
+        let (stage, next) = if kind == "install" {
+            (
+                owner.reserve_install_set(&prior).unwrap(),
+                prior.test_switch("nightly-original"),
+            )
+        } else {
+            (
+                owner.reserve_switch(&prior, "nightly-new").unwrap(),
+                prior.test_switch("nightly-new"),
+            )
+        };
         let package = stage.join("candidate.smod");
         fs::write(&package, b"new mod").unwrap();
         let source = stage.join("candidate");
         fs::write(&source, b"new list").unwrap();
         owner
-            .seal_switch(
-                &prior.test_switch("nightly-new").test_receipt(2),
+            .seal_staged_set(
+                &next.test_receipt(2),
                 &[
                     (PathBuf::from("sunrise-mods.txt"), Some(source)),
                     (PathBuf::from("sunrise-mods/new.smod"), Some(package)),
@@ -604,15 +645,18 @@ mod tests {
     }
 
     #[test]
-    fn admission_after_switch_kills_restores_the_old_or_committed_exact_set() {
-        for boundary in ["root", "files", "pointer", "marker"] {
+    fn admission_after_staged_kills_restores_the_old_or_committed_exact_set() {
+        for (kind, boundary) in ["switch", "install"]
+            .into_iter()
+            .flat_map(|kind| ["root", "files", "pointer", "marker"].map(|b| (kind, b)))
+        {
             let home = tempfile::tempdir().unwrap();
             let home = home.path();
             fs::write(home.join("sunrise-mods.txt"), b"old list").unwrap();
             crash_process(
                 "browser::sunrise::txn::switch_record::tests::live_switch_process",
                 home,
-                Some(boundary),
+                Some(&format!("{kind}-{boundary}")),
                 || {
                     assert!(Lease::admit(home).is_err());
                     assert_eq!(
@@ -629,7 +673,15 @@ mod tests {
             let admission = Lease::admit(home).unwrap();
             let committed = admission.active_build().unwrap().unwrap();
             if boundary == "marker" {
-                assert_eq!(committed.base(), "nightly-new");
+                assert_eq!(
+                    committed.base(),
+                    if kind == "switch" {
+                        "nightly-new"
+                    } else {
+                        "nightly-original"
+                    }
+                );
+                assert_eq!(committed.generation(), 2);
                 assert_eq!(
                     fs::read(home.join("sunrise-mods/new.smod")).unwrap(),
                     b"new mod"
@@ -651,6 +703,7 @@ mod tests {
                 );
             } else {
                 assert_eq!(committed.base(), "nightly-original");
+                assert_eq!(committed.generation(), 1);
                 assert!(!home.join("sunrise-mods").exists());
                 assert_eq!(
                     committed

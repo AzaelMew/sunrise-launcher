@@ -26,9 +26,13 @@ use std::path::{Path, PathBuf};
 
 mod build;
 mod durable;
+mod staged_install;
 mod switch;
 mod switch_record;
 pub use build::{displayed_image, Active, Receipt, Target};
+pub(super) use staged_install::{
+    detach_private_profile, expose_private_profile, seal_private_profile, StagedInstall,
+};
 pub use switch::Switch;
 
 const FILE: &str = "mod-browser/install-txn.json";
@@ -130,7 +134,7 @@ impl Lease {
     pub fn recover_abandoned(&self) -> Result<(), String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.unwrap_or_default();
-        if matches!(record.intent, Intent::Switch { .. }) {
+        if record.staged().is_some() {
             let _publication =
                 crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
             switch_record::recover(&self.home, &mut record)?;
@@ -246,6 +250,8 @@ struct Attempt {
 enum Intent {
     Install {
         bootstrap: Option<build::Bootstrap>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        staged: Option<Box<switch_record::Journal>>,
     },
     Switch {
         operation: Box<switch_record::Journal>,
@@ -281,7 +287,10 @@ impl Default for Record {
     fn default() -> Self {
         Self {
             version: VERSION,
-            intent: Intent::Install { bootstrap: None },
+            intent: Intent::Install {
+                bootstrap: None,
+                staged: None,
+            },
             attempts: Vec::new(),
             pointer: None,
         }
@@ -289,9 +298,16 @@ impl Default for Record {
 }
 
 impl Record {
+    fn staged(&self) -> Option<&switch_record::Journal> {
+        match &self.intent {
+            Intent::Install { staged, .. } => staged.as_deref(),
+            Intent::Switch { operation } => Some(operation),
+        }
+    }
+
     fn bootstrap(&self) -> Option<&build::Bootstrap> {
         match &self.intent {
-            Intent::Install { bootstrap } => bootstrap.as_ref(),
+            Intent::Install { bootstrap, .. } => bootstrap.as_ref(),
             Intent::Switch { .. } => None,
         }
     }
@@ -308,6 +324,7 @@ impl Lease {
         let mut record = read(&self.home)?.unwrap_or_default();
         if record.pointer.is_some()
             || !record.attempts.is_empty()
+            || record.staged().is_some()
             || build::read(&self.home)?.is_some()
         {
             return Err(unsettled());
@@ -324,6 +341,7 @@ impl Lease {
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         record.intent = Intent::Install {
             bootstrap: Some(build::Bootstrap::bind(&self.home, target.clone())?),
+            staged: None,
         };
         write(&self.home, &record)?;
         Ok(target)
@@ -468,7 +486,10 @@ fn recover_pointer(home: &Path, record: &mut Record) -> Result<(), String> {
         if !is_after {
             return Err(unsettled());
         }
-        record.intent = Intent::Install { bootstrap: None };
+        record.intent = Intent::Install {
+            bootstrap: None,
+            staged: None,
+        };
     } else {
         if !is_before && !is_after {
             return Err(unsettled());
@@ -533,7 +554,7 @@ pub(crate) fn references(tag: &str) -> Result<bool, String> {
         let refers = |active: &Active| same(active.base()) || same(active.executable());
         let record = read(home)?;
         if let Some(record) = &record {
-            if let Intent::Switch { operation } = &record.intent {
+            if let Some(operation) = record.staged() {
                 if operation.references(tag)? {
                     return Ok(true);
                 }
@@ -615,6 +636,7 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
             (
                 Intent::Install {
                     bootstrap: Some(bootstrap),
+                    staged: None,
                 },
                 None,
             ) => {
@@ -622,7 +644,13 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
                     && after.generation == 1
                     && after.base() == bootstrap.target.base()
             }
-            (Intent::Install { bootstrap: None }, Some(before)) => {
+            (
+                Intent::Install {
+                    bootstrap: None,
+                    staged: None,
+                },
+                Some(before),
+            ) => {
                 before.profile == after.profile
                     && before.base() == after.base()
                     && after.generation.checked_sub(1) == Some(before.generation)
@@ -633,11 +661,12 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
             return Err(kept(unsettled()));
         }
     }
-    if let Intent::Switch { operation } = &record.intent {
-        if record.pointer.is_some() || !record.attempts.is_empty() {
+    if let Some(operation) = record.staged() {
+        if record.pointer.is_some() || record.bootstrap().is_some() || !record.attempts.is_empty() {
             return Err(kept(unsettled()));
         }
-        operation.validate().map_err(kept)?;
+        let same_base = matches!(record.intent, Intent::Install { .. });
+        operation.validate(same_base).map_err(kept)?;
     }
     use std::path::Component;
     let inside = |path: &Path| {
@@ -663,7 +692,7 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
 /// A failed persistence barrier is reported, even if the namespace change already happened.
 fn write(home: &Path, record: &Record) -> Result<(), String> {
     let file = home.join(FILE);
-    let persisted = if matches!(record.intent, Intent::Install { .. })
+    let persisted = if record.staged().is_none()
         && record.attempts.is_empty()
         && record.pointer.is_none()
         && record.bootstrap().is_none()
@@ -686,7 +715,14 @@ pub(super) fn begin(
     approvals: &[Approval],
 ) -> Result<String, String> {
     let mut record = read(home)?.unwrap_or_default();
-    if !matches!(record.intent, Intent::Install { bootstrap: None }) || record.pointer.is_some() {
+    if !matches!(
+        record.intent,
+        Intent::Install {
+            bootstrap: None,
+            staged: None
+        }
+    ) || record.pointer.is_some()
+    {
         return Err(unsettled());
     }
     if record
@@ -1069,9 +1105,12 @@ fn done(
 /// Whether installs of this profile wait for a build, or a restore is still owed.
 fn outstanding(home: &Path) -> bool {
     read(home).map_or(true, |r| {
-        r.is_some_and(|r| !r.attempts.is_empty() || matches!(r.intent, Intent::Switch { .. }))
+        r.is_some_and(|r| !r.attempts.is_empty() || r.staged().is_some())
     })
 }
+
+#[cfg(test)]
+pub(super) use tests::{crash_process, wait_to_be_killed};
 
 #[cfg(test)]
 mod tests {
@@ -1415,7 +1454,7 @@ mod tests {
         assert!(!newer.exists() && !lease.outstanding());
     }
 
-    pub(super) fn wait_to_be_killed() {
+    pub(in crate::browser::sunrise) fn wait_to_be_killed() {
         use std::io::Write;
         let mut out = io::stdout().lock();
         writeln!(out, "owner ready").unwrap();
@@ -1426,7 +1465,7 @@ mod tests {
     }
 
     /// Drives a child up to a durable boundary, then kills it without Rust destructors.
-    pub(super) fn crash_process<T>(
+    pub(in crate::browser::sunrise) fn crash_process<T>(
         test: &str,
         home: &Path,
         worker: Option<&str>,
