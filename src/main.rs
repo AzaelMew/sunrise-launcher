@@ -349,6 +349,8 @@ struct Launcher {
     starting_play: Option<launcher_play::PlayIntent>,
     /// Play was pressed on a version not prepared yet: it starts once this preparation ends well.
     play_when_prepared: Option<(String, launcher_play::PlayIntent)>,
+    /// The Play waiting for the mods to be brought up to date (`Msg::ModsUpdated`).
+    play_when_updated: Option<launcher_play::PlayIntent>,
     /// Join a friend: the code typed on the Play page, and the one the game
     /// starting now joins.
     friend_code: line_edit::LineEdit,

@@ -178,6 +178,7 @@ impl Launcher {
             play_step: None,
             starting_play: None,
             play_when_prepared: None,
+            play_when_updated: None,
             friend_code: line_edit::LineEdit::new(String::new(), 256, 32),
             friend_focused: false,
             window_width: 0.,

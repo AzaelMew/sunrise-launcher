@@ -371,7 +371,7 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
 }
 
 #[test]
-fn wasm_update_waits_for_the_player() {
+fn a_code_mod_updates_like_any_other() {
     let dir = scratch("auto-wasm");
     let home = dir.join("home");
     let old = ruby(&dir, "1.0.0", &["lamp"], &[]);
@@ -414,11 +414,11 @@ fn wasm_update_waits_for_the_player() {
     .unwrap();
     let index = index_of(&[("1.1.0", GAME, &new), ("1.0.0", GAME, &old)]);
     let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
-    assert!(report.updated.is_empty(), "{report:?}");
-    assert_eq!(report.held.len(), 1, "{report:?}");
+    assert_eq!(report.updated, ["Ruby 1.1.0"], "{report:?}");
+    assert!(report.held.is_empty());
     assert_eq!(
         installed_ruby(&home),
-        ("1.0.0".into(), fs::read(&old).unwrap())
+        ("1.1.0".into(), fs::read(&new).unwrap())
     );
     fs::remove_dir_all(dir).unwrap();
 }

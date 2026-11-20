@@ -1465,5 +1465,7 @@
   "Switch anyway": "Switch anyway",
   "Stay on this version": "Stay on this version",
   "it": "it",
-  "they": "they"
+  "they": "they",
+  "Update mods automatically": "Update mods automatically",
+  "Each mod moves to its newest version that fits, at launch and before Play. Turn this off to update by hand.": "Each mod moves to its newest version that fits, at launch and before Play. Turn this off to update by hand."
 }

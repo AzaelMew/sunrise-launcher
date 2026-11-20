@@ -198,38 +198,12 @@ impl Launcher {
         let accepted = intent.account.clone();
         self.play_pressed = Some(Instant::now());
         let tx = self.tx.clone();
-        let auto = self
-            .instances
-            .list
-            .iter()
-            .find(|i| i.id == intent.instance)
-            .filter(|_| self.starting_pack.is_none())
-            .map(|i| mods_page::AutoTarget {
-                instance: i.clone(),
-                game: backend::played_version_id_by(Some(&tag)),
-            });
-        let mods_tx = self.mods.tx.clone();
-        let auto_enabled = self.settings.auto_updates_mods();
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         self.starting_play = Some(intent);
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
             backend::play_step("checking the game's assets");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
             backend::complete_assets(&tag);
-            if let Some(auto) = auto {
-                backend::play_step("updating registry mods");
-                let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
-                let out = mods_page::auto_update(
-                    &[auto],
-                    auto_enabled,
-                    native_allowed,
-                    &Default::default(),
-                );
-                if !out.lines.is_empty() || !out.asks.is_empty() {
-                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(out.lines, out.asks));
-                }
-            }
             backend::play_step("reading the sign-in");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::SignIn));
             let session = if sunrise_launcher::developer_offline::enabled(&tag) {
