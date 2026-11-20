@@ -357,6 +357,162 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+#[ignore = "daily; build the launcher binary first"]
+fn actual_sdk_build_runner_keeps_a_surviving_attempt_private_and_retries() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let _scratch = super::super::tests::scratch_state();
+    let root = tempfile::tempdir().unwrap();
+    let rust = Toolchain {
+        dir: root.path().join("rust"),
+        host: crate::rust_toolchain::host().unwrap(),
+    };
+    let write_tool = |name, script| {
+        let path = root.path().join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    let detached = write_tool(
+        "stop-tool",
+        r#"#!/bin/sh
+set -eu
+[ "$1" = native-build ]
+read -r plan
+setsid /bin/sh -ec '
+  touch "$TMPDIR/holding"
+  for _ in $(seq 400); do
+    if [ -f "$TMPDIR/release" ]; then
+      for dir in "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"; do printf old > "$dir/proof"; done
+      touch "$TMPDIR/finished"
+      exit 0
+    fi
+    sleep .025
+  done
+  exit 1
+' &
+for _ in $(seq 400); do [ ! -f "$TMPDIR/holding" ] || break; sleep .025; done
+[ -f "$TMPDIR/holding" ]
+printf '%s\n' '{"event":"mod","id":"greeter","done":1,"total":1}'
+wait
+"#,
+    );
+    let succeeds = write_tool(
+        "retry-tool",
+        r#"#!/bin/sh
+set -eu
+[ "$1" = native-build ]
+read -r plan
+for dir in "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"; do printf retry > "$dir/proof"; done
+printf '%s\n' '{"event":"built","route":"prebuilt-api","binary":"unused","libraries":[],"records":[],"mods":[],"internals":{}}'
+"#,
+    );
+    let revoke_tool = write_tool(
+        "registry-tool",
+        r#"#!/bin/sh
+set -eu
+read -r plan
+printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":[],"proc_macros":[]}'
+read -r answer
+printf '%s' "$answer" > "$TMPDIR/answer"
+"#,
+    );
+    let build_fixture = |program: &Path,
+                         workspace: &mut Workspace,
+                         cancellation: &Cancellation,
+                         on_mod: &dyn Fn(&str, usize, usize),
+                         consent: Option<&dyn Fn(&Consent) -> bool>| {
+        let saved = workspace.path().to_owned();
+        build(
+            &rust,
+            program,
+            Plan {
+                workspace,
+                work: &saved.join("work"),
+                package: Package {
+                    runtime: &saved.join("runtime"),
+                    api: &saved.join("api"),
+                    engine: &saved.join("engine"),
+                },
+                mods: &saved.join("mods"),
+                server: false,
+                mixins_from_source: false,
+            },
+            consent,
+            on_mod,
+            cancellation,
+        )
+    };
+    let mut settings = crate::backend::Settings::default();
+    settings.allow_native_mods().unwrap();
+    let stop = Cancellation::default();
+    stop.admit_native_work().unwrap();
+    let mut first = Workspace::new(root.path()).unwrap();
+    let old = first.path().to_owned();
+    let error =
+        build_fixture(&detached, &mut first, &stop, &|_, _, _| stop.stop(), None).unwrap_err();
+    assert_eq!(error.error, super::super::CANCELLED);
+    drop(first);
+    assert!(old.join("tmp/holding").exists() && !old.join("tmp/finished").exists());
+
+    let mut revoke = Workspace::new(root.path()).unwrap();
+    let stale = Cancellation::default();
+    stale.admit_native_work().unwrap();
+    let settings = RefCell::new(settings);
+    let failure = build_fixture(
+        &revoke_tool,
+        &mut revoke,
+        &stale,
+        &|_, _, _| unreachable!(),
+        Some(&|_| {
+            settings.borrow_mut().revoke_native_mods().unwrap();
+            settings.borrow_mut().allow_native_mods().unwrap();
+            true
+        }),
+    )
+    .unwrap_err();
+    assert!(
+        failure.error.contains("permission changed"),
+        "{}",
+        failure.error
+    );
+    assert!(!revoke.path().join("tmp/answer").exists());
+
+    let mut retry = Workspace::new(root.path()).unwrap();
+    let fresh = Cancellation::default();
+    fresh.admit_native_work().unwrap();
+    let result = build_fixture(
+        &succeeds,
+        &mut retry,
+        &fresh,
+        &|_, _, _| unreachable!(),
+        None,
+    );
+    assert_eq!(result.unwrap().route, CheckRoute::PrebuiltApi);
+    assert!(
+        !old.join("tmp/finished").exists(),
+        "retry finished independently"
+    );
+    fs::write(old.join("tmp/release"), b"release").unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while !old.join("tmp/finished").exists() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(old.join("tmp/finished").is_file());
+    for part in ["cargo", "target", "tmp"] {
+        assert_eq!(fs::read(old.join(part).join("proof")).unwrap(), b"old");
+        assert_eq!(
+            fs::read(retry.path().join(part).join("proof")).unwrap(),
+            b"retry"
+        );
+    }
+    let clean = retry.path().to_owned();
+    drop(retry);
+    assert!(!clean.exists());
+}
+
+#[test]
 fn build_plan_and_process_use_the_same_private_cargo_home() {
     let dir = tempfile::tempdir().unwrap();
     let mut workspace = Workspace::new(dir.path()).unwrap();

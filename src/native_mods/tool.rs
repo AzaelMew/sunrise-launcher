@@ -265,7 +265,12 @@ pub(super) fn build(
     let mut command = command(rust, program);
     #[cfg(target_os = "linux")]
     let mut command = {
-        let mut command = command(rust, &std::env::current_exe().map_err(unrun)?);
+        let launcher = std::env::current_exe().map_err(unrun)?;
+        // The lib test is not a launcher. The ignored integration fixture uses the real
+        // launcher from the same Cargo build, not another implementation of the helper.
+        #[cfg(test)]
+        let launcher = launcher.with_file_name("").join("../sunrise-launcher");
+        let mut command = command(rust, &launcher);
         command
             .arg(crate::process::compiler_worker::ARG)
             .arg(program);
