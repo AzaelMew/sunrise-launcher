@@ -1494,5 +1494,8 @@
   "Couldn't check your mods for this version": "Couldn't check your mods for this version",
   "Installing removes {mods}": "Installing removes {mods}",
   "Not available for your version (made for the {day} Nightly)": "Not available for your version (made for the {day} Nightly)",
-  "Getting build tools · at least {size} · {percent}%": "Getting build tools · at least {size} · {percent}%"
+  "Getting build tools · at least {size} · {percent}%": "Getting build tools · at least {size} · {percent}%",
+  "Needed": "Needed",
+  "{mods} is needed and isn't available for your version": "{mods} is needed and isn't available for your version",
+  "{mods} are needed and aren't available for your version": "{mods} are needed and aren't available for your version"
 }
