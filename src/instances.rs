@@ -820,7 +820,60 @@ const PLAYER_FILES: &[&str] = &["options.txt", "sunrise-player.txt"];
 /// copy of `from`'s game folder (its worlds, options and packs). Nothing of `from` changes.
 pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
     let from = from.map(find).transpose()?;
-    create_with(name, from.as_ref(), None, |_| {})
+    create_whole_in(
+        &backend::game_home(),
+        &backend::data_dir(),
+        name,
+        from.as_ref(),
+        None,
+        |_| {},
+    )
+}
+
+/// The directory and build the creation picker told the player it would duplicate.
+#[derive(Clone)]
+pub struct CopyPreview {
+    instance: Instance,
+    base: Option<String>,
+}
+
+impl CopyPreview {
+    /// Read only; the worker rechecks both the directory and this build under admission.
+    pub fn read(instance: &Instance) -> Result<Self, String> {
+        let refs = crate::profile_txn::references(&instance.home)?;
+        let base = refs
+            .pointer
+            .as_deref()
+            .map(crate::managed_play::Active::parse)
+            .transpose()?
+            .map(|active| active.base().to_owned());
+        if let Some(expected) = instance.incarnation {
+            expected.check(instance, Identity::of(&instance.home)?)?;
+        }
+        Ok(Self {
+            instance: instance.clone(),
+            base,
+        })
+    }
+
+    pub fn base(&self) -> Option<&str> {
+        self.base.as_deref()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum CopyFrom<'a> {
+    Selected(&'a Instance),
+    Preview(&'a CopyPreview),
+}
+
+impl<'a> CopyFrom<'a> {
+    fn instance(self) -> &'a Instance {
+        match self {
+            Self::Selected(selected) => selected,
+            Self::Preview(preview) => &preview.instance,
+        }
+    }
 }
 
 /// [`create`], with everything else the New Profile dialog chose, as one step: `picture` (None
@@ -829,17 +882,18 @@ pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
 /// place. Once visible, its initial choices can be recovered even if the launcher exits.
 pub fn create_with(
     name: &str,
-    from: Option<&Instance>,
+    from: Option<&CopyPreview>,
     picture: Option<Option<&[u8]>>,
     choose: impl FnOnce(&mut Meta),
 ) -> Result<Instance, String> {
-    create_whole_in(
+    create_with_publish(
         &backend::game_home(),
         &backend::data_dir(),
         name,
-        from,
+        from.map(CopyFrom::Preview),
         picture,
         choose,
+        |_| {},
     )
 }
 
@@ -859,14 +913,22 @@ fn create_whole_in(
     picture: Option<Option<&[u8]>>,
     choose: impl FnOnce(&mut Meta),
 ) -> Result<Instance, String> {
-    create_with_publish(game_home, data, name, from, picture, choose, |_| {})
+    create_with_publish(
+        game_home,
+        data,
+        name,
+        from.map(CopyFrom::Selected),
+        picture,
+        choose,
+        |_| {},
+    )
 }
 
 fn create_with_publish(
     game_home: &Path,
     data: &Path,
     name: &str,
-    from: Option<&Instance>,
+    copy: Option<CopyFrom<'_>>,
     picture: Option<Option<&[u8]>>,
     choose: impl FnOnce(&mut Meta),
     after_visible: impl FnOnce(&Path),
@@ -875,6 +937,7 @@ fn create_with_publish(
     if name.is_empty() {
         return Err("A profile needs a name.".into());
     }
+    let from = copy.map(CopyFrom::instance);
     if let Some(from) = from.filter(|f| f.kind == Kind::Pack) {
         return Err(format!(
             "{} plays its pack's mods: import the pack again for a second copy.",
@@ -920,9 +983,17 @@ fn create_with_publish(
         .transpose()?;
     let active = if let Some(source) = &source {
         let _inputs = source.lock_inputs()?;
+        let active = source.active()?;
+        if let Some(CopyFrom::Preview(preview)) = copy {
+            if active.as_ref().map(crate::managed_play::Active::base) != preview.base() {
+                return Err(lifecycle::changed());
+            }
+        }
         let _worlds = crate::worlds::lock_saved_worlds(&source.home().join("saves"))?;
         copy_home(source.home(), &contents).map_err(create_error)?;
-        source.stage_copy(&contents)?
+        active
+            .map(|active| source.stage_copy(active, &contents))
+            .transpose()?
     } else {
         fs::create_dir(&contents).map_err(create_error)?;
         for f in PLAYER_FILES {

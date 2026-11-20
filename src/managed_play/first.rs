@@ -237,10 +237,11 @@ impl Profile {
         Ok(!profile_txn::references(self.home())?.targets.is_empty())
     }
 
-    pub(crate) fn stage_copy(&self, destination: &Path) -> Result<Option<Active>, String> {
-        let Some(mut active) = self.active()? else {
-            return Ok(None);
-        };
+    pub(crate) fn stage_copy(
+        &self,
+        mut active: Active,
+        destination: &Path,
+    ) -> Result<Active, String> {
         active.verify_artifacts()?;
         if inputs(self.home(), None)? != active.inputs
             || inputs(destination, None)? != active.inputs
@@ -255,7 +256,7 @@ impl Profile {
         active.receipts.clear();
         let bytes = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
         profile_txn::write_copy_pointer(destination, &bytes)?;
-        Ok(Some(active))
+        Ok(active)
     }
 
     pub fn home(&self) -> &Path {

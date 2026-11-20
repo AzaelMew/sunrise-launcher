@@ -872,6 +872,8 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
     match role.as_str() {
         "input" => {
             let source = create_in(&game, &cache, "Source", None).unwrap();
+            let preview = CopyPreview::read(&source).unwrap();
+            assert_eq!(preview.base(), None);
             let folder = backend::version_dir(BUILD);
             let resources = backend::resources(BUILD);
             fs::create_dir_all(&resources).unwrap();
@@ -904,17 +906,32 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
             let bytes = serde_json::to_vec(&exact).unwrap();
             Active::parse(&bytes).unwrap();
             durable::replace(&source.home, &source.home.join(POINTER), &bytes).unwrap();
+            drop(managed);
+            let stale = create_with_publish(
+                &game,
+                &cache,
+                "Old Preview",
+                Some(CopyFrom::Preview(&preview)),
+                None,
+                |_| {},
+                |_| panic!("a changed binding was published"),
+            );
+            assert_eq!(stale.unwrap_err(), lifecycle::changed());
+            assert!(!game.join("instances/old-preview").exists());
         }
         "copy" => {
             let source = find_in(&list_in(&game, &cache), "source").unwrap();
+            let preview = CopyPreview::read(&source).unwrap();
+            assert_eq!(preview.base(), Some(BUILD));
             create_with_publish(
                 &game,
                 &cache,
                 "New Copy",
-                Some(&source),
+                Some(CopyFrom::Preview(&preview)),
                 None,
                 |meta| {
                     meta.group = Some("Kept after exit".into());
+                    meta.version = Some("not-the-copied-build".into());
                 },
                 |visible| {
                     assert!(visible.join(POINTER).is_file());
