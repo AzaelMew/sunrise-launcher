@@ -979,32 +979,27 @@ impl Launcher {
         else {
             return;
         };
-        // Under the profile's lock, and only the files that are still the ones listed.
-        let _lock = match browser::lock_home(&home) {
-            Ok(lock) => lock,
-            Err(e) => {
-                self.mods.message = Some(Err(e.to_string()));
-                return;
-            }
-        };
-        let entries = installed::Installed::load(&home).entries;
+        // One transaction under the profile's lock, and only the files that are still the ones
+        // listed: a crash in it is undone at the next start like an install's.
+        let wanted: Vec<(String, String)> = removal
+            .items
+            .iter()
+            .map(|item| (item.id.clone(), item.checksum.clone()))
+            .collect();
         let mut failed = Vec::new();
-        for item in &removal.items {
-            let same = entries
-                .iter()
-                .any(|e| e.project == item.id && e.checksum == item.checksum);
-            if !same {
-                continue;
+        match sunrise::remove_checked(&home, &wanted) {
+            Ok(gone) => {
+                for item in removal.items.iter().filter(|i| gone.contains(&i.id)) {
+                    if let Some(log) = &item.log {
+                        failed.push(native_mods::BuildFailure {
+                            id: item.id.clone(),
+                            reason: item.reason.clone(),
+                            log: log.clone(),
+                        });
+                    }
+                }
             }
-            if let Err(e) = installed::remove(&home, &item.id) {
-                self.mods.message = Some(Err(e));
-            } else if let Some(log) = &item.log {
-                failed.push(native_mods::BuildFailure {
-                    id: item.id.clone(),
-                    reason: item.reason.clone(),
-                    log: log.clone(),
-                });
-            }
+            Err(e) => self.mods.message = Some(Err(e)),
         }
         if !failed.is_empty() {
             self.mods.failed = Some(InstallFailure::ModsDidNotBuild(failed));

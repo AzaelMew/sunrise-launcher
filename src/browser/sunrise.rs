@@ -1128,6 +1128,12 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
     }
 }
 
+/// Removes registry mods in one transaction (`txn`), each only if it is still the file shown
+/// (id and checksum). Returns the ids that went.
+pub fn remove_checked(home: &Path, wanted: &[(String, String)]) -> Result<Vec<String>, String> {
+    dependencies::remove_checked(home, wanted)
+}
+
 /// Installs a registry project into the game folder `home`: its newest version for this game that
 /// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
 /// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in

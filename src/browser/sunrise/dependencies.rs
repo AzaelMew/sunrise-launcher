@@ -233,6 +233,66 @@ pub(super) fn install(
     Ok(done)
 }
 
+/// Removes the registry mods in `wanted` (id and checksum: only a file that is still the one the
+/// player was shown goes) in one transaction, like an install: the record first, the files and
+/// the lists moved aside under the lock, a failure put back. Returns the ids that went.
+pub(super) fn remove_checked(
+    home: &Path,
+    wanted: &[(String, String)],
+) -> Result<Vec<String>, String> {
+    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    super::txn::settle(home)?;
+    let mut list = installed::Installed::load(home);
+    let (gone, kept): (Vec<_>, Vec<_>) = list.entries.drain(..).partition(|e| {
+        e.source == SourceId::Sunrise
+            && wanted
+                .iter()
+                .any(|(id, checksum)| *id == e.project && *checksum == e.checksum)
+    });
+    list.entries = kept;
+    if gone.is_empty() {
+        return Ok(Vec::new());
+    }
+    let staged = tempfile::Builder::new()
+        .prefix(".installed-mods-")
+        .tempdir_in(home)
+        .map_err(|e| format!("{}: {e}", home.display()))?;
+    let mut changes = Vec::new();
+    let mut disable = Vec::new();
+    for entry in &gone {
+        if let Some(path) = entry.path(home) {
+            if path.symlink_metadata().is_ok_and(|m| !m.is_file()) {
+                return Err(trf(
+                    "{file} is a folder, not a file the browser installed. Nothing was removed: move it away yourself.",
+                    &[("file", &entry.file)],
+                ));
+            }
+            changes.push((None, path));
+        }
+        disable.extend(super::mod_id(entry).map(str::to_owned));
+    }
+    list.save(staged.path())?;
+    changes.push((
+        Some(staged.path().join(installed::MANIFEST)),
+        home.join(installed::MANIFEST),
+    ));
+    if disable.iter().any(|id| mod_list::is_enabled(home, id)) {
+        let saved = home.join(ENABLED);
+        let next = staged.path().join(ENABLED);
+        match fs::copy(&saved, &next) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", saved.display())),
+        }
+        let ids = disable.iter().map(String::as_str).collect::<Vec<_>>();
+        mod_list::set_all_enabled(staged.path(), &ids, false)?;
+        changes.push((Some(next), saved));
+    }
+    let (staged, attempt) = publish(staged, changes, &[])?;
+    super::txn::commit(home, &attempt, staged, false)?;
+    Ok(gone.into_iter().map(|e| e.project).collect())
+}
+
 struct Plan<'a> {
     install: &'a Install<'a>,
     staged: &'a Path,
