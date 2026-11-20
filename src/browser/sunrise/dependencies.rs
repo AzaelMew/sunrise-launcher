@@ -191,10 +191,10 @@ pub(super) fn install(
         mod_list::set_all_enabled(staged.path(), &ids, false)?;
         changes.push((Some(next), saved));
     }
-    let _staged = publish(staged, changes)?;
+    let staged = publish(staged, changes)?;
     // The files are in place and the list is still kept: what is left to do is part of the
     // install, and a failure in it puts the files back.
-    super::journal::commit(home, || {
+    super::journal::commit(home, staged, || {
         for (broken, copy) in aside {
             let to = super::unreadable_slot(home, &broken)?;
             fs::copy(copy, &to).map_err(|e| format!("{}: {e}", to.display()))?;
