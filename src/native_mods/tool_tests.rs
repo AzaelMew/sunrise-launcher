@@ -14,6 +14,9 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
             "CONSENT" => script.push_str(
                 "echo '{\"event\":\"consent\",\"added_crates\":2,\"build_scripts\":[\"syn\"],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
+            "QUIET" => script.push_str(
+                "echo '{\"event\":\"consent\",\"added_crates\":3,\"build_scripts\":[],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
+            ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
             "EXIT1" => script.push_str("exit 1\n"),
             "EXIT2" => script.push_str("exit 2\n"),
@@ -120,6 +123,30 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         silent.error
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Crates with no build script and no proc macro run nothing while building, so the player is
+/// not asked about them and the tool is told yes (#104).
+#[cfg(unix)]
+#[test]
+fn crates_that_run_nothing_while_building_are_not_asked_about() {
+    let dir = tempfile::tempdir().unwrap();
+    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
+    run(
+        fake(dir.path(), &["QUIET", built]),
+        "{}",
+        Some(&|_: &Consent| unreachable!("nothing runs while building")),
+        &|_, _, _| {},
+        &Cancellation::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("answer"))
+            .unwrap()
+            .trim(),
+        "true"
+    );
 }
 
 #[test]
@@ -424,7 +451,7 @@ printf '%s\n' '{"event":"built","route":"prebuilt-api","binary":"unused","librar
         r#"#!/bin/sh
 set -eu
 read -r plan
-printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":[],"proc_macros":[]}'
+printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":["syn"],"proc_macros":[]}'
 read -r answer
 printf '%s' "$answer" > "$TMPDIR/answer"
 "#,
