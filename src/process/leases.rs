@@ -166,6 +166,8 @@ pub(crate) fn inherit_profile(command: &mut std::process::Command, file: &File) 
 #[cfg(windows)]
 pub(super) mod windows;
 #[cfg(windows)]
+pub(crate) use windows::CompilerJob;
+#[cfg(windows)]
 pub use windows::WindowsChild;
 
 /// Create a Windows profile child with explicitly piped or attached streams. It inherits
@@ -175,6 +177,24 @@ pub(crate) fn spawn_profile(
     command: &std::process::Command,
     lease: &crate::browser::sunrise::txn::Lease,
     piped: bool,
+) -> io::Result<super::child::Child> {
+    spawn_managed(command, Some(lease), piped, false)
+}
+
+#[cfg(windows)]
+pub(crate) fn spawn_compiler(
+    command: &std::process::Command,
+    lease: Option<&crate::browser::sunrise::txn::Lease>,
+) -> io::Result<super::child::Child> {
+    spawn_managed(command, lease, true, true)
+}
+
+#[cfg(windows)]
+fn spawn_managed(
+    command: &std::process::Command,
+    lease: Option<&crate::browser::sunrise::txn::Lease>,
+    piped: bool,
+    compiler: bool,
 ) -> io::Result<super::child::Child> {
     use std::os::windows::io::AsRawHandle;
     let mut environment: Vec<_> = std::env::vars_os().collect();
@@ -207,8 +227,9 @@ pub(crate) fn spawn_profile(
             error.as_raw_handle(),
         ]
     });
+    let files: Vec<_> = lease.iter().map(|lease| lease.file()).collect();
     let child = windows::spawn_exact(
-        &[lease.file()],
+        &files,
         Path::new(command.get_program()),
         &arguments,
         &environment,
@@ -216,6 +237,7 @@ pub(crate) fn spawn_profile(
             directory: command.get_current_dir(),
             streams,
             attached: !piped,
+            compiler,
             ..windows::Start::default()
         },
     )?;

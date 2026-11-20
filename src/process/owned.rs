@@ -99,6 +99,14 @@ impl Owned {
         }
     }
 
+    #[cfg(windows)]
+    pub(crate) fn spawn_compiler(
+        command: &Command,
+        lease: Option<&crate::browser::sunrise::txn::Lease>,
+    ) -> io::Result<Self> {
+        Ok(CHILDREN.track(super::leases::spawn_compiler(command, lease)?))
+    }
+
     pub fn child(&mut self) -> &mut Child {
         &mut self.child
     }

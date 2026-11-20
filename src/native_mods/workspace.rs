@@ -39,6 +39,12 @@ impl Workspace {
         self.0.disable_cleanup(true);
     }
 
+    /// Windows compiler success proves the kernel job was empty at SDK exit.
+    #[cfg(windows)]
+    pub(super) fn worker_finished(&mut self) {
+        self.0.disable_cleanup(false);
+    }
+
     /// Copy the installed SDK inputs, never giving a compiler links into the shared cache.
     pub(super) fn package(&self, package: &Package) -> io::Result<Package> {
         let root = self.path().join("package");

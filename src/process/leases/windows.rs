@@ -9,21 +9,93 @@ use std::{
     },
     path::Path,
     ptr,
+    sync::Arc,
 };
 use windows_sys::Win32::{
     Foundation::*,
     Globalization::CompareStringOrdinal,
-    System::{Console::*, Threading::*},
+    System::{Console::*, JobObjects::*, Threading::*},
 };
 
 /// An owned process object; neither waiting nor termination guesses ownership from a PID.
-pub struct WindowsChild(OwnedHandle, u32);
+pub struct WindowsChild(OwnedHandle, u32, Option<Arc<CompilerJob>>);
+
+/// An unnamed non-inheritable job. The launcher's death closes its last handle and kills the tree.
+#[derive(Debug)]
+pub(crate) struct CompilerJob(OwnedHandle);
+
+impl CompilerJob {
+    fn create() -> io::Result<Self> {
+        // SAFETY: no name or inherited security descriptor; the caller owns the returned handle.
+        let handle = unsafe { CreateJobObjectW(ptr::null(), ptr::null()) };
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: CreateJobObjectW returned an owned handle. Set a fixed-size, no-breakaway limit.
+        let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if unsafe {
+            SetInformationJobObject(
+                job.0.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                mem::size_of_val(&limits) as u32,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(job)
+    }
+
+    pub(crate) fn terminate(&self) -> io::Result<()> {
+        // SAFETY: the live job handle identifies exactly this attempt, not a recycled PID.
+        if unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    fn check_empty(&self) -> io::Result<()> {
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        // SAFETY: a live handle and the fixed-size output buffer for this information class.
+        if unsafe {
+            QueryInformationJobObject(
+                self.0.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                mem::size_of_val(&info) as u32,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            let error = io::Error::last_os_error();
+            self.terminate()?;
+            return Err(error);
+        }
+        if info.ActiveProcesses != 0 {
+            self.terminate()?;
+            return Err(io::Error::other(
+                "the native build tool left a running child",
+            ));
+        }
+        Ok(())
+    }
+}
 impl WindowsChild {
     pub(crate) fn id(&self) -> u32 {
         self.1
     }
 
+    pub(crate) fn compiler_job(&self) -> Option<Arc<CompilerJob>> {
+        self.2.clone()
+    }
+
     pub(crate) fn kill(&self) -> io::Result<()> {
+        if let Some(job) = &self.2 {
+            return job.terminate();
+        }
         // SAFETY: the process handle is live and identifies the process we created.
         if unsafe { TerminateProcess(self.0.as_raw_handle(), 1) } == 0 {
             return Err(io::Error::last_os_error());
@@ -37,8 +109,11 @@ impl WindowsChild {
 
     /// Wait for the owned process, retaining its full Windows exit code.
     pub fn wait(&self) -> io::Result<std::process::ExitStatus> {
-        self.status(INFINITE)?
-            .ok_or_else(|| io::ErrorKind::TimedOut.into())
+        let status = self.status(INFINITE)?.ok_or(io::ErrorKind::TimedOut)?;
+        if let Some(job) = &self.2 {
+            job.check_empty()?;
+        }
+        Ok(status)
     }
 
     fn status(&self, millis: u32) -> io::Result<Option<std::process::ExitStatus>> {
@@ -122,6 +197,7 @@ pub(super) struct Start<'a> {
     pub runtime_root: Option<&'a Path>,
     pub breakaway: bool,
     pub attached: bool,
+    pub compiler: bool,
 }
 
 pub(super) fn spawn_exact(
@@ -148,6 +224,11 @@ pub(super) fn spawn_exact(
         argument(&mut line, &wide(arg)?);
     }
     line.push(0);
+    let job = start
+        .compiler
+        .then(CompilerJob::create)
+        .transpose()?
+        .map(Arc::new);
     let nul = File::options().read(true).write(true).open("NUL")?;
     let mut roots: Vec<_> = files.iter().map(|file| file.as_raw_handle()).collect();
     roots.sort_unstable_by_key(|h| *h as usize);
@@ -227,10 +308,11 @@ pub(super) fn spawn_exact(
         let mut environment: Vec<u16> = env.into_iter().flat_map(|(entry, _)| entry).collect();
         environment.push(0);
         let mut bytes = 0;
-        InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut bytes);
+        let attributes = 1 + u32::from(job.is_some());
+        InitializeProcThreadAttributeList(ptr::null_mut(), attributes, 0, &mut bytes);
         let mut storage = vec![0usize; bytes.div_ceil(mem::size_of::<usize>())];
         let list = storage.as_mut_ptr().cast();
-        if InitializeProcThreadAttributeList(list, 1, 0, &mut bytes) == 0 {
+        if InitializeProcThreadAttributeList(list, attributes, 0, &mut bytes) == 0 {
             return Err(io::Error::last_os_error());
         }
         let _attributes = Attributes(storage);
@@ -245,6 +327,23 @@ pub(super) fn spawn_exact(
         ) == 0
         {
             return Err(io::Error::last_os_error());
+        }
+        // Put the SDK in its job atomically in CreateProcessW, before it can spawn a child.
+        // This is independent of the narrow allowlist of inherited handles above.
+        let jobs = job.as_ref().map(|job| [job.0.as_raw_handle()]);
+        if let Some(jobs) = &jobs {
+            if UpdateProcThreadAttribute(
+                list,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+                jobs.as_ptr().cast(),
+                mem::size_of_val(jobs),
+                ptr::null_mut(),
+                ptr::null(),
+            ) == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
         }
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
@@ -286,6 +385,6 @@ pub(super) fn spawn_exact(
         let process = OwnedHandle::from_raw_handle(information.hProcess);
         drop(OwnedHandle::from_raw_handle(information.hThread));
         // inherited closes without unlock; the game's file objects retain sharing exclusion.
-        Ok(WindowsChild(process, information.dwProcessId))
+        Ok(WindowsChild(process, information.dwProcessId, job))
     }
 }

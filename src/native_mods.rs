@@ -1712,6 +1712,8 @@ fn pipeline(
             append_log(&log)?;
         }
         let built = built.map_err(blame)?;
+        #[cfg(windows)]
+        workspace.worker_finished();
         workspace
             .verify_outputs(&built, &game, &rust, ids.iter().copied())
             .map_err(|e| e.to_string())?;

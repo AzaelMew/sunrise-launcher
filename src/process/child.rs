@@ -50,6 +50,14 @@ impl Child {
         }
     }
 
+    #[cfg(windows)]
+    pub(crate) fn compiler_job(&self) -> Option<std::sync::Arc<super::leases::CompilerJob>> {
+        match &self.process {
+            Handle::Std(_) => None,
+            Handle::Windows(child) => child.compiler_job(),
+        }
+    }
+
     pub fn id(&self) -> u32 {
         match &self.process {
             Handle::Std(child) => child.id(),

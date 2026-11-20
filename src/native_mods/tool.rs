@@ -32,6 +32,8 @@ pub struct Cancellation(
 struct Attempt {
     stopped: bool,
     tool: Option<u32>,
+    #[cfg(windows)]
+    job: Option<Arc<crate::process::leases::CompilerJob>>,
     grant: Option<NativeGrant>,
 }
 
@@ -89,6 +91,11 @@ impl Cancellation {
     pub fn stop(&self) {
         let mut state = self.state();
         state.stopped = true;
+        #[cfg(windows)]
+        if let Some(job) = &state.job {
+            let _ = job.terminate();
+            return;
+        }
         if let Some(pid) = state.tool {
             // SAFETY: this process group was created for this attempt by `start`.
             #[cfg(unix)]
@@ -273,7 +280,7 @@ fn run(
         .arg("native-build")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation)?;
+    let (mut child, errors) = start(command, cancellation, true)?;
     let result = talk(&mut child, plan, consent, on_mod);
     let status = child.wait();
     let errors = finish(cancellation, errors);
@@ -389,6 +396,7 @@ fn talk(
 fn start(
     mut command: std::process::Command,
     cancellation: &Cancellation,
+    _compiler: bool,
 ) -> Result<
     (
         crate::process::owned::Owned,
@@ -404,12 +412,24 @@ fn start(
     state.check()?;
     // The settings lock is held through the OS handoff, not while the SDK runs or asks.
     let permission = state.grant.map(NativeGrant::hold).transpose()?;
-    let mut child = match &cancellation.1 {
-        Some(lease) => crate::process::owned::Owned::spawn_profile(&mut command, lease),
-        None => crate::process::owned::Owned::spawn(&mut command),
+    let spawn = |command: &mut std::process::Command| match &cancellation.1 {
+        Some(lease) => crate::process::owned::Owned::spawn_profile(command, lease),
+        None => crate::process::owned::Owned::spawn(command),
+    };
+    #[cfg(unix)]
+    let mut child = spawn(&mut command).map_err(unrun)?;
+    #[cfg(windows)]
+    let mut child = if _compiler {
+        crate::process::owned::Owned::spawn_compiler(&command, cancellation.1.as_deref())
+    } else {
+        spawn(&mut command)
     }
     .map_err(unrun)?;
     state.tool = Some(child.child().id());
+    #[cfg(windows)]
+    {
+        state.job = child.child().compiler_job();
+    }
     drop(permission);
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");
@@ -418,7 +438,14 @@ fn start(
 
 /// Forgets a tool that ended and returns the tail of its stderr.
 fn finish(cancellation: &Cancellation, errors: std::thread::JoinHandle<String>) -> String {
-    cancellation.state().tool = None;
+    {
+        let mut state = cancellation.state();
+        state.tool = None;
+        #[cfg(windows)]
+        {
+            state.job = None;
+        }
+    }
     errors.join().unwrap_or_default()
 }
 
@@ -506,7 +533,7 @@ pub(super) fn ask(
         .arg(name)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    let (mut child, errors) = start(command, cancellation)?;
+    let (mut child, errors) = start(command, cancellation, false)?;
     let mut input = child.child().stdin.take().expect("piped");
     let sent = writeln!(input, "{plan}").map_err(unrun);
     drop(input);
