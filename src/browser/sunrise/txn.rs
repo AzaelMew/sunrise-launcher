@@ -736,6 +736,18 @@ pub(super) fn begin(
     changes: &[(Option<PathBuf>, PathBuf)],
     approvals: &[Approval],
 ) -> Result<String, String> {
+    begin_attempt(home, staged, changes, approvals, &[])
+}
+
+/// With a sealed batch, appends the player's removal decision to that exact batch.
+/// Recovery will undo the removals first and then the installs until one `done` accepts both.
+pub(super) fn begin_attempt(
+    home: &Path,
+    staged: &Path,
+    changes: &[(Option<PathBuf>, PathBuf)],
+    approvals: &[Approval],
+    sealed: &[String],
+) -> Result<String, String> {
     let mut record = read(home)?.unwrap_or_default();
     if !matches!(
         record.intent,
@@ -747,10 +759,10 @@ pub(super) fn begin(
     {
         return Err(unsettled());
     }
-    if record
-        .attempts
-        .iter()
-        .any(|a| a.state == State::Pending || a.build.is_some() || a.undo.is_some())
+    let sealed_batch = !sealed.is_empty();
+    if record.attempts.iter().any(|a| {
+        a.state != State::Published || a.undo.is_some() || a.build.is_some() != sealed_batch
+    }) || (sealed_batch && !record.attempts.iter().map(|a| &a.id).eq(sealed))
     {
         return Err(unsettled());
     }

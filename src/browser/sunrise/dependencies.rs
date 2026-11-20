@@ -1,4 +1,4 @@
-//! A manual registry install stages and verifies the whole set before changing the profile.
+//! Installs and removals stage the whole set before changing the profile.
 use super::{fs, index, installed, mod_list, Install, SourceId};
 use crate::i18n::trf;
 use semver::{Version, VersionReq};
@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use sunrise_launcher_smod::index::resolve::{self, Request, RequestResult};
 use sunrise_launcher_smod::manifest::Side;
 use sunrise_launcher_smod::mod_list::FILE as ENABLED;
+
+mod github;
 
 /// Installs the `asked` projects, each at its version, and what they need, as one attempt: the
 /// plan, the world question and the publish cover the whole set, so a failure anywhere leaves
@@ -314,17 +316,37 @@ pub(super) fn install(
     Ok(done)
 }
 
-/// Removes the registry mods in `wanted` (id and checksum: only a file that is still the one the
-/// player was shown goes) in one transaction, like an install: the record first, the files and
-/// the lists moved aside under the lock, a failure put back. Returns the ids that went.
+/// Removes the managed mods in `wanted`, each checked against the id and checksum shown.
+/// A failure leaves their files and enabled list unchanged.
 pub(super) fn remove_checked(
     home: &Path,
     wanted: &[(String, String)],
 ) -> Result<Vec<String>, String> {
-    let _lease = super::txn::Lease::admit(home)?;
+    let lease = super::txn::Lease::admit(home)?;
+    lease.remove_after_build(wanted, &[])
+}
+
+impl super::txn::Lease {
+    /// Removes failures and accepts a sealed install batch together. Closing before Continue
+    /// (or during publication) leaves the full batch available for recovery.
+    pub fn remove_after_build(
+        &self,
+        wanted: &[(String, String)],
+        sealed: &[String],
+    ) -> Result<Vec<String>, String> {
+        remove_owned(self, wanted, sealed)
+    }
+}
+
+fn remove_owned(
+    lease: &super::txn::Lease,
+    wanted: &[(String, String)],
+    sealed: &[String],
+) -> Result<Vec<String>, String> {
+    let home = lease.home();
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     super::txn::settle_owned(home)?;
-    if super::txn::has_build(home)? {
+    if sealed.is_empty() && super::txn::has_build(home)? {
         return Err(super::txn::unsettled());
     }
     let mut list = installed::Installed::load(home);
@@ -334,8 +356,28 @@ pub(super) fn remove_checked(
                 .iter()
                 .any(|(id, checksum)| *id == e.project && *checksum == e.checksum)
     });
+    let github = wanted
+        .iter()
+        .filter_map(|(id, checksum)| {
+            if kept
+                .iter()
+                .chain(&gone)
+                .any(|entry| super::mod_id(entry) == Some(id))
+            {
+                return None;
+            }
+            github::removal_paths(home, id, checksum).map(|paths| (id.clone(), paths))
+        })
+        .collect::<Vec<_>>();
     list.entries = kept;
-    if gone.is_empty() {
+    if !sealed.is_empty()
+        && wanted.iter().any(|(id, _)| {
+            !gone.iter().any(|e| &e.project == id) && !github.iter().any(|(local, _)| local == id)
+        })
+    {
+        return Err(super::txn::unsettled());
+    }
+    if gone.is_empty() && github.is_empty() {
         return Ok(Vec::new());
     }
     let staged = tempfile::Builder::new()
@@ -356,26 +398,32 @@ pub(super) fn remove_checked(
         }
         disable.extend(super::mod_id(entry).map(str::to_owned));
     }
-    list.save(staged.path())?;
-    changes.push((
-        Some(staged.path().join(installed::MANIFEST)),
-        home.join(installed::MANIFEST),
-    ));
-    if disable.iter().any(|id| mod_list::is_enabled(home, id)) {
-        let saved = home.join(ENABLED);
-        let next = staged.path().join(ENABLED);
-        match fs::copy(&saved, &next) {
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", saved.display())),
-        }
-        let ids = disable.iter().map(String::as_str).collect::<Vec<_>>();
-        mod_list::set_all_enabled(staged.path(), &ids, false)?;
-        changes.push((Some(next), saved));
+    if !gone.is_empty() {
+        list.save(staged.path())?;
+        changes.push((
+            Some(staged.path().join(installed::MANIFEST)),
+            home.join(installed::MANIFEST),
+        ));
     }
-    let (staged, attempt) = publish(staged, changes, &[])?;
+    for (id, paths) in &github {
+        disable.push(id.clone());
+        changes.extend(paths.iter().cloned().map(|path| (None, path)));
+    }
+    if disable.iter().any(|id| mod_list::is_enabled(home, id)) {
+        changes.push(stage_enabled(home, staged.path(), &disable, false)?);
+    }
+    let (staged, attempt) = publish_with(staged, changes, &[], sealed)?;
     super::txn::commit(home, &attempt, staged, false)?;
-    Ok(gone.into_iter().map(|e| e.project).collect())
+    if !sealed.is_empty() {
+        let mut finished = sealed.to_vec();
+        finished.push(attempt);
+        lease.done(&finished)?;
+    }
+    Ok(gone
+        .into_iter()
+        .map(|e| e.project)
+        .chain(github.into_iter().map(|(id, _)| id))
+        .collect())
 }
 
 struct Plan<'a> {
@@ -525,6 +573,26 @@ impl Plan<'_> {
     }
 }
 
+/// Changes the enabled list in staging, so the transaction publishes and restores it along
+/// with the packages it describes.
+fn stage_enabled(
+    home: &Path,
+    staged: &Path,
+    ids: &[String],
+    on: bool,
+) -> Result<(Option<PathBuf>, PathBuf), String> {
+    let saved = home.join(ENABLED);
+    let next = staged.join(ENABLED);
+    match fs::copy(&saved, &next) {
+        Ok(_) => {}
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("{}: {e}", saved.display())),
+    }
+    let ids = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    mod_list::set_all_enabled(staged, &ids, on)?;
+    Ok((Some(next), saved))
+}
+
 /// Same-filesystem moves under a record that is written first (`txn::begin`): if it can't be,
 /// nothing moves; if a move fails, the attempt is undone on the spot. The record stays until
 /// the caller commits (`txn::commit`): publishing is not the end. The profile lock keeps
@@ -534,12 +602,25 @@ fn publish(
     changes: Vec<(Option<PathBuf>, PathBuf)>,
     approvals: &[installed::Approval],
 ) -> Result<(tempfile::TempDir, String), String> {
+    publish_with(staged, changes, approvals, &[])
+}
+
+fn publish_with(
+    staged: tempfile::TempDir,
+    changes: Vec<(Option<PathBuf>, PathBuf)>,
+    approvals: &[installed::Approval],
+    sealed: &[String],
+) -> Result<(tempfile::TempDir, String), String> {
     let home = staged
         .path()
         .parent()
         .expect("staged in the profile")
         .to_path_buf();
-    let id = super::txn::begin(&home, staged.path(), &changes, approvals)?;
+    let id = if sealed.is_empty() {
+        super::txn::begin(&home, staged.path(), &changes, approvals)?
+    } else {
+        super::txn::begin_attempt(&home, staged.path(), &changes, approvals, sealed)?
+    };
     for (i, (from, to)) in changes.into_iter().enumerate() {
         let result = (|| -> io::Result<()> {
             if let Some(dir) = to.parent() {
