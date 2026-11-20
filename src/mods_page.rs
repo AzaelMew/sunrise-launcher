@@ -849,7 +849,9 @@ impl Launcher {
         }
         let allow = ask.question.mods.into_iter().collect();
         match ask.then {
-            Then::Build(base) => self.build_native_on(Some(base), true),
+            Then::Build(base) => {
+                self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
+            }
             Then::Switch(version, channel) => {
                 self.commit_switch(&ask.instance, version, channel, allow)
             }

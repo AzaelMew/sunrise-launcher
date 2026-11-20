@@ -1312,7 +1312,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, leave_out_mods, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, if leave_out_mods { native_mods::LeaveOut::Everything } else { native_mods::LeaveOut::Nothing }, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
