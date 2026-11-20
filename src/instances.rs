@@ -361,6 +361,11 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// A modpack's profile: its pack pins the build and the mods, so neither is switched here.
+    pub fn is_pack_profile(&self) -> bool {
+        self.id.starts_with("pack:")
+    }
+
     /// The installed version this instance plays: its pinned one, else `requested` (the
     /// command line's `--version`) or the launcher's (`backend::resolve_version`).
     pub fn resolve_version(&self, requested: Option<&str>) -> Result<String, String> {
