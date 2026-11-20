@@ -263,6 +263,11 @@ pub enum InstallError {
     NeedsWorlds {
         mods: Vec<String>,
     },
+    /// The exact candidate failed with named mod-specific proof, not a transport failure.
+    Build {
+        failures: Vec<crate::native_mods::BuildFailure>,
+        reason: String,
+    },
     /// The planner refused for another reason, in its words.
     Refused(String),
     Message(String),
@@ -273,6 +278,10 @@ impl InstallError {
         match error {
             crate::native_mods::Failed::NoConsent => Self::NeedsNativeConsent {
                 native: native.into(),
+            },
+            crate::native_mods::Failed::Mods { left, error } => Self::Build {
+                failures: crate::native_mods::build_failures(&left),
+                reason: error,
             },
             other => Self::Message(other.to_string()),
         }
@@ -308,6 +317,7 @@ impl std::fmt::Display for InstallError {
             )),
             Self::Unavailable { reason, .. }
             | Self::Conflict { reason, .. }
+            | Self::Build { reason, .. }
             | Self::Refused(reason) => f.write_str(reason),
             Self::NeedsWorlds { mods } => f.write_str(&crate::i18n::trf(
                 "A saved world uses {mods}: install again to be asked about it.",

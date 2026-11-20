@@ -109,20 +109,32 @@ fn install_inner(
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
-    let planned = resolve::install(
-        install.index,
-        &asked
-            .iter()
-            .map(|(project, version)| Request {
-                id: project.id.clone(),
-                version: Some(version.version.clone()),
-            })
-            .collect::<Vec<_>>(),
-        &held,
-        game,
-        Side::Both,
-        |_, v| super::fits_game(v, game),
-    );
+    let pins: Vec<_> = asked
+        .iter()
+        .map(|(project, version)| Request {
+            id: project.id.clone(),
+            version: Some(version.version.clone()),
+        })
+        .collect();
+    let planned = if private {
+        resolve::install_whole(install.index, &pins, &held, game, Side::Both, |_, v| {
+            super::fits_game(v, game)
+        })
+        .map_err(|error| match error {
+            resolve::WholeRefusal::Inconsistent(reason) => super::explain(
+                install.index,
+                &pins.iter().map(|pin| pin.id.clone()).collect::<Vec<_>>(),
+                &held,
+                game,
+                reason,
+            ),
+            resolve::WholeRefusal::Unproved(reason) => installed::InstallError::Message(reason),
+        })?
+    } else {
+        resolve::install(install.index, &pins, &held, game, Side::Both, |_, v| {
+            super::fits_game(v, game)
+        })
+    };
     for (project, _) in asked {
         if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
             return Err(super::explain(

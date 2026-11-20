@@ -2039,7 +2039,7 @@ fn a_dependency_the_plan_moves_to_a_newer_version_is_updated_and_stays_off_when_
 
 /// An index with `creatures` 1.0.0 and 2.0.0, `lamps` needing `creatures ^1` and `fireflies`
 /// needing `creatures ^2`, every file written under `dir`.
-fn conflict_index(dir: &Path) -> Index {
+pub(super) fn conflict_index(dir: &Path) -> Index {
     let mut index = sample();
     let base = index.project("coords_hud").unwrap().clone();
     let make = |id: &str, number: &str, needs: Option<&str>| {

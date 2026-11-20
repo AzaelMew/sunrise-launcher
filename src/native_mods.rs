@@ -1242,9 +1242,13 @@ fn pipeline(
             for text in &texts {
                 append_log(text)?;
             }
-            // A server has no Mods page: the refusal and what to do are printed, and nothing is
-            // switched off for it.
-            if target == Target::Server {
+            // An absent/unreadable usage list does not prove incompatibility. Neither exact
+            // planner may omit the package on that evidence. The server never tries omissions.
+            if target == Target::Server
+                || unusable
+                    .iter()
+                    .any(|(_, verdict)| matches!(verdict, fit::Verdict::NoList { .. }))
+            {
                 return Err(texts.join("\n\n").into());
             }
             let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = mods

@@ -156,6 +156,14 @@ impl StagedInstall {
         self.input
     }
 
+    pub(in crate::browser::sunrise) fn compatible_candidate(
+        &self,
+        index: &index::Index,
+    ) -> Result<bool, String> {
+        let inventory = self.proposed_inventory(index)?;
+        Ok(switch::fits(&chosen(&inventory)))
+    }
+
     fn proposed_inventory(&self, index: &index::Index) -> Result<switch::Inventory, String> {
         let after = switch::Inventory::read(&self.stage)?;
         for (id, pkg) in &after.packages {
