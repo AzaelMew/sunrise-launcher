@@ -18,14 +18,15 @@ pub(super) enum Request {
 /// What runs next.
 pub(super) enum Step {
     Install(Request),
-    Build,
+    /// The native mods the build takes up.
+    Build(Vec<String>),
 }
 
 #[derive(Default)]
 pub(super) struct Queue {
     waiting: VecDeque<Request>,
     /// An install put native code in: one build takes it up.
-    build: bool,
+    build: Vec<String>,
 }
 
 impl Queue {
@@ -46,8 +47,12 @@ impl Queue {
     }
 
     /// An install put native code in. Installs that follow each other share the one build.
-    pub(super) fn build_after_install(&mut self) {
-        self.build = true;
+    pub(super) fn build_after_install(&mut self, ids: Vec<String>) {
+        for id in ids {
+            if !self.build.contains(&id) {
+                self.build.push(id);
+            }
+        }
     }
 
     /// What starts now. Nothing starts while an install or a build runs: a running build can't
@@ -65,7 +70,7 @@ impl Queue {
                 self.waiting.pop_front().map(Step::Install)
             };
         }
-        std::mem::take(&mut self.build).then_some(Step::Build)
+        (!self.build.is_empty()).then(|| Step::Build(std::mem::take(&mut self.build)))
     }
 }
 
@@ -86,7 +91,7 @@ mod tests {
         match step {
             Some(Step::Install(Request::One { id, .. })) => id,
             Some(Step::Install(Request::Many(..))) => "many".into(),
-            Some(Step::Build) => "build".into(),
+            Some(Step::Build(ids)) => format!("build {}", ids.join(",")),
             None => "nothing".into(),
         }
     }
@@ -95,16 +100,16 @@ mod tests {
     fn installs_that_followed_each_other_start_one_build() {
         let mut queue = Queue::default();
         assert_eq!(id_of(queue.next(false, false, false)), "nothing");
-        queue.build_after_install();
-        queue.build_after_install();
-        assert_eq!(id_of(queue.next(false, false, false)), "build");
+        queue.build_after_install(vec!["m".into()]);
+        queue.build_after_install(vec!["m".into()]);
+        assert_eq!(id_of(queue.next(false, false, false)), "build m");
         assert_eq!(id_of(queue.next(false, false, false)), "nothing");
     }
 
     #[test]
     fn a_running_build_is_never_joined_the_follow_up_waits_for_it() {
         let mut queue = Queue::default();
-        queue.build_after_install();
+        queue.build_after_install(vec!["m".into()]);
         assert_eq!(
             id_of(queue.next(false, true, false)),
             "nothing",
@@ -115,9 +120,9 @@ mod tests {
             "nothing",
             "an install runs"
         );
-        queue.build_after_install();
+        queue.build_after_install(vec!["m".into()]);
         assert_eq!(id_of(queue.next(false, true, false)), "nothing");
-        assert_eq!(id_of(queue.next(false, false, false)), "build");
+        assert_eq!(id_of(queue.next(false, false, false)), "build m");
         assert_eq!(id_of(queue.next(false, false, false)), "nothing");
     }
 
@@ -128,7 +133,7 @@ mod tests {
         queue.push(Request::Many(vec!["x".into()], "Pack".into()));
         queue.push(one("b"));
         assert!(queue.waits("a") && queue.waits("b") && !queue.waits("c"));
-        queue.build_after_install();
+        queue.build_after_install(vec!["m".into()]);
         // Nothing starts while one runs.
         assert_eq!(id_of(queue.next(true, false, false)), "nothing");
         assert_eq!(
@@ -141,7 +146,7 @@ mod tests {
         assert_eq!(id_of(queue.next(false, false, false)), "many");
         assert_eq!(id_of(queue.next(false, false, false)), "b");
         assert!(!queue.is_waiting());
-        assert_eq!(id_of(queue.next(false, false, false)), "build");
+        assert_eq!(id_of(queue.next(false, false, false)), "build m");
     }
 
     #[test]
@@ -151,5 +156,13 @@ mod tests {
         assert_eq!(id_of(queue.next(false, false, true)), "nothing");
         assert!(queue.waits("a"));
         assert_eq!(id_of(queue.next(false, false, false)), "a");
+    }
+
+    #[test]
+    fn the_build_is_told_which_mods_it_was_started_for_each_once() {
+        let mut queue = Queue::default();
+        queue.build_after_install(vec!["a".into(), "b".into()]);
+        queue.build_after_install(vec!["b".into(), "c".into()]);
+        assert_eq!(id_of(queue.next(false, false, false)), "build a,b,c");
     }
 }

@@ -1,4 +1,5 @@
 //! Mods › Discover (mock 03): the registry's mods, filtered, sorted, one click to Add.
+use super::install_state::{self, InstallState};
 use super::model::{self, Make, Sort};
 use super::ui::*;
 use super::*;
@@ -273,10 +274,13 @@ impl Launcher {
                 None => added.contains(&id),
             };
             let working = adding.as_deref() == Some(id.as_str());
-            let waiting = self.mods.waiting(&id);
+            let state = install_state::of(&id, self.mods.waiting(&id), self.mods.build_failures());
+            let waiting = state == Some(InstallState::Waiting);
             let note = card_data.fit.reason().filter(|_| !is_added);
             let control = if is_added {
                 Some(added_mark())
+            } else if state == Some(InstallState::BuildFailed) {
+                Some(muted(tr("Couldn't build on your computer")).into_any_element())
             } else if note.is_some() {
                 None
             } else {
