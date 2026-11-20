@@ -130,16 +130,26 @@ impl Launcher {
                     }
                 };
                 let Some(path) = path else { return };
+                let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy().into_owned();
                 if !this.can_change_builds()
                     || !build_import::can_import(&this.installed, this.settings.selected.as_deref())
                 {
+                    this.storage_builds.import_notice = Some(Err(trf(
+                        "Could not import {build}. Wait for any game or build operation to finish, then make sure a game build is installed and try again.",
+                        &[("build", &name)],
+                    )));
+                    cx.notify();
                     return;
                 }
                 this.importing_build = true;
                 this.storage_builds.import_notice = None;
                 let tx = this.tx.clone();
                 std::thread::spawn(move || {
-                    let _ = tx.send(Msg::Imported(build_import::install(&path, None)));
+                    let result = build_import::install(&path, None).map_err(|error| trf(
+                        "Could not import {build}: {error}. Check the file and try again.",
+                        &[("build", &name), ("error", &error)],
+                    ));
+                    let _ = tx.send(Msg::Imported(result));
                 });
                 cx.notify();
             });

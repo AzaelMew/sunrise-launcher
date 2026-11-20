@@ -462,6 +462,47 @@ mod tests {
     }
 
     #[test]
+    fn storage_import_does_not_change_the_selected_build() {
+        const ACTOR: &str = "SUNRISE_TEST_STORAGE_IMPORT";
+        let scratch = tempfile::tempdir().unwrap();
+        if std::env::var_os(ACTOR).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "build_import::tests::storage_import_does_not_change_the_selected_build",
+                ])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", scratch.path().join("launcher"))
+                .env("SUNRISE_HOME", scratch.path().join("game"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            return;
+        }
+        let tag = "v0.2.95";
+        let base = backend::version_dir(tag);
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join(CLIENT), program(b"signed base")).unwrap();
+        fs::write(base.join(".installed"), "").unwrap();
+        backend::Settings {
+            selected: Some(tag.into()),
+            ..Default::default()
+        }
+        .save()
+        .unwrap();
+        let path = scratch.path().join(CLIENT);
+        fs::write(&path, program(b"another build")).unwrap();
+        let new = install(&path, None).unwrap();
+        assert!(is_imported(&new));
+        assert_eq!(backend::Settings::load().selected.as_deref(), Some(tag));
+        assert!(backend::installed().contains(&new));
+    }
+
+    #[test]
     fn a_failed_import_leaves_nothing_behind() {
         let versions = dir("failed");
         // A folder from an import that never finished is not that program's version.
