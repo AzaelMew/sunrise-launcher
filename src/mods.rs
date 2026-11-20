@@ -1225,19 +1225,19 @@ impl Launcher {
                 .instances
                 .discover_catalogue(self.settings.instance.as_deref())
             {
-                DiscoverCatalogue::Registry => tr("Search mods"),
-                DiscoverCatalogue::Sources => tr("Search source projects"),
+                DiscoverCatalogue::Registry => tr("Search mods…"),
+                DiscoverCatalogue::Sources => tr("Search source projects…"),
             },
-            (false, true) => tr("Search your mods"),
+            (false, true) => tr("Search your mods…"),
             (true, false) => match self.ui.mods.packs.scope {
-                pack_discover::Scope::Resource => tr("Search resource packs"),
-                pack_discover::Scope::Shader => tr("Search shader packs"),
-                pack_discover::Scope::Data => tr("Search data packs"),
+                pack_discover::Scope::Resource => tr("Search resource packs…"),
+                pack_discover::Scope::Shader => tr("Search shader packs…"),
+                pack_discover::Scope::Data => tr("Search data packs…"),
             },
             (true, true) => match self.ui.mods.shelf {
-                Shelf::Resource => tr("Search your resource packs"),
-                Shelf::Shader => tr("Search your shader packs"),
-                Shelf::Data => tr("Search your data packs"),
+                Shelf::Resource => tr("Search your resource packs…"),
+                Shelf::Shader => tr("Search your shader packs…"),
+                Shelf::Data => tr("Search your data packs…"),
             },
         }
         .into();
