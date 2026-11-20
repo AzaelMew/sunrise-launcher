@@ -798,14 +798,9 @@ impl Launcher {
                     .pb(px(10.))
                     .child(label("Console")),
             )
-            .child(
-                div()
-                    .relative()
-                    .child(log)
-                    .when(!whole.is_empty(), |d| {
-                        d.child(crate::code_box::copy_button("host-console".into(), whole))
-                    }),
-            )
+            .child(div().relative().child(log).when(!whole.is_empty(), |d| {
+                d.child(crate::code_box::copy_button("host-console".into(), whole))
+            }))
             .child(
                 div()
                     .flex()
