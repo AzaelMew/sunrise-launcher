@@ -285,6 +285,10 @@ fn read_named(
     let pictured = pictures == Pictures::All;
     let (title, description, icon) = match kind {
         Kind::Resource => {
+            // The game reads a folder, or a file whose name ends in `.zip`, exactly so.
+            if !(path.is_dir() || file.ends_with(".zip")) {
+                return None;
+            }
             let [meta, icon] = entries(path, [Some("pack.mcmeta"), pictured.then_some("pack.png")]);
             let meta: serde_json::Value = serde_json::from_slice(&meta?).ok()?;
             (file.clone(), plain(&meta["pack"]["description"]), icon)
@@ -559,6 +563,13 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     if ext.as_deref() == Some(SHADER_PACKAGE) {
         Ok(Kind::Shader)
     } else if zip.index_for_name("pack.mcmeta").is_some() {
+        // The game loads a resource pack file only when its name ends in `.zip`.
+        if !name.ends_with(".zip") {
+            return Err(trf(
+                "{name} is not a pack: packs are .zip or .sshader files.",
+                &[("name", &name)],
+            ));
+        }
         Ok(Kind::Resource)
     } else if zip
         .file_names()

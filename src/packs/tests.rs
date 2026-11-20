@@ -726,3 +726,24 @@ fn a_listing_reads_only_the_pictures_it_was_asked_for() {
         Some(&b"png"[..]),
     );
 }
+
+#[test]
+fn a_resource_pack_file_is_listed_only_when_its_name_ends_in_zip() {
+    let home = scratch("zip-name");
+    let rp = home.join("resourcepacks");
+    for name in ["Renamed.jar", "Paused.zip.disabled", "Upper.ZIP", "Plain.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    fs::create_dir_all(rp.join("Folder.jar")).unwrap();
+    fs::write(rp.join("Folder.jar/pack.mcmeta"), META).unwrap();
+    let names: Vec<String> = list(&home, Kind::Resource)
+        .into_iter()
+        .map(|p| p.file)
+        .collect();
+    assert_eq!(names, ["Folder.jar", "Plain.zip"]);
+    let drops = home.join("drops");
+    zip_file(&drops.join("Dropped.ZIP"), &[("pack.mcmeta", META)]);
+    assert!(add(&home, &drops.join("Dropped.ZIP")).is_err());
+    assert!(!rp.join("Dropped.ZIP").exists());
+    fs::remove_dir_all(&home).unwrap();
+}
