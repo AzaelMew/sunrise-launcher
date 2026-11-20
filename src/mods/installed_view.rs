@@ -296,40 +296,10 @@ impl Launcher {
                                     crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
                                         .text_color(c(palette().danger))
                                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Remove(items.clone()), false);
+                                            this.run(actions::Action::Remove(items.clone()));
                                             cx.notify();
                                         })),
                                 ),
-                        )
-                }
-                Confirm::Stake(action, worlds) => {
-                    let action = action.clone();
-                    let n = worlds.len();
-                    panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(crate::selectable::selectable(trf(
-                            "{count} of your worlds were saved with these mods",
-                            &[("count", &n.to_string())],
-                        ))))
-                        .children(worlds.iter().map(|(world, mods)| {
-                            div().text_size(px(tokens::LABEL)).child(trf("{world}: {mods}", &[("world", world), ("mods", &mods.join(", "))]))
-                        }))
-                        .child(div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                            "{what} can permanently remove blocks, items and other content from these worlds. Nothing has been changed yet.",
-                            &[("what", action.consequence())],
-                        ))))
-                        .child(muted(tr("Sunrise backs up each of these worlds first (a zip in backups/) and reads the backup back. If one can't be made or checked, nothing is changed.")))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
-                                .child(primary("alt-confirm-backup", trf("Back up {count} worlds and continue", &[("count", &n.to_string())])).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.run(action.clone(), true);
-                                    cx.notify();
-                                }))),
                         )
                 }
                 Confirm::Update(plan) => {
@@ -375,7 +345,7 @@ impl Launcher {
                                         dim(b)
                                     } else {
                                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Update(included.clone()), false);
+                                            this.run(actions::Action::Update(included.clone()));
                                             cx.notify();
                                         }))
                                     }

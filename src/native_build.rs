@@ -19,9 +19,9 @@ impl Launcher {
     }
 
     /// [`Self::build_native`] on `base` when given (an update's newer release or Nightly) instead
-    /// of the Sunrise the instance plays; with `back_up`, the player chose to back up the worlds
-    /// saved with mods the build switches off, then build without those mods.
-    pub(super) fn build_native_on(&mut self, base: Option<String>, back_up: bool) {
+    /// of the Sunrise the instance plays; with `leave_out`, the player chose to build without the mods
+    /// that worlds were saved with.
+    pub(super) fn build_native_on(&mut self, base: Option<String>, leave_out: bool) {
         if self.native_step.is_some() {
             return;
         }
@@ -30,7 +30,7 @@ impl Launcher {
         // The card stays under the question: Cancel goes back to it.
         if self.settings.native_mods_allowed_at.is_none() {
             self.request_native_build_consent();
-            self.native_consent_build = Some((base, back_up));
+            self.native_consent_build = Some((base, leave_out));
             return;
         }
         self.pending_consent = None;
@@ -108,7 +108,7 @@ impl Launcher {
                 &folder,
                 &instance,
                 None,
-                back_up,
+                leave_out,
                 &cancellation,
                 |step| {
                     let _ = tx.send(Msg::NativeProgress(step));
