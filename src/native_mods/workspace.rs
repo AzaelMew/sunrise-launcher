@@ -1,6 +1,10 @@
 //! SDK inputs and writable paths for one native compiler attempt, never reused by a retry.
 use super::{sdk_cache::Package, tool, Path};
-use std::{collections::BTreeSet, fs, io};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs, io,
+};
+use sunrise_launcher_smod::{index::sha256_file, manifest::Manifest};
 
 pub(crate) const ATTEMPT_PREFIX: &str = ".native-attempt-";
 
@@ -86,27 +90,38 @@ impl Workspace {
         built: &tool::Built,
         package: &Package,
         rust: &crate::rust_toolchain::Toolchain,
-        target: super::Target,
-        ids: impl Iterator<Item = &'a str>,
+        expected_route: Option<tool::CheckRoute>,
+        revision: &str,
+        mods: impl Iterator<Item = &'a Manifest>,
     ) -> io::Result<()> {
         let work = self.path().join("work");
-        if regular_under(&work, &built.binary).is_err()
-            && (built.binary
-                != package
-                    .runtime
-                    .join("bin")
-                    .join(super::Installed::binary(target))
-                || regular_under(&package.runtime, &built.binary).is_err())
-        {
+        if expected_route.is_some_and(|route| route != built.route) {
             return Err(invalid());
         }
+        // Both SDK runtime slices use this filename; installation renames the server image.
+        let runtime_binary = built.binary
+            == package.runtime.join("bin").join(crate::backend::CLIENT)
+            && regular_under(&package.runtime, &built.binary).is_ok();
+        match built.route {
+            tool::CheckRoute::PrebuiltApi if !runtime_binary => return Err(invalid()),
+            tool::CheckRoute::Prebuilt
+                if !runtime_binary && regular_under(&work, &built.binary).is_err() =>
+            {
+                return Err(invalid())
+            }
+            _ => (),
+        }
+        let wanted: BTreeMap<_, _> = mods.map(|m| (m.id.as_str(), m.version.as_str())).collect();
         let used: BTreeSet<_> = built.mods.iter().map(String::as_str).collect();
-        if used.len() != built.mods.len() || used != ids.collect() || built.libraries.is_empty() {
+        if used.len() != built.mods.len()
+            || !used.iter().copied().eq(wanted.keys().copied())
+            || built.libraries.is_empty()
+        {
             return Err(invalid());
         }
         let std_lib = rust.target_libdir();
         let mingw = rust.mingw_bin();
-        let mut filenames = BTreeSet::new();
+        let mut files = BTreeMap::new();
         for file in &built.libraries {
             let name = file
                 .file_name()
@@ -115,7 +130,7 @@ impl Workspace {
             if ![".so", ".dll", ".dylib"]
                 .iter()
                 .any(|suffix| name.ends_with(suffix))
-                || !filenames.insert(name.to_ascii_lowercase())
+                || files.insert(name.to_ascii_lowercase(), file).is_some()
             {
                 return Err(invalid());
             }
@@ -134,6 +149,46 @@ impl Workspace {
             if regular_under(&work, file).is_err() && !runtime() && !standard() && !gnu() {
                 return Err(invalid());
             }
+        }
+        let mut stamped = BTreeSet::new();
+        let mut recorded = BTreeSet::new();
+        let mut patch = false;
+        for row in &built.records {
+            let Some(file) = files
+                .get(&row.file.to_ascii_lowercase())
+                .copied()
+                .filter(|file| {
+                    file.file_name()
+                        .is_some_and(|name| name == row.file.as_str())
+                })
+            else {
+                return Err(invalid());
+            };
+            let id = row.mod_id.as_str();
+            let version = match row.kind {
+                tool::LibraryKind::Mod if recorded.insert(id) => {
+                    wanted.get(id).copied().ok_or_else(invalid)?
+                }
+                tool::LibraryKind::Patch
+                    if built.route == tool::CheckRoute::Prebuilt
+                        && id == "sunrise_patch"
+                        && !patch =>
+                {
+                    patch = true;
+                    "0"
+                }
+                _ => return Err(invalid()),
+            };
+            let rust = crate::rust_toolchain::VERSION;
+            if !stamped.insert(&row.file)
+                || row.identity != format!("{revision} {id} {version} {rust} unwind")
+                || !sha256_file(file).is_ok_and(|digest| digest == row.sha256)
+            {
+                return Err(invalid());
+            }
+        }
+        if recorded != used {
+            return Err(invalid());
         }
         Ok(())
     }

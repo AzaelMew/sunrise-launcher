@@ -82,23 +82,76 @@ fn an_sdk_can_only_supply_its_own_files_and_the_exact_requested_mods() {
         fs::write(file, b"bytes").unwrap();
     }
     let mut built = tool::Built {
-        route: "prebuilt-api".into(),
-        binary,
+        route: tool::CheckRoute::PrebuiltApi,
+        binary: binary.clone(),
         libraries: vec![lib.clone()],
         mods: vec!["greeter".into()],
-        records: serde_json::json!([]),
+        records: vec![tool::LibraryRecord {
+            file: "greeter.dll".into(),
+            sha256: sha256_file(&lib).unwrap(),
+            kind: tool::LibraryKind::Mod,
+            mod_id: "greeter".into(),
+            identity: format!(
+                "fixture-build greeter 1.0.0 {} unwind",
+                crate::rust_toolchain::VERSION
+            ),
+        }],
         internals: Default::default(),
     };
+    let manifest = Manifest::parse(
+        "id = 'greeter'\nname = 'Greeter'\nversion = '1.0.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = 'a123456789012345678901234567890123456789'\n",
+    )
+    .unwrap();
     let verify = |built: &tool::Built| {
         stage.verify_outputs(
             built,
             &package,
             &rust,
-            super::super::Target::Client,
-            ["greeter"].into_iter(),
+            Some(tool::CheckRoute::PrebuiltApi),
+            "fixture-build",
+            [&manifest].into_iter(),
         )
     };
     assert!(verify(&built).is_ok());
+    built.route = tool::CheckRoute::Prebuilt;
+    assert!(
+        verify(&built).is_err(),
+        "checked API route cannot publish an engine result"
+    );
+    built.route = tool::CheckRoute::PrebuiltApi;
+    let fake_binary = work.join("another-executable");
+    fs::write(&fake_binary, b"wrong executable").unwrap();
+    built.binary = fake_binary;
+    assert!(
+        verify(&built).is_err(),
+        "API result must use the SDK runtime executable"
+    );
+    built.binary = binary;
+    fs::write(&lib, b"different output").unwrap();
+    assert!(
+        verify(&built).is_err(),
+        "library record digest binds the copied output"
+    );
+    fs::write(&lib, b"bytes").unwrap();
+    built.records[0].file = "another.dll".into();
+    assert!(
+        verify(&built).is_err(),
+        "a library record names exactly one supplied path"
+    );
+    built.records[0].file = "greeter.dll".into();
+    let identity = std::mem::replace(&mut built.records[0].identity, "wrong identity".into());
+    assert!(
+        verify(&built).is_err(),
+        "records must name the exact build and mod version"
+    );
+    built.records[0].identity = identity;
+    assert!(verify(&built).is_ok());
+    let records = std::mem::take(&mut built.records);
+    assert!(
+        verify(&built).is_err(),
+        "every requested mod needs its own record"
+    );
+    built.records = records;
     built.mods.push("unexpected".into());
     assert!(verify(&built).is_err());
     built.mods.pop();

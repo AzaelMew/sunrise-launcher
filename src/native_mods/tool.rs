@@ -4,7 +4,7 @@ use crate::{
     backend::{NativeGrant, PermissionFence},
     i18n::{tr, trf},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -163,12 +163,29 @@ pub enum BlameKind {
 /// What a build made.
 #[derive(Debug, Deserialize)]
 pub(super) struct Built {
-    pub route: String,
+    pub route: CheckRoute,
     pub binary: PathBuf,
     pub libraries: Vec<PathBuf>,
     pub mods: Vec<String>,
-    pub records: Value,
+    pub records: Vec<LibraryRecord>,
     pub internals: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(super) struct LibraryRecord {
+    pub file: String,
+    pub sha256: String,
+    pub kind: LibraryKind,
+    #[serde(rename = "mod")]
+    pub mod_id: String,
+    pub identity: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum LibraryKind {
+    Mod,
+    Patch,
 }
 
 #[derive(Deserialize)]

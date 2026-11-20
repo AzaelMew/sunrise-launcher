@@ -48,7 +48,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
                 "not an event",
                 r#"{"event":"mod","id":"greeter","done":1,"total":1}"#,
                 "CONSENT",
-                r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":["/b/lib.so"],"records":[{"name":"lib"}],"mods":["greeter"],"internals":{"greeter":[]},"mixins":"abc","used":[]}"#,
+                r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":["/b/lib.so"],"records":[{"file":"lib.so","sha256":"abc","kind":"mod","mod":"greeter","identity":"fixture"}],"mods":["greeter"],"internals":{"greeter":[]},"mixins":"abc","used":[]}"#,
             ],
         ),
         r#"{"contract":2}"#,
@@ -59,7 +59,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
     )
     .unwrap();
     assert_eq!(
-        (built.route.as_str(), built.binary.as_path()),
+        (built.route.name(), built.binary.as_path()),
         ("prebuilt", Path::new("/b/game"))
     );
     assert_eq!(*started.borrow(), ["greeter 1/1"]);

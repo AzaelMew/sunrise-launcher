@@ -1019,7 +1019,7 @@ pub struct AtStake {
 struct Checks {
     verdicts: Vec<(String, fit::Verdict)>,
     refusals: Vec<(String, String)>,
-    route: Option<String>,
+    route: Option<tool::CheckRoute>,
 }
 
 /// The mods `ids` of `folder` checked against `sdk`'s build by its tool (`native-check`); the surface and build data are fetched only when a mod made for another build needs them.
@@ -1076,10 +1076,7 @@ fn checks_from(
 ) -> Result<(Checks, Vec<tool::Need>), String> {
     let invalid = tool::invalid_check_reply;
     let mut checks = Checks {
-        route: checked
-            .route
-            .ok_or_else(tool::too_old)?
-            .map(|route| route.name().to_owned()),
+        route: checked.route.ok_or_else(tool::too_old)?,
         ..Checks::default()
     };
     if checked.contract != Some(tool::CONTRACT) || checked.mods.len() != ids.len() {
@@ -1510,6 +1507,7 @@ fn pipeline(
                 (
                     sdk_cache::developer(&program, &revision, target, &local, cancellation)?,
                     program,
+                    None,
                 )
             }
             (None, sdk) => {
@@ -1540,7 +1538,7 @@ fn pipeline(
                 };
                 let program = sdk_cache::tool(sdk, &sdk_base, &fetched).map_err(refused)?;
                 // A developer base using its commit's SDK release asks its route here: no fit was checked.
-                let route = match route.clone() {
+                let route = match route {
                     Some(route) => route,
                     None => {
                         let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
@@ -1557,9 +1555,10 @@ fn pipeline(
                         &[("build", &sdk.shown())],
                     )
                 })?;
-                let slices = sdk_cache::slices(lease, sdk, &sdk_base, &route, target, &fetched)
-                    .map_err(refused)?;
-                (slices, program)
+                let slices =
+                    sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)
+                        .map_err(refused)?;
+                (slices, program, Some(route))
             }
         };
         Some(package)
@@ -1591,7 +1590,7 @@ fn pipeline(
     // the pinned catalog (`internals::Catalog::pinned`).
     let about = |route: &str,
                  internals: &std::collections::BTreeMap<String, serde_json::Value>,
-                 libraries: &serde_json::Value| {
+                 libraries: &[tool::LibraryRecord]| {
         serde_json::json!({
             "libraries": libraries,
             "base": origin,
@@ -1624,7 +1623,7 @@ fn pipeline(
         Target::Client => rust_toolchain::linker(),
         Target::Server => rust_toolchain::linker_server(),
     };
-    if let Some((game, program)) = &prebuilt {
+    if let Some((game, program, expected_route)) = &prebuilt {
         let checking = std::time::Instant::now();
         linker()?;
         let rust = rust_toolchain::install(|f| progress(Step::Rust(f)))?;
@@ -1681,13 +1680,18 @@ fn pipeline(
                 &built,
                 &game,
                 &rust,
-                target,
-                mods.iter().map(|bundle| bundle.manifest.id.as_str()),
+                *expected_route,
+                &revision,
+                mods.iter().map(|bundle| &bundle.manifest),
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                let _ = append_log(&e.to_string());
+                tr("The native build tool's output couldn't be verified. See the build log.")
+                    .to_owned()
+            })?;
         append_log(&trf(
             "Native mods route: {route}.",
-            &[("route", &built.route)],
+            &[("route", built.route.name())],
         ))
         .map_err(blame)?;
         // The whole step; the tool's own build and the function replacement have their lines.
@@ -1708,7 +1712,7 @@ fn pipeline(
             target,
             &built.binary,
             &built.libraries,
-            &about(&built.route, &built.internals, &built.records),
+            &about(built.route.name(), &built.internals, &built.records),
             &ordered,
             cancellation,
         )?;
@@ -3838,7 +3842,7 @@ mod tests {
         )
         .unwrap()
         .0;
-        assert_eq!(both.route.as_deref(), Some("prebuilt-api"));
+        assert_eq!(both.route, Some(tool::CheckRoute::PrebuiltApi));
         assert!(matches!(&both.verdicts[..], [(id, fit::Verdict::MadeFor)] if id == "fine"));
         assert_eq!(
             both.refusals,
@@ -4004,7 +4008,7 @@ printf ']}}\n'
                 ("old".into(), exact),
             ],
             refusals: Vec::new(),
-            route: Some("prebuilt-api".into()),
+            route: Some(tool::CheckRoute::PrebuiltApi),
         };
         let left = planning::update_left_out(&found, &checks).unwrap();
         let ids: Vec<&str> = left.iter().map(|l| l.id.as_str()).collect();
