@@ -146,7 +146,12 @@ fn install_in(
                 Some(&prior),
                 progress,
             )?;
-            plan.commit(&[RECORD, ARCHIVE], native_mods::Profile::Optimized, steps)?;
+            let proposal =
+                plan.prepare(&[RECORD, ARCHIVE], native_mods::Profile::Optimized, steps)?;
+            if proposal.question().needed() {
+                return Err(proposal.question().lines().join("\n"));
+            }
+            proposal.commit(false, || Ok(()))?;
             installed.work = work;
             Ok(installed)
         }
@@ -654,6 +659,106 @@ mod tests {
         assert_eq!(fs::read(home.join(ARCHIVE)).unwrap(), bytes);
         assert_eq!(read(&prior.work).unwrap().version, "1.0.0");
         assert!(!home.join("mod-browser/install-txn.json").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn same_base_approval_commits_only_the_frozen_set_and_world_evidence() {
+        use sunrise_launcher_nbt::{write_named, Limits, NamedTag, Tag};
+        let dir = scratch("same-base-approval");
+        let packs = dir.join("sunrise-packs");
+        let pack = install_fixture(&registry(&dir, true, ""), "cozy", &packs).unwrap();
+        let home = home(&pack.work);
+        let saved = home.join("saves/example/level.dat");
+        fs::create_dir_all(saved.parent().unwrap()).unwrap();
+        let write_world = |name: &str| {
+            let data = Tag::compound([("LevelName", Tag::String(name.into()))]);
+            let tag = Tag::compound([("Data", data)]);
+            let bytes = write_named(
+                &NamedTag {
+                    name: "".into(),
+                    tag,
+                },
+                Limits::default(),
+            )
+            .unwrap();
+            let mut gzip = flate2::write::GzEncoder::new(
+                fs::File::create(&saved).unwrap(),
+                flate2::Compression::fast(),
+            );
+            gzip.write_all(&bytes).unwrap();
+            gzip.finish().unwrap();
+        };
+        write_world("Before");
+        let package = Path::new("sunrise-mods/coords_hud.smod");
+        let pointer = home.join("mod-browser/active-build.json");
+        let original = fs::read(&pointer).unwrap();
+        let base = txn::Lease::admit(&home)
+            .unwrap()
+            .active_build()
+            .unwrap()
+            .unwrap()
+            .base()
+            .to_string();
+        let original_package = fs::read(home.join(package)).unwrap();
+        let prepare = || {
+            let owner = Arc::new(txn::Lease::admit(&home).unwrap());
+            let active = owner.active_build().unwrap().unwrap();
+            let plan = txn::StagedInstall::begin(owner, active).unwrap();
+            fs::remove_file(plan.stage().join(package)).unwrap();
+            installed::Installed::default().save(plan.stage()).unwrap();
+            mod_list::set_enabled(plan.stage(), "coords_hud", false).unwrap();
+            let ready = plan
+                .prepare(&[], native_mods::Profile::Optimized, |_| {})
+                .unwrap();
+            assert_eq!(ready.question().affected.len(), 1);
+            assert!(txn::Lease::admit(&home).is_err());
+            assert_eq!(fs::read(&pointer).unwrap(), original);
+            assert_eq!(fs::read(home.join(package)).unwrap(), original_package);
+            ready
+        };
+        let refused = prepare();
+        assert_eq!(refused.question().affected[0].world, "Before");
+        assert!(refused
+            .commit(false, || panic!("no revalidation on cancel"))
+            .is_err());
+        assert!(prepare()
+            .commit(true, || Err("offline".into()))
+            .unwrap_err()
+            .contains("offline"));
+        let stale = prepare();
+        write_world("After");
+        assert!(stale.commit(true, || Ok(())).is_err());
+        assert!(!home.join("mod-browser/install-txn.json").exists());
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(home.join(installed::MANIFEST)).unwrap()).unwrap();
+        let opaque = serde_json::json!({"file":"unknown/path","proof":["keep me"]});
+        manifest["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(opaque.clone());
+        fs::write(
+            home.join(installed::MANIFEST),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let approved = prepare();
+        assert_eq!(approved.question().affected[0].world, "After");
+        approved.commit(true, || Ok(())).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_slice(&fs::read(home.join(installed::MANIFEST)).unwrap()).unwrap();
+        assert_eq!(after["entries"], serde_json::json!([opaque]));
+        assert!(!home.join(package).exists());
+        assert_ne!(fs::read(&pointer).unwrap(), original);
+        assert_eq!(
+            txn::Lease::admit(&home)
+                .unwrap()
+                .active_build()
+                .unwrap()
+                .unwrap()
+                .base(),
+            base
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 

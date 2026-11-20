@@ -39,7 +39,8 @@ pub use build::{
 pub(super) use build::{scan_packages, waiting_packages};
 pub(crate) use durable::replace as replace_local_record;
 pub(super) use staged_install::{
-    detach_private_profile, expose_private_profile, seal_private_profile, StagedInstall,
+    detach_private_profile, expose_private_profile, seal_private_profile, ReadyInstall,
+    StagedInstall,
 };
 pub use switch::Switch;
 

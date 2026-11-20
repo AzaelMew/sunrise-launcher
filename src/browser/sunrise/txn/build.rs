@@ -563,7 +563,7 @@ pub fn displayed_image(home: &Path) -> Option<String> {
 }
 
 impl WaitingMod {
-    fn matches(&self, home: &Path) -> Result<bool, String> {
+    pub(super) fn matches(&self, home: &Path) -> Result<bool, String> {
         Ok(Image::at(&home.join(&self.file))? == Image::Sha256(self.digest))
     }
 

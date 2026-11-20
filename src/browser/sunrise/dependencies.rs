@@ -19,6 +19,26 @@ pub(super) fn install(
     turn_on: bool,
     waiting: &BTreeMap<String, super::txn::WaitingMod>,
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    install_inner(install, asked, native_allowed, turn_on, waiting, false)
+}
+
+pub(super) fn stage(
+    install: &Install<'_>,
+    asked: &[(&index::Project, &index::Version)],
+    native_allowed: bool,
+    waiting: &BTreeMap<String, super::txn::WaitingMod>,
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    install_inner(install, asked, native_allowed, true, waiting, true)
+}
+
+fn install_inner(
+    install: &Install<'_>,
+    asked: &[(&index::Project, &index::Version)],
+    native_allowed: bool,
+    turn_on: bool,
+    waiting: &BTreeMap<String, super::txn::WaitingMod>,
+    private: bool,
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let home = install.home;
     let game = asked
         .first()
@@ -30,7 +50,9 @@ pub(super) fn install(
         .map_err(|e| format!("{}: {e}", home.display()))?;
     // An install an earlier run left half done is undone first; while it can't be, nothing new
     // is begun on top of its list.
-    super::txn::settle_owned(home)?;
+    if !private {
+        super::txn::settle_owned(home)?;
+    }
     let mut installed = installed::Installed::load(home);
     // An approval that waited in a queue is read again here, under the lock: each mod it
     // removes must still be the file the player saw, and a world that uses it must have been
@@ -54,7 +76,9 @@ pub(super) fn install(
             .entries
             .iter()
             .find(|e| e.source == SourceId::Sunrise && e.project == r.id);
-        if now.is_some_and(|e| e.checksum != r.checksum) {
+        if now.is_some_and(|e| e.checksum != r.checksum)
+            || private && now.is_none_or(|e| !exact_file(e, home, &r.checksum))
+        {
             return Err(trf(
                 "{mod} changed since you approved removing it. Install again to review it.",
                 &[("mod", &r.id)],
@@ -67,7 +91,7 @@ pub(super) fn install(
         .filter(|r| !r.worlds_ok && !agreed(&r.id))
         .map(|r| r.id.clone())
         .collect();
-    let question = if unagreed.is_empty() {
+    let question = if private || unagreed.is_empty() {
         None
     } else {
         crate::worlds::question(home, &unagreed)?
@@ -184,7 +208,7 @@ pub(super) fn install(
     // asked for or a dependency moving to another version). Worlds that can't be looked at,
     // or a package that can't be compared, stop the install.
     let mut drops = Vec::new();
-    for (entry, file) in &plan.selected {
+    for (entry, file) in plan.selected.iter().filter(|_| !private) {
         let (Some(file), Some(old)) =
             (file, plan.installed.find(SourceId::Sunrise, &entry.project))
         else {
@@ -306,12 +330,39 @@ pub(super) fn install(
         mod_list::set_all_enabled(staged.path(), &ids, false)?;
         changes.push((Some(next), saved));
     }
-    let brings_native = done
-        .iter()
-        .any(|e| crate::native_status::is_native_file(&e.file));
-    let (staged, attempt) = publish(staged, changes, install.approvals)?;
-    super::txn::commit(home, &attempt, staged, brings_native)?;
+    if private {
+        // These paths belong to the reserved candidate, never the live profile. Only the
+        // sealed outer attempt may publish, after the exact image and world check.
+        for (from, to) in changes {
+            if let Some(from) = from {
+                if let Some(parent) = to.parent() {
+                    fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+                }
+                fs::copy(from, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+            } else {
+                match fs::remove_file(&to) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("{}: {e}", to.display()).into()),
+                }
+            }
+        }
+    } else {
+        let brings_native = done
+            .iter()
+            .any(|e| crate::native_status::is_native_file(&e.file));
+        let (staged, attempt) = publish(staged, changes, install.approvals)?;
+        super::txn::commit(home, &attempt, staged, brings_native)?;
+    }
     Ok(done)
+}
+
+fn exact_file(entry: &installed::Entry, home: &Path, checksum: &str) -> bool {
+    entry.path(home).is_some_and(|p| {
+        checksum.strip_prefix("SHA-256:").is_some_and(|expected| {
+            index::sha256_file(&p).is_ok_and(|actual| actual.eq_ignore_ascii_case(expected))
+        })
+    })
 }
 
 /// Removes the registry mods in `wanted` (id and checksum: only a file that is still the one the

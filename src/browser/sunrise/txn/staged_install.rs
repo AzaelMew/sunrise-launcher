@@ -55,14 +55,25 @@ impl StagedInstall {
         &self.stage
     }
 
-    pub fn commit(
-        mut self,
+    pub fn prepare(
+        self,
         sidecars: &[&str],
         profile: native_mods::Profile,
         progress: impl Fn(native_mods::Step),
-    ) -> Result<(), String> {
+    ) -> Result<ReadyInstall, String> {
         let after = switch::Inventory::read(&self.stage)?;
-        let included = chosen(&after);
+        let waiting = build::waiting_packages(self.owner.home())?;
+        let mut verified = chosen(&after);
+        for (id, item) in waiting {
+            if item.matches(&self.stage)? {
+                if after.packages.get(&id).is_some_and(|pkg| pkg.on) {
+                    return Err(unsettled());
+                }
+                // An unrelated Install neither removes nor tries to build the exact bytes
+                // already disabled by Switch. A different replacement must be proved as usual.
+                verified.remove(id.as_str());
+            }
+        }
         let cancellation = native_mods::Cancellation::for_profile(self.owner.clone());
         let image = verify_candidate(
             self.prior.base(),
@@ -70,7 +81,7 @@ impl StagedInstall {
             profile,
             &cancellation,
             &progress,
-            &included,
+            &verified,
         )?;
         let home = self.owner.home();
         let changed: Vec<_> = self
@@ -90,36 +101,97 @@ impl StagedInstall {
                 namespaces: &old.manifest.namespaces,
             })
             .collect();
-        let fence = if changed.is_empty() {
-            None
+        let (fence, question) = if changed.is_empty() {
+            (None, worlds::SwitchQuestion::default())
         } else {
             let (fence, question) = worlds::switch::Fence::hold(home, &changed, None)?;
-            if !question.affected.is_empty() {
-                return Err(question.lines().join("\n"));
-            }
-            Some(fence)
+            (Some(fence), question)
         };
+        if after.browser != self.before.browser {
+            // Keep raw unrelated rows and foreign metadata on records we didn't change.
+            // The planner's typed view is for choosing packages, not rewriting those rows.
+            let mut browser = self.before.browser.clone();
+            let rows = browser["entries"].as_array_mut().ok_or_else(unsettled)?;
+            rows.retain(|row| {
+                !self.before.packages.iter().any(|(id, old)| {
+                    old.row
+                        .as_ref()
+                        .is_some_and(|entry| row["file"].as_str() == Some(entry.file.as_str()))
+                        && after.packages.get(id).and_then(|new| new.row.as_ref())
+                            != old.row.as_ref()
+                })
+            });
+            for (id, pkg) in &after.packages {
+                if let Some(row) = &pkg.row {
+                    if self.before.packages.get(id).and_then(|p| p.row.as_ref()) != Some(row) {
+                        rows.push(serde_json::to_value(row).map_err(|e| e.to_string())?);
+                    }
+                }
+            }
+            write(
+                &self.stage.join(installed::MANIFEST),
+                &serde_json::to_vec(&browser).map_err(|e| e.to_string())?,
+            )?;
+        }
         let next = self
             .prior
             .adopt(&image, build::inputs(&self.stage)?, &self.stage)?;
         if build::inputs(home)? != self.input {
             return Err(unsettled());
         }
-        let mut steps = switch::changes(home, &self.stage, &self.before, &included)?;
+        let mut steps = switch::changes(home, &self.stage, &self.before, &chosen(&after))?;
         for name in sidecars {
             steps.push((PathBuf::from(name), Some(self.stage.join(name))));
         }
         self.owner.seal_staged_set(&next, &steps)?;
-        self.owner.publish_staged_set(|| {
-            if let Some(fence) = &fence {
+        Ok(ReadyInstall {
+            install: self,
+            next,
+            cancellation,
+            fence,
+            question,
+        })
+    }
+}
+
+/// Approval consumes the exact candidate that was built and shown, rather than retrying
+/// the request. Dropping it (including closing the question) retires the private attempt.
+pub(in crate::browser::sunrise) struct ReadyInstall {
+    install: StagedInstall,
+    next: Active,
+    cancellation: native_mods::Cancellation,
+    fence: Option<worlds::switch::Fence>,
+    question: worlds::SwitchQuestion,
+}
+
+impl ReadyInstall {
+    pub fn question(&self) -> &worlds::SwitchQuestion {
+        &self.question
+    }
+
+    pub fn commit(
+        mut self,
+        approved: bool,
+        revalidate: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        if !approved && self.question.needed() {
+            return Err(self.question.lines().join("\n"));
+        }
+        let home = self.install.owner.home();
+        revalidate()?;
+        self.install.owner.publish_staged_set(|| {
+            if build::inputs(home)? != self.install.input {
+                return Err(unsettled());
+            }
+            if let Some(fence) = &self.fence {
                 fence.revalidate(home)?;
             }
-            self.prior.verify_artifacts()?;
-            next.verify_artifacts()?;
-            next.verify_resources()?;
-            cancellation.publication_guard(next.executable())
+            self.install.prior.verify_artifacts()?;
+            self.next.verify_artifacts()?;
+            self.next.verify_resources()?;
+            self.cancellation.publication_guard(self.next.executable())
         })?;
-        self.published = true;
+        self.install.published = true;
         Ok(())
     }
 }

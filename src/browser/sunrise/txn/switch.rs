@@ -27,13 +27,13 @@ pub(super) struct Package {
     pub(super) digest: String,
     relative: PathBuf,
     file: PathBuf,
-    row: Option<installed::Entry>,
+    pub(super) row: Option<installed::Entry>,
     pub(super) on: bool,
 }
 
 pub(super) struct Inventory {
     pub(super) packages: BTreeMap<String, Package>,
-    browser: serde_json::Value,
+    pub(super) browser: serde_json::Value,
     selection: Option<String>,
 }
 

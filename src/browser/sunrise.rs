@@ -1269,23 +1269,12 @@ fn install_set_from(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let waiting = txn::waiting_packages(home)?;
-    let mut asked = Vec::new();
-    for project in projects {
-        let p = index
-            .project(&project.id)
-            .filter(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
-            .ok_or_else(|| format!("{} isn't a mod in Sunrise's registry.", project.title))?;
-        let version = match waiting.get(&p.id) {
-            Some(waiting) => waiting.replacement(index, p, game).ok_or_else(|| {
-                trf(
-                    "{mod} needs an update from its author before it can be turned on.",
-                    &[("mod", &p.name)],
-                )
-            })?,
-            None => newest(index, p, game)?,
-        };
-        asked.push((p, version));
-    }
+    let asked = registry_candidates(
+        index,
+        projects.iter().map(|p| p.id.as_str()),
+        game,
+        &waiting,
+    )?;
     dependencies::install(
         &Install {
             index,
@@ -1300,6 +1289,35 @@ fn install_set_from(
         &waiting,
     )
 }
+
+fn registry_candidates<'a, 'b>(
+    index: &'a Index,
+    ids: impl IntoIterator<Item = &'b str>,
+    game: &str,
+    waiting: &std::collections::BTreeMap<String, txn::WaitingMod>,
+) -> Result<Vec<(&'a index::Project, &'a index::Version)>, String> {
+    ids.into_iter()
+        .map(|id| {
+            let p = index
+                .project(id)
+                .filter(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
+                .ok_or_else(|| format!("{id} isn't a mod in Sunrise's registry."))?;
+            let version = match waiting.get(&p.id) {
+                Some(waiting) => waiting.replacement(index, p, game).ok_or_else(|| {
+                    trf(
+                        "{mod} needs an update from its author before it can be turned on.",
+                        &[("mod", &p.name)],
+                    )
+                })?,
+                None => newest(index, p, game)?,
+            };
+            Ok((p, version))
+        })
+        .collect()
+}
+
+mod registry_install;
+pub use registry_install::{prepare_registry_install, RegistryInstall};
 
 /// [`install`] from a trusted `index`.
 #[allow(clippy::too_many_arguments)]

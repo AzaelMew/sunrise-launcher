@@ -1532,5 +1532,10 @@
   "No exact download matches the saved build {version}.": "No exact download matches the saved build {version}.",
   "This profile has no committed build to start.": "This profile has no committed build to start.",
   "The launch command does not match this profile's saved build and folders.": "The launch command does not match this profile's saved build and folders.",
-  "{mod} was taken down: {reason} Turn it off in Mods before playing.": "{mod} was taken down: {reason} Turn it off in Mods before playing."
+  "{mod} was taken down: {reason} Turn it off in Mods before playing.": "{mod} was taken down: {reason} Turn it off in Mods before playing.",
+  "The mod registry changed while the install was being prepared. Nothing was installed.": "The mod registry changed while the install was being prepared. Nothing was installed.",
+  "This install may affect saved worlds": "This install may affect saved worlds",
+  "Install anyway": "Install anyway",
+  "Cancel install": "Cancel install",
+  "Installing…": "Installing…"
 }

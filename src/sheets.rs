@@ -742,27 +742,22 @@ impl Launcher {
     /// A switch or update would remove mods that saved worlds use: the one question. Staying is
     /// the default and what closing does.
     fn world_question_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let question = self
+        let ask = self
             .mods
             .world_ask
             .as_ref()
-            .map(|ask| ask.question.clone())
             .expect("shown only while a question is pending");
-        let instance = self
-            .mods
-            .world_ask
-            .as_ref()
-            .map(|ask| ask.instance.clone())
-            .unwrap_or_default();
-        let installing = matches!(
-            self.mods.world_ask.as_ref().map(|ask| &ask.then),
-            Some(crate::mods_page::Then::Install(_))
-        );
+        let question = &ask.question;
+        let prepared = match &ask.then {
+            crate::mods_page::Then::PreparedRegistry(prepared) => Some(prepared.plan.question()),
+            _ => None,
+        };
+        let installing = matches!(ask.then, crate::mods_page::Then::Install(_));
         let entries = self
             .instances
             .list
             .iter()
-            .find(|i| i.id == instance)
+            .find(|i| i.id == ask.instance)
             .map(|i| sunrise_launcher::browser::installed::Installed::load(&i.home).entries)
             .unwrap_or_default();
         let names = crate::mods_page::titles(&entries, &question.mods);
@@ -782,15 +777,24 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(title(trf(
-                if installing {
-                    "Installing removes {mods}"
-                } else {
-                    "Switching removes {mods}"
-                },
-                &[("mods", &mods)],
-            )))
-            .child(muted(text))
+            .child(title(if prepared.is_some() {
+                tr("This install may affect saved worlds").into()
+            } else {
+                trf(
+                    if installing {
+                        "Installing removes {mods}"
+                    } else {
+                        "Switching removes {mods}"
+                    },
+                    &[("mods", &mods)],
+                )
+            }))
+            .children(
+                prepared
+                    .map_or_else(|| vec![text], |question| question.lines())
+                    .into_iter()
+                    .map(muted),
+            )
             .child(
                 div()
                     .flex()
@@ -798,7 +802,15 @@ impl Launcher {
                     .justify_end()
                     .gap(px(10.))
                     .child(
-                        button("alt-world-switch", tr("Switch anyway")).on_click(cx.listener(
+                        button(
+                            "alt-world-switch",
+                            tr(if prepared.is_some() {
+                                "Install anyway"
+                            } else {
+                                "Switch anyway"
+                            }),
+                        )
+                        .on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 this.answer_world_question(
                                     sunrise_launcher::worlds::Answer::Switch,
@@ -808,11 +820,20 @@ impl Launcher {
                         )),
                     )
                     .child(
-                        crate::frame::primary("alt-world-stay", tr("Stay on this version"))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        crate::frame::primary(
+                            "alt-world-stay",
+                            tr(if prepared.is_some() {
+                                "Cancel install"
+                            } else {
+                                "Stay on this version"
+                            }),
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
                                 this.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
                                 cx.notify();
-                            })),
+                            },
+                        )),
                     ),
             );
         frame("alt-world-question", 560., body, cx)

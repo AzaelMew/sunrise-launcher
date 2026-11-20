@@ -328,6 +328,19 @@ pub fn install(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, InstallError> {
     let lease = super::sunrise::txn::Lease::admit(home)?;
+    if project.source == SourceId::Sunrise && project.kind == Kind::Mod {
+        if let Some(active) = lease.active_build()? {
+            return Ok(super::sunrise::prepare_registry_install(
+                std::sync::Arc::new(lease),
+                active,
+                std::slice::from_ref(&project.id),
+                approvals,
+                crate::native_mods::Profile::Optimized,
+                progress,
+            )?
+            .commit(false)?);
+        }
+    }
     let entries = lease.install(source, project, everything, game, approvals, progress)?;
     // Standalone installs have no follow-up worker. A successful command is final; the
     // native mods are installed, but need the separate native-build command before use.
