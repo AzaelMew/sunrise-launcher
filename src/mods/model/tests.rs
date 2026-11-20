@@ -191,7 +191,7 @@ fn the_page_names_the_version_add_installs() {
         Some("2.0.0")
     );
     assert_eq!(p.versions[1].fit, Fit::OtherBuild("25.1".into()));
-    assert_eq!(p.side, "Not needed on servers");
+    assert_eq!(p.about.unwrap().side, "Not needed on servers");
     assert!(page(&idx, "missing", GAME, vec![], false).is_none());
 }
 
@@ -429,6 +429,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             name: "mine".into(),
             version: "0.3".into(),
             github: false,
+            source: None,
             native: true,
             unreadable: false,
         },
@@ -437,6 +438,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             name: "By Hand".into(),
             version: "1.0".into(),
             github: false,
+            source: None,
             native: false,
             unreadable: false,
         },
@@ -965,6 +967,7 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         name: "ruby".into(),
         version: String::new(),
         github: false,
+        source: None,
         native: true,
         unreadable,
     };
