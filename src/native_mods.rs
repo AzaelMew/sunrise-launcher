@@ -974,7 +974,7 @@ impl From<Failed> for String {
 
 /// Refuse before staging, fetching a prebuilt game or downloading a compiler.
 pub fn require_consent() -> Result<(), Failed> {
-    if backend::Settings::load().native_mods_allowed_at.is_some() {
+    if backend::NativeGrant::read()?.is_some() {
         Ok(())
     } else {
         Err(Failed::NoConsent)
@@ -1216,7 +1216,8 @@ fn pipeline(
     progress: &impl Fn(Step),
 ) -> Result<Built, Failed> {
     let cancellation = &options.cancellation;
-    cancellation.check()?;
+    // Keep a single consent revision across private staging, compilation and publication.
+    cancellation.admit_native_work()?;
     let started = std::time::Instant::now();
     let built_on = checked_about(base)?;
     backend::need_prepared(base)?;

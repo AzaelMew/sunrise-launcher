@@ -1,6 +1,9 @@
 //! The SDK's native build tool, `cargo sunrise-mod native-build`, run as a process with the launcher's toolchain (docs/modding/src/reference/sdk/08-native-build.md).
-use crate::i18n::{tr, trf};
 use crate::rust_toolchain::Toolchain;
+use crate::{
+    backend::{NativeGrant, PermissionFence},
+    i18n::{tr, trf},
+};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -29,6 +32,7 @@ struct Attempt {
     tool: Option<u32>,
     #[cfg(windows)]
     job: Option<Arc<crate::process::leases::CompilerJob>>,
+    grant: Option<NativeGrant>,
 }
 
 impl Attempt {
@@ -47,8 +51,25 @@ impl Cancellation {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    pub(super) fn admit_native_work(&self) -> Result<(), super::Failed> {
+        let mut state = self.state();
+        state.check()?;
+        if let Some(grant) = state.grant {
+            drop(grant.hold()?);
+        } else {
+            state.grant = Some(NativeGrant::read()?.ok_or(super::Failed::NoConsent)?);
+        }
+        Ok(())
+    }
+
     pub(super) fn check(&self) -> Result<(), String> {
         self.state().check()
+    }
+
+    pub(super) fn publication_guard(&self) -> Result<Option<PermissionFence>, String> {
+        let state = self.state();
+        state.check()?;
+        state.grant.map(NativeGrant::hold).transpose()
     }
 
     /// Stops this attempt and the SDK tool it started, if any.
@@ -412,6 +433,8 @@ fn start(
     // Stop either prevents the spawn or sees the PID. It cannot fall between them.
     let mut state = cancellation.state();
     state.check()?;
+    // A grant check and the worker handoff form one short admission, never held during I/O.
+    let permission = state.grant.map(NativeGrant::hold).transpose()?;
     #[cfg(not(windows))]
     let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
     #[cfg(windows)]
@@ -426,6 +449,7 @@ fn start(
     {
         state.job = child.child().compiler_job();
     }
+    drop(permission);
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");
     Ok((child, std::thread::spawn(move || tail(stderr))))

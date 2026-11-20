@@ -34,10 +34,13 @@ pub(super) fn install(
                 .join(&bundle.manifest.id),
         )?;
     }
-    if let Err(cancelled) = cancellation.check() {
-        let _ = fs::remove_dir_all(&partial);
-        return Err(cancelled);
-    }
+    let _permission = match cancellation.publication_guard() {
+        Ok(permission) => permission,
+        Err(cancelled) => {
+            let _ = fs::remove_dir_all(&partial);
+            return Err(cancelled);
+        }
+    };
     let dir = target.directory(version);
     let _ = fs::remove_dir_all(&dir);
     fs::rename(&partial, &dir).map_err(|e| e.to_string())?;
