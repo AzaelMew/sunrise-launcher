@@ -1,0 +1,10 @@
+{
+  "suite": "dedicated server fence",
+  "source_head": "47617609864647a2a296fb87cecde4311b93949f",
+  "binary_sha256": "b23e40ca9e76a1c8a9f0b27b3bc2e9cda158381072a07f516a4b7bb76db482f7",
+  "size": [
+    "1280x800",
+    "800x600"
+  ],
+  "status": "captured"
+}
