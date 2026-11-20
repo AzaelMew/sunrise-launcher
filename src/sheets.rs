@@ -466,7 +466,7 @@ impl Launcher {
         if self.mods.card_error.as_ref().is_some_and(|e| e.open) {
             return Some(self.card_why_sheet(cx));
         }
-        if self.mods.removal.is_some() {
+        if !self.mods.removal.is_empty() {
             return Some(self.removal_sheet(cx));
         }
         match self.ui.sheet {
@@ -666,7 +666,8 @@ impl Launcher {
         let removal = self
             .mods
             .removal
-            .clone()
+            .first()
+            .cloned()
             .expect("shown only while mods are listed");
         let names: Vec<String> = removal.items.iter().map(|i| i.title.clone()).collect();
         let log = removal.log();
@@ -702,7 +703,7 @@ impl Launcher {
                         )
                         .on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
-                                if let Some(removal) = &mut this.mods.removal {
+                                if let Some(removal) = this.mods.removal.first_mut() {
                                     removal.why = !removal.why;
                                 }
                                 cx.notify();
