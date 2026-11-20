@@ -246,6 +246,7 @@ pub fn recover(home: &Path) {
             return;
         }
     };
+    super::journal::recover(home);
     let me = std::process::id();
     let (mut mine, earlier): (Vec<Kept>, Vec<Kept>) =
         kept_list(home).into_iter().partition(|k| k.pid == me);
