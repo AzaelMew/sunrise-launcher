@@ -2897,8 +2897,22 @@ pub fn server_command(tag: &str, folder: &Path) -> Result<Command, String> {
     dedicated::command(tag, folder)
 }
 
+/// Check the command returned by `prepare_server_command`, while its runtime guard is held.
 pub fn verify_server_command(tag: &str, folder: &Path, command: &Command) -> Result<(), String> {
-    dedicated::verify(tag, folder, command)
+    dedicated::verify(tag, folder, command, true)
+}
+
+/// Keep the isolated directory and the installed source fenced before Windows stages its slot,
+/// then check the exact staged command before either dedicated spawn route can use it.
+pub fn prepare_server_command(
+    tag: &str,
+    folder: &Path,
+    cmd: Command,
+) -> Result<(Command, RuntimeGuard), String> {
+    dedicated::verify(tag, folder, &cmd, false)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    verify_server_command(tag, folder, &cmd)?;
+    Ok((cmd, runtime))
 }
 
 /// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
@@ -3239,8 +3253,19 @@ pub const LOG_KEEP: usize = 2000;
 
 impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
+        Self::start_with(|tx| spawn(job, cmd, tx))
+    }
+
+    pub fn start_server(tag: &str, folder: &Path, cmd: Command) -> Result<Self, String> {
+        let (cmd, runtime) = prepare_server_command(tag, folder, cmd)?;
+        Self::start_with(|tx| spawn_prepared(Job::Server, cmd, runtime, tx, None))
+    }
+
+    fn start_with(
+        start: impl FnOnce(Sender<Msg>) -> Result<Running, String>,
+    ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let running = spawn(job, cmd, tx)?;
+        let running = start(tx)?;
         let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
@@ -4189,7 +4214,17 @@ pub fn spawn_holding(
     tx: Sender<Msg>,
     hold: Option<sunrise_launcher_smod::locks::Locked>,
 ) -> Result<Running, String> {
-    let (mut cmd, runtime) = prepare_command(cmd)?;
+    let (cmd, runtime) = prepare_command(cmd)?;
+    spawn_prepared(job, cmd, runtime, tx, hold)
+}
+
+fn spawn_prepared(
+    job: Job,
+    mut cmd: Command,
+    runtime: RuntimeGuard,
+    tx: Sender<Msg>,
+    hold: Option<sunrise_launcher_smod::locks::Locked>,
+) -> Result<Running, String> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

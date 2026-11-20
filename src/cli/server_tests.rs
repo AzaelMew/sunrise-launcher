@@ -64,6 +64,16 @@ fn main() {
     assert_eq!(std::env::current_dir().unwrap().canonicalize().unwrap(), expected);
     assert_eq!(std::path::PathBuf::from(std::env::var_os("SUNRISE_HOME").unwrap()).canonicalize().unwrap(), expected);
     assert!(std::env::var_os("SUNRISE_ACCOUNT_SESSIONS").is_none());
+    let data = std::path::PathBuf::from(std::env::var_os("SUNRISE_LAUNCHER_HOME").unwrap());
+    let exe = std::env::current_exe().unwrap().canonicalize().unwrap();
+    #[cfg(windows)]
+    {
+        let slot = std::path::PathBuf::from(std::env::var_os("SUNRISE_WINDOWS_RUNTIME_SLOT").unwrap()).canonicalize().unwrap();
+        assert_eq!(slot.parent().unwrap(), data.canonicalize().unwrap().join("run"));
+        assert_eq!(exe, slot.join("game/sunrise-client.exe"));
+    }
+    #[cfg(not(windows))]
+    assert_eq!(exe, data.canonicalize().unwrap().join("versions/nightly-same-build/sunrise-client"));
     assert!(std::fs::read_to_string("eula.txt").unwrap().contains("eula=true"));
     std::fs::write("server-ran", "yes").unwrap();
 }
@@ -140,18 +150,42 @@ fn dedicated_cli_actor() {
         return;
     };
     if std::env::var_os("SUNRISE_TEST_DEDICATED_CHECK_COMMAND").is_some() {
-        let dir = Path::new(&dir);
+        let probe = Path::new(&dir).with_file_name("effective-command-test");
+        fs::create_dir_all(&probe).unwrap();
         let game = backend::game_home();
-        let mut command = backend::server_command(TAG, dir).unwrap();
-        backend::verify_server_command(TAG, dir, &command).unwrap();
-        command.env("SUNRISE_HOME", &game);
-        assert!(backend::verify_server_command(TAG, dir, &command).is_err());
-        let mut command = backend::server_command(TAG, dir).unwrap();
-        command.current_dir(&game);
-        assert!(backend::verify_server_command(TAG, dir, &command).is_err());
-        let mut command = backend::server_command(TAG, dir).unwrap();
-        command.arg("--home").arg(&game);
-        assert!(backend::verify_server_command(TAG, dir, &command).is_err());
+        let command = backend::server_command(TAG, &probe).unwrap();
+        let (command, _runtime) = backend::prepare_server_command(TAG, &probe, command).unwrap();
+        backend::verify_server_command(TAG, &probe, &command).unwrap();
+        let clone = |program: &std::ffi::OsStr| {
+            let mut copy = Command::new(program);
+            copy.args(command.get_args())
+                .current_dir(command.get_current_dir().unwrap());
+            for (name, value) in command.get_envs() {
+                if let Some(value) = value {
+                    copy.env(name, value);
+                } else {
+                    copy.env_remove(name);
+                }
+            }
+            copy
+        };
+        let forged = clone(std::env::current_exe().unwrap().as_os_str());
+        assert!(backend::verify_server_command(TAG, &probe, &forged).is_err());
+        let mut forged = clone(command.get_program());
+        forged.env("SUNRISE_HOME", &game);
+        assert!(backend::verify_server_command(TAG, &probe, &forged).is_err());
+        let mut forged = clone(command.get_program());
+        forged.current_dir(&game);
+        assert!(backend::verify_server_command(TAG, &probe, &forged).is_err());
+        let mut forged = clone(command.get_program());
+        forged.arg("--home").arg(&game);
+        assert!(backend::verify_server_command(TAG, &probe, &forged).is_err());
+        #[cfg(windows)]
+        {
+            let mut forged = clone(command.get_program());
+            forged.env("SUNRISE_WINDOWS_RUNTIME_SLOT", &game);
+            assert!(backend::verify_server_command(TAG, &probe, &forged).is_err());
+        }
     }
     let args = [
         "sunrise-launcher",

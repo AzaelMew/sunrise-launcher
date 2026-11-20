@@ -123,16 +123,29 @@ pub(super) fn verify_paths(tag: &str, command: &Command) -> Result<(), String> {
     Ok(())
 }
 
-/// Check the effective command again at handoff. The dedicated process is never wrapped in
-/// the client's launch settings, and its data and working directory are the same isolated root.
-pub(super) fn verify(tag: &str, folder: &Path, actual: &Command) -> Result<(), String> {
+/// A direct launch uses only the dedicated argv, the isolated root, and the dedicated
+/// overrides. Windows may replace the installed program with that root's prepared copy.
+pub(super) fn verify(
+    tag: &str,
+    folder: &Path,
+    actual: &Command,
+    effective: bool,
+) -> Result<(), String> {
     let expected = command(tag, folder)?;
-    if actual.get_program() != expected.get_program()
-        || actual.get_args().ne(expected.get_args())
+    verify_paths(tag, &expected)?;
+    if actual.get_args().ne(expected.get_args())
         || actual.get_current_dir() != expected.get_current_dir()
-        || actual.get_envs().ne(expected.get_envs())
     {
         return Err(refused());
     }
-    verify_paths(tag, actual)
+    #[cfg(windows)]
+    if effective {
+        return crate::windows_runtime::verify_dedicated(&expected, actual).map_err(|_| refused());
+    }
+    #[cfg(not(windows))]
+    let _ = effective;
+    if actual.get_program() != expected.get_program() || actual.get_envs().ne(expected.get_envs()) {
+        return Err(refused());
+    }
+    Ok(())
 }
