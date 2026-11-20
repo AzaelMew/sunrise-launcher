@@ -1,5 +1,5 @@
 //! The selected instance's worlds on Home (`sunrise_launcher::worlds`): each with its picture,
-//! mode, version, when it was last played and its size, and Back up, Copy, Delete (to the
+//! mode, version, when it was last played and its size, and Copy, Delete (to the
 //! trash, after a confirmation) and Open folder. Reading sizes and copying run in the background.
 use super::*;
 use std::path::PathBuf;

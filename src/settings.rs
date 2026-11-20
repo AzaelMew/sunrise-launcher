@@ -716,11 +716,6 @@ impl Launcher {
 
     fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
         let game = backend::game_home();
-        let backups = self
-            .selected_instance()
-            .map_or_else(|| game.clone(), |i| i.home.clone())
-            .join("backups");
-        let has_backups = backups.is_dir();
         let files = row(
             tr("Game files and worlds"),
             short(&game),
@@ -728,21 +723,6 @@ impl Launcher {
                 let dir = game.clone();
                 button("alt-open-game", tr("Open folder"))
                     .on_click(move |_, _, cx| glass_toast::open(cx, &dir))
-            }),
-        );
-        let open_backups = button("alt-open-backups", tr("Open folder"));
-        let kept = row(
-            tr("World backups"),
-            if has_backups {
-                short(&backups)
-            } else {
-                tr("None yet. Sunrise makes one before a mod change that could harm a world.")
-                    .to_string()
-            },
-            div().child(if has_backups {
-                open_backups.on_click(move |_, _, cx| glass_toast::open(cx, &backups))
-            } else {
-                off(open_backups)
             }),
         );
 
@@ -941,7 +921,7 @@ impl Launcher {
             .flex_col()
             .gap(px(14.))
             .child(group(vec![self.location_row(cx)]))
-            .child(group(vec![files, kept]))
+            .child(group(vec![files]))
             .child(group(cache))
             .children(notes.into_iter().flatten())
     }
