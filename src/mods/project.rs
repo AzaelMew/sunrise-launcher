@@ -458,7 +458,7 @@ impl Launcher {
                 "alt-fact-code",
                 "shield",
                 tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.").into(),
+                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.").into(),
                 palette().accent_ink,
             ),
             Make::Content => fact(
