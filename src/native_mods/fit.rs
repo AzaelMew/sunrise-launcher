@@ -33,8 +33,6 @@ pub enum Verdict {
         made_for: String,
         misfits: Vec<Misfit>,
     },
-    /// An `[[inject]]` row's point is not the same in this build: why.
-    Points { made_for: String, why: String },
 }
 
 impl Verdict {
@@ -250,10 +248,6 @@ pub fn line(name: &str, verdict: &Verdict, build: &str) -> String {
                 )
             }
         }
-        Verdict::Points { made_for, why } => trf(
-            "It was made for {made_for} and this profile runs {build}, where a point it hooks is not the same: {why}",
-            &[("made_for", &made(made_for)), ("build", build), ("why", why)],
-        ),
     }
 }
 
@@ -267,7 +261,6 @@ pub fn detail(verdict: &Verdict) -> super::isolate::Detail {
         Verdict::DoesNotFit { made_for, misfits } => {
             (made_for, misfits.iter().map(change).collect())
         }
-        Verdict::Points { made_for, why } => (made_for, vec![why.clone()]),
         Verdict::Exact { made_for, .. } | Verdict::NoList { made_for, .. } => {
             (made_for, vec![short(verdict)])
         }
@@ -285,9 +278,7 @@ pub fn headline(name: &str, verdict: &Verdict) -> String {
         Verdict::Exact { .. } | Verdict::NoList { .. } => {
             trf("{mod} works on another version only.", &[("mod", name)])
         }
-        Verdict::DoesNotFit { .. } | Verdict::Points { .. } => {
-            trf("{mod} doesn't fit this game.", &[("mod", name)])
-        }
+        Verdict::DoesNotFit { .. } => trf("{mod} doesn't fit this game.", &[("mod", name)]),
     }
 }
 
@@ -319,7 +310,6 @@ pub fn short(verdict: &Verdict) -> String {
         } => tr("its package was made with a newer tool than this game uses; update the game to read its list").to_owned(),
         Verdict::NoList { .. } => tr("its package doesn't say what it uses").to_owned(),
         Verdict::DoesNotFit { misfits, .. } => changes(misfits),
-        Verdict::Points { why, .. } => why.clone(),
     }
 }
 

@@ -221,10 +221,10 @@ pub(crate) fn read(home: &Path) -> Vec<Item> {
             })
         })
         .collect();
-    // The files put there by hand, native and not: the game plays with them too.
+    // Local native and content packages are also part of the profile.
     let by_hand = native_status::untracked(home)
         .into_iter()
-        .chain(native_status::untracked_wasm(home));
+        .chain(native_status::untracked_content(home));
     mods.extend(by_hand.map(|file| {
         Item {
             on: mod_list::is_enabled(home, &file.id),

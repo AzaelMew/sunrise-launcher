@@ -270,7 +270,7 @@ fn read_local(home: &Path) -> Vec<model::Local> {
         .into_iter()
         .map(local(true))
         .chain(
-            native_status::untracked_wasm(home)
+            native_status::untracked_content(home)
                 .into_iter()
                 .map(local(false)),
         )

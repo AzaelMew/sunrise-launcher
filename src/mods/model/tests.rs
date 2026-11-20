@@ -475,10 +475,10 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     );
     // A package of `sunrise-mods/` put there by hand is listed by its name and needs neither
     // permission nor a build.
-    let wasm = r.iter().find(|r| r.id == "by_hand").expect("listed");
-    assert_eq!((wasm.title.as_str(), wasm.on), ("By Hand", true));
-    assert_eq!((wasm.make, &wasm.need), (None, &None));
-    assert!(wasm.local.is_some() && wasm.entry.is_none());
+    let content = r.iter().find(|r| r.id == "by_hand").expect("listed");
+    assert_eq!((content.title.as_str(), content.on), ("By Hand", true));
+    assert_eq!((content.make, &content.need), (None, &None));
+    assert!(content.local.is_some() && content.entry.is_none());
     assert!(plan_updates(&r, true)
         .included
         .iter()

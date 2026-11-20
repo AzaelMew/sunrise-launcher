@@ -158,51 +158,6 @@ pub fn sunrise_label(version: &str) -> String {
     }
 }
 
-/// Enabled wasm packages that need the patchable engine, never native compilation.
-pub fn wasm_points(home: &Path) -> Vec<sunrise_launcher_smod::index::native::Bundle> {
-    wasm_points_at(home).into_iter().map(|(_, b)| b).collect()
-}
-
-/// [`wasm_points`], each with the file it was read from.
-fn wasm_points_at(
-    home: &Path,
-) -> Vec<(
-    std::path::PathBuf,
-    sunrise_launcher_smod::index::native::Bundle,
-)> {
-    use std::io::Read;
-    wasm_hmods(home)
-        .into_iter()
-        .filter_map(|path| {
-            let file = fs::File::open(&path).ok()?;
-            let mut zip = zip::ZipArchive::new(file).ok()?;
-            let package = sunrise_launcher_smod::Package::read_zip(&mut zip).ok()?;
-            if package.manifest.wasm.is_none()
-                || package.manifest.inject.is_empty()
-                || !mod_list::is_enabled(home, &package.manifest.id)
-            {
-                return None;
-            }
-            let mut files = std::collections::BTreeMap::new();
-            for i in 0..zip.len() {
-                let mut entry = zip.by_index(i).ok()?;
-                if entry.is_dir() {
-                    continue;
-                }
-                let name = entry.name().ok()?.into_owned();
-                let mut bytes = Vec::new();
-                entry.read_to_end(&mut bytes).ok()?;
-                files.insert(name, bytes);
-            }
-            let bundle = sunrise_launcher_smod::index::native::Bundle {
-                manifest: package.manifest,
-                files,
-            };
-            Some((path, bundle))
-        })
-        .collect()
-}
-
 /// The native mods turned on in game folder `home`, read from their `.smod`s. One that can't be
 /// read is left out: the on/off list is keyed by the manifest id, which an unreadable file can't
 /// give, so it is neither on nor a build input (the game doesn't load it either). Its file name
@@ -223,10 +178,6 @@ fn enabled_files(home: &Path) -> Vec<(std::path::PathBuf, Mod)> {
             out.push((path, (b.manifest.id, b.manifest.version, Some(digest))));
         }
     }
-    out.extend(wasm_points_at(home).into_iter().map(|(path, b)| {
-        let digest = native_mods::digest(b.files.iter().map(|(n, d)| (n.as_str(), d.as_slice())));
-        (path, (b.manifest.id, b.manifest.version, Some(digest)))
-    }));
     out
 }
 
@@ -339,10 +290,10 @@ pub fn untracked(home: &Path) -> Vec<Installed> {
     untracked_in(home, native_mods::INSTALLED, hmods(home), true)
 }
 
-/// The packages put in `sunrise-mods/` by hand: mods that run as wasm or carry content only,
+/// The packages put in `sunrise-mods/` by hand: content-only mods,
 /// which the registry browser has no record of. One that can't be read is not a mod the game
 /// loads and is left out, as is one whose ID the registry's mods or the native files have.
-pub fn untracked_wasm(home: &Path) -> Vec<Installed> {
+pub fn untracked_content(home: &Path) -> Vec<Installed> {
     let tracked = crate::browser::installed::Installed::load(home);
     let mut taken: std::collections::HashSet<String> = tracked
         .entries
@@ -351,7 +302,7 @@ pub fn untracked_wasm(home: &Path) -> Vec<Installed> {
         .chain(hmods(home).iter().map(|path| stem(path)))
         .collect();
     let dir = sunrise_launcher_smod::mod_list::DIR;
-    let mut found = untracked_in(home, dir, wasm_hmods(home), false);
+    let mut found = untracked_in(home, dir, content_files(home), false);
     found.retain(|package| package.icon.is_ok() && taken.insert(package.id.clone()));
     found
 }
@@ -536,7 +487,7 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     out += &mod_list::selection_text(home);
     for path in hmods(home)
         .into_iter()
-        .chain(wasm_hmods(home))
+        .chain(content_files(home))
         .flat_map(|p| [p.clone(), p.with_extension("origin.json")])
         .chain([home.join("mod-browser.json")])
     {
@@ -547,7 +498,7 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
     out
 }
 
-fn wasm_hmods(home: &Path) -> Vec<std::path::PathBuf> {
+fn content_files(home: &Path) -> Vec<std::path::PathBuf> {
     let mut paths: Vec<_> = fs::read_dir(home.join(sunrise_launcher_smod::mod_list::DIR))
         .into_iter()
         .flatten()
@@ -581,12 +532,12 @@ mod tests {
     fn non_files_with_smod_names_are_not_archive_candidates() {
         let home = tempfile::tempdir().unwrap();
         let native = home.path().join(native_mods::INSTALLED);
-        let wasm = home.path().join(sunrise_launcher_smod::mod_list::DIR);
-        for dir in [&native, &wasm] {
+        let content = home.path().join(sunrise_launcher_smod::mod_list::DIR);
+        for dir in [&native, &content] {
             fs::create_dir_all(dir.join("not-an-archive.smod")).unwrap();
         }
         assert!(hmods(home.path()).is_empty());
-        assert!(wasm_hmods(home.path()).is_empty());
+        assert!(content_files(home.path()).is_empty());
         assert!(enabled(home.path()).is_empty());
         assert!(untracked(home.path()).is_empty());
     }
@@ -687,124 +638,24 @@ mod tests {
     }
 
     #[test]
-    fn declared_paths_use_the_common_owner_for_both_code_targets() {
-        let header = "id='owner'\nname='Owner'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\ninternals=[{path='Game',hash='game'},{path='Game::world',kind='field',hash='world'}]\n";
-        for target in [
-            format!(
-                "[native]\ngame='26.3'\nsunrise='{}'\nmixins='{}'\n",
-                "a".repeat(40),
-                "b".repeat(40)
-            ),
-            format!("[wasm]\nsha512='{}'\ntoolchain='1.99.1'\n", "0".repeat(128)),
-        ] {
-            let manifest =
-                sunrise_launcher_smod::Manifest::parse(&format!("{header}{target}")).unwrap();
-            assert_eq!(declared_internals(&manifest), ["Game", "Game::world"]);
-        }
+    fn declared_paths_use_root_internals() {
+        let manifest = sunrise_launcher_smod::Manifest::parse(
+            "id='owner'\nname='Owner'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\ninternals=[{path='Game',hash='game'},{path='Game::world',kind='field',hash='world'}]\n[native]\ngame='26.3'\nsunrise='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\nmixins='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n",
+        )
+        .unwrap();
+        assert_eq!(declared_internals(&manifest), ["Game", "Game::world"]);
     }
 
     #[test]
-    fn wasm_package_changes_invalidate_the_build_view_cache() {
-        let home = std::env::temp_dir().join(format!("wasm-build-view-{}", std::process::id()));
-        fs::create_dir_all(home.join(sunrise_launcher_smod::mod_list::DIR)).unwrap();
-        let package = home
-            .join(sunrise_launcher_smod::mod_list::DIR)
-            .join("example.smod");
-        fs::write(&package, b"a").unwrap();
-        let before = fingerprint(&home, None);
-        fs::write(&package, b"ab").unwrap();
-        // Package changes must re-read the manifest to notice added or removed listeners.
-        assert_ne!(
-            before,
-            fingerprint(&home, None),
-            "wasm packages invalidate the selection cache"
-        );
-        let native = home.join(native_mods::INSTALLED);
-        fs::create_dir_all(&native).unwrap();
-        fs::write(native.join("example.smod"), b"a").unwrap();
-        assert_ne!(
-            before,
-            fingerprint(&home, None),
-            "a native package is a build input"
-        );
-        fs::remove_dir_all(home).unwrap();
-    }
-
-    #[test]
-    fn wasm_listeners_select_patchable_build_without_native_compilation() {
+    fn content_package_changes_invalidate_the_local_mods_view() {
         let home = tempfile::tempdir().unwrap();
         let folder = home.path().join(sunrise_launcher_smod::mod_list::DIR);
         fs::create_dir_all(&folder).unwrap();
-        // A shared wasm member with the required three exports.
-        let mut module = b"\0asm\x01\0\0\0".to_vec();
-        let mut section = |id: u8, bytes: &[u8]| {
-            module.extend([id, bytes.len() as u8]);
-            module.extend(bytes);
-        };
-        section(0, b"\x08dylink.0\x01\x04\0\0\0\0");
-        section(1, &[1, 0x60, 0, 0]);
-        section(3, &[1, 0]);
-        let mut exports = vec![3];
-        for name in ["sunrise_layout", "sunrise_in", "sunrise_hook"] {
-            exports.push(name.len() as u8);
-            exports.extend(name.as_bytes());
-            exports.extend([0, 0]);
-        }
-        section(7, &exports);
-        section(10, &[1, 2, 0, 0x0b]);
-        for inject in [false, true] {
-            let rows = if inject {
-                "[[inject]]\nid='count'\nat=\"sunrise_client::game::Game<'_>::tick\"\nkind='head'\nwith='tick'\n"
-            } else {
-                ""
-            };
-            let manifest = format!("id='wasm_test'\nname='Wasm test'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n{rows}[wasm]\nsha512='{}'\ntoolchain='1.99.1'\nbuilt_with='selection fixture'\n", sunrise_launcher_smod::manifest::sha512_of(&module));
-            let bytes =
-                sunrise_launcher_smod::Package::write_files(&manifest, &[("mod.wasm", &module)])
-                    .unwrap();
-            fs::write(folder.join("test.smod"), bytes).unwrap();
-            mod_list::set_enabled(home.path(), "wasm_test", true).unwrap();
-            assert_eq!(enabled(home.path()).len(), usize::from(inject));
-            // Put there by hand: listed by its own ID and name, and not among the native files.
-            let local: Vec<_> = untracked_wasm(home.path())
-                .into_iter()
-                .map(|p| (p.file, p.id, p.name))
-                .collect();
-            assert_eq!(
-                local,
-                [(
-                    "sunrise-mods/test.smod".into(),
-                    "wasm_test".into(),
-                    "Wasm test".into()
-                )]
-            );
-            assert!(untracked(home.path()).is_empty());
-            // Once the registry's record names the file, it is the registry's mod.
-            let record = home.path().join("mod-browser.json");
-            fs::write(
-                &record,
-                serde_json::json!({"entries": [{
-                    "source": "sunrise", "project": "wasm-test", "slug": "wasm-test",
-                    "title": "Wasm test", "kind": "mod", "version": "1.0.0", "number": "1.0.0",
-                    "file": "sunrise-mods/test.smod", "checksum": "", "page": "",
-                    "dependency": false,
-                }]})
-                .to_string(),
-            )
-            .unwrap();
-            assert!(untracked_wasm(home.path()).is_empty());
-            fs::remove_file(record).unwrap();
-            if inject {
-                let staged = native_mods::stage_installed(home.path(), home.path().join("staged"))
-                    .unwrap()
-                    .unwrap();
-                let bundles = native_mods::bundles(&staged).unwrap();
-                assert_eq!(bundles.len(), 1);
-                assert!(bundles[0].manifest.native.is_none());
-            }
-            mod_list::set_enabled(home.path(), "wasm_test", false).unwrap();
-            assert!(enabled(home.path()).is_empty());
-        }
+        let package = folder.join("example.smod");
+        fs::write(&package, b"a").unwrap();
+        let before = fingerprint(home.path(), None);
+        fs::write(&package, b"ab").unwrap();
+        assert_ne!(before, fingerprint(home.path(), None));
     }
 
     #[test]

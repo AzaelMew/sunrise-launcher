@@ -23,9 +23,7 @@ pub fn read(dir: &Path) -> Result<Option<Bundle>, String> {
         return Ok(None);
     }
     let package = Package::read(dir)?;
-    if package.manifest.native.is_none()
-        && (package.manifest.wasm.is_none() || package.manifest.inject.is_empty())
-    {
+    if !package.is_native() {
         return Ok(None);
     }
     if let Some(state) = package
@@ -79,7 +77,7 @@ fn copy_files(to: &Path, files: impl IntoIterator<Item = (String, Vec<u8>)>) -> 
     Ok(())
 }
 
-/// Check target-crossing edges; an unreadable package stops the scan, naming the mod, rather than building a smaller set.
+/// An unreadable package stops the scan, naming the mod, rather than building a smaller set.
 pub fn checked_bundles(folder: &Path) -> Result<Vec<Bundle>, String> {
     let paths = sunrise_launcher_smod::find(folder)
         .into_iter()
@@ -95,51 +93,5 @@ pub fn checked_bundles(folder: &Path) -> Result<Vec<Bundle>, String> {
     {
         return Err(format!("{id}: {error}"));
     }
-    let found = super::scan_bundles(folder)?;
-    let wasm: Vec<_> = sunrise_launcher_smod::find(folder)
-        .into_iter()
-        .chain(sunrise_launcher_smod::find(
-            &folder
-                .parent()
-                .unwrap_or(folder)
-                .join(sunrise_launcher_smod::mod_list::DIR),
-        ))
-        .filter_map(|path| sunrise_launcher_smod::Package::read(&path).ok())
-        .filter(|package| package.manifest.wasm.is_some())
-        .collect();
-    for bundle in &found {
-        let dependent = sunrise_launcher_smod::Package::read(&bundle.dir)?;
-        for library in &wasm {
-            if !dependent
-                .manifest
-                .dependencies
-                .contains_key(&library.manifest.id)
-            {
-                continue;
-            }
-            let reason = if let Some(name) = dependent
-                .layouts
-                .first_difference(&library.manifest.id, &library.layouts)
-            {
-                trf(
-                    "{mod}: layout mismatch in library {library} for type {type}",
-                    &[
-                        ("mod", &dependent.manifest.id),
-                        ("library", &library.manifest.id),
-                        ("type", name),
-                    ],
-                )
-            } else {
-                trf(
-                    "{library} is a wasm mod; native mod {mod} depends on it: mixed native and wasm dependencies aren't supported yet",
-                    &[
-                        ("library", &library.manifest.id),
-                        ("mod", &dependent.manifest.id),
-                    ],
-                )
-            };
-            return Err(reason);
-        }
-    }
-    Ok(found)
+    super::scan_bundles(folder)
 }
