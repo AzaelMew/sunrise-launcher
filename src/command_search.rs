@@ -144,12 +144,8 @@ pub(crate) fn destinations() -> Vec<Entry> {
     let under = |parent: &str, child: &str| format!("{} › {}", tr(parent), tr(child));
     let mut all = vec![
         Entry::page(tr("Home").to_string(), "home", Page::Home),
-        Entry::page(tr("Mods").to_string(), "package", Page::Discover),
-        Entry::page(
-            under("Mods", "Resource, shader and data packs"),
-            "archive",
-            Page::Packs,
-        ),
+        Entry::page(tr("Mods").to_string(), "puzzle", Page::Discover),
+        Entry::page(tr("Packs").to_string(), "package", Page::Packs),
         Entry::page(under("Servers", "Join"), "globe", Page::Join),
         Entry::page(under("Servers", "Host"), "server", Page::Hosting),
         Entry::page(tr("Versions").to_string(), "download", Page::Versions),
@@ -853,7 +849,7 @@ mod tests {
             [
                 "Home",
                 "Mods",
-                "Mods › Resource, shader and data packs",
+                "Packs",
                 "Servers › Join",
                 "Servers › Host",
                 "Versions",
@@ -864,6 +860,21 @@ mod tests {
                 "Show or hide the sidebar",
             ]
         );
+    }
+
+    #[test]
+    fn packs_search_opens_the_packs_destination() {
+        let mut search = Search::new(sample(), (None, 0));
+        search.query.set("Packs".to_string());
+        search.list();
+
+        let first = search.rows().next().unwrap();
+        assert_eq!(first.group, Group::Navigate);
+        assert_eq!(first.label, "Packs");
+        assert!(matches!(
+            search.press("enter", |_| Key::Enter),
+            Press::Open(Target::Page(Page::Packs))
+        ));
     }
 
     #[test]
@@ -962,7 +973,7 @@ mod tests {
             [
                 "Home",
                 "Mods",
-                "Mods › Resource, shader and data packs",
+                "Packs",
                 "Servers › Join",
                 "Servers › Host",
                 "Versions",

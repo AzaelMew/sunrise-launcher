@@ -47,6 +47,7 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> Svg {
     let glass = match name {
         "home" => "dashboard-square-01",
         "package" | "box" | "archive" => "package-01",
+        "puzzle" => "puzzle",
         "server" => "computer",
         "sliders" => "sliders-horizontal",
         "play" => "play",

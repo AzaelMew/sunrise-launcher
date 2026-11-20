@@ -381,7 +381,7 @@ impl Launcher {
         self.choose_view(Page::Discover);
     }
 
-    /// The rail's Mods: where the player last was this session, else Installed when this setup
+    /// The Mods tab: where the player last was this session, else Installed when this setup
     /// has mods and Discover when it has none.
     pub(super) fn open_mods(&mut self) {
         self.leave_section(false);
@@ -394,7 +394,7 @@ impl Launcher {
         });
     }
 
-    /// The rail's Packs, by the same rule as [`Self::open_mods`].
+    /// The Packs tab, by the same rule as [`Self::open_mods`].
     pub(super) fn open_packs(&mut self) {
         self.leave_section(true);
         self.ui.page = self.ui.mods.last_packs.unwrap_or_else(|| {
@@ -820,7 +820,7 @@ impl Launcher {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        use ui::{c, field_theme};
+        use ui::field_theme;
         let t = field_theme(self.theme);
         let focused = focus.is_focused(window);
         let packs = matches!(self.ui.page, Page::Packs | Page::PackFind);
@@ -911,36 +911,10 @@ impl Launcher {
             .gap(px(20.))
             .child(
                 div()
-                    .flex()
-                    .flex_col()
                     .flex_none()
-                    .child(
-                        div()
-                            .text_size(px(tokens::TITLE))
-                            .font_weight(FontWeight::BOLD)
-                            .child(if packs { tr("Packs") } else { tr("Mods") }),
-                    )
-                    .child(
-                        div()
-                            .id("mods-packs-section")
-                            .reach()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().accent_ink))
-                            .cursor_pointer()
-                            .child(if packs {
-                                tr("Back to mods")
-                            } else {
-                                tr("Resource, shader and data packs")
-                            })
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if packs {
-                                    this.open_mods()
-                                } else {
-                                    this.open_packs()
-                                }
-                                cx.notify();
-                            })),
-                    ),
+                    .text_size(px(tokens::TITLE))
+                    .font_weight(FontWeight::BOLD)
+                    .child(if packs { tr("Packs") } else { tr("Mods") }),
             )
             .child(segmented(
                 "alt-mods-tabs",
