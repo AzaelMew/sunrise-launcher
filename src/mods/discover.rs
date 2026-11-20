@@ -92,9 +92,7 @@ impl Launcher {
             .flatten();
         let run = self.ui.mods.build.as_ref().filter(|run| run.running());
         let build_fraction = run.map_or(0., |run| run.fraction());
-        let tools = self
-            .first_build
-            .filter(|_| run.is_some_and(|run| run.progress.is_none()));
+        let tools = run.and_then(|run| run.getting_tools());
 
         // The filters: category and kind as dropdowns, fits my game, and the order.
         let fits = div()
