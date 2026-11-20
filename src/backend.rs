@@ -4410,10 +4410,6 @@ pub struct Settings {
     pub instance: Option<String>,
     pub minecraft_dir: Option<PathBuf>,
     pub server_dir: Option<PathBuf>,
-    /// Unset means on: only a player who turned it off has `false` here. 0.1.1 wrote its
-    /// `auto_install` (off by default) for everyone, so this is a new key and that one is ignored.
-    #[serde(default)]
-    pub install_new_versions: Option<bool>,
     /// Unset means on: after an install the launcher deletes the release versions nothing needs
     /// (`prune_old_versions`). Only a player who turned it off has `false` here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4663,10 +4659,6 @@ impl Settings {
     /// The window's language: the one picked, else the system's.
     pub fn language(&self) -> crate::i18n::Language {
         self.language.unwrap_or_else(crate::i18n::Language::system)
-    }
-    /// Whether new Sunrise versions are installed automatically.
-    pub fn auto_install(&self) -> bool {
-        self.install_new_versions.unwrap_or(true)
     }
     /// Whether old versions are deleted after an install.
     pub fn auto_prune(&self) -> bool {
@@ -6703,25 +6695,18 @@ pub fn {f}("
     }
 
     #[test]
-    fn new_versions_install_automatically_unless_turned_off() {
-        // No settings file, an old one that never mentioned it, and 0.1.1's default `false`.
-        assert!(Settings::parse("").auto_install());
-        assert!(Settings::parse("{}").auto_install());
-        assert!(
-            Settings::parse(r#"{"selected": "v2026.10.13", "auto_install": false}"#).auto_install()
+    fn old_automatic_download_settings_do_not_discard_other_preferences() {
+        let settings = Settings::parse(
+            r#"{
+            "selected": "v2026.10.13", "auto_install": false,
+            "install_new_versions": true, "prune_old_versions": false
+        }"#,
         );
-        assert!(Settings::parse(r#"{"install_new_versions": true}"#).auto_install());
-        assert!(!Settings::parse(r#"{"install_new_versions": false}"#).auto_install());
-        // Saving after the player turned it off keeps it off.
-        let off = Settings {
-            install_new_versions: Some(false),
-            ..Settings::default()
-        };
-        assert!(!Settings::parse(&serde_json::to_string(&off).unwrap()).auto_install());
-        // The selection rule is unchanged: the new version is selected only from the newest.
-        let installed = ["v2026.10.12".to_string(), "v2026.10.1".to_string()];
-        assert!(select_after_update(Some("v2026.10.12"), &installed));
-        assert!(!select_after_update(Some("v2026.10.1"), &installed));
+        assert_eq!(settings.selected.as_deref(), Some("v2026.10.13"));
+        assert!(!settings.auto_prune());
+        let saved = serde_json::to_value(&settings).unwrap();
+        assert!(saved.get("install_new_versions").is_none());
+        assert!(saved.get("auto_install").is_none());
     }
 
     #[test]

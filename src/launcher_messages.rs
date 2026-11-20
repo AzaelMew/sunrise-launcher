@@ -256,9 +256,6 @@ impl Launcher {
                         settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
                     }
                     self.updates = *updates;
-                    if self.settings.auto_install() {
-                        self.install_update();
-                    }
                     if let Some(release) = self.updates.launcher.clone() {
                         self.update_launcher(release);
                     }
