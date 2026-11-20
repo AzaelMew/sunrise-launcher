@@ -590,6 +590,7 @@ pub(super) fn require_dir(path: &Path) -> Result<(), String> {
 /// Take the identity from the actual bytes, not a display/cache manifest. Order and file
 /// boundaries are explicit; a rebuild cannot substitute a changed package at the same path.
 pub(super) fn inputs(home: &Path) -> Result<[u8; 32], String> {
+    sunrise_launcher_smod::index::browser_state::reconcile(home)?;
     fn item(hash: &mut Sha256, root: &Path, rel: &str) -> Result<(), String> {
         hash.update((rel.len() as u64).to_le_bytes());
         hash.update(rel.as_bytes());

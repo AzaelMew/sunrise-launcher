@@ -31,7 +31,7 @@ pub(super) fn install(
     // An install an earlier run left half done is undone first; while it can't be, nothing new
     // is begun on top of its list.
     super::txn::settle_owned(home)?;
-    let mut installed = installed::Installed::load(home);
+    let mut installed = installed::Installed::load_checked(home)?;
     // An approval that waited in a queue is read again here, under the lock: each mod it
     // removes must still be the file the player saw, and a world that uses it must have been
     // agreed to (worlds that can't be looked at stop the install).
@@ -327,7 +327,7 @@ pub(super) fn remove_checked(
     if super::txn::has_build(home)? {
         return Err(super::txn::unsettled());
     }
-    let mut list = installed::Installed::load(home);
+    let mut list = installed::Installed::load_checked(home)?;
     let (gone, kept): (Vec<_>, Vec<_>) = list.entries.drain(..).partition(|e| {
         e.source == SourceId::Sunrise
             && wanted

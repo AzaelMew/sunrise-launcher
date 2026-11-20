@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use sunrise_launcher_smod::index::{self, Index, Trust};
+use sunrise_launcher_smod::index::{self, Index, Trust, MAX_INDEX};
 
 /// Where the registry publishes its index (GitHub Pages of sunrise-org/sunrise-mods).
 pub const INDEX_URL: &str = sunrise_launcher_addresses::MOD_INDEX;
@@ -25,8 +25,6 @@ const REPORT: &str = sunrise_launcher_addresses::MOD_REPORT;
 pub const LOADER: &str = "sunrise";
 /// How long a fetched index is used before it is fetched again.
 const FRESH: Duration = Duration::from_secs(600);
-/// Larger than any index should be.
-const MAX_INDEX: u64 = 16 << 20;
 /// The last index fetched, kept in the game folder for when the registry can't be reached.
 const CACHE: &str = "mod-browser/sunrise-index.json";
 /// Players' ratings of every project (the registry service, crates/sunrise-mod-registry).
@@ -1421,7 +1419,7 @@ fn install_version_guarded(
     progress: &dyn Fn(&str, f32),
 ) -> Result<installed::Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    let mut list = installed::Installed::load(home);
+    let mut list = installed::Installed::load_checked(home)?;
     let install = Install {
         index,
         local,
@@ -1632,7 +1630,7 @@ pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
 pub fn turn_off_revoked(index: &Index, home: &Path) -> Result<Vec<String>, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for e in installed::Installed::load(home).entries {
+    for e in installed::Installed::load_checked(home)?.entries {
         let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
         let Some(r) = (e.source == SourceId::Sunrise)
             .then(|| index.revoked(&e.project, hash))
@@ -1687,7 +1685,7 @@ fn check_before_play(
     included: &[crate::native_status::Included],
     load: impl FnOnce() -> Option<Arc<Index>>,
 ) -> Result<Vec<String>, String> {
-    let entries = installed::Installed::load(home).entries;
+    let entries = installed::Installed::load_checked(home)?.entries;
     if included.is_empty() && !entries.iter().any(|e| e.source == SourceId::Sunrise) {
         return Ok(Vec::new());
     }

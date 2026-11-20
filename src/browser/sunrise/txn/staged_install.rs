@@ -21,6 +21,7 @@ pub(in crate::browser::sunrise) struct StagedInstall {
 
 impl StagedInstall {
     pub fn begin(owner: Arc<Lease>, prior: Active) -> Result<Self, String> {
+        let _lock = super::locked(owner.home())?;
         prior.verify_artifacts()?;
         let before = switch::Inventory::read(owner.home())?;
         let input = build::inputs(owner.home())?;

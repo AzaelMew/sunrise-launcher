@@ -549,7 +549,10 @@ pub fn fingerprint(home: &Path, version: Option<&str>) -> String {
         .into_iter()
         .chain(wasm_hmods(home))
         .flat_map(|p| [p.clone(), p.with_extension("origin.json")])
-        .chain([home.join("mod-browser.json")])
+        .chain([
+            home.join(sunrise_launcher_smod::index::browser_state::MANIFEST),
+            home.join(sunrise_launcher_smod::index::browser_state::PENDING),
+        ])
     {
         let meta = fs::metadata(&path).ok();
         let time = meta.as_ref().and_then(|m| m.modified().ok());

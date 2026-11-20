@@ -8,8 +8,9 @@ use super::{pick, safe_name, Kind, Project, Source, SourceId, Support, Version};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use sunrise_launcher_smod::index::browser_state;
 
-pub(crate) const MANIFEST: &str = "mod-browser.json";
+pub(crate) use browser_state::MANIFEST;
 /// The folders the browser installs into: an entry's `file` is always inside one of them.
 const FOLDERS: [&str; 5] = [
     "mods",
@@ -92,10 +93,27 @@ fn readable_entries<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Entry>
 
 impl Installed {
     pub fn load(home: &Path) -> Self {
-        fs::read_to_string(home.join(MANIFEST))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
+        Self::read(home)
+            .inspect_err(|error| eprintln!("{error}"))
             .unwrap_or_default()
+    }
+
+    /// A decision that may change the profile cannot use an empty list after failed recovery.
+    /// Mutating callers hold their own guard through the write.
+    pub fn load_checked(home: &Path) -> Result<Self, String> {
+        let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+        Self::read(home)
+    }
+
+    fn read(home: &Path) -> Result<Self, String> {
+        browser_state::reconcile(home)?;
+        let path = home.join(MANIFEST);
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(format!("{}: {e}", path.display())),
+        };
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
     /// Atomically publishes the list. Mutating callers must hold `lock_home`
@@ -386,7 +404,7 @@ pub(super) fn put(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    let mut installed = Installed::load(home);
+    let mut installed = Installed::load_checked(home)?;
     let mut done = Vec::new();
     for step in steps {
         let p = &step.project;
@@ -466,7 +484,7 @@ fn legacy_mod_folder(home: &Path, file: &str) -> bool {
 /// Removes what the browser installed for `name` (a project id or slug): its file and its entry.
 pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    let mut installed = Installed::load(home);
+    let mut installed = Installed::load_checked(home)?;
     let entry = installed
         .lookup(name)
         .cloned()

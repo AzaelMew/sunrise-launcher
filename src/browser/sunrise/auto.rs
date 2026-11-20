@@ -172,7 +172,7 @@ pub fn switch_question(
     home: &Path,
     ctx: &Context,
 ) -> Result<Option<crate::worlds::Question>, String> {
-    let ids: Vec<String> = installed::Installed::load(home)
+    let ids: Vec<String> = installed::Installed::load_checked(home)?
         .entries
         .iter()
         .filter(|entry| matches!(decide(index, entry, ctx), Decision::Remove(_)))
@@ -297,27 +297,26 @@ fn save_kept(home: &Path, list: &[Kept]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether the browser's list has `kept`'s project at a newer version whose file is in place.
-fn finished(home: &Path, kept: &Kept) -> bool {
-    let list = installed::Installed::load(home);
-    let Some(now) = list.find(SourceId::Sunrise, &kept.entry.project) else {
-        return false;
-    };
-    let hash = now.checksum.strip_prefix("SHA-256:").unwrap_or_default();
-    now.version != kept.entry.version
-        && now
-            .path(home)
-            .and_then(|p| index::sha256_file(&p).ok())
-            .is_some_and(|h| h.eq_ignore_ascii_case(hash))
-}
-
-/// Puts `kept` back: its file where it was and its entry in the browser's list.
-fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
+/// Puts `kept` back, unless the list and the file agree the update finished.
+fn restore_if_unfinished(home: &Path, kept: &Kept) -> Result<(), String> {
+    let mut list = installed::Installed::load_checked(home)?;
+    let finished = list
+        .find(SourceId::Sunrise, &kept.entry.project)
+        .is_some_and(|now| {
+            let hash = now.checksum.strip_prefix("SHA-256:").unwrap_or_default();
+            now.version != kept.entry.version
+                && now
+                    .path(home)
+                    .and_then(|p| index::sha256_file(&p).ok())
+                    .is_some_and(|h| h.eq_ignore_ascii_case(hash))
+        });
+    if finished {
+        return Ok(());
+    }
     let (Some(target), copy) = (kept.entry.path(home), home.join(&kept.copy)) else {
         return Err(format!("{} is outside the game folder", kept.entry.file));
     };
     fs::copy(&copy, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-    let mut list = installed::Installed::load(home);
     let ours =
         |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == kept.entry.project;
     if let Some(now) = list.entries.iter().find(|e| ours(e)) {
@@ -357,12 +356,10 @@ pub(super) fn recover_kept(home: &Path) {
     let (mut mine, earlier): (Vec<Kept>, Vec<Kept>) =
         kept_list(home).into_iter().partition(|k| k.pid == me);
     for k in earlier {
-        if !finished(home, &k) {
-            if let Err(e) = restore(home, &k) {
-                eprintln!("Couldn't put {} back: {e}", k.entry.title);
-                mine.push(k);
-                continue;
-            }
+        if let Err(e) = restore_if_unfinished(home, &k) {
+            eprintln!("Couldn't put {} back: {e}", k.entry.title);
+            mine.push(k);
+            continue;
         }
         let _ = fs::remove_file(home.join(&k.copy));
     }
@@ -440,7 +437,14 @@ pub(super) fn run_with(
     let mut report = Report::default();
     // The mods whose loss a saved world would feel, and the player has not agreed to.
     let asked = RefCell::new(Vec::new());
-    for entry in installed::Installed::load(home).entries {
+    let list = match installed::Installed::load_checked(home) {
+        Ok(list) => list,
+        Err(e) => {
+            report.failed.push(e);
+            return report;
+        }
+    };
+    for entry in list.entries {
         if pending.contains(&entry.project) {
             continue;
         }
@@ -520,7 +524,7 @@ fn update(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Option<String>, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let list = installed::Installed::load(home);
+    let list = installed::Installed::load_checked(home)?;
     let Some(current) = list.find(entry.source, &entry.project) else {
         return Ok(None);
     };
@@ -569,18 +573,16 @@ fn update(
         Err(e) => {
             if let Some(kept) = &kept {
                 // Leave the backup and journal intact if restoring it fails.
-                if !finished(home, kept) {
-                    if let Err(restore_error) = restore(home, kept) {
-                        let mut list = kept_list(home);
-                        if let Some(record) = list
-                            .iter_mut()
-                            .find(|k| k.entry.project == kept.entry.project)
-                        {
-                            record.pid = 0;
-                        }
-                        let _ = save_kept(home, &list);
-                        return Err(format!("{e}; restore failed: {restore_error}"));
+                if let Err(restore_error) = restore_if_unfinished(home, kept) {
+                    let mut list = kept_list(home);
+                    if let Some(record) = list
+                        .iter_mut()
+                        .find(|k| k.entry.project == kept.entry.project)
+                    {
+                        record.pid = 0;
                     }
+                    let _ = save_kept(home, &list);
+                    return Err(format!("{e}; restore failed: {restore_error}"));
                 }
                 let _ = fs::remove_file(home.join(&kept.copy));
                 let mut list = kept_list(home);

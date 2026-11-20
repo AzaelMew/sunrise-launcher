@@ -360,10 +360,10 @@ impl Launcher {
                                     tr("This pack changed. Check the refreshed list.").into()
                                 );
                             }
-                            packs::remove(&dest, &p)?;
                             // Otherwise Discover thinks this version is still installed and
                             // will not download it again. change_pack holds the home lock.
-                            let mut kept = installed::Installed::load(&dest);
+                            let mut kept = installed::Installed::load_checked(&dest)?;
+                            packs::remove(&dest, &p)?;
                             let before = kept.entries.len();
                             kept.entries
                                 .retain(|entry| entry.path(&dest).as_deref() != Some(&p.path));

@@ -231,7 +231,8 @@ fn stage_pack(
         mods.push(format!("{} {}", m.id, m.version));
     }
     if let Some(before) = before {
-        let mut installed = installed::Installed::load(home);
+        let _lock = crate::browser::lock_home(home).map_err(|e| at(home, e))?;
+        let mut installed = installed::Installed::load_checked(home)?;
         for old in &before.mods {
             let (id, version) = old.split_once(' ').ok_or_else(pack_unavailable)?;
             if pack.manifest.mods.iter().any(|m| m.id == id) {

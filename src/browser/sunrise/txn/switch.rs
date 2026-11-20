@@ -33,7 +33,7 @@ pub(super) struct Package {
 
 pub(super) struct Inventory {
     pub(super) packages: BTreeMap<String, Package>,
-    browser: serde_json::Value,
+    browser: Option<serde_json::Value>,
     selection: Option<String>,
 }
 
@@ -273,16 +273,19 @@ impl Drop for Switch {
 
 impl Inventory {
     pub(super) fn read(home: &Path) -> Result<Self, String> {
+        index::browser_state::reconcile(home)?;
         build::verify_packages(home)?;
-        let browser = match build::optional_bytes(&home.join(installed::MANIFEST))? {
-            None => serde_json::json!({ "entries": [] }),
-            Some(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|e| bad(&home.join(installed::MANIFEST), e))?,
+        let path = home.join(installed::MANIFEST);
+        let browser: Option<serde_json::Value> = build::optional_bytes(&path)?
+            .map(|bytes| serde_json::from_slice(&bytes).map_err(|e| bad(&path, e)))
+            .transpose()?;
+        let rows: &[_] = match &browser {
+            None => &[],
+            Some(doc) => doc
+                .get("entries")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(unsettled)?,
         };
-        let rows = browser
-            .get("entries")
-            .and_then(serde_json::Value::as_array)
-            .ok_or_else(unsettled)?;
         let mut tracked = BTreeMap::new();
         for raw in rows {
             let Some(file) = raw.get("file").and_then(serde_json::Value::as_str) else {
@@ -718,7 +721,10 @@ fn stage_set(
             Err(e) => return Err(bad(&home.join(folder), e)),
         }
     }
-    let mut browser = source.browser.clone();
+    let mut browser = source
+        .browser
+        .clone()
+        .unwrap_or_else(|| serde_json::json!({ "entries": [] }));
     let rows = browser
         .get_mut("entries")
         .and_then(serde_json::Value::as_array_mut)
@@ -767,7 +773,7 @@ fn stage_set(
     if source.selection.is_some() || !selection.is_empty() {
         save(&stage.join(mod_list::FILE), selection.as_bytes())?;
     }
-    if build::optional_bytes(&home.join(installed::MANIFEST))?.is_some() || !rows.is_empty() {
+    if source.browser.is_some() || !rows.is_empty() {
         save(
             &stage.join(installed::MANIFEST),
             &serde_json::to_vec(&browser).map_err(|e| e.to_string())?,
@@ -988,7 +994,7 @@ mod tests {
         }
         let source = Inventory {
             packages,
-            browser: serde_json::Value::Null,
+            browser: None,
             selection: None,
         };
         let mut attempted = 0;

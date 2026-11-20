@@ -164,7 +164,9 @@ impl Lease {
         while !record.attempts.is_empty() {
             undo_last(&self.home, &mut record)?;
         }
-        Ok(())
+        // Play, builds and Switch must see the game’s completed publication before
+        // taking a snapshot of the profile inputs.
+        sunrise_launcher_smod::index::browser_state::reconcile(&self.home)
     }
 
     pub(in crate::browser) fn finish_standalone(&self) -> Result<(), String> {
