@@ -339,6 +339,47 @@ fn a_failed_restore_and_ledger_save_cannot_lose_the_backup_on_same_process_retry
 }
 
 #[test]
+fn an_omitted_installed_claim_cannot_authorize_retiring_the_backup() {
+    let dir = scratch("ambiguous-installed-claim");
+    let home = dir.join("home");
+    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
+    let index = index_of(&[("1.0.0", GAME, &v1)]);
+    let project = index.project("ruby").unwrap();
+    install_version_guarded(
+        &index,
+        true,
+        project,
+        &project.versions[0],
+        &home,
+        &|_| Ok(()),
+        &|_, _| {},
+    )
+    .unwrap();
+    let entry = installed::Installed::load(&home).entries.remove(0);
+    let mut kept = keep(&home, &entry).unwrap();
+    kept.session = None;
+    let backup = home.join(&kept.copy);
+    save_kept(&home, &[kept]).unwrap();
+    let ledger = fs::read(home.join(KEPT)).unwrap();
+    let path = home.join(installed::MANIFEST);
+    let exact = fs::read(&path).unwrap();
+    let mut list: serde_json::Value = serde_json::from_slice(&exact).unwrap();
+    let omitted = serde_json::json!({"source":"sunrise", "project":"ruby", "file":"../external"});
+    list["entries"].as_array_mut().unwrap().push(omitted);
+    let disputed = serde_json::to_vec(&list).unwrap();
+    fs::write(&path, &disputed).unwrap();
+    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    assert!(recover(&home).is_err());
+    assert_eq!(fs::read(&path).unwrap(), disputed);
+    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
+    assert_eq!(fs::read(&backup).unwrap(), fs::read(&v1).unwrap());
+    fs::write(&path, exact).unwrap();
+    recover(&home).unwrap();
+    assert!(!home.join(KEPT).exists());
+    assert!(backup.is_file());
+}
+
+#[test]
 fn unproved_backup_stops_the_old_updater_but_not_play() {
     let dir = scratch("auto-restore-retry");
     let home = dir.join("home");

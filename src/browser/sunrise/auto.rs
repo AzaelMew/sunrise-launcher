@@ -313,10 +313,28 @@ pub fn recover(home: &Path) -> Result<(), String> {
     if kept.is_empty() {
         return Ok(());
     }
-    let installed = installed::Installed::load(home);
+    // The usual display reader drops unknown or malformed claims. No dropped claim may
+    // be treated as proof that another row alone owns these bytes.
+    #[derive(Deserialize)]
+    struct Claims {
+        entries: Vec<installed::Entry>,
+    }
+    let manifest = home.join(installed::MANIFEST);
+    if !fs::symlink_metadata(&manifest).is_ok_and(|meta| meta.is_file() && regular(&meta)) {
+        return Err(notice());
+    }
+    let bytes = fs::read(&manifest).map_err(|_| notice())?;
+    let claims: Claims = serde_json::from_slice(&bytes).map_err(|_| notice())?;
+    if claims
+        .entries
+        .iter()
+        .any(|claim| claim.path(home).is_none())
+    {
+        return Err(notice());
+    }
     // A session token is not evidence that the last attempt finished or rolled back.
     for old in &kept {
-        let mut rows = installed
+        let mut rows = claims
             .entries
             .iter()
             .filter(|row| row.source == SourceId::Sunrise && row.project == old.entry.project);
