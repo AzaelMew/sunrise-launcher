@@ -1546,5 +1546,10 @@
   "{source} has no Sunrise native bundles or source mods.": "{source} has no Sunrise native bundles or source mods.",
   "A mod with the id {mod} is already installed from another source. Remove it first.": "A mod with the id {mod} is already installed from another source. Remove it first.",
   "Installing…": "Installing…",
-  "The downloaded package for {mod} changed. Fetch it again.": "The downloaded package for {mod} changed. Fetch it again."
+  "The downloaded package for {mod} changed. Fetch it again.": "The downloaded package for {mod} changed. Fetch it again.",
+  "Registry not checked": "Registry not checked",
+  "Removing mods…": "Removing mods…",
+  "Replace the local file to update this mod.": "Replace the local file to update this mod.",
+  "Updates from GitHub": "Updates from GitHub",
+  "{mod} changed since you reviewed it. Choose again.": "{mod} changed since you reviewed it. Choose again."
 }

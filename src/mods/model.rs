@@ -547,18 +547,16 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
             },
         );
     }
-    if let Some(local) = &row.local {
+    if row
+        .local
+        .as_ref()
+        .is_some_and(|local| local.origin.is_none())
+    {
         say(
             "folder-01",
-            match local.github {
-                true => tr("From GitHub").into(),
-                false => tr("Local file").into(),
-            },
+            tr("Local file").into(),
             Tone::Muted,
-            match local.github {
-                true => tr("Get updates from GitHub, not the registry.").into(),
-                false => tr("Replace the local file to update this mod.").into(),
-            },
+            tr("Replace the local file to update this mod.").into(),
         );
     }
     let tip = said
@@ -578,6 +576,22 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
 impl Row {
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
+    }
+
+    /// Registry and GitHub installs can be removed; files copied in by hand cannot.
+    pub(super) fn managed(&self) -> bool {
+        self.local.is_none() || self.origin().is_some()
+    }
+
+    pub(super) fn origin(&self) -> Option<&sunrise_launcher::github_mods::Origin> {
+        self.local.as_ref()?.origin.as_ref()
+    }
+
+    pub(super) fn removal_checksum(&self) -> Option<String> {
+        self.entry
+            .as_ref()
+            .map(|e| e.checksum.clone())
+            .or_else(|| self.origin().map(|o| format!("SHA-256:{}", o.sha256)))
     }
 }
 
@@ -601,7 +615,7 @@ pub(super) struct Local {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) version: String,
-    pub(super) github: bool,
+    pub(super) origin: Option<sunrise_launcher::github_mods::Origin>,
     /// Native code, which needs permission and a build; else a package of `sunrise-mods/`,
     /// which runs as wasm or carries content only.
     pub(super) native: bool,

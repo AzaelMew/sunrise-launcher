@@ -8,7 +8,7 @@ use super::*;
 pub(super) enum Action {
     /// (mod id, title)
     TurnOff(Vec<(String, String)>),
-    /// (mod id, project id, title)
+    /// (mod id, reviewed checksum, title)
     Remove(Vec<(String, String, String)>),
 }
 
@@ -215,8 +215,7 @@ impl Launcher {
         };
     }
 
-    /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods
-    /// have individual switches only: they aren't selectable for registry bulk actions.
+    /// Turn the chosen mods on in one rewrite of the list. Hand-copied files aren't selectable.
     /// A mod that can't be turned on stays as it is and its row says why.
     pub(super) fn bulk_on(&mut self) {
         if !self.guard() {
@@ -225,7 +224,7 @@ impl Launcher {
         let rows = self.rows();
         let chosen: Vec<&Row> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.managed() && self.ui.mods.selection.contains(&r.id))
             .collect();
         let (go, held) =
             model::turn_on_plan(&chosen, self.settings.native_mods_allowed_at.is_some());
@@ -273,7 +272,7 @@ impl Launcher {
         let rows = self.rows();
         let chosen: Vec<(String, String)> = rows
             .iter()
-            .filter(|r| r.local.is_none() && r.on && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.managed() && r.on && self.ui.mods.selection.contains(&r.id))
             .map(|r| (r.id.clone(), r.title.clone()))
             .collect();
         if chosen.is_empty() {
@@ -290,14 +289,8 @@ impl Launcher {
         let rows = self.rows();
         let chosen: Vec<(String, String, String)> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
-            .filter_map(|r| {
-                Some((
-                    r.id.clone(),
-                    r.entry.as_ref()?.project.clone(),
-                    r.title.clone(),
-                ))
-            })
+            .filter(|r| self.ui.mods.selection.contains(&r.id))
+            .filter_map(|r| Some((r.id.clone(), r.removal_checksum()?, r.title.clone())))
             .collect();
         if !chosen.is_empty() {
             self.confirm(Confirm::Remove(chosen));
@@ -403,19 +396,19 @@ fn run(action: Action, home: &std::path::Path, tx: &Sender<Event>) {
     let refuse = |why: String| {
         let _ = tx.send(Event::Refused(why));
     };
-    let _owner = match sunrise::txn::Lease::admit(home) {
-        Ok(owner) => owner,
-        Err(error) => return refuse(error),
-    };
-    let _lock = match sunrise_launcher::browser::lock_home(home) {
-        Ok(lock) => lock,
-        Err(e) => return refuse(e.to_string()),
-    };
     let done = |said: String, failed: Vec<(String, String)>| {
         let _ = tx.send(Event::Done(said, failed));
     };
     match action {
         Action::TurnOff(items) => {
+            let _owner = match sunrise::txn::Lease::admit(home) {
+                Ok(owner) => owner,
+                Err(error) => return refuse(error),
+            };
+            let _lock = match sunrise_launcher::browser::lock_home(home) {
+                Ok(lock) => lock,
+                Err(e) => return refuse(e.to_string()),
+            };
             let ids: Vec<&str> = items.iter().map(|(id, _)| id.as_str()).collect();
             match mod_list::set_all_enabled(home, &ids, false) {
                 Ok(()) => done(
@@ -430,21 +423,33 @@ fn run(action: Action, home: &std::path::Path, tx: &Sender<Event>) {
             }
         }
         Action::Remove(items) => {
-            let (mut removed, mut failed) = (0, Vec::new());
-            for (i, (id, project, title)) in items.iter().enumerate() {
-                let _ = tx.send(Event::Progress(
-                    trf("Removing {name}…", &[("name", title)]),
-                    i as f32 / items.len() as f32,
-                ));
-                match installed::remove(home, project) {
-                    Ok(_) => removed += 1,
-                    Err(e) => failed.push((id.clone(), e)),
+            let _ = tx.send(Event::Progress(tr("Removing mods…").into(), 0.));
+            let wanted = items
+                .iter()
+                .map(|(id, hash, _)| (id.clone(), hash.clone()))
+                .collect::<Vec<_>>();
+            match sunrise::remove_checked(home, &wanted) {
+                Ok(gone) => {
+                    let failed = items
+                        .into_iter()
+                        .filter(|(id, ..)| !gone.contains(id))
+                        .map(|(id, _, title)| {
+                            (
+                                id,
+                                trf(
+                                    "{mod} changed since you reviewed it. Choose again.",
+                                    &[("mod", &title)],
+                                ),
+                            )
+                        })
+                        .collect();
+                    done(
+                        counted(gone.len(), "Removed 1 mod.", "Removed {count} mods."),
+                        failed,
+                    );
                 }
+                Err(e) => refuse(e),
             }
-            done(
-                counted(removed, "Removed 1 mod.", "Removed {count} mods."),
-                failed,
-            );
         }
     }
 }
@@ -523,7 +528,11 @@ mod tests {
         let (tx, rx) = channel();
         run(off(&["bricks"]), &home, &tx);
         run(
-            Action::Remove(vec![("bricks".into(), "bricks".into(), "BRICKS".into())]),
+            Action::Remove(vec![(
+                "bricks".into(),
+                "SHA-256:other".into(),
+                "BRICKS".into(),
+            )]),
             &home,
             &tx,
         );

@@ -57,13 +57,13 @@ impl Launcher {
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
                 .iter()
-                .filter(|&&i| rows[i].local.is_none())
+                .filter(|&&i| rows[i].managed())
                 .map(|&i| rows[i].id.clone())
                 .collect(),
         );
         let selected: Vec<&Row> = rows
             .iter()
-            .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
+            .filter(|r| r.managed() && self.ui.mods.selection.contains(&r.id))
             .collect();
 
         // ---- what to show: the same row of chips Discover filters with
@@ -169,7 +169,7 @@ impl Launcher {
                 bar = bar.child(muted(trf(
                     "{shown} of {total} mods shown",
                     &[
-                        ("shown", &shown_ids.len().to_string()),
+                        ("shown", &visible.len().to_string()),
                         ("total", &rows.len().to_string()),
                     ],
                 )));
@@ -337,7 +337,7 @@ impl Launcher {
         for (n, &i) in visible.iter().enumerate() {
             let r = rows[i].clone();
             let pos = position;
-            if r.local.is_none() {
+            if r.managed() {
                 position += 1;
             }
             list = list.child(self.row(n, pos, r, shown_ids.clone(), busy, cx));
@@ -431,6 +431,7 @@ impl Launcher {
         // kind and version move under the name with the status after them, in fixed places
         // too; the action and the switch keep theirs.
         let wide = self.content_width() >= 860.;
+        let github = r.origin().is_some();
         let cells = model::cells(&r, error.as_deref());
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
@@ -507,20 +508,22 @@ impl Launcher {
                 None => d,
             }
         };
-        let title =
-            div()
-                .flex()
-                .flex_col()
-                .min_w_0()
-                .child(title)
-                .when(r.registry_unchecked, |d| {
-                    d.child(
-                        div()
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .child(tr("Registry not checked")),
-                    )
-                });
+        let title = div()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .child(title)
+            .when(github && (wide || cells.status.is_some()), |d| {
+                d.child(muted(tr("Updates from GitHub")).truncate())
+            })
+            .when(r.registry_unchecked, |d| {
+                d.child(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().muted))
+                        .child(tr("Registry not checked")),
+                )
+            });
         use model::column;
         let kind = |width: f32| {
             div()
@@ -560,9 +563,10 @@ impl Launcher {
                     ))
                 },
             )
-            .child(match r.local {
-                Some(_) => div().flex_none().w(px(18.)),
-                None => div().flex_none().child(check),
+            .child(if r.managed() {
+                div().flex_none().child(check)
+            } else {
+                div().flex_none().w(px(18.))
             })
             .child(tile(picture, &r.id, &r.title, 32.));
         let row = if wide {
@@ -601,7 +605,15 @@ impl Launcher {
                             .items_center()
                             .child(kind(64.))
                             .child(version(60.))
-                            .child(div().flex_1().min_w_0().flex().child(status_cell)),
+                            .child(div().flex_1().min_w_0().flex().child(
+                                if github && cells.status.is_none() {
+                                    muted(tr("Updates from GitHub"))
+                                        .truncate()
+                                        .into_any_element()
+                                } else {
+                                    status_cell
+                                },
+                            )),
                     ),
             )
             .children(action)

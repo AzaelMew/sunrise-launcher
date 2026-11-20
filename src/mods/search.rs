@@ -139,7 +139,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             version: "1.0".into(),
-            github: false,
+            origin: None,
             native: id != "rain",
             unreadable: false,
         });
