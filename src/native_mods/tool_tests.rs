@@ -17,6 +17,9 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
             "QUIET" => script.push_str(
                 "echo '{\"event\":\"consent\",\"added_crates\":3,\"build_scripts\":[],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
+            "MACRO" => script.push_str(
+                "echo '{\"event\":\"consent\",\"added_crates\":1,\"build_scripts\":[],\"proc_macros\":[\"serde_derive\"]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
+            ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
             "EXIT1" => script.push_str("exit 1\n"),
             "EXIT2" => script.push_str("exit 2\n"),
@@ -144,6 +147,72 @@ fn crates_that_run_nothing_while_building_are_not_asked_about() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("answer"))
             .unwrap()
+            .trim(),
+        "true"
+    );
+
+    // A proc macro alone still runs while building, so it is asked about.
+    let macros = tempfile::tempdir().unwrap();
+    let asked = RefCell::new(Vec::new());
+    run(
+        fake(macros.path(), &["MACRO", built]),
+        "{}",
+        Some(&|question: &Consent| {
+            asked.borrow_mut().extend(question.proc_macros.clone());
+            false
+        }),
+        &|_, _, _| {},
+        &Cancellation::default(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(*asked.borrow(), ["serde_derive"]);
+    assert_eq!(
+        std::fs::read_to_string(macros.path().join("answer"))
+            .unwrap()
+            .trim(),
+        "false"
+    );
+}
+
+/// The yes given without asking is bound to the attempt's original permission like an asked
+/// one: a revoke and regrant before the question refuses it (#104 on #157).
+#[test]
+#[cfg(unix)]
+fn a_regrant_refuses_the_yes_given_without_asking() {
+    let _scratch = super::super::tests::scratch_state();
+    let settings = RefCell::new(crate::backend::Settings::default());
+    settings.borrow_mut().allow_native_mods().unwrap();
+    let current = Cancellation::default();
+    current.admit_native_work().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let failure = run(
+        fake(
+            dir.path(),
+            &[
+                r#"{"event":"mod","id":"greeter","done":1,"total":1}"#,
+                "QUIET",
+                "EXIT1",
+            ],
+        ),
+        "{}",
+        Some(&|_: &Consent| unreachable!("nothing runs while building")),
+        &|_, _, _| {
+            settings.borrow_mut().revoke_native_mods().unwrap();
+            settings.borrow_mut().allow_native_mods().unwrap();
+        },
+        &current,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        failure.error.contains("Native mod permission changed"),
+        "{}",
+        failure.error
+    );
+    assert_ne!(
+        std::fs::read_to_string(dir.path().join("answer"))
+            .unwrap_or_default()
             .trim(),
         "true"
     );
