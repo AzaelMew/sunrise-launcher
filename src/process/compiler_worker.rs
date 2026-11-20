@@ -12,8 +12,8 @@ pub(crate) fn proved(status: &std::process::ExitStatus) -> bool {
     matches!(status.code(), Some(0..=3))
 }
 
-/// Entry point reached before launcher initialization. It uses the same inherited stdio,
-/// process group, environment and profile lease as the compiler command it wraps.
+/// Entry point reached before launcher initialization. It passes inherited stdio, process
+/// group and environment to the compiler command it wraps.
 #[doc(hidden)]
 pub fn run(mut args: impl Iterator<Item = OsString>) -> i32 {
     let Some(program) = args.next() else {

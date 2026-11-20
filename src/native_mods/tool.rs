@@ -272,14 +272,27 @@ pub(super) fn build(
         command
     };
     plan.workspace.isolate(&mut command).map_err(unrun)?;
-    run(
+    let terminal = run(
         command,
         &plan_line(rust, plan),
         consent,
         on_mod,
         cancellation,
         Some(quiescent),
-    )
+    );
+    compiler_handoff(terminal, *quiescent)
+}
+
+/// A success or an attributed failure is useful only after the whole compiler tree stops.
+/// In particular, macOS only has leader exit today; the private directory must not be read.
+fn compiler_handoff(terminal: Result<Built, Failure>, quiescent: bool) -> Result<Built, Failure> {
+    match terminal {
+        Err(failure) if quiescent || failure.blame.is_none() => Err(failure),
+        Ok(built) if quiescent => Ok(built),
+        _ => Err(tr("The launcher couldn't prove all native build workers stopped. Their build files were kept.")
+            .to_owned()
+            .into()),
+    }
 }
 
 /// Runs the tool's `command` on the plan line `plan`.

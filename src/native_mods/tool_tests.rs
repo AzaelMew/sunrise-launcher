@@ -289,6 +289,33 @@ fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies
 }
 
 #[test]
+#[cfg(unix)]
+#[ignore = "daily"]
+fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
+    let failed = r#"{"event":"failed","error":"compile error","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#;
+    for (lines, success) in [(&[built][..], true), (&[failed, "EXIT1"], false)] {
+        let terminal = || {
+            run(
+                fake(dir.path(), lines),
+                "{}",
+                None,
+                &|_, _, _| unreachable!(),
+                &Cancellation::default(),
+                None,
+            )
+        };
+        let unproved = compiler_handoff(terminal(), false).unwrap_err();
+        assert!(unproved
+            .error
+            .contains("couldn't prove all native build workers stopped"));
+        assert!(unproved.blame.is_none());
+        assert_eq!(compiler_handoff(terminal(), true).is_ok(), success);
+    }
+}
+
+#[test]
 fn build_plan_and_process_use_the_same_private_cargo_home() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();

@@ -125,7 +125,7 @@ pub(crate) use windows::CompilerJob;
 #[cfg(windows)]
 pub use windows::WindowsChild;
 
-/// Start a piped compiler suspended and put it in its Job before it can create children.
+/// Start a piped compiler with a Job-list attribute so it belongs to the Job at creation.
 #[cfg(windows)]
 pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<super::child::Child> {
     use std::os::windows::io::AsRawHandle;

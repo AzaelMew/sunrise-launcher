@@ -1667,13 +1667,13 @@ fn pipeline(
         );
         if quiescent {
             workspace.worker_finished();
+            let log = workspace.import_log().map_err(|e| e.to_string())?;
+            if !log.is_empty() {
+                append_log(&log)?;
+            }
         }
-        // Don't turn a stopped tool into a compile failure or retry it as an omitted mod.
+        // Don't turn a stopped or unproved tool into an attributed compile failure.
         cancellation.check()?;
-        let log = workspace.import_log().map_err(|e| e.to_string())?;
-        if !log.is_empty() {
-            append_log(&log)?;
-        }
         let built = built.map_err(|failure| blame(blamed_text(failure)))?;
         workspace
             .verify_outputs(
