@@ -343,13 +343,9 @@ fn shared_lock_blocks_migration_until_all_readers_release() {
     let first = acquire_lock_at(&f.bootstrap).unwrap();
     let second = acquire_lock_at(&f.bootstrap).unwrap();
     assert!(f.refuse(&f.target()).contains("Cannot lock"));
-    // A parallel test can fork with this descriptor before its exec closes it.
-    // Release at the intended boundary instead of waiting for unrelated children.
-    first.unlock().unwrap();
     drop(first);
     assert!(f.refuse(&f.target()).contains("Cannot lock"));
     assert!(!f.target().exists());
-    second.unlock().unwrap();
     drop(second);
     f.old_pointer();
     let roots = migrate(&f.source, &f.target(), &f.bootstrap, |_| {}).unwrap();
