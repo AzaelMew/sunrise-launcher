@@ -77,6 +77,8 @@ pub(crate) struct CardError {
     pub(crate) title: String,
     pub(crate) line: String,
     pub(crate) details: String,
+    /// The mod's own build failed, not the install: the sheet says "couldn't be built".
+    pub(crate) built: bool,
     /// Details is open.
     pub(crate) open: bool,
 }
@@ -370,6 +372,7 @@ impl Launcher {
                             id: id.clone(),
                             line: crate::mods::install_state::plain_failure(why),
                             details: why.clone(),
+                            built: false,
                             open: false,
                         }),
                         _ => None,

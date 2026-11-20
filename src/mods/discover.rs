@@ -299,7 +299,11 @@ impl Launcher {
                 tools,
                 build_fraction,
             );
-            let note = card_data.fit.reason().filter(|_| !is_added);
+            // An unknown fit says so in the place of Install, not as a note under the card.
+            let note = card_data
+                .fit
+                .reason()
+                .filter(|_| !is_added && card_data.fit != Fit::Unknown);
             let install_label = match &profile {
                 Some(name) => trf("Install to {profile}", &[("profile", name)]),
                 None => tr("Install").to_string(),
@@ -346,6 +350,8 @@ impl Launcher {
                 )
             } else if is_added {
                 Some(added_mark())
+            } else if card_data.fit == Fit::Unknown {
+                Some(muted(tr("Checking…")).into_any_element())
             } else if state == Some(InstallState::BuildFailed) {
                 Some(muted(tr("Couldn't build on your computer")).into_any_element())
             } else if card_data.fit == Fit::NeedsNewerSunrise && self.updates.sunrise.is_some() {
@@ -414,6 +420,7 @@ impl Launcher {
                                             title: title.clone(),
                                             line: line.clone(),
                                             details: details.clone(),
+                                            built: true,
                                             open: true,
                                         });
                                         cx.notify();

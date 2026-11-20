@@ -1087,3 +1087,20 @@ fn a_collection_cannot_be_installed_while_a_mod_it_needs_does_not_fit_but_an_opt
         "COW and PIG are needed and aren't available for your version"
     );
 }
+
+#[test]
+fn a_mod_is_unknown_not_unfit_until_there_is_a_game_to_judge_by() {
+    let idx = zoo();
+    let all = cards(&idx, "");
+    assert!(all.iter().all(|c| c.fit == Fit::Unknown));
+    let f = Filters {
+        fits_only: true,
+        ..Filters::default()
+    };
+    assert_eq!(
+        discover(&all, &f).len(),
+        2,
+        "Fits my game puts away only what is known not to fit"
+    );
+    assert!(cards(&idx, GAME).iter().all(|c| c.fit == Fit::Fits));
+}
