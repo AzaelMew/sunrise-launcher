@@ -672,6 +672,40 @@ impl Storage {
         }
         let entries = self.entries()?;
         let mut report = self.apply_retaining(entries, clear, all, true)?;
+        let native = self.root.join("native");
+        if checked(&native, true)?.is_some() {
+            let mut bytes = 0u64;
+            let mut counted = HashSet::new();
+            let mut unknown = false;
+            for entry in fs::read_dir(&native)? {
+                let entry = entry?;
+                if !entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(native_mods::ATTEMPT_PREFIX))
+                {
+                    continue;
+                }
+                match Tree::build(&entry.path()) {
+                    Ok(tree) => bytes = bytes.saturating_add(tree.size(&mut counted)),
+                    Err(_) => unknown = true, // An unproved worker may still change its private paths.
+                }
+            }
+            if bytes > 0 || unknown {
+                let row = report
+                    .rows
+                    .iter_mut()
+                    .find(|row| row.category == Category::BuildFiles)
+                    .expect("report contains Build files");
+                row.bytes = row.bytes.saturating_add(bytes);
+                row.remaining_bytes = row.remaining_bytes.saturating_add(bytes);
+                report.total_bytes = report.total_bytes.saturating_add(bytes);
+                row.kept.push(Kept {
+                    bytes,
+                    reason: crate::i18n::tr("Private compiler work was kept because the launcher couldn't prove all workers had stopped.").into(),
+                });
+            }
+        }
         if clear.is_none() && !all {
             for entry in self.entries()? {
                 if let Err(error) = entry.access().and_then(|access| access.check()) {
