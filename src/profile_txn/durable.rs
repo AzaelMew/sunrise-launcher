@@ -189,7 +189,7 @@ fn require_unnamed_data_only(path: &[u16]) -> io::Result<()> {
     result
 }
 
-pub(super) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
     replace_at(home, record, bytes, || {})
 }
 

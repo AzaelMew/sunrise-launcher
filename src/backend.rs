@@ -139,7 +139,7 @@ impl GameArchitecture {
     }
 }
 
-const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
+pub(crate) const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct InstalledGameArchitecture {

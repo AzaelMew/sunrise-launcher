@@ -1,0 +1,210 @@
+//! Exact managed Play state. The profile journal owns admission and publication;
+//! this boundary owns the types, verification and interpretation of its saved pointers.
+mod artifact;
+mod inputs;
+mod resources;
+use inputs::inputs;
+pub use inputs::{scan_packages, ScannedPackage};
+
+use crate::{native_mods, native_status};
+use artifact::Artifact;
+use resources::Resources;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{fs, io, path::Path};
+
+fn unsettled() -> String {
+    crate::i18n::tr("Sunrise couldn't verify the profile's saved game build.").into()
+}
+
+fn validate_tag(tag: &str) -> Result<(), String> {
+    if !tag
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
+        || tag.ends_with('.')
+        || !tag
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.+@".contains(&b))
+    {
+        return Err(unsettled());
+    }
+    Ok(())
+}
+
+fn plain_file(meta: &fs::Metadata) -> bool {
+    !crate::native_cache::linked(meta)
+}
+
+fn require_dir(path: &Path) -> Result<(), String> {
+    let meta = fs::symlink_metadata(path).map_err(|error| at(path, error))?;
+    if !meta.is_dir() || !plain_file(&meta) {
+        return Err(at(path, io::Error::from(io::ErrorKind::InvalidData)));
+    }
+    Ok(())
+}
+
+fn open_if_file(path: &Path) -> Result<Option<fs::File>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && plain_file(&meta) => {
+            fs::File::open(path).map(Some).map_err(|e| at(path, e))
+        }
+        Ok(_) => Err(at(path, io::Error::from(io::ErrorKind::InvalidData))),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(at(path, error)),
+    }
+}
+
+fn digest_file(path: &Path) -> Result<Option<[u8; 32]>, String> {
+    let Some(mut file) = open_if_file(path)? else {
+        return Ok(None);
+    };
+    let mut hash = Sha256::new();
+    io::copy(&mut file, &mut hash).map_err(|e| at(path, e))?;
+    Ok(Some(hash.finalize().into()))
+}
+
+fn optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    use io::Read as _;
+    let Some(mut file) = open_if_file(path)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|e| at(path, e))?;
+    Ok(Some(bytes))
+}
+
+fn at(path: &Path, error: impl std::fmt::Display) -> String {
+    format!("{}: {error}", path.display())
+}
+
+/// Only this pointer selects a game's executable once its managed profile is initialized.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Active {
+    version: u32,
+    profile: [u8; 16],
+    generation: u64,
+    base: Artifact,
+    executable: Artifact,
+    resources: Resources,
+    inputs: [u8; 32],
+    receipts: Vec<Receipt>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Receipt {
+    id: [u8; 16],
+    waiting_for_update: Vec<(String, String)>,
+    removed: Vec<(String, String)>,
+}
+
+impl Active {
+    pub fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let value: Self = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        if value.version != 1 || value.profile == [0; 16] || value.generation == 0 {
+            return Err(unsettled());
+        }
+        validate_tag(value.base())?;
+        validate_tag(value.executable())?;
+        if value.base() == value.executable() && value.base != value.executable {
+            return Err(unsettled());
+        }
+        let mut ids = std::collections::HashSet::new();
+        if value.receipts.iter().any(|receipt| {
+            receipt.id == [0; 16]
+                || !ids.insert(receipt.id)
+                || (receipt.removed.is_empty() && receipt.waiting_for_update.is_empty())
+        }) {
+            return Err(unsettled());
+        }
+        Ok(value)
+    }
+
+    pub fn base(&self) -> &str {
+        &self.base.tag
+    }
+    pub fn executable(&self) -> &str {
+        &self.executable.tag
+    }
+
+    pub fn resource_path(&self) -> std::path::PathBuf {
+        self.resources.path(self.base())
+    }
+
+    pub fn allow_accelerator(&self) -> bool {
+        self.resources.allow_accelerator(self.base())
+    }
+
+    pub fn verify_program(&self, path: &Path) -> Result<(), String> {
+        self.executable.verify_program(path)
+    }
+
+    /// Hash the actual image, including runtime dependencies and the signed archive marker.
+    pub fn verify_artifacts(&self) -> Result<(), String> {
+        if Artifact::capture(self.base())? != self.base
+            || (self.executable != self.base
+                && Artifact::capture(self.executable())? != self.executable)
+        {
+            return Err(unsettled());
+        }
+        self.resources.verify(self.base())
+    }
+
+    /// Capture a full immutable generation after owning the admitted profile and checking
+    /// the chosen image. A previous generation is only advanced on the same exact base.
+    pub fn capture(
+        profile: [u8; 16],
+        base: &str,
+        executable: &str,
+        home: &Path,
+        epoch: [u8; 32],
+        previous: Option<&Self>,
+    ) -> Result<Self, String> {
+        scan_packages(home)?;
+        verify_included(base, executable, home)?;
+        if inputs(home, None)? != epoch {
+            return Err(unsettled());
+        }
+        let base = Artifact::capture(base)?;
+        let executable = if executable == base.tag {
+            base.clone()
+        } else {
+            Artifact::capture(executable)?
+        };
+        let (generation, resources, receipts) = if let Some(old) = previous {
+            if profile != old.profile || base != old.base {
+                return Err(unsettled());
+            }
+            old.resources.verify(&base.tag)?;
+            (
+                old.generation.checked_add(1).ok_or_else(unsettled)?,
+                old.resources.clone(),
+                old.receipts.clone(),
+            )
+        } else {
+            (1, Resources::capture(&base.tag)?, Vec::new())
+        };
+        Ok(Self {
+            version: 1,
+            profile,
+            generation,
+            base,
+            executable,
+            resources,
+            inputs: epoch,
+            receipts,
+        })
+    }
+}
+
+fn verify_included(base: &str, image: &str, home: &Path) -> Result<(), String> {
+    if image != base
+        && native_mods::about(image)
+            .is_none_or(|about| about.base != base || !about.left_out.is_empty())
+    {
+        return Err(unsettled());
+    }
+    native_status::check_exact_compiled_profile(&native_status::included(image)?, home)
+}
