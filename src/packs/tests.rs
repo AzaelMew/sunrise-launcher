@@ -726,3 +726,138 @@ fn a_listing_reads_only_the_pictures_it_was_asked_for() {
         Some(&b"png"[..]),
     );
 }
+
+#[test]
+fn a_resource_pack_file_is_listed_only_when_its_name_ends_in_zip() {
+    let home = scratch("zip-name");
+    let rp = home.join("resourcepacks");
+    for name in [
+        "Renamed.jar",
+        "Paused.zip.disabled",
+        "Upper.ZIP",
+        "Plain.zip",
+    ] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    fs::create_dir_all(rp.join("Folder.jar")).unwrap();
+    fs::write(rp.join("Folder.jar/pack.mcmeta"), META).unwrap();
+    let names: Vec<String> = list(&home, Kind::Resource)
+        .into_iter()
+        .map(|p| p.file)
+        .collect();
+    assert_eq!(names, ["Folder.jar", "Plain.zip"]);
+    let drops = home.join("drops");
+    zip_file(&drops.join("Dropped.ZIP"), &[("pack.mcmeta", META)]);
+    assert!(add(&home, &drops.join("Dropped.ZIP")).is_err());
+    assert!(!rp.join("Dropped.ZIP").exists());
+    let refused = add_local(&home, Kind::Resource, &drops.join("Dropped.ZIP")).unwrap_err();
+    assert!(refused.contains("Dropped.ZIP"), "{refused}");
+    assert!(!refused.contains(".sunrise-add-"), "{refused}");
+    zip_file(
+        &drops.join("Bare.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"pack_format":15}}"#)],
+    );
+    assert!(add_local(&home, Kind::Resource, &drops.join("Bare.zip")).is_err());
+    let left: Vec<String> = fs::read_dir(&rp)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| {
+            n.starts_with(".sunrise-add-") || n.starts_with("Dropped") || n.starts_with("Bare")
+        })
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+    zip_file(&drops.join("Lower.zip"), &[("pack.mcmeta", META)]);
+    assert_eq!(
+        add_local(&home, Kind::Resource, &drops.join("Lower.zip"))
+            .unwrap()
+            .file,
+        "Lower.zip"
+    );
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn a_pack_mcmeta_with_a_byte_order_mark_or_comments_is_read() {
+    let home = scratch("lenient-meta");
+    let rp = home.join("resourcepacks");
+    let bom = "\u{feff}{\"pack\":{\"description\":\"Bom\"}}";
+    let commented =
+        "// made by hand\n{\"pack\":{/* why */\"description\":\"A // b \\\" /* c */\"}}";
+    zip_file(&rp.join("Bom.zip"), &[("pack.mcmeta", bom.as_bytes())]);
+    zip_file(
+        &rp.join("Note.zip"),
+        &[("pack.mcmeta", commented.as_bytes())],
+    );
+    zip_file(
+        &rp.join("Open.zip"),
+        &[("pack.mcmeta", b"{\"pack\":/* never closed")],
+    );
+    let seen: Vec<(String, String)> = list(&home, Kind::Resource)
+        .into_iter()
+        .map(|p| (p.file, p.description))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Bom.zip".to_string(), "Bom".to_string()),
+            ("Note.zip".to_string(), "A // b \" /* c */".to_string())
+        ]
+    );
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn a_resource_pack_without_a_description_is_not_listed() {
+    let home = scratch("no-description");
+    let rp = home.join("resourcepacks");
+    zip_file(
+        &rp.join("Bare.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"pack_format":15}}"#)],
+    );
+    zip_file(
+        &rp.join("Null.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"description":null}}"#)],
+    );
+    zip_file(
+        &rp.join("Empty.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"description":""}}"#)],
+    );
+    fs::create_dir_all(rp.join("Folder")).unwrap();
+    fs::write(rp.join("Folder/pack.mcmeta"), b"{}").unwrap();
+    let names: Vec<String> = list(&home, Kind::Resource)
+        .into_iter()
+        .map(|p| p.file)
+        .collect();
+    assert_eq!(names, ["Empty.zip"]);
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn a_repeated_options_key_is_read_and_set_on_its_last_line() {
+    let home = scratch("repeated-key");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    fs::write(
+        home.join("options.txt"),
+        "resourcePacks:[\"vanilla\",\"file/A.zip\"]\nlang:fr_ch\nresourcePacks:[\"vanilla\",\"file/B.zip\"]\n",
+    )
+    .unwrap();
+    let on = |home: &Path| -> Vec<String> {
+        list(home, Kind::Resource)
+            .into_iter()
+            .filter(|p| p.enabled)
+            .map(|p| p.file)
+            .collect()
+    };
+    assert_eq!(on(&home), ["B.zip"]);
+    let a = list(&home, Kind::Resource).remove(0);
+    set_enabled(&home, &a, true).unwrap();
+    assert_eq!(on(&home), ["A.zip", "B.zip"], "listed by name, both on");
+    assert_eq!(
+        fs::read_to_string(home.join("options.txt")).unwrap(),
+        "resourcePacks:[\"vanilla\",\"file/A.zip\"]\nlang:fr_ch\nresourcePacks:[\"vanilla\",\"file/B.zip\",\"file/A.zip\"]\n"
+    );
+    fs::remove_dir_all(&home).unwrap();
+}

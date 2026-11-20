@@ -1255,6 +1255,7 @@
   "Close the game and servers, and wait for downloads, builds, imports and sign-in to finish before moving data.": "Claude ludum et servitores, et exspecta dum deprompta, aedificationes, importationes et inscriptio finiantur, antequam data transferas.",
   "No pack {query} in {folder}": "No pack {query} in {folder}",
   "{name} is not a pack: packs are .zip or .sshader files.": "{name} is not a pack: packs are .zip or .sshader files.",
+  "{name} must be named with a lowercase .zip ending for the game to load it": "{name} must be named with a lowercase .zip ending for the game to load it",
   "{name} has an entry whose name can't be read: {error}": "{name} has an entry whose name can't be read: {error}",
   "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).": "{name} has neither a pack.mcmeta (a resource pack) nor a shaders folder (a shader pack).",
   "{file} and {neighbor} are not next to each other any more.": "{file} and {neighbor} are not next to each other any more.",

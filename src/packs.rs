@@ -285,9 +285,13 @@ fn read_named(
     let pictured = pictures == Pictures::All;
     let (title, description, icon) = match kind {
         Kind::Resource => {
+            // The game reads a folder, or a file whose name ends in `.zip`, exactly so.
+            if !(path.is_dir() || file.ends_with(".zip")) {
+                return None;
+            }
             let [meta, icon] = entries(path, [Some("pack.mcmeta"), pictured.then_some("pack.png")]);
-            let meta: serde_json::Value = serde_json::from_slice(&meta?).ok()?;
-            (file.clone(), plain(&meta["pack"]["description"]), icon)
+            let description = pack_description(&pack_meta(&meta?)?)?;
+            (file.clone(), description, icon)
         }
         Kind::Shader if path.join(SHADER_MANIFEST).is_file() || ext(SHADER_PACKAGE) => {
             // A Sunrise shader pack's picture is its `icon.png`.
@@ -369,6 +373,51 @@ pub fn artwork(path: &Path, kind: Kind) -> Option<Vec<u8>> {
     entry(path, name)
 }
 
+/// A `pack.mcmeta` read the way the game's JSON reader does: a leading byte order mark is
+/// skipped and `//` and `/* */` comments are ignored. Anything unreadable gives `None`.
+pub(crate) fn pack_meta(bytes: &[u8]) -> Option<serde_json::Value> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut clean = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_string = !in_string;
+                clean.push(c);
+            }
+            '\\' if in_string => {
+                clean.push(c);
+                clean.extend(chars.next());
+            }
+            '/' if !in_string && chars.peek() == Some(&'/') => {
+                while chars.next_if(|&n| n != '\n').is_some() {}
+            }
+            '/' if !in_string && chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for n in chars.by_ref() {
+                    if last == '*' && n == '/' {
+                        break;
+                    }
+                    last = n;
+                }
+                clean.push(' ');
+            }
+            c => clean.push(c),
+        }
+    }
+    serde_json::from_str(&clean).ok()
+}
+
+/// The description of a parsed `pack.mcmeta` as plain text. The game refuses a pack that gives
+/// none, so a missing one gives `None`.
+pub(crate) fn pack_description(meta: &serde_json::Value) -> Option<String> {
+    let description = &meta["pack"]["description"];
+    (!description.is_null()).then(|| plain(description))
+}
+
 /// A text component as plain text: its strings, without `§` formatting codes.
 pub(crate) fn plain(component: &serde_json::Value) -> String {
     fn walk(v: &serde_json::Value, out: &mut String) {
@@ -404,8 +453,10 @@ pub(crate) fn plain(component: &serde_json::Value) -> String {
 
 /// `key:value` in a `key:value` per line file.
 fn line_value(text: &str, key: &str) -> Option<String> {
+    // The game keeps the last line of a repeated key.
     text.lines()
-        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+        .filter_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+        .next_back()
         .map(str::to_string)
 }
 
@@ -449,20 +500,22 @@ fn set_line(path: &Path, key: &str, value: &str) -> Result<(), String> {
 
 /// `text` with `key:value` set, or added as a line; every other line stays.
 fn with_line(text: &str, key: &str, value: &str) -> String {
-    let mut found = false;
+    let is_key = |l: &str| l.strip_prefix(key).is_some_and(|r| r.starts_with(':'));
+    // The game keeps the last line of a repeated key, so that is the line to set.
+    let last = text
+        .lines()
+        .rev()
+        .position(is_key)
+        .map(|n| text.lines().count() - 1 - n);
     let mut out: Vec<String> = text
         .lines()
-        .map(
-            |l| match l.strip_prefix(key).and_then(|r| r.strip_prefix(':')) {
-                Some(_) if !found => {
-                    found = true;
-                    format!("{key}:{value}")
-                }
-                _ => l.to_string(),
-            },
-        )
+        .enumerate()
+        .map(|(i, l)| match last {
+            Some(n) if n == i => format!("{key}:{value}"),
+            _ => l.to_string(),
+        })
         .collect();
-    if !found {
+    if last.is_none() {
         out.push(format!("{key}:{value}"));
     }
     let mut text = out.join("\n");
@@ -559,6 +612,13 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
     if ext.as_deref() == Some(SHADER_PACKAGE) {
         Ok(Kind::Shader)
     } else if zip.index_for_name("pack.mcmeta").is_some() {
+        // The game loads a resource pack file only when its name ends in `.zip`.
+        if !name.ends_with(".zip") {
+            return Err(trf(
+                "{name} must be named with a lowercase .zip ending for the game to load it",
+                &[("name", &name)],
+            ));
+        }
         Ok(Kind::Resource)
     } else if zip
         .file_names()
@@ -683,8 +743,15 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             )
         })?;
         // What is checked is the copy that gets put in place.
-        let found = kind_of(temp.path())
-            .map_err(|e| e.replace(&temp.path().display().to_string(), &name.to_string_lossy()))?;
+        let found = kind_of(temp.path()).map_err(|e| {
+            let shown = name.to_string_lossy();
+            let temp_name = temp.path().file_name().map(|n| n.to_string_lossy());
+            let e = e.replace(&temp.path().display().to_string(), &shown);
+            match temp_name {
+                Some(t) => e.replace(&*t, &shown),
+                None => e,
+            }
+        })?;
         if found != kind {
             return Err(trf(
                 "{file} is a {found} pack, not a {kind} pack.",
