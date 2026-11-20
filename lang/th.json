@@ -1506,5 +1506,6 @@
   "{mod} changed since you approved removing it. Install again to review it.": "{mod} changed since you approved removing it. Install again to review it.",
   "A saved world uses {mods}: install again to be asked about it.": "A saved world uses {mods}: install again to be asked about it.",
   "Asking {source}…": "Asking {source}…",
-  "It runs native code. Turn on a native mod to be asked about native code first, then update it.": "It runs native code. Turn on a native mod to be asked about native code first, then update it."
+  "It runs native code. Turn on a native mod to be asked about native code first, then update it.": "It runs native code. Turn on a native mod to be asked about native code first, then update it.",
+  "Removes {count} of your mods · couldn't check your native mods": "Removes {count} of your mods · couldn't check your native mods"
 }
