@@ -22,10 +22,38 @@ pub(crate) enum Request {
         id: String,
         known: Option<Box<Project>>,
         /// Installed registry mods this install removes with it (the ones it can't live with).
-        replacing: Vec<sunrise_launcher::browser::installed::Replace>,
+        replacing: Vec<sunrise_launcher::browser::installed::Approval>,
     },
-    /// A collection's mods, and the collection's name.
-    Many(Target, Vec<String>, String),
+    /// A collection's mods, the collection's name and what the player approved.
+    Many(
+        Target,
+        Vec<String>,
+        String,
+        Vec<sunrise_launcher::browser::installed::Approval>,
+    ),
+}
+
+impl Request {
+    /// The profile and game it is for.
+    pub(crate) fn target(&self) -> &Target {
+        match self {
+            Request::One { target, .. } | Request::Many(target, ..) => target,
+        }
+    }
+
+    /// The same request with the player's answer to the world question added: they agreed to
+    /// what saved worlds lose from `mods`.
+    pub(crate) fn approving(mut self, mods: &[String]) -> Request {
+        let (Request::One {
+            replacing: approvals,
+            ..
+        }
+        | Request::Many(_, _, _, approvals)) = &mut self;
+        approvals.extend(mods.iter().map(|id| {
+            sunrise_launcher::browser::installed::Approval::DropContent { id: id.clone() }
+        }));
+        self
+    }
 }
 
 /// What runs next.
@@ -176,7 +204,7 @@ mod tests {
         assert!(queue.submit(one("a"), true).is_none());
         assert!(queue
             .submit(
-                Request::Many(target(), vec!["x".into()], "Pack".into()),
+                Request::Many(target(), vec!["x".into()], "Pack".into(), Vec::new()),
                 true
             )
             .is_none());
@@ -281,11 +309,13 @@ mod tests {
             source: SourceId::Sunrise,
             id: "lumen".into(),
             known: None,
-            replacing: vec![sunrise_launcher::browser::installed::Replace {
-                id: "lamps".into(),
-                checksum: "SHA-256:1".into(),
-                worlds_ok: false,
-            }],
+            replacing: vec![sunrise_launcher::browser::installed::Approval::Remove(
+                sunrise_launcher::browser::installed::Replace {
+                    id: "lamps".into(),
+                    checksum: "SHA-256:1".into(),
+                    worlds_ok: false,
+                },
+            )],
         };
         // What came behind it waits while the question is open (the caller holds the queue)...
         assert!(queue.submit(one("later"), false).is_some());
@@ -304,7 +334,7 @@ mod tests {
                     (target.instance.as_str(), target.game.as_str()),
                     ("other", "26.2")
                 );
-                assert_eq!(replacing[0].id, "lamps");
+                assert_eq!(replacing.len(), 1);
             }
             _ => panic!("the held request starts"),
         }
@@ -321,5 +351,32 @@ mod tests {
             "the other profile's build was not dropped as a duplicate"
         );
         assert_eq!(id_of(queue.next("other", false, false, false)), "build m");
+    }
+
+    #[test]
+    fn the_answer_to_the_world_question_goes_with_the_request_it_stopped() {
+        let held = Request::One {
+            target: target(),
+            source: SourceId::Sunrise,
+            id: "lumen".into(),
+            known: None,
+            replacing: Vec::new(),
+        };
+        let held = held.approving(&["flywheel".to_string()]);
+        assert_eq!(held.target().instance, "main");
+        match held {
+            Request::One { replacing, .. } => assert_eq!(
+                replacing,
+                [
+                    sunrise_launcher::browser::installed::Approval::DropContent {
+                        id: "flywheel".into()
+                    }
+                ]
+            ),
+            _ => panic!("one"),
+        }
+        let many = Request::Many(target(), vec!["a".into()], "Pack".into(), Vec::new())
+            .approving(&["b".to_string()]);
+        assert!(matches!(many, Request::Many(_, _, _, approvals) if approvals.len() == 1));
     }
 }

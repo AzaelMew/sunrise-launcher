@@ -227,6 +227,17 @@ pub struct Replace {
     pub worlds_ok: bool,
 }
 
+/// What the player approved for an install, checked again under the install's lock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Approval {
+    /// Removing this installed mod, as shown.
+    Remove(Replace),
+    /// Losing what saved worlds use from this mod: its new version's package no longer has
+    /// content its old one had.
+    DropContent { id: String },
+}
+
 /// Why an install didn't happen: native code the player hasn't allowed yet (the plan may not
 /// have known it was there), which the launcher answers by asking and trying again, or any
 /// other reason, in words.
@@ -246,6 +257,11 @@ pub enum InstallError {
     Conflict {
         mods: Vec<String>,
         reason: String,
+    },
+    /// A saved world uses what the new version of these mods no longer has: the world question
+    /// comes before anything is published.
+    NeedsWorlds {
+        mods: Vec<String>,
     },
     /// The planner refused for another reason, in its words.
     Refused(String),
@@ -282,6 +298,10 @@ impl std::fmt::Display for InstallError {
             Self::Unavailable { reason, .. }
             | Self::Conflict { reason, .. }
             | Self::Refused(reason) => f.write_str(reason),
+            Self::NeedsWorlds { mods } => f.write_str(&crate::i18n::trf(
+                "A saved world uses {mods}: install again to be asked about it.",
+                &[("mods", &mods.join(", "))],
+            )),
             Self::Message(message) => f.write_str(message),
         }
     }
@@ -294,8 +314,9 @@ impl From<InstallError> for String {
 }
 
 /// Installs `project` (and what it needs) into the game folder `home`. A project already
-/// installed is updated to the version chosen. `replacing` are registry mods that are removed
-/// as part of the same install (the ones it can't live with): all or nothing. `progress` gets
+/// installed is updated to the version chosen. `approvals` are what the player agreed to: registry
+/// mods removed as part of the same install (the ones it can't live with), all or nothing, and
+/// the world content that may be lost. `progress` gets
 /// a line per file and the fraction.
 pub fn install(
     source: &dyn Source,
@@ -303,12 +324,12 @@ pub fn install(
     everything: bool,
     home: &Path,
     game: &str,
-    replacing: &[Replace],
+    approvals: &[Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, InstallError> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     if project.source == SourceId::Sunrise {
-        return super::sunrise::install(project, home, game, replacing, progress);
+        return super::sunrise::install(project, home, game, approvals, progress);
     }
     let steps = plan(source, project, everything, game)?;
     Ok(put(

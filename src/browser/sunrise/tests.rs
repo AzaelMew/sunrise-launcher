@@ -425,7 +425,7 @@ fn a_mod_install_with_dependencies_keeps_the_unreadable_file_it_replaces() {
         index: &index,
         local: true,
         home: &home,
-        replacing: &[],
+        approvals: &[],
         progress: &|_, _| {},
     };
     dependencies::install(&install, p, &p.versions[0], false, true).unwrap();
@@ -480,7 +480,7 @@ fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
         index: &index,
         local: true,
         home: &home,
-        replacing: &[],
+        approvals: &[],
         progress: &|_, _| {},
     };
     let result = install.prepare(p, &p.versions[0], &list, &home.join("staging"));
@@ -509,7 +509,7 @@ fn a_failed_install_with_dependencies_leaves_no_copy_of_the_unreadable_file() {
         index: &index,
         local: true,
         home: &home,
-        replacing: &[],
+        approvals: &[],
         progress: &|_, _| {},
     };
     assert!(dependencies::install(&install, p, &p.versions[0], false, true).is_err());
@@ -672,7 +672,7 @@ fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_n
         index: &index,
         local: true,
         home: &home,
-        replacing: &[],
+        approvals: &[],
         progress: &|_, _| {},
     };
     let refused = dependencies::install(&install, p, &p.versions[0], false, true).unwrap_err();
@@ -705,7 +705,7 @@ fn native_code_is_refused_without_the_choice_whoever_brings_it() {
                     index,
                     local: true,
                     home: &home,
-                    replacing: &[],
+                    approvals: &[],
                     progress: &|_, _| {},
                 },
                 project,
@@ -935,7 +935,7 @@ fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file(
             index: &index,
             local: true,
             home: &home,
-            replacing: &[],
+            approvals: &[],
             progress: &|_, _| {},
         };
         let done = dependencies::install(&install, p, &p.versions[0], true, true).unwrap();
@@ -974,7 +974,7 @@ fn a_mod_install_with_dependencies_replaces_an_entry_whose_file_is_gone() {
         index: &index,
         local: true,
         home: &home,
-        replacing: &[],
+        approvals: &[],
         progress: &|_, _| {},
     };
     dependencies::install(&install, p, &p.versions[0], false, true).unwrap();
@@ -2005,7 +2005,7 @@ fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
     )
     .is_err());
 
-    let replacing = [installed::Replace {
+    let replacing = [installed::Approval::Remove(installed::Replace {
         id: "lamps".into(),
         checksum: installed::Installed::load(&home)
             .find(SourceId::Sunrise, "lamps")
@@ -2013,7 +2013,7 @@ fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
             .checksum
             .clone(),
         worlds_ok: false,
-    }];
+    })];
     install_from(
         &index,
         true,
@@ -2046,7 +2046,7 @@ fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
     let index = conflict_index(dir.path());
     let home = dir.path().join("profile");
     let lamps = project_of(&index, index.project("lamps").unwrap(), GAME).unwrap();
-    let go = |lamps_replaced: &installed::Replace| {
+    let go = |approvals: &[installed::Approval]| {
         let fireflies = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
         install_from(
             &index,
@@ -2056,7 +2056,7 @@ fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
             GAME,
             false,
             true,
-            std::slice::from_ref(lamps_replaced),
+            approvals,
             &|_, _| {},
         )
     };
@@ -2086,7 +2086,7 @@ fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
         checksum: "SHA-256:other".into(),
         ..approved.clone()
     };
-    let refused = go(&stale).unwrap_err();
+    let refused = go(&[installed::Approval::Remove(stale)]).unwrap_err();
     assert!(refused.contains("changed since you approved"), "{refused}");
     assert!(installed::Installed::load(&home)
         .find(SourceId::Sunrise, "lamps")
@@ -2095,16 +2095,18 @@ fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
     let world = home.join("saves/Home");
     fs::create_dir_all(&world).unwrap();
     fs::write(world.join("level.dat"), b"not nbt").unwrap();
-    let refused = go(&approved).unwrap_err();
-    assert!(refused.contains("A saved world uses"), "{refused}");
+    let refused = go(&[installed::Approval::Remove(approved.clone())]).unwrap_err();
+    assert!(
+        matches!(&refused, installed::InstallError::NeedsWorlds { mods } if mods == &["lamps"])
+    );
     assert!(installed::Installed::load(&home)
         .find(SourceId::Sunrise, "lamps")
         .is_some());
     // Agreed: it goes ahead. Worlds that can't be looked at stop it when nobody agreed.
-    go(&installed::Replace {
-        worlds_ok: true,
-        ..approved
-    })
+    go(&[
+        installed::Approval::Remove(approved),
+        installed::Approval::DropContent { id: "lamps".into() },
+    ])
     .unwrap();
     assert!(installed::Installed::load(&home)
         .find(SourceId::Sunrise, "lamps")
@@ -2201,7 +2203,7 @@ fn an_install_that_replaces_a_mod_and_then_fails_leaves_that_mod_installed() {
     broken.versions[0].file.url = format!("file://{}", dir.path().join("missing.smod").display());
     let fireflies = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
 
-    let replacing = [installed::Replace {
+    let replacing = [installed::Approval::Remove(installed::Replace {
         id: "lamps".into(),
         checksum: installed::Installed::load(&home)
             .find(SourceId::Sunrise, "lamps")
@@ -2209,7 +2211,7 @@ fn an_install_that_replaces_a_mod_and_then_fails_leaves_that_mod_installed() {
             .checksum
             .clone(),
         worlds_ok: false,
-    }];
+    })];
     assert!(install_from(
         &index,
         true,
