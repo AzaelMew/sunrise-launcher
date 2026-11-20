@@ -930,16 +930,18 @@ impl Launcher {
 
     /// The mods switching the selected profile to the game build `tag` would remove, by the
     /// index already read, the profile's own list and the SDK check of the native mods
-    /// (`native_off`). None when no index has been read: that is not "none".
+    /// (`native_off`), for the game that build itself plays. None when that can't be told: no
+    /// index has been read, or the build isn't installed. That is not "none".
     pub(crate) fn mods_removed_by(
         &self,
         tag: &str,
         native_off: &[(String, String)],
     ) -> Option<Vec<sunrise::auto::Removal>> {
         let (index, instance) = (sunrise::known_index()?, self.selected_instance()?);
+        let game = backend::game_of_build(tag)?;
         let ctx = sunrise::auto::Context {
             in_pack: sunrise::auto::in_pack(&instance.home),
-            game: &backend::played_version_id_by(Some(tag)),
+            game: &game,
             native_allowed: self.settings.native_mods_allowed_at.is_some(),
         };
         Some(sunrise::auto::removals_at(

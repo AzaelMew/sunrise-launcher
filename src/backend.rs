@@ -1413,6 +1413,24 @@ pub fn played_version_id_by(tag: Option<&str>) -> String {
     played_by(tag, "version_id")
 }
 
+/// The Minecraft version id the build `tag` plays, from that build's own files; None when it
+/// isn't installed (a build that isn't here says nothing about itself, and no other build
+/// stands in for it).
+pub fn game_of_build(tag: &str) -> Option<String> {
+    game_in(&versions_dir(), tag)
+}
+
+fn game_in(versions: &Path, tag: &str) -> Option<String> {
+    installed_in(versions)
+        .iter()
+        .any(|t| t == tag)
+        .then_some(())?;
+    let dir = versions.join(tag);
+    read_json(&dir.join(RELEASE_FILE))
+        .and_then(|release| release["version_id"].as_str().map(String::from))
+        .or_else(|| locked_game(&dir))
+}
+
 fn played_by(tag: Option<&str>, field: &str) -> String {
     // Tests share one scratch launcher folder whose installed builds other tests change.
     if cfg!(test) {
@@ -4895,6 +4913,11 @@ mod tests {
         assert_eq!(played(Some("v0.3.2"), "vanilla"), "26.2");
         assert_eq!(played(Some("v0.3.1"), "version_id"), PINNED_GAME);
         assert_eq!(played(Some("v9.9.9"), "version_id"), "26.4-pre1");
+        // A build's own game, and nothing for one that isn't installed: no other build's.
+        assert_eq!(game_in(v, "v0.3.3").as_deref(), Some("26.4-pre1"));
+        assert_eq!(game_in(v, "v0.3.2").as_deref(), Some("26.2"));
+        assert_eq!(game_in(v, "v9.9.9"), None);
+        assert_eq!(game_in(v, "v0.3.4"), None, "not complete: not installed");
     }
 
     fn pe_architecture(bytes: &[u8]) -> Option<GameArchitecture> {
