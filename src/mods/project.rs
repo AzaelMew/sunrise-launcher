@@ -175,7 +175,9 @@ impl Launcher {
             )
             .children(self.strip(cx));
         let page = div()
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
             .gap(px(14.))
