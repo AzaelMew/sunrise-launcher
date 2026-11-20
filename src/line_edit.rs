@@ -412,6 +412,13 @@ impl LineEdit {
         }
     }
 
+    /// All that shows of the line, as the box draws it.
+    #[cfg(test)]
+    pub(super) fn shown(&self) -> String {
+        let (a, b, c, _) = self.view(false);
+        a + &b + &c
+    }
+
     /// What shows: the text before the selection, the selection, the text after, and whether the
     /// caret sits before the selection (otherwise after it). `whole` shows all of it selected.
     fn view(&self, whole: bool) -> (String, String, String, bool) {

@@ -173,6 +173,11 @@ fn field_chars(window_width: f32) -> usize {
     ((pane - 26.) / 8.) as usize
 }
 
+/// Sizes a settings text box to its pane: the one place the box's width is set.
+fn fit_field(input: &mut line_edit::LineEdit, window_width: f32) {
+    input.show(field_chars(window_width));
+}
+
 impl Launcher {
     /// A [`row`] whose controls are wide: in a narrow window they would leave the words a
     /// column a syllable wide, so there they go under the words.
@@ -1390,7 +1395,7 @@ impl Launcher {
             "",
             div().relative().child(opener).children(menu),
         );
-        self.proxy_input.show(field_chars(self.window_width));
+        fit_field(&mut self.proxy_input, self.window_width);
         let refused = (!self.proxy_focused)
             .then(|| sunrise_launcher::proxy::refuse(self.proxy_input.text()))
             .flatten();
@@ -1584,6 +1589,19 @@ mod tests {
         assert_eq!(field_chars(1280.), 91);
         assert_eq!(field_chars(900.), 44);
         assert_eq!(field_chars(300.), 21);
+    }
+
+    #[test]
+    fn a_long_proxy_shows_whole_in_a_wide_window_and_the_settings_view_sizes_its_box() {
+        let line = "http://user:password@proxy.example.org:7890/".repeat(2);
+        let mut input = line_edit::LineEdit::new(line.clone(), 256, 44);
+        fit_field(&mut input, 1280.);
+        assert_eq!(input.text(), line);
+        assert!(line.chars().count() <= 91);
+        assert_eq!(input.shown(), line);
+        // The view sizes the proxy box through `fit_field`; a Launcher needs a window to build.
+        let source = include_str!("settings.rs");
+        assert!(source.contains("fit_field(&mut self.proxy_input, self.window_width);"));
     }
 
     #[test]
