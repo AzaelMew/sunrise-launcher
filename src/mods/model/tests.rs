@@ -1329,12 +1329,12 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         .expect("listed");
     assert!(!broken.on);
     assert_eq!(broken.need, None);
-    assert!(!cells(broken, None, None).switch);
+    assert!(!cells(broken, None, None, true).switch);
     let good = r
         .iter()
         .find(|r| r.local.as_ref().is_some_and(|l| !l.unreadable))
         .expect("listed");
     assert!(good.on);
     assert_eq!(good.need, Some(Need::Permission));
-    assert!(cells(good, None, None).switch);
+    assert!(cells(good, None, None, true).switch);
 }
