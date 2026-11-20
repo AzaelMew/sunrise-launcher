@@ -156,6 +156,7 @@ impl Launcher {
                     self.installed = backend::installed();
                     let as_update = self.update_install.take().filter(|t| *t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
+                    let cache_only = self.switch_cache_download_finished(&tag);
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
                         let name = if as_update.is_some() {
                             "launcher.update_ms"
@@ -196,7 +197,7 @@ impl Launcher {
                                     &before,
                                 )
                             }) && (!for_instance || self.launcher_version().is_none());
-                            if resume.is_none() {
+                            if resume.is_none() && !cache_only {
                                 if select {
                                     self.settings.selected = Some(tag.clone());
                                 }

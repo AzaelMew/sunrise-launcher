@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::sync::mpsc::Sender;
 use sunrise_launcher::native_mods::{Consent, UpdateCheck};
 
+mod switch_build;
 mod versions;
 
 /// More Tab stops than any page has: how far [`Launcher::modal`] looks for the next one inside
@@ -30,6 +31,7 @@ pub(crate) enum Sheet {
     Worlds,
     /// One build to keep, picked from all of them (`versions`).
     Versions,
+    SwitchBuild,
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
     Search,
@@ -72,6 +74,7 @@ pub(crate) struct SheetsState {
     notice: String,
     way_out: Option<WayOut>,
     versions: versions::State,
+    switch_build: switch_build::State,
 }
 
 /// The explicit native-mod check against the newer installed build.
@@ -281,6 +284,9 @@ impl Launcher {
     /// built or changed by it: a pending permission is declined, a pending library question is
     /// answered no, a held update stays held.
     pub(crate) fn close_sheet(&mut self) {
+        if matches!(self.ui.sheet, Some(Sheet::SwitchBuild | Sheet::Versions)) {
+            self.cancel_switch_sheet();
+        }
         if let Some((_, reply)) = self.ui.sheets.registry.take() {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
@@ -473,6 +479,7 @@ impl Launcher {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
+            Some(Sheet::SwitchBuild) => Some(self.switch_build_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
             Some(Sheet::ModBuild) => {
@@ -837,7 +844,7 @@ impl Launcher {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.native_error = None;
-                this.pin_build(None, channel);
+                this.prefer_channel(channel);
                 // The chooser opens under Home's build picker.
                 this.navigate(crate::frame::Page::Home);
                 this.open_sheet(Sheet::Build);
@@ -1260,113 +1267,18 @@ impl Launcher {
         })
     }
 
-    /// Switches the selected setup to another build. The switch is staged against the build kept
-    /// now: when it would remove mods that saved worlds use, the world question comes first and
-    /// the pin changes only if the answer is Switch anyway (`commit_switch`).
-    pub(crate) fn pin_build(&mut self, version: Option<String>, channel: instances::Channel) {
-        if self.launch_busy() || self.client.is_some() {
-            self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
-            return;
-        }
+    /// The channel is a preference. An existing committed build never changes here.
+    pub(crate) fn prefer_channel(&mut self, channel: instances::Channel) {
         let Some(instance) = self.selected_instance() else {
             return;
         };
-        let mut staged = instance.clone();
-        staged.version = version.clone();
-        staged.channel = channel;
-        // A build that isn't downloaded says nothing about its game: what it would remove can't
-        // be told yet, and the mods are judged when it is installed (Play's update asks the
-        // world question then, before anything is built).
-        let question = match self.game_of(&staged) {
-            None => None,
-            Some(game) => {
-                let ctx = sunrise_launcher::browser::sunrise::auto::Context {
-                    in_pack: sunrise_launcher::browser::sunrise::auto::in_pack(&instance.home),
-                    game: &game,
-                    native_allowed: self.settings.native_mods_allowed_at.is_some(),
-                };
-                let asked = sunrise_launcher::browser::sunrise::known_index().map(|index| {
-                    sunrise_launcher::browser::sunrise::auto::switch_question(
-                        &index,
-                        &instance.home,
-                        &ctx,
-                    )
-                });
-                // Worlds that can't be looked at stop the switch: it might remove a mod they use.
-                match asked.transpose() {
-                    Ok(question) => question.flatten(),
-                    Err(e) => {
-                        self.ui.sheets.error = Some(e);
-                        return;
-                    }
-                }
-            }
-        };
-        let id = instance.id.clone();
-        match question {
-            Some(question) => {
-                self.mods.world_ask = Some(crate::mods_page::WorldAsk {
-                    instance: id,
-                    question,
-                    then: crate::mods_page::Then::Switch(version, channel),
-                });
-            }
-            None => self.commit_switch(&id, version, channel, Default::default()),
-        }
-    }
-
-    /// Moves every mod on to the build, whatever the setting for routine updates says (a switch
-    /// is not a routine update), and saves the new pin once they have moved. `allow` are the
-    /// mods the player let a world lose. A build that isn't downloaded has no game to move
-    /// the mods to: its pin is saved at once and the mods follow when it is installed.
-    pub(crate) fn commit_switch(
-        &mut self,
-        id: &str,
-        version: Option<String>,
-        channel: instances::Channel,
-        allow: std::collections::BTreeSet<String>,
-    ) {
-        if self.launch_busy() || self.client.is_some() {
-            self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
-            return;
-        }
-        let Some(instance) = self.instances.list.iter().find(|i| i.id == id) else {
-            return;
-        };
-        let mut staged = instance.clone();
-        staged.version = version.clone();
-        staged.channel = channel;
-        match self.game_of(&staged) {
-            Some(game) if !instance.is_pack_profile() => {
-                self.mods.switching = Some((id.to_owned(), version, channel));
-                self.update_mods(
-                    crate::mods_page::AutoTarget {
-                        instance: staged,
-                        game,
-                    },
-                    allow,
-                );
-            }
-            _ => self.save_switch(id, version, channel),
-        }
-    }
-
-    /// Saves the pin of a switch.
-    pub(crate) fn save_switch(
-        &mut self,
-        id: &str,
-        version: Option<String>,
-        channel: instances::Channel,
-    ) {
-        match instances::edit(id, |m| {
-            m.version = version;
-            m.channel = Some(channel);
-        }) {
+        let result = instances::edit(&instance.id, |meta| meta.channel = Some(channel));
+        match result {
             Ok(_) => {
                 self.ui.sheets.error = None;
                 self.reload_instances();
             }
-            Err(e) => self.ui.sheets.error = Some(e),
+            Err(error) => self.ui.sheets.error = Some(error),
         }
     }
 
@@ -1453,7 +1365,7 @@ impl Launcher {
             })
             .when(!nightly_gated, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Nightly);
+                    this.prefer_channel(instances::Channel::Nightly);
                     cx.notify();
                 }))
             }),
@@ -1477,7 +1389,7 @@ impl Launcher {
             })
             .when(!stable_off, |d| {
                 d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.pin_build(None, instances::Channel::Stable);
+                    this.prefer_channel(instances::Channel::Stable);
                     cx.notify();
                 }))
             }),

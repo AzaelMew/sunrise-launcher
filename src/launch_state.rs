@@ -438,17 +438,8 @@ impl Launcher {
             Act::StopBuild => self.stop_build(),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), *way_out),
             Act::Update => {
-                let (Some(release), Some(instance)) =
-                    (self.updates.sunrise.clone(), self.selected_instance())
-                else {
-                    return;
-                };
-                if self.native_state_of(instance) != native_status::State::NoMods {
-                    // Never overwrite a working native build while staging its candidate.
-                    self.instance_install = Some(release.tag.clone());
-                    self.install(&release);
-                } else {
-                    self.install_update();
+                if let Some(release) = &self.updates.sunrise {
+                    self.open_update_picker(release.tag.clone());
                 }
             }
         }
