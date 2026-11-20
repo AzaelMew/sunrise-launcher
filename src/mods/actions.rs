@@ -247,11 +247,7 @@ impl Launcher {
         let Some(to) = row.update.clone().filter(|_| row.local.is_none()) else {
             return;
         };
-        let refusal = if !row.on {
-            Some(tr(
-                "It is turned off. Turn it on first: an update never switches a mod on.",
-            ))
-        } else if row.native() && self.settings.native_mods_allowed_at.is_none() {
+        let refusal = if row.native() && self.settings.native_mods_allowed_at.is_none() {
             Some(tr(
                 "It runs native code. Allow native mods first (Allow… on its row), then update it.",
             ))
@@ -447,15 +443,12 @@ fn run(action: Action, backed_up: bool, home: &std::path::Path, game: &str, tx: 
                         (i as f32 + f) / count as f32,
                     ));
                 };
-                // Read again now: it may have been switched off since the plan was made.
-                if !mod_list::is_enabled(home, &item.id) {
-                    failed.push((item.id.clone(), tr("turned off: left as it is").to_string()));
-                    continue;
-                }
+                // Read now, not at planning: a mod that is off stays off.
+                let was_on = mod_list::is_enabled(home, &item.id);
                 let result = match item.native {
                     true => sunrise::Registry
                         .project(&item.id)
-                        .and_then(|p| sunrise::install(&p, home, game, &step))
+                        .and_then(|p| sunrise::update_native(&p, home, game, was_on, &step))
                         .map(|_| None),
                     false => auto::update_to(&index, &item.id, &item.to, home, &step),
                 };

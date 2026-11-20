@@ -66,7 +66,6 @@
   "Check Minecraft accounts": "验证 Minecraft 账户",
   "Check Minecraft: Java Edition ownership and your profile at minecraft.net.": "请在 minecraft.net 检查 Minecraft: Java Edition 的所有权和你的档案。",
   "Check again": "重新检查",
-  "Check for updates": "检查更新",
   "Checking Minecraft ownership…": "正在检查 Minecraft 所有权…",
   "Checking the mods' crates against Sunrise's Cargo.lock": "正在对照 Sunrise 的 Cargo.lock 检查模组的 crate",
   "Checking…": "正在检查…",
@@ -813,7 +812,6 @@
   "Installed {mods}, checksums checked. Turn it on under Installed.": "Installed {mods}, checksums checked. Turn it on under Installed.",
   "Installing · {percent}%": "Installing · {percent}%",
   "Installs after you sign in": "Installs after you sign in",
-  "It is turned off. Turn it on first: an update never switches a mod on.": "It is turned off. Turn it on first: an update never switches a mod on.",
   "It runs native code. Allow native mods first (Allow… on its row), then update it.": "It runs native code. Allow native mods first (Allow… on its row), then update it.",
   "Its first errors and the end of its output": "Its first errors and the end of its output",
   "Its resources are prepared.": "Its resources are prepared.",
@@ -1114,8 +1112,6 @@
   "the {day} update": "the {day} update",
   "the {day}, {time} UTC update": "the {day}, {time} UTC update",
   "them": "them",
-  "turned off: left as it is": "turned off: left as it is",
-  "turned off: turn it on first, then update": "turned off: turn it on first, then update",
   "warning: {text}": "warning: {text}",
   "you chose its version: update it on its own": "you chose its version: update it on its own",
   "your Sunrise version": "your Sunrise version",
@@ -1478,5 +1474,12 @@
   "Updates 1 installed mod": "Updates 1 installed mod",
   "Updates {count} installed mods": "Updates {count} installed mods",
   "Everything you picked is installed.": "Everything you picked is installed.",
-  "Some picks can't be installed together.": "Some picks can't be installed together."
+  "Some picks can't be installed together.": "Some picks can't be installed together.",
+  "Version {version} is out. {why}": "Version {version} is out. {why}",
+  "Check now": "Check now",
+  "Hide until the launcher restarts": "Hide until the launcher restarts",
+  "Not checked: {error}": "Not checked: {error}",
+  "up to date · checked just now": "up to date · checked just now",
+  "Check for updates": "检查更新",
+  "Sunrise Launcher {version} available": "Sunrise Launcher {version} available"
 }
