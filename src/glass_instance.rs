@@ -46,11 +46,6 @@ impl Launcher {
         backend::sunrise_update(self.game_releases(), &self.installed, profile.channel)
     }
 
-    /// The channel the profile actually follows, without changing its saved preference.
-    pub(super) fn followed_channel(&self, channel: Channel) -> Channel {
-        channel.following(self.game_releases())
-    }
-
     /// Stable can follow an installed build even when its release feed is unavailable.
     pub(super) fn stable_available(&self) -> bool {
         Channel::Stable.newest_installed(&self.installed).is_some()
