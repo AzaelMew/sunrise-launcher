@@ -5,7 +5,10 @@ use serde_json::{json, Value};
 use std::{
     fs,
     io::{BufRead, BufReader, Write},
-    os::unix::{fs::PermissionsExt, net::UnixListener},
+    os::unix::{
+        fs::{OpenOptionsExt, PermissionsExt},
+        net::UnixListener,
+    },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
@@ -269,6 +272,103 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
     drop(socket);
     drop(to_mcp);
     assert!(mcp.0.wait().unwrap().success());
+}
+
+#[test]
+fn cli_persists_its_first_build_before_the_registry_replies() {
+    let fixture = Fixture::new();
+    let pipe = fixture.root.join("registry");
+    assert!(Command::new("mkfifo")
+        .arg(&pipe)
+        .status()
+        .unwrap()
+        .success());
+    let file = format!("{}/lantern.smod", mod_list::DIR);
+    let package = fixture.home.join(&file);
+    fs::create_dir_all(package.parent().unwrap()).unwrap();
+    let body = format!(
+        "id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n",
+        manifest::API
+    );
+    fs::write(
+        &package,
+        manifest::Package::write_files(&body, &[]).unwrap(),
+    )
+    .unwrap();
+    let sha = sunrise_launcher_smod::index::sha256_file(&package).unwrap();
+    let row = fixture
+        .home
+        .join(sunrise_launcher_smod::index::browser_state::MANIFEST);
+    fs::create_dir_all(row.parent().unwrap()).unwrap();
+    fs::write(
+        row,
+        json!({"entries":[{
+            "source":"sunrise", "project":"lantern", "slug":"lantern", "title":"Lantern",
+            "kind":"mod", "version":"1.0.0", "number":"1.0.0", "file":file,
+            "checksum":format!("SHA-256:{sha}"), "page":"", "dependency":false,
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    fs::write(fixture.home.join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
+
+    let mut interrupted = Running(
+        fixture
+            .launcher(&["play", "--version", BUILD])
+            .env("SUNRISE_MOD_INDEX", &pipe)
+            .spawn()
+            .unwrap(),
+    );
+    // Successfully opening the write end proves the real index read is waiting;
+    // keep it open without sending a reply.
+    let limit = Instant::now() + Duration::from_secs(25);
+    let writer = loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&pipe)
+        {
+            Ok(file) => break file,
+            Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                assert!(
+                    Instant::now() < limit,
+                    "the launcher did not reach the registry read"
+                );
+                assert!(interrupted.0.try_wait().unwrap().is_none());
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            Err(error) => panic!("registry fixture: {error}"),
+        }
+    };
+    let pending = sunrise_launcher::profile_txn::references(&fixture.home).unwrap();
+    assert!(pending.targets.contains(BUILD));
+    assert!(pending.pointer.is_none());
+    assert!(!fixture.home.join("args").exists());
+    interrupted.0.kill().unwrap();
+    assert!(!interrupted.0.wait().unwrap().success());
+    drop(writer);
+    fs::remove_file(&pipe).unwrap();
+    fs::write(&pipe, r#"{"schema":1,"projects":[]}"#).unwrap();
+    fs::write(
+        fixture.data.join("instances.json"),
+        r#"{"instances":{"sunrise":{"version":"developer-other"}}}"#,
+    )
+    .unwrap();
+    fs::write(fixture.home.join("finish"), []).unwrap();
+    let retried = fixture
+        .launcher(&["play"])
+        .env("SUNRISE_MOD_INDEX", &pipe)
+        .output()
+        .unwrap();
+    assert_eq!(
+        retried.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&retried.stderr)
+    );
+    assert_resource_args(&fixture, &fixture.game_arguments());
+    let committed: Value = serde_json::from_slice(&fixture.pointer()).unwrap();
+    assert_eq!(committed["base"]["tag"], BUILD);
 }
 
 #[test]

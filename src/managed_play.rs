@@ -1,6 +1,7 @@
 //! Exact managed Play state. The profile journal owns admission and publication;
 //! this boundary owns the types, verification and interpretation of its saved pointers.
 mod artifact;
+mod catalogue;
 mod client;
 mod first;
 mod game;

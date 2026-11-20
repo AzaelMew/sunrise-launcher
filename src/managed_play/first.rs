@@ -410,6 +410,14 @@ impl FirstAttempt<'_> {
         self.stage.handoff()
     }
 
+    /// Verify under the game-manifest lock before checking or compiling this first set.
+    pub(super) fn verify_inputs(&self) -> Result<(), String> {
+        if inputs(&self.home, None)? != self.bound.inputs {
+            return Err(unsettled());
+        }
+        Ok(())
+    }
+
     pub fn prepare(&self, log: &dyn Fn(String)) -> Result<(), String> {
         let base = self.base();
         if backend::check_prepared(base) {

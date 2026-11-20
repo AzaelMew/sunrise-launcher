@@ -1,5 +1,9 @@
 //! Ordinary client Play keeps one admission on its worker through the actual spawn.
-use super::{first::assert_requested, unsettled, FirstBuild, Profile};
+use super::{
+    catalogue,
+    first::{assert_requested, game_lock},
+    unsettled, Active, FirstBuild, Profile,
+};
 use crate::{
     account::{self, Accounts, NoOwner},
     backend::{self, RuntimeGuard},
@@ -45,6 +49,8 @@ impl From<StartError> for String {
     }
 }
 
+type NativeConsent<'a> = Option<&'a dyn Fn(&native_mods::Consent) -> bool>;
+
 pub struct Client<'a> {
     pub instance: &'a instances::Instance,
     pub accepted_account: Option<&'a str>,
@@ -70,7 +76,7 @@ impl Client<'_> {
         architecture: impl Fn(&str) -> Option<String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&mut Command, &crate::launch::Launch) -> Result<(), String>,
-        native_consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+        native_consent: NativeConsent<'_>,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
         // A fresh default profile may not have a game directory yet. Do not recreate
@@ -87,36 +93,25 @@ impl Client<'_> {
         }
         let mut profile = Profile::open_checked(&self.instance.home, None)?;
         let cancellation = native_mods::Cancellation::default();
-        let mode = self.instance.native_profile;
-        let native = |step| progress(Progress::Native(step));
         let check_build = |tag: &str| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
                 return Err(StartError::Account(NoOwner::default()));
             }
             architecture(tag).map_or(Ok(()), |error| Err(StartError::Other(error)))
         };
-        let registry = crate::browser::sunrise::PlayCatalogue::inspect(profile.home())?;
-        let active = if let Some(old) = profile.active()? {
-            assert_requested(self.requested_build, old.base(), old.executable())?;
-            check_build(old.base())?;
-            profile
-                .refresh(mode, &cancellation, native, native_consent)
-                .map_err(StartError::Native)?
-                .ok_or_else(unsettled)?
-        } else {
-            let first = profile.begin_requested(self.requested_build, choose, |fraction| {
-                progress(Progress::Download(fraction));
-            })?;
-            check_build(first.base())?;
-            progress(Progress::Prepare);
-            first.prepare(&|line| progress(Progress::Line(line)))?;
-            let image = first
-                .exact_image(mode, &cancellation, native, native_consent)
-                .map_err(StartError::Native)?;
-            first.commit(&image, &cancellation)?
-        };
+        let (active, registry_notices) = self.ready(
+            &mut profile,
+            choose,
+            check_build,
+            (&cancellation, native_consent),
+            &progress,
+            || {
+                use crate::browser::sunrise;
+                sunrise::index().ok()?;
+                sunrise::fetched_index()
+            },
+        )?;
         let tag = active.executable();
-        let registry_notices = registry.notices(tag)?;
         let offline = !self.explicit_account && developer_offline::enabled(tag);
         let mut cmd = backend::client_with_resources(tag, &active.resource_path());
         instances::apply(&mut cmd, self.instance)?;
@@ -179,7 +174,58 @@ impl Client<'_> {
             }
         }
     }
+
+    fn ready(
+        &self,
+        profile: &mut Profile,
+        choose: impl FnOnce() -> Result<FirstBuild, String>,
+        check_build: impl FnOnce(&str) -> Result<(), StartError>,
+        (cancellation, native_consent): (&native_mods::Cancellation, NativeConsent<'_>),
+        progress: impl Fn(Progress),
+        load_catalogue: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
+    ) -> Result<(Active, Vec<String>), StartError> {
+        let home = profile.home().to_owned();
+        let mode = self.instance.native_profile;
+        let native = |step| progress(Progress::Native(step));
+        if let Some(old) = profile.active()? {
+            assert_requested(self.requested_build, old.base(), old.executable())?;
+            check_build(old.base())?;
+            // Legacy writers still use the game lock, not profile admission. Keep
+            // them out until refresh has staged the exact set we checked.
+            let _manifest = game_lock(&home)?;
+            crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
+            let notices = catalogue::inspect(&home, load_catalogue)?;
+            let active = profile
+                .refresh(mode, cancellation, native, native_consent)
+                .map_err(StartError::Native)?
+                .ok_or_else(unsettled)?;
+            return Ok((active, notices));
+        }
+
+        let first = profile.begin_requested(self.requested_build, choose, |fraction| {
+            progress(Progress::Download(fraction));
+        })?;
+        check_build(first.base())?;
+        progress(Progress::Prepare);
+        first.prepare(&|line| progress(Progress::Line(line)))?;
+        let (image, notices) = {
+            let _manifest = game_lock(&home)?;
+            crate::browser::installed::recover_game_install(&home).map_err(StartError::Journal)?;
+            first.verify_inputs()?;
+            let notices = catalogue::inspect(&home, load_catalogue)?;
+            let image = first
+                .exact_image(mode, cancellation, native, native_consent)
+                .map_err(StartError::Native)?;
+            (image, notices)
+        };
+        // Resource preparation takes a version lock. Don't take it under the game
+        // manifest lock; commit rechecks the frozen input epoch before publication.
+        Ok((first.commit(&image, cancellation)?, notices))
+    }
 }
+
+#[cfg(test)]
+mod tests;
 
 /// Resolve an ordinary headless first Play lazily. An existing committed or pending
 /// build bypasses the catalogue completely; an explicit first selection remains exact.
