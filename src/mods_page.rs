@@ -13,18 +13,49 @@ use sunrise_launcher::native_status;
 
 mod queue;
 
+/// The mods to remove when the build an install started has ended, and the failures to tell
+/// the player about. `brought` are the mods the build was started for; `stopped` is whether
+/// it stopped for a reason outside the mods (every one of them goes); else only those of
+/// `failures` that were among them do, and the build already went on without them.
+fn removed_after_build(
+    brought: &[String],
+    stopped: bool,
+    failures: Vec<native_mods::BuildFailure>,
+) -> (Vec<String>, Vec<native_mods::BuildFailure>) {
+    if stopped {
+        return (brought.to_vec(), Vec::new());
+    }
+    let failures: Vec<_> = failures
+        .into_iter()
+        .filter(|f| brought.contains(&f.id))
+        .collect();
+    (failures.iter().map(|f| f.id.clone()).collect(), failures)
+}
+
+/// What a build that an install started cost it. Nothing stays installed from either.
+pub(crate) enum InstallFailure {
+    /// Mods that failed to compile: each with its reason and log. They were removed and the
+    /// rest of the build went on.
+    ModsDidNotBuild(Vec<native_mods::BuildFailure>),
+    /// The build stopped for a reason outside the mods (no network, the build tools didn't
+    /// download, no room): the mods that went in were removed, the notice says why, and
+    /// Install can be tried again.
+    Interrupted,
+}
+
 /// How an install ended well: what to tell the player, if anything (a registry mod says
 /// nothing: its card shows it installed), and whether native code went in, which a build takes up.
 pub(super) struct Finished {
     said: Option<String>,
-    native: bool,
+    /// The native mods that went in, by id: a build takes them up, and they go again if it fails.
+    native: Vec<String>,
 }
 
 impl Finished {
     fn said(said: String) -> Self {
         Self {
             said: Some(said),
-            native: false,
+            native: Vec::new(),
         }
     }
 }
@@ -65,6 +96,11 @@ pub(super) struct Mods {
     pub(super) message: Option<Result<String, String>>,
     /// What waits for the install and build slot.
     queue: queue::Queue,
+    /// The native mods the running build was started to take up.
+    building: Vec<String>,
+    /// How the last build of an install ended, when it cost the install: read by the card and
+    /// by the failure sheet, until the next build starts.
+    pub(crate) failed: Option<InstallFailure>,
     pub(super) updates: HashMap<(SourceId, String), String>,
     /// An install awaiting explicit native-code consent, before any download.
     /// The selected instance's native build state, the mods it would build again
@@ -134,6 +170,15 @@ impl Mods {
         self.home.current()
     }
 
+    /// The mods the last install's build removed for not compiling, each with its reason and
+    /// log: what the failure sheet lists.
+    pub(crate) fn build_failures(&self) -> &[native_mods::BuildFailure] {
+        match &self.failed {
+            Some(InstallFailure::ModsDidNotBuild(failures)) => failures,
+            _ => &[],
+        }
+    }
+
     /// Whether the install of mod `id` waits for its turn.
     pub(crate) fn waiting(&self, id: &str) -> bool {
         self.queue.waits(id)
@@ -163,6 +208,8 @@ impl Mods {
             busy: None,
             message: None,
             queue: Default::default(),
+            building: Vec::new(),
+            failed: None,
             native_state: Default::default(),
             unbuilt: None,
             updates: HashMap::new(),
@@ -183,7 +230,7 @@ impl Launcher {
         let mut changed = false;
         let mut loaded = Vec::new();
         let mut done = false;
-        let mut native = false;
+        let mut native = Vec::new();
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
@@ -199,7 +246,7 @@ impl Launcher {
                     m.busy = None;
                     m.message = match result {
                         Ok(finished) => {
-                            native |= finished.native;
+                            native.extend(finished.native);
                             finished.said.map(|said| {
                                 crate::glass_toast::say(said.clone());
                                 Ok(said)
@@ -224,8 +271,8 @@ impl Launcher {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
         }
-        if native {
-            self.mods.queue.build_after_install();
+        if !native.is_empty() {
+            self.mods.queue.build_after_install(native);
         }
         // Installs that waited start in order. The build that finishes them goes through the
         // Build button's entry, so its own planner decides what to build: native mods share a
@@ -251,7 +298,10 @@ impl Launcher {
             Some(queue::Step::Install(queue::Request::Many(ids, shown))) => {
                 self.mods_install_many(ids, shown)
             }
-            Some(queue::Step::Build) => self.build_native(),
+            Some(queue::Step::Build(ids)) => {
+                self.mods.building = ids;
+                self.build_native()
+            }
             None => {}
         }
         for l in loaded {
@@ -425,7 +475,11 @@ impl Launcher {
                 if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
                     return Ok(Finished {
                         said: None,
-                        native: done.iter().any(|e| native_status::is_native_file(&e.file)),
+                        native: done
+                            .iter()
+                            .filter(|e| native_status::is_native_file(&e.file))
+                            .map(|e| e.project.clone())
+                            .collect(),
                     });
                 }
                 let names: Vec<String> = done
@@ -444,6 +498,33 @@ impl Launcher {
 }
 
 impl Launcher {
+    /// A build ended. The mods its installs brought in that failed to compile are removed, and
+    /// the build already went on without them; if it stopped for another reason (`stopped`),
+    /// every mod it was started for is removed. Either way nothing broken stays in the list.
+    pub(super) fn install_build_ended(&mut self, stopped: Option<String>) {
+        let brought = std::mem::take(&mut self.mods.building);
+        if brought.is_empty() {
+            return;
+        }
+        let home = self.mods.home();
+        let failures = match &stopped {
+            Some(_) => Vec::new(),
+            None => native_mods::build_failures(&self.native_left_out()),
+        };
+        let (gone, failures) = removed_after_build(&brought, stopped.is_some(), failures);
+        for id in &gone {
+            let _ = installed::remove(&home, id);
+        }
+        self.mods.failed = match stopped {
+            Some(why) => {
+                self.mods.message = Some(Err(why));
+                Some(InstallFailure::Interrupted)
+            }
+            None => (!failures.is_empty()).then_some(InstallFailure::ModsDidNotBuild(failures)),
+        };
+        self.mods.reload_installed();
+    }
+
     /// Whether installing the registry mods `ids` would put native code in, by the index
     /// already read: false when none was.
     fn brings_native(&self, ids: &[String]) -> bool {
@@ -490,7 +571,7 @@ impl Launcher {
                 sunrise::check_set(&index, &ids, &held, &game)?;
                 let source = browser::source(SourceId::Sunrise);
                 let total = ids.len() as f32;
-                let native = std::cell::Cell::new(false);
+                let native = std::cell::RefCell::new(Vec::new());
                 crate::mods::run_in_order(&ids, |i, id| {
                     let p = source.project(id)?;
                     let progress = |line: &str, f: f32| {
@@ -498,9 +579,10 @@ impl Launcher {
                     };
                     installed::install(&*source, &p, false, &home, &game, &progress)
                         .map(|done| {
-                            native.set(
-                                native.get()
-                                    || done.iter().any(|e| native_status::is_native_file(&e.file)),
+                            native.borrow_mut().extend(
+                                done.iter()
+                                    .filter(|e| native_status::is_native_file(&e.file))
+                                    .map(|e| e.project.clone()),
                             );
                             done.into_iter().map(|e| e.title).collect()
                         })
@@ -513,7 +595,7 @@ impl Launcher {
                 })?;
                 Ok(Finished {
                     said: None,
-                    native: native.get(),
+                    native: native.into_inner(),
                 })
             })();
             let _ = tx.send(Event::Done(result));

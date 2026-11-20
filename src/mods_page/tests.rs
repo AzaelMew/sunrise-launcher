@@ -86,3 +86,23 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
         );
     }
 }
+
+#[test]
+fn a_build_ending_removes_only_what_it_cost_the_install() {
+    let failure = |id: &str| native_mods::BuildFailure {
+        id: id.into(),
+        reason: "r".into(),
+        log: "l".into(),
+    };
+    let brought = ["a".to_string(), "b".to_string()];
+    // "old" failed in an earlier build: not this install's, so it stays.
+    let (gone, told) = removed_after_build(&brought, false, vec![failure("b"), failure("old")]);
+    assert_eq!(gone, ["b"]);
+    assert_eq!(told, [failure("b")]);
+    let (gone, told) = removed_after_build(&brought, false, Vec::new());
+    assert!(gone.is_empty() && told.is_empty());
+    // The build stopped outside the mods: every mod it was started for goes.
+    let (gone, told) = removed_after_build(&brought, true, vec![failure("b")]);
+    assert_eq!(gone, ["a", "b"]);
+    assert!(told.is_empty());
+}
