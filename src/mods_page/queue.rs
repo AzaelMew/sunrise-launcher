@@ -46,6 +46,11 @@ impl Queue {
             .any(|r| matches!(r, Request::One { id: waiting, .. } if waiting == id))
     }
 
+    /// Whether the follow-up build is to take up mod `id`.
+    pub(super) fn will_build(&self, id: &str) -> bool {
+        self.build.iter().any(|b| b == id)
+    }
+
     /// An install put native code in. Installs that follow each other share the one build.
     pub(super) fn build_after_install(&mut self, ids: Vec<String>) {
         for id in ids {

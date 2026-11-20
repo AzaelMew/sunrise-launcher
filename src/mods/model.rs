@@ -32,7 +32,10 @@ pub(super) enum Fit {
     Fits,
     /// Versions exist, none for this build: the newest build one was made for.
     OtherBuild(String),
-    /// Taken down, or asks for something this Sunrise doesn't have.
+    /// A version for this build asks for something this Sunrise doesn't have: a newer Sunrise
+    /// has it.
+    NeedsNewerSunrise,
+    /// Taken down, or made for an earlier mod system.
     Refused(String),
 }
 
@@ -44,7 +47,11 @@ impl Fit {
     pub(super) fn reason(&self) -> Option<String> {
         match self {
             Fit::Fits => None,
-            Fit::OtherBuild(game) => Some(trf("Made for {game}", &[("game", game)])),
+            Fit::OtherBuild(game) => Some(trf(
+                "Not available for your version (made for {game})",
+                &[("game", game)],
+            )),
+            Fit::NeedsNewerSunrise => Some(tr("Needs a newer Sunrise").to_string()),
             Fit::Refused(why) => Some(why.clone()),
         }
     }
@@ -65,6 +72,8 @@ pub(super) struct Card {
     pub(super) updated: String,
     pub(super) first: String,
     pub(super) fit: Fit,
+    /// The registry has no key for its author: its files carry no signature.
+    pub(super) unsigned: bool,
     /// A native mod with no prebuilt binary for this game: it is built on this computer.
     pub(super) builds_locally: bool,
     /// A collection's card: how many mods it lists.
@@ -102,6 +111,12 @@ pub(super) fn fit_of(index: &Index, p: &index::Project, game: &str) -> Fit {
         .find_map(|v| index.revoked(&p.id, &v.file.sha256))
     {
         return Fit::Refused(trf("Taken down: {reason}", &[("reason", &r.reason)]));
+    }
+    if for_game
+        .iter()
+        .any(|v| !v.capabilities.unknown().is_empty())
+    {
+        return Fit::NeedsNewerSunrise;
     }
     Fit::Refused(tr("Made for Sunrise's earlier mod system").to_string())
 }
@@ -141,6 +156,7 @@ pub(super) fn cards(index: &Index, game: &str) -> Vec<Card> {
                 fit: fit_of(index, p, game),
                 // Only claimed when the registry lists no prebuilt at all: which one fits this
                 // computer is decided at install, by build and platform.
+                unsigned: p.key.is_none(),
                 builds_locally: make == Make::Native
                     && index
                         .installable(p, game)

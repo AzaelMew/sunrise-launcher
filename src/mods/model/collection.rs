@@ -62,6 +62,7 @@ pub(in crate::mods) fn cards(index: &Index, mods: &[Card]) -> Vec<Card> {
                 }
             }
             Some(Card {
+                unsigned: false,
                 id: c.id.clone(),
                 name: c.name.clone(),
                 authors: c.owners.join(", "),
