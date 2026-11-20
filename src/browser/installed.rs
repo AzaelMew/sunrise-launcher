@@ -341,6 +341,20 @@ pub fn install(
     )?)
 }
 
+/// Installs the registry mods `projects` together into `home` as one attempt
+/// ([`super::sunrise::install_set`]): one world question for the set, and none of them installed if
+/// anything fails.
+pub fn install_set(
+    projects: &[Project],
+    home: &Path,
+    game: &str,
+    approvals: &[Approval],
+    progress: &dyn Fn(&str, f32),
+) -> Result<Vec<Entry>, InstallError> {
+    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+    super::sunrise::install_set(projects, home, game, approvals, progress)
+}
+
 /// Downloads each step's file into `home`, in the folder `folder` names for its kind, and lists
 /// it: what was already there at that version is kept, an older version replaced.
 pub(super) fn put(

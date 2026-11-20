@@ -1115,10 +1115,10 @@ impl Launcher {
             .is_some_and(|index| sunrise::brings_native(&index, ids, &held, &self.mods_game()))
     }
 
-    /// A collection's one Install: the registry mods `ids` planned together, then installed one
-    /// after another, each with what it needs, as the mod page's Install does one. A failure
-    /// stops the rest and names the mod; the ones before it stay installed. `shown` is the
-    /// collection's name.
+    /// A collection's one Install, and Update all: the registry mods `ids` planned, asked about
+    /// and installed together with what they need, as one attempt (`installed::install_set`):
+    /// one world question for the set, and a failure leaves none of them installed. `shown` is
+    /// the name the page shows for it.
     pub(super) fn mods_install_many(&mut self, ids: Vec<String>, shown: String) {
         if ids.is_empty() {
             return;
@@ -1164,35 +1164,32 @@ impl Launcher {
                 let held = sunrise::held_mods(&installed::Installed::load(&home).entries);
                 sunrise::check_set(&index, &ids, &held, &game)?;
                 let source = browser::source(SourceId::Sunrise);
-                let total = ids.len() as f32;
-                crate::mods::run_in_order(&ids, |i, id| {
-                    let p = source.project(id)?;
-                    let progress = |line: &str, f: f32| {
-                        let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
-                    };
-                    installed::install(&*source, &p, false, &home, &game, &approvals, &progress)
-                        .map(|done| {
-                            native.borrow_mut().extend(
-                                done.iter()
-                                    .filter(|e| native_status::is_native_file(&e.file))
-                                    .map(|e| e.project.clone()),
-                            );
-                            done.into_iter().map(|e| e.title).collect()
-                        })
-                        .map_err(|why| {
-                            if let installed::InstallError::NeedsWorlds { mods } = &why {
-                                *worlds.borrow_mut() = Some(mods.clone());
-                            }
-                            consent.set(matches!(
-                                why,
-                                installed::InstallError::NeedsNativeConsent { .. }
-                            ));
-                            trf(
-                                "{mod} didn't install: {why}",
-                                &[("mod", &p.title), ("why", &why.to_string())],
-                            )
-                        })
+                let projects = ids
+                    .iter()
+                    .map(|id| source.project(id))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let progress = |line: &str, f: f32| {
+                    let _ = tx.send(Event::Progress(line.to_string(), f));
+                };
+                let done = installed::install_set(&projects, &home, &game, &approvals, &progress)
+                    .map_err(|why| {
+                    if let installed::InstallError::NeedsWorlds { mods } = &why {
+                        *worlds.borrow_mut() = Some(mods.clone());
+                    }
+                    consent.set(matches!(
+                        why,
+                        installed::InstallError::NeedsNativeConsent { .. }
+                    ));
+                    trf(
+                        "{mod} didn't install: {why}",
+                        &[("mod", &shown), ("why", &why.to_string())],
+                    )
                 })?;
+                native.borrow_mut().extend(
+                    done.iter()
+                        .filter(|e| native_status::is_native_file(&e.file))
+                        .map(|e| e.project.clone()),
+                );
                 Ok(Finished {
                     said: None,
                     native: native.take(),

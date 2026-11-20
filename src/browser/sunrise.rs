@@ -1172,6 +1172,69 @@ pub fn install(
     )
 }
 
+/// Installs the registry mods `projects` together (what each needs too) as one attempt: one plan,
+/// one world question and one publish for the set, so a failure leaves none of them installed.
+pub fn install_set(
+    projects: &[Project],
+    home: &Path,
+    game: &str,
+    approvals: &[installed::Approval],
+    progress: &dyn Fn(&str, f32),
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    let index = fetched_index().ok_or_else(|| {
+        tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
+            .to_string()
+    })?;
+    install_set_from(
+        &index,
+        local(),
+        projects,
+        home,
+        game,
+        crate::backend::Settings::load()
+            .native_mods_allowed_at
+            .is_some(),
+        true,
+        approvals,
+        progress,
+    )
+}
+
+/// [`install_set`] from a trusted `index`; every project must be a mod.
+#[allow(clippy::too_many_arguments)]
+fn install_set_from(
+    index: &Index,
+    local: bool,
+    projects: &[Project],
+    home: &Path,
+    game: &str,
+    native_allowed: bool,
+    turn_on: bool,
+    approvals: &[installed::Approval],
+    progress: &dyn Fn(&str, f32),
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    let mut asked = Vec::new();
+    for project in projects {
+        let p = index
+            .project(&project.id)
+            .filter(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
+            .ok_or_else(|| format!("{} isn't a mod in Sunrise's registry.", project.title))?;
+        asked.push((p, newest(index, p, game)?));
+    }
+    dependencies::install(
+        &Install {
+            index,
+            local,
+            home,
+            approvals,
+            progress,
+        },
+        &asked,
+        native_allowed,
+        turn_on,
+    )
+}
+
 /// [`install`] from a trusted `index`.
 #[allow(clippy::too_many_arguments)]
 fn install_from(
@@ -1188,22 +1251,20 @@ fn install_from(
     let p = index
         .project(&project.id)
         .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
-    let v = newest(index, p, game)?;
     if matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod) {
-        return dependencies::install(
-            &Install {
-                index,
-                local,
-                home,
-                approvals,
-                progress,
-            },
-            p,
-            v,
+        return install_set_from(
+            index,
+            local,
+            std::slice::from_ref(project),
+            home,
+            game,
             native_allowed,
             turn_on,
+            approvals,
+            progress,
         );
     }
+    let v = newest(index, p, game)?;
     Ok(vec![install_version(index, local, p, v, home, progress)?])
 }
 
