@@ -5,7 +5,10 @@ use super::{
     Install,
 };
 use crate::{backend, i18n::tr, native_mods, worlds};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 const MAX_TRIALS: usize = 512;
 type Choice<'a> = (&'a index::Project, &'a index::Version);
@@ -45,6 +48,7 @@ pub fn prepare_registry_install(
     ids: &[String],
     progress: &dyn Fn(&str, f32),
     registry_consent: &dyn Fn(&native_mods::Consent) -> bool,
+    continue_without: &dyn Fn(&[native_mods::BuildFailure]) -> bool,
 ) -> Result<RegistryInstall, installed::InstallError> {
     let (index, evidence) = authoritative_index()?;
     let waiting = txn::waiting_packages(owner.home())?;
@@ -53,66 +57,127 @@ pub fn prepare_registry_install(
         backend::game_of_build(first_plan.base()).ok_or_else(backend::no_version_installed)?;
     let mut first = Some(first_plan);
     let native_allowed = backend::Settings::native_grant()?.is_some();
-    let options = requested_choices(&index, ids, &game, &waiting)?;
-    let mut refused = None;
-    let (ready, entries) = ranked(&options, |asked| {
-        let plan = match first.take() {
-            Some(plan) => plan,
-            None => txn::StagedInstall::for_instance(owner.clone(), instance, progress)?,
-        };
-        let entries = match dependencies::stage(
-            &Install {
-                index: &index,
-                local: false,
-                home: plan.stage(),
-                approvals: &[],
-                progress,
-            },
-            asked,
-            native_allowed,
-            &waiting,
-        ) {
-            Ok(entries) => entries,
-            Err(
-                error @ (installed::InstallError::Conflict { .. }
-                | installed::InstallError::Unavailable { .. }
-                | installed::InstallError::Refused(_)),
-            ) => {
-                refused.get_or_insert(error);
-                return Ok(None);
-            }
-            Err(error) => return Err(error),
-        };
-        if !plan.compatible_candidate(&index)? {
-            refused.get_or_insert_with(|| installed::InstallError::Refused(incompatible().into()));
-            return Ok(None);
-        }
-        match plan.prepare(
-            &index,
-            &[],
-            instance.native_profile,
-            |step| progress(&step.label(), 0.99),
-            Some(registry_consent),
-        ) {
-            Ok(ready) => Ok(Some((ready, entries))),
-            Err(error @ native_mods::Failed::Mods { .. }) => {
-                let error = installed::InstallError::for_build(error, &ids.join(", "));
-                if !matches!(refused, Some(installed::InstallError::Build { .. })) {
-                    refused = Some(error);
+    let mut requests = ids.to_vec();
+    let mut omitted = BTreeSet::new();
+    loop {
+        let options = requested_choices(&index, &requests, &game, &waiting)?;
+        let mut refused = None;
+        let mut omission = None;
+        let result = ranked(&options, |asked| {
+            let plan = match first.take() {
+                Some(plan) => plan,
+                None => txn::StagedInstall::for_instance(owner.clone(), instance, progress)?,
+            };
+            let entries = match dependencies::stage(
+                &Install {
+                    index: &index,
+                    local: false,
+                    home: plan.stage(),
+                    approvals: &[],
+                    progress,
+                },
+                asked,
+                native_allowed,
+                &waiting,
+            ) {
+                Ok(entries) => entries,
+                Err(
+                    error @ (installed::InstallError::Conflict { .. }
+                    | installed::InstallError::Unavailable { .. }
+                    | installed::InstallError::Refused(_)),
+                ) => {
+                    refused.get_or_insert(error);
+                    return Ok(None);
                 }
-                Ok(None)
+                Err(error) => return Err(error),
+            };
+            let roots: Vec<_> = asked.iter().map(|(p, _)| p.id.as_str()).collect();
+            let Some(changes) = plan.registry_candidate(&index, &roots, &omitted)? else {
+                refused
+                    .get_or_insert_with(|| installed::InstallError::Refused(incompatible().into()));
+                return Ok(None);
+            };
+            match plan.prepare(
+                &index,
+                &[],
+                instance.native_profile,
+                |step| progress(&step.label(), 0.99),
+                Some(registry_consent),
+            ) {
+                Ok(ready) => Ok(Some((ready, entries))),
+                Err(native_mods::Failed::Mods { left, error }) => {
+                    let reduction = omission_for(&left, &changes);
+                    if !matches!(refused, Some(installed::InstallError::Build { .. }))
+                        || (omission.is_none() && reduction.is_some())
+                    {
+                        refused = Some(installed::InstallError::Build {
+                            failures: native_mods::build_failures(&left),
+                            reason: error,
+                        });
+                        omission = reduction;
+                    }
+                    Ok(None)
+                }
+                Err(error) => Err(installed::InstallError::for_build(error, &ids.join(", "))),
             }
-            Err(error) => Err(installed::InstallError::for_build(error, &ids.join(", "))),
+        })?;
+        if let Some((ready, entries)) = result {
+            return Ok(RegistryInstall {
+                ready: Box::new(ready),
+                evidence,
+                entries,
+            });
         }
-    })?
-    .ok_or_else(|| {
-        refused.unwrap_or_else(|| installed::InstallError::Refused(incompatible().into()))
-    })?;
-    Ok(RegistryInstall {
-        ready: Box::new(ready),
-        evidence,
-        entries,
-    })
+        let refusal =
+            refused.unwrap_or_else(|| installed::InstallError::Refused(incompatible().into()));
+        let (Some(reduction), installed::InstallError::Build { failures, .. }) =
+            (omission, &refusal)
+        else {
+            return Err(refusal);
+        };
+        // A declined/no-survivor attempt still reports the named compiler failures. Continue
+        // starts from the admitted preimage, not from the failed private tree. Its final package
+        // set is proved again, and only that set may proceed to the world decision.
+        if !omitted.is_empty() || !continue_without(failures) {
+            return Err(refusal);
+        }
+        requests.retain(|id| !reduction.requests.contains(id));
+        if requests.is_empty() {
+            return Err(refusal);
+        }
+        omitted = reduction.packages;
+    }
+}
+
+struct Omission {
+    requests: BTreeSet<String>,
+    packages: BTreeSet<(String, String)>,
+}
+
+fn omission_for(
+    left: &[native_mods::LeftOut],
+    changes: &BTreeMap<String, (String, BTreeSet<String>)>,
+) -> Option<Omission> {
+    let mut result = Omission {
+        requests: BTreeSet::new(),
+        packages: BTreeSet::new(),
+    };
+    for failure in left {
+        match &failure.why {
+            native_mods::Why::Needs(_) => continue,
+            native_mods::Why::DidNotBuild
+                if failure
+                    .detail
+                    .as_ref()
+                    .and_then(|d| d.log.as_deref())
+                    .is_some_and(|log| !log.is_empty()) => {}
+            _ => return None,
+        }
+        let (digest, requests) = changes.get(&failure.id)?;
+        result.requests.extend(requests.iter().cloned());
+        result.packages.insert((failure.id.clone(), digest.clone()));
+    }
+    (!result.packages.is_empty()).then_some(result)
 }
 
 fn incompatible() -> &'static str {
@@ -193,6 +258,51 @@ fn ranked<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compile_failure_does_not_omit_unchanged_packages_or_unknown_failures() {
+        let changed = BTreeMap::from([(
+            "broken-lib".into(),
+            ("new-archive".into(), BTreeSet::from(["lamps".into()])),
+        )]);
+        let mut root = native_mods::LeftOut {
+            id: "broken-lib".into(),
+            version: "2".into(),
+            why: native_mods::Why::DidNotBuild,
+            detail: Some(native_mods::Detail {
+                log: Some("rustc: exact diagnostic".into()),
+                ..Default::default()
+            }),
+        };
+        let needs = native_mods::LeftOut {
+            id: "lamps".into(),
+            version: "1".into(),
+            why: native_mods::Why::Needs("broken-lib".into()),
+            detail: None,
+        };
+        let left = [root.clone(), needs];
+        let omission = omission_for(&left, &changed).unwrap();
+        assert_eq!(
+            omission.packages,
+            BTreeSet::from([("broken-lib".into(), "new-archive".into())])
+        );
+        assert_eq!(
+            native_mods::build_failures(&left)[0].log,
+            "rustc: exact diagnostic"
+        );
+        let mut requested = vec!["lamps".to_owned(), "owls".to_owned()];
+        requested.retain(|id| !omission.requests.contains(id));
+        assert_eq!(requested, ["owls"]);
+        assert!(
+            omission_for(&left, &BTreeMap::new()).is_none(),
+            "not a new candidate; keep the preimage"
+        );
+        root.detail = None;
+        assert!(
+            omission_for(&[root], &changed).is_none(),
+            "not attributed by the compiler"
+        );
+    }
 
     #[test]
     fn two_requests_select_the_older_version_that_satisfies_both() {

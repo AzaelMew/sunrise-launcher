@@ -291,6 +291,8 @@ impl Launcher {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
+        } else if let Some(ask) = self.mods.build_ask.take() {
+            let _ = ask.reply.send(false);
         }
         self.ui.sheet = None;
         self.ui.sheets.ticked = (false, false);
@@ -302,6 +304,7 @@ impl Launcher {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.mods.world_ask.is_some()
+            || self.mods.build_ask.is_some()
             || self.ui.sheet.is_some();
         if self.mods.world_ask.is_some() {
             self.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
@@ -463,6 +466,9 @@ impl Launcher {
         if self.mods.world_ask.is_some() {
             return Some(self.world_question_sheet(cx));
         }
+        if self.mods.build_ask.is_some() {
+            return Some(self.install_build_sheet(cx));
+        }
         if self.mods.card_error.as_ref().is_some_and(|e| e.open) {
             return Some(self.card_why_sheet(cx));
         }
@@ -550,6 +556,93 @@ impl Launcher {
                         ))),
                 )
             })
+    }
+
+    fn install_build_sheet(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let ask = self
+            .mods
+            .build_ask
+            .as_ref()
+            .expect("build decision is open");
+        let index = sunrise_launcher::browser::sunrise::known_index();
+        let items: Vec<_> = ask
+            .failures
+            .iter()
+            .map(|failure| {
+                let name = index
+                    .as_ref()
+                    .and_then(|index| index.project(&failure.id))
+                    .map_or_else(|| failure.id.clone(), |p| p.name.clone());
+                (name, failure.reason.clone())
+            })
+            .collect();
+        let names = items
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let summary = trf(
+            if items.len() == 1 {
+                "{count} mod couldn't be built"
+            } else {
+                "{count} mods couldn't be built"
+            },
+            &[("count", &items.len().to_string())],
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(title(summary))
+            .child(muted(names))
+            .child(muted(tr(
+                "Continue without the failed packages. Any previous versions of them will be kept.",
+            )))
+            .children(ask.details.then(|| {
+                let log = ask
+                    .failures
+                    .iter()
+                    .filter(|failure| !failure.log.is_empty())
+                    .map(|failure| format!("{}\n{}", failure.id, failure.log))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                Self::why_panel(items, log, cx)
+            }))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        button(
+                            "install-build-why",
+                            if ask.details {
+                                tr("Hide why")
+                            } else {
+                                tr("Show why")
+                            },
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                if let Some(ask) = &mut this.mods.build_ask {
+                                    ask.details = !ask.details;
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        crate::frame::primary("install-build-continue", tr("Continue")).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                                if let Some(ask) = this.mods.build_ask.take() {
+                                    let _ = ask.reply.send(true);
+                                }
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+            );
+        frame("install-build-failed", 580., body, cx)
     }
 
     /// A failed install's Details: the same Show why panel, for the one mod.

@@ -133,6 +133,7 @@ pub(crate) fn failure_line(error: &InstallError) -> String {
         InstallError::Conflict { mods, .. } => {
             trf("Conflicts with {mods}", &[("mods", &mods.join(", "))])
         }
+        InstallError::Build { .. } => tr("Couldn't build on your computer").to_owned(),
         InstallError::Refused(_) => tr("Can't be installed with the mods you have").to_string(),
         other => plain_failure(&other.to_string()),
     }

@@ -34,6 +34,8 @@ enum Basis {
     First(build::Bootstrap),
 }
 
+pub(in crate::browser::sunrise) type RegistryChanges = BTreeMap<String, (String, BTreeSet<String>)>;
+
 impl StagedInstall {
     pub fn for_instance(
         owner: Arc<Lease>,
@@ -156,12 +158,54 @@ impl StagedInstall {
         self.input
     }
 
-    pub(in crate::browser::sunrise) fn compatible_candidate(
+    /// Which requested roots reach each newly staged package. An unchanged preimage must
+    /// never be removed from the live profile to make a failing candidate work.
+    pub(in crate::browser::sunrise) fn registry_candidate(
         &self,
         index: &index::Index,
-    ) -> Result<bool, String> {
+        requested: &[&str],
+        omitted: &BTreeSet<(String, String)>,
+    ) -> Result<Option<RegistryChanges>, String> {
         let inventory = self.proposed_inventory(index)?;
-        Ok(switch::fits(&chosen(&inventory)))
+        if !switch::fits(&chosen(&inventory))
+            || inventory
+                .packages
+                .iter()
+                .any(|(id, pkg)| omitted.contains(&(id.clone(), pkg.digest.clone())))
+        {
+            return Ok(None);
+        }
+        let mut changes = BTreeMap::new();
+        for &root in requested {
+            let mut seen = BTreeSet::new();
+            let mut next = vec![root];
+            while let Some(id) = next.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let pkg = inventory.packages.get(id).ok_or_else(unsettled)?;
+                if self
+                    .before
+                    .packages
+                    .get(id)
+                    .is_none_or(|old| old.digest != pkg.digest)
+                {
+                    changes
+                        .entry(id.to_owned())
+                        .or_insert_with(|| (pkg.digest.clone(), BTreeSet::new()))
+                        .1
+                        .insert(root.to_owned());
+                }
+                next.extend(
+                    pkg.manifest
+                        .dependencies
+                        .iter()
+                        .filter(|(_, dependency)| !dependency.details().optional)
+                        .map(|(id, _)| id.as_str()),
+                );
+            }
+        }
+        Ok(Some(changes))
     }
 
     fn proposed_inventory(&self, index: &index::Index) -> Result<switch::Inventory, String> {

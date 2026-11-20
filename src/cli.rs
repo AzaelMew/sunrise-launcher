@@ -2144,6 +2144,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 std::slice::from_ref(&project.id),
                 &line,
                 &registry_consent,
+                &|_| false,
             )?;
             if !switch::approve_world_change(proposal.question(), tr("Update anyway? [y/N]"))? {
                 return Err(tr("Update cancelled. Nothing was changed.").into());

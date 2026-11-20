@@ -288,7 +288,15 @@ impl Launcher {
                     .is_some_and(|c| model::collection::installed(c, &cards, &added)),
                 None => added.contains(&id),
             };
-            let state = install_state::of(&id, self.mods.waiting(&id), &[], game_running);
+            let (failure_profile, install_failures) = &self.mods.install_failures;
+            let install_failures =
+                if failure_profile.as_deref() == self.selected_instance().map(|i| i.id.as_str()) {
+                    install_failures.as_slice()
+                } else {
+                    &[]
+                };
+            let state =
+                install_state::of(&id, self.mods.waiting(&id), install_failures, game_running);
             let stage = install_state::stage(
                 &id,
                 busy.as_ref().map(|(for_id, f)| (for_id.as_str(), *f)),
@@ -337,6 +345,15 @@ impl Launcher {
                             .child(crate::build::progress_bar(stage.fraction())),
                     );
                 Some(dim(if wide { b.w_full() } else { b }).into_any_element())
+            } else if state == Some(InstallState::BuildFailed) {
+                Some(
+                    muted(if is_added {
+                        tr("Installed, couldn't build")
+                    } else {
+                        tr("Couldn't build on your computer")
+                    })
+                    .into_any_element(),
+                )
             } else if is_added && !enabled.contains(&id) {
                 let id = id.clone();
                 Some(
@@ -352,8 +369,6 @@ impl Launcher {
                 Some(added_mark())
             } else if card_data.fit == Fit::Unknown {
                 Some(muted(tr("Checking…")).into_any_element())
-            } else if state == Some(InstallState::BuildFailed) {
-                Some(muted(tr("Couldn't build on your computer")).into_any_element())
             } else if card_data.fit == Fit::NeedsNewerSunrise && self.updates.sunrise.is_some() {
                 Some(
                     crate::frame::button(("alt-card-update", n), tr("Update"))
@@ -397,6 +412,10 @@ impl Launcher {
                 .filter(|e| e.id == id && stage.is_none());
             // What a build that stopped or a mod that didn't compile says, when no install error
             // is already on the card: its Details opens the same panel.
+            let install_failure = install_failures
+                .iter()
+                .find(|failure| failure.id == id)
+                .cloned();
             let build_failure = self
                 .native_error
                 .as_ref()
@@ -407,11 +426,13 @@ impl Launcher {
                         && self.native_failed_mods.contains(&id)
                 })
                 .cloned();
-            // A failed install keeps Install to try again, and a Details beside it.
-            let control = match (failed_here, &build_failure) {
-                (None, Some(line)) => {
+            let build_failure = install_failure
+                .map(|failure| (failure.reason, Some(failure.log)))
+                .or_else(|| build_failure.map(|line| (line, None)));
+            // A failure keeps its own details; never substitute logs from another attempt.
+            let control = match (failed_here, build_failure) {
+                (None, Some((line, log))) => {
                     let open_id = id.clone();
-                    let line = line.clone();
                     let title = card_data.name.clone();
                     Some(
                         div()
@@ -426,10 +447,12 @@ impl Launcher {
                                             id: open_id.clone(),
                                             title: title.clone(),
                                             line: line.clone(),
-                                            details: std::fs::read_to_string(
-                                                sunrise_launcher::native_mods::log_path(),
-                                            )
-                                            .unwrap_or_else(|_| line.clone()),
+                                            details: log.clone().unwrap_or_else(|| {
+                                                std::fs::read_to_string(
+                                                    sunrise_launcher::native_mods::log_path(),
+                                                )
+                                                .unwrap_or_else(|_| line.clone())
+                                            }),
                                             built: true,
                                             open: true,
                                         });

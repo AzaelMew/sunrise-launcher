@@ -128,8 +128,15 @@ pub(crate) struct PreparedEdit {
     pub(crate) plan: sunrise::txn::PreparedModEdit,
 }
 
+pub(crate) struct BuildAsk {
+    pub(crate) failures: Vec<sunrise_launcher::native_mods::BuildFailure>,
+    pub(crate) details: bool,
+    pub(crate) reply: Sender<bool>,
+}
+
 pub(super) enum Event {
     Progress(String, f32),
+    BuildAsk(BuildAsk),
     ReadyEdit(Box<PreparedEdit>),
     EditFinished(Result<Option<String>, String>),
     Done(Result<Finished, installed::InstallError>),
@@ -181,6 +188,11 @@ pub(super) struct Mods {
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
     /// is removed until it is answered, and the answer defaults to Stay.
     pub(crate) world_ask: Option<WorldAsk>,
+    pub(crate) build_ask: Option<BuildAsk>,
+    pub(crate) install_failures: (
+        Option<String>,
+        Vec<sunrise_launcher::native_mods::BuildFailure>,
+    ),
     /// What came in with each mod installed this run, by id (the card's "Also installed").
     pub(crate) also: HashMap<String, Vec<String>>,
     /// The dependencies each moved to another version (the card's "Also updated").
@@ -280,6 +292,8 @@ impl Mods {
             running: None,
             consent_request: None,
             world_ask: None,
+            build_ask: None,
+            install_failures: (None, Vec::new()),
             also: HashMap::new(),
             updated: HashMap::new(),
             card_error: None,
@@ -310,6 +324,13 @@ impl Launcher {
                         busy.1 = line;
                         busy.2 = f;
                     }
+                }
+                Event::BuildAsk(ask) => {
+                    m.install_failures = (
+                        m.running.as_ref().map(|t| t.instance.clone()),
+                        ask.failures.clone(),
+                    );
+                    m.build_ask = Some(ask);
                 }
                 Event::NeedsConsent(ask, request) => {
                     m.busy = None;
@@ -350,6 +371,12 @@ impl Launcher {
                 Event::Done(result) => {
                     done = true;
                     let id = m.busy.take().map(|(id, ..)| id);
+                    if let Err(installed::InstallError::Build { failures, .. }) = &result {
+                        m.install_failures = (
+                            m.running.as_ref().map(|t| t.instance.clone()),
+                            failures.clone(),
+                        );
+                    }
                     if let Some(instance) = m.running.take().map(|t| t.instance) {
                         if m.install_owners
                             .get(&instance)
@@ -365,8 +392,15 @@ impl Launcher {
                                 .unwrap_or_else(|| id.clone()),
                             id: id.clone(),
                             line: crate::mods::install_state::failure_line(why),
-                            details: why.to_string(),
-                            built: false,
+                            details: match why {
+                                installed::InstallError::Build { failures, .. } => failures
+                                    .iter()
+                                    .find(|failure| failure.id == *id)
+                                    .filter(|failure| !failure.log.is_empty())
+                                    .map_or_else(|| why.to_string(), |failure| failure.log.clone()),
+                                _ => why.to_string(),
+                            },
+                            built: matches!(why, installed::InstallError::Build { .. }),
                             open: false,
                         }),
                         _ => None,
@@ -531,6 +565,7 @@ impl Launcher {
     }
 
     fn start_install(&mut self, request: queue::Request) {
+        self.mods.install_failures = (None, Vec::new());
         let target = request.target();
         let (lease, fresh) = match self.mods.install_owners.get(&target.instance) {
             Some(lease) => (lease.clone(), false),
@@ -660,6 +695,7 @@ impl Launcher {
                         std::slice::from_ref(&p.id),
                         &progress,
                         &|inventory| crate::native_build::ask_registry(&launcher, inventory),
+                        &|failures| ask_install_build(&tx, failures),
                     )?;
                     let finished = Finished::registry_install(plan.entries(), &before, &p.id);
                     return PreparedInstall {
@@ -705,7 +741,21 @@ impl Launcher {
     }
 }
 
-/// Why an install's thread stopped: it failed, or it needs the native-code question first.
+fn ask_install_build(
+    tx: &Sender<Event>,
+    failures: &[sunrise_launcher::native_mods::BuildFailure],
+) -> bool {
+    let (reply, answer) = std::sync::mpsc::channel();
+    tx.send(Event::BuildAsk(BuildAsk {
+        failures: failures.to_vec(),
+        details: false,
+        reply,
+    }))
+    .is_ok()
+        && answer.recv().unwrap_or(false)
+}
+
+/// Why an install's thread stopped or paused.
 enum Stop {
     Failed(installed::InstallError),
     ReadyInstall(Box<PreparedInstall>),
@@ -823,6 +873,7 @@ impl Launcher {
                     &ids,
                     &progress,
                     &|inventory| crate::native_build::ask_registry(&launcher, inventory),
+                    &|failures| ask_install_build(&tx, failures),
                 )?;
                 let finished = Finished::registry_install(plan.entries(), &before, "");
                 PreparedInstall {

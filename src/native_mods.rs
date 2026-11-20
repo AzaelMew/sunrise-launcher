@@ -920,7 +920,7 @@ struct Built {
 pub enum Failed {
     /// No native-code permission has been recorded for this install.
     NoConsent,
-    /// These mods stopped the exact build. Only the Switch planner may try another fitted set.
+    /// These named mods stopped the exact build. A planner may try a different exact set.
     Mods {
         left: Vec<LeftOut>,
         error: String,
