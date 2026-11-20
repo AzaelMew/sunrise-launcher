@@ -86,6 +86,36 @@ fn entry(version: &str) -> installed::Entry {
     }
 }
 
+/// A saved world in `home` that was saved with the mod `id`.
+fn world_using(home: &Path, id: &str) {
+    use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
+    let world = home.join("saves/Home");
+    fs::create_dir_all(&world).unwrap();
+    let record = Tag::compound([
+        ("ModId", Tag::String(id.into())),
+        ("ModVersion", Tag::String("1.0.0".into())),
+    ]);
+    let root = Tag::compound([
+        (
+            "Data",
+            Tag::compound([("LevelName", Tag::String("Home".into()))]),
+        ),
+        (
+            "sunrise",
+            Tag::compound([("ContentModList", Tag::List(vec![record]))]),
+        ),
+    ]);
+    let bytes = nbt::write_named(
+        &nbt::NamedTag {
+            name: "".into(),
+            tag: root,
+        },
+        Limits::default(),
+    )
+    .unwrap();
+    fs::write(world.join("level.dat"), bytes).unwrap();
+}
+
 fn version_of(d: Decision) -> Option<String> {
     match d {
         Decision::Update(v) => Some(v.version.clone()),
@@ -193,7 +223,7 @@ fn a_game_switch_moves_each_mod_to_its_newest_fitting_version_and_removes_the_re
         file: "sunrise-native-mods/ruby.smod".into(),
         ..entry("1.0.0")
     };
-    assert!(removals(&none, &[native.clone()], &PLAY, &[]).is_empty());
+    assert!(removals(&none, std::slice::from_ref(&native), &PLAY, &[]).is_empty());
     let off = [(
         "ruby".to_string(),
         "it uses a function that changed".to_string(),
@@ -229,7 +259,7 @@ fn a_switch_run_removes_the_mods_that_cannot_stay_and_says_so() {
     let mut list = installed::Installed::load(&home);
     list.entries.push(entry("1.0.0"));
     list.save(&home).unwrap();
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert_eq!(report.removed.len(), 1, "{report:?}");
     assert!(installed::Installed::load(&home).entries.is_empty());
     assert!(!home.join("sunrise-mods/ruby.smod").exists());
@@ -280,7 +310,7 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
 
     // 1.1.0 adds a block: updated, the 1.0.0 file kept aside.
     let index = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert_eq!(report.updated, ["Ruby 1.1.0"]);
     assert!(
         report.held.is_empty() && report.failed.is_empty(),
@@ -297,7 +327,7 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
         fs::read(&v1).unwrap()
     );
     // A second run in the same launcher keeps it; the next start drops it, the update done.
-    run_with(&index, true, &home, &PLAY, &|_, _| {});
+    run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert!(home.join(&kept[0].copy).is_file());
     save_kept(
         &home,
@@ -311,14 +341,20 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
     assert!(!home.join(&kept[0].copy).exists());
     assert!(kept_list(&home).is_empty());
 
-    // 1.2.0 drops two blocks: it waits, and 1.1.0 stays as it was.
+    // 1.2.0 drops two blocks, and a world was saved with Ruby: it waits, asks, and 1.1.0 stays
+    // as it was.
+    world_using(&home, "ruby");
     let index = index_of(&[
         ("1.2.0", GAME, &v3),
         ("1.1.0", GAME, &v2),
         ("1.0.0", GAME, &v1),
     ]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert!(report.updated.is_empty(), "{report:?}");
+    assert_eq!(
+        report.ask.as_ref().map(|q| q.mods.clone()),
+        Some(vec!["ruby".to_string()])
+    );
     assert_eq!(report.held.len(), 1);
     assert!(
         report.held[0].contains("block ruby:brick, block ruby:ore"),
@@ -402,7 +438,7 @@ fn failed_restore_keeps_its_record_for_retry() {
     assert!(home.join(&kept.copy).is_file());
     let v2 = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
     let newer = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    let report = run_with(&newer, true, &home, &PLAY, &|_, _| {});
+    let report = run_with(&newer, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert!(report.updated.is_empty());
     assert_eq!(kept_list(&home).len(), 1);
     assert!(home.join(&kept.copy).is_file());
@@ -441,7 +477,7 @@ fn an_update_cut_short_is_rolled_back_at_the_next_start() {
     k.pid = 0;
     save_kept(&home, &[k]).unwrap();
     fs::write(home.join(&old.file), b"half").unwrap();
-    assert!(run(&home, &PLAY, false, &|_, _| {}).is_none());
+    assert!(run(&home, &PLAY, false, &Default::default(), &|_, _| {}).is_none());
     assert_eq!(
         installed_ruby(&home),
         ("1.0.0".into(), fs::read(&v1).unwrap())
@@ -483,7 +519,7 @@ fn an_automatic_update_keeps_a_disabled_mod_off() {
     // The player turns it off; the automatic update replaces its file and leaves it off.
     mod_list::set_enabled(&home, "ruby", false).unwrap();
     let index = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert_eq!(report.updated, ["Ruby 1.1.0"], "{report:?}");
     assert!(
         !mod_list::is_enabled(&home, "ruby"),
@@ -497,7 +533,7 @@ fn an_automatic_update_keeps_a_disabled_mod_off() {
     // Turned back on, the next automatic update leaves it on.
     mod_list::set_enabled(&home, "ruby", true).unwrap();
     let index = index_of(&[("1.2.0", GAME, &v3), ("1.1.0", GAME, &v2)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
     assert_eq!(report.updated, ["Ruby 1.2.0"], "{report:?}");
     assert!(mod_list::is_enabled(&home, "ruby"));
 
@@ -553,12 +589,19 @@ fn auto_update_and_manual_mutation_do_not_race_or_lose_entries() {
     let index_auto = index.clone();
     let auto_thread = std::thread::spawn(move || {
         let resume = std::sync::Mutex::new(auto_resume_rx);
-        run_with(&index_auto, true, &home_auto, &PLAY, &|_line, _fraction| {
-            let _ = auto_started_tx.send(());
-            if let Ok(rx) = resume.lock() {
-                let _ = rx.recv_timeout(Duration::from_secs(5));
-            }
-        })
+        run_with(
+            &index_auto,
+            true,
+            &home_auto,
+            &PLAY,
+            &Default::default(),
+            &|_line, _fraction| {
+                let _ = auto_started_tx.send(());
+                if let Ok(rx) = resume.lock() {
+                    let _ = rx.recv_timeout(Duration::from_secs(5));
+                }
+            },
+        )
     });
 
     auto_started_rx
@@ -651,12 +694,19 @@ fn auto_update_does_not_revive_concurrently_removed_mod() {
     let index_auto = index.clone();
     let auto_thread = std::thread::spawn(move || {
         let resume = std::sync::Mutex::new(auto_resume_rx);
-        run_with(&index_auto, true, &home_auto, &PLAY, &|_line, _fraction| {
-            let _ = auto_started_tx.send(());
-            if let Ok(rx) = resume.lock() {
-                let _ = rx.recv_timeout(Duration::from_secs(5));
-            }
-        })
+        run_with(
+            &index_auto,
+            true,
+            &home_auto,
+            &PLAY,
+            &Default::default(),
+            &|_line, _fraction| {
+                let _ = auto_started_tx.send(());
+                if let Ok(rx) = resume.lock() {
+                    let _ = rx.recv_timeout(Duration::from_secs(5));
+                }
+            },
+        )
     });
 
     auto_started_rx
@@ -717,4 +767,39 @@ fn content_ids_are_the_declaration_files_of_the_mods_own_namespace() {
             "menu ruby:forge",
         ]
     );
+}
+
+#[test]
+fn a_switch_that_would_remove_a_mod_a_world_uses_asks_and_changes_nothing_until_allowed() {
+    let dir = scratch("auto-switch-ask");
+    let a = ruby(&dir, "1.0.0", &["a"], &[]);
+    let index = index_of(&[("1.0.0", "26.2", &a)]);
+    let home = dir.join("profile");
+    fs::create_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::copy(&a, home.join("sunrise-mods/ruby.smod")).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries.push(entry("1.0.0"));
+    list.save(&home).unwrap();
+    world_using(&home, "ruby");
+
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
+    let ask = report.ask.expect("a world uses ruby");
+    assert_eq!(
+        (ask.mods.as_slice(), ask.worlds.as_slice()),
+        (&["ruby".to_string()][..], &["Home".to_string()][..])
+    );
+    assert!(report.removed.is_empty());
+    assert_eq!(
+        installed::Installed::load(&home).entries.len(),
+        1,
+        "Stay changes nothing"
+    );
+    assert!(home.join("sunrise-mods/ruby.smod").is_file());
+
+    let allow = BTreeSet::from(["ruby".to_string()]);
+    let report = run_with(&index, true, &home, &PLAY, &allow, &|_, _| {});
+    assert!(report.ask.is_none());
+    assert_eq!(report.removed.len(), 1);
+    assert!(installed::Installed::load(&home).entries.is_empty());
+    fs::remove_dir_all(&dir).unwrap();
 }

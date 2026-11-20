@@ -343,8 +343,11 @@ impl Launcher {
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
+            || self.mods.world_ask.is_some()
             || self.ui.sheet.is_some();
-        if open {
+        if self.mods.world_ask.is_some() {
+            self.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
+        } else if open {
             self.close_sheet();
         }
         open
@@ -544,6 +547,9 @@ impl Launcher {
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));
         }
+        if self.mods.world_ask.is_some() {
+            return Some(self.world_question_sheet(cx));
+        }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
@@ -574,6 +580,72 @@ impl Launcher {
             },
             None => None,
         }
+    }
+
+    // ---- The world question ----
+
+    /// A switch or update would remove mods that saved worlds use: the one question. Staying is
+    /// the default and what closing does.
+    fn world_question_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let question = self
+            .mods
+            .world_ask
+            .as_ref()
+            .map(|ask| ask.question.clone())
+            .expect("shown only while a question is pending");
+        let names: Vec<String> = self
+            .mods_named(&question.mods)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let text = trf(
+            "{worlds} use {mods}. Switching removes {them}, and what {they} added to those worlds will be lost.",
+            &[
+                ("worlds", &crate::mods::names(&question.worlds)),
+                ("mods", &crate::mods::names(&names)),
+                (
+                    "them",
+                    if names.len() == 1 { tr("it") } else { tr("them") },
+                ),
+                (
+                    "they",
+                    if names.len() == 1 { tr("it") } else { tr("they") },
+                ),
+            ],
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(title(
+                tr("Some of your worlds use mods this would remove").into(),
+            ))
+            .child(muted(text))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(10.))
+                    .child(
+                        button("alt-world-switch", tr("Switch anyway")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.answer_world_question(
+                                    sunrise_launcher::worlds::Answer::Switch,
+                                );
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        crate::frame::primary("alt-world-stay", tr("Stay on this version"))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
+                                cx.notify();
+                            })),
+                    ),
+            );
+        frame("alt-world-question", 560., body, cx)
     }
 
     // ---- Resolve ----

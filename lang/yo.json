@@ -1461,5 +1461,11 @@
   "Couldn't build on your computer": "Couldn't build on your computer",
   "Removed, because they can't work with this version: {list}.": "Removed, because they can't work with this version: {list}.",
   "no version for {game}": "no version for {game}",
-  "{title} wasn't removed: {error}": "{title} wasn't removed: {error}"
+  "{title} wasn't removed: {error}": "{title} wasn't removed: {error}",
+  "{worlds} use {mods}. Switching removes {them}, and what {they} added to those worlds will be lost.": "{worlds} use {mods}. Switching removes {them}, and what {they} added to those worlds will be lost.",
+  "Some of your worlds use mods this would remove": "Some of your worlds use mods this would remove",
+  "Switch anyway": "Switch anyway",
+  "Stay on this version": "Stay on this version",
+  "it": "it",
+  "they": "they"
 }
