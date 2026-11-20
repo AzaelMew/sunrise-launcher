@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Rita inn aftur í tínum kaga.",
   "Sign in to Tailscale": "Rita inn á Tailscale Tailscale .",
   "Sign in to play": "Rita inn fyri at spæla",
-  "Sign in with Microsoft": "Rita inn við Microsoft Microsoft .",
   "Sign in with `sunrise-launcher account sign-in`.": "Rita inn við `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Rita inn við eina Microsoft kontu sum eigur Minecraft: Java Útgáva til at spæla",
   "Sign out": "Rita út",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Rita inn við Microsoft Microsoft ."
 }

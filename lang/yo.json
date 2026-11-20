@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Wọle lẹẹkansi ni aṣàwákiri rẹ.",
   "Sign in to Tailscale": "Wọle si Tailscale",
   "Sign in to play": "Wọle lati ṣere",
-  "Sign in with Microsoft": "Wọle pẹlu Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Wọlé pẹ̀lú `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Wọlé pẹlu akọọlẹ Microsoft kan ti o ni Minecraft: Java Ẹya lati mu ṣiṣẹ",
   "Sign out": "Wọlé jade",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Wọle pẹlu Microsoft"
 }

@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Браузерығыҙҙа яңынан инегеҙ.",
   "Sign in to Tailscale": "Tailscale сайтына инергә",
   "Sign in to play": "Уйнар өсөн инергә",
-  "Sign in with Microsoft": "Microsoft менән инергә",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` менән инегеҙ.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Minecraft Minecraft хужаһы булған Microsoft иҫәп яҙмаһы менән инеү: Java Уйнау өсөн баҫма",
   "Sign out": "Сығыу",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Microsoft менән инергә"
 }

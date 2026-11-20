@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "ลงชื่อเข้าใช้อีกครั้งในเบราว์เซอร์",
   "Sign in to Tailscale": "ลงชื่อเข้าใช้ Tailscale",
   "Sign in to play": "ลงชื่อเข้าใช้เพื่อเล่น",
-  "Sign in with Microsoft": "ลงชื่อเข้าใช้ด้วย Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "ลงชื่อเข้าใช้ด้วย `sunrise-launcher account sign-in`",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "ลงชื่อเข้าใช้ด้วยบัญชี Microsoft ที่มี Minecraft: Java Edition เพื่อเริ่มเล่น",
   "Sign out": "ออกจากระบบ",
@@ -1476,5 +1475,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "ลงชื่อเข้าใช้ด้วย Microsoft"
 }

@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Sínigh isteach arís i do bhrabhsálaí.",
   "Sign in to Tailscale": "Sínigh isteach ar Tailscale",
   "Sign in to play": "Sínigh isteach chun imirt",
-  "Sign in with Microsoft": "Sínigh isteach le Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Sínigh isteach le `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Sínigh isteach le cuntas Microsoft ar leis Minecraft: Java Edition é a imirt",
   "Sign out": "Sínigh amach",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Sínigh isteach le Microsoft"
 }

@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Ensalutu denove en via retumilo.",
   "Sign in to Tailscale": "Ensalutu al Tailscale",
   "Sign in to play": "Ensalutu por ludi",
-  "Sign in with Microsoft": "Ensalutu per Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Ensalutu per `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Ensalutu kun Microsoft konto kiu posedas Minecraft: Java Eldono por ludi",
   "Sign out": "Elsaluti",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Ensalutu per Microsoft"
 }

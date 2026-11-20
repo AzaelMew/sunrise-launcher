@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "브라우저에서 다시 로그인하세요.",
   "Sign in to Tailscale": "Tailscale 로그인",
   "Sign in to play": "플레이하려면 로그인",
-  "Sign in with Microsoft": "Microsoft로 로그인",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in`으로 로그인하세요.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "플레이하려면 Minecraft: Java Edition을 소유한 Microsoft 계정으로 로그인하세요.",
   "Sign out": "로그아웃",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Microsoft로 로그인"
 }

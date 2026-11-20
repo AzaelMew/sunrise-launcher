@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Logige oma brauseris uuesti sisse.",
   "Sign in to Tailscale": "Logige sisse Tailscale",
   "Sign in to play": "Mängimiseks logige sisse",
-  "Sign in with Microsoft": "Logige sisse Microsoftiga",
   "Sign in with `sunrise-launcher account sign-in`.": "Logige sisse käsuga `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Logige mängimiseks sisse Microsofti kontoga, millele kuulub Minecraft: Java Edition",
   "Sign out": "Logi välja",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Logige sisse Microsoftiga"
 }

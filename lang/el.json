@@ -413,7 +413,6 @@
   "Sign in again in your browser.": "Συνδεθείτε ξανά στο πρόγραμμα περιήγησής σας.",
   "Sign in to Tailscale": "Συνδεθείτε στο Tailscale",
   "Sign in to play": "Συνδεθείτε για να παίξετε",
-  "Sign in with Microsoft": "Συνδεθείτε με τη Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Συνδεθείτε με `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Συνδεθείτε με έναν λογαριασμό Microsoft στον οποίο ανήκει το Minecraft: Java Edition για αναπαραγωγή",
   "Sign out": "Αποσυνδεθείτε",
@@ -1468,5 +1467,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Συνδεθείτε με τη Microsoft"
 }
