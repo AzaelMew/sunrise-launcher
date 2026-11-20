@@ -186,13 +186,19 @@ impl Launcher {
                 .child(title(headline.into()));
             if let Some(plan) = plan {
                 panel = panel
-                    .child(muted(trf(
-                        "{from} → {to}",
-                        &[
-                            ("from", &build_name(plan.prior())),
-                            ("to", &build_name(plan.target())),
-                        ],
-                    )))
+                    .child(muted(match plan.prior() {
+                        Some(from) => trf(
+                            "{from} → {to}",
+                            &[
+                                ("from", &build_name(from)),
+                                ("to", &build_name(plan.target())),
+                            ],
+                        ),
+                        None => trf(
+                            "Profile game build: {build}",
+                            &[("build", &build_name(plan.target()))],
+                        ),
+                    }))
                     .children(
                         plan.question()
                             .lines()

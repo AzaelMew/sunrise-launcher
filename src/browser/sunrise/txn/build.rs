@@ -369,24 +369,32 @@ impl Active {
         effects: SwitchEffects,
         waiting: std::collections::BTreeMap<String, WaitingMod>,
     ) -> Result<Self, String> {
-        let mut receipts = self.receipts.clone();
-        if !effects.is_empty() {
-            let mut id = [0; 16];
-            getrandom::fill(&mut id).map_err(|e| e.to_string())?;
-            receipts.push(Receipt { id, effects });
-        }
-        let mut next = Self::capture(
+        Self::capture(
             self.profile,
             self.generation.checked_add(1).ok_or_else(unsettled)?,
             (base, executable),
             inputs(staged)?,
-            receipts,
+            self.receipts.clone(),
             staged,
             None,
-        )?;
-        next.waiting = waiting;
-        next.require_waiting_off(staged)?;
-        Ok(next)
+        )?
+        .with_switch_effects(staged, effects, waiting)
+    }
+
+    pub(super) fn with_switch_effects(
+        mut self,
+        staged: &Path,
+        effects: SwitchEffects,
+        waiting: std::collections::BTreeMap<String, WaitingMod>,
+    ) -> Result<Self, String> {
+        if !effects.is_empty() {
+            let mut id = [0; 16];
+            getrandom::fill(&mut id).map_err(|e| e.to_string())?;
+            self.receipts.push(Receipt { id, effects });
+        }
+        self.waiting = waiting;
+        self.require_waiting_off(staged)?;
+        Ok(self)
     }
 
     pub(super) fn require_waiting_off(&self, home: &Path) -> Result<(), String> {

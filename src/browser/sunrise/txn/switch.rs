@@ -41,7 +41,7 @@ pub(super) struct Inventory {
 /// The only caller permission it accepts is committing this very value, or dropping it.
 pub struct Switch {
     owner: Arc<Lease>,
-    prior: Active,
+    basis: Basis,
     next: Active,
     initial_inputs: [u8; 32],
     index: String,
@@ -50,6 +50,11 @@ pub struct Switch {
     question: worlds::SwitchQuestion,
     effects: SwitchEffects,
     live: bool,
+}
+
+enum Basis {
+    Committed(Active),
+    First(build::Bootstrap),
 }
 
 impl Switch {
@@ -61,19 +66,27 @@ impl Switch {
         progress: impl Fn(native_mods::Step),
     ) -> Result<Option<Self>, String> {
         build::validate_tag(tag)?;
-        let prior = owner.active_build()?.ok_or_else(|| {
-            tr("Play this profile once before switching its game build.").to_string()
-        })?;
-        if prior.base() == tag {
+        let prior = owner.active_build()?;
+        if prior.as_ref().is_some_and(|prior| prior.base() == tag) {
             return Ok(None);
         }
         if native_mods::is_native(tag) {
             return Err(unsettled());
         }
-        prior.verify_artifacts()?;
         backend::need_prepared(tag)?;
-        let root = owner.reserve_switch(&prior, tag)?;
-        match Self::plan(owner.clone(), prior, tag, profile, &root, progress) {
+        let (root, basis) = match prior {
+            Some(prior) => {
+                prior.verify_artifacts()?;
+                (owner.reserve_switch(&prior, tag)?, Basis::Committed(prior))
+            }
+            None => {
+                let target =
+                    super::Target::first_play(tag, |_| Err(backend::no_version_installed()))?;
+                let (root, binding) = owner.reserve_first_switch(&target)?;
+                (root, Basis::First(binding))
+            }
+        };
+        match Self::plan(owner.clone(), basis, tag, profile, &root, progress) {
             Ok(plan) => Ok(Some(plan)),
             Err(error) => {
                 owner.recover_abandoned()?;
@@ -84,7 +97,7 @@ impl Switch {
 
     fn plan(
         owner: Arc<Lease>,
-        prior: Active,
+        basis: Basis,
         tag: &str,
         profile: native_mods::Profile,
         root: &Path,
@@ -92,8 +105,10 @@ impl Switch {
     ) -> Result<Self, String> {
         let home = owner.home();
         let initial_inputs = build::inputs(home)?;
-        if initial_inputs != prior.inputs {
-            return Err(tr("The profile's mods have changed since it last played. Play it before switching builds.").into());
+        match &basis {
+            Basis::Committed(prior) if initial_inputs != prior.inputs => return Err(tr("The profile's mods have changed since it last played. Play it before switching builds.").into()),
+            Basis::First(binding) => binding.verify(home)?,
+            Basis::Committed(_) => {}
         }
         let source = Inventory::read(home)?;
         let game = backend::game_of_build(tag).ok_or_else(unsettled)?;
@@ -170,7 +185,14 @@ impl Switch {
                 namespaces: &old.manifest.namespaces,
             })
             .collect();
-        let next = prior.switched(tag, &image, prepared.path(), effects.clone(), waiting)?;
+        let next = match &basis {
+            Basis::Committed(prior) => {
+                prior.switched(tag, &image, prepared.path(), effects.clone(), waiting)?
+            }
+            Basis::First(binding) => binding
+                .first_generation(&image, prepared.path(), build::inputs(prepared.path())?)?
+                .with_switch_effects(prepared.path(), effects.clone(), waiting)?,
+        };
         let mut order = backend::WorldBuildOrder::for_target(tag);
         let (fence, question) = worlds::switch::Fence::hold(
             home,
@@ -187,7 +209,7 @@ impl Switch {
         owner.seal_staged_set(&next, &files)?;
         Ok(Self {
             owner,
-            prior,
+            basis,
             next,
             initial_inputs,
             index,
@@ -206,8 +228,11 @@ impl Switch {
     pub fn target(&self) -> &str {
         self.next.base()
     }
-    pub fn prior(&self) -> &str {
-        self.prior.base()
+    pub fn prior(&self) -> Option<&str> {
+        match &self.basis {
+            Basis::Committed(prior) => Some(prior.base()),
+            Basis::First(_) => None,
+        }
     }
     pub fn question(&self) -> &worlds::SwitchQuestion {
         &self.question
@@ -229,10 +254,15 @@ impl Switch {
         if build::inputs(home)? != self.initial_inputs {
             return Err(unsettled());
         }
-        self.prior.verify_artifacts()?;
         self.next.verify_artifacts()?;
         self.owner.publish_staged_set(|| {
-            self.prior.verify_resources()?;
+            match &self.basis {
+                Basis::Committed(prior) => {
+                    prior.verify_artifacts()?;
+                    prior.verify_resources()?;
+                }
+                Basis::First(binding) => binding.verify_artifact()?,
+            }
             self.next.verify_resources()?;
             cutoff()?;
             self.cancellation.publication_guard(self.next.executable())

@@ -82,7 +82,15 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
         writeln!(output, "{}", serde_json::json!({"profile":instance.id,"from":plan.prior(),"to":tag,"world_risks":lines,"waiting_for_update":plan.effects().waiting_for_update,"removed":plan.effects().removed}))
             .map_err(|e| e.to_string())?;
     } else {
-        writeln!(output, "{} → {tag}", plan.prior()).map_err(|e| e.to_string())?;
+        match plan.prior() {
+            Some(prior) => writeln!(output, "{prior} → {tag}"),
+            None => writeln!(
+                output,
+                "{}",
+                trf("Profile game build: {build}", &[("build", tag)])
+            ),
+        }
+        .map_err(|e| e.to_string())?;
         for line in lines {
             terminal_line(&mut output, &line).map_err(|e| e.to_string())?;
         }

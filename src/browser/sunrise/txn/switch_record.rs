@@ -1,6 +1,8 @@
 //! The exact, bounded live steps of a Switch. No registry, resolver or compiler participates in
 //! the publishing phase or in recovery.
-use super::{build, durable, read, unsettled, write, Active, Image, Intent, Lease, Record};
+use super::{
+    build, durable, read, unsettled, write, Active, FirstSwitch, Image, Intent, Lease, Record,
+};
 use cap_fs_ext::MetadataExt;
 use cap_std::{ambient_authority, fs::Dir};
 use serde::{Deserialize, Serialize};
@@ -77,7 +79,7 @@ impl Journal {
             (Some(before), None) if (before.base() == self.target) == same_base => {
                 (before.profile, before.generation)
             }
-            (None, Some(bootstrap)) if same_base && bootstrap.target.base() == self.target => {
+            (None, Some(bootstrap)) if bootstrap.target.base() == self.target => {
                 (bootstrap.profile, 0)
             }
             _ => return Err(unsettled()),
@@ -244,6 +246,14 @@ impl Lease {
         Ok((path, bootstrap.ok_or_else(unsettled)?))
     }
 
+    pub(super) fn reserve_first_switch(
+        &self,
+        target: &super::Target,
+    ) -> Result<(PathBuf, build::Bootstrap), String> {
+        let (path, binding) = self.reserve_staged(None, target.base(), Some(target), false)?;
+        Ok((path, binding.ok_or_else(unsettled)?))
+    }
+
     fn reserve_staged(
         &self,
         prior: Option<&Active>,
@@ -257,22 +267,50 @@ impl Lease {
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let before = build::optional_bytes(&home.join(build::FILE))?;
         let record = read(home)?;
-        let bootstrap = match (prior, before.as_deref(), record.as_ref()) {
-            (Some(prior), Some(before), None) if build::parse(before)? == *prior => None,
-            (None, None, Some(record))
-                if same_base && record.staged().is_none() && record.pointer.is_none() =>
+        let previous = record.as_ref().and_then(Record::bootstrap).cloned();
+        let bootstrap = match (prior, before.as_deref(), bound) {
+            (Some(prior), Some(before), None)
+                if record.is_none() && build::parse(before)? == *prior =>
             {
-                let binding = record.bootstrap().cloned().ok_or_else(unsettled)?;
-                if bound != Some(&binding.target) {
-                    return Err(unsettled());
-                }
-                binding.verify(home)?;
+                None
+            }
+            (None, None, Some(target))
+                if record.as_ref().is_none_or(|record| {
+                    record.staged().is_none()
+                        && record.pointer.is_none()
+                        && record.attempts.is_empty()
+                }) =>
+            {
+                let binding = if same_base {
+                    let binding = previous
+                        .clone()
+                        .filter(|binding| binding.target == *target)
+                        .ok_or_else(unsettled)?;
+                    binding.verify(home)?;
+                    binding
+                } else {
+                    if target.download.is_some() {
+                        return Err(unsettled());
+                    }
+                    let mut binding = build::Bootstrap::bind(home, target.clone())?;
+                    if let Some(previous) = &previous {
+                        binding.profile = previous.profile;
+                    }
+                    binding
+                };
                 binding.verify_artifact()?;
                 Some(binding)
             }
             _ => return Err(unsettled()),
         };
         let root = home.join("mod-browser");
+        match fs::create_dir(&root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                build::require_dir(&root)?
+            }
+            Err(error) => return Err(fail_at(&root, error)),
+        }
         let dir = tempfile::Builder::new()
             .prefix(".install-txn-")
             .tempdir_in(&root)
@@ -303,7 +341,12 @@ impl Lease {
                 staged: Some(operation),
             }
         } else {
-            Intent::Switch { operation }
+            Intent::Switch {
+                operation,
+                first: bootstrap
+                    .clone()
+                    .map(|target| Box::new(FirstSwitch { target, previous })),
+            }
         };
         // A reported flush error can still leave the record visible. Keep its directory.
         let path = dir.keep();
@@ -328,7 +371,7 @@ impl Lease {
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let mut record = read(home)?.ok_or_else(unsettled)?;
         let same_base = matches!(record.intent, Intent::Install { .. });
-        let bootstrap = record.bootstrap().cloned();
+        let bootstrap = record.staged_binding().cloned();
         let journal = operation(&mut record)?;
         if journal.phase != Phase::Staging {
             return Err(unsettled());
@@ -420,7 +463,7 @@ impl Lease {
 
 fn operation(record: &mut Record) -> Result<&mut Journal, String> {
     match &mut record.intent {
-        Intent::Switch { operation }
+        Intent::Switch { operation, .. }
         | Intent::Install {
             staged: Some(operation),
             ..
@@ -526,7 +569,7 @@ fn recover_at(
     record: &mut Record,
     mut before_advance: impl FnMut(usize),
 ) -> Result<(), String> {
-    let bootstrap = record.bootstrap().cloned();
+    let bootstrap = record.retained_binding().cloned();
     let journal = operation(record)?;
     let committed = journal.phase == Phase::Committed;
     let staging = journal.staging(home);
@@ -662,6 +705,20 @@ mod tests {
         let (stage, next) = if kind == "first" {
             let bound = owner.bind_bootstrap(|| Ok(target)).unwrap();
             let (stage, binding) = owner.reserve_first_install(&bound).unwrap();
+            (stage, binding.test_active())
+        } else if matches!(kind, "unbound" | "pending") {
+            if kind == "pending" {
+                owner.bind_bootstrap(|| Ok(target)).unwrap();
+            }
+            let new = Target::legacy("nightly-new").unwrap();
+            let (stage, binding) = owner.reserve_first_switch(&new).unwrap();
+            let record = read(&home).unwrap().unwrap();
+            if let Some(previous) = record.retained_binding() {
+                assert_eq!(previous.profile, binding.profile);
+                assert_eq!(previous.target.base(), "nightly-original");
+            } else {
+                assert_eq!(kind, "unbound");
+            }
             (stage, binding.test_active())
         } else {
             let prior = Bootstrap::bind(&home, target)
@@ -827,10 +884,12 @@ mod tests {
 
     #[test]
     fn admission_after_staged_kills_restores_the_old_or_committed_exact_set() {
-        for (kind, boundary) in ["switch", "install", "first"]
+        for (kind, boundary) in ["switch", "install", "first", "unbound", "pending"]
             .into_iter()
             .flat_map(|kind| ["root", "files", "pointer", "marker"].map(|b| (kind, b)))
         {
+            let first_generation = matches!(kind, "first" | "unbound" | "pending");
+            let retained = matches!(kind, "first" | "pending");
             let home = tempfile::tempdir().unwrap();
             let home = home.path();
             fs::create_dir(home.join("sunrise-native-mods")).unwrap();
@@ -867,7 +926,7 @@ mod tests {
                     assert!(Lease::admit(home).is_err());
                     assert_eq!(
                         build::read(home).unwrap().map(|active| active.generation()),
-                        (kind != "first").then_some(1)
+                        (!first_generation).then_some(1)
                     );
                     assert!(home.join("sunrise-mods/new.smod").is_file());
                 });
@@ -892,20 +951,20 @@ mod tests {
                 assert!(crate::browser::mod_list::set_enabled(home, "waiting", true).is_err());
                 assert_eq!(
                     committed.base(),
-                    if kind == "switch" {
+                    if matches!(kind, "switch" | "unbound" | "pending") {
                         "nightly-new"
                     } else {
                         "nightly-original"
                     }
                 );
-                assert_eq!(committed.generation(), if kind == "first" { 1 } else { 2 });
+                assert_eq!(committed.generation(), if first_generation { 1 } else { 2 });
                 assert_eq!(
                     fs::read(home.join("sunrise-mods/new.smod")).unwrap(),
                     b"new mod"
                 );
                 assert_eq!(
                     admission.acknowledge_switch([1; 16]).unwrap(),
-                    kind != "first"
+                    !first_generation
                 );
                 drop(admission);
                 let reopened = Lease::admit(home).unwrap();
@@ -926,13 +985,15 @@ mod tests {
                     b"mod.waiting:false\n"
                 );
             } else {
-                if kind == "first" {
+                if first_generation {
                     assert!(committed.is_none());
-                    let bound = admission
-                        .play_target(|| panic!("retained first-install binding"))
-                        .unwrap();
-                    assert_eq!(bound.base(), "nightly-original");
-                    assert!(read(home).unwrap().unwrap().staged().is_none());
+                    if retained {
+                        let bound = admission
+                            .play_target(|| panic!("retained prior binding"))
+                            .unwrap();
+                        assert_eq!(bound.base(), "nightly-original");
+                        assert!(read(home).unwrap().unwrap().staged().is_none());
+                    }
                 } else {
                     let committed = committed.unwrap();
                     assert_eq!(committed.base(), "nightly-original");
@@ -955,7 +1016,7 @@ mod tests {
             }
             assert_eq!(
                 read(home).unwrap().is_none(),
-                kind != "first" || boundary == "marker"
+                !retained || boundary == "marker"
             );
         }
     }

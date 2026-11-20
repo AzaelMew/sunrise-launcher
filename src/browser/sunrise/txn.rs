@@ -266,7 +266,17 @@ enum Intent {
     },
     Switch {
         operation: Box<switch_record::Journal>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        first: Option<Box<FirstSwitch>>,
     },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FirstSwitch {
+    target: build::Bootstrap,
+    /// A prior interrupted Play can retain its own exact binding if the player cancels.
+    previous: Option<build::Bootstrap>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -312,7 +322,7 @@ impl Record {
     fn staged(&self) -> Option<&switch_record::Journal> {
         match &self.intent {
             Intent::Install { staged, .. } => staged.as_deref(),
-            Intent::Switch { operation } => Some(operation),
+            Intent::Switch { operation, .. } => Some(operation),
         }
     }
 
@@ -320,6 +330,22 @@ impl Record {
         match &self.intent {
             Intent::Install { bootstrap, .. } => bootstrap.as_deref(),
             Intent::Switch { .. } => None,
+        }
+    }
+
+    fn staged_binding(&self) -> Option<&build::Bootstrap> {
+        match &self.intent {
+            Intent::Install { bootstrap, .. } => bootstrap.as_deref(),
+            Intent::Switch { first, .. } => first.as_deref().map(|first| &first.target),
+        }
+    }
+
+    fn retained_binding(&self) -> Option<&build::Bootstrap> {
+        match &self.intent {
+            Intent::Install { bootstrap, .. } => bootstrap.as_deref(),
+            Intent::Switch { first, .. } => {
+                first.as_deref().and_then(|first| first.previous.as_ref())
+            }
         }
     }
 }
@@ -687,9 +713,13 @@ pub(crate) fn references(tag: &str) -> Result<bool, String> {
                     return Ok(true);
                 }
             }
-            if record.bootstrap().is_some_and(|pending| {
-                same(pending.target.base()) || same(pending.target.preferred_image())
-            }) {
+            if [record.staged_binding(), record.retained_binding()]
+                .into_iter()
+                .flatten()
+                .any(|pending| {
+                    same(pending.target.base()) || same(pending.target.preferred_image())
+                })
+            {
                 return Ok(true);
             }
             if let Some(pointer) = &record.pointer {
@@ -794,8 +824,23 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
             return Err(kept(unsettled()));
         }
         let same_base = matches!(record.intent, Intent::Install { .. });
+        if let Intent::Switch {
+            first: Some(first), ..
+        } = &record.intent
+        {
+            first.target.validate().map_err(kept)?;
+            if first.target.profile == [0; 16] || first.target.target.download.is_some() {
+                return Err(kept(unsettled()));
+            }
+            if let Some(previous) = &first.previous {
+                previous.validate().map_err(kept)?;
+                if previous.profile != first.target.profile {
+                    return Err(kept(unsettled()));
+                }
+            }
+        }
         operation
-            .validate(same_base, record.bootstrap())
+            .validate(same_base, record.staged_binding())
             .map_err(kept)?;
     }
     use std::path::Component;
