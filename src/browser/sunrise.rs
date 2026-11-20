@@ -1138,7 +1138,7 @@ pub fn remove_checked(home: &Path, wanted: &[(String, String)]) -> Result<Vec<St
 /// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
 /// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in
 /// `sunrise-mods.txt`.
-pub fn install(
+pub(super) fn install(
     project: &Project,
     home: &Path,
     game: &str,
@@ -1174,7 +1174,7 @@ pub fn install(
 
 /// Installs the registry mods `projects` together (what each needs too) as one attempt: one plan,
 /// one world question and one publish for the set, so a failure leaves none of them installed.
-pub fn install_set(
+pub(super) fn install_set(
     projects: &[Project],
     home: &Path,
     game: &str,

@@ -327,32 +327,49 @@ pub fn install(
     approvals: &[Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, InstallError> {
-    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    if project.source == SourceId::Sunrise {
-        return super::sunrise::install(project, home, game, approvals, progress);
-    }
-    let steps = plan(source, project, everything, game)?;
-    Ok(put(
-        source,
-        steps,
-        home,
-        &|kind| kind.folder().expect("plan keeps folder kinds"),
-        progress,
-    )?)
+    super::sunrise::txn::Lease::acquire(home)?
+        .install(source, project, everything, game, approvals, progress)
 }
 
-/// Installs the registry mods `projects` together into `home` as one attempt
-/// ([`super::sunrise::install_set`]): one world question for the set, and none of them installed if
-/// anything fails.
-pub fn install_set(
-    projects: &[Project],
-    home: &Path,
-    game: &str,
-    approvals: &[Approval],
-    progress: &dyn Fn(&str, f32),
-) -> Result<Vec<Entry>, InstallError> {
-    let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
-    super::sunrise::install_set(projects, home, game, approvals, progress)
+impl super::sunrise::txn::Lease {
+    /// Installs into the leased profile. The launcher keeps the lease if a build is owed.
+    pub fn install(
+        &self,
+        source: &dyn Source,
+        project: &Project,
+        everything: bool,
+        game: &str,
+        approvals: &[Approval],
+        progress: &dyn Fn(&str, f32),
+    ) -> Result<Vec<Entry>, InstallError> {
+        let home = self.home();
+        let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+        if super::sunrise::txn::has_build(home)? {
+            return Err(super::sunrise::txn::unsettled().into());
+        }
+        if project.source == SourceId::Sunrise {
+            return super::sunrise::install(project, home, game, approvals, progress);
+        }
+        let steps = plan(source, project, everything, game)?;
+        Ok(put(
+            source,
+            steps,
+            home,
+            &|kind| kind.folder().expect("plan keeps folder kinds"),
+            progress,
+        )?)
+    }
+
+    /// Installs the registry mods together: one world question and one transaction for the set.
+    pub fn install_set(
+        &self,
+        projects: &[Project],
+        game: &str,
+        approvals: &[Approval],
+        progress: &dyn Fn(&str, f32),
+    ) -> Result<Vec<Entry>, InstallError> {
+        super::sunrise::install_set(projects, self.home(), game, approvals, progress)
+    }
 }
 
 /// Downloads each step's file into `home`, in the folder `folder` names for its kind, and lists

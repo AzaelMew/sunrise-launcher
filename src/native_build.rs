@@ -28,27 +28,35 @@ impl Launcher {
     ) {
         // A question about worlds, or mods waiting to be removed, is answered first.
         if self.native_step.is_some()
+            || self.mods.busy.is_some()
             || self.mods.world_ask.is_some()
             || !self.mods.removal.is_empty()
         {
             return;
         }
-        // Every way to a build asks first while native mods aren't allowed (permission taken
-        // back in Storage, say, with a card still open): the question, never a refusal.
-        // The card stays under the question: Cancel goes back to it.
-        if self.settings.native_mods_allowed_at.is_none() {
-            self.request_native_build_consent();
-            self.native_consent_build = Some((base, leave_out));
-            return;
-        }
-        self.pending_consent = None;
         self.native_error = None;
         self.native_failed_mods.clear();
         self.mods.unbuilt = None;
         // This attempt's own log, starting empty: an open panel shows it rather than the last
         // attempt's (`native_log_page`).
         self.native_log_reset();
-        let instance = instances::selected();
+        let instance = if self.native_attempts.is_some() {
+            // A world or consent answer retries the sealed batch, never a newly selected home.
+            let Some(instance) = self
+                .instances
+                .list
+                .iter()
+                .find(|instance| self.native_for.as_deref() == Some(instance.id.as_str()))
+            else {
+                self.install_build_ended(crate::mods_page::BuildEnd::Stopped(
+                    native_mods::CANCELLED.into(),
+                ));
+                return;
+            };
+            instance.clone()
+        } else {
+            instances::selected()
+        };
         self.native_for = Some(instance.id.clone());
         let plays = self.version_of(&instance).cloned();
         let base = base.or_else(|| native_mods::base_for(plays.as_deref(), &self.installed, false));
@@ -59,21 +67,57 @@ impl Launcher {
             self.play_after_build = None;
             return;
         };
-        // The installs waiting for this build keep its tag in their record.
-        self.native_attempts =
-            sunrise_launcher::browser::sunrise::txn::mark_build(&instance.home, &base);
+        // Seal the batch before reading the build's inputs. A retry after a decision has
+        // the same lease and attempt IDs; worker and UI keep the owner alive through reaping.
+        use sunrise_launcher::browser::sunrise::txn::Lease;
+        let batch = (|| {
+            let lease = match self.mods.install_owners.get(&instance.id) {
+                Some(lease) => lease.clone(),
+                None => {
+                    let lease = Lease::acquire(&instance.home)?;
+                    lease.recover_abandoned()?;
+                    std::sync::Arc::new(lease)
+                }
+            };
+            let ids = lease.mark_build(&base)?;
+            Ok::<_, String>((lease, ids))
+        })();
+        let lease = match batch {
+            Ok((lease, ids)) => {
+                self.native_attempts = Some((lease.clone(), ids));
+                lease
+            }
+            Err(error) => {
+                self.native_log_preflight(&error);
+                self.native_error = Some(error);
+                self.play_after_build = None;
+                return;
+            }
+        };
+        // A build won't read inputs until native-code permission is given. Keep the sealed
+        // batch across the question, so Cancel can restore it and Allow retries the same base.
+        if self.settings.native_mods_allowed_at.is_none() {
+            self.request_native_build_consent();
+            self.native_consent_build = Some((Some(base), leave_out));
+            return;
+        }
+        self.pending_consent = None;
         // The mods this build is given: its failure is read against them, even if another
         // instance is selected by the time it ends.
-        self.native_built_mods = native_status::enabled(&self.mods.home())
+        self.native_built_mods = native_status::enabled(&instance.home)
             .into_iter()
             .map(|(id, ..)| id)
             .collect();
-        let folder = match self.native_mods_to_build() {
-            Ok((folder, _)) => folder,
+        let folder = match native_mods::installed_mods(&instance.home).and_then(|folder| {
+            native_mods::bundles(&folder)?;
+            Ok(folder)
+        }) {
+            Ok(folder) => folder,
             Err(e) => {
                 self.native_log_preflight(&e);
-                self.native_error = Some(e);
+                self.native_error = Some(e.clone());
                 self.play_after_build = None;
+                self.install_build_ended(crate::mods_page::BuildEnd::Stopped(e));
                 return;
             }
         };
@@ -131,6 +175,7 @@ impl Launcher {
                 },
                 move || catalogue,
             );
+            drop(lease);
             let _ = tx.send(Msg::Native(
                 result.map(native_mods::ClientBuild::into_version),
             ));

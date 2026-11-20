@@ -1489,5 +1489,6 @@
   "Close the game to update": "Close the game to update",
   "Updates": "Updates",
   "a development build of the launcher made it": "a development build of the launcher made it",
-  "its backups are not where the launcher keeps them": "its backups are not where the launcher keeps them"
+  "its backups are not where the launcher keeps them": "its backups are not where the launcher keeps them",
+  "Another launcher is working on this profile. Try again when it finishes.": "Another launcher is working on this profile. Try again when it finishes."
 }

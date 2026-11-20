@@ -29,7 +29,7 @@ pub(super) fn install(
         .map_err(|e| format!("{}: {e}", home.display()))?;
     // An install an earlier run left half done is undone first; while it can't be, nothing new
     // is begun on top of its list.
-    super::txn::settle(home)?;
+    super::txn::settle_owned(home)?;
     let mut installed = installed::Installed::load(home);
     // An approval that waited in a queue is read again here, under the lock: each mod it
     // removes must still be the file the player saw, and a world that uses it must have been
@@ -315,8 +315,12 @@ pub(super) fn remove_checked(
     home: &Path,
     wanted: &[(String, String)],
 ) -> Result<Vec<String>, String> {
+    let _lease = super::txn::Lease::acquire(home)?;
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    super::txn::settle(home)?;
+    super::txn::settle_owned(home)?;
+    if super::txn::has_build(home)? {
+        return Err(super::txn::unsettled());
+    }
     let mut list = installed::Installed::load(home);
     let (gone, kept): (Vec<_>, Vec<_>) = list.entries.drain(..).partition(|e| {
         e.source == SourceId::Sunrise
