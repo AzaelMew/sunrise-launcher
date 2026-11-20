@@ -3,7 +3,7 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 
-pub(super) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = record.parent().expect("inside the profile");
     fs::create_dir_all(dir)?;
     let mut next = tempfile::Builder::new().prefix(".txn-").tempfile_in(dir)?;

@@ -35,6 +35,7 @@ pub use build::{
     active_stamp, displayed_image, waiting_for_update, Active, Receipt, SwitchEffects, Target,
     WaitingMod,
 };
+pub(crate) use durable::replace as replace_local_record;
 pub(super) use staged_install::{
     detach_private_profile, expose_private_profile, seal_private_profile, StagedInstall,
 };
