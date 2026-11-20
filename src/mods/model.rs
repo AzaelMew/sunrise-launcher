@@ -582,6 +582,12 @@ pub(super) enum Group {
     Rest,
 }
 
+/// Whether the list names its groups: only when something is under Updates. With one group
+/// left (everything else) a heading would say nothing; the count row below says how many show.
+pub(super) fn names_groups(groups: impl IntoIterator<Item = Group>) -> bool {
+    groups.into_iter().any(|g| g == Group::Updates)
+}
+
 impl Row {
     pub(super) fn group(&self) -> Group {
         if self.update.is_some() {
