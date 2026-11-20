@@ -376,10 +376,12 @@ impl Launcher {
     fn header(&mut self, cx: &mut Context<Self>) -> Div {
         let p = palette();
         let active = self.ui.page.active_tab();
+        let compact = self.window_width < 900. && self.settings.sidebar_expanded;
+        // Keep every destination readable; the account chip can shorten its label.
         let mut tabs = div()
             .flex()
+            .flex_none()
             .items_center()
-            .min_w_0()
             .gap(px(if self.window_width < 1000. { 2. } else { 10. }));
         for (dest, id, icon, label) in [
             (Page::Home, "nav-home", "home", tr("Home")),
@@ -390,7 +392,6 @@ impl Launcher {
         ] {
             let on = active == dest;
             let colour = if on { p.chrome_text } else { p.chrome_muted };
-            let compact = self.window_width < 900. && self.settings.sidebar_expanded;
             tabs = tabs.child(
                 div()
                     .id(id)
@@ -401,8 +402,15 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .gap(px(7.))
-                    .px(px(if self.window_width < 1000. { 8. } else { 14. }))
+                    .px(px(if compact {
+                        7.
+                    } else if self.window_width < 1000. {
+                        8.
+                    } else {
+                        14.
+                    }))
                     .h(px(42.))
+                    .whitespace_nowrap()
                     .text_color(rgb(colour))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.chrome_raised)))
@@ -448,6 +456,7 @@ impl Launcher {
             .child(
                 div()
                     .flex()
+                    .min_w_0()
                     .items_center()
                     .gap(px(10.))
                     .child(self.search_button(cx))

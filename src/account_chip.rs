@@ -120,9 +120,10 @@ impl Launcher {
     pub(crate) fn account_chip(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         if self.accounts.accounts.is_empty() {
             let p = palette();
+            let label = tr("Sign in with Microsoft");
             return crate::frame::input(false)
                 .id("account-sign-in")
-                .flex_none()
+                .min_w_0()
                 .h(px(tokens::FIELD))
                 .px(px(12.))
                 .gap(px(8.))
@@ -133,8 +134,9 @@ impl Launcher {
                 .cursor_pointer()
                 .hover(move |s| s.bg(rgb(p.chrome_raised)))
                 .reach_edge()
+                .tooltip(crate::glass_ui::tip(label))
                 .child(crate::microsoft::logo(18.))
-                .child(tr("Sign in with Microsoft"))
+                .child(div().min_w_0().truncate().child(label))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.account_action(Action::Add);
                     cx.notify();
@@ -151,7 +153,7 @@ impl Launcher {
         let seen = self.account_menu.chip.clone();
         div()
             .id("account-chip")
-            .flex_none()
+            .min_w_0()
             .flex()
             .items_center()
             .gap(px(10.))
@@ -188,6 +190,7 @@ impl Launcher {
                     )
                     .child(
                         div()
+                            .truncate()
                             .text_size(px(tokens::CAPTION))
                             .text_color(rgb(palette().chrome_muted))
                             .child(tr("Microsoft account")),
