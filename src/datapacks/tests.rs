@@ -137,3 +137,31 @@ fn coverage_says_what_runs() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_data_pack_mcmeta_with_a_byte_order_mark_or_comments_is_listed() {
+    let root = scratch("lenient-meta");
+    let packs = root.join("datapacks");
+    zip_file(
+        &packs.join("Bom.zip"),
+        &[("pack.mcmeta", "\u{feff}{\"pack\":{\"description\":\"B\"}}")],
+    );
+    fs::create_dir_all(packs.join("Note")).unwrap();
+    fs::write(
+        packs.join("Note/pack.mcmeta"),
+        "{\"pack\":{\"description\":\"N\"} // trailing note\n}",
+    )
+    .unwrap();
+    let seen: Vec<(String, String)> = list(&root)
+        .into_iter()
+        .map(|p| (p.file, p.description))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Bom.zip".to_string(), "B".to_string()),
+            ("Note".to_string(), "N".to_string())
+        ]
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

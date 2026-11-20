@@ -290,7 +290,7 @@ fn read_named(
                 return None;
             }
             let [meta, icon] = entries(path, [Some("pack.mcmeta"), pictured.then_some("pack.png")]);
-            let meta: serde_json::Value = serde_json::from_slice(&meta?).ok()?;
+            let meta = pack_meta(&meta?)?;
             (file.clone(), plain(&meta["pack"]["description"]), icon)
         }
         Kind::Shader if path.join(SHADER_MANIFEST).is_file() || ext(SHADER_PACKAGE) => {
@@ -371,6 +371,44 @@ pub fn artwork(path: &Path, kind: Kind) -> Option<Vec<u8>> {
         Kind::Shader => return None,
     };
     entry(path, name)
+}
+
+/// A `pack.mcmeta` read the way the game's JSON reader does: a leading byte order mark is
+/// skipped and `//` and `/* */` comments are ignored. Anything unreadable gives `None`.
+pub(crate) fn pack_meta(bytes: &[u8]) -> Option<serde_json::Value> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut clean = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                in_string = !in_string;
+                clean.push(c);
+            }
+            '\\' if in_string => {
+                clean.push(c);
+                clean.extend(chars.next());
+            }
+            '/' if !in_string && chars.peek() == Some(&'/') => {
+                while chars.next_if(|&n| n != '\n').is_some() {}
+            }
+            '/' if !in_string && chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for n in chars.by_ref() {
+                    if last == '*' && n == '/' {
+                        break;
+                    }
+                    last = n;
+                }
+                clean.push(' ');
+            }
+            c => clean.push(c),
+        }
+    }
+    serde_json::from_str(&clean).ok()
 }
 
 /// A text component as plain text: its strings, without `§` formatting codes.

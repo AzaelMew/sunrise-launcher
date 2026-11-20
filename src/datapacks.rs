@@ -2,7 +2,7 @@
 //! the game discovers them (`datapack::discover`). The game turns on every pack it finds there
 //! that `<world>/datapacks.json` doesn't list as disabled, when the world opens or on `/reload`,
 //! so adding one is copying it in.
-use crate::packs::{entry, plain};
+use crate::packs::{entry, pack_meta, plain};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -49,8 +49,7 @@ pub fn list(world: &Path) -> Vec<DataPack> {
             if !(zip || path.is_dir()) {
                 return None;
             }
-            let meta: serde_json::Value =
-                serde_json::from_slice(&entry(&path, "pack.mcmeta")?).ok()?;
+            let meta = pack_meta(&entry(&path, "pack.mcmeta")?)?;
             Some(DataPack {
                 enabled: !off.contains(&format!("file/{file}")),
                 description: plain(&meta["pack"]["description"]),

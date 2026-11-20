@@ -731,7 +731,12 @@ fn a_listing_reads_only_the_pictures_it_was_asked_for() {
 fn a_resource_pack_file_is_listed_only_when_its_name_ends_in_zip() {
     let home = scratch("zip-name");
     let rp = home.join("resourcepacks");
-    for name in ["Renamed.jar", "Paused.zip.disabled", "Upper.ZIP", "Plain.zip"] {
+    for name in [
+        "Renamed.jar",
+        "Paused.zip.disabled",
+        "Upper.ZIP",
+        "Plain.zip",
+    ] {
         zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
     }
     fs::create_dir_all(rp.join("Folder.jar")).unwrap();
@@ -745,5 +750,35 @@ fn a_resource_pack_file_is_listed_only_when_its_name_ends_in_zip() {
     zip_file(&drops.join("Dropped.ZIP"), &[("pack.mcmeta", META)]);
     assert!(add(&home, &drops.join("Dropped.ZIP")).is_err());
     assert!(!rp.join("Dropped.ZIP").exists());
+    fs::remove_dir_all(&home).unwrap();
+}
+
+#[test]
+fn a_pack_mcmeta_with_a_byte_order_mark_or_comments_is_read() {
+    let home = scratch("lenient-meta");
+    let rp = home.join("resourcepacks");
+    let bom = "\u{feff}{\"pack\":{\"description\":\"Bom\"}}";
+    let commented =
+        "// made by hand\n{\"pack\":{/* why */\"description\":\"A // b \\\" /* c */\"}}";
+    zip_file(&rp.join("Bom.zip"), &[("pack.mcmeta", bom.as_bytes())]);
+    zip_file(
+        &rp.join("Note.zip"),
+        &[("pack.mcmeta", commented.as_bytes())],
+    );
+    zip_file(
+        &rp.join("Open.zip"),
+        &[("pack.mcmeta", b"{\"pack\":/* never closed")],
+    );
+    let seen: Vec<(String, String)> = list(&home, Kind::Resource)
+        .into_iter()
+        .map(|p| (p.file, p.description))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Bom.zip".to_string(), "Bom".to_string()),
+            ("Note.zip".to_string(), "A // b \" /* c */".to_string())
+        ]
+    );
     fs::remove_dir_all(&home).unwrap();
 }
