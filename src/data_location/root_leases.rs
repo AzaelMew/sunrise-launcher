@@ -60,14 +60,14 @@ impl Registry {
     }
 
     pub(super) fn acquire(&self, roots: &[&Path], exclusive: bool) -> Result<MigrationLease> {
-        let roots = roots
-            .iter()
-            .map(|root| canonical_data_path(root))
-            .collect::<Result<Vec<_>>>()?;
         let gate = self.0.join("gate.lock");
         let file = open_lock_file(&gate)?;
         file.lock().map_err(|error| problem(&gate, error))?;
         let _gate = MigrationLease(file);
+        let roots = roots
+            .iter()
+            .map(|root| claim_key(root).map(|key| (*root, key)))
+            .collect::<Result<Vec<_>>>()?;
 
         for entry in fs::read_dir(&self.0).map_err(|error| problem(&self.0, error))? {
             let entry = entry.map_err(|error| problem(&self.0, error))?;
@@ -91,8 +91,8 @@ impl Registry {
                                 .map_err(|error| problem(&record, error))?;
                             if exclusive || active.exclusive {
                                 for active_root in active.roots.into_iter().map(decode_path) {
-                                    if let Some(root) =
-                                        roots.iter().find(|root| overlaps(root, &active_root))
+                                    if let Some((root, _)) =
+                                        roots.iter().find(|(_, key)| overlaps(key, &active_root))
                                     {
                                         return Err(crate::i18n::trf(
                                             "Cannot lock {path}: another launcher is using or moving this data. Close it and try again.",
@@ -121,7 +121,7 @@ impl Registry {
         let lease = super::lock_file(&entry.path().join("owner.lock"), true)?;
         let record = entry.path().join("claim.json");
         let claim = Claim {
-            roots: roots.iter().map(|root| encode_path(root)).collect(),
+            roots: roots.iter().map(|(_, key)| encode_path(key)).collect(),
             exclusive,
         };
         let bytes = serde_json::to_vec(&claim).map_err(|error| problem(&record, error))?;
@@ -129,6 +129,37 @@ impl Registry {
         let _ = entry.keep();
         Ok(lease)
     }
+}
+
+// Use the portable folded spelling on every OS. Keep it separate from the real I/O
+// path: a claimed missing component must match even if it is subsequently created
+// with a different case, including on case-sensitive volumes used by tests.
+fn claim_key(path: &Path) -> Result<PathBuf> {
+    let resolved = match fs::canonicalize(path) {
+        Ok(real) => super::plain_drive(real),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let absolute = std::path::absolute(path).map_err(|error| problem(path, error))?;
+            let (prefix, missing) = super::resolved_prefix(&absolute)?;
+            use sunrise_launcher_smod::index::browser_state::portable_ascii_component;
+            if missing
+                .iter()
+                .any(|part| !part.to_str().is_some_and(portable_ascii_component))
+            {
+                return Err(problem(
+                    path,
+                    crate::i18n::tr(
+                        "Choose a portable folder name for a data folder that does not exist yet.",
+                    ),
+                ));
+            }
+            missing
+                .iter()
+                .rev()
+                .fold(prefix, |path, part| path.join(part))
+        }
+        Err(error) => return Err(problem(path, error)),
+    };
+    Ok(PathBuf::from(resolved.as_os_str().to_ascii_lowercase()))
 }
 
 #[cfg(unix)]

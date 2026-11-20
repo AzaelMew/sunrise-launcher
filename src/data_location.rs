@@ -409,12 +409,12 @@ fn migrate_locked(
     controls.push(registry.path().to_owned());
     // Both pointer and source leases cover recovery and the entire snapshot/commit.
     crate::relocation::admit_idle_profiles(&source)?;
+    progress("Copying and verifying launcher data");
     fs::create_dir_all(&target).map_err(|e| problem(&target, e))?;
     let stage = target.join(".relocation-staging");
     let staged = layout(&source, &stage);
     let result = (|| {
         private_dir(&stage)?;
-        progress("Copying and verifying launcher data");
         copy_tree(&source.launcher, &staged.launcher, &controls, &mut progress)?;
         progress("Copying and verifying game data");
         copy_tree(&source.game, &staged.game, &controls, &mut progress)?;
@@ -570,6 +570,14 @@ pub(crate) fn canonical_data_path(path: &Path) -> Result<PathBuf> {
 /// copied, so a link on the way is followed, not refused. Refusing it would report a broken
 /// data folder at every start to players who never moved their data.
 fn pointer_path(path: &Path) -> Result<PathBuf> {
+    let (existing, missing) = resolved_prefix(path)?;
+    Ok(missing
+        .iter()
+        .rev()
+        .fold(existing, |path, part| path.join(part)))
+}
+
+fn resolved_prefix(path: &Path) -> Result<(PathBuf, Vec<std::ffi::OsString>)> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(format!(
             "Use an absolute path without '..': {}",
@@ -580,11 +588,14 @@ fn pointer_path(path: &Path) -> Result<PathBuf> {
     let mut rest = Vec::new();
     loop {
         match fs::canonicalize(existing) {
-            Ok(real) => {
-                let real = plain_drive(real);
-                return Ok(rest.iter().rev().fold(real, |path, part| path.join(part)));
+            Ok(real) => return Ok((plain_drive(real), rest)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match fs::symlink_metadata(existing) {
+                    Ok(_) => return Err(problem(existing, e)), // Not missing: a dangling link.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(error) => return Err(problem(existing, error)),
+                }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(problem(existing, e)),
         }
         match (existing.parent(), existing.file_name()) {
@@ -592,7 +603,7 @@ fn pointer_path(path: &Path) -> Result<PathBuf> {
                 rest.push(name.to_os_string());
                 existing = parent;
             }
-            _ => return Ok(path.to_path_buf()),
+            _ => return Err(problem(existing, std::io::ErrorKind::NotFound)),
         }
     }
 }

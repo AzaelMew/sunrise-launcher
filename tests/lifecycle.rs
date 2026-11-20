@@ -12,7 +12,7 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         game: game_parent.join("game"),
         build: base.join("build"),
     };
-    let target = base.join("destination");
+    let target = base.join("NewHome");
     for dir in [&source.launcher, &source.game, &source.build] {
         fs::create_dir_all(dir).unwrap();
     }
@@ -66,33 +66,46 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
     let nested = location_for_game("child.json", nested_game.clone());
     let ancestor = location_for_game("parent.json", game_parent.clone());
     let sibling = location_for_game("sibling.json", sibling_game.clone());
-    let destination = location_for_game("destination.json", target.clone());
+    let alternative_case = base.join("newhome/GAME");
+    let nonportable = base.join("NewHöme");
     #[cfg(unix)]
     let aliased_nested = {
         let alias = base.join("alias-of-game-parent");
         std::os::unix::fs::symlink(&game_parent, &alias).unwrap();
         location_for_game("aliased-child.json", alias.join("game/nested-game"))
     };
-    let create = |location: &std::path::Path, overrides: bool| {
+    let create = |location: &std::path::Path, game_override: Option<&std::path::Path>| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
         cmd.args(["instance", "create", "Late Writer"])
             .env("SUNRISE_LAUNCHER_LOCATION_FILE", location)
+            .env("XDG_DATA_HOME", base.join("fallback-data"))
+            .env("XDG_CONFIG_HOME", base.join("fallback-config"))
             .env_remove("SUNRISE_HOME")
             .env_remove("SUNRISE_LAUNCHER_HOME");
-        if overrides {
-            cmd.env("SUNRISE_HOME", &source.game)
-                .env("SUNRISE_LAUNCHER_HOME", &source.launcher);
+        if let Some(game) = game_override {
+            cmd.env("SUNRISE_HOME", game)
+                .env("SUNRISE_LAUNCHER_HOME", &spare.launcher);
         }
         cmd.output().unwrap()
     };
+    // A persisted Move location must already exist. Portable environment overrides
+    // can designate a missing root, so use that real startup route for both cases.
+    let refused = create(&alternate, Some(&nonportable));
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("Choose a portable folder name"));
+    assert!(!nonportable.exists());
     let mut reached_copy = false;
     let moved = data_location::migrate(&source, &target, &bootstrap, |step| {
         if step != "Copying and verifying launcher data" {
             return;
         }
         reached_copy = true;
-        let assert_blocked = |path: &std::path::Path, overrides, lock: &str| {
-            let blocked = create(path, overrides);
+        assert!(
+            !target.exists(),
+            "prove the contention before the destination mkdir"
+        );
+        let assert_blocked = |path: &std::path::Path, game_override, lock: &str| {
+            let blocked = create(path, game_override);
             let error = String::from_utf8_lossy(&blocked.stderr);
             assert_eq!(blocked.status.code(), Some(1), "{blocked:?}");
             assert!(
@@ -102,19 +115,22 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
             assert!(!source.game.join("instances/late-writer").exists());
             assert!(!spare.game.join("instances/late-writer").exists());
         };
-        assert_blocked(&bootstrap, false, "migration.lock");
+        assert_blocked(&bootstrap, None, "migration.lock");
         let root_claim = "another launcher is using or moving this data";
-        assert_blocked(&alternate, false, root_claim);
-        assert_blocked(&alternate, true, root_claim);
-        for path in single_root.iter().chain([&nested, &ancestor, &destination]) {
-            assert_blocked(path, false, root_claim);
+        assert_blocked(&alternate, None, root_claim);
+        for game in [&source.game, &target, &alternative_case] {
+            assert_blocked(&alternate, Some(game), root_claim);
+        }
+        assert!(!alternative_case.parent().unwrap().exists());
+        for path in single_root.iter().chain([&nested, &ancestor]) {
+            assert_blocked(path, None, root_claim);
         }
         #[cfg(unix)]
-        assert_blocked(&aliased_nested, false, root_claim);
+        assert_blocked(&aliased_nested, None, root_claim);
         for game in [&nested_game, &game_parent, &target] {
             assert!(!game.join("instances/late-writer").exists());
         }
-        let disjoint = create(&sibling, false);
+        let disjoint = create(&sibling, None);
         assert!(disjoint.status.success(), "{disjoint:?}");
         assert!(sibling_game.join("instances/late-writer").is_dir());
     })
@@ -125,7 +141,7 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         .game
         .join("nested-game/instances/late-writer")
         .exists());
-    let accepted = create(&bootstrap, false);
+    let accepted = create(&bootstrap, None);
     assert!(accepted.status.success(), "{accepted:?}");
     assert!(moved.game.join("instances/late-writer").is_dir());
     assert!(!source.game.join("instances/late-writer").exists());
