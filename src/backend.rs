@@ -2339,24 +2339,19 @@ pub fn preparer(
     let jar = data_dir()
         .join("server-jars")
         .join(format!("{version}.jar"));
-    if !reused && !jar.exists() {
+    if !reused {
         let json: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&manifest).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-        let url = json["downloads"]["server"]["url"]
-            .as_str()
-            .ok_or_else(|| format!("{} has no server download", manifest.display()))?;
-        log(format!("Downloading the {version} server jar from Mojang"));
-        fs::create_dir_all(jar.parent().unwrap()).map_err(|e| e.to_string())?;
-        let mut body = Vec::new();
-        get(url)?
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
-        let partial = jar.with_extension("partial");
-        fs::write(&partial, body)
-            .and_then(|_| fs::rename(&partial, &jar))
-            .map_err(|e| e.to_string())?;
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            let mut body = Vec::new();
+            get(url)?
+                .into_reader()
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
+            Ok(body)
+        };
+        ensure_server_jar(&jar, &json, &fetch, log)?;
     }
     let mut cmd = Command::new(binary);
     with_java(&mut cmd, &java_home);
@@ -2366,6 +2361,43 @@ pub fn preparer(
     }
     cmd.arg("--minecraft-dir").arg(&minecraft);
     Ok((cmd, minecraft))
+}
+
+/// Makes sure `jar` holds the server jar `manifest` names: one already cached whose sha1 is not
+/// the manifest's (a cut-off or captive-portal download) is fetched again, and a download is
+/// kept only when it matches. A manifest without a sha1 can't check either.
+fn ensure_server_jar(
+    jar: &Path,
+    manifest: &serde_json::Value,
+    fetch: sources::Fetch,
+    log: &dyn Fn(String),
+) -> Result<(), String> {
+    use crate::i18n::{tr, trf};
+    let server = &manifest["downloads"]["server"];
+    let sha1 = server["sha1"].as_str();
+    let whole =
+        |body: &[u8]| sha1.is_none_or(|want| sources::sha1_hex(body).eq_ignore_ascii_case(want));
+    if fs::read(jar).is_ok_and(|body| whole(&body)) {
+        return Ok(());
+    }
+    let url = server["url"]
+        .as_str()
+        .ok_or_else(|| tr("The version file has no server download").to_string())?;
+    log(trf(
+        "Downloading the {version} server jar from Mojang",
+        &[(
+            "version",
+            &jar.file_stem().unwrap_or_default().to_string_lossy(),
+        )],
+    ));
+    let body = fetch(url)?;
+    if !whole(&body) {
+        return Err(trf(
+            "The server jar from Mojang is not the one its version file names (sha1 {sha1})",
+            &[("sha1", &sources::sha1_hex(&body))],
+        ));
+    }
+    sources::write_file(jar, &body)
 }
 
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
@@ -4487,6 +4519,53 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[test]
+    fn a_cached_server_jar_that_fails_its_sha1_is_fetched_again() {
+        let dir = std::env::temp_dir().join(format!("sunrise-jar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let jar = dir.join("server-jars/26.3.jar");
+        let good = b"the real server jar".to_vec();
+        // The sha1 of `good`, from `printf 'the real server jar' | sha1sum`.
+        let manifest = serde_json::json!({"downloads": {"server": {
+            "url": "https://piston-data.mojang.com/server.jar",
+            "sha1": "0527c3af27483cb5b7a62b046066baf42588a449"}}});
+        let served = |body: Vec<u8>| move |_: &str| Ok(body.clone());
+        let nothing = |_: String| {};
+        // A captive portal's page was cached: it is replaced.
+        fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        fs::write(&jar, b"<html>sign in</html>").unwrap();
+        ensure_server_jar(&jar, &manifest, &served(good.clone()), &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), good);
+        // A whole cached jar is not fetched again.
+        let refuse = |_: &str| -> Result<Vec<u8>, String> { Err("fetched".into()) };
+        ensure_server_jar(&jar, &manifest, &refuse, &nothing).unwrap();
+        // A bad download is refused and never cached.
+        fs::remove_file(&jar).unwrap();
+        let error = ensure_server_jar(&jar, &manifest, &served(b"cut".to_vec()), &nothing);
+        assert!(error.is_err());
+        assert!(!jar.exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_server_jar_whose_version_file_has_no_sha1_is_kept_and_not_checked() {
+        let dir = std::env::temp_dir().join(format!("sunrise-jar-nosha-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let jar = dir.join("server-jars/26.3.jar");
+        let manifest = serde_json::json!({"downloads": {"server": {
+            "url": "https://piston-data.mojang.com/server.jar"}}});
+        let nothing = |_: String| {};
+        let served = |_: &str| Ok(b"whatever came down".to_vec());
+        // With nothing to check against, a download is kept as it came.
+        ensure_server_jar(&jar, &manifest, &served, &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), b"whatever came down");
+        // And a cached jar is trusted, not fetched again.
+        let refuse = |_: &str| -> Result<Vec<u8>, String> { Err("fetched".into()) };
+        ensure_server_jar(&jar, &manifest, &refuse, &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), b"whatever came down");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_launchers_build_is_its_selected_one_when_installed_else_the_newest() {
