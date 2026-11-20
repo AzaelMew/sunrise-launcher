@@ -432,8 +432,6 @@ impl Launcher {
         }
     }
 
-    }
-
     pub(crate) fn fetch_links(&self) {
         let tx = self.tx.clone();
         std::thread::spawn(move || {

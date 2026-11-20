@@ -332,7 +332,7 @@ impl Launcher {
         }
         rows.push(row(
             tr("Remove old game builds automatically"),
-            tr("After installing a build, keep only recent releases and builds still in use."),
+            tr("After a download, remove only old automatic downloads that are not in use."),
             div().child(
                 switch("alt-prune", self.settings.auto_prune()).on_click(cx.listener(
                     |this, _: &ClickEvent, _, cx| {

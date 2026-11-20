@@ -759,7 +759,7 @@ enum Cmd {
     /// Show the launcher's settings, or set one (the Settings page): selected-version TAG,
     /// game-architecture auto|x64|arm64,
     /// minecraft-dir PATH, server-dir PATH ("default" resets a folder),
-    /// prune-old-versions on|off (delete old versions after an install, keeping the
+    /// prune-old-versions on|off (delete old automatic downloads after an install, keeping the
     /// selected one, the ones profiles use and the newest few), keep-versions N (how many of the
     /// newest to keep; "default" is 2), opening-animation on|off, cat on|off (the corner cat), proxy http://host:port|socks5://host:port
     /// ("default" removes it), while-playing stay|minimize|hide (what the window does while the game runs), language

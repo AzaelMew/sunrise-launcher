@@ -7,18 +7,45 @@ use crate::{instances, native_mods, nightly};
 use std::{fs, path::Path};
 
 pub(super) const KEEP_NEWEST: usize = 2;
-const DOWNLOADED: &str = ".downloaded-build";
-// Older launchers marked Nightlies installed by an update. Unmarked historical Nightlies
-// have unknown provenance; leave them for individual Remove.
+const REQUESTED: &str = ".downloaded-build";
+const AUTOMATIC: &str = ".automatic-download";
+// The old marker was also written by an explicit CLI update. It is not proof of an
+// automatic download, but remains valid download provenance for manual cleanup.
 const LEGACY_DOWNLOADED: &str = ".auto-installed";
 
-pub(super) fn mark_downloaded(dir: &Path) -> Result<(), String> {
-    fs::write(dir.join(DOWNLOADED), "").map_err(|e| e.to_string())
+#[derive(Clone, Copy)]
+pub(crate) enum Download {
+    Requested,
+    Automatic,
+}
+
+impl Download {
+    pub(super) fn mark(self, dir: &Path) -> Result<(), String> {
+        let path = dir.join(match self {
+            Self::Requested => REQUESTED,
+            Self::Automatic => AUTOMATIC,
+        });
+        match fs::File::create_new(&path) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && path.is_file() => Ok(()),
+            Err(e) => Err(format!("{}: {e}", path.display())),
+        }
+    }
 }
 
 fn downloaded(tag: &str) -> bool {
     let dir = version_dir(tag);
-    dir.join(DOWNLOADED).is_file() || dir.join(LEGACY_DOWNLOADED).is_file()
+    [REQUESTED, AUTOMATIC, LEGACY_DOWNLOADED]
+        .into_iter()
+        .any(|name| dir.join(name).is_file())
+}
+
+fn auto_downloaded(dir: &Path) -> bool {
+    dir.join(AUTOMATIC).is_file()
+        && dir
+            .join(REQUESTED)
+            .symlink_metadata()
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
 fn old_downloads(
@@ -140,7 +167,7 @@ pub fn remove_builds(
 ) -> Vec<(String, String)> {
     tags.iter()
         .filter_map(|tag| {
-            delete(tag, Some(releases), old_only)
+            delete(tag, Some(releases), old_only, false)
                 .err()
                 .map(|e| (tag.clone(), e))
         })
@@ -152,8 +179,8 @@ pub fn prune_old_versions(releases: &[Release], just_installed: &str) {
     if settings.auto_prune() {
         for tag in old_downloads(&installed(), settings.keep_newest(), downloaded) {
             // The player can download an older build in the picker, before it is in use.
-            if tag != just_installed {
-                let _ = delete(&tag, Some(releases), true);
+            if tag != just_installed && auto_downloaded(&version_dir(&tag)) {
+                let _ = delete(&tag, Some(releases), true, true);
             }
         }
     }
@@ -161,7 +188,7 @@ pub fn prune_old_versions(releases: &[Release], just_installed: &str) {
 
 /// The CLI's explicit Remove may change the launcher selection, but not a profile pointer.
 pub fn remove_version(tag: &str) -> Result<(), String> {
-    delete(tag, None, false)?;
+    delete(tag, None, false, false)?;
     let mut settings = Settings::load();
     if settings.selected.as_deref() == Some(tag) {
         settings.selected = installed().first().cloned();
@@ -170,7 +197,12 @@ pub fn remove_version(tag: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn delete(tag: &str, releases: Option<&[Release]>, old_only: bool) -> Result<(), String> {
+fn delete(
+    tag: &str,
+    releases: Option<&[Release]>,
+    old_only: bool,
+    automatic: bool,
+) -> Result<(), String> {
     // Only installed folder names may enter the deletion fence.
     if !installed().iter().any(|v| v == tag) {
         return Err(trf("{tag} is not installed.", &[("tag", tag)]));
@@ -179,6 +211,9 @@ fn delete(tag: &str, releases: Option<&[Release]>, old_only: bool) -> Result<(),
     cache_cleanup::delete_version(&version_dir(tag), || {
         let installed = installed();
         let settings = Settings::load();
+        if automatic && !auto_downloaded(&version_dir(tag)) {
+            return Err(Error::IncompleteUnit);
+        }
         if old_only
             && !old_downloads(&installed, settings.keep_newest(), downloaded)
                 .iter()
@@ -254,6 +289,25 @@ mod tests {
                 "v0.2.90",
                 "v0.2.89"
             ]
+        );
+    }
+
+    #[test]
+    fn pruning_preserves_manual_and_legacy_nightlies() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        assert!(!auto_downloaded(dir), "unknown origin stays");
+        fs::write(dir.join(LEGACY_DOWNLOADED), "").unwrap();
+        assert!(
+            !auto_downloaded(dir),
+            "the legacy mark may be from CLI update"
+        );
+        Download::Automatic.mark(dir).unwrap();
+        assert!(auto_downloaded(dir));
+        Download::Requested.mark(dir).unwrap();
+        assert!(
+            !auto_downloaded(dir),
+            "a later explicit download protects a cached archive"
         );
     }
 

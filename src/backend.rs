@@ -1224,7 +1224,12 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
     let download = GameDownload::select(release)?;
     let proof = download.prove(&release.tag)?;
-    download.install(&release.tag, &proof, progress)
+    download.install(
+        &release.tag,
+        &proof,
+        version_storage::Download::Requested,
+        progress,
+    )
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
@@ -4268,7 +4273,7 @@ pub struct Settings {
     pub instance: Option<String>,
     pub minecraft_dir: Option<PathBuf>,
     pub server_dir: Option<PathBuf>,
-    /// Unset means on: after an install the launcher deletes the release versions nothing needs
+    /// Unset means on: after an install the launcher deletes old automatic downloads nothing needs
     /// (`version_storage::prune_old_versions`). Only a player who turned it off has `false` here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prune_old_versions: Option<bool>,

@@ -1583,6 +1583,6 @@
   "Could not open the file picker: {error}": "Could not open the file picker: {error}",
   "Could not remove {build}: {error}": "Could not remove {build}: {error}",
   "Remove old game builds automatically": "Remove old game builds automatically",
-  "After installing a build, keep only recent releases and builds still in use.": "After installing a build, keep only recent releases and builds still in use.",
+  "After a download, remove only old automatic downloads that are not in use.": "After a download, remove only old automatic downloads that are not in use.",
   "This version has a {installed} game build, but Settings selects {selected}. Install the selected build with the version picker beside Play on Home before launching.": "This version has a {installed} game build, but Settings selects {selected}. Install the selected build with the version picker beside Play on Home before launching."
 }

@@ -422,7 +422,12 @@ impl Lease {
     pub fn install_bootstrap(&self, target: &Target, progress: impl Fn(f32)) -> Result<(), String> {
         let download = target.download.as_ref().ok_or_else(unsettled)?;
         let proof = self.bootstrap_proof(target, || download.prove(target.base()))?;
-        download.install(target.base(), &proof, progress)
+        download.install(
+            target.base(),
+            &proof,
+            backend::version_storage::Download::Automatic,
+            progress,
+        )
     }
 
     /// Complete local preparation for a previously bound first build. The worker inherits
