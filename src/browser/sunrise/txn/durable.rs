@@ -120,6 +120,18 @@ pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+/// Rename a prepared directory into an absent destination, or undo that move.
+pub(super) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(not(windows))]
+    sync_directory(from)?;
+    crate::instances::publish_new_folder(from, to)?;
+    #[cfg(not(windows))]
+    for path in [from, to] {
+        sync_directory(path.parent().expect("inside the profile"))?;
+    }
+    Ok(())
+}
+
 /// Unlike the record file, an APFS directory only needs its metadata fsynced. The device
 /// barrier runs immediately afterwards on the (regular) record file.
 #[cfg(not(windows))]

@@ -855,7 +855,7 @@ fn creation_parent(root: &Path, name: &str) -> std::io::Result<PathBuf> {
 }
 
 /// Publish atomically without replacing another attempt's folder, even if it is empty.
-fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::ffi::CString;
@@ -894,7 +894,11 @@ fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> {
         let (from, to) = (wide(from), wide(to));
         // SAFETY: both pointers name owned, null-terminated path strings for the call.
         let result = unsafe {
-            windows_sys::Win32::Storage::FileSystem::MoveFileW(from.as_ptr(), to.as_ptr())
+            windows_sys::Win32::Storage::FileSystem::MoveFileExW(
+                from.as_ptr(),
+                to.as_ptr(),
+                windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH,
+            )
         };
         if result != 0 {
             Ok(())
