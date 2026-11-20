@@ -1492,5 +1492,6 @@
   "{mod} couldn't be built": "{mod} couldn't be built",
   "{native} runs native code: allow native mods first.": "{native} runs native code: allow native mods first.",
   "Conflicts with {mods}": "Conflicts with {mods}",
-  "Conflicts with a mod you have installed": "Conflicts with a mod you have installed"
+  "Conflicts with a mod you have installed": "Conflicts with a mod you have installed",
+  "Your mods are being updated. Wait for it to finish before changing mods.": "Your mods are being updated. Wait for it to finish before changing mods."
 }

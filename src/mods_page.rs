@@ -472,7 +472,11 @@ impl Launcher {
         // follow-up build takes it all up.
         let locked = matches!(
             self.mods_lock(),
-            Some(crate::mods::Lock::GameRunning | crate::mods::Lock::Preparing)
+            Some(
+                crate::mods::Lock::GameRunning
+                    | crate::mods::Lock::Preparing
+                    | crate::mods::Lock::Updating
+            )
         );
         let selected = self
             .selected_instance()
@@ -628,7 +632,9 @@ impl Launcher {
     /// What the queue hands out later starts through [`Self::start_install`] and is not asked
     /// again.
     fn submit_install(&mut self, request: queue::Request) {
-        let busy = self.mods.busy.is_some() || self.native_step.is_some();
+        let busy = self.mods.busy.is_some()
+            || self.native_step.is_some()
+            || self.mods_lock() == Some(crate::mods::Lock::Updating);
         if let Some(request) = self.mods.queue.submit(request, busy) {
             self.start_install(request);
         }
