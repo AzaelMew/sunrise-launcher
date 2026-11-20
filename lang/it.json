@@ -1448,10 +1448,10 @@
   "Version {version} is out. {why}": "Version {version} is out. {why}",
   "Check now": "Check now",
   "Hide until the launcher restarts": "Hide until the launcher restarts",
-  "Not checked: {error}": "Not checked: {error}",
   "up to date · checked just now": "up to date · checked just now",
   "Check for updates": "Controlla gli aggiornamenti",
   "Sunrise Launcher {version} available": "Sunrise Launcher {version} available",
   "Working…": "Working…",
-  "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.": "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it."
+  "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.": "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.",
+  "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again."
 }
