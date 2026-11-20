@@ -91,7 +91,7 @@ pub(crate) fn shared(command: &Command) -> Result<Vec<Claim>, Error> {
     }
     if let Some(home) = command.get_current_dir() {
         let home = home.canonicalize()?;
-        for relative in [".sunrise-cache", "wasm-cache", "cache"] {
+        for relative in [".sunrise-cache", "cache"] {
             crate::storage::mark_used(&home.join(relative))?;
         }
         use sunrise_launcher_smod::{mod_list, Package};
@@ -438,7 +438,6 @@ pub(crate) fn publish(path: &Path) -> Result<(), Error> {
         ".local/sunrise-client/26.3",
         "resources",
         ".sunrise-cache",
-        "wasm-cache",
         "cache",
         "logs",
         "crash-reports",
@@ -483,7 +482,6 @@ pub(crate) fn publish_existing() -> Result<(), Error> {
                             ".local/sunrise-client/26.3",
                             "resources",
                             ".sunrise-cache",
-                            "wasm-cache",
                             "cache",
                             "logs",
                             "crash-reports",
