@@ -599,6 +599,46 @@ fn another_process_sees_only_the_exact_old_or_committed_generation_after_kills()
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn undo_restores_restricted_pointer_and_package_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    for (file, mode) in [(POINTER, 0o600), (PACK, 0o640), (LIST, 0o604)] {
+        fs::set_permissions(home.join(file), fs::Permissions::from_mode(mode)).unwrap();
+    }
+    drop(pause_actor(home, "install:pointer-renamed"));
+    assert_eq!(fs::read(home.join(POINTER)).unwrap(), INSTALLED);
+    drop(Admission::open(home, None).unwrap());
+    pair(home, false, false);
+    for (file, mode) in [(POINTER, 0o600), (PACK, 0o640), (LIST, 0o604)] {
+        assert_eq!(
+            fs::metadata(home.join(file)).unwrap().permissions().mode() & 0o7777,
+            mode
+        );
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn a_read_only_file_that_cannot_be_replaced_is_refused_before_seal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let pointer = home.join(POINTER);
+    let original = fs::metadata(&pointer).unwrap().permissions();
+    let mut restricted = original.clone();
+    restricted.set_readonly(true);
+    fs::set_permissions(&pointer, restricted).unwrap();
+    let mut owner = Admission::open(home, None).unwrap();
+    assert!(owner.reserve(Intent::Install, BTreeSet::new()).is_err());
+    assert!(!home.join(RECORD).exists());
+    pair(home, false, false);
+    fs::set_permissions(pointer, original).unwrap();
+}
+
 #[test]
 fn directory_restore_does_not_replace_an_occupied_stage_destination() {
     let tmp = tempfile::tempdir().unwrap();

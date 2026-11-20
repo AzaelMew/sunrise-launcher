@@ -220,11 +220,14 @@ impl Admission {
         clean_retired(&self.home)?;
         let root = record_dir(&self.home)?;
         fs::create_dir_all(&root).map_err(|e| at(&root, e))?;
-        let stage = tempfile::Builder::new()
-            .prefix(STAGE_PREFIX)
-            .rand_bytes(24)
-            .tempdir_in(&root)
-            .map_err(|e| at(&root, e))?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(STAGE_PREFIX).rand_bytes(24);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(fs::Permissions::from_mode(0o700));
+        }
+        let stage = builder.tempdir_in(&root).map_err(|e| at(&root, e))?;
         let pointer = self.home.join(POINTER);
         record.operation = Some(Operation {
             stage: Stage {
@@ -276,10 +279,13 @@ pub enum Intent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
 enum Image {
     Missing,
-    Sha256([u8; 32]),
+    File {
+        sha256: [u8; 32],
+        access: durable::Access,
+    },
 }
 
 impl Image {
@@ -293,9 +299,20 @@ impl Image {
             return Err(at(path, unsettled()));
         }
         let mut file = fs::File::open(path).map_err(|e| at(path, e))?;
+        let access = durable::Access::of(path, &file).map_err(|e| at(path, e))?;
         let mut hash = Sha256::new();
         io::copy(&mut file, &mut hash).map_err(|e| at(path, e))?;
-        Ok(Self::Sha256(hash.finalize().into()))
+        Ok(Self::File {
+            sha256: hash.finalize().into(),
+            access,
+        })
+    }
+
+    fn digest(self) -> Option<[u8; 32]> {
+        match self {
+            Self::Missing => None,
+            Self::File { sha256, .. } => Some(sha256),
+        }
     }
 }
 
@@ -407,6 +424,7 @@ struct Ready {
     directories: BTreeMap<PathBuf, Identity>,
     files: Vec<Step>,
     next_pointer: Vec<u8>,
+    pointer_after: Image,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -445,6 +463,7 @@ impl Ready {
                     || step.parent.volume != op.stage.id.volume
             })
             || self.next_pointer.is_empty()
+            || self.pointer_after.digest() != Some(Sha256::digest(&self.next_pointer).into())
         {
             return Err(unsettled());
         }
@@ -558,7 +577,7 @@ fn write(home: &Path, record: &Record) -> Result<(), String> {
 }
 
 fn snapshot(source: &Path, copy: &Path, image: Image) -> Result<(), String> {
-    if image != Image::Missing {
+    if let Image::File { access, .. } = image {
         let mut src = fs::File::open(source).map_err(|e| at(source, e))?;
         let mut dst = fs::File::options()
             .create_new(true)
@@ -566,6 +585,7 @@ fn snapshot(source: &Path, copy: &Path, image: Image) -> Result<(), String> {
             .open(copy)
             .map_err(|e| at(copy, e))?;
         io::copy(&mut src, &mut dst)
+            .and_then(|_| access.apply(&dst))
             .and_then(|_| durable::flush(&dst))
             .map_err(|e| at(copy, e))?;
         drop(dst);
@@ -618,6 +638,7 @@ impl<'a> Staging<'a> {
             directories: BTreeMap::new(),
             files: Vec::new(),
             next_pointer: pointer_bytes,
+            pointer_after: Image::at(&newer)?,
         };
         let mut entries = BTreeSet::new();
         for (i, (name, source)) in files.iter().enumerate() {
@@ -833,7 +854,7 @@ impl Record {
 
     fn preallocated_binding(stage: &Path, binding: &Self) -> Result<PathBuf, String> {
         let saved = stage.join("binding-after-undo");
-        if Image::at(&saved)? != Image::Sha256(binding.digest()?) {
+        if Image::at(&saved)?.digest() != Some(binding.digest()?) {
             return Err(at(&saved, unsettled()));
         }
         Ok(saved)
@@ -884,10 +905,8 @@ impl Record {
             let before = op
                 .previous_pointer
                 .as_ref()
-                .map_or(Image::Missing, |bytes| {
-                    Image::Sha256(Sha256::digest(bytes).into())
-                });
-            if before != op.before {
+                .map(|bytes| Sha256::digest(bytes).into());
+            if before != op.before.digest() {
                 return Err(unsettled());
             }
             if let Some(plan) = &op.ready {
@@ -916,7 +935,7 @@ impl Record {
             Self::preallocated_binding(&stage, &binding)?;
         }
         let pointer = home.join(POINTER);
-        let next = Image::Sha256(Sha256::digest(&plan.next_pointer).into());
+        let next = plan.pointer_after;
         if Image::at(&pointer)? != op.before
             || Image::at(&stage.join("pointer-old"))? != op.before
             || Image::at(&stage.join("pointer-new"))? != next
@@ -1024,7 +1043,7 @@ impl Record {
         let stage = op.stage.path(home);
         let mut committed = false;
         if let Some(plan) = &op.ready {
-            let next = Image::Sha256(Sha256::digest(&plan.next_pointer).into());
+            let next = plan.pointer_after;
             let mut slots = Slots::open(&stage, self.digest()?, plan.steps())?;
             match slots.current().phase {
                 Phase::Ready => {

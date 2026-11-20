@@ -3,6 +3,143 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
 
+/// Permission evidence belongs to each file image, not just its bytes. If the stage
+/// cannot reproduce the source's access, seal refuses before changing any live names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Access {
+    #[cfg(unix)]
+    mode: u32,
+    #[cfg(unix)]
+    owner: u32,
+    #[cfg(unix)]
+    group: u32,
+    #[cfg(windows)]
+    descriptor: [u8; 32],
+}
+
+impl Access {
+    #[cfg(unix)]
+    pub(super) fn of(_path: &Path, file: &File) -> io::Result<Self> {
+        use std::os::unix::fs::MetadataExt;
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            // A mode is not equivalent to an extended ACL. This journal does not
+            // clone extended access metadata; refuse it while everything is private.
+            for attr in [c"system.posix_acl_access", c"security.capability"] {
+                // SAFETY: valid open file and constant C string; null plus zero queries size.
+                let found = unsafe {
+                    libc::fgetxattr(file.as_raw_fd(), attr.as_ptr(), std::ptr::null_mut(), 0)
+                };
+                if found >= 0 {
+                    return Err(io::ErrorKind::Unsupported.into());
+                }
+                let error = io::Error::last_os_error();
+                if !matches!(error.raw_os_error(), Some(libc::ENODATA | libc::EOPNOTSUPP)) {
+                    return Err(error);
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let source = std::ffi::CString::new(_path.as_os_str().as_bytes())?;
+            // SAFETY: COPYFILE_CHECK is a read-only source metadata check; no destination
+            // or callback state is used. Reject an ACL that mode/owner alone cannot prove.
+            let metadata = unsafe {
+                libc::copyfile(
+                    source.as_ptr(),
+                    std::ptr::null(),
+                    std::ptr::null_mut(),
+                    libc::COPYFILE_CHECK | libc::COPYFILE_ACL | libc::COPYFILE_NOFOLLOW_SRC,
+                )
+            };
+            if metadata < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if metadata as u32 & libc::COPYFILE_ACL != 0 {
+                return Err(io::ErrorKind::Unsupported.into());
+            }
+        }
+        let meta = file.metadata()?;
+        Ok(Self {
+            mode: meta.mode() & 0o7777,
+            owner: meta.uid(),
+            group: meta.gid(),
+        })
+    }
+
+    #[cfg(windows)]
+    pub(super) fn of(path: &Path, file: &File) -> io::Result<Self> {
+        use sha2::{Digest, Sha256};
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::{
+            Foundation::ERROR_INSUFFICIENT_BUFFER,
+            Security::{
+                GetFileSecurityW, DACL_SECURITY_INFORMATION, GROUP_SECURITY_INFORMATION,
+                OWNER_SECURITY_INFORMATION,
+            },
+        };
+        if file.metadata()?.permissions().readonly() {
+            // A read-only path cannot be atomically replaced and flushed by this journal.
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        let path: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
+        let pieces =
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+        let mut size = 0;
+        // SAFETY: a nul buffer with size 0 queries the size of a self-relative descriptor.
+        let probed =
+            unsafe { GetFileSecurityW(path.as_ptr(), pieces, std::ptr::null_mut(), 0, &mut size) };
+        let error = io::Error::last_os_error();
+        if probed != 0
+            || error.raw_os_error() != Some(ERROR_INSUFFICIENT_BUFFER as i32)
+            || size == 0
+        {
+            return Err(error);
+        }
+        let mut buffer = vec![0u32; (size as usize).div_ceil(4)];
+        // SAFETY: the aligned owned buffer has at least size writable bytes.
+        if unsafe {
+            GetFileSecurityW(
+                path.as_ptr(),
+                pieces,
+                buffer.as_mut_ptr().cast(),
+                size,
+                &mut size,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: all stored bytes (including alignment padding) are initialized u32s.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                buffer.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(buffer.as_slice()),
+            )
+        };
+        let descriptor = bytes
+            .get(..size as usize)
+            .ok_or(io::ErrorKind::InvalidData)?;
+        Ok(Self {
+            descriptor: Sha256::digest(descriptor).into(),
+        })
+    }
+
+    pub(super) fn apply(self, file: &File) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(fs::Permissions::from_mode(self.mode))?;
+        }
+        #[cfg(windows)]
+        let _ = file; // Do not broaden or synthesize a different ACL. Verify the inherited one.
+        Ok(())
+    }
+}
+
 pub(super) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
     replace_at(home, record, bytes, || {})
 }
