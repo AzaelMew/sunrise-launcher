@@ -15,6 +15,7 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
                 "echo '{\"event\":\"consent\",\"added_crates\":2,\"build_scripts\":[\"syn\"],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
+            "EXIT1" => script.push_str("exit 1\n"),
             "EXIT3" => script.push_str("exit 3\n"),
             event => script.push_str(&format!("echo '{event}'\n")),
         }
@@ -54,6 +55,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         Some(&consent),
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -71,15 +73,14 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         r#"{"contract":2}"#
     );
 
+    let blamed = r#"{"event":"failed","error":"Compiling greeter failed (101)","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#;
     let failed = run(
-        fake(
-            &dir,
-            &[r#"{"event":"failed","error":"Compiling greeter failed (101)","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#],
-        ),
+        fake(&dir, &[blamed, "EXIT1"]),
         "{}",
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert_eq!(
@@ -89,12 +90,26 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             kind: BlameKind::Compile
         })
     );
+    for events in [&[blamed][..], &[blamed, "EXIT3"][..]] {
+        assert!(run(
+            fake(&dir, events),
+            "{}",
+            None,
+            &on_mod,
+            &Cancellation::default(),
+            None,
+        )
+        .unwrap_err()
+        .blame
+        .is_none());
+    }
     let silent = run(
         fake(&dir, &[]),
         "{}",
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert!(
@@ -103,6 +118,44 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         silent.error
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn build_plan_and_process_use_the_same_private_cargo_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();
+    let path = workspace.path();
+    let rust = Toolchain {
+        dir: path.join("rust"),
+        host: crate::rust_toolchain::hosts().first().unwrap(),
+    };
+    let plan = Plan {
+        work: &path.join("work"),
+        workspace: &workspace,
+        package: Package {
+            runtime: path,
+            api: path,
+            engine: path,
+        },
+        mods: &path.join("mods"),
+        server: false,
+        mixins_from_source: false,
+    };
+    let line: Value = serde_json::from_str(&plan_line(&rust, &plan)).unwrap();
+    let mut command = std::process::Command::new("sdk-tool");
+    workspace.isolate(&mut command).unwrap();
+    let cargo_home = command
+        .get_envs()
+        .find(|(name, _)| *name == "CARGO_HOME")
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(
+        line["toolchain"]["cargo_home"],
+        serde_json::json!(Path::new(cargo_home))
+    );
+    assert_eq!(Path::new(cargo_home), path.join("cargo"));
+    assert_eq!(line["work"], serde_json::json!(path.join("work")));
 }
 
 #[test]
@@ -133,6 +186,7 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
         None,
         &|_, _, _| {},
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert!(

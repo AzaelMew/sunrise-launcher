@@ -38,6 +38,8 @@ pub mod sdk_cache;
 pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::{Cancellation, Consent};
+mod workspace;
+pub(crate) use workspace::ATTEMPT_PREFIX;
 mod uses;
 
 // Settings and logs are shared by native-build and diagnostics tests.
@@ -1195,8 +1197,8 @@ fn pipeline(
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
     // The mods are copied first: the build and its key use the copy, whatever happens to the
     // folder meanwhile.
-    let incoming = root().join("mods.incoming");
-    let _ = fs::remove_dir_all(&incoming);
+    let mut workspace = workspace::Workspace::new(&root()).map_err(|e| e.to_string())?;
+    let incoming = workspace.path().join("mods.incoming");
     let found = scan_bundles(folder)?;
     if found.is_empty() {
         return Err(Failed::Nothing);
@@ -1600,16 +1602,20 @@ fn pipeline(
         progress(Step::PrebuiltMods);
         let compiling = std::time::Instant::now();
         // The tool compiles every mod in the folder it's given: exactly the staged copies of the ones this build keeps.
-        let compiled = root().join("mods.compile");
-        let _ = fs::remove_dir_all(&compiled);
+        let compiled = workspace.path().join("mods.compile");
         for bundle in &mods {
             copy_bundle(bundle, &compiled.join(&bundle.manifest.id))?;
         }
+        let game = workspace.package(game).map_err(|e| e.to_string())?;
+        let work = workspace.path().join("work");
+        workspace.allow_worker();
+        let mut quiescent = false;
         let built = tool::build(
             &rust,
             program,
             &tool::Plan {
-                work: &root(),
+                work: &work,
+                workspace: &workspace,
                 package: tool::Package {
                     runtime: &game.runtime,
                     api: &game.api,
@@ -1628,11 +1634,27 @@ fn pipeline(
                 })
             },
             cancellation,
+            &mut quiescent,
         );
+        if quiescent {
+            workspace.worker_finished();
+        }
         // Don't turn a stopped tool into a compile failure or retry it as an omitted mod.
         cancellation.check()?;
+        let log = workspace.import_log().map_err(|e| e.to_string())?;
+        if !log.is_empty() {
+            append_log(&log)?;
+        }
         let built = built.map_err(|failure| blame(blamed_text(failure)))?;
-        let _ = fs::remove_dir_all(&compiled);
+        workspace
+            .verify_outputs(
+                &built,
+                &game,
+                &rust,
+                target,
+                mods.iter().map(|bundle| bundle.manifest.id.as_str()),
+            )
+            .map_err(|e| e.to_string())?;
         append_log(&trf(
             "Native mods route: {route}.",
             &[("route", &built.route)],
@@ -1665,7 +1687,6 @@ fn pipeline(
         // Used again: it counts as the newest of the builds kept (`prune`).
         let _ = fs::write(target.directory(&version).join(".installed"), "");
     }
-    let _ = fs::remove_dir_all(&incoming);
     built.secs = started.elapsed().as_secs();
     Ok(built)
 }

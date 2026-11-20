@@ -119,9 +119,56 @@ impl ChildLeases {
     }
 }
 #[cfg(windows)]
-mod windows;
+pub(super) mod windows;
+#[cfg(windows)]
+pub(crate) use windows::CompilerJob;
 #[cfg(windows)]
 pub use windows::WindowsChild;
+
+/// Start a piped compiler suspended and put it in its Job before it can create children.
+#[cfg(windows)]
+pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<super::child::Child> {
+    use std::os::windows::io::AsRawHandle;
+    let mut environment: Vec<_> = std::env::vars_os().collect();
+    for (key, value) in command.get_envs() {
+        environment.retain(|(existing, _)| {
+            !existing
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&key.to_string_lossy())
+        });
+        if let Some(value) = value {
+            environment.push((key.to_owned(), value.to_owned()));
+        }
+    }
+    let arguments: Vec<_> = command.get_args().map(std::ffi::OsStr::to_owned).collect();
+    let pipes = {
+        let (input, parent_input) = io::pipe()?;
+        let (parent_output, output) = io::pipe()?;
+        let (parent_error, error) = io::pipe()?;
+        (
+            (input, output, error),
+            (parent_input, parent_output, parent_error),
+        )
+    };
+    let ((input, output, error), parent) = pipes;
+    let child = windows::spawn_exact(
+        &[],
+        Path::new(command.get_program()),
+        &arguments,
+        &environment,
+        windows::Start {
+            directory: command.get_current_dir(),
+            streams: Some([
+                input.as_raw_handle(),
+                output.as_raw_handle(),
+                error.as_raw_handle(),
+            ]),
+            compiler: true,
+            ..windows::Start::default()
+        },
+    )?;
+    Ok(super::child::Child::windows(child, Some(parent)))
+}
 
 #[cfg(test)]
 mod tests;
