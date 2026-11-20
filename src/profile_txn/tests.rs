@@ -718,6 +718,34 @@ fn a_read_only_file_that_cannot_be_replaced_is_refused_before_seal() {
     fs::set_permissions(pointer, original).unwrap();
 }
 
+#[cfg(windows)]
+#[test]
+fn an_existing_named_data_stream_is_refused_before_seal_and_left_intact() {
+    for zone in [&b"[ZoneTransfer]\r\nZoneId=3\r\n"[..], &b""[..]] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        initialized(home, true);
+        let mut stream = home.join(PACK).into_os_string();
+        stream.push(":Zone.Identifier");
+        fs::write(&stream, zone).unwrap();
+        let mut owner = Admission::open(home, None).unwrap();
+        let stage = owner.reserve(Intent::Install, BTreeSet::new()).unwrap();
+        let source = stage.path().join("replace.smod");
+        fs::write(&source, package("2.0.0")).unwrap();
+        assert_eq!(
+            stage
+                .seal(INSTALLED.to_vec(), &[(PACK.into(), Some(source))])
+                .err(),
+            Some(at(
+                &home.join(PACK),
+                io::Error::from(io::ErrorKind::Unsupported)
+            ))
+        );
+        pair(home, false, false);
+        assert_eq!(fs::read(&stream).unwrap(), zone);
+    }
+}
+
 #[test]
 fn directory_restore_does_not_replace_an_occupied_stage_destination() {
     let tmp = tempfile::tempdir().unwrap();

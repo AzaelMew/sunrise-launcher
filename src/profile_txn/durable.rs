@@ -86,6 +86,7 @@ impl Access {
             return Err(io::ErrorKind::Unsupported.into());
         }
         let path: Vec<_> = path.as_os_str().encode_wide().chain([0]).collect();
+        require_unnamed_data_only(&path)?;
         let pieces =
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
         let mut size = 0;
@@ -138,6 +139,54 @@ impl Access {
         let _ = file; // Do not broaden or synthesize a different ACL. Verify the inherited one.
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn require_unnamed_data_only(path: &[u16]) -> io::Result<()> {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_HANDLE_EOF, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{
+            FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard,
+            WIN32_FIND_STREAM_DATA,
+        },
+    };
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    // SAFETY: path is nul-terminated and data has the requested layout and size.
+    let handle = unsafe {
+        FindFirstStreamW(
+            path.as_ptr(),
+            FindStreamInfoStandard,
+            (&raw mut data).cast(),
+            0,
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    // The snapshot copies only the unnamed stream, even if another stream is empty.
+    // Require positive evidence that this is the only stream on the file.
+    let unnamed = data
+        .cStreamName
+        .iter()
+        .copied()
+        .take_while(|&unit| unit != 0)
+        .eq("::$DATA".encode_utf16());
+    // SAFETY: handle is open and data remains writable.
+    let result = if !unnamed || unsafe { FindNextStreamW(handle, (&raw mut data).cast()) } != 0 {
+        Err(io::ErrorKind::Unsupported.into())
+    } else {
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(ERROR_HANDLE_EOF as i32) {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    };
+    // SAFETY: this is the valid search handle obtained above, closed exactly once.
+    if unsafe { FindClose(handle) } == 0 && result.is_ok() {
+        return Err(io::Error::last_os_error());
+    }
+    result
 }
 
 pub(super) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
