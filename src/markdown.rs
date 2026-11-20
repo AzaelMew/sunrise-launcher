@@ -183,6 +183,7 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
         .text_size(px(crate::theme::UI.px))
         .line_height(px(if glass { 21.7 } else { 22. }))
         .text_color(t.ink_soft);
+    let mut codes = 0usize;
     for block in blocks {
         column = column.child(match block {
             Block::Heading(level, text, spans) => div()
@@ -216,20 +217,21 @@ pub fn render(source: &str, t: &Theme) -> AnyElement {
                 })
                 .child(div().flex_1().min_w_0().child(styled(text, spans)))
                 .into_any_element(),
-            Block::Code(code) => div()
-                .p(px(16.))
-                .rounded(px(if glass {
-                    crate::glass_ui::rad(12.)
-                } else {
-                    crate::theme::RADIUS_PLATE
-                }))
-                .bg(t.plate_soft)
-                .font_family(crate::theme::MONO)
-                .text_size(px(12.))
-                .line_height(px(18.))
-                .text_color(t.ink)
-                .child(crate::selectable::selectable(code.trim_end().to_string()))
-                .into_any_element(),
+            Block::Code(code) => {
+                codes += 1;
+                crate::code_box::code_box(format!("md-code-{codes}"), vec![code.into()], None)
+                    .rounded(px(if glass {
+                        crate::glass_ui::rad(12.)
+                    } else {
+                        crate::theme::RADIUS_PLATE
+                    }))
+                    .bg(t.plate_soft)
+                    .border_0()
+                    .text_size(px(12.))
+                    .line_height(px(18.))
+                    .text_color(t.ink)
+                    .into_any_element()
+            }
             Block::Rule => div().h(px(1.)).bg(t.rule).my(px(8.)).into_any_element(),
             Block::Table(rows) => {
                 let mut grid = div()
