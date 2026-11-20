@@ -60,7 +60,7 @@ impl Section {
             Section::Account => "Who plays, and the Microsoft accounts signed in here.",
             Section::Game => "How the game starts. Its build is chosen beside Play on Home.",
             Section::Appearance => "The theme, its accent and what is behind Home.",
-            Section::Mods => "What mods with native code may do on this computer.",
+            Section::Mods => "Updates, and what native mods may do on this computer.",
             Section::Storage => "Where your files are, and the space downloads take.",
             Section::Privacy => "What Sunrise sends, and what it never does.",
             Section::Launcher => "Language, network and this version.",
