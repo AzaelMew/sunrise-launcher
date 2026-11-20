@@ -672,7 +672,8 @@ pub(super) fn cells(row: &Row, error: Option<&str>, building: Option<&BuildState
             (_, Some(_)) => Some(RowAction::Update),
             _ => None,
         },
-        switch: !matches!(row.need, Some(Need::TakenDown(_))),
+        switch: !matches!(row.need, Some(Need::TakenDown(_)))
+            && !row.local.as_ref().is_some_and(|l| l.unreadable),
         unavailable: row.unfit.is_some()
             || row.left_out.is_some()
             || matches!(
@@ -732,6 +733,9 @@ pub(super) struct Local {
     /// Native code, which needs permission and a build; else a package of `sunrise-mods/`,
     /// which runs as wasm or carries content only.
     pub(super) native: bool,
+    /// The file can't be read: it has no id of its own (the id is only its file name), so it is
+    /// never on, needs nothing and has no switch that could act on a working mod's id.
+    pub(super) unreadable: bool,
 }
 
 /// The registry mods the browser installed, as rows. Packs, files of other sources and files
@@ -788,7 +792,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         })
         .collect();
     out.extend(w.local.iter().map(|l| {
-        let on = w.enabled.contains(&l.id);
+        let on = !l.unreadable && w.enabled.contains(&l.id);
         let need = match on && l.native {
             true if !w.native_allowed => Some(Need::Permission),
             true if w.unbuilt.contains(&l.id) => Some(Need::Build),

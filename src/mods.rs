@@ -93,10 +93,12 @@ fn enabled_ids(home: &Path, entries: &[Entry], local: &[model::Local]) -> HashSe
         .filter(|id| mod_list::is_enabled(home, id))
         .map(str::to_owned)
         .collect();
+    // A file that can't be read has no id of its own (its file name is only a label), so it is
+    // never on: it must not borrow the on state of a working mod of that name.
     enabled.extend(
         local
             .iter()
-            .filter(|l| mod_list::is_enabled(home, &l.id))
+            .filter(|l| !l.unreadable && mod_list::is_enabled(home, &l.id))
             .map(|l| l.id.clone()),
     );
     enabled
@@ -266,6 +268,7 @@ fn read_local(home: &Path) -> Vec<model::Local> {
             version: f.version,
             github: f.origin.is_some(),
             native,
+            unreadable: f.icon.is_err(),
         }
     };
     native_status::untracked(home)
@@ -997,6 +1000,7 @@ mod enabled_tests {
             version: String::new(),
             github: false,
             native: false,
+            unreadable: false,
         };
         // "gone" was a package of the list known before and is no longer there.
         let got = enabled_ids(home.path(), &[], &[local("kept"), local("off")]);

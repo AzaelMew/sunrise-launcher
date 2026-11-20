@@ -408,6 +408,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             version: "0.3".into(),
             github: false,
             native: true,
+            unreadable: false,
         },
         Local {
             id: "by_hand".into(),
@@ -415,6 +416,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
             version: "1.0".into(),
             github: false,
             native: false,
+            unreadable: false,
         },
     ];
     let w = World {
@@ -452,6 +454,7 @@ fn turning_on_a_local_native_file_exposes_permission_then_build() {
         version: "1.0".into(),
         github: false,
         native: true,
+        unreadable: false,
     }];
     let unbuilt = HashSet::from([id.into()]);
     let row = |allowed| {
@@ -556,6 +559,7 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
         version: "1.0".into(),
         github: false,
         native: true,
+        unreadable: false,
     });
     let w = World {
         local: &local,
@@ -615,6 +619,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
         version: "1.0".into(),
         github: id == "lib",
         native: true,
+        unreadable: false,
     });
     let w = World {
         local: &local,
@@ -734,6 +739,7 @@ fn the_build_button_is_only_counted_as_drawn_when_its_group_is_shown() {
         version: "1.0".into(),
         github: false,
         native: true,
+        unreadable: false,
     });
     let w = World {
         local: &local,
@@ -1251,4 +1257,39 @@ fn install_is_off_when_everything_picked_is_installed() {
     let v = collection::view(&idx, c, &base, &ticked(&["cow", "pig"]), &held, GAME);
     assert_eq!(v.plan_line(), "Everything you picked is installed.");
     assert!(v.done() && !v.can_install());
+}
+
+#[test]
+fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() {
+    let on: HashSet<String> = HashSet::from(["ruby".to_owned()]);
+    let none = HashSet::new();
+    let (idx, _) = pack();
+    let file = |unreadable| Local {
+        id: "ruby".into(),
+        name: "ruby".into(),
+        version: String::new(),
+        github: false,
+        native: true,
+        unreadable,
+    };
+    let local = [file(true), file(false)];
+    let w = World {
+        local: &local,
+        ..world(&idx, &on, &none, false)
+    };
+    let r = rows(&[], &w);
+    let broken = r
+        .iter()
+        .find(|r| r.local.as_ref().is_some_and(|l| l.unreadable))
+        .expect("listed");
+    assert!(!broken.on);
+    assert_eq!(broken.need, None);
+    assert!(!cells(broken, None, None).switch);
+    let good = r
+        .iter()
+        .find(|r| r.local.as_ref().is_some_and(|l| !l.unreadable))
+        .expect("listed");
+    assert!(good.on);
+    assert_eq!(good.need, Some(Need::Permission));
+    assert!(cells(good, None, None).switch);
 }

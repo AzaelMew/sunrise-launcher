@@ -1426,9 +1426,14 @@ fn played_in(versions: &Path, selected: Option<&str>, field: &str) -> String {
         .unwrap_or_else(|| PINNED_GAME.into())
 }
 
+/// The version whose folder holds `tag`'s prepared resources: a native build shares its base's
+/// (`copy_base` leaves `.local` out), any other version keeps its own.
+pub fn resources_owner(tag: &str) -> String {
+    crate::native_mods::about(tag).map_or_else(|| tag.to_owned(), |about| about.base)
+}
+
 pub fn resources(tag: &str) -> PathBuf {
-    let base = crate::native_mods::about(tag).map(|about| about.base);
-    resources_at(&version_dir(base.as_deref().unwrap_or(tag)))
+    resources_at(&version_dir(&resources_owner(tag)))
 }
 
 fn resources_at(dir: &Path) -> PathBuf {
@@ -2394,6 +2399,15 @@ pub fn preparer(
     log: &dyn Fn(String),
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
+    // A native build reads the resources of its base, so it is the base that gets prepared.
+    let owner = resources_owner(tag);
+    if owner != tag && !version_dir(&owner).join(COMPLETE).is_file() {
+        return Err(crate::i18n::trf(
+            "This native build needs its base version {base}; reinstall it.",
+            &[("base", &owner)],
+        ));
+    }
+    let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
@@ -2536,6 +2550,8 @@ fn ensure_server_jar(
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
 pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
     use crate::i18n::{tr, trf};
+    let tag = resources_owner(tag);
+    let tag = tag.as_str();
     let dir = version_dir(tag);
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
@@ -4117,9 +4133,12 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
     spawn_holding(job, cmd, tx, None)
 }
 
-/// Holds `version`'s preparation lock, so a second preparation of it can't start while one runs; it is released when the guard drops.
+/// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
+/// native build), so a second preparation of the same folder can't start while one runs; it is
+/// released when the guard drops.
 pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
-    prepare_lock_at(&version_dir(version), version)
+    let owner = resources_owner(version);
+    prepare_lock_at(&version_dir(&owner), &owner)
 }
 
 fn prepare_lock_at(
@@ -5253,6 +5272,38 @@ pub fn {f}("
             "base": base, "sunrise": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "client"
         }).to_string()).unwrap();
         assert_eq!(resources(&native), resources(&base));
+        // Preparing a native build prepares the base whose resources it reads.
+        assert_eq!(resources_owner(&native), base);
+        assert_eq!(resources_owner(&base), base);
+        // Two native builds on one base, and the base itself, share one preparation lock.
+        let sibling = format!("{native}-sibling");
+        fs::create_dir_all(version_dir(&sibling)).unwrap();
+        fs::copy(
+            native_dir.join("native-mods.json"),
+            version_dir(&sibling).join("native-mods.json"),
+        )
+        .unwrap();
+        {
+            let _held = prepare_lock(&native).unwrap();
+            assert!(prepare_lock(&base).is_err());
+            assert!(prepare_lock(&sibling).is_err());
+        }
+        assert!(prepare_lock(&base).is_ok());
+        // Preparing a native build runs the base's preparer, and says so when it can't.
+        let try_prepare = || {
+            preparer(&native, Path::new("."), MinecraftFrom::Install, &|_| {})
+                .map(|_| ())
+                .unwrap_err()
+        };
+        assert_eq!(try_prepare(), crate::preparer::too_old(&base));
+        fs::remove_file(base_dir.join(COMPLETE)).unwrap();
+        let error = try_prepare();
+        assert!(
+            error.contains(&base) && !error.contains("too old"),
+            "{error}"
+        );
+        fs::write(base_dir.join(COMPLETE), "").unwrap();
+        fs::remove_dir_all(version_dir(&sibling)).unwrap();
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
         assert!(remove(&base).is_err());
