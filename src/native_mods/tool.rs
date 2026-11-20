@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 /// The contract this launcher's plans speak.
 pub(super) const CONTRACT: u32 = 2;
@@ -280,7 +281,7 @@ fn run(
     let (mut child, errors) = start(command, cancellation, true)?;
     let result = talk(&mut child, plan, consent, on_mod, cancellation);
     let status = child.wait();
-    let join_stderr = if let Some(proved) = quiescent {
+    if let Some(proved) = quiescent {
         #[cfg(target_os = "linux")]
         {
             *proved = status
@@ -295,18 +296,11 @@ fn run(
         {
             *proved = false;
         }
-        *proved
-    } else {
-        true
-    };
+    }
     if status.is_err() {
         let _ = child.child().kill();
     }
-    // An escaped process can keep the error pipe open. Don't wait on it without proof.
-    let errors = finish(
-        cancellation,
-        (join_stderr || errors.is_finished()).then_some(errors),
-    );
+    let errors = finish(cancellation, errors);
     cancellation.check()?;
     let outcome = match (result, status) {
         (Ok(Some(Ok(built))), Ok(status)) if status.success() => Ok(built),
@@ -379,6 +373,68 @@ pub(super) fn ended(code: Option<i32>) -> String {
     }
 }
 
+// Reading a pipe can outlive its SDK process: an escaped descendant can keep a writable
+// handle even if it never writes. Keep draining independently; after exit a bounded grace
+// lets the reader deliver already-buffered events without requiring an inherited EOF.
+const EXIT_DRAIN: Duration = Duration::from_millis(750);
+const EXIT_POLL: Duration = Duration::from_millis(20);
+
+struct Output {
+    lines: mpsc::Receiver<std::io::Result<String>>,
+    deadline: Option<Instant>,
+}
+
+impl Output {
+    fn new(stream: Box<dyn std::io::Read + Send>) -> Self {
+        let (send, lines) = mpsc::sync_channel(16);
+        std::thread::spawn(move || {
+            for line in BufReader::new(stream).lines() {
+                let failed = line.is_err();
+                if send.send(line).is_err() || failed {
+                    break;
+                }
+            }
+        });
+        Self {
+            lines,
+            deadline: None,
+        }
+    }
+
+    fn line(
+        &mut self,
+        child: &mut crate::process::owned::Owned,
+        cancellation: &Cancellation,
+    ) -> std::io::Result<Option<String>> {
+        loop {
+            if self.deadline.is_none() {
+                let mut state = cancellation.state();
+                if child.try_wait()?.is_some() {
+                    // Unix try_wait can reap the leader. Stop must never signal a reused PID.
+                    state.tool = None;
+                    self.deadline = Some(Instant::now() + EXIT_DRAIN);
+                }
+            }
+            if let Err(stopped) = cancellation.check() {
+                if self.deadline.is_none() {
+                    let _ = child.child().kill();
+                }
+                return Err(std::io::Error::other(stopped));
+            }
+            if self.deadline.is_some_and(|at| Instant::now() >= at) {
+                return Err(std::io::Error::other(tr(
+                    "The native build tool stopped, but its output was still open.",
+                )));
+            }
+            match self.lines.recv_timeout(EXIT_POLL) {
+                Ok(line) => return line.map(Some),
+                Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
+                Err(mpsc::RecvTimeoutError::Timeout) => (),
+            }
+        }
+    }
+}
+
 /// Sends the plan, answers consent questions and reads events until the last.
 fn talk(
     child: &mut crate::process::owned::Owned,
@@ -389,9 +445,9 @@ fn talk(
 ) -> std::io::Result<Option<Result<Built, Failure>>> {
     let mut input = child.child().stdin.take().expect("piped");
     writeln!(input, "{plan}")?;
-    let output = child.child().stdout.take().expect("piped");
-    for line in BufReader::new(output).lines() {
-        let Ok(event) = serde_json::from_str::<Event>(&line?) else {
+    let mut output = Output::new(child.child().stdout.take().expect("piped"));
+    while let Some(line) = output.line(child, cancellation)? {
+        let Ok(event) = serde_json::from_str::<Event>(&line) else {
             continue;
         };
         match event {
@@ -430,13 +486,7 @@ fn start(
     mut command: std::process::Command,
     cancellation: &Cancellation,
     _compiler: bool,
-) -> Result<
-    (
-        crate::process::owned::Owned,
-        std::thread::JoinHandle<String>,
-    ),
-    String,
-> {
+) -> Result<(crate::process::owned::Owned, mpsc::Receiver<String>), String> {
     command.stderr(Stdio::piped());
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut command, 0);
@@ -462,11 +512,15 @@ fn start(
     drop(permission);
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");
-    Ok((child, std::thread::spawn(move || tail(stderr))))
+    let (send, errors) = mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let _ = send.send(tail(stderr));
+    });
+    Ok((child, errors))
 }
 
 /// Forgets a tool that ended and returns the tail of its stderr.
-fn finish(cancellation: &Cancellation, errors: Option<std::thread::JoinHandle<String>>) -> String {
+fn finish(cancellation: &Cancellation, errors: mpsc::Receiver<String>) -> String {
     {
         let mut state = cancellation.state();
         state.tool = None;
@@ -475,9 +529,7 @@ fn finish(cancellation: &Cancellation, errors: Option<std::thread::JoinHandle<St
             state.job = None;
         }
     }
-    errors
-        .and_then(|errors| errors.join().ok())
-        .unwrap_or_default()
+    errors.recv_timeout(EXIT_DRAIN).unwrap_or_default()
 }
 
 /// `native-check`'s reply: each mod's refusal, verdict or the file it needs.
@@ -568,17 +620,21 @@ pub(super) fn ask(
     let mut input = child.child().stdin.take().expect("piped");
     let sent = writeln!(input, "{plan}").map_err(unrun);
     drop(input);
-    let output = child.child().stdout.take().expect("piped");
-    let last = BufReader::new(output)
-        .lines()
-        .map_while(Result::ok)
-        .filter(|line| !line.trim().is_empty())
-        .last();
+    let mut output = Output::new(child.child().stdout.take().expect("piped"));
+    let last = (|| -> Result<Option<String>, String> {
+        let mut last = None;
+        while let Some(line) = output.line(&mut child, cancellation).map_err(unrun)? {
+            if !line.trim().is_empty() {
+                last = Some(line);
+            }
+        }
+        Ok(last)
+    })();
     let status = child.wait().map_err(unrun);
-    let errors = finish(cancellation, Some(errors));
+    let errors = finish(cancellation, errors);
     cancellation.check()?;
     sent?;
-    let result = match (last, status?.code()) {
+    let result = match (last?, status?.code()) {
         (None, code @ Some(2 | 3)) => Err(ended(code)),
         (last, _) => reply(last.as_deref()),
     };

@@ -176,6 +176,78 @@ fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn an_sdk_exit_or_stop_finishes_even_while_a_descendant_keeps_both_pipes_open() {
+    for case in ["exit", "stop", "check"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().to_owned();
+        let cancellation = Cancellation::default();
+        let (done, result) = std::sync::mpsc::channel();
+        let actor = path.clone();
+        let active = cancellation.clone();
+        let run_fixture = std::thread::spawn(move || {
+            let mut command = std::process::Command::new("/bin/sh");
+            command.args(["-ec", r#"
+read -r plan
+setsid /bin/sh -ec 'touch "$1/holding"; while [ ! -e "$1/release" ]; do sleep .02; done; printf done > "$1/finished"' child "$1" &
+while [ ! -e "$1/holding" ]; do sleep .02; done
+case "$2" in
+  stop) while :; do sleep .02; done ;;
+  check) echo '{"contract":2,"route":null,"mods":[]}' ;;
+esac
+exit 125
+"#, "sdk"]).arg(&actor).arg(case);
+            let mut proved = true;
+            let error = if case == "check" {
+                ask(command, "native-check", &serde_json::json!({}), &active).unwrap_err()
+            } else {
+                run(
+                    command,
+                    "{}",
+                    None,
+                    &|_, _, _| unreachable!(),
+                    &active,
+                    Some(&mut proved),
+                )
+                .unwrap_err()
+                .error
+            };
+            done.send((error, proved)).unwrap();
+        });
+        let until = Instant::now() + Duration::from_secs(10);
+        while !path.join("holding").exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let inherited = path.join("holding").exists();
+        if case == "stop" {
+            cancellation.stop();
+        }
+        let outcome = result.recv_timeout(Duration::from_secs(8));
+        let writing = !path.join("finished").exists();
+        // Always release the test child, including if the old launcher behavior regresses.
+        std::fs::write(path.join("release"), b"release").unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        while !path.join("finished").exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(inherited && writing && path.join("finished").exists());
+        let (error, proved) = outcome.expect("the runner must finish without its pipe EOF");
+        run_fixture.join().unwrap();
+        match case {
+            "stop" => {
+                assert_eq!(error, super::super::CANCELLED);
+                assert!(!proved);
+            }
+            "exit" => {
+                assert!(error.contains("output was still open"), "{error}");
+                assert!(!proved);
+            }
+            _ => assert!(error.contains("output was still open"), "{error}"),
+        }
+    }
+}
+
+#[test]
 fn build_plan_and_process_use_the_same_private_cargo_home() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();

@@ -92,6 +92,14 @@ impl Owned {
         &mut self.child
     }
 
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.registry.release(self.child.id());
+        }
+        Ok(status)
+    }
+
     pub fn wait(&mut self) -> io::Result<ExitStatus> {
         let status = self.child.wait();
         self.registry.release(self.child.id());
