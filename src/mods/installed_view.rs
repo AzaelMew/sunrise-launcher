@@ -169,7 +169,7 @@ impl Launcher {
                 bar = bar.child(muted(trf(
                     "{shown} of {total} mods shown",
                     &[
-                        ("shown", &shown_ids.len().to_string()),
+                        ("shown", &visible.len().to_string()),
                         ("total", &rows.len().to_string()),
                     ],
                 )));
