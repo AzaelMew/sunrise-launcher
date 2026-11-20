@@ -16,13 +16,11 @@ fn link_dir(target: &Path, alias: &Path) {
     #[cfg(unix)]
     std::os::unix::fs::symlink(target, alias).unwrap();
     #[cfg(windows)]
-    assert!(Command::new("cmd.exe")
-        .args(["/d", "/c", "mklink", "/J"])
-        .arg(alias)
-        .arg(target)
-        .status()
-        .unwrap()
-        .success());
+    {
+        // The runner can put forward slashes in its temporary-directory path.
+        let native = |path: &Path| path.components().collect::<std::path::PathBuf>();
+        sunrise_launcher::sources::junction(&native(target), &native(alias)).unwrap();
+    }
 }
 
 #[test]
