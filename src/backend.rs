@@ -1254,6 +1254,7 @@ fn unpack(archive: &Path, url: &str, to: &Path) -> Result<(), String> {
 /// the fraction done.
 pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> {
     let tag = release.tag.as_str();
+    installation::recover_replacement(tag)?;
     let settings = Settings::load();
     let assets = game_assets_for(
         std::env::consts::OS,
@@ -1364,6 +1365,7 @@ pub use developer_play::client_as;
 /// checksum), and unpacks it as the installed version `tag`.
 mod installation;
 pub(crate) use installation::install_as;
+pub use installation::recover_game_installations;
 
 pub fn remove(tag: &str) -> Result<(), String> {
     // A native build's base keeps its prepared data, so it stays while one is installed.

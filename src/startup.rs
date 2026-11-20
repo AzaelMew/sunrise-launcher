@@ -85,6 +85,7 @@ fn run_launcher() {
     }
     if setup_window.is_none() {
         if location_error.is_none() {
+            backend::recover_game_installations();
             if let Err(error) = sunrise_launcher::instances::initialize_default() {
                 eprintln!("{error}");
             }
