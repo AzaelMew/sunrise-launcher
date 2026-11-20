@@ -430,7 +430,7 @@ impl FirstAttempt<'_> {
         if backend::check_prepared(base) {
             return Ok(());
         }
-        let _prepare = backend::prepare_lock(base)?;
+        let preparation = backend::prepare_lock(base)?;
         backend::reuse_prepared_for_play(base);
         if backend::check_prepared(base) {
             return Ok(());
@@ -438,21 +438,27 @@ impl FirstAttempt<'_> {
         let minecraft = backend::Settings::load()
             .minecraft_dir
             .unwrap_or_else(|| crate::preparer::minecraft_dir(None));
+        let handoff = preparation.handoff(Some(self.handoff()));
         let (command, minecraft) = backend::preparer_staged(
             base,
             &minecraft,
             backend::MinecraftFrom::Install,
             log,
-            Some(self.handoff()),
+            &handoff,
         )?;
-        backend::sounds_staged(base, &minecraft, log, Some(self.handoff()));
-        self.run_prepare(command, log)
+        backend::sounds_staged(base, &minecraft, log, &handoff);
+        self.run_prepare(command, &preparation, log)
     }
 
-    fn run_prepare(&self, command: Command, log: &dyn Fn(String)) -> Result<(), String> {
-        crate::preparer::run_staged(command, self.handoff(), log)?;
+    fn run_prepare(
+        &self,
+        command: Command,
+        preparation: &crate::preparer::Preparation,
+        log: &dyn Fn(String),
+    ) -> Result<(), String> {
+        crate::preparer::run_staged(command, preparation.handoff(Some(self.handoff())), log)?;
         backend::forget_prepared();
-        backend::need_prepared(self.base())
+        backend::need_prepared_locked(self.base(), preparation)
     }
 
     pub fn exact_image(

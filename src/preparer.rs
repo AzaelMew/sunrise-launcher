@@ -114,17 +114,55 @@ fn unrun(error: std::io::Error) -> String {
     )
 }
 
+/// Exclusive access to a version's shared preparation tree. On Unix the flock follows
+/// the inherited file description; on Windows the no-share open follows the handle.
+pub struct Preparation(pub(crate) fs::File);
+
+pub(crate) struct Handoff<'a> {
+    preparation: &'a Preparation,
+    profile: Option<crate::process::leases::ProfileHandoff<'a>>,
+}
+
+impl Preparation {
+    pub(crate) fn handoff<'a>(
+        &'a self,
+        profile: Option<crate::process::leases::ProfileHandoff<'a>>,
+    ) -> Handoff<'a> {
+        Handoff {
+            preparation: self,
+            profile,
+        }
+    }
+
+    pub fn spawn_attached(&self, command: Command) -> io::Result<crate::process::child::Child> {
+        self.handoff(None).spawn(command, false)
+    }
+}
+
+impl Handoff<'_> {
+    pub(crate) fn spawn(
+        &self,
+        command: Command,
+        piped: bool,
+    ) -> io::Result<crate::process::child::Child> {
+        crate::process::leases::spawn_preparer(
+            command,
+            &self.preparation.0,
+            self.profile.as_ref(),
+            piped,
+        )
+    }
+}
+
 /// Runs `command` to its end, each stdout line to `out`; stderr is read beside it (so no pipe fills) and its lines returned.
 fn run(
     mut command: Command,
     out: &mut dyn FnMut(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
-    use crate::process::{leases::StagedChild, owned::Owned};
-    let mut child = if let Some(profile) = profile {
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::process_group(&mut command, 0);
-        Owned::spawn_staged(command, profile, StagedChild::Prepare)
+    use crate::process::owned::Owned;
+    let mut child = if let Some(handoff) = handoff {
+        handoff.spawn(command, true).map(Owned::start_preparer)
     } else {
         command
             .stdin(Stdio::null())
@@ -151,10 +189,10 @@ fn run(
 
 pub(crate) fn run_staged(
     command: Command,
-    profile: crate::process::leases::ProfileHandoff<'_>,
+    handoff: Handoff<'_>,
     line: &dyn Fn(String),
 ) -> Result<(), String> {
-    let (status, errors) = run(command, &mut |text| line(text), Some(profile))?;
+    let (status, errors) = run(command, &mut |text| line(text), Some(&handoff))?;
     for error in errors {
         line(error);
     }
@@ -202,7 +240,7 @@ fn tail(stream: impl std::io::Read) -> Vec<String> {
 fn reply(
     command: Command,
     line: &dyn Fn(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<Value>, String> {
     let mut last = None;
     let (status, errors) = run(
@@ -215,7 +253,7 @@ fn reply(
                 None => {}
             }
         },
-        profile,
+        handoff,
     )?;
     if status.code() == Some(2) {
         return Ok(None);
@@ -250,12 +288,12 @@ fn reply(
 }
 
 /// Copies the sounds into `root`'s resources (`sounds`), each line to `line`; None when the preparer has no such command.
-pub fn sounds(
+pub(crate) fn sounds(
     binary: &Path,
     root: &Path,
     minecraft: &Path,
     line: &dyn Fn(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<()>, String> {
     let mut command = crate::process::command(binary);
     command
@@ -265,7 +303,7 @@ pub fn sounds(
         .arg(root)
         .arg("--minecraft-dir")
         .arg(minecraft);
-    let (status, errors) = run(command, &mut |text| line(text), profile)?;
+    let (status, errors) = run(command, &mut |text| line(text), handoff)?;
     match status.code() {
         Some(0) => Ok(Some(())),
         Some(2) => Ok(None),
@@ -298,10 +336,10 @@ pub(crate) fn needs(
     binary: &Path,
     root: &Path,
     line: &dyn Fn(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<Needs>, String> {
     Ok(
-        reply(json_command(binary, root, "needs"), line, profile)?.map(|value| Needs {
+        reply(json_command(binary, root, "needs"), line, handoff)?.map(|value| Needs {
             server_jar: value["server_jar"].as_bool().unwrap_or(true),
             jdk: value["jdk"].as_bool().unwrap_or(true),
         }),
@@ -330,11 +368,11 @@ pub(crate) fn missing_extras(
     binary: &Path,
     root: &Path,
     resources: &Path,
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<Extras>, String> {
     let mut command = json_command(binary, root, "missing-extras");
     command.arg("--output").arg(resources);
-    Ok(reply(command, &|_| {}, profile)?.map(|value| extras(&value["missing"])))
+    Ok(reply(command, &|_| {}, handoff)?.map(|value| extras(&value["missing"])))
 }
 
 /// Writes the prepared `resources`' cache of prepared data (`data-file --json`): whether it wrote one; `None` when the preparer is too old to.
@@ -342,11 +380,11 @@ pub(crate) fn data_file(
     binary: &Path,
     root: &Path,
     resources: &Path,
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<bool>, String> {
     let mut command = json_command(binary, root, "data-file");
     command.arg("--output").arg(resources);
-    Ok(reply(command, &|_| {}, profile)?.map(|value| value["written"].as_bool().unwrap_or(false)))
+    Ok(reply(command, &|_| {}, handoff)?.map(|value| value["written"].as_bool().unwrap_or(false)))
 }
 
 /// What `extras` did: the kinds added, each that failed with why, and what still lacks.
@@ -365,7 +403,7 @@ pub(crate) fn add_extras(
     only: &[String],
     folders: &[PathBuf],
     line: &dyn Fn(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: Option<&Handoff<'_>>,
 ) -> Result<Option<Added>, String> {
     let mut command = json_command(binary, root, "extras");
     command
@@ -376,7 +414,7 @@ pub(crate) fn add_extras(
     for folder in folders {
         command.arg("--minecraft-dir").arg(folder);
     }
-    Ok(reply(command, line, profile)?.map(|value| Added {
+    Ok(reply(command, line, handoff)?.map(|value| Added {
         added: value["added"]
             .as_array()
             .into_iter()

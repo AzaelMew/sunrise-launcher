@@ -118,8 +118,8 @@ pub struct ProfileHandoff<'a> {
     pub(crate) handed_off: &'a std::sync::atomic::AtomicBool,
 }
 
-/// Preparation only needs the profile gate. The compiler also needs the existing Windows
-/// Job cutover (the Unix compiler uses its worker executable for process-tree proof).
+/// A staged profile child. The compiler also needs the existing Windows Job cutover
+/// (the Unix compiler uses its worker executable for process-tree proof).
 #[derive(Clone, Copy)]
 pub enum StagedChild {
     Prepare,
@@ -129,7 +129,7 @@ pub enum StagedChild {
 impl ProfileHandoff<'_> {
     #[cfg(unix)]
     fn spawn_unix(
-        self,
+        &self,
         command: std::process::Command,
         roots: &[&File],
         runtime_root: Option<&Path>,
@@ -163,6 +163,40 @@ impl ProfileHandoff<'_> {
             true,
         )
     }
+}
+
+/// The shared version's preparation exclusion must follow its writer, even when
+/// there is no admitted profile (startup/Prepare).
+pub(crate) fn spawn_preparer(
+    mut command: std::process::Command,
+    file: &File,
+    profile: Option<&ProfileHandoff<'_>>,
+    piped: bool,
+) -> io::Result<super::child::Child> {
+    command.env_remove("SUNRISE_ACCOUNT_SESSIONS");
+    #[cfg(unix)]
+    {
+        if piped {
+            std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        }
+        let command = profile_streams(command, piped);
+        match profile {
+            Some(profile) => profile.spawn_unix(command, &[file], None),
+            None => spawn_unix(command, &[file], None, None),
+        }
+        .map(Into::into)
+    }
+    #[cfg(windows)]
+    spawn_windows_command(
+        &command,
+        &[file],
+        windows::Start {
+            profile: profile.map(|handoff| handoff.file),
+            attached: !piped,
+            ..windows::Start::default()
+        },
+        piped,
+    )
 }
 
 #[cfg(unix)]

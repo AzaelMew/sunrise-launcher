@@ -46,13 +46,26 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
             let first = profile
                 .begin_first(|| FirstBuild::installed(BUILD), |_| {})
                 .unwrap();
-            first.run_prepare(actor("prepare"), &|_| {}).unwrap();
+            let preparation = backend::prepare_lock(BUILD).unwrap();
+            first
+                .run_prepare(actor("prepare"), &preparation, &|_| {})
+                .unwrap();
             panic!("test should have killed this launcher while the preparer was held");
         }
         "already-open-launcher" => {
+            let other_home = home.join("instances/other-game");
+            fs::create_dir_all(&other_home).unwrap();
+            let mut other = Profile::open(&other_home, None).unwrap();
             fs::create_dir(home.with_file_name("contender-ready")).unwrap();
             await_fixture(|| home.with_file_name("try-admission").is_file());
             assert!(Profile::open(&home, None).is_err());
+            let second = other
+                .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+                .unwrap();
+            let error = second
+                .prepare(&|_| {})
+                .expect_err("the live child owns this shared base, not just one profile");
+            assert!(error.contains("already being prepared"), "{error}");
         }
         "scenario" => {
             fs::create_dir_all(&home).unwrap();
@@ -372,6 +385,39 @@ fn first_play_preparer_subcommands_keep_admission_and_never_trust_an_unrecorded_
         fs::write(resources.join("sunrise-resources.json"), "{}").unwrap();
     };
     let admit = || Profile::open(&home, None);
+    if role == "other-home" {
+        fs::create_dir_all(&home).unwrap();
+        let mut profile = admit().unwrap();
+        fs::write(root.join("other-admitted"), []).unwrap();
+        await_fixture(|| root.join("try-other").is_file());
+        let attempt = profile
+            .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+            .unwrap();
+        let result = if pass == "needs" {
+            attempt.prepare(&|_| panic!("a second preparer started"))
+        } else {
+            attempt
+                .commit(BUILD, &native_mods::Cancellation::default())
+                .map(drop)
+        };
+        let error = result.expect_err("another home cannot write or seal this version");
+        assert!(error.contains("already being prepared"), "{error}");
+        assert!(
+            backend::prepare_lock(BUILD).is_err(),
+            "explicit Prepare uses the same lock"
+        );
+        fs::write(root.join("other-refused"), []).unwrap();
+        return;
+    }
+    if role == "startup" {
+        backend::reuse_prepared_everywhere();
+        backend::reuse_prepared_for(BUILD);
+        assert!(
+            !root.join("startup-wrote").exists(),
+            "startup started a preparer while its version was locked"
+        );
+        return;
+    }
     if role == "attempt" {
         let mut profile = admit().unwrap();
         let attempt = profile
@@ -402,6 +448,7 @@ while [ "$#" -ne 0 ]; do
   shift
 done
 root=${SUNRISE_HOME%/*}
+if [ "$PREPARE_CASE_ROLE" = startup ]; then : > "$root/startup-wrote"; exit 2; fi
 # Write the accelerator before announcing the interruption, while it still has no evidence.
 if [ "$cmd" = data-file ]; then printf 'fixture data' > "$out/sunrise-data.bin"; fi
 if [ "$cmd" = "$PREPARE_CASE_PASS" ] && [ ! -f "$root/finish" ]; then
@@ -424,6 +471,13 @@ esac
     if pass != "needs" {
         prepared();
     }
+    let mut contender = Running(
+        actor("other-home")
+            .env("SUNRISE_HOME", root.join("other-game"))
+            .spawn()
+            .unwrap(),
+    );
+    await_fixture(|| root.join("other-admitted").is_file());
     let mut attempt = Running(actor("attempt").spawn().unwrap());
     await_fixture(|| root.join("entered").is_file());
     attempt.0.kill().unwrap();
@@ -433,6 +487,14 @@ esac
         "the live {pass} child lost admission when Play died"
     );
     assert!(profile_txn::references(&home).unwrap().pointer.is_none());
+    fs::write(root.join("try-other"), []).unwrap();
+    await_fixture(|| root.join("other-refused").is_file());
+    assert!(contender.0.wait().unwrap().success());
+    assert!(actor("startup")
+        .env("SUNRISE_HOME", root.join("other-game"))
+        .status()
+        .unwrap()
+        .success());
     fs::write(root.join("finish"), []).unwrap();
     let mut resumed = None;
     await_fixture(|| {

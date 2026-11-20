@@ -1363,11 +1363,21 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             } else {
                 backend::MinecraftFrom::Install
             };
-            let _preparing = backend::prepare_lock(&tag)?;
-            let (preparer, minecraft) =
-                backend::preparer(&tag, &minecraft, from, &|line| eprintln!("{line}"))?;
-            backend::sounds(&tag, &minecraft, &|line| println!("{line}"));
-            let code = attached(preparer)?;
+            let preparation = backend::prepare_lock(&tag)?;
+            let (preparer, minecraft) = backend::preparer(
+                &tag,
+                &minecraft,
+                from,
+                &|line| eprintln!("{line}"),
+                &preparation,
+            )?;
+            backend::sounds(&tag, &minecraft, &|line| println!("{line}"), &preparation);
+            let (preparer, _runtime) = backend::prepare_command(preparer)?;
+            let status = preparation
+                .spawn_attached(preparer)
+                .and_then(|mut child| child.wait())
+                .map_err(|e| format!("Could not run the game's preparer: {e}"))?;
+            let code = attached_status(status)?;
             if code != 0 {
                 return Ok(code);
             }

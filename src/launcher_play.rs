@@ -149,8 +149,8 @@ impl Launcher {
                     return;
                 }
             };
-            let result = backend::preparer(&tag, &minecraft, from, &log)
-                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log))
+            let result = backend::preparer(&tag, &minecraft, from, &log, &lock)
+                .inspect(|(_, minecraft)| backend::sounds(&tag, minecraft, &log, &lock))
                 .map(|(p, _)| {
                     backend::set_prepare_step(backend::PrepareStep::Prepare);
                     p

@@ -1765,6 +1765,9 @@ fn reuse_prepared(versions: &Path, tag: &str) -> Option<String> {
         if game_version_at(&source) != version {
             continue;
         }
+        let Ok(_source) = prepare_lock_at(&source, &other) else {
+            continue;
+        };
         let from = resources_at(&source);
         let Some(manifest) = read_json(&from.join(RESOURCES_MANIFEST)) else {
             continue;
@@ -1812,9 +1815,20 @@ pub(crate) fn reuse_prepared_for_play(tag: &str) {
 pub(crate) fn reuse_prepared_for(tag: &str) {
     let about = crate::native_mods::about(tag);
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
-    reuse_prepared(&versions_dir(), tag);
-    complete_assets(tag);
+    let Ok(preparation) = prepare_lock(tag) else {
+        return;
+    };
+    let versions = versions_dir();
+    reuse_prepared(&versions, tag);
+    complete_assets_in(
+        &versions,
+        tag,
+        minecraft_folders,
+        &|line| eprintln!("{line}"),
+        Some(&preparation.handoff(None)),
+    );
     forget_prepared();
+    drop(preparation);
     let (root, resources) = (version_dir(tag), resources(tag));
     let spawned = std::thread::Builder::new()
         .name("Prepared data file".into())
@@ -1836,8 +1850,13 @@ fn write_data_file(root: &Path, resources: &Path) -> Result<(), String> {
     if !prepared_at(resources) || resources.join(crate::preparer::DATA_FILE).exists() {
         return Ok(());
     }
+    let version = root.file_name().unwrap_or_default().to_string_lossy();
+    let preparation = prepare_lock_at(root, &version)?;
     match crate::preparer::binary(root) {
-        Some(binary) => crate::preparer::data_file(&binary, root, resources, None).map(drop),
+        Some(binary) => {
+            crate::preparer::data_file(&binary, root, resources, Some(&preparation.handoff(None)))
+                .map(drop)
+        }
         None => Ok(()),
     }
 }
@@ -1854,8 +1873,18 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
     for tag in installed_in(&versions) {
         // Here, on the start-up thread, and not in `complete_assets`, which Play also runs: a
         // download of thousands of files is not for the moment the game is waited for.
-        refill_own_store(&tag);
-        complete_assets(&tag);
+        let Ok(preparation) = prepare_lock(&tag) else {
+            continue;
+        };
+        let handoff = preparation.handoff(None);
+        refill_own_store(&tag, &handoff);
+        complete_assets_in(
+            &versions,
+            &tag,
+            minecraft_folders,
+            &|line| eprintln!("{line}"),
+            Some(&handoff),
+        );
     }
     reused
 }
@@ -1863,14 +1892,14 @@ pub fn reuse_prepared_everywhere() -> Vec<(String, String)> {
 fn reuse_prepared_in(versions: &Path) -> Vec<(String, String)> {
     let mut tags = installed_in(versions);
     tags.reverse();
-    let reused = tags
-        .iter()
-        .filter_map(|tag| reuse_prepared(versions, tag).map(|from| (tag.clone(), from)))
-        .collect();
-    for tag in &tags {
-        complete_reports(versions, tag);
-    }
-    reused
+    tags.into_iter()
+        .filter_map(|tag| {
+            let _preparation = prepare_lock_at(&versions.join(&tag), &tag).ok()?;
+            let from = reuse_prepared(versions, &tag);
+            complete_reports(versions, &tag);
+            from.map(|from| (tag, from))
+        })
+        .collect()
 }
 
 /// The data generator reports the game reads at run time: the built-in registries' network ids
@@ -1907,11 +1936,15 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
     };
     let reports = |dir: &Path| dir.join(".local/datagen/out/reports");
     let mut sources = vec![reports(&target)];
+    let mut source_claims = Vec::new();
     for other in installed_in(versions).into_iter().filter(|t| t != tag) {
         let dir = versions.join(&other);
         if server(&dir).as_ref() == Some(&pins) {
-            sources.push(resources_at(&dir));
-            sources.push(reports(&dir));
+            if let Ok(preparation) = prepare_lock_at(&dir, &other) {
+                sources.push(resources_at(&dir));
+                sources.push(reports(&dir));
+                source_claims.push(preparation);
+            }
         }
     }
     let mut complete = true;
@@ -1940,22 +1973,19 @@ fn complete_reports(versions: &Path, tag: &str) -> bool {
 /// in any Minecraft folder, one line each in the log, once per launcher run, and the version plays
 /// as before. Nothing is prepared again.
 pub fn complete_assets(tag: &str) {
-    complete_assets_in(
-        &versions_dir(),
-        tag,
-        minecraft_folders,
-        &|line| eprintln!("{line}"),
-        None,
-    );
+    let Ok(preparation) = prepare_lock(tag) else {
+        return;
+    };
+    complete_assets_staged(tag, &preparation.handoff(None));
 }
 
-pub(crate) fn complete_assets_for_play(tag: &str, stage: &crate::profile_txn::Staging<'_>) {
+pub(crate) fn complete_assets_staged(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
     complete_assets_in(
         &versions_dir(),
         tag,
         minecraft_folders,
         &|line| eprintln!("{line}"),
-        Some(stage),
+        Some(handoff),
     );
 }
 
@@ -1976,13 +2006,13 @@ fn refill_wanted(
 /// and the copies of `complete_assets` read them from its store: asked again, once per run, through
 /// the same owner gate as any download from Mojang (`download_for_owner`), which keeps the files
 /// already whole. Called where a download is expected (`reuse_prepared_everywhere`), never on Play.
-fn refill_own_store(tag: &str) {
+fn refill_own_store(tag: &str, handoff: &crate::preparer::Handoff<'_>) {
     static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let own = data_dir().join("minecraft");
     let root = versions_dir().join(tag);
     let resources = resources_at(&root);
     let missing = crate::preparer::binary(&root).and_then(|binary| {
-        crate::preparer::missing_extras(&binary, &root, &resources, None)
+        crate::preparer::missing_extras(&binary, &root, &resources, Some(handoff))
             .ok()
             .flatten()
     });
@@ -2017,7 +2047,7 @@ fn complete_assets_in(
     tag: &str,
     folders: impl Fn() -> Vec<PathBuf>,
     log: &dyn Fn(String),
-    stage: Option<&crate::profile_txn::Staging<'_>>,
+    handoff: Option<&crate::preparer::Handoff<'_>>,
 ) {
     // The versions tried this run. Held while adding: the start, an install and Play can complete one version at once.
     static TRIED: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
@@ -2030,8 +2060,7 @@ fn complete_assets_in(
     let Some(binary) = crate::preparer::binary(&root) else {
         return;
     };
-    let handoff = || stage.map(crate::profile_txn::Staging::handoff);
-    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff()) {
+    let lacking = match crate::preparer::missing_extras(&binary, &root, &resources, handoff) {
         Ok(Some(lacking)) if !lacking.is_empty() => lacking,
         Ok(_) => return,
         Err(e) => return log(format!("{tag}: {e}")),
@@ -2042,15 +2071,8 @@ fn complete_assets_in(
     }
     tried.push(root.clone());
     let kinds: Vec<String> = lacking.iter().map(|(kind, _)| kind.clone()).collect();
-    match crate::preparer::add_extras(
-        &binary,
-        &root,
-        &resources,
-        &kinds,
-        &folders(),
-        log,
-        handoff(),
-    ) {
+    match crate::preparer::add_extras(&binary, &root, &resources, &kinds, &folders(), log, handoff)
+    {
         Ok(Some(added)) => {
             for (kind, error) in added.failed {
                 let what = lacking
@@ -2379,8 +2401,9 @@ pub fn preparer(
     minecraft: &Path,
     from: MinecraftFrom,
     log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
 ) -> Result<(Command, PathBuf), String> {
-    preparer_staged(tag, minecraft, from, log, None)
+    preparer_staged(tag, minecraft, from, log, &preparation.handoff(None))
 }
 
 pub(crate) fn preparer_staged(
@@ -2388,7 +2411,7 @@ pub(crate) fn preparer_staged(
     minecraft: &Path,
     from: MinecraftFrom,
     log: &dyn Fn(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: &crate::preparer::Handoff<'_>,
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
@@ -2404,7 +2427,7 @@ pub(crate) fn preparer_staged(
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
     // The version's own answer: a sibling's verified import is linked in when found, and whether its exporters ship.
-    let needs = crate::preparer::needs(&binary, &dir, log, profile)?
+    let needs = crate::preparer::needs(&binary, &dir, log, Some(handoff))?
         .ok_or_else(|| crate::preparer::too_old(tag))?;
     let reused = !needs.server_jar;
     let chosen = minecraft.to_path_buf();
@@ -2540,15 +2563,20 @@ fn ensure_server_jar(
 }
 
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
-pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
-    sounds_staged(tag, minecraft, log, None);
+pub fn sounds(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    preparation: &crate::preparer::Preparation,
+) {
+    sounds_staged(tag, minecraft, log, &preparation.handoff(None));
 }
 
 pub(crate) fn sounds_staged(
     tag: &str,
     minecraft: &Path,
     log: &dyn Fn(String),
-    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+    handoff: &crate::preparer::Handoff<'_>,
 ) {
     use crate::i18n::{tr, trf};
     let tag = resources_owner(tag);
@@ -2557,7 +2585,7 @@ pub(crate) fn sounds_staged(
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
     let result = match crate::preparer::binary(&dir) {
-        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log, profile)
+        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log, Some(handoff))
             .and_then(|done| done.ok_or_else(|| crate::preparer::too_old(tag))),
         None => Err(crate::preparer::too_old(tag)),
     };
@@ -3128,6 +3156,20 @@ pub fn server_dir(requested: Option<PathBuf>) -> PathBuf {
 
 /// Whether `tag` is prepared, with the run-time reports it needs completed when another copy has them.
 pub fn need_prepared(tag: &str) -> Result<(), String> {
+    need_prepared_inner(tag, None)
+}
+
+pub(crate) fn need_prepared_locked(
+    tag: &str,
+    preparation: &crate::preparer::Preparation,
+) -> Result<(), String> {
+    need_prepared_inner(tag, Some(preparation))
+}
+
+fn need_prepared_inner(
+    tag: &str,
+    preparation: Option<&crate::preparer::Preparation>,
+) -> Result<(), String> {
     let about = crate::native_mods::about(tag);
     if let Some(about) = &about {
         if !version_dir(&about.base).join(COMPLETE).is_file() {
@@ -3139,6 +3181,11 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
     }
     let tag = about.as_ref().map_or(tag, |about| about.base.as_str());
     if check_prepared(tag) {
+        let _owned = if preparation.is_none() {
+            Some(prepare_lock(tag)?)
+        } else {
+            None
+        };
         complete_reports(&versions_dir(), tag);
         Ok(())
     } else {
@@ -4182,30 +4229,36 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
 /// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
 /// native build), so a second preparation of the same folder can't start while one runs; it is
 /// released when the guard drops.
-pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+pub fn prepare_lock(version: &str) -> Result<crate::preparer::Preparation, String> {
     let owner = resources_owner(version);
     prepare_lock_at(&version_dir(&owner), &owner)
 }
 
-fn prepare_lock_at(
-    dir: &Path,
-    version: &str,
-) -> Result<sunrise_launcher_smod::locks::Locked, String> {
+fn prepare_lock_at(dir: &Path, version: &str) -> Result<crate::preparer::Preparation, String> {
     let path = dir.join(".preparing.lock");
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    sunrise_launcher_smod::locks::locked(file, sunrise_launcher_smod::locks::LockMode::Exclusive)
-        .map_err(|error| match error {
-            std::fs::TryLockError::WouldBlock => crate::i18n::trf(
-                "Sunrise {version} is already being prepared.",
-                &[("version", version)],
-            ),
-            std::fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
-        })
+    let busy = || {
+        crate::i18n::trf(
+            "Sunrise {version} is already being prepared.",
+            &[("version", version)],
+        )
+    };
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(false).write(true);
+    #[cfg(windows)]
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut options, 0);
+    let file = options.open(&path).map_err(|e| {
+        #[cfg(windows)]
+        if matches!(e.raw_os_error(), Some(32 | 33)) {
+            return busy();
+        }
+        format!("{}: {e}", path.display())
+    })?;
+    #[cfg(unix)]
+    file.try_lock().map_err(|e| match e {
+        fs::TryLockError::WouldBlock => busy(),
+        fs::TryLockError::Error(e) => format!("{}: {e}", path.display()),
+    })?;
+    Ok(crate::preparer::Preparation(file))
 }
 
 /// [`spawn`], keeping `hold` (a lock) until the program ends; a preparation's whole process group is stopped if the launcher quits first.
@@ -4213,9 +4266,16 @@ pub fn spawn_holding(
     job: Job,
     cmd: Command,
     tx: Sender<Msg>,
-    hold: Option<sunrise_launcher_smod::locks::Locked>,
+    hold: Option<crate::preparer::Preparation>,
 ) -> Result<Running, String> {
     let (mut cmd, runtime) = prepare_command(cmd)?;
+    if let Some(preparation) = &hold {
+        let child = preparation
+            .handoff(None)
+            .spawn(cmd, true)
+            .map_err(|e| e.to_string())?;
+        return Ok(monitor(job, child, tx, runtime, hold));
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -4239,7 +4299,7 @@ fn monitor(
     mut child: Child,
     tx: Sender<Msg>,
     runtime: RuntimeGuard,
-    hold: Option<sunrise_launcher_smod::locks::Locked>,
+    hold: Option<crate::preparer::Preparation>,
 ) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
@@ -5325,9 +5385,16 @@ pub fn {f}("
         assert!(prepare_lock(&base).is_ok());
         // Preparing a native build runs the base's preparer, and says so when it can't.
         let try_prepare = || {
-            preparer(&native, Path::new("."), MinecraftFrom::Install, &|_| {})
-                .map(|_| ())
-                .unwrap_err()
+            let preparation = prepare_lock(&native).unwrap();
+            preparer(
+                &native,
+                Path::new("."),
+                MinecraftFrom::Install,
+                &|_| {},
+                &preparation,
+            )
+            .map(|_| ())
+            .unwrap_err()
         };
         assert_eq!(try_prepare(), crate::preparer::too_old(&base));
         fs::remove_file(base_dir.join(COMPLETE)).unwrap();
