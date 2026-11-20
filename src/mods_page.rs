@@ -855,7 +855,6 @@ impl Launcher {
                 self.commit_switch(&ask.instance, version, channel, allow)
             }
             Then::Install(ask) => self.install_replacing(*ask, &allow),
-            Then::UpdateChosen(items) => self.update_allowing(items, allow),
             Then::Retry(request) => {
                 let mods: Vec<String> = allow.into_iter().collect();
                 self.submit_install(request.approving(&mods));
@@ -1333,8 +1332,6 @@ pub(crate) enum Then {
     Switch(Option<String>, instances::Channel),
     /// An install that removes mods a world uses.
     Install(Box<BreakAsk>),
-    /// The updates the player chose on the Installed list that would drop what a world may use.
-    UpdateChosen(Vec<crate::mods::Included>),
     /// An install that would drop what a world uses: it goes ahead as it was, with that agreed.
     Retry(Box<queue::Request>),
 }

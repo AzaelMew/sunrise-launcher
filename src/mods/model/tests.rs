@@ -215,20 +215,12 @@ fn pack() -> (Index, Vec<Entry>) {
 }
 
 #[test]
-fn rows_put_updates_first_then_the_rest_and_a_native_mod_is_just_a_row() {
+fn rows_are_listed_by_name_and_a_native_mod_is_just_a_row() {
     let (idx, entries) = pack();
     let enabled: HashSet<String> = ["quiet", "zoom", "deep", "bad"].map(String::from).into();
     let r = rows(&entries, &world(&idx, &enabled));
-    let order: Vec<(&str, Group)> = r.iter().map(|r| (r.id.as_str(), r.group())).collect();
-    assert_eq!(
-        order,
-        [
-            ("bad", Group::Updates),
-            ("deep", Group::Updates),
-            ("zoom", Group::Updates),
-            ("quiet", Group::Rest)
-        ]
-    );
+    let order: Vec<&str> = r.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(order, ["bad", "deep", "quiet", "zoom"]);
     let row = |id: &str| r.iter().find(|r| r.id == id).unwrap();
     assert_eq!(row("bad").need, Some(Need::TakenDown("unsafe".into())));
     assert_eq!(
@@ -293,13 +285,13 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
             .map(|i| r[i].id.clone())
             .collect::<Vec<_>>()
     };
-    assert_eq!(ids(&RowFilter::default()), ["bad", "deep", "zoom", "quiet"]);
+    assert_eq!(ids(&RowFilter::default()), ["bad", "deep", "quiet", "zoom"]);
     assert_eq!(
         ids(&RowFilter {
             show: Show::On,
             ..Default::default()
         }),
-        ["zoom", "quiet"]
+        ["quiet", "zoom"]
     );
     assert_eq!(
         ids(&RowFilter {
@@ -325,77 +317,47 @@ fn filters_narrow_the_shown_rows_and_never_reorder_them() {
 }
 
 #[test]
-fn update_all_covers_the_whole_pack_and_names_what_it_leaves_out() {
+fn update_all_covers_the_whole_pack_but_a_version_the_player_chose() {
     let (idx, entries) = pack();
     let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
     let r = rows(&entries, &world(&idx, &on));
-    let plan = plan_updates(&r, false);
-    let ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(
-        ids,
-        ["bad", "zoom"],
-        "a taken-down mod is updated to a file that wasn't"
-    );
-    assert_eq!(plan.skipped.len(), 1, "{:?}", plan.skipped);
-    assert!(plan
-        .skipped
+    let ids = |rows: &[Row]| -> Vec<String> {
+        let mut ids: Vec<String> = updatable(rows).iter().map(|r| r.id.clone()).collect();
+        ids.sort();
+        ids
+    };
+    // A native mod is in it: the install asks for permission itself. A taken-down mod is updated
+    // to a file that wasn't.
+    assert_eq!(ids(&r), ["bad", "deep", "zoom"]);
+    // A mod that is off is in it too.
+    let only_zoom: HashSet<String> = ["zoom".to_string()].into();
+    let off = rows(&entries, &world(&idx, &only_zoom));
+    assert!(off
         .iter()
-        .any(|(t, why)| t == "DEEP" && why.contains("native")));
-    let with = plan_updates(&r, true);
-    assert!(with.included.iter().any(|i| i.id == "deep" && i.native));
-    assert!(with.skipped.is_empty());
-
-    // A version the player chose is never moved by a batch.
+        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
+    assert_eq!(ids(&off), ["bad", "deep", "zoom"]);
+    // A version the player chose is never moved by it.
     let pins = std::collections::BTreeMap::from([("zoom".to_string(), "1.0.0".to_string())]);
     let w = World {
         chosen: &pins,
         ..world(&idx, &on)
     };
-    let pinned = plan_updates(&rows(&entries, &w), true);
-    assert!(pinned.included.iter().all(|i| i.id != "zoom"));
-    assert!(pinned.skipped.iter().any(|(t, _)| t == "ZOOM"));
+    assert_eq!(ids(&rows(&entries, &w)), ["bad", "deep"]);
+    // Nothing waiting: no button.
+    assert!(updatable(&[]).is_empty());
 }
 
 #[test]
-fn a_mod_that_is_off_is_in_the_plan() {
+fn a_row_with_a_newer_version_says_update_available() {
     let (idx, entries) = pack();
-    let on: HashSet<String> = ["zoom".to_string()].into();
+    let on: HashSet<String> = ["zoom"].map(String::from).into();
     let r = rows(&entries, &world(&idx, &on));
-    assert!(r
-        .iter()
-        .any(|r| r.id == "bad" && !r.on && r.update.is_some()));
-    let plan = plan_updates(&r, true);
-    let mut ids: Vec<&str> = plan.included.iter().map(|i| i.id.as_str()).collect();
-    ids.sort();
-    assert_eq!(ids, ["bad", "deep", "zoom"]);
-    assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
-}
-
-#[test]
-fn the_update_button_counts_only_what_the_plan_includes() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["zoom", "bad", "deep"].map(String::from).into();
-    let r = rows(&entries, &world(&idx, &on));
-    // "deep" is native and not allowed: it is left out, so the button counts two, not three.
-    assert_eq!(r.iter().filter(|r| r.update.is_some()).count(), 3);
-    assert_eq!(update_all_button(&r, false), Some(2));
-    assert_eq!(update_all_button(&r, true), Some(3));
-    // Nothing the plan can update: no button at all, not "Update 0 mods".
-    let only_deep: Vec<Row> = r.into_iter().filter(|r| r.id == "deep").collect();
-    assert_eq!(update_all_button(&only_deep, false), None);
-    assert_eq!(update_all_button(&[], true), None);
-}
-
-#[test]
-fn a_skipped_native_row_says_why() {
-    let (idx, entries) = pack();
-    let on: HashSet<String> = ["deep"].map(String::from).into();
-    let r = rows(&entries, &world(&idx, &on));
-    let deep = r.iter().find(|r| r.id == "deep").unwrap();
-    let tip = cells(deep, None, false).status.unwrap().tip;
-    assert!(tip.contains("native code: allow it first"), "{tip}");
-    let tip = cells(deep, None, true).status.unwrap().tip;
-    assert!(!tip.contains("allow it first"), "{tip}");
+    let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
+    let cells = cells(zoom, None);
+    assert_eq!(cells.status.unwrap().label, "Update available");
+    assert!(cells.action.is_some());
+    let quiet = r.iter().find(|r| r.id == "quiet").unwrap();
+    assert!(self::cells(quiet, None).action.is_none());
 }
 
 #[test]
@@ -409,8 +371,8 @@ fn a_row_the_plan_cannot_update_says_why() {
     };
     let r = rows(&entries, &w);
     let zoom = r.iter().find(|r| r.id == "zoom").unwrap();
-    assert!(update_refusal(zoom, true).is_some_and(|w| w.contains("you chose")));
-    let tip = cells(zoom, None, true).status.expect("says something").tip;
+    assert!(update_refusal(zoom).is_some_and(|w| w.contains("you chose")));
+    let tip = cells(zoom, None).status.expect("says something").tip;
     assert!(tip.contains("you chose its version"), "{tip}");
 }
 
@@ -449,10 +411,7 @@ fn native_files_the_browser_didnt_install_are_listed_and_never_planned() {
     assert_eq!((wasm.title.as_str(), wasm.on), ("By Hand", true));
     assert_eq!((wasm.make, &wasm.need), (None, &None));
     assert!(wasm.local.is_some() && wasm.entry.is_none());
-    assert!(plan_updates(&r, true)
-        .included
-        .iter()
-        .all(|i| i.id != "mine"));
+    assert!(updatable(&r).iter().all(|r| r.id != "mine"));
 }
 
 #[test]
@@ -463,7 +422,7 @@ fn turning_on_skips_what_is_taken_down_or_needs_permission() {
     let (ok, held) = turn_on_plan(&all, false);
     assert_eq!(
         ok.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
-        ["zoom", "quiet"]
+        ["quiet", "zoom"]
     );
     assert_eq!(held.len(), 2);
     let (ok, held) = turn_on_plan(&all, true);
@@ -998,14 +957,14 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
         .expect("listed");
     assert!(!broken.on);
     assert_eq!(broken.need, None);
-    assert!(!cells(broken, None, true).switch);
+    assert!(!cells(broken, None).switch);
     let good = r
         .iter()
         .find(|r| r.local.as_ref().is_some_and(|l| !l.unreadable))
         .expect("listed");
     assert!(good.on);
     assert_eq!(good.need, None);
-    assert!(cells(good, None, true).switch);
+    assert!(cells(good, None).switch);
 }
 
 #[test]
@@ -1106,15 +1065,4 @@ fn a_mod_is_unknown_not_unfit_until_there_is_a_game_to_judge_by() {
     };
     assert_eq!(discover(&all, &off).len(), 2);
     assert!(cards(&idx, GAME).iter().all(|c| c.fit == Fit::Fits));
-}
-
-#[test]
-fn the_installed_list_names_its_groups_only_when_there_is_more_than_one() {
-    assert!(!names_groups([Group::Rest, Group::Rest]));
-    assert!(!names_groups([]));
-    assert!(names_groups([Group::Updates, Group::Rest]));
-    assert!(
-        names_groups([Group::Updates]),
-        "its Update button lives in the heading"
-    );
 }

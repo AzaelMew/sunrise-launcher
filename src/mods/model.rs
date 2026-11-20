@@ -498,7 +498,7 @@ pub(super) mod column {
 
 /// `row`'s cells. `error` is why its last update failed. The status is the first thing that
 /// applies, most pressing first; whatever else applies is in its tooltip.
-pub(super) fn cells(row: &Row, error: Option<&str>, native_allowed: bool) -> Cells {
+pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
     let mut said: Vec<Status> = Vec::new();
     let mut say = |icon, label: String, tone, tip: String| {
         said.push(Status {
@@ -527,9 +527,9 @@ pub(super) fn cells(row: &Row, error: Option<&str>, native_allowed: bool) -> Cel
     if let Some(to) = &row.update {
         say(
             "refresh",
-            trf("{version} is out", &[("version", to)]),
+            tr("Update available").into(),
             Tone::Info,
-            match update_refusal(row, native_allowed) {
+            match update_refusal(row) {
                 Some(why) => trf(
                     "Version {version} is out. {why}",
                     &[("version", to), ("why", &why)],
@@ -570,28 +570,6 @@ pub(super) fn cells(row: &Row, error: Option<&str>, native_allowed: bool) -> Cel
 impl Row {
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Group {
-    Updates,
-    Rest,
-}
-
-/// Whether the list names its groups: only when something is under Updates. With one group
-/// left (everything else) a heading would say nothing; the count row below says how many show.
-pub(super) fn names_groups(groups: impl IntoIterator<Item = Group>) -> bool {
-    groups.into_iter().any(|g| g == Group::Updates)
-}
-
-impl Row {
-    pub(super) fn group(&self) -> Group {
-        if self.update.is_some() {
-            Group::Updates
-        } else {
-            Group::Rest
-        }
     }
 }
 
@@ -688,22 +666,9 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
     out
 }
 
-/// Rows in the order the list shows them: by group, then by name.
+/// Rows in the order the list shows them: by name.
 pub(super) fn sort(rows: &mut [Row]) {
-    rows.sort_by(|a, b| {
-        (a.group(), a.title.to_lowercase()).cmp(&(b.group(), b.title.to_lowercase()))
-    });
-}
-
-impl PartialOrd for Group {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Group {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (*self as u8).cmp(&(*other as u8))
-    }
+    rows.sort_by_key(|r| r.title.to_lowercase());
 }
 
 /// The version an update would install: the newest for `game` that wasn't taken down, if it is
@@ -763,61 +728,19 @@ pub(super) fn visible(rows: &[Row], f: &RowFilter) -> Vec<usize> {
 
 // ---------------------------------------------------------------- batches
 
-/// What "Update N mods" would do, shown before anything is downloaded.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct UpdatePlan {
-    pub(super) included: Vec<Included>,
-    pub(super) skipped: Vec<(String, String)>,
+/// Why "Update all" leaves out `r`'s update, if it does.
+pub(super) fn update_refusal(r: &Row) -> Option<String> {
+    r.pinned
+        .then(|| tr("you chose its version: update it on its own").to_string())
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Included {
-    pub(crate) id: String,
-    pub(crate) title: String,
-    pub(crate) from: String,
-    pub(crate) to: String,
-    pub(crate) native: bool,
-}
-
-/// Why a batch leaves out `r`'s update, if it does.
-pub(super) fn update_refusal(r: &Row, native_allowed: bool) -> Option<String> {
-    if r.pinned {
-        Some(tr("you chose its version: update it on its own").to_string())
-    } else if r.native() && !native_allowed {
-        Some(tr("native code: allow it first, then update this mod on its own").to_string())
-    } else {
-        None
-    }
-}
-
-/// The whole pack's compatible updates, not only the visible rows. Native code is only updated
-/// with the player's permission, and a version the player chose stays. A mod taken down is
-/// updated: the new file is checked like any install and replaces the one that was taken down.
-pub(super) fn plan_updates(rows: &[Row], native_allowed: bool) -> UpdatePlan {
-    let mut plan = UpdatePlan::default();
-    for r in rows.iter().filter(|r| r.local.is_none()) {
-        let Some(to) = &r.update else { continue };
-        // A mod that is off is updated like any other and stays off: downloading a newer checked
-        // file never switches a mod on, and a native mod that is off builds when it is turned on.
-        if let Some(why) = update_refusal(r, native_allowed) {
-            plan.skipped.push((r.title.clone(), why));
-        } else {
-            plan.included.push(Included {
-                id: r.id.clone(),
-                title: r.title.clone(),
-                from: r.version.clone(),
-                to: to.clone(),
-                native: r.native(),
-            });
-        }
-    }
-    plan
-}
-
-/// The count on the "Update N mods" button: what [`plan_updates`] would really include, and no
-/// button (`None`) when that is nothing.
-pub(super) fn update_all_button(rows: &[Row], native_allowed: bool) -> Option<usize> {
-    Some(plan_updates(rows, native_allowed).included.len()).filter(|n| *n > 0)
+/// The mods "Update all" updates, in the list's order: every registry mod with a newer version
+/// that the player didn't pin, the whole pack and not only the visible rows. A mod that is off is
+/// updated like any other and stays off, and one taken down is replaced by a file that wasn't.
+pub(super) fn updatable(rows: &[Row]) -> Vec<&Row> {
+    rows.iter()
+        .filter(|r| r.local.is_none() && r.update.is_some() && update_refusal(r).is_none())
+        .collect()
 }
 
 /// Which of the chosen mods can be turned on now, and which can't (and why).

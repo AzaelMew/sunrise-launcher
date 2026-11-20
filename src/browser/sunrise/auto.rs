@@ -492,66 +492,6 @@ pub(super) fn run_with(
     report
 }
 
-/// One update the player chose, by the path the automatic update takes: the replaced file is
-/// kept until the update is done (an interrupted one is rolled back), the mod's on/off state is
-/// never touched, and a content mod whose new version drops something a saved world may use
-/// waits for the player's answer: `Ok(Some(why))`, nothing changed. `allow` are the mods the
-/// player has answered for: they go ahead and lose that content.
-pub fn update_to(
-    index: &Index,
-    project: &str,
-    version: &str,
-    home: &Path,
-    allow: &BTreeSet<String>,
-    progress: &dyn Fn(&str, f32),
-) -> Result<Option<String>, String> {
-    recover(home);
-    let entry = installed::Installed::load(home)
-        .find(SourceId::Sunrise, project)
-        .cloned()
-        .ok_or_else(|| {
-            trf(
-                "{project} wasn't installed from the registry.",
-                &[("project", project)],
-            )
-        })?;
-    if crate::native_status::is_native_file(&entry.file) {
-        return Err(trf(
-            "{project} is a native mod: it updates by its own path.",
-            &[("project", project)],
-        ));
-    }
-    let p = index.project(project).ok_or_else(|| {
-        trf(
-            "{project} isn't in Sunrise's registry.",
-            &[("project", project)],
-        )
-    })?;
-    let v = p
-        .versions
-        .iter()
-        .find(|v| v.version == version && index.revoked(&p.id, &v.file.sha256).is_none())
-        .ok_or_else(|| {
-            trf(
-                "{project} {version} can't be installed.",
-                &[("project", project), ("version", version)],
-            )
-        })?;
-    update(
-        index,
-        super::local(),
-        p,
-        v,
-        &entry,
-        home,
-        Worlds {
-            allow,
-            asked: &RefCell::new(Vec::new()),
-        },
-        progress,
-    )
-}
-
 /// What an update may do to mods saved worlds use: the mods the player allowed to lose content,
 /// and where the ones it had to ask about are noted.
 #[derive(Clone, Copy)]
