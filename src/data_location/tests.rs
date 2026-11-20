@@ -320,6 +320,23 @@ fn stale_worker_cannot_commit_after_successful_migration() {
     f.migrated(&roots);
 }
 
+#[cfg(unix)]
+#[test]
+fn migration_lock_releases_even_with_a_pre_exec_copy() {
+    let f = Fixture::new("build");
+    for exclusive in [false, true] {
+        let lease = lock_at(&f.bootstrap, exclusive).unwrap();
+        // Like a child between fork and exec, this copy shares the open file description
+        // and remains open after the parent's guard is dropped.
+        let inherited = lease.0.try_clone().unwrap();
+        assert!(lock_at(&f.bootstrap, true).is_err());
+        drop(lease);
+        let next = lock_at(&f.bootstrap, true).unwrap();
+        drop(inherited);
+        drop(next);
+    }
+}
+
 #[test]
 fn shared_lock_blocks_migration_until_all_readers_release() {
     let f = Fixture::new("build");
