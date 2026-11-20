@@ -143,7 +143,7 @@ impl Launcher {
                     "{picked} of {all} selected",
                     &[
                         ("picked", &view.ticked.to_string()),
-                        ("all", &view.members.to_string()),
+                        ("all", &view.total.to_string()),
                     ],
                 ))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -393,6 +393,9 @@ impl Launcher {
         });
         if line.labelled {
             name = name.child(badge(tr("Library")));
+        }
+        if line.needed {
+            name = name.child(badge(tr("Needed")));
         }
         let mut text = div()
             .flex_1()

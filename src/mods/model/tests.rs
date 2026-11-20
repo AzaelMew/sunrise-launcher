@@ -1047,3 +1047,43 @@ fn a_card_that_cannot_install_says_why_in_the_words_of_the_table() {
     // No registry key for the author: the card carries the Unsigned chip.
     assert!(card("fine").unsigned);
 }
+
+#[test]
+fn a_collection_cannot_be_installed_while_a_mod_it_needs_does_not_fit_but_an_optional_one_may_be_missing(
+) {
+    // cow is ticked by default (the collection needs it) and is made for another build.
+    let mut idx = zoo();
+    idx_version(&mut idx, "cow").game = "25.1".into();
+    let v = farm(&idx, &["pig"]);
+    assert_eq!(
+        v.total, 3,
+        "\"1 of 3 selected\" counts every mod, available or not"
+    );
+    assert_eq!(
+        v.members, 1,
+        "what can be picked on this build: owl needs the missing cow too"
+    );
+    assert!(v.lines.iter().find(|l| l.id == "cow").unwrap().needed);
+    assert!(!v.can_install());
+    assert_eq!(
+        v.plan_line(),
+        "COW is needed and isn't available for your version"
+    );
+    // A mod the collection doesn't tick by default may be the missing one: the rest installs.
+    let mut idx = zoo();
+    idx_version(&mut idx, "owl").game = "25.1".into();
+    let v = farm(&idx, &["cow", "pig"]);
+    assert!(!v.lines.iter().find(|l| l.id == "owl").unwrap().needed);
+    assert!(v.needed_missing.is_empty());
+    assert!(v.can_install());
+    assert_eq!(v.to_install(), ["cow", "pig"]);
+    // Two needed and missing are named together.
+    let mut idx = zoo();
+    idx_version(&mut idx, "cow").game = "25.1".into();
+    idx_version(&mut idx, "pig").game = "25.1".into();
+    let v = farm(&idx, &[]);
+    assert_eq!(
+        v.plan_line(),
+        "COW and PIG are needed and aren't available for your version"
+    );
+}
