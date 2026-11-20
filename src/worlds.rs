@@ -2,6 +2,8 @@
 //! up, copying and deleting them. Backups are made as vanilla's Make Backup makes them
 //! (`LevelStorageAccess.makeWorldBackup`): `backups/<yyyy-MM-dd_HH-mm-ss>_<folder>.zip` in the
 //! game folder, every file under `<folder>/` but the world's `session.lock`.
+use crate::profile_txn::Identity;
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -68,24 +70,53 @@ pub(crate) fn lock_saved_dir(world: &Path) -> Result<WorldLock, String> {
     Ok(WorldLock(lock))
 }
 
-/// During a profile snapshot, keep every copied save directory closed to the game.
-pub(crate) fn lock_saved_worlds(saves: &Path) -> Result<Vec<WorldLock>, String> {
-    let entries = match fs::symlink_metadata(saves) {
-        Ok(meta) if meta.is_dir() && !crate::native_cache::linked(&meta) => fs::read_dir(saves),
-        Ok(_) => Err(std::io::ErrorKind::InvalidInput.into()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => Err(e),
-    }
-    .map_err(|e| e.to_string())?;
-    let mut claims = Vec::new();
-    for entry in entries {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-        if meta.is_dir() {
-            claims.push(lock_saved_dir(&path)?);
+/// Each world in a profile snapshot must be the directory whose session lock we hold.
+pub(crate) struct SavedWorlds(BTreeMap<PathBuf, (Identity, WorldLock)>);
+
+impl SavedWorlds {
+    pub(crate) fn claim(saves: &Path) -> Result<Self, String> {
+        let mut claims = BTreeMap::new();
+        let entries = match fs::symlink_metadata(saves) {
+            Ok(meta) if meta.is_dir() && !crate::native_cache::linked(&meta) => fs::read_dir(saves),
+            Ok(_) => Err(std::io::ErrorKind::InvalidInput.into()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self(claims)),
+            Err(e) => Err(e),
         }
+        .map_err(|e| e.to_string())?;
+        for entry in entries {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if fs::symlink_metadata(&path)
+                .map_err(|e| e.to_string())?
+                .is_dir()
+            {
+                let identity = Identity::of(&path)?;
+                let lock = lock_saved_dir(&path)?;
+                claims.insert(path, (identity, lock));
+            }
+        }
+        Ok(Self(claims))
     }
-    Ok(claims)
+
+    pub(crate) fn verify(&self, world: &Path) -> std::io::Result<()> {
+        if self
+            .0
+            .get(world)
+            .is_some_and(|(identity, _)| Identity::of(world).ok() == Some(*identity))
+        {
+            return Ok(());
+        }
+        Err(std::io::Error::other(crate::i18n::trf(
+            "World {world} changed while copying. Close the game and try again.",
+            &[(
+                "world",
+                &world.file_name().unwrap_or_default().to_string_lossy(),
+            )],
+        )))
+    }
+
+    pub(crate) fn verify_all(&self) -> std::io::Result<()> {
+        self.0.keys().try_for_each(|path| self.verify(path))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

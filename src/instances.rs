@@ -1015,8 +1015,8 @@ fn create_with_publish(
                 return Err(lifecycle::changed());
             }
         }
-        let _worlds = crate::worlds::lock_saved_worlds(&source.home().join("saves"))?;
-        copy_home(source.home(), &contents).map_err(create_error)?;
+        let worlds = crate::worlds::SavedWorlds::claim(&source.home().join("saves"))?;
+        copy_home(source.home(), &contents, &worlds).map_err(create_error)?;
         active
             .map(|active| source.stage_copy(active, &contents))
             .transpose()?
@@ -1150,10 +1150,13 @@ pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> 
     }
 }
 
-fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
+fn copy_home(from: &Path, to: &Path, worlds: &crate::worlds::SavedWorlds) -> std::io::Result<()> {
     let saves = from.join("saves");
     let mut pending = vec![(from.to_owned(), to.to_owned())];
     while let Some((source, target)) = pending.pop() {
+        if source.parent() == Some(&saves) {
+            worlds.verify(&source)?;
+        }
         fs::create_dir(&target)?;
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
@@ -1177,7 +1180,7 @@ fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
             }
         }
     }
-    Ok(())
+    worlds.verify_all()
 }
 
 /// Changes what the player chose about an instance: its name, icon or group. No folder moves.

@@ -614,6 +614,32 @@ fn a_replacement_detached_after_admission_is_restored_without_overwriting() {
 }
 
 #[test]
+fn profile_snapshot_refuses_a_busy_world_created_after_enumeration() {
+    for existing_saves in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("game");
+        let saves = home.join("saves");
+        fs::create_dir(&home).unwrap();
+        if existing_saves {
+            put(&saves.join("Old/level.dat"), "already there");
+        }
+        let claims = crate::worlds::SavedWorlds::claim(&saves).unwrap();
+        let late = saves.join("Late");
+        put(&late.join("level.dat"), "game is still writing this world");
+        let game = fs::File::create(late.join(crate::worlds::LOCK)).unwrap();
+        game.try_lock().unwrap();
+        let stage = root.path().join("private");
+        let error = copy_home(&home, &stage, &claims).unwrap_err();
+        assert!(error.to_string().contains("World Late changed"), "{error}");
+        assert!(!stage.join("saves/Late/level.dat").exists());
+        assert_eq!(
+            fs::read(late.join("level.dat")).unwrap(),
+            b"game is still writing this world"
+        );
+    }
+}
+
+#[test]
 fn a_trash_failure_preserves_the_whole_detached_profile() {
     let root = scratch("failed-trash");
     let (game, cache) = (root.join("game"), root.join("cache"));
