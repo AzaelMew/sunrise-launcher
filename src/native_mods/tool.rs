@@ -446,7 +446,11 @@ fn talk(
     let mut input = child.child().stdin.take().expect("piped");
     writeln!(input, "{plan}")?;
     let mut output = Output::new(child.child().stdout.take().expect("piped"));
+    let mut terminal = None;
     while let Some(line) = output.line(child, cancellation)? {
+        if terminal.is_some() && !line.trim().is_empty() {
+            return Err(std::io::Error::other(invalid_check_reply()));
+        }
         let Ok(event) = serde_json::from_str::<Event>(&line) else {
             continue;
         };
@@ -474,11 +478,11 @@ fn talk(
                 };
                 writeln!(input, "{yes}")?;
             }
-            Event::Built { built } => return Ok(Some(Ok(built))),
-            Event::Failed { error, blame } => return Ok(Some(Err(Failure { error, blame }))),
+            Event::Built { built } => terminal = Some(Ok(built)),
+            Event::Failed { error, blame } => terminal = Some(Err(Failure { error, blame })),
         }
     }
-    Ok(None)
+    Ok(terminal)
 }
 
 /// Starts the tool in its own process group, tracked until it exits, with its stderr read into a capped tail.
@@ -621,23 +625,34 @@ pub(super) fn ask(
     let sent = writeln!(input, "{plan}").map_err(unrun);
     drop(input);
     let mut output = Output::new(child.child().stdout.take().expect("piped"));
-    let last = (|| -> Result<Option<String>, String> {
-        let mut last = None;
+    let reply_line = (|| -> Result<Option<String>, String> {
+        let mut first = None;
+        let mut extra = false;
         while let Some(line) = output.line(&mut child, cancellation).map_err(unrun)? {
             if !line.trim().is_empty() {
-                last = Some(line);
+                if first.is_some() {
+                    extra = true;
+                } else {
+                    first = Some(line);
+                }
             }
         }
-        Ok(last)
+        if extra {
+            return Err(invalid_check_reply());
+        }
+        Ok(first)
     })();
     let status = child.wait().map_err(unrun);
     let errors = finish(cancellation, errors);
     cancellation.check()?;
     sent?;
-    let result = match (last?, status?.code()) {
-        (None, code @ Some(2 | 3)) => Err(ended(code)),
-        (last, _) => reply(last.as_deref()),
-    };
+    let result = reply_line.and_then(|line| {
+        let status = status?;
+        match (line, status.code()) {
+            (None, code @ Some(2 | 3)) => Err(ended(code)),
+            (line, _) => reply(line.as_deref(), status.success()),
+        }
+    });
     if result.is_err() {
         log_errors(&errors);
     }
@@ -658,12 +673,21 @@ pub(super) fn too_old() -> String {
 }
 
 /// A one-line command's reply: its value, its error's message, or (no line at all) a tool from before the command.
-fn reply(line: Option<&str>) -> Result<Value, String> {
+fn reply(line: Option<&str>, success: bool) -> Result<Value, String> {
     let value: Value = serde_json::from_str(line.ok_or_else(too_old)?).map_err(|_| too_old())?;
-    if let Some(error) = value.get("error") {
+    let error = value.get("error");
+    if !value.is_object() || (error.is_some() == success) {
+        return Err(invalid_check_reply());
+    }
+    if let Some(error) = error {
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(invalid_check_reply)?;
         return Err(trf(
             "The native build tool refused: {error}",
-            &[("error", error["message"].as_str().unwrap_or_default())],
+            &[("error", message)],
         ));
     }
     Ok(value)

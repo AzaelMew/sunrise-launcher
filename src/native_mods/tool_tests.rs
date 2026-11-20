@@ -248,6 +248,47 @@ exit 125
 }
 
 #[test]
+#[cfg(unix)]
+fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let good = r#"{"contract":2,"route":null,"mods":[]}"#;
+    let refusal = r#"{"contract":2,"error":{"kind":"unread","message":"fixture refused"}}"#;
+    let ask_sdk = |lines: &[&str]| {
+        ask(
+            fake(dir.path(), lines),
+            "native-check",
+            &serde_json::json!({}),
+            &Cancellation::default(),
+        )
+    };
+    assert!(ask_sdk(&[good]).is_ok());
+    assert!(ask_sdk(&[refusal, "EXIT1"])
+        .unwrap_err()
+        .contains("fixture refused"));
+    for lines in [&[good, good][..], &[good, "EXIT1"], &[refusal]] {
+        assert!(ask_sdk(lines)
+            .unwrap_err()
+            .contains("incomplete or inconsistent"));
+    }
+    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
+    let failed = r#"{"event":"failed","error":"another ending","blame":null,"used":[]}"#;
+    let result = run(
+        fake(dir.path(), &[built, failed]),
+        "{}",
+        None,
+        &|_, _, _| unreachable!(),
+        &Cancellation::default(),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        result.error.contains("incomplete or inconsistent"),
+        "{}",
+        result.error
+    );
+}
+
+#[test]
 fn build_plan_and_process_use_the_same_private_cargo_home() {
     let dir = tempfile::tempdir().unwrap();
     let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();
@@ -397,7 +438,7 @@ fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
         {"id":"later","refusal":null,"verdict":null,"needs":"surface"},
         {"id":"refused","refusal":"it has a build script","verdict":null,"needs":null}]}"#
         .replace('\n', "");
-    let checked: Checked = serde_json::from_value(reply(Some(&line)).unwrap()).unwrap();
+    let checked: Checked = serde_json::from_value(reply(Some(&line), true).unwrap()).unwrap();
     assert_eq!(checked.mods[0].verdict, Some(Verdict::MadeFor));
     let Some(Verdict::DoesNotFit { misfits, .. }) = &checked.mods[1].verdict else {
         panic!("{:?}", checked.mods[1]);
@@ -416,9 +457,9 @@ fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
         ]
     );
     assert_eq!(checked.mods[2].needs, Some(Need::Surface));
-    assert!(reply(None).unwrap_err().contains("too old"));
+    assert!(reply(None, true).unwrap_err().contains("too old"));
     let error = r#"{"contract":2,"error":{"kind":"unread","message":"mods: not a folder"}}"#;
-    let refused = reply(Some(error)).unwrap_err();
+    let refused = reply(Some(error), false).unwrap_err();
     assert!(refused.ends_with(": mods: not a folder"), "{refused}");
 }
 
