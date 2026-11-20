@@ -58,7 +58,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
     )
     .unwrap();
     assert_eq!(
-        (built.route.as_str(), built.binary.as_path()),
+        (built.route.name(), built.binary.as_path()),
         ("prebuilt", Path::new("/b/game"))
     );
     assert_eq!(*started.borrow(), ["greeter 1/1"]);
@@ -114,6 +114,44 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         silent.error
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn build_plan_and_process_use_the_same_private_cargo_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();
+    let path = workspace.path();
+    let rust = Toolchain {
+        dir: path.join("rust"),
+        host: crate::rust_toolchain::hosts().first().unwrap(),
+    };
+    let plan = Plan {
+        work: &path.join("work"),
+        workspace: &workspace,
+        package: Package {
+            runtime: path,
+            api: path,
+            engine: path,
+        },
+        mods: &path.join("mods"),
+        server: false,
+        mixins_from_source: false,
+    };
+    let line: Value = serde_json::from_str(&plan_line(&rust, &plan)).unwrap();
+    let mut command = std::process::Command::new("sdk-tool");
+    workspace.isolate(&mut command).unwrap();
+    let cargo_home = command
+        .get_envs()
+        .find(|(name, _)| *name == "CARGO_HOME")
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(
+        line["toolchain"]["cargo_home"],
+        serde_json::json!(Path::new(cargo_home))
+    );
+    assert_eq!(Path::new(cargo_home), path.join("cargo"));
+    assert_eq!(line["work"], serde_json::json!(path.join("work")));
 }
 
 #[test]

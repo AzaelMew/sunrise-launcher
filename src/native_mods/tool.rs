@@ -115,6 +115,7 @@ pub(super) struct Package<'a> {
 /// What a build is for.
 pub(super) struct Plan<'a> {
     pub work: &'a Path,
+    pub workspace: &'a super::workspace::Workspace,
     pub package: Package<'a>,
     /// A folder of exactly the mods to compile.
     pub mods: &'a Path,
@@ -169,9 +170,10 @@ pub enum BlameKind {
 /// What a build made.
 #[derive(Debug, Deserialize)]
 pub(super) struct Built {
-    pub route: String,
+    pub route: CheckRoute,
     pub binary: PathBuf,
     pub libraries: Vec<PathBuf>,
+    pub mods: Vec<String>,
     pub records: Value,
     pub internals: BTreeMap<String, Value>,
 }
@@ -192,12 +194,10 @@ enum Event {
     Built {
         #[serde(flatten)]
         built: Built,
-        used: Vec<PathBuf>,
     },
     Failed {
         error: String,
         blame: Option<Blame>,
-        used: Vec<PathBuf>,
     },
 }
 
@@ -227,10 +227,12 @@ pub(super) fn toolchain(rust: &Toolchain) -> Value {
 
 /// The plan's JSON line.
 fn plan_line(rust: &Toolchain, plan: &Plan<'_>) -> String {
+    let mut tools = toolchain(rust);
+    tools["cargo_home"] = serde_json::json!(plan.workspace.path().join("cargo"));
     serde_json::json!({
         "contract": CONTRACT,
         "work": plan.work,
-        "toolchain": toolchain(rust),
+        "toolchain": tools,
         "package": {"runtime": plan.package.runtime, "api": plan.package.api, "engine": plan.package.engine},
         "mods": plan.mods,
         "target": if plan.server { "server" } else { "client" },
@@ -248,8 +250,10 @@ pub(super) fn build(
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
 ) -> Result<Built, Failure> {
+    let mut command = command(rust, program);
+    plan.workspace.isolate(&mut command).map_err(unrun)?;
     run(
-        command(rust, program),
+        command,
         &plan_line(rust, plan),
         consent,
         on_mod,
@@ -374,23 +378,11 @@ fn talk(
                 let yes = consent.is_some_and(|ask| ask(&question));
                 writeln!(input, "{yes}")?;
             }
-            Event::Built { built, used } => {
-                mark_used(&used);
-                return Ok(Some(Ok(built)));
-            }
-            Event::Failed { error, blame, used } => {
-                mark_used(&used);
-                return Ok(Some(Err(Failure { error, blame })));
-            }
+            Event::Built { built } => return Ok(Some(Ok(built))),
+            Event::Failed { error, blame } => return Ok(Some(Err(Failure { error, blame }))),
         }
     }
     Ok(None)
-}
-
-fn mark_used(paths: &[PathBuf]) {
-    for path in paths {
-        let _ = crate::storage::mark_used(path);
-    }
 }
 
 /// Starts the tool in its own process group, tracked until it exits, with its stderr read into a capped tail.

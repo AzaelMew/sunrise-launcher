@@ -28,6 +28,7 @@ mod planning;
 pub use planning::{routes, update_check, UpdateCheck};
 mod internals_sync;
 mod tool;
+mod workspace;
 pub use internals_sync::catalog;
 pub mod fit;
 mod isolate;
@@ -1255,10 +1256,10 @@ fn pipeline(
     backend::need_prepared(base)?;
     let platform = platform_for_game(base)?;
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
-    // The mods are copied first: the build and its key use the copy, whatever happens to the
-    // folder meanwhile.
-    let incoming = root().join("mods.incoming");
-    let _ = fs::remove_dir_all(&incoming);
+    // The mods and compiler scratch paths belong only to this attempt, not to its profile
+    // or any successor. The build and its key use copies, whatever happens to the originals.
+    let mut workspace = workspace::Workspace::new(&root()).map_err(|e| e.to_string())?;
+    let incoming = workspace.path().join("mods.incoming");
     let found = scan_bundles(folder)?;
     if found.is_empty() {
         return Err(Failed::Nothing);
@@ -1540,7 +1541,14 @@ fn pipeline(
                         )
                     })?;
                 (
-                    sdk_cache::developer(&program, &revision, target, &local, cancellation)?,
+                    sdk_cache::developer(
+                        &program,
+                        &revision,
+                        target,
+                        &local,
+                        &workspace.path().join("developer-layout"),
+                        cancellation,
+                    )?,
                     program,
                 )
             }
@@ -1665,16 +1673,19 @@ fn pipeline(
         progress(Step::PrebuiltMods);
         let compiling = std::time::Instant::now();
         // The tool compiles every mod in the folder it's given: exactly the staged copies of the ones this build keeps.
-        let compiled = root().join("mods.compile");
-        let _ = fs::remove_dir_all(&compiled);
+        let compiled = workspace.path().join("mods.compile");
         for bundle in &mods {
             copy_bundle(bundle, &compiled.join(&bundle.manifest.id))?;
         }
+        let game = workspace.package(game).map_err(|e| e.to_string())?;
+        let work = workspace.path().join("work");
+        workspace.allow_worker();
         let built = tool::build(
             &rust,
             program,
             &tool::Plan {
-                work: &root(),
+                work: &work,
+                workspace: &workspace,
                 package: tool::Package {
                     runtime: &game.runtime,
                     api: &game.api,
@@ -1696,11 +1707,17 @@ fn pipeline(
         );
         // Don't turn a stopped tool into a compile failure or retry it as an omitted mod.
         cancellation.check()?;
+        let log = workspace.import_log().map_err(|e| e.to_string())?;
+        if !log.is_empty() {
+            append_log(&log)?;
+        }
         let built = built.map_err(blame)?;
-        let _ = fs::remove_dir_all(&compiled);
+        workspace
+            .verify_outputs(&built, &game, &rust, ids.iter().copied())
+            .map_err(|e| e.to_string())?;
         append_log(&trf(
             "Native mods route: {route}.",
-            &[("route", &built.route)],
+            &[("route", built.route.name())],
         ))?;
         // The whole step; the tool's own build and the function replacement have their lines.
         append_log(&trf(
@@ -1719,7 +1736,7 @@ fn pipeline(
             target,
             &built.binary,
             &built.libraries,
-            &about(&built.route, &built.internals, &built.records),
+            &about(built.route.name(), &built.internals, &built.records),
             &ordered,
             cancellation,
         )?;
