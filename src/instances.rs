@@ -8,6 +8,7 @@
 //! launcher's data folder, so renaming one never moves a folder.
 use crate::backend;
 use crate::browser::sunrise::pack as registry_pack;
+use crate::i18n::tr;
 use crate::launch::Launch;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -878,7 +879,16 @@ fn edit_in(
     let instance = find_in(&all, query)?;
     let mut store = Store::load(data);
     let meta = store.instances.entry(instance.id.clone()).or_default();
+    let build = (meta.version.clone(), meta.channel);
     change(meta);
+    // Every way to change a profile ends here, so this is the one place a modpack's build
+    // is kept: the Versions sheet, the Keep button and `instance version` all come through.
+    if instance.is_pack_profile() && build != (meta.version.clone(), meta.channel) {
+        return Err(tr(
+            "A modpack keeps the build it was made for. Make your own profile to change it.",
+        )
+        .to_string());
+    }
     meta.name = meta.name.take().map(|n| n.trim().to_string());
     meta.group = meta
         .group
