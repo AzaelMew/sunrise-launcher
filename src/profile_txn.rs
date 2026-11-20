@@ -1,5 +1,10 @@
 //! Exclusive ownership of an existing profile, including an optional inherited child handle.
 
+#[doc(hidden)]
+pub mod durable;
+#[doc(hidden)]
+pub mod progress;
+
 use cap_fs_ext::MetadataExt;
 use cap_std::{ambient_authority, fs::Dir};
 use std::{
@@ -128,6 +133,9 @@ impl Admission {
         &self.home
     }
 }
+
+#[cfg(test)]
+const RECORD: &str = "mod-browser/install-txn.json";
 
 #[cfg(test)]
 mod tests;
