@@ -5,7 +5,7 @@ use std::{
     fs, io,
     path::{Path, PathBuf},
 };
-use sunrise_launcher_smod::{manifest, mod_list};
+use sunrise_launcher_smod::{index, manifest, mod_list};
 
 /// One candidate the game discovers by extension or unpacked manifest. A directory is
 /// game content, not a managed archive destination implied by its name or manifest ID.
@@ -108,6 +108,87 @@ pub(super) fn inputs(home: &Path, repaired: Option<&[u8]>) -> Result<[u8; 32], S
         }
     }
     Ok(hash.finalize().into())
+}
+
+/// Game-owned updates can leave stale display fields. Prove the existing row's
+/// destination using the game's own checks before deriving a new row. Others are opaque.
+pub(super) fn browser_repair(
+    home: &Path,
+    packages: &[ScannedPackage],
+) -> Result<Option<Vec<u8>>, String> {
+    use crate::browser::{installed, sunrise, Kind, SourceId};
+    use serde_json::Value;
+    let path = home.join(installed::MANIFEST);
+    let Some(bytes) = super::optional_bytes(&path)? else {
+        return Ok(None);
+    };
+    let mut document: serde_json::Map<String, Value> =
+        serde_json::from_slice(&bytes).map_err(|e| at(&path, e))?;
+    let rows = document
+        .get_mut("entries")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(unsettled)?;
+    let mut claims = index::browser_state::Installed {
+        entries: std::mem::take(rows),
+    };
+    let by_file = packages
+        .iter()
+        .map(|package| {
+            package
+                .path
+                .strip_prefix(home)
+                .map(|relative| (relative, package))
+                .map_err(|e| at(&package.path, e))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+    let mut changes = Vec::new();
+    for (position, raw) in claims.entries.iter().enumerate() {
+        let Some(file) = raw.get("file").and_then(Value::as_str) else {
+            continue;
+        };
+        let relative = Path::new(file);
+        if ![mod_list::DIR, mod_list::NATIVE_DIR]
+            .iter()
+            .any(|dir| relative.starts_with(dir))
+        {
+            continue;
+        }
+        let row: installed::Entry =
+            serde_json::from_value(raw.clone()).map_err(|e| at(&path, e))?;
+        let package = by_file.get(relative).ok_or_else(unsettled)?;
+        let id = &package.manifest.id;
+        if package.directory
+            || !installed::in_folders(file)
+            || row.kind != Kind::Mod
+            || row.source != SourceId::Sunrise
+            || &row.project != id
+            || sunrise::mod_id(&row) != Some(id.as_str())
+            || claims.single(id).map_err(|e| e.render(crate::i18n::trf))? != Some(position)
+        {
+            return Err(unsettled());
+        }
+        claims
+            .check_other_claims(home, id, file)
+            .map_err(|e| e.render(crate::i18n::trf))?;
+        let checksum = format!("SHA-256:{}", index::sha256_file(&package.path)?);
+        if row.version != package.manifest.version || !row.checksum.eq_ignore_ascii_case(&checksum)
+        {
+            changes.push((position, package.manifest.version.clone(), checksum));
+        }
+    }
+    if changes.is_empty() {
+        return Ok(None);
+    }
+    for (position, version, checksum) in changes {
+        let raw = &mut claims.entries[position];
+        raw["version"] = Value::from(version.clone());
+        raw["number"] = Value::from(version);
+        raw["checksum"] = Value::from(checksum);
+    }
+    *rows = claims.entries;
+    serde_json::to_vec(&document)
+        .map(Some)
+        .map_err(|e| at(&path, e))
 }
 
 #[cfg(test)]

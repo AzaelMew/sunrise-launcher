@@ -112,6 +112,104 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
     }
 }
 
+#[test]
+fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
+    use serde_json::{json, Value};
+    use sunrise_launcher_smod::{index, manifest, mod_list};
+    const CASE: &str = "managed_play::first::tests::game_replacements_repair_only_owned_row_fields_and_advance_the_same_base";
+    if std::env::var_os("PLAY_ADOPTION_FIXTURE").is_none() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = backend::plain(temp.path().canonicalize().unwrap());
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", CASE, "--nocapture"])
+            .env("PLAY_ADOPTION_FIXTURE", "1")
+            .env("SUNRISE_HOME", root.join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let home = backend::game_home();
+    let folder = backend::version_dir(BUILD);
+    let resources = backend::resources(BUILD);
+    fs::create_dir_all(&resources).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    fs::write(folder.join(".installed"), []).unwrap();
+    fs::write(folder.join(backend::CLIENT), "unchanged client").unwrap();
+    fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
+    let relative = format!("{}/lantern.smod", mod_list::DIR);
+    let package = home.join(&relative);
+    let write_package = |version| {
+        let manifest = format!("id='lantern'\nname='Lantern'\nversion='{version}'\napi='{}'\ncapabilities=['registries']\n", manifest::API);
+        fs::write(
+            &package,
+            manifest::Package::write_files(&manifest, &[]).unwrap(),
+        )
+        .unwrap();
+    };
+    write_package("1.0.0");
+    let row = json!({
+        "source": "sunrise", "project": "lantern", "slug": "lantern", "title": "Lantern",
+        "kind": "mod", "version": "1.0.0", "number": "1.0.0", "file": relative,
+        "checksum": format!("SHA-256:{}", index::sha256_file(&package).unwrap()),
+        "page": "registry page", "future-field": {"keep": [1, 2]}
+    });
+    let opaque =
+        json!({"source": "future", "file": "resourcepacks/other.zip", "opaque": [null, {}]});
+    let path = home.join(crate::browser::installed::MANIFEST);
+    let initial = json!({"entries": [opaque, row], "future-top": [false]});
+    fs::write(&path, serde_json::to_vec(&initial).unwrap()).unwrap();
+    let cancellation = native_mods::Cancellation::default();
+    let mut profile = Profile::open(&home, None).unwrap();
+    let first = profile
+        .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+        .unwrap()
+        .commit(BUILD, &cancellation)
+        .unwrap();
+    let mut previous = first;
+    let mut expected = initial.clone();
+    for version in ["1.1.0", "1.2.0"] {
+        write_package(version);
+        assert!(profile
+            .verified_handoff::<()>(&previous, &cancellation, |_| panic!("stale game launched"))
+            .is_err());
+        let current = profile
+            .refresh(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.profile, previous.profile);
+        assert_eq!(current.generation, previous.generation + 1);
+        assert_eq!(current.base, previous.base);
+        assert_eq!(current.resources, previous.resources);
+        assert_eq!(profile.active().unwrap(), Some(current.clone()));
+        assert_eq!(inputs(&home, None).unwrap(), current.inputs);
+        profile
+            .verified_handoff(&current, &cancellation, |_| Ok(()))
+            .unwrap();
+        expected["entries"][1]["version"] = version.into();
+        expected["entries"][1]["number"] = version.into();
+        expected["entries"][1]["checksum"] =
+            format!("SHA-256:{}", index::sha256_file(&package).unwrap()).into();
+        let actual: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+        previous = current;
+    }
+    write_package("1.3.0");
+    // An opaque row naming a different hard link still claims the same exact file.
+    let alias = home.join("same-package.smod");
+    fs::hard_link(&package, alias).unwrap();
+    expected["entries"][0]["file"] = "same-package.smod".into();
+    let before = serde_json::to_vec(&expected).unwrap();
+    fs::write(&path, &before).unwrap();
+    assert!(profile
+        .refresh(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
+        .is_err());
+    assert_eq!(profile.active().unwrap(), Some(previous));
+    assert_eq!(fs::read(&path).unwrap(), before);
+}
+
 struct Running(Child);
 impl Drop for Running {
     fn drop(&mut self) {

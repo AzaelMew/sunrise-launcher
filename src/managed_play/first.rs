@@ -7,10 +7,13 @@ use crate::{
     },
     native_mods,
     process::leases::ProfileHandoff,
-    profile_txn::{self, Admission, Bootstrap, Staging},
+    profile_txn::{self, Admission, Bootstrap, Intent, Staging},
 };
 use serde::{Deserialize, Serialize};
-use std::{path::Path, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 use sunrise_launcher_smod::install_lock::{lock_home, HomeLockGuard};
 
 #[derive(Serialize, Deserialize)]
@@ -166,6 +169,85 @@ impl Profile {
         self.0.handoff()
     }
 
+    /// Bring an already committed profile forward on the same base. The game may have
+    /// changed packages and the enable list; failed fits never change the launcher pointer.
+    pub fn refresh(
+        &mut self,
+        mode: native_mods::Profile,
+        cancellation: &native_mods::Cancellation,
+        progress: impl Fn(native_mods::Step),
+        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+    ) -> Result<Option<Active>, native_mods::Failed> {
+        let home = self.home().to_owned();
+        let (old, epoch, repair, stage) = {
+            let _manifest = game_lock(&home)?;
+            crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
+            let Some(old) = self.active()? else {
+                return Ok(None);
+            };
+            old.verify_artifacts()?;
+            let epoch = inputs(&home, None)?;
+            let repair = super::inputs::browser_repair(&home, &scan_packages(&home)?)?;
+            if old.inputs == epoch && repair.is_none() {
+                super::verify_included(old.base(), old.executable(), &home)?;
+                if native_mods::is_native(old.executable()) {
+                    cancellation.admit_native_work()?;
+                }
+                return Ok(Some(old));
+            }
+            let _references = ReferencePublication::begin(&home)?;
+            let tags = [old.base().to_owned(), old.executable().to_owned()]
+                .into_iter()
+                .collect();
+            (old, epoch, repair, self.0.reserve(Intent::Install, tags)?)
+        };
+        let image = image_for_stage(
+            old.base(),
+            old.executable(),
+            &home,
+            &stage,
+            mode,
+            cancellation,
+            progress,
+            consent,
+        )?;
+        let _manifest = game_lock(&home)?;
+        crate::browser::installed::recover_game_install(&home).map_err(String::from)?;
+        let _references = ReferencePublication::begin(&home)?;
+        let active = Active::capture(old.profile, old.base(), &image, &home, epoch, Some(&old))?;
+        Ok(Some(publish_generation(
+            stage,
+            active,
+            &home,
+            epoch,
+            repair,
+            cancellation,
+        )?))
+    }
+
+    /// Recheck the actual committed generation immediately before creating its child.
+    /// The same profile admission, game-manifest lock and native grant span the cutover.
+    pub fn verified_handoff<T>(
+        &self,
+        active: &Active,
+        cancellation: &native_mods::Cancellation,
+        spawn: impl FnOnce(ProfileHandoff<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let home = self.home();
+        let _manifest = game_lock(home)?;
+        crate::browser::installed::recover_game_install(home)?;
+        if self.active()?.as_ref() != Some(active) || inputs(home, None)? != active.inputs {
+            return Err(unsettled());
+        }
+        active.verify_artifacts()?;
+        super::verify_included(active.base(), active.executable(), home)?;
+        if native_mods::is_native(active.executable()) {
+            cancellation.admit_native_work().map_err(String::from)?;
+        }
+        let _permission = cancellation.publication_guard()?;
+        spawn(self.handoff())
+    }
+
     pub fn begin_first(
         &mut self,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
@@ -308,6 +390,9 @@ impl FirstAttempt<'_> {
             cancellation.admit_native_work().map_err(String::from)?;
         }
         let _manifest = game_lock(&self.home)?;
+        crate::browser::installed::recover_game_install(&self.home)?;
+        let _references = ReferencePublication::begin(&self.home)?;
+        self.bound.verify_image()?;
         let active = Active::capture(
             self.bound.profile,
             &self.bound.base,
@@ -316,18 +401,48 @@ impl FirstAttempt<'_> {
             self.bound.inputs,
             None,
         )?;
-        let _references = ReferencePublication::begin(&self.home)?;
-        self.bound.verify_image()?;
-        let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
-        self.stage.seal(pointer, &[])?.publish(|| {
-            active.verify_artifacts()?;
-            if inputs(&self.home, None)? != self.bound.inputs {
-                return Err(unsettled());
-            }
-            cancellation.publication_guard()
-        })?;
-        Ok(active)
+        let repair = super::inputs::browser_repair(&self.home, &scan_packages(&self.home)?)?;
+        publish_generation(
+            self.stage,
+            active,
+            &self.home,
+            self.bound.inputs,
+            repair,
+            cancellation,
+        )
     }
+}
+
+/// The caller holds the profile, game manifest and reference fence. A stale row is a postimage
+/// of this transaction, not a standalone restore. Its published bytes are what the pointer hashes.
+fn publish_generation(
+    stage: Staging<'_>,
+    mut active: Active,
+    home: &Path,
+    epoch: [u8; 32],
+    repair: Option<Vec<u8>>,
+    cancellation: &native_mods::Cancellation,
+) -> Result<Active, String> {
+    let mut files = Vec::new();
+    if let Some(bytes) = repair {
+        active.inputs = inputs(home, Some(&bytes))?;
+        let candidate = stage.path().join("browser-repair");
+        profile_txn::durable::replace(stage.path(), &candidate, &bytes)
+            .map_err(|error| at(&candidate, error))?;
+        files.push((
+            PathBuf::from(crate::browser::installed::MANIFEST),
+            Some(candidate),
+        ));
+    }
+    let pointer = serde_json::to_vec(&active).map_err(|e| e.to_string())?;
+    stage.seal(pointer, &files)?.publish(|| {
+        active.verify_artifacts()?;
+        if inputs(home, None)? != epoch {
+            return Err(unsettled());
+        }
+        cancellation.publication_guard()
+    })?;
+    Ok(active)
 }
 
 #[allow(clippy::too_many_arguments)]
