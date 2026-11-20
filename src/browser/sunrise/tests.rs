@@ -1911,6 +1911,23 @@ fn a_dependency_the_plan_moves_to_a_newer_version_is_updated_and_stays_off_when_
         "an off dependency stays off"
     );
     assert!(mod_list::is_enabled(&home, "fireflies"));
+    // The mod asked for stays off too when it was installed and off: an update never switches
+    // a mod on (Update on its row installs it again).
+    mod_list::set_enabled(&home, "creatures", true).unwrap();
+    mod_list::set_enabled(&home, "fireflies", false).unwrap();
+    install_from(
+        &index,
+        true,
+        &project,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    assert!(!mod_list::is_enabled(&home, "fireflies"));
 }
 
 /// An index with `creatures` 1.0.0 and 2.0.0, `lamps` needing `creatures ^1` and `fireflies`

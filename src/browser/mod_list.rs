@@ -26,6 +26,12 @@ pub fn is_enabled(home: &Path, id: &str) -> bool {
         .any(|(k, v)| k.trim() == key && v.trim() == "true")
 }
 
+/// Whether the saved list, which can be read, says mod `id` is off: a list that can't be read
+/// says nothing, and a change to it is left to fail where it is made.
+pub fn is_off(home: &Path, id: &str) -> bool {
+    home.join(MODS_LIST).is_file() && !is_enabled(home, id)
+}
+
 /// Turns mod `id` on (or off) in `sunrise-mods.txt`, keeping the other lines.
 pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
     set_all_enabled(home, &[id], on)

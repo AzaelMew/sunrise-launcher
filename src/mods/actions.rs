@@ -1,9 +1,8 @@
 //! Everything on the Mods screens that changes files. Each action is refused while the game or
 //! a launch step is running. The launcher makes no backups of worlds itself: the game's own
 //! Edit World › Make Backup is the way to keep one.
-use super::model::{self, Included, Row};
+use super::model::{self, Row};
 use super::*;
-use sunrise_launcher::browser::sunrise::auto;
 
 #[derive(Clone)]
 pub(super) enum Action {
@@ -11,8 +10,6 @@ pub(super) enum Action {
     TurnOff(Vec<(String, String)>),
     /// (mod id, project id, title)
     Remove(Vec<(String, String, String)>),
-    /// The updates, and the mods the player answered the world question for.
-    Update(Vec<Included>, std::collections::BTreeSet<String>),
 }
 
 /// Why mods can't change now.
@@ -293,74 +290,48 @@ impl Launcher {
         }
     }
 
-    /// Plans "Update N mods" for the whole pack, or for the selected rows only.
-    pub(super) fn ask_update(&mut self, only_selected: bool) {
-        let rows: Vec<Row> = self
-            .rows()
-            .into_iter()
-            .filter(|r| !only_selected || self.ui.mods.selection.contains(&r.id))
-            .collect();
-        let plan = model::plan_updates(&rows, self.settings.native_mods_allowed_at.is_some());
-        self.confirm(Confirm::Update(plan));
-    }
-
-    /// One mod's update: the same reviewed path as the batch, for one mod.
+    /// One mod's update: its install again, which picks the newest version that fits.
     pub(super) fn update_one(&mut self, row: &Row) {
-        let Some(to) = row.update.clone().filter(|_| row.local.is_none()) else {
-            return;
-        };
-        let refusal = if row.native() && self.settings.native_mods_allowed_at.is_none() {
-            Some(tr(
-                "It runs native code. Turn on a native mod to be asked about native code first, then update it.",
-            ))
-        } else {
-            None
-        };
-        if let Some(why) = refusal {
-            self.ui.mods.notice = Some(Err(why.to_string()));
-            return;
-        }
-        self.run(Action::Update(
-            vec![Included {
-                id: row.id.clone(),
-                title: row.title.clone(),
-                from: row.version.clone(),
-                to,
-                native: row.native(),
-            }],
-            Default::default(),
-        ));
+        self.update_rows(vec![row.id.clone()], row.title.clone());
     }
 
-    /// The world question for updates that were held back, by what each would drop; Stay leaves
-    /// them as they are, Switch anyway runs them again with those mods allowed.
-    pub(super) fn ask_worlds_before_update(&mut self, items: Vec<Included>) {
-        let Some(instance) = self.selected_instance() else {
-            return;
-        };
-        let (id, home) = (instance.id.clone(), self.mods_home());
-        let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
-        match sunrise_launcher::worlds::question(&home, &ids) {
-            Ok(Some(question)) => {
-                self.mods.world_ask = Some(crate::mods_page::WorldAsk {
-                    instance: id,
-                    question,
-                    then: crate::mods_page::Then::UpdateChosen(items),
-                });
-            }
-            // No world uses them after all: nothing stops the update.
-            Ok(None) => self.update_allowing(items, ids.into_iter().collect()),
-            Err(e) => self.ui.mods.notice = Some(Err(e)),
-        }
+    /// "Update all": every mod with a newer version, as one install.
+    pub(super) fn update_all(&mut self) {
+        let ids = model::updatable(&self.rows())
+            .iter()
+            .map(|r| r.id.clone())
+            .collect();
+        self.update_rows(ids, tr("Updates").to_string());
     }
 
-    /// The updates again, now that the world question was answered for `allow`.
-    pub(crate) fn update_allowing(
-        &mut self,
-        items: Vec<Included>,
-        allow: std::collections::BTreeSet<String>,
-    ) {
-        self.run(Action::Update(items, allow));
+    /// The selected rows' updates, as one install.
+    pub(super) fn update_selected(&mut self) {
+        let rows = self.rows();
+        let ids = model::updatable(&rows)
+            .iter()
+            .filter(|r| self.ui.mods.selection.contains(&r.id))
+            .map(|r| r.id.clone())
+            .collect();
+        self.update_rows(ids, tr("Updates").to_string());
+    }
+
+    /// Updating is installing: the same path as the Install on Discover, so the native-code
+    /// question, the plan and the world question, the queue and the transaction are the same.
+    fn update_rows(&mut self, ids: Vec<String>, shown: String) {
+        if self.game_running() {
+            self.ui.mods.notice = Some(Err(tr("Close the game to update").to_string()));
+            return;
+        }
+        if let Some(lock) = self.mods_lock().filter(|lock| *lock != Lock::Building) {
+            self.ui.mods.notice = Some(Err(lock.why().to_string()));
+            return;
+        }
+        self.ui.mods.notice = None;
+        self.mods.message = None;
+        match <[String; 1]>::try_from(ids) {
+            Ok([id]) => self.mods_install(SourceId::Sunrise, id, None, Some(shown)),
+            Err(ids) => self.mods_install_many(ids, shown),
+        }
     }
 
     /// Starts `action` on a worker.
@@ -368,7 +339,6 @@ impl Launcher {
         if !self.guard() {
             return;
         }
-        let game = self.mods_game();
         let m = &mut self.ui.mods;
         let current = m
             .snapshot
@@ -398,7 +368,7 @@ impl Launcher {
                 .map(|s| s.home.clone())
                 .unwrap_or_else(backend::game_home),
         );
-        std::thread::spawn(move || run(action, &home, &game, &tx));
+        std::thread::spawn(move || run(action, &home, &tx));
     }
 }
 
@@ -415,7 +385,7 @@ fn counted(count: usize, one: &'static str, many: &'static str) -> String {
     }
 }
 
-fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
+fn run(action: Action, home: &std::path::Path, tx: &Sender<Event>) {
     let refuse = |why: String| {
         let _ = tx.send(Event::Refused(why));
     };
@@ -455,55 +425,6 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
             }
             done(
                 counted(removed, "Removed 1 mod.", "Removed {count} mods."),
-                failed,
-            );
-        }
-        Action::Update(items, allow) => {
-            let index = match sunrise::index() {
-                Ok(index) => index,
-                Err(e) => return refuse(e),
-            };
-            let (mut updated, mut failed, mut asked) = (0, Vec::new(), Vec::new());
-            let count = items.len();
-            for (i, item) in items.iter().enumerate() {
-                let step = |line: &str, f: f32| {
-                    let _ = tx.send(Event::Progress(
-                        trf(
-                            "{n} of {count}: {line}",
-                            &[
-                                ("n", &(i + 1).to_string()),
-                                ("count", &count.to_string()),
-                                ("line", line),
-                            ],
-                        ),
-                        (i as f32 + f) / count as f32,
-                    ));
-                };
-                // Read now, not at planning: a mod that is off stays off.
-                let was_on = mod_list::is_enabled(home, &item.id);
-                let result = match item.native {
-                    true => sunrise::Registry
-                        .project(&item.id)
-                        .and_then(|p| sunrise::update_native(&p, home, game, was_on, &step))
-                        .map(|_| None),
-                    false => auto::update_to(&index, &item.id, &item.to, home, &allow, &step),
-                };
-                match result {
-                    Ok(None) => updated += 1,
-                    // A world may use what this version drops: the question comes, not a failure.
-                    Ok(Some(_)) => asked.push(item.clone()),
-                    Err(e) => failed.push((item.id.clone(), e)),
-                }
-            }
-            if !asked.is_empty() {
-                let _ = tx.send(Event::Asked(asked));
-            }
-            done(
-                counted(
-                    updated,
-                    "Updated 1 mod, checked against the registry.",
-                    "Updated {count} mods, each checked against the registry.",
-                ),
                 failed,
             );
         }
@@ -567,7 +488,7 @@ mod tests {
     fn turning_off_a_mod_a_world_was_saved_with_is_just_the_switch() {
         let home = home_with_world("bricks");
         let (tx, rx) = channel();
-        run(off(&["bricks"]), &home, "26.3", &tx);
+        run(off(&["bricks"]), &home, &tx);
         assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
         assert!(!mod_list::is_enabled(&home, "bricks"));
         assert!(mod_list::is_enabled(&home, "unrelated"));
@@ -582,11 +503,10 @@ mod tests {
         std::fs::create_dir_all(&old).unwrap();
         std::fs::write(old.join("2026-01-01_00-00-00_Home.zip"), b"older backup").unwrap();
         let (tx, rx) = channel();
-        run(off(&["bricks"]), &home, "26.3", &tx);
+        run(off(&["bricks"]), &home, &tx);
         run(
             Action::Remove(vec![("bricks".into(), "bricks".into(), "BRICKS".into())]),
             &home,
-            "26.3",
             &tx,
         );
         assert!(rx
@@ -621,7 +541,7 @@ mod tests {
     fn a_mod_no_world_uses_changes_at_once() {
         let home = home_with_world("bricks");
         let (tx, rx) = channel();
-        run(off(&["unrelated"]), &home, "26.3", &tx);
+        run(off(&["unrelated"]), &home, &tx);
         assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
         assert!(!mod_list::is_enabled(&home, "unrelated"));
         std::fs::remove_dir_all(home).ok();

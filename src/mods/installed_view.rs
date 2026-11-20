@@ -1,6 +1,6 @@
 //! Mods › Installed (mocks 05, 05b): what needs the player first, then updates, then the rest;
 //! one switch per row; bulk actions that name their count and scope.
-use super::model::{self, Group, Make, Row, Show};
+use super::model::{self, Make, Row, Show};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -122,10 +122,9 @@ impl Launcher {
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
         let busy = self.mods_busy();
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let with_update = {
             let chosen: Vec<Row> = selected.iter().map(|r| (*r).clone()).collect();
-            model::plan_updates(&chosen, native_allowed).included.len()
+            model::updatable(&chosen).len()
         };
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::frame::button(id, label);
@@ -227,7 +226,7 @@ impl Launcher {
                     })
                     .child(if !busy && with_update > 0 {
                         upd.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.ask_update(true);
+                            this.update_selected();
                             cx.notify();
                         }))
                     } else {
@@ -299,77 +298,17 @@ impl Launcher {
                                 ),
                         )
                 }
-                Confirm::Update(plan) => {
-                    let included = plan.included.clone();
-                    let natives = included.iter().filter(|i| i.native).count();
-                    panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Update {count} mods?", &[("count", &included.len().to_string())])))
-                        .children(included.iter().take(14).map(|i| {
-                            div().text_size(px(tokens::LABEL)).child(crate::selectable::selectable(trf(
-                                "{title} {from} → {to}{native}",
-                                &[
-                                    ("title", &i.title),
-                                    ("from", &i.from),
-                                    ("to", &i.to),
-                                    ("native", &if i.native { trf("  ({code})", &[("code", tr("native code"))]) } else { String::new() }),
-                                ],
-                            )))
-                        }))
-                        .children((included.len() > 14).then(|| muted(trf("and {count} more", &[("count", &(included.len() - 14).to_string())]))))
-                        .children((!plan.skipped.is_empty()).then(|| {
-                            div().flex().flex_col().gap(px(2.)).child(muted(tr("Left out:"))).children(plan.skipped.iter().map(|(t, why)| {
-                                div().text_size(px(tokens::SMALL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf("{title}: {why}", &[("title", t), ("why", why)])))
-                            }))
-                        }))
-                        .child(muted(tr("Each file is checked against the registry's size, hash and signature before it replaces anything. Mods that are off stay off.")))
-                        .children((natives > 0).then(|| {
-                            div().text_size(px(tokens::SMALL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                                "{count} of these run native code. A new build is made only when you Play or choose Build…, after the usual checks.",
-                                &[("count", &natives.to_string())],
-                            )))
-                        }))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
-                                .child({
-                                    let b = primary("alt-confirm-update", trf("Update {count} mods", &[("count", &included.len().to_string())]));
-                                    if included.is_empty() || busy {
-                                        dim(b)
-                                    } else {
-                                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Update(included.clone(), Default::default()));
-                                            cx.notify();
-                                        }))
-                                    }
-                                }),
-                        )
-                }
             }
         });
 
-        // ---- rows, in three groups
+        // ---- rows, with one button above them when any update is waiting
         let mut list = div().flex().flex_col();
-        let mut last: Option<Group> = None;
         let mut position = 0;
-        let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
-        // Only what the plan would really update: with none, there is no button.
-        let update_all = model::update_all_button(&rows, native_allowed);
-        let headings = model::names_groups(visible.iter().map(|&i| rows[i].group()));
-        for (n, &i) in visible.iter().enumerate() {
-            let r = rows[i].clone();
-            let g = r.group();
-            if headings && last != Some(g) {
-                last = Some(g);
-                let (title, count) = match g {
-                    Group::Updates => (tr("UPDATES"), group_counts(g)),
-                    Group::Rest => (tr("EVERYTHING ELSE"), group_counts(g)),
-                };
-                let mut head = div()
+        let waiting = model::updatable(&rows).len();
+        if waiting > 0 {
+            let b = crate::frame::button("alt-update-all", tr("Update all"));
+            list = list.child(
+                div()
                     .flex()
                     .items_center()
                     .justify_between()
@@ -381,29 +320,22 @@ impl Launcher {
                             .text_size(px(tokens::CAPTION))
                             .text_color(c(palette().muted))
                             .child(crate::selectable::selectable(trf(
-                                "{title} · {count}",
-                                &[("title", title), ("count", &count.to_string())],
+                                "Updates waiting: {count}",
+                                &[("count", &waiting.to_string())],
                             ))),
-                    );
-                if let (Group::Updates, Some(updates_total)) = (g, update_all) {
-                    let b = crate::frame::button(
-                        "alt-update-all",
-                        trf(
-                            "Update {count} mods",
-                            &[("count", &updates_total.to_string())],
-                        ),
-                    );
-                    head = head.child(if !busy {
+                    )
+                    .child(if !busy {
                         b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.ask_update(false);
+                            this.update_all();
                             cx.notify();
                         }))
                     } else {
                         dim(b)
-                    });
-                }
-                list = list.child(head);
-            }
+                    }),
+            );
+        }
+        for (n, &i) in visible.iter().enumerate() {
+            let r = rows[i].clone();
             let pos = position;
             if r.local.is_none() {
                 position += 1;
@@ -499,11 +431,7 @@ impl Launcher {
         // kind and version move under the name with the status after them, in fixed places
         // too; the action and the switch keep theirs.
         let wide = self.content_width() >= 860.;
-        let cells = model::cells(
-            &r,
-            error.as_deref(),
-            self.settings.native_mods_allowed_at.is_some(),
-        );
+        let cells = model::cells(&r, error.as_deref());
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,

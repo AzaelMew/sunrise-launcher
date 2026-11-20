@@ -181,19 +181,22 @@ pub(super) fn install(
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
     let mut stale = Vec::new();
-    let mut enable = if turn_on {
+    // What was installed and off stays off when it is updated, the mod asked for or a dependency.
+    let off: Vec<String> = plan
+        .installed
+        .entries
+        .iter()
+        .filter(|e| e.source == SourceId::Sunrise && mod_list::is_off(home, &e.project))
+        .map(|e| e.project.clone())
+        .collect();
+    let mut enable = if turn_on && !off.contains(&project.id) {
         vec![project.id.clone()]
     } else {
         Vec::new()
     };
     for (entry, file) in plan.selected {
         if let Some(file) = file {
-            // A dependency that was installed and off stays off when it is updated.
-            let was_off = plan
-                .installed
-                .find(SourceId::Sunrise, &entry.project)
-                .is_some()
-                && !mod_list::is_enabled(home, &entry.project);
+            let was_off = off.contains(&entry.project);
             if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
                 // A file that is gone or no longer parses is replaced wherever the new one goes
                 // (a native mod and a plain one live in different places); a good one is not.

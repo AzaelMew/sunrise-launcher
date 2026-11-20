@@ -1172,35 +1172,6 @@ pub fn install(
     )
 }
 
-/// Updates an installed native mod to its newest file. A mod that is off (`turn_on` false) stays
-/// off, and its dependencies being off doesn't refuse the update.
-pub fn update_native(
-    project: &Project,
-    home: &Path,
-    game: &str,
-    turn_on: bool,
-    progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, String> {
-    let index = fetched_index().ok_or_else(|| {
-        tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-            .to_string()
-    })?;
-    install_from(
-        &index,
-        local(),
-        project,
-        home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        turn_on,
-        &[],
-        progress,
-    )
-    .map_err(String::from)
-}
-
 /// [`install`] from a trusted `index`.
 #[allow(clippy::too_many_arguments)]
 fn install_from(
