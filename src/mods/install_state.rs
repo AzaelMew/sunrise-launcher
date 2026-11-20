@@ -85,9 +85,9 @@ pub(crate) fn stage(
     }
 }
 
-/// "Also installed: A, B", or "A, B and 12 more" past two names.
-pub(crate) fn also_line(names: &[String]) -> Option<String> {
-    let shown = match names {
+/// "A, B", or "A, B and 12 more" past two names.
+fn names_line(names: &[String]) -> Option<String> {
+    Some(match names {
         [] => return None,
         [a] => a.clone(),
         [a, b] => format!("{a}, {b}"),
@@ -95,8 +95,24 @@ pub(crate) fn also_line(names: &[String]) -> Option<String> {
             "{a}, {b} and {count} more",
             &[("a", a), ("b", b), ("count", &rest.len().to_string())],
         ),
-    };
+    })
+}
+
+/// "Also installed: A, B", or "A, B and 12 more" past two names.
+pub(crate) fn also_line(names: &[String]) -> Option<String> {
+    let shown = names_line(names)?;
     Some(trf("Also installed: {names}", &[("names", &shown)]))
+}
+
+/// "Also updated: Flywheel 0.3 → 0.4", for the dependencies an install moved to a new version
+/// (title, version before, version after).
+pub(crate) fn updated_line(updated: &[(String, String, String)]) -> Option<String> {
+    let moves: Vec<String> = updated
+        .iter()
+        .map(|(title, from, to)| format!("{title} {from} → {to}"))
+        .collect();
+    let shown = names_line(&moves)?;
+    Some(trf("Also updated: {names}", &[("names", &shown)]))
 }
 
 /// One plain line for why an install failed; the whole text stays behind "Details".
@@ -171,6 +187,20 @@ mod tests {
         assert_eq!(
             n(&["A", "B", "C", "D"]).unwrap(),
             "Also installed: A, B and 2 more"
+        );
+    }
+
+    #[test]
+    fn the_also_updated_line_shows_each_move_and_counts_past_two() {
+        let m = |t: &str, a: &str, b: &str| (t.to_string(), a.to_string(), b.to_string());
+        assert_eq!(updated_line(&[]), None);
+        assert_eq!(
+            updated_line(&[m("Flywheel", "0.3", "0.4")]).unwrap(),
+            "Also updated: Flywheel 0.3 → 0.4"
+        );
+        assert_eq!(
+            updated_line(&[m("A", "1", "2"), m("B", "1", "2"), m("C", "1", "2")]).unwrap(),
+            "Also updated: A 1 → 2, B 1 → 2 and 1 more"
         );
     }
 
