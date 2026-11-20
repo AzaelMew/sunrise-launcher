@@ -120,7 +120,7 @@ impl Entry {
 }
 
 /// The rows of Settings found by name, as their sections title them.
-const SETTINGS_ROWS: [(&str, Section); 20] = [
+const SETTINGS_ROWS: [(&str, Section); 19] = [
     ("While you play", Section::Game),
     ("Minecraft folder", Section::Game),
     ("Profiles", Section::Game),
@@ -132,7 +132,6 @@ const SETTINGS_ROWS: [(&str, Section); 20] = [
     ("Show the cat", Section::Appearance),
     ("Native code", Section::Mods),
     ("Installed game builds", Section::Storage),
-    ("Versions", Section::Storage),
     ("Clean up old builds…", Section::Storage),
     ("Import a game build", Section::Storage),
     ("Remove old game builds automatically", Section::Storage),
@@ -163,17 +162,22 @@ pub(crate) fn destinations() -> Vec<Entry> {
             Page::Settings,
         )
     }));
-    all.extend(SETTINGS_ROWS.map(|(title, section)| Entry {
-        group: Group::Settings,
-        label: tr(title).to_string(),
-        hint: under("Settings", section.label()),
-        target: match title {
-            "Worlds on Home" => Target::WorldsOnHome,
-            _ => Target::Section(section),
-        },
-        art: Art::Glyph("sliders"),
-        quiet: true,
-    }));
+    all.extend(
+        SETTINGS_ROWS
+            .into_iter()
+            .chain([("Versions", Section::Storage)])
+            .map(|(title, section)| Entry {
+                group: Group::Settings,
+                label: tr(title).to_string(),
+                hint: under("Settings", section.label()),
+                target: match title {
+                    "Worlds on Home" => Target::WorldsOnHome,
+                    _ => Target::Section(section),
+                },
+                art: Art::Glyph("sliders"),
+                quiet: true,
+            }),
+    );
     all
 }
 
@@ -957,6 +961,18 @@ mod tests {
     }
 
     #[test]
+    fn each_searchable_setting_names_a_real_setting_or_action() {
+        let source = concat!(
+            include_str!("settings.rs"),
+            include_str!("settings/appearance.rs"),
+            include_str!("storage_builds.rs"),
+        );
+        for (title, _) in SETTINGS_ROWS {
+            assert!(source.contains(&format!(r#"tr("{title}")"#)), "{title}");
+        }
+    }
+
+    #[test]
     fn results_are_bounded() {
         let mut entries = sample();
         entries.extend((0..40).map(|n| entry(Group::Mods, &format!("Meadow mod {n}"))));
@@ -985,7 +1001,10 @@ mod tests {
                 "Settings"
             ]
         );
-        assert_eq!(places.len(), 6 + Section::ALL.len() + SETTINGS_ROWS.len());
+        assert_eq!(
+            places.len(),
+            6 + Section::ALL.len() + SETTINGS_ROWS.len() + 1
+        );
         let entries = sample();
         for gone in [
             "java",
