@@ -453,8 +453,10 @@ pub(crate) fn plain(component: &serde_json::Value) -> String {
 
 /// `key:value` in a `key:value` per line file.
 fn line_value(text: &str, key: &str) -> Option<String> {
+    // The game keeps the last line of a repeated key.
     text.lines()
-        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+        .filter_map(|l| l.strip_prefix(key)?.strip_prefix(':'))
+        .next_back()
         .map(str::to_string)
 }
 
@@ -498,20 +500,22 @@ fn set_line(path: &Path, key: &str, value: &str) -> Result<(), String> {
 
 /// `text` with `key:value` set, or added as a line; every other line stays.
 fn with_line(text: &str, key: &str, value: &str) -> String {
-    let mut found = false;
+    let is_key = |l: &str| l.strip_prefix(key).is_some_and(|r| r.starts_with(':'));
+    // The game keeps the last line of a repeated key, so that is the line to set.
+    let last = text
+        .lines()
+        .rev()
+        .position(is_key)
+        .map(|n| text.lines().count() - 1 - n);
     let mut out: Vec<String> = text
         .lines()
-        .map(
-            |l| match l.strip_prefix(key).and_then(|r| r.strip_prefix(':')) {
-                Some(_) if !found => {
-                    found = true;
-                    format!("{key}:{value}")
-                }
-                _ => l.to_string(),
-            },
-        )
+        .enumerate()
+        .map(|(i, l)| match last {
+            Some(n) if n == i => format!("{key}:{value}"),
+            _ => l.to_string(),
+        })
         .collect();
-    if !found {
+    if last.is_none() {
         out.push(format!("{key}:{value}"));
     }
     let mut text = out.join("\n");

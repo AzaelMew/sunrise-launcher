@@ -808,3 +808,33 @@ fn a_resource_pack_without_a_description_is_not_listed() {
     assert_eq!(names, ["Empty.zip"]);
     fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn a_repeated_options_key_is_read_and_set_on_its_last_line() {
+    let home = scratch("repeated-key");
+    let rp = home.join("resourcepacks");
+    for name in ["A.zip", "B.zip"] {
+        zip_file(&rp.join(name), &[("pack.mcmeta", META)]);
+    }
+    fs::write(
+        home.join("options.txt"),
+        "resourcePacks:[\"vanilla\",\"file/A.zip\"]\nlang:fr_ch\nresourcePacks:[\"vanilla\",\"file/B.zip\"]\n",
+    )
+    .unwrap();
+    let on = |home: &Path| -> Vec<String> {
+        list(home, Kind::Resource)
+            .into_iter()
+            .filter(|p| p.enabled)
+            .map(|p| p.file)
+            .collect()
+    };
+    assert_eq!(on(&home), ["B.zip"]);
+    let a = list(&home, Kind::Resource).remove(0);
+    set_enabled(&home, &a, true).unwrap();
+    assert_eq!(on(&home), ["A.zip", "B.zip"], "listed by name, both on");
+    assert_eq!(
+        fs::read_to_string(home.join("options.txt")).unwrap(),
+        "resourcePacks:[\"vanilla\",\"file/A.zip\"]\nlang:fr_ch\nresourcePacks:[\"vanilla\",\"file/B.zip\",\"file/A.zip\"]\n"
+    );
+    fs::remove_dir_all(&home).unwrap();
+}
