@@ -634,6 +634,16 @@ impl Launcher {
                             .child(v)
                     })),
             );
+        let source_button = p.source.map(|source| {
+            let (icon, label, url) = match source {
+                model::SourceLink::GitHub(url) => ("github", tr("Open on GitHub"), url),
+                model::SourceLink::Other(url) => ("link-01", tr("Open source page"), url),
+            };
+            crate::frame::button("alt-project-source", "")
+                .child(crate::glass_ui::icon(icon, 15., c(palette().text)))
+                .child(div().pl(px(8.)).child(label))
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| Launcher::open_url(&url, cx)))
+        });
         let scroll = crate::frame::scrolls("project");
         let right = div()
             .flex()
@@ -650,12 +660,19 @@ impl Launcher {
                     .child(facts)
                     .children(game_line)
                     .children(changes)
-                    .child(details_toggle)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(8.))
+                            .child(details_toggle)
+                            .children(source_button),
+                    )
                     .children(details),
             )
             .child({
-                let row = about_row;
-                let source = p.source.clone();
                 card()
                     .p(px(16.))
                     .flex()
@@ -667,14 +684,9 @@ impl Launcher {
                             .pb(px(6.))
                             .child(tr("ABOUT")),
                     )
-                    .child(row(tr("Downloads"), p.downloads.to_string()))
-                    .child(row(tr("Updated"), p.updated.clone()))
-                    .child(row(tr("Licence"), p.license.clone()))
-                    .children((source.starts_with("https://")).then(|| {
-                        about_link("alt-project-source", tr("Source code")).on_click(cx.listener(
-                            move |_, _: &ClickEvent, _, cx| Launcher::open_url(&source, cx),
-                        ))
-                    }))
+                    .child(about_row(tr("Downloads"), p.downloads.to_string()))
+                    .child(about_row(tr("Updated"), p.updated.clone()))
+                    .child(about_row(tr("Licence"), p.license.clone()))
             });
 
         // A narrow window has one column: the action stays near the top. Beside the column, the

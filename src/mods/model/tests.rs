@@ -3,6 +3,44 @@ use sunrise_launcher::browser::installed::Entry;
 
 const GAME: &str = "26.3";
 
+#[test]
+fn source_links_only_trim_repositories_on_github() {
+    for (source, expected) in [
+        (
+            "https://github.com/Hollowfen/Trail-Markers.git/tree/main/mods?tab=readme#install",
+            Some(SourceLink::GitHub(
+                "https://github.com/Hollowfen/Trail-Markers".into(),
+            )),
+        ),
+        (
+            "https://github.com/Hollowfen/Trail-Markers/blob/main/README.md",
+            Some(SourceLink::GitHub(
+                "https://github.com/Hollowfen/Trail-Markers".into(),
+            )),
+        ),
+        (
+            "https://github.com.example.test/owner/repo.git/tree/main?keep=1#readme",
+            Some(SourceLink::Other(
+                "https://github.com.example.test/owner/repo.git/tree/main?keep=1#readme".into(),
+            )),
+        ),
+        (
+            "https://code.example.test/owner/repo?keep=1#readme",
+            Some(SourceLink::Other(
+                "https://code.example.test/owner/repo?keep=1#readme".into(),
+            )),
+        ),
+        ("https://github.com/owner", None),
+        ("https://@github.com/owner/repo", None),
+        ("https://user:pass@github.com/owner/repo", None),
+        ("http://github.com/owner/repo", None),
+        ("https:///owner/repo", None),
+        ("", None),
+    ] {
+        assert_eq!(SourceLink::read(source), expected, "{source}");
+    }
+}
+
 fn project(
     id: &str,
     kind: &str,
