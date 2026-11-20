@@ -463,6 +463,9 @@ impl Launcher {
         if self.mods.break_ask.is_some() {
             return Some(self.break_sheet(cx));
         }
+        if self.mods.card_error.as_ref().is_some_and(|e| e.open) {
+            return Some(self.card_why_sheet(cx));
+        }
         if self.mods.removal.is_some() {
             return Some(self.removal_sheet(cx));
         }
@@ -567,6 +570,96 @@ impl Launcher {
 
     // ---- Removal ----
 
+    /// The why behind a failure, one component for the removal sheet and a card's Details: a
+    /// reason per mod, the compiler's or download's log, and Copy and Save… for it.
+    fn why_panel(items: Vec<(String, String)>, log: String, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .children(items.into_iter().map(|(name, reason)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
+                    .child(muted(reason))
+            }))
+            .when(!log.is_empty(), |d| {
+                let (copy, save) = (log.clone(), log.clone());
+                d.child(
+                    div()
+                        .id("alt-why-log")
+                        .max_h(px(180.))
+                        .overflow_y_scroll()
+                        .p(px(10.))
+                        .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                        .bg(rgb(palette().field))
+                        .font_family(crate::theme::MONO)
+                        .text_size(px(tokens::SMALL))
+                        .text_color(rgb(palette().muted))
+                        .child(crate::selectable::selectable(log.clone())),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(button("alt-why-copy", tr("Copy")).on_click(cx.listener(
+                            move |_, _: &ClickEvent, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    copy.clone(),
+                                ));
+                            },
+                        )))
+                        .child(button("alt-why-save", tr("Save…")).on_click(cx.listener(
+                            move |_, _: &ClickEvent, _, cx| {
+                                let pick = cx.prompt_for_new_path(
+                                    &backend::game_home(),
+                                    Some("build-log.txt"),
+                                );
+                                let text = save.clone();
+                                cx.spawn(async move |_, _| {
+                                    if let Ok(Ok(Some(path))) = pick.await {
+                                        let _ = std::fs::write(path, text);
+                                    }
+                                })
+                                .detach();
+                            },
+                        ))),
+                )
+            })
+    }
+
+    /// A failed install's Details: the same Show why panel, for the one mod.
+    fn card_why_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let error = self
+            .mods
+            .card_error
+            .as_ref()
+            .expect("shown only while Details is open");
+        let (name, line, log) = (
+            error.title.clone(),
+            error.line.clone(),
+            error.details.clone(),
+        );
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(title(trf("{mod} couldn't be installed", &[("mod", &name)])))
+            .child(Self::why_panel(vec![(name, line)], log, cx))
+            .child(div().flex().justify_end().child(
+                crate::frame::primary("alt-card-why-close", tr("Close")).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        if let Some(error) = &mut this.mods.card_error {
+                            error.open = false;
+                        }
+                        cx.notify();
+                    },
+                )),
+            ));
+        frame("alt-card-why", 560., body, cx)
+    }
+
     /// Mods that can't stay: which, and why behind "Show why", with the compiler's log to copy
     /// or save. Continue is the default; it removes them and the rest goes on.
     fn removal_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -577,67 +670,14 @@ impl Launcher {
             .expect("shown only while mods are listed");
         let names: Vec<String> = removal.items.iter().map(|i| i.title.clone()).collect();
         let log = removal.log();
-        let why =
-            removal.why.then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .children(removal.items.iter().map(|item| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(item.title.clone()),
-                            )
-                            .child(muted(item.reason.clone()))
-                    }))
-                    .when(!log.is_empty(), |d| {
-                        let (copy, save) = (log.clone(), log.clone());
-                        d.child(
-                            div()
-                                .id("alt-removal-log")
-                                .max_h(px(180.))
-                                .overflow_y_scroll()
-                                .p(px(10.))
-                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                                .bg(rgb(palette().field))
-                                .font_family(crate::theme::MONO)
-                                .text_size(px(tokens::SMALL))
-                                .text_color(rgb(palette().muted))
-                                .child(crate::selectable::selectable(log.clone())),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.))
-                                .child(button("alt-removal-copy", tr("Copy")).on_click(
-                                    cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                            copy.clone(),
-                                        ));
-                                    }),
-                                ))
-                                .child(button("alt-removal-save", tr("Save…")).on_click(
-                                    cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                        let pick = cx.prompt_for_new_path(
-                                            &backend::game_home(),
-                                            Some("build-log.txt"),
-                                        );
-                                        let text = save.clone();
-                                        cx.spawn(async move |_, _| {
-                                            if let Ok(Ok(Some(path))) = pick.await {
-                                                let _ = std::fs::write(path, text);
-                                            }
-                                        })
-                                        .detach();
-                                    }),
-                                )),
-                        )
-                    })
-            });
+        let why = removal.why.then(|| {
+            let items = removal
+                .items
+                .iter()
+                .map(|i| (i.title.clone(), i.reason.clone()))
+                .collect();
+            Self::why_panel(items, log.clone(), cx)
+        });
         let body = div()
             .flex()
             .flex_col()
