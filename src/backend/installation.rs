@@ -84,6 +84,7 @@ pub(crate) fn install_as(
     fs::File::create_new(top.join(ARCHIVE_ID))
         .and_then(|mut file| file.write_all(sha256.as_bytes()))
         .map_err(|e| e.to_string())?;
+    version_storage::mark_downloaded(&top)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
     match crate::run_leases::publish_build(&top, &target) {
         Ok(()) => {}

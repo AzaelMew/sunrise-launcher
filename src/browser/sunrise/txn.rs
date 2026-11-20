@@ -2080,7 +2080,7 @@ mod tests {
             .any(|arg| Path::new(arg) == exact_resources));
         drop(owner);
         assert!(matches!(
-            crate::cache_cleanup::delete_version(&base, true),
+            crate::cache_cleanup::delete_version(&base, || Ok(())),
             Err(crate::storage::Error::IncompleteUnit)
         ));
         let mut rechecked = false;
