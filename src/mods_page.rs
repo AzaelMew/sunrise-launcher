@@ -149,7 +149,7 @@ pub(super) struct Mods {
     /// An install that would break installed mods, asked before anything is downloaded.
     pub(crate) break_ask: Option<BreakAsk>,
     /// The mods that go once the player continues (`removal`).
-    pub(crate) removal: Option<removal::Removal>,
+    pub(crate) removal: removal::Pending,
     /// The native mods the running build was started to take up.
     building: Vec<String>,
     /// How the last build of an install ended, when it cost the install: read by the card and
@@ -271,7 +271,7 @@ impl Mods {
             updating: false,
             building: Vec::new(),
             world_ask: None,
-            removal: None,
+            removal: Default::default(),
             break_ask: None,
             also: HashMap::new(),
             updated: HashMap::new(),
@@ -364,9 +364,15 @@ impl Launcher {
                         removals,
                     } = out;
                     for (instance, items) in removals {
+                        let entries = self
+                            .instances
+                            .list
+                            .iter()
+                            .find(|i| i.id == instance)
+                            .map(|i| installed::Installed::load(&i.home).entries)
+                            .unwrap_or_default();
                         m.removal
-                            .get_or_insert_with(Default::default)
-                            .add(&instance, removal::Removal::of_updates(items));
+                            .add(&instance, &entries, removal::Removal::of_updates(items));
                     }
                     // The first question waits for its answer; later ones come with the next run.
                     if m.world_ask.is_none() {
@@ -777,11 +783,10 @@ impl Launcher {
                     id: f.id,
                     reason: f.reason,
                     log: Some(f.log),
+                    checksum: String::new(),
                 });
-                self.mods
-                    .removal
-                    .get_or_insert_with(Default::default)
-                    .add(&instance, items);
+                let entries = self.mods.installed.clone();
+                self.mods.removal.add(&instance, &entries, items);
             }
         }
     }
@@ -789,7 +794,7 @@ impl Launcher {
     /// Continue on the removal sheet: the listed mods go. Those whose build failed are
     /// remembered for the cards.
     pub(crate) fn continue_removal(&mut self) {
-        let Some(removal) = self.mods.removal.take() else {
+        let Some(removal) = self.mods.removal.take_first() else {
             return;
         };
         let Some(home) = self
@@ -801,8 +806,23 @@ impl Launcher {
         else {
             return;
         };
+        // Under the profile's lock, and only the files that are still the ones listed.
+        let _lock = match browser::lock_home(&home) {
+            Ok(lock) => lock,
+            Err(e) => {
+                self.mods.message = Some(Err(e.to_string()));
+                return;
+            }
+        };
+        let entries = installed::Installed::load(&home).entries;
         let mut failed = Vec::new();
         for item in &removal.items {
+            let same = entries
+                .iter()
+                .any(|e| e.project == item.id && e.checksum == item.checksum);
+            if !same {
+                continue;
+            }
             if let Err(e) = installed::remove(&home, &item.id) {
                 self.mods.message = Some(Err(e));
             } else if let Some(log) = &item.log {

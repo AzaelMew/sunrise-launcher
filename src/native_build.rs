@@ -25,7 +25,7 @@ impl Launcher {
         // A question about worlds, or mods waiting to be removed, is answered first.
         if self.native_step.is_some()
             || self.mods.world_ask.is_some()
-            || self.mods.removal.is_some()
+            || !self.mods.removal.is_empty()
         {
             return;
         }
