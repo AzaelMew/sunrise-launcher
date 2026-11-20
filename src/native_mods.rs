@@ -2272,6 +2272,7 @@ fn carried_over(name: &std::ffi::OsStr, target: Target) -> bool {
         "Sunrise.app",
         "native-mods.json",
         "native-data",
+        crate::managed_play::Artifact::ARCHIVE_RECEIPT,
         sunrise_launcher_smod::mod_list::NATIVE_DIR,
     ]
     .iter()
@@ -2488,10 +2489,18 @@ mod tests {
             // different proof must not remove the bytes that already occupy this name.
             install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
             assert!(install_as(&release, tag, &"c".repeat(64), None, None, |_| {}).is_err());
-            assert_eq!(
-                fs::read(backend::version_dir(tag).join(backend::CLIENT)).unwrap(),
-                b"release game"
-            );
+            let game = backend::version_dir(tag);
+            let client = game.join(backend::CLIENT);
+            assert_eq!(fs::read(&client).unwrap(), b"release game");
+            fs::write(&client, b"different game").unwrap();
+            assert!(install_as(&release, tag, &sha256, None, None, |_| {}).is_err());
+            assert_eq!(fs::read(&client).unwrap(), b"different game");
+            fs::write(&client, b"release game").unwrap();
+            let library = game.join("unrecorded.dll");
+            fs::write(&library, b"not extracted from the archive").unwrap();
+            assert!(install_as(&release, tag, &sha256, None, None, |_| {}).is_err());
+            fs::remove_file(library).unwrap();
+            install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
             fs::create_dir_all(&resources).unwrap();

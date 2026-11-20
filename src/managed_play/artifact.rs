@@ -7,7 +7,7 @@ use std::{fs, io, path::Path};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Artifact {
+pub(crate) struct Artifact {
     pub(super) tag: String,
     executable: [u8; 32],
     runtime: [u8; 32],
@@ -20,23 +20,75 @@ impl Artifact {
     }
 
     pub(super) fn capture_at(tag: &str, dir: &Path) -> Result<Self, String> {
+        Self::installed(dir, tag, None)
+    }
+
+    pub(crate) const ARCHIVE_RECEIPT: &str = ".sunrise-archive.json";
+
+    /// Record the extracted image before its cache name and completion marker are published.
+    pub(crate) fn record_archive(dir: &Path, tag: &str, archive: &str) -> Result<(), String> {
+        let image = Self::image(dir, tag, Some(archive))?;
+        let path = dir.join(Self::ARCHIVE_RECEIPT);
+        let file = fs::File::create_new(&path).map_err(|error| at(&path, error))?;
+        serde_json::to_writer(
+            file,
+            &ArchiveReceipt {
+                archive: archive.to_owned(),
+                image,
+            },
+        )
+        .map_err(|error| at(&path, error.into()))
+    }
+
+    /// Accept a deferred archive only when its digest and the current executable/runtime
+    /// match the image recorded after verifying and extracting that archive.
+    pub(crate) fn matches_archive(dir: &Path, tag: &str, archive: &str) -> bool {
+        Self::installed(dir, tag, Some(archive)).is_ok()
+    }
+
+    fn installed(dir: &Path, tag: &str, expected: Option<&str>) -> Result<Self, String> {
         require_dir(dir)?;
         let complete = dir.join(".installed");
-        if digest_file(&complete)?.is_none() {
+        if super::open_if_file(&complete)?.is_none() {
             return Err(at(&complete, io::ErrorKind::NotFound.into()));
         }
+        let path = dir.join(Self::ARCHIVE_RECEIPT);
+        let receipt = super::optional_bytes(&path)?
+            .map(|bytes| {
+                serde_json::from_slice::<ArchiveReceipt>(&bytes)
+                    .map_err(|error| at(&path, error.into()))
+            })
+            .transpose()?;
+        let archive = receipt.as_ref().map(|receipt| receipt.archive.as_str());
+        if expected.is_some_and(|expected| archive != Some(expected))
+            || archive.is_some_and(|archive| !backend::installation::valid_archive_digest(archive))
+        {
+            return Err(super::unsettled());
+        }
+        let image = Self::image(dir, tag, archive)?;
+        if receipt.is_some_and(|receipt| receipt.image != image) {
+            return Err(super::unsettled());
+        }
+        Ok(image)
+    }
+
+    fn image(dir: &Path, tag: &str, archive: Option<&str>) -> Result<Self, String> {
         let path = dir.join(backend::CLIENT);
         let Some(executable) = digest_file(&path)? else {
             return Err(at(&path, io::ErrorKind::NotFound.into()));
         };
         let mut hash = Sha256::new();
+        item(
+            &mut hash,
+            Self::ARCHIVE_RECEIPT.as_bytes(),
+            archive.map(|archive| Sha256::digest(archive).into()),
+        );
         for file in [
-            ".installed",
-            backend::installation::ARCHIVE_ID,
             backend::GAME_BUILD_ARCHITECTURE,
             "sunrise-release.json",
             "research-lock.json",
             "native-mods.json",
+            crate::preparer::BINARY,
         ] {
             item(&mut hash, file.as_bytes(), digest_file(&dir.join(file))?);
         }
@@ -76,6 +128,13 @@ impl Artifact {
         }
         Ok(())
     }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ArchiveReceipt {
+    archive: String,
+    image: Artifact,
 }
 
 pub(super) fn tree(path: &Path, resources: bool) -> Result<Option<[u8; 32]>, String> {
@@ -168,7 +227,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn image_covers_library_native_payload_and_archive_but_not_logs() {
+    fn image_covers_library_native_payload_and_architecture_but_not_logs() {
         let temp = tempfile::tempdir().unwrap();
         let dir = temp.path();
         fs::write(dir.join(backend::CLIENT), b"game").unwrap();
@@ -178,7 +237,6 @@ mod tests {
             "native.dll",
             "native-data/data.json",
             backend::GAME_BUILD_ARCHITECTURE,
-            backend::installation::ARCHIVE_ID,
         ];
         for path in paths {
             fs::write(dir.join(path), b"original").unwrap();

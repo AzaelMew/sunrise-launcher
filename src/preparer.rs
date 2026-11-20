@@ -88,12 +88,14 @@ pub fn clone_or_copy(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// The version folder's `sunrise-prepare`, when it ships one.
+pub(crate) const BINARY: &str = if cfg!(windows) {
+    "sunrise-prepare.exe"
+} else {
+    "sunrise-prepare"
+};
+
 pub fn binary(dir: &Path) -> Option<PathBuf> {
-    let binary = dir.join(if cfg!(windows) {
-        "sunrise-prepare.exe"
-    } else {
-        "sunrise-prepare"
-    });
+    let binary = dir.join(BINARY);
     binary.is_file().then_some(binary)
 }
 

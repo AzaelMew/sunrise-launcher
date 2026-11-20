@@ -4,7 +4,14 @@ use super::*;
 mod bound;
 pub(crate) use bound::{GameDownload, GameProof};
 
-pub(crate) const ARCHIVE_ID: &str = ".sunrise-archive-sha256";
+use crate::managed_play::Artifact;
+
+pub(crate) fn valid_archive_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 pub(crate) fn install_as(
     release: &Release,
@@ -20,17 +27,9 @@ pub(crate) fn install_as(
         .ok_or_else(|| format!("{tag} has no build for this platform."))?;
     let root = versions_dir();
     let target = version_dir(tag);
-    let matches_archive = |meta: &fs::Metadata| {
-        meta.is_dir()
-            && !crate::native_cache::linked(meta)
-            && [COMPLETE, CLIENT, ARCHIVE_ID].into_iter().all(|name| {
-                fs::symlink_metadata(target.join(name))
-                    .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
-            })
-            && fs::read_to_string(target.join(ARCHIVE_ID)).is_ok_and(|id| id == sha256)
-    };
+    let matches_archive = || Artifact::matches_archive(&target, tag, sha256);
     match fs::symlink_metadata(&target) {
-        Ok(meta) if matches_archive(&meta) => {
+        Ok(_) if matches_archive() => {
             progress(1.0);
             return Ok(());
         }
@@ -82,9 +81,7 @@ pub(crate) fn install_as(
     if let Some((bytes, sha256)) = release_facts {
         keep_release_file(&top, bytes, sha256)?;
     }
-    fs::File::create_new(top.join(ARCHIVE_ID))
-        .and_then(|mut file| file.write_all(sha256.as_bytes()))
-        .map_err(|e| e.to_string())?;
+    Artifact::record_archive(&top, tag, sha256)?;
     crate::nightly::record_install_time(&top, release).map_err(|e| e.to_string())?;
     // Transfer and unpack privately. Cache readers wait only at the visibility boundary.
     let _publication =
@@ -94,10 +91,7 @@ pub(crate) fn install_as(
         Err(crate::native_cache::Error::Io(ref e))
             if e.kind() == std::io::ErrorKind::AlreadyExists =>
         {
-            if !fs::symlink_metadata(&target)
-                .as_ref()
-                .is_ok_and(matches_archive)
-            {
+            if !matches_archive() {
                 return Err(existing_build(tag));
             }
             progress(1.0);

@@ -43,7 +43,7 @@ impl ReferencePublication {
 }
 
 use crate::{native_mods, native_status};
-use artifact::Artifact;
+pub(crate) use artifact::Artifact;
 use resources::Resources;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};

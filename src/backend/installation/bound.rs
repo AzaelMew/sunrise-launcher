@@ -1,5 +1,6 @@
 //! The archive a deferred first Play resolved before any full download.
 use super::super::*;
+use crate::managed_play::Artifact;
 use sunrise_launcher_release_verify::{is_build, Channel, SIGNATURE, SIGNATURE_V2, SUMS};
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -24,12 +25,8 @@ pub(crate) struct GameProof {
 impl GameProof {
     pub(crate) fn saved(value: serde_json::Value) -> Result<Self, String> {
         let proof: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
-        let digest = |s: &str| {
-            s.len() == 64
-                && s.bytes()
-                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        };
-        if !digest(&proof.archive) || proof.facts.as_deref().is_some_and(|s| !digest(s)) {
+        let valid = super::valid_archive_digest;
+        if !valid(&proof.archive) || proof.facts.as_deref().is_some_and(|s| !valid(s)) {
             return Err(crate::i18n::tr("The saved game download proof is invalid.").into());
         }
         Ok(proof)
@@ -191,21 +188,15 @@ impl GameDownload {
     }
 
     pub(crate) fn is_installed(&self, tag: &str, proof: &GameProof) -> bool {
-        self.is_installed_at(&version_dir(tag), proof)
+        self.is_installed_at(&version_dir(tag), tag, proof)
     }
 
-    fn is_installed_at(&self, home: &Path, proof: &GameProof) -> bool {
+    fn is_installed_at(&self, home: &Path, tag: &str, proof: &GameProof) -> bool {
         let regular = |name: &str| {
             fs::symlink_metadata(home.join(name))
                 .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
         };
-        fs::symlink_metadata(home)
-            .is_ok_and(|meta| meta.is_dir() && !crate::native_cache::linked(&meta))
-            && regular(COMPLETE)
-            && regular(CLIENT)
-            && regular(super::ARCHIVE_ID)
-            && fs::read_to_string(home.join(super::ARCHIVE_ID))
-                .is_ok_and(|stamp| stamp == proof.archive)
+        Artifact::matches_archive(home, tag, &proof.archive)
             && proof.facts.as_deref().is_none_or(|sha| {
                 regular(RELEASE_FILE) && fs::read(home.join(RELEASE_FILE)).is_ok_and(|bytes| {
                     sunrise_launcher_release_verify::sha256_hex(&bytes) == sha
@@ -246,10 +237,10 @@ mod tests {
             archive: "a".repeat(64),
             facts: None,
         };
-        let archive = home.join(super::super::ARCHIVE_ID);
+        let archive = home.join(Artifact::ARCHIVE_RECEIPT);
+        let tag = "nightly-2026-11-20-aabbccd";
         fs::write(home.join(COMPLETE), b"").unwrap();
         fs::write(home.join(CLIENT), b"client").unwrap();
-        fs::write(&archive, "b".repeat(64)).unwrap();
         let marker = |requested, binary| {
             std::fs::write(
                 home.join(GAME_BUILD_ARCHITECTURE),
@@ -259,19 +250,27 @@ mod tests {
         };
         use GameArchitecture::{Arm64, X64};
         marker(Arm64, X64);
-        assert!(!download.is_installed_at(home, &proof), "wrong archive");
-        fs::write(archive, &proof.archive).unwrap();
+        Artifact::record_archive(home, tag, &"b".repeat(64)).unwrap();
+        assert!(
+            !download.is_installed_at(home, tag, &proof),
+            "wrong archive"
+        );
+        fs::remove_file(&archive).unwrap();
         let direct = GameDownload {
             requested: Some(X64),
             ..download.clone()
         };
         for request in [Arm64, X64] {
             marker(request, X64);
-            assert!(download.is_installed_at(home, &proof));
-            assert!(direct.is_installed_at(home, &proof));
+            Artifact::record_archive(home, tag, &proof.archive).unwrap();
+            assert!(download.is_installed_at(home, tag, &proof));
+            assert!(direct.is_installed_at(home, tag, &proof));
+            fs::remove_file(&archive).unwrap();
             marker(request, Arm64);
-            assert!(!download.is_installed_at(home, &proof), "wrong binary");
-            assert!(!direct.is_installed_at(home, &proof), "wrong binary");
+            Artifact::record_archive(home, tag, &proof.archive).unwrap();
+            assert!(!download.is_installed_at(home, tag, &proof), "wrong binary");
+            assert!(!direct.is_installed_at(home, tag, &proof), "wrong binary");
+            fs::remove_file(&archive).unwrap();
         }
     }
 }
