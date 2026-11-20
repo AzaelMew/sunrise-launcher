@@ -782,3 +782,29 @@ fn a_pack_mcmeta_with_a_byte_order_mark_or_comments_is_read() {
     );
     fs::remove_dir_all(&home).unwrap();
 }
+
+#[test]
+fn a_resource_pack_without_a_description_is_not_listed() {
+    let home = scratch("no-description");
+    let rp = home.join("resourcepacks");
+    zip_file(
+        &rp.join("Bare.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"pack_format":15}}"#)],
+    );
+    zip_file(
+        &rp.join("Null.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"description":null}}"#)],
+    );
+    zip_file(
+        &rp.join("Empty.zip"),
+        &[("pack.mcmeta", br#"{"pack":{"description":""}}"#)],
+    );
+    fs::create_dir_all(rp.join("Folder")).unwrap();
+    fs::write(rp.join("Folder/pack.mcmeta"), b"{}").unwrap();
+    let names: Vec<String> = list(&home, Kind::Resource)
+        .into_iter()
+        .map(|p| p.file)
+        .collect();
+    assert_eq!(names, ["Empty.zip"]);
+    fs::remove_dir_all(&home).unwrap();
+}

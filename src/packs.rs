@@ -290,8 +290,8 @@ fn read_named(
                 return None;
             }
             let [meta, icon] = entries(path, [Some("pack.mcmeta"), pictured.then_some("pack.png")]);
-            let meta = pack_meta(&meta?)?;
-            (file.clone(), plain(&meta["pack"]["description"]), icon)
+            let description = pack_description(&pack_meta(&meta?)?)?;
+            (file.clone(), description, icon)
         }
         Kind::Shader if path.join(SHADER_MANIFEST).is_file() || ext(SHADER_PACKAGE) => {
             // A Sunrise shader pack's picture is its `icon.png`.
@@ -409,6 +409,13 @@ pub(crate) fn pack_meta(bytes: &[u8]) -> Option<serde_json::Value> {
         }
     }
     serde_json::from_str(&clean).ok()
+}
+
+/// The description of a parsed `pack.mcmeta` as plain text. The game refuses a pack that gives
+/// none, so a missing one gives `None`.
+pub(crate) fn pack_description(meta: &serde_json::Value) -> Option<String> {
+    let description = &meta["pack"]["description"];
+    (!description.is_null()).then(|| plain(description))
 }
 
 /// A text component as plain text: its strings, without `§` formatting codes.
