@@ -595,9 +595,7 @@ impl Launcher {
             .gap(px(12.))
             .child(title(summary))
             .child(muted(names))
-            .child(muted(tr(
-                "Continue without the failed packages. Any previous versions of them will be kept.",
-            )))
+            .child(muted(if ask.playing { tr("The mods will stay installed but be turned off before Play.") } else { tr("Continue without the failed packages. Any previous versions of them will be kept.") }))
             .children(ask.details.then(|| {
                 let log = ask
                     .failures
@@ -631,8 +629,9 @@ impl Launcher {
                             },
                         )),
                     )
+                    .children(ask.playing.then(|| button("install-build-stay", tr("Stay")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| { this.close_sheet(); cx.notify(); }))))
                     .child(
-                        crate::frame::primary("install-build-continue", tr("Continue")).on_click(
+                        crate::frame::primary("install-build-continue", if ask.playing { tr("Continue without it") } else { tr("Continue") }).on_click(
                             cx.listener(|this, _: &ClickEvent, _, cx| {
                                 if let Some(ask) = this.mods.build_ask.take() {
                                     let _ = ask.reply.send(true);
@@ -694,21 +693,31 @@ impl Launcher {
             .world_ask
             .as_ref()
             .expect("shown only while a question is pending");
-        let (question, removing) = match &ask.then {
-            crate::mods_page::Then::PreparedInstall(prepared) => {
-                (prepared.question().expect("prepared question"), false)
-            }
-            crate::mods_page::Then::PreparedEdit(prepared) => (prepared.plan.question(), true),
+        let (question, heading, proceed, stay) = match &ask.then {
+            crate::mods_page::Then::PreparedInstall(prepared) => (
+                prepared.question().expect("prepared question"),
+                tr("This install may affect saved worlds"),
+                tr("Install anyway"),
+                tr("Cancel install"),
+            ),
+            crate::mods_page::Then::PreparedEdit(prepared) => (
+                prepared.plan.question(),
+                tr("This removal may affect saved worlds"),
+                tr("Remove anyway"),
+                tr("Cancel removal"),
+            ),
+            crate::mods_page::Then::PlayWithout(question, _) => (
+                question.as_ref(),
+                tr("Turning these mods off may affect saved worlds"),
+                tr("Play anyway"),
+                tr("Stay"),
+            ),
         };
         let body = div()
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(title(if removing {
-                tr("This removal may affect saved worlds").into()
-            } else {
-                tr("This install may affect saved worlds").into()
-            }))
+            .child(title(heading.to_owned()))
             .children(question.lines().into_iter().map(muted))
             .child(
                 div()
@@ -716,34 +725,14 @@ impl Launcher {
                     .flex_wrap()
                     .justify_end()
                     .gap(px(10.))
+                    .child(button("alt-world-switch", proceed).on_click(cx.listener(
+                        |this, _: &ClickEvent, _, cx| {
+                            this.answer_world_question(sunrise_launcher::worlds::Answer::Switch);
+                            cx.notify();
+                        },
+                    )))
                     .child(
-                        button(
-                            "alt-world-switch",
-                            tr(if removing {
-                                "Remove anyway"
-                            } else {
-                                "Install anyway"
-                            }),
-                        )
-                        .on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.answer_world_question(
-                                    sunrise_launcher::worlds::Answer::Switch,
-                                );
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(
-                        crate::frame::primary(
-                            "alt-world-stay",
-                            tr(if removing {
-                                "Cancel removal"
-                            } else {
-                                "Cancel install"
-                            }),
-                        )
-                        .on_click(cx.listener(
+                        crate::frame::primary("alt-world-stay", stay).on_click(cx.listener(
                             |this, _: &ClickEvent, _, cx| {
                                 this.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
                                 cx.notify();

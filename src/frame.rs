@@ -381,11 +381,17 @@ impl Launcher {
         self.native_step = Some(tr("Starting the build").into());
         self.play_after_build = Some(intent);
         let tx = self.tx.clone();
+        let decisions = crate::mods_page::PlayBuildDecision(self.mods.tx.clone());
         std::thread::spawn(move || {
-            let result =
-                owner.play_image(&target, instance.native_profile, &cancellation, |step| {
+            let result = owner.play_with_build_decisions(
+                &target,
+                instance.native_profile,
+                &cancellation,
+                |step| {
                     let _ = tx.send(Msg::NativeProgress(step));
-                });
+                },
+                decisions,
+            );
             let _ = tx.send(Msg::PlayImage(result));
         });
     }

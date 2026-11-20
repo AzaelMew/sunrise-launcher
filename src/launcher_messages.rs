@@ -302,7 +302,7 @@ impl Launcher {
                     self.native_progress = None;
                     let wanted = self.play_after_build.take();
                     match result {
-                        Ok(tag) => {
+                        Ok(Some(tag)) => {
                             self.installed = backend::installed();
                             self.reload_instances();
                             if let Some(intent) = wanted.filter(|intent| {
@@ -312,6 +312,7 @@ impl Launcher {
                                 self.play(intent, tag);
                             }
                         }
+                        Ok(None) => {}
                         Err(error) => self.client_error = Some(error),
                     }
                 }

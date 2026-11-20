@@ -213,6 +213,7 @@ impl Bootstrap {
             inputs: self.inputs,
             receipts: Vec::new(),
             waiting: Default::default(),
+            compile_failed: Default::default(),
         }
     }
 
@@ -255,6 +256,8 @@ pub struct Active {
     receipts: Vec<Receipt>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     waiting: std::collections::BTreeMap<String, WaitingMod>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub(super) compile_failed: std::collections::BTreeMap<String, WaitingMod>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +338,7 @@ impl Active {
             inputs,
             receipts,
             waiting: Default::default(),
+            compile_failed: Default::default(),
         })
     }
 
@@ -355,6 +359,11 @@ impl Active {
         for (id, item) in &self.waiting {
             if item.matches(home)? {
                 next.waiting.insert(id.clone(), item.clone());
+            }
+        }
+        for (id, item) in &self.compile_failed {
+            if !crate::browser::mod_list::is_enabled(home, id) && item.matches(home)? {
+                next.compile_failed.insert(id.clone(), item.clone());
             }
         }
         next.require_waiting_off(home)?;
@@ -510,7 +519,7 @@ impl Active {
         }) {
             return Err(unsettled());
         }
-        for (id, mod_) in &self.waiting {
+        for (id, mod_) in self.waiting.iter().chain(&self.compile_failed) {
             if !sunrise_launcher_smod::index::valid_id(id)
                 || !super::switch_record::valid_package_destination(&mod_.file)
             {
@@ -680,6 +689,21 @@ pub(in crate::browser::sunrise) fn waiting_packages(
 /// Installed display only. Admission reads and validates the same file independently.
 pub fn waiting_for_update(home: &Path) -> std::collections::BTreeMap<String, WaitingMod> {
     waiting_packages(home).unwrap_or_default()
+}
+
+/// Advisory diagnostics retained on the committed generation, only for the same off bytes.
+pub fn retained_compile_failures(home: &Path) -> std::collections::BTreeMap<String, String> {
+    read(home)
+        .ok()
+        .flatten()
+        .into_iter()
+        .flat_map(|active| active.compile_failed)
+        .filter_map(|(id, item)| {
+            (!crate::browser::mod_list::is_enabled(home, &id)
+                && item.matches(home).unwrap_or(false))
+            .then_some((id, item.reason))
+        })
+        .collect()
 }
 
 pub fn active_stamp(home: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {

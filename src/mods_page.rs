@@ -131,12 +131,14 @@ pub(crate) struct PreparedEdit {
 pub(crate) struct BuildAsk {
     pub(crate) failures: Vec<sunrise_launcher::native_mods::BuildFailure>,
     pub(crate) details: bool,
+    pub(crate) playing: bool,
     pub(crate) reply: Sender<bool>,
 }
 
 pub(super) enum Event {
     Progress(String, f32),
     BuildAsk(BuildAsk),
+    PlayWorld(Box<sunrise_launcher::worlds::SwitchQuestion>, Sender<bool>),
     ReadyEdit(Box<PreparedEdit>),
     EditFinished(Result<Option<String>, String>),
     Done(Result<Finished, installed::InstallError>),
@@ -326,11 +328,18 @@ impl Launcher {
                     }
                 }
                 Event::BuildAsk(ask) => {
-                    m.install_failures = (
-                        m.running.as_ref().map(|t| t.instance.clone()),
-                        ask.failures.clone(),
-                    );
+                    if !ask.playing {
+                        m.install_failures = (
+                            m.running.as_ref().map(|t| t.instance.clone()),
+                            ask.failures.clone(),
+                        );
+                    }
                     m.build_ask = Some(ask);
+                }
+                Event::PlayWorld(question, reply) => {
+                    m.world_ask = Some(WorldAsk {
+                        then: Then::PlayWithout(question, reply),
+                    });
                 }
                 Event::NeedsConsent(ask, request) => {
                     m.busy = None;
@@ -695,7 +704,7 @@ impl Launcher {
                         std::slice::from_ref(&p.id),
                         &progress,
                         &|inventory| crate::native_build::ask_registry(&launcher, inventory),
-                        &|failures| ask_install_build(&tx, failures),
+                        &|failures| ask_build(&tx, failures, false),
                     )?;
                     let finished = Finished::registry_install(plan.entries(), &before, &p.id);
                     return PreparedInstall {
@@ -741,14 +750,16 @@ impl Launcher {
     }
 }
 
-fn ask_install_build(
+fn ask_build(
     tx: &Sender<Event>,
     failures: &[sunrise_launcher::native_mods::BuildFailure],
+    playing: bool,
 ) -> bool {
     let (reply, answer) = std::sync::mpsc::channel();
     tx.send(Event::BuildAsk(BuildAsk {
         failures: failures.to_vec(),
         details: false,
+        playing,
         reply,
     }))
     .is_ok()
@@ -786,6 +797,9 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let stay = answer == sunrise_launcher::worlds::Answer::Stay;
         match ask.then {
+            Then::PlayWithout(_, reply) => {
+                let _ = reply.send(!stay);
+            }
             Then::PreparedInstall(prepared) => {
                 let PreparedInstall {
                     target,
@@ -873,7 +887,7 @@ impl Launcher {
                     &ids,
                     &progress,
                     &|inventory| crate::native_build::ask_registry(&launcher, inventory),
-                    &|failures| ask_install_build(&tx, failures),
+                    &|failures| ask_build(&tx, failures, false),
                 )?;
                 let finished = Finished::registry_install(plan.entries(), &before, "");
                 PreparedInstall {
@@ -902,6 +916,23 @@ pub(crate) enum Then {
     /// The exact prepared set, image and locked world evidence to approve once.
     PreparedInstall(Box<PreparedInstall>),
     PreparedEdit(Box<PreparedEdit>),
+    PlayWithout(Box<sunrise_launcher::worlds::SwitchQuestion>, Sender<bool>),
+}
+
+pub(super) struct PlayBuildDecision(pub(super) Sender<Event>);
+
+impl sunrise::txn::PlayDecisions for PlayBuildDecision {
+    fn continue_without(&self, failures: &[sunrise_launcher::native_mods::BuildFailure]) -> bool {
+        ask_build(&self.0, failures, true)
+    }
+
+    fn accept_world_impact(&self, question: &sunrise_launcher::worlds::SwitchQuestion) -> bool {
+        let (reply, answer) = std::sync::mpsc::channel();
+        self.0
+            .send(Event::PlayWorld(Box::new(question.clone()), reply))
+            .is_ok()
+            && answer.recv().unwrap_or(false)
+    }
 }
 
 /// A switch, update or install that waits for the player's answer: it would remove mods that

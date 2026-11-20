@@ -426,6 +426,8 @@ pub(super) enum Need {
     TakenDown(String),
     /// Retained at the same path after a Switch but unusable on the active build.
     Waiting(String),
+    /// A failed installed package remains available to retry by updating or turning it on.
+    CompileFailed(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -530,6 +532,12 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
             Tone::Warning,
             why.clone(),
         ),
+        Some(Need::CompileFailed(why)) => say(
+            "cancel-01",
+            tr("Installed, couldn't build").into(),
+            Tone::Warning,
+            why.clone(),
+        ),
         None => {}
     }
     if let Some(to) = &row.update {
@@ -570,7 +578,8 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
         version: row.version.clone(),
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         action: row.update.as_ref().map(|_| RowAction::Update),
-        switch: row.need.is_none() && !row.local.as_ref().is_some_and(|l| l.unreadable),
+        switch: !matches!(row.need, Some(Need::TakenDown(_) | Need::Waiting(_)))
+            && !row.local.as_ref().is_some_and(|l| l.unreadable),
     }
 }
 

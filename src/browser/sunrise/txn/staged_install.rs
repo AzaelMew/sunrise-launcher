@@ -2,7 +2,7 @@
 use super::{
     build, durable,
     switch::{self, CandidateBuild},
-    unsettled, Active, Lease, Target,
+    unsettled, Active, Image, Lease, Target,
 };
 use crate::{
     browser::{installed, sunrise, Kind, SourceId},
@@ -35,6 +35,12 @@ enum Basis {
 }
 
 pub(in crate::browser::sunrise) type RegistryChanges = BTreeMap<String, (String, BTreeSet<String>)>;
+
+#[derive(Default)]
+struct Retention<'a> {
+    explicitly_off: &'a [String],
+    compile_failed: BTreeMap<String, build::WaitingMod>,
+}
 
 impl StagedInstall {
     pub fn for_instance(
@@ -151,7 +157,7 @@ impl StagedInstall {
             .map(|name| (PathBuf::from(name), Some(self.stage.join(name))))
             .collect();
         let after = self.proposed_inventory(index)?;
-        self.seal(after, sidecars, &[], compiler, progress)
+        self.seal(after, sidecars, Retention::default(), compiler, progress)
     }
 
     pub(super) fn inputs(&self) -> [u8; 32] {
@@ -225,11 +231,108 @@ impl StagedInstall {
         Ok(after)
     }
 
+    pub(super) fn installed_compile_failures(
+        &self,
+        left: &[native_mods::LeftOut],
+    ) -> Option<Vec<native_mods::BuildFailure>> {
+        let mut failed = BTreeMap::new();
+        for item in left {
+            match item.why {
+                native_mods::Why::Needs(_) => (),
+                native_mods::Why::DidNotBuild
+                    if item
+                        .detail
+                        .as_ref()?
+                        .log
+                        .as_ref()
+                        .is_some_and(|log| !log.is_empty()) =>
+                {
+                    let pkg = self.before.packages.get(&item.id)?;
+                    if !pkg.on
+                        || pkg.manifest.native.is_none()
+                        || pkg.manifest.version != item.version
+                    {
+                        return None;
+                    }
+                    let failure = native_mods::build_failures(std::slice::from_ref(item)).pop()?;
+                    failed.insert(item.id.as_str(), failure);
+                }
+                _ => return None,
+            }
+        }
+        if failed.is_empty() {
+            return None;
+        }
+        // The compiler knows compiled crates; include enabled content-only dependents from
+        // the actual package manifests too. None may be silently turned off.
+        loop {
+            let old = failed.len();
+            for (id, pkg) in &self.before.packages {
+                if !pkg.on || failed.contains_key(id.as_str()) {
+                    continue;
+                }
+                if let Some((needs, _)) = pkg.manifest.dependencies.iter().find(|(dep, rule)| {
+                    !rule.details().optional && failed.contains_key(dep.as_str())
+                }) {
+                    failed.insert(
+                        id,
+                        native_mods::BuildFailure {
+                            id: id.clone(),
+                            reason: trf("It needs {mod}, which didn't build.", &[("mod", needs)]),
+                            log: String::new(),
+                        },
+                    );
+                }
+            }
+            if failed.len() == old {
+                break;
+            }
+        }
+        Some(failed.into_values().collect())
+    }
+
+    /// Keep the exact failed installed bytes but prove the enabled survivors. Unlike a
+    /// deliberate single-mod toggle, every disabled package participates in world impact.
+    pub(super) fn after_compile_failure(
+        self,
+        index: &index::Index,
+        failed: &[native_mods::BuildFailure],
+        compiler: CandidateBuild<'_>,
+        progress: impl Fn(native_mods::Step),
+    ) -> Result<ReadyInstall, String> {
+        let mut retention = Retention::default();
+        for failure in failed {
+            let pkg = self
+                .before
+                .packages
+                .get(&failure.id)
+                .filter(|pkg| pkg.on)
+                .ok_or_else(unsettled)?;
+            let Image::Sha256(digest) = Image::at(&self.stage.join(&pkg.relative))? else {
+                return Err(unsettled());
+            };
+            retention.compile_failed.insert(
+                failure.id.clone(),
+                build::WaitingMod {
+                    file: pkg.relative.clone(),
+                    digest,
+                    reason: failure.reason.clone(),
+                    was_on: true,
+                },
+            );
+        }
+        let ids: Vec<_> = failed.iter().map(|failure| failure.id.as_str()).collect();
+        crate::browser::mod_list::set_all_enabled(&self.stage, &ids, false)?;
+        let after = self.proposed_inventory(index)?;
+        self.seal(after, Vec::new(), retention, compiler, progress)
+            .map_err(Into::into)
+    }
+
     fn seal(
         self,
         after: switch::Inventory,
         sidecars: Vec<(PathBuf, Option<PathBuf>)>,
-        requested_off: &[String],
+        retention: Retention<'_>,
         compiler: CandidateBuild<'_>,
         progress: impl Fn(native_mods::Step),
     ) -> Result<ReadyInstall, native_mods::Failed> {
@@ -245,7 +348,44 @@ impl StagedInstall {
                 verified.remove(id.as_str());
             }
         }
-        let image = verify_candidate(self.base(), &self.stage, &compiler, &progress, &verified)?;
+        if !switch::fits(&verified) {
+            return Err(tr("The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.").to_owned().into());
+        }
+        let prior_failures = match &self.basis {
+            Basis::Committed(prior) => Some(&prior.compile_failed),
+            Basis::First(_) => None,
+        };
+        let mut excluded = BTreeSet::new();
+        for (id, failure) in prior_failures
+            .into_iter()
+            .flatten()
+            .chain(&retention.compile_failed)
+        {
+            if after.packages.get(id).is_some_and(|pkg| !pkg.on) && failure.matches(&self.stage)? {
+                excluded.insert(id.as_str());
+            }
+        }
+        if !excluded.is_empty() {
+            // Off packages depending on a known failure cannot be proved in isolation either.
+            loop {
+                let old = excluded.len();
+                for (&id, pkg) in &verified {
+                    if !pkg.on
+                        && pkg.manifest.dependencies.iter().any(|(dep, rule)| {
+                            !rule.details().optional && excluded.contains(dep.as_str())
+                        })
+                    {
+                        excluded.insert(id);
+                    }
+                }
+                if excluded.len() == old {
+                    break;
+                }
+            }
+            verified.retain(|id, _| !excluded.contains(id));
+        }
+        let image =
+            switch::build_candidate(self.base(), &self.stage, &compiler, &progress, &verified)?;
         let home = self.owner.home();
         let changed: Vec<_> = self
             .before
@@ -253,7 +393,9 @@ impl StagedInstall {
             .iter()
             .filter(|(id, old)| {
                 after.packages.get(*id).is_none_or(|new| {
-                    old.on && !requested_off.contains(id) && (!new.on || new.digest != old.digest)
+                    old.on
+                        && !retention.explicitly_off.contains(id)
+                        && (!new.on || new.digest != old.digest)
                 })
             })
             .map(|(id, old)| worlds::switch::Changed {
@@ -295,12 +437,13 @@ impl StagedInstall {
             )?;
         }
         let candidate_inputs = build::inputs(&self.stage)?;
-        let next = match &self.basis {
+        let mut next = match &self.basis {
             Basis::Committed(prior) => prior.adopt(&image, candidate_inputs, &self.stage)?,
             Basis::First(binding) => {
                 binding.first_generation(&image, &self.stage, candidate_inputs)?
             }
         };
+        next.compile_failed.extend(retention.compile_failed);
         if build::inputs(home)? != self.input {
             return Err(unsettled().into());
         }
@@ -489,8 +632,17 @@ impl StagedInstall {
             cancellation: native_mods::Cancellation::for_profile(self.owner.clone()),
             registry_consent,
         };
-        self.seal(after, sidecars, &requested_off, compiler, progress)
-            .map_err(Into::into)
+        self.seal(
+            after,
+            sidecars,
+            Retention {
+                explicitly_off: &requested_off,
+                ..Retention::default()
+            },
+            compiler,
+            progress,
+        )
+        .map_err(Into::into)
     }
 }
 
@@ -505,6 +657,10 @@ pub(in crate::browser::sunrise) struct ReadyInstall {
 }
 
 impl ReadyInstall {
+    pub(super) fn image(&self) -> &str {
+        self.next.executable()
+    }
+
     pub fn question(&self) -> &worlds::SwitchQuestion {
         &self.question
     }

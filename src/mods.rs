@@ -108,6 +108,7 @@ struct Snapshot {
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
     waiting: std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
+    compile_failed: std::collections::BTreeMap<String, String>,
     /// Mod files the registry didn't install: on/off is editable, the files are not.
     local: Vec<model::Local>,
     /// The hand-placed packages are being read off the window thread (`Event::Local`): `local`
@@ -121,6 +122,7 @@ enum Event {
         String,
         Vec<model::Local>,
         std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
+        std::collections::BTreeMap<String, String>,
     ),
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
@@ -468,11 +470,12 @@ impl Launcher {
                     m.catalog = Catalog::Ready(cards, categories)
                 }
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
-                Event::Local(key, local, waiting) => {
+                Event::Local(key, local, waiting, compile_failed) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
                         snap.local = local;
                         snap.waiting = waiting;
+                        snap.compile_failed = compile_failed;
                         snap.reading = false;
                     }
                     let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
@@ -524,13 +527,13 @@ impl Launcher {
             let entries = installed::Installed::load(&home).entries;
             // Reading every hand-placed package takes long with many of them: it is done on a
             // worker, and the rows of the same folder known before stay until it answers.
-            let (local, waiting) = self
+            let (local, waiting, compile_failed) = self
                 .ui
                 .mods
                 .snapshot
                 .take()
                 .filter(|s| s.home == home)
-                .map(|s| (s.local, s.waiting))
+                .map(|s| (s.local, s.waiting, s.compile_failed))
                 .unwrap_or_default();
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
@@ -539,6 +542,7 @@ impl Launcher {
                     worker_key,
                     read_local(&worker_home),
                     sunrise::txn::waiting_for_update(&worker_home),
+                    sunrise::txn::retained_compile_failures(&worker_home),
                 ));
             });
             let enabled = enabled_ids(&home, &entries, &local);
@@ -550,6 +554,7 @@ impl Launcher {
                 enabled,
                 chosen,
                 waiting,
+                compile_failed,
                 local,
                 reading: true,
             });
@@ -623,7 +628,7 @@ impl Launcher {
         };
         let index = sunrise::fetched_index();
         let game = self.mods_game();
-        model::rows(
+        let mut rows = model::rows(
             &snap.entries,
             &model::World {
                 index: index.as_deref(),
@@ -633,7 +638,17 @@ impl Launcher {
                 waiting: &snap.waiting,
                 local: &snap.local,
             },
-        )
+        );
+        for row in &mut rows {
+            if row.need.is_none() {
+                row.need = snap
+                    .compile_failed
+                    .get(&row.id)
+                    .cloned()
+                    .map(model::Need::CompileFailed);
+            }
+        }
+        rows
     }
 
     /// Whether another install or update holds the folder right now.

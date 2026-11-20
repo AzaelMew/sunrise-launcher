@@ -40,8 +40,8 @@ mod switch;
 mod switch_record;
 pub(crate) use build::require_current_update;
 pub use build::{
-    active_stamp, displayed_selection, waiting_for_update, Active, Receipt, SwitchEffects, Target,
-    WaitingMod,
+    active_stamp, displayed_selection, retained_compile_failures, waiting_for_update, Active,
+    Receipt, SwitchEffects, Target, WaitingMod,
 };
 pub(super) use build::{scan_packages, waiting_packages};
 pub(crate) use durable::replace as replace_local_record;
@@ -55,6 +55,12 @@ pub(crate) use switch_record::Identity as DirectoryIdentity;
 
 const FILE: &str = "mod-browser/install-txn.json";
 const VERSION: u64 = 2;
+
+/// Passive Play never changes the enabled set without both applicable player decisions.
+pub trait PlayDecisions {
+    fn continue_without(&self, failures: &[crate::native_mods::BuildFailure]) -> bool;
+    fn accept_world_impact(&self, question: &crate::worlds::SwitchQuestion) -> bool;
+}
 
 /// The live owner of one profile's install batch. The file is never removed: all launchers
 /// must contend on the same inode, even when the record itself is replaced or absent.
@@ -520,8 +526,7 @@ impl Lease {
         Ok(active)
     }
 
-    /// Verify the actual set; an old browser checksum is not evidence that the game failed
-    /// to replace a package. If the image differs, build exactly that set on the same base.
+    /// Noninteractive Play never authorizes removal from the enabled set.
     pub fn play_image(
         &self,
         target: &Target,
@@ -529,6 +534,98 @@ impl Lease {
         cancellation: &crate::native_mods::Cancellation,
         progress: impl Fn(crate::native_mods::Step),
     ) -> Result<String, String> {
+        self.play_exact(target, cancellation, || {
+            crate::native_mods::build_exact_client(
+                target.base(),
+                &self.home,
+                profile,
+                cancellation,
+                progress,
+                None,
+            )
+        })
+        .map_err(Into::into)
+    }
+
+    pub fn play_with_build_decisions(
+        self: &std::sync::Arc<Self>,
+        target: &Target,
+        profile: crate::native_mods::Profile,
+        cancellation: &crate::native_mods::Cancellation,
+        progress: impl Fn(crate::native_mods::Step),
+        decisions: impl PlayDecisions,
+    ) -> Result<Option<String>, String> {
+        match self.play_exact(target, cancellation, || {
+            crate::native_mods::build_exact_client(
+                target.base(),
+                &self.home,
+                profile,
+                cancellation,
+                &progress,
+                None,
+            )
+        }) {
+            Ok(image) => Ok(Some(image)),
+            Err(crate::native_mods::Failed::Mods { left, error }) => self.complete_failed_play(
+                target,
+                (left, error),
+                switch::CandidateBuild {
+                    profile,
+                    cancellation: cancellation.clone(),
+                    registry_consent: None,
+                },
+                progress,
+                decisions,
+                super::authoritative_index,
+            ),
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    fn complete_failed_play(
+        self: &std::sync::Arc<Self>,
+        target: &Target,
+        (left, error): (Vec<crate::native_mods::LeftOut>, String),
+        compiler: switch::CandidateBuild<'_>,
+        progress: impl Fn(crate::native_mods::Step),
+        decisions: impl PlayDecisions,
+        authority: impl Fn() -> Result<(super::index::Index, String), String>,
+    ) -> Result<Option<String>, String> {
+        let plan = match self.active_build()? {
+            Some(active) => StagedInstall::begin(self.clone(), active)?,
+            None => StagedInstall::first(self.clone(), target)?,
+        };
+        let Some(failures) = plan.installed_compile_failures(&left) else {
+            return Err(error);
+        };
+        if !decisions.continue_without(&failures) {
+            return Ok(None);
+        }
+        let (catalogue, evidence) = authority()?;
+        let ready = plan.after_compile_failure(&catalogue, &failures, compiler, progress)?;
+        let needed = ready.question().needed();
+        if needed && !decisions.accept_world_impact(ready.question()) {
+            return Ok(None);
+        }
+        let image = ready.image().to_owned();
+        ready.commit(needed, || {
+            let (_, current) = authority()?;
+            if evidence != current {
+                return Err(unsettled());
+            }
+            Ok(())
+        })?;
+        Ok(Some(image))
+    }
+
+    /// Build exactly the admitted inputs on the same base. A caller may ask about an
+    /// attributable compile failure; no failed result reaches publication here.
+    fn play_exact(
+        &self,
+        target: &Target,
+        cancellation: &crate::native_mods::Cancellation,
+        compile: impl FnOnce() -> Result<String, crate::native_mods::Failed>,
+    ) -> Result<String, crate::native_mods::Failed> {
         let prior = self.active_build()?;
         let inputs = build::inputs(&self.home)?;
         let repaired = switch::Inventory::browser_repair(&self.home)?;
@@ -536,7 +633,7 @@ impl Lease {
             prior.require_waiting_off(&self.home)?;
             prior.verify_artifacts()?;
             if prior.base() != target.base() || prior.executable() != target.preferred_image() {
-                return Err(unsettled());
+                return Err(unsettled().into());
             }
             if prior.inputs == inputs && repaired.is_none() {
                 build::verify_included(prior.base(), prior.executable(), &self.home)?;
@@ -546,7 +643,7 @@ impl Lease {
             let record = read(&self.home)?.ok_or_else(unsettled)?;
             let binding = record.bootstrap().ok_or_else(unsettled)?;
             if binding.target != *target {
-                return Err(unsettled());
+                return Err(unsettled().into());
             }
             binding.verify(&self.home)?;
             binding.verify_artifact()?;
@@ -558,15 +655,7 @@ impl Lease {
         } else if crate::native_status::exact_enabled(&self.home)?.is_empty() {
             target.base().to_owned()
         } else {
-            crate::native_mods::build_exact_client(
-                target.base(),
-                &self.home,
-                profile,
-                cancellation,
-                progress,
-                None,
-            )
-            .map_err(|e| e.to_string())?
+            compile()?
         };
         if let Some(repaired) = repaired {
             let (root, mut next) = if let Some(prior) = prior {
@@ -2077,6 +2166,7 @@ mod tests {
         fs::write(preparation.join("blocks.json"), b"{}").unwrap();
         // Cache eviction can select the installed unit now, before either profile has a reference.
         assert!(!references("nightly-original").unwrap());
+        passive_play_build_failure_keeps_the_package(&data.join("game/instances/broken-build"));
         use sunrise_launcher_smod::{index, manifest, mod_list};
         let first = crate::backend::game_home().join("instances/first");
         fs::create_dir_all(first.join(mod_list::DIR)).unwrap();
@@ -2302,6 +2392,159 @@ mod tests {
         assert!(owner
             .play_target(|| panic!("a corrupted artifact is not a fresh profile"))
             .is_err());
+    }
+
+    fn passive_play_build_failure_keeps_the_package(home: &Path) {
+        use crate::{
+            native_mods::{self, BuildFailure},
+            worlds::SwitchQuestion,
+        };
+        use std::{cell::Cell, io::Write, sync::Arc};
+        use sunrise_launcher_nbt::{write_named, Limits, NamedTag, Tag};
+        use sunrise_launcher_smod::{index, manifest, mod_list};
+
+        struct Choices<'a> {
+            proceed: bool,
+            world: bool,
+            asked: &'a Cell<u32>,
+        }
+        impl PlayDecisions for Choices<'_> {
+            fn continue_without(&self, failures: &[BuildFailure]) -> bool {
+                assert_eq!(failures.len(), 1);
+                assert_eq!(failures[0].id, "broken");
+                assert_eq!(failures[0].log, "rustc: broken mod fixture");
+                self.proceed
+            }
+            fn accept_world_impact(&self, question: &SwitchQuestion) -> bool {
+                assert_eq!(question.affected[0].world, "Survival");
+                assert_eq!(question.affected[0].mods, ["Broken lamps"]);
+                self.asked.set(self.asked.get() + 1);
+                self.world
+            }
+        }
+
+        fs::create_dir_all(home).unwrap();
+        let owner = Arc::new(Lease::admit(home).unwrap());
+        let target = owner
+            .play_target(|| Target::first_play("nightly-original", |_| panic!("installed fixture")))
+            .unwrap();
+        owner
+            .play_image(&target, Default::default(), &Default::default(), |_| {})
+            .unwrap();
+        let pointer = fs::read(home.join(build::FILE)).unwrap();
+        let archive = home.join(mod_list::NATIVE_DIR).join("broken.smod");
+        fs::create_dir_all(archive.parent().unwrap()).unwrap();
+        let bytes = sunrise_launcher_smod::Package::write_files(&format!(
+            "id='broken'\nname='Broken lamps'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{}'\nmixins='{}'\n",
+            manifest::API, "a".repeat(40), "b".repeat(40)),
+            &[("src/lib.rs", b"compile_error!(\"broken fixture\");"), ("Cargo.toml", b"[package]\nname='broken'\nversion='1.0.0'\n")]).unwrap();
+        fs::write(&archive, &bytes).unwrap();
+        let list = b"mod.broken:true\n";
+        fs::write(home.join(mod_list::FILE), list).unwrap();
+        let world = home.join("saves/Survival");
+        fs::create_dir_all(&world).unwrap();
+        let nbt = write_named(
+            &NamedTag {
+                name: "".into(),
+                tag: Tag::compound([
+                    (
+                        "Data",
+                        Tag::compound([("LevelName", Tag::String("Survival".into()))]),
+                    ),
+                    (
+                        "sunrise",
+                        Tag::compound([(
+                            "ContentModList",
+                            Tag::List(vec![Tag::compound([(
+                                "ModId",
+                                Tag::String("broken".into()),
+                            )])]),
+                        )]),
+                    ),
+                ]),
+            },
+            Limits::default(),
+        )
+        .unwrap();
+        let mut gz = flate2::write::GzEncoder::new(
+            fs::File::create(world.join("level.dat")).unwrap(),
+            flate2::Compression::fast(),
+        );
+        gz.write_all(&nbt).unwrap();
+        gz.finish().unwrap();
+        let questions = Cell::new(0);
+        let tries = Cell::new(0);
+        let run = |proceed, world| {
+            let target = owner
+                .play_target(|| panic!("committed base cannot change"))
+                .unwrap();
+            let cancellation = native_mods::Cancellation::for_profile(owner.clone());
+            // Simulate only the compiler boundary; use actual admitted transaction and files.
+            let Err(native_mods::Failed::Mods { left, error }) =
+                owner.play_exact(&target, &cancellation, || {
+                    tries.set(tries.get() + 1);
+                    Err(native_mods::Failed::Mods {
+                        left: vec![native_mods::LeftOut {
+                            id: "broken".into(),
+                            version: "1.0.0".into(),
+                            why: native_mods::Why::DidNotBuild,
+                            detail: Some(native_mods::Detail {
+                                log: Some("rustc: broken mod fixture".into()),
+                                ..Default::default()
+                            }),
+                        }],
+                        error: "failed compile".into(),
+                    })
+                })
+            else {
+                panic!("expected an attributed compiler failure")
+            };
+            owner
+                .complete_failed_play(
+                    &target,
+                    (left, error),
+                    switch::CandidateBuild {
+                        profile: Default::default(),
+                        cancellation,
+                        registry_consent: None,
+                    },
+                    |_| {},
+                    Choices {
+                        proceed,
+                        world,
+                        asked: &questions,
+                    },
+                    || Ok((index::Index::default(), "exact".into())),
+                )
+                .unwrap()
+        };
+        for proceed in [false, true] {
+            assert_eq!(run(proceed, false), None);
+            assert_eq!(fs::read(home.join(build::FILE)).unwrap(), pointer);
+            assert_eq!(fs::read(home.join(mod_list::FILE)).unwrap(), list);
+            assert_eq!(fs::read(&archive).unwrap(), bytes);
+        }
+        assert_eq!(
+            questions.get(),
+            1,
+            "Stay on the first sheet never asks about a world"
+        );
+        assert_eq!(run(true, true).as_deref(), Some("nightly-original"));
+        assert_eq!(questions.get(), 2);
+        assert_eq!(tries.get(), 3);
+        assert_eq!(fs::read(&archive).unwrap(), bytes);
+        assert!(!crate::browser::mod_list::is_enabled(home, "broken"));
+        assert!(build::retained_compile_failures(home)["broken"].contains("didn't compile"));
+        let active = owner.verify_launch().unwrap();
+        assert_eq!(active.generation, 2);
+        assert_eq!(active.base(), "nightly-original");
+        let target = owner.play_target(|| panic!("still committed")).unwrap();
+        assert_eq!(
+            owner
+                .play_exact(&target, &Default::default(), || panic!("already proved"))
+                .unwrap(),
+            "nightly-original"
+        );
     }
 
     #[test]
