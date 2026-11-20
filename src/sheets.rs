@@ -1277,20 +1277,31 @@ impl Launcher {
         // A build that isn't downloaded says nothing about its game: what it would remove can't
         // be told yet, and the mods are judged when it is installed (Play's update asks the
         // world question then, before anything is built).
-        let question = self.game_of(&staged).and_then(|game| {
-            let ctx = sunrise_launcher::browser::sunrise::auto::Context {
-                in_pack: sunrise_launcher::browser::sunrise::auto::in_pack(&instance.home),
-                game: &game,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
-            };
-            sunrise_launcher::browser::sunrise::known_index().and_then(|index| {
-                sunrise_launcher::browser::sunrise::auto::switch_question(
-                    &index,
-                    &instance.home,
-                    &ctx,
-                )
-            })
-        });
+        let question = match self.game_of(&staged) {
+            None => None,
+            Some(game) => {
+                let ctx = sunrise_launcher::browser::sunrise::auto::Context {
+                    in_pack: sunrise_launcher::browser::sunrise::auto::in_pack(&instance.home),
+                    game: &game,
+                    native_allowed: self.settings.native_mods_allowed_at.is_some(),
+                };
+                let asked = sunrise_launcher::browser::sunrise::known_index().map(|index| {
+                    sunrise_launcher::browser::sunrise::auto::switch_question(
+                        &index,
+                        &instance.home,
+                        &ctx,
+                    )
+                });
+                // Worlds that can't be looked at stop the switch: it might remove a mod they use.
+                match asked.transpose() {
+                    Ok(question) => question.flatten(),
+                    Err(e) => {
+                        self.ui.sheets.error = Some(e);
+                        return;
+                    }
+                }
+            }
+        };
         let id = instance.id.clone();
         match question {
             Some(question) => {

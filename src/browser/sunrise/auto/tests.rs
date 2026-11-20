@@ -858,6 +858,21 @@ fn a_switch_that_would_remove_a_mod_a_world_uses_asks_and_changes_nothing_until_
         1,
         "answered: it goes on the list to confirm"
     );
+
+    // Worlds that can't be looked at: nothing is removed, and the report says why.
+    fs::remove_dir_all(home.join("saves")).unwrap();
+    fs::write(home.join("saves"), b"not a folder").unwrap();
+    let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
+    assert!(report.remove.is_empty() && report.ask.is_none());
+    assert!(
+        report
+            .failed
+            .iter()
+            .any(|line| line.contains("worlds couldn't be checked")),
+        "{:?}",
+        report.failed
+    );
+    assert!(home.join("sunrise-mods/ruby.smod").is_file());
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -873,9 +888,11 @@ fn a_switch_asks_before_anything_changes_and_only_for_mods_it_would_remove() {
     list.entries.push(entry("1.0.0"));
     list.save(&home).unwrap();
     // No world uses it: the switch goes ahead without a question.
-    assert!(switch_question(&index, &home, &PLAY).is_none());
+    assert!(switch_question(&index, &home, &PLAY).unwrap().is_none());
     world_using(&home, "ruby");
-    let ask = switch_question(&index, &home, &PLAY).expect("a world uses ruby");
+    let ask = switch_question(&index, &home, &PLAY)
+        .unwrap()
+        .expect("a world uses ruby");
     assert_eq!(ask.mods, ["ruby"]);
     assert_eq!(ask.worlds, ["Home"]);
     // A game it fits on removes nothing: nothing to ask.
@@ -883,7 +900,11 @@ fn a_switch_asks_before_anything_changes_and_only_for_mods_it_would_remove() {
         game: "26.2",
         ..PLAY
     };
-    assert!(switch_question(&index, &home, &fits).is_none());
+    assert!(switch_question(&index, &home, &fits).unwrap().is_none());
+    // Worlds that can't be read are not "no worlds": the switch can't be judged, and says so.
+    fs::remove_dir_all(home.join("saves")).unwrap();
+    fs::write(home.join("saves"), b"not a folder").unwrap();
+    assert!(switch_question(&index, &home, &PLAY).is_err());
     fs::remove_dir_all(&dir).unwrap();
 }
 

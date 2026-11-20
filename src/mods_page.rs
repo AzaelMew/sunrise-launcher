@@ -1098,15 +1098,18 @@ impl Launcher {
             .selected_instance()
             .map(|i| i.id.clone())
             .unwrap_or_default();
-        if let Ok(Some(question)) = sunrise_launcher::worlds::question(&self.mods.home(), &ids) {
-            self.mods.world_ask = Some(WorldAsk {
-                instance,
-                question,
-                then: Then::Install(Box::new(ask)),
-            });
-            return;
+        match sunrise_launcher::worlds::question(&self.mods.home(), &ids) {
+            Ok(Some(question)) => {
+                self.mods.world_ask = Some(WorldAsk {
+                    instance,
+                    question,
+                    then: Then::Install(Box::new(ask)),
+                });
+            }
+            Ok(None) => self.install_replacing(ask),
+            // Worlds that can't be looked at stop the install: it removes mods they may use.
+            Err(e) => self.mods.message = Some(Err(e)),
         }
-        self.install_replacing(ask);
     }
 
     /// Queues the install a break sheet asked for, with the mods it would break going in the
