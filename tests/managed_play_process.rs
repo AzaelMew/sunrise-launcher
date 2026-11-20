@@ -293,7 +293,7 @@ fn owner() {
             );
         }
         drop(profile);
-        let log = backend::Logged::monitor_game(child, runtime);
+        let log = backend::Logged::monitor_game(child, runtime, Default::default());
         assert!(log.finished().is_none());
         fs::write(home.join("game-stop"), []).unwrap();
         let mut result = None;

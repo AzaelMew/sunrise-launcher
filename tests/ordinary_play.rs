@@ -159,6 +159,26 @@ fn assert_resource_args(fixture: &Fixture, args: &[String]) {
     assert!(!path.join(".last-used").exists());
 }
 
+fn mcp_request(
+    to_mcp: &mut impl Write,
+    from_mcp: &mut impl BufRead,
+    id: u32,
+    method: &str,
+    params: Value,
+) -> Value {
+    writeln!(
+        to_mcp,
+        "{}",
+        json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
+    )
+    .unwrap();
+    let mut line = String::new();
+    assert_ne!(from_mcp.read_line(&mut line).unwrap(), 0);
+    let result: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(result["id"], id);
+    result["result"].clone()
+}
+
 #[test]
 fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mcp() {
     let fixture = Fixture::new();
@@ -181,19 +201,7 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
     );
     let mut to_mcp = mcp.0.stdin.take().unwrap();
     let mut from_mcp = BufReader::new(mcp.0.stdout.take().unwrap());
-    let mut rpc = |id, method, params| {
-        writeln!(
-            to_mcp,
-            "{}",
-            json!({"jsonrpc":"2.0","id":id,"method":method,"params":params})
-        )
-        .unwrap();
-        let mut line = String::new();
-        assert_ne!(from_mcp.read_line(&mut line).unwrap(), 0);
-        let result: Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(result["id"], id);
-        result["result"].clone()
-    };
+    let mut rpc = |id, method, params| mcp_request(&mut to_mcp, &mut from_mcp, id, method, params);
     rpc(1, "initialize", json!({}));
     let mut cli = Running(
         fixture
@@ -311,6 +319,52 @@ fn attached_prelaunch_hook_keeps_both_streams_and_its_failure_code() {
     );
     assert!(!fixture.home.join("args").exists());
     assert!(!fixture.home.join("bad-post-exit").exists());
+}
+
+#[test]
+fn mcp_returns_a_bounded_tail_when_the_prelaunch_hook_fails() {
+    let fixture = Fixture::new();
+    fixture.configure(json!({"pre_launch": r#"i=1; while [ "$i" -le 45 ]; do printf 'hook-line-%02d\n' "$i"; i=$((i+1)); done; exit 37"#}));
+    let mut mcp = Running(
+        fixture
+            .launcher(&["mcp"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut input = mcp.0.stdin.take().unwrap();
+    let mut output = BufReader::new(mcp.0.stdout.take().unwrap());
+    mcp_request(&mut input, &mut output, 1, "initialize", json!({}));
+    let reply = mcp_request(
+        &mut input,
+        &mut output,
+        2,
+        "tools/call",
+        json!({"name":"play","arguments":{}}),
+    );
+    assert_eq!(reply["isError"], true, "{reply}");
+    let detail = reply["content"][0]["text"].as_str().unwrap();
+    assert!(
+        detail.contains("pre-launch command failed (exit 37)"),
+        "{detail}"
+    );
+    assert_eq!(
+        detail
+            .lines()
+            .filter(|line| line.starts_with("hook-line-"))
+            .count(),
+        20,
+        "{detail}"
+    );
+    assert!(
+        detail.contains("hook-line-26") && detail.ends_with("hook-line-45"),
+        "{detail}"
+    );
+    assert!(!detail.contains("hook-line-25"), "{detail}");
+    assert!(!fixture.home.join("args").exists());
+    drop(input);
+    assert!(mcp.0.wait().unwrap().success());
 }
 
 #[test]

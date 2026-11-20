@@ -3281,16 +3281,26 @@ impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
         let running = spawn(job, cmd, tx)?;
-        Ok(Self::keep(running, rx))
+        Ok(Self::keep(running, rx, Default::default()))
     }
 
-    pub fn monitor_game(child: Child, runtime: RuntimeGuard) -> Self {
+    pub fn monitor_game(
+        child: Child,
+        runtime: RuntimeGuard,
+        prelaunch_log: std::collections::VecDeque<String>,
+    ) -> Self {
         let (tx, rx) = std::sync::mpsc::channel();
-        Self::keep(monitor_game(child, tx, runtime), rx)
+        Self::keep(monitor_game(child, tx, runtime), rx, prelaunch_log)
     }
 
-    fn keep(running: Running, rx: std::sync::mpsc::Receiver<Msg>) -> Self {
-        let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    fn keep(
+        running: Running,
+        rx: std::sync::mpsc::Receiver<Msg>,
+        mut initial_log: std::collections::VecDeque<String>,
+    ) -> Self {
+        let excess = initial_log.len().saturating_sub(LOG_KEEP);
+        initial_log.drain(..excess);
+        let log = Arc::new(Mutex::new(initial_log));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
         std::thread::spawn(move || {

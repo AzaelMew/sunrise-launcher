@@ -5,8 +5,8 @@
 use crate::cli_tools;
 use crate::game_tools::{self, GameTools};
 use serde_json::{json, Value};
-use std::path::PathBuf;
 use std::time::Duration;
+use std::{cell::RefCell, collections::VecDeque, path::PathBuf};
 use sunrise_launcher::account::{self, Accounts, SignIn, SignInState};
 use sunrise_launcher::backend::{self, Job, Logged};
 use sunrise_launcher::i18n::tr;
@@ -126,8 +126,11 @@ impl Session {
                         .map_err(|error| error.to_string())?;
                     (Logged::start(Job::Client, cmd)?, tag, notices)
                 } else {
+                    const HOOK_TAIL: usize = 20;
+                    const HOOK_LINE_BYTES: usize = 4096;
                     let accounts = Accounts::load();
-                    let game = managed_play::Client {
+                    let hook_tail = RefCell::new(VecDeque::with_capacity(HOOK_TAIL));
+                    let start = managed_play::Client {
                         instance: &instance,
                         accepted_account: accounts.selected().map(|a| a.uuid.as_str()),
                         explicit_account: false,
@@ -145,12 +148,35 @@ impl Session {
                                 .map_err(|e| e.to_string())
                         },
                         None,
-                        |_| {},
-                    )?;
+                        |event| {
+                            if let managed_play::Progress::HookLine(line) = event {
+                                let mut tail = hook_tail.borrow_mut();
+                                if tail.len() == HOOK_TAIL {
+                                    tail.pop_front();
+                                }
+                                tail.push_back(
+                                    line[..line.floor_char_boundary(HOOK_LINE_BYTES)].to_owned(),
+                                );
+                            }
+                        },
+                    );
+                    let hook_tail = hook_tail.into_inner();
+                    let game = match start {
+                        Ok(game) => game,
+                        Err(managed_play::StartError::Hook(error)) if !hook_tail.is_empty() => {
+                            let mut text = error.to_string();
+                            for line in hook_tail {
+                                text.push('\n');
+                                text.push_str(&line);
+                            }
+                            return Err(text);
+                        }
+                        Err(error) => return Err(error.into()),
+                    };
                     let mut notices = game.registry_notices;
                     notices.extend(game.notice);
                     (
-                        Logged::monitor_game(game.child, game.runtime),
+                        Logged::monitor_game(game.child, game.runtime, hook_tail),
                         game.executable,
                         notices,
                     )

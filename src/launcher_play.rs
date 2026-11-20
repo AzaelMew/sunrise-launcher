@@ -284,7 +284,9 @@ impl Launcher {
                         Progress::Prepare => Msg::PlayStep(backend::PlayStep::Prepare),
                         Progress::Native(_) => Msg::PlayStep(backend::PlayStep::Native),
                         Progress::SignIn => Msg::PlayStep(backend::PlayStep::SignIn),
-                        Progress::Line(line) => Msg::Line(Job::Prepare, line),
+                        Progress::Line(line) | Progress::HookLine(line) => {
+                            Msg::Line(Job::Prepare, line)
+                        }
                     };
                     let _ = tx.send(msg);
                 },

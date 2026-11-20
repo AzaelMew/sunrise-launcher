@@ -19,6 +19,7 @@ pub enum Progress {
     Native(native_mods::Step),
     SignIn,
     Line(String),
+    HookLine(String),
 }
 
 #[derive(Debug)]
@@ -152,7 +153,9 @@ impl Client<'_> {
                 &active,
                 &cancellation,
                 cmd,
-                (launch, self.piped, &|line| progress(Progress::Line(line))),
+                (launch, self.piped, &|line| {
+                    progress(Progress::HookLine(line))
+                }),
                 prepare_jars,
                 || {
                     if let Some(uuid) = self.accepted_account.filter(|_| !offline) {
