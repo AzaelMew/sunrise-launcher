@@ -73,6 +73,16 @@ pub(super) fn touched(home: &Path, done: &[installed::Entry], priors: &[Prior]) 
         .collect()
 }
 
+/// Takes out of `list` what was touched in profile `home`: one profile's build is the only
+/// one that may undo or clear it. The other profiles' stay in the list.
+pub(super) fn take_for(list: &mut Vec<Touched>, home: &Path) -> Vec<Touched> {
+    let (mine, others) = std::mem::take(list)
+        .into_iter()
+        .partition(|t| t.home == home);
+    *list = others;
+    mine
+}
+
 impl Touched {
     /// Puts the mod back as it was, or removes it when the install added it.
     pub(super) fn undo(&self) -> Result<(), String> {
@@ -344,5 +354,20 @@ mod tests {
         let list = installed::Installed::load(home);
         assert!(list.find(SourceId::Sunrise, "lamps").is_some());
         assert!(home.join("sunrise-mods/lamps.smod").exists());
+    }
+
+    #[test]
+    fn one_profiles_build_takes_only_its_own_mods_from_the_list() {
+        let (a, b) = (PathBuf::from("/a"), PathBuf::from("/b"));
+        let touched = |home: &PathBuf, id: &str| Touched {
+            home: home.clone(),
+            id: id.into(),
+            prior: None,
+        };
+        let mut list = vec![touched(&a, "one"), touched(&b, "two"), touched(&a, "three")];
+        let mine = take_for(&mut list, &b);
+        assert_eq!(mine, [touched(&b, "two")]);
+        assert_eq!(list, [touched(&a, "one"), touched(&a, "three")]);
+        assert!(take_for(&mut list, &b).is_empty());
     }
 }
