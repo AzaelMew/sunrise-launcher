@@ -6,13 +6,15 @@ use sunrise_launcher::data_location::{self, Roots};
 fn move_excludes_cli_writers_between_settlement_and_copying() {
     let root = tempfile::tempdir().unwrap();
     let base = root.path().canonicalize().unwrap();
+    let game_parent = base.join("game-parent");
     let source = Roots {
         launcher: base.join("launcher"),
-        game: base.join("game"),
+        game: game_parent.join("game"),
         build: base.join("build"),
     };
+    let target = base.join("destination");
     for dir in [&source.launcher, &source.game, &source.build] {
-        fs::create_dir(dir).unwrap();
+        fs::create_dir_all(dir).unwrap();
     }
     let bootstrap = base.join("location.json");
     let point = |path: &std::path::Path, roots: &Roots| {
@@ -46,6 +48,31 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         point(&path, &roots);
         path
     });
+    let nested_game = source.game.join("nested-game");
+    let sibling_game = game_parent.join("game-sibling");
+    fs::create_dir(&nested_game).unwrap();
+    fs::create_dir(&sibling_game).unwrap();
+    let location_for_game = |name: &str, game| {
+        let pointer = base.join("alternate").join(name);
+        point(
+            &pointer,
+            &Roots {
+                game,
+                ..spare.clone()
+            },
+        );
+        pointer
+    };
+    let nested = location_for_game("child.json", nested_game.clone());
+    let ancestor = location_for_game("parent.json", game_parent.clone());
+    let sibling = location_for_game("sibling.json", sibling_game.clone());
+    let destination = location_for_game("destination.json", target.clone());
+    #[cfg(unix)]
+    let aliased_nested = {
+        let alias = base.join("alias-of-game-parent");
+        std::os::unix::fs::symlink(&game_parent, &alias).unwrap();
+        location_for_game("aliased-child.json", alias.join("game/nested-game"))
+    };
     let create = |location: &std::path::Path, overrides: bool| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
         cmd.args(["instance", "create", "Late Writer"])
@@ -59,7 +86,7 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         cmd.output().unwrap()
     };
     let mut reached_copy = false;
-    let moved = data_location::migrate(&source, &base.join("destination"), &bootstrap, |step| {
+    let moved = data_location::migrate(&source, &target, &bootstrap, |step| {
         if step != "Copying and verifying launcher data" {
             return;
         }
@@ -79,13 +106,25 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         let root_claim = "another launcher is using or moving this data";
         assert_blocked(&alternate, false, root_claim);
         assert_blocked(&alternate, true, root_claim);
-        for path in &single_root {
+        for path in single_root.iter().chain([&nested, &ancestor, &destination]) {
             assert_blocked(path, false, root_claim);
         }
+        #[cfg(unix)]
+        assert_blocked(&aliased_nested, false, root_claim);
+        for game in [&nested_game, &game_parent, &target] {
+            assert!(!game.join("instances/late-writer").exists());
+        }
+        let disjoint = create(&sibling, false);
+        assert!(disjoint.status.success(), "{disjoint:?}");
+        assert!(sibling_game.join("instances/late-writer").is_dir());
     })
     .unwrap();
     assert!(reached_copy);
     assert!(!moved.game.join("instances/late-writer").exists());
+    assert!(!moved
+        .game
+        .join("nested-game/instances/late-writer")
+        .exists());
     let accepted = create(&bootstrap, false);
     assert!(accepted.status.success(), "{accepted:?}");
     assert!(moved.game.join("instances/late-writer").is_dir());

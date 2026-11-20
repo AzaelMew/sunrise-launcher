@@ -1,5 +1,5 @@
 //! One registry for the OS account, independent of which location file or data roots a launcher uses.
-use super::{canonical_data_path, open_lock_file, problem, same_path, MigrationLease, Result};
+use super::{canonical_data_path, open_lock_file, overlaps, problem, MigrationLease, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, TryLockError},
@@ -92,7 +92,7 @@ impl Registry {
                             if exclusive || active.exclusive {
                                 for active_root in active.roots.into_iter().map(decode_path) {
                                     if let Some(root) =
-                                        roots.iter().find(|root| same_path(root, &active_root))
+                                        roots.iter().find(|root| overlaps(root, &active_root))
                                     {
                                         return Err(crate::i18n::trf(
                                             "Cannot lock {path}: another launcher is using or moving this data. Close it and try again.",

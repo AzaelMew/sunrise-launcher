@@ -375,6 +375,15 @@ fn migrate_locked(
             ));
         }
     }
+    let destination = layout(&source, &target);
+    tool_safe(&destination.build)?;
+    let registry = root_leases::Registry::open()?;
+    // Reserve both sides by containment before checking the target or settling the source.
+    // No independent launcher may publish into our destination while it is staged.
+    let _roots = registry.acquire(
+        &[&source.launcher, &source.game, &source.build, &target],
+        true,
+    )?;
     if target.exists()
         && (!target.is_dir()
             || fs::read_dir(&target)
@@ -387,10 +396,6 @@ fn migrate_locked(
             target.display()
         ));
     }
-    let destination = layout(&source, &target);
-    tool_safe(&destination.build)?;
-    let registry = root_leases::Registry::open()?;
-    let _roots = registry.acquire(&[&source.launcher, &source.game, &source.build], true)?;
     // Canonical spellings are only for excluding controls from the copied tree. Commit
     // to the caller's bootstrap, and report that same path if replacement is refused.
     let mut controls = [
