@@ -63,6 +63,63 @@ pub(super) fn retire(record: &Path) -> io::Result<()> {
     }
 }
 
+/// Repeat the restoration barrier when the target already matches the recorded preimage.
+/// A pending addition may never have created its target directory at all.
+pub(super) fn sync_restored(to: &Path, backup: &Path, missing: bool) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let file = if missing { None } else { Some(File::open(to)?) };
+    #[cfg(not(windows))]
+    for path in [to, backup] {
+        let dir = path.parent().expect("inside the profile");
+        match sync_directory(dir) {
+            Err(e) if (missing || path == backup) && e.kind() == io::ErrorKind::NotFound => {}
+            result => result?,
+        }
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(file) = file {
+        flush(&file)?;
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    if !missing {
+        flush(&File::open(to)?)?;
+    }
+    #[cfg(windows)]
+    {
+        // Windows' write-through move already supplied the namespace barrier.
+        let _ = backup;
+        if !missing {
+            flush(&File::options().write(true).open(to)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// A restore is also a same-filesystem rename. Flush its data and both changed directories
+/// before the journal can advance to an older step that may touch the same target again.
+pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    let file = File::options().write(true).open(from)?;
+    #[cfg(not(windows))]
+    let file = File::open(from)?;
+    flush(&file)?;
+    #[cfg(windows)]
+    {
+        drop(file);
+        move_through(from, to)
+    }
+    #[cfg(not(windows))]
+    {
+        fs::rename(from, to)?;
+        for path in [from, to] {
+            sync_directory(path.parent().expect("inside the profile"))?;
+        }
+        #[cfg(target_os = "macos")]
+        flush(&file)?;
+        Ok(())
+    }
+}
+
 /// Unlike the record file, an APFS directory only needs its metadata fsynced. The device
 /// barrier runs immediately afterwards on the (regular) record file.
 #[cfg(not(windows))]
@@ -109,16 +166,19 @@ fn move_through(from: &Path, to: &Path) -> io::Result<()> {
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
-    let dir = to.parent().expect("inside the profile").canonicalize()?;
-    let wide = |path: &Path| {
-        dir.join(path.file_name().expect("has a filename"))
+    let wide = |path: &Path| -> io::Result<Vec<u16>> {
+        Ok(path
+            .parent()
+            .expect("inside the profile")
+            .canonicalize()?
+            .join(path.file_name().expect("has a filename"))
             .as_os_str()
             .encode_wide()
             .chain([0])
-            .collect::<Vec<_>>()
+            .collect())
     };
-    let (from, to) = (wide(from), wide(to));
-    // SAFETY: both buffers are NUL-terminated paths in the same directory.
+    let (from, to) = (wide(from)?, wide(to)?);
+    // SAFETY: both buffers are NUL-terminated; cross-volume copies are not enabled.
     if unsafe {
         MoveFileExW(
             from.as_ptr(),

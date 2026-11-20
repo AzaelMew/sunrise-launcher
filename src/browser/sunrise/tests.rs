@@ -2244,7 +2244,7 @@ fn a_removal_is_one_transaction_that_takes_only_the_files_it_was_shown() {
         .tempdir_in(&home)
         .unwrap();
     let file = home.join("sunrise-mods/lamps.smod");
-    txn::begin_for_test(&home, staged.path(), std::slice::from_ref(&file));
+    txn::begin(&home, staged.path(), &[(None, file.clone())], &[]).unwrap();
     fs::rename(&file, staged.path().join("old-0")).unwrap();
     let _ = staged.keep();
     assert!(txn::recover(&home));

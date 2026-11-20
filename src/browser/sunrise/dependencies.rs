@@ -528,8 +528,7 @@ fn publish(
         .parent()
         .expect("staged in the profile")
         .to_path_buf();
-    let targets: Vec<PathBuf> = changes.iter().map(|(_, to)| to.clone()).collect();
-    let id = super::txn::begin(&home, staged.path(), &targets, approvals)?;
+    let id = super::txn::begin(&home, staged.path(), &changes, approvals)?;
     for (i, (from, to)) in changes.into_iter().enumerate() {
         let result = (|| -> io::Result<()> {
             if let Some(dir) = to.parent() {
