@@ -179,7 +179,9 @@ impl Launcher {
                                     eprintln!("Could not mark updated Nightly {tag}: {e}");
                                 }
                             }
-                            if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
+                            if !cache_only
+                                && self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag)
+                            {
                                 self.updates.sunrise = None;
                             }
                             // An instance's own version leaves the other instances on theirs.

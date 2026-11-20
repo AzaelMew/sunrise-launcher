@@ -606,11 +606,12 @@ pub(super) fn publish(home: &Path, active: &Active) -> Result<(), String> {
 }
 
 // An advisory label for lists only. Launches and mutations must use an admitted lease.
-pub fn displayed_image(home: &Path) -> Option<String> {
+/// A display snapshot only; launch and mutation admit under the profile gate.
+pub fn displayed_selection(home: &Path) -> Option<(String, String)> {
     read(home)
         .ok()
         .flatten()
-        .map(|active| active.executable.tag)
+        .map(|active| (active.base.tag, active.executable.tag))
 }
 
 impl WaitingMod {

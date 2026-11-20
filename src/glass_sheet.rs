@@ -115,6 +115,7 @@ mod tests {
             icon: None,
             group: None,
             version: None,
+            committed_base: None,
             channel: Channel::Stable,
             native_profile: Default::default(),
             played: Default::default(),

@@ -40,7 +40,7 @@ mod switch;
 mod switch_record;
 pub(crate) use build::require_current_update;
 pub use build::{
-    active_stamp, displayed_image, waiting_for_update, Active, Receipt, SwitchEffects, Target,
+    active_stamp, displayed_selection, waiting_for_update, Active, Receipt, SwitchEffects, Target,
     WaitingMod,
 };
 pub(super) use build::{scan_packages, waiting_packages};
@@ -2127,6 +2127,38 @@ mod tests {
         assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
         let initial = owner.active_build().unwrap().unwrap();
         assert_eq!(initial.generation, 1);
+        let latest = "nightly-2026-11-20-abcdef0";
+        let releases = [crate::backend::Release {
+            tag: latest.into(),
+            name: "Nightly".into(),
+            body: String::new(),
+            date: "2026-11-20".into(),
+            time: String::new(),
+            asset: Some(("fixture".into(), 1)),
+            prerelease: false,
+            nightly: Some("nightly".into()),
+        }];
+        let offer = || {
+            let instance = crate::instances::find("first").unwrap();
+            assert_eq!(instance.committed_base.as_deref(), Some("nightly-original"));
+            instance
+                .game_update(&releases)
+                .map(|release| release.tag.as_str())
+        };
+        assert_eq!(offer(), Some(latest));
+        // The download completes in the versions cache, never in the profile.
+        let cached = crate::backend::version_dir(latest);
+        fs::create_dir(&cached).unwrap();
+        fs::write(cached.join(crate::backend::CLIENT), binary).unwrap();
+        fs::write(cached.join(".installed"), b"").unwrap();
+        assert!(crate::backend::installed().contains(&latest.to_owned()));
+        assert_eq!(offer(), Some(latest));
+        let pointer_file = first.join(build::FILE);
+        let pointer_before = fs::read(&pointer_file).unwrap();
+        let _ = owner.reserve_switch(&initial, latest).unwrap();
+        owner.recover_abandoned().unwrap(); // Cancel a staged switch before publication.
+        assert_eq!(fs::read(pointer_file).unwrap(), pointer_before);
+        assert_eq!(offer(), Some(latest));
         // Later preparation writes cannot silently change the bound runtime data.
         fs::write(preparation.join("blocks.json"), b"{\"new\":true}").unwrap();
         assert_eq!(

@@ -276,6 +276,7 @@ mod tests {
                     icon: None,
                     group: None,
                     version: None,
+                    committed_base: None,
                     channel: Default::default(),
                     native_profile: Default::default(),
                     played: Default::default(),

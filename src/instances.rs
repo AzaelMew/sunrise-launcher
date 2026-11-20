@@ -404,7 +404,9 @@ pub struct Instance {
     /// Its pinned Sunrise version, if any (`Meta::version`; a modpack's own native build when it
     /// has one, `Meta::built`).
     pub version: Option<String>,
-    /// Which builds it follows when it keeps no version.
+    /// The immutable game base, separately from its derived executable. Display only.
+    pub committed_base: Option<String>,
+    /// Which new builds it offers, without moving the committed selection.
     pub channel: Channel,
     /// Its saved native build choice, or Optimized before the player chooses one.
     pub native_profile: crate::native_mods::Profile,
@@ -415,6 +417,24 @@ pub struct Instance {
 }
 
 impl Instance {
+    /// The channel's update offer compares exact tags, not the cache or a derived executable.
+    pub fn game_update<'a>(
+        &self,
+        releases: &'a [backend::Release],
+    ) -> Option<&'a backend::Release> {
+        if self.is_pack_profile() {
+            return None;
+        }
+        let base = self.committed_base.as_deref()?;
+        self.channel
+            .following(releases)
+            .builds(releases)
+            .next()
+            .filter(|newest| {
+                newest.tag != base && backend::compare_versions(&newest.tag, base).is_ge()
+            })
+    }
+
     /// A modpack's profile: its pack pins the build and the mods, so neither is switched here.
     pub fn is_pack_profile(&self) -> bool {
         self.id.starts_with("pack:")
@@ -634,20 +654,25 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
         .into_iter()
         .map(|(id, name, kind, work, home)| {
             let meta = store.instances.get(&id).cloned().unwrap_or_default();
-            let version = crate::browser::sunrise::txn::displayed_image(&home).or_else(|| {
-                meta.built
-                    .filter(|built| {
-                        crate::native_mods::about(built)
-                            .is_some_and(|about| Some(&about.base) == meta.version.as_ref())
-                    })
-                    .or(meta.version)
-            });
+            let (committed_base, version) =
+                match crate::browser::sunrise::txn::displayed_selection(&home) {
+                    Some((base, executable)) => (Some(base), Some(executable)),
+                    None => (
+                        None,
+                        meta.built
+                            .filter(|built| {
+                                crate::native_mods::about(built)
+                                    .is_some_and(|about| Some(&about.base) == meta.version.as_ref())
+                            })
+                            .or(meta.version),
+                    ),
+                };
             Instance {
                 name: meta.name.unwrap_or(name),
                 icon: meta.icon,
                 group: meta.group,
-                // A modpack's own native build, while it is made from the version it records.
                 version,
+                committed_base,
                 channel: meta.channel.unwrap_or_default(),
                 native_profile: meta
                     .native_profile

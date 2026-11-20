@@ -37,7 +37,7 @@ pub(crate) struct Facts {
     pub crash: Option<String>,
     /// The build the profile stays on can't be built for any more (`build_gone`).
     pub build_gone: Option<instances::Channel>,
-    /// The name of a newer build, for a profile that follows the newest Nightly.
+    /// The name of a newer build on this committed profile's preferred channel.
     pub update: Option<String>,
     /// How many mods the game was made without.
     pub mods_off: usize,
@@ -398,8 +398,6 @@ impl Launcher {
     pub(crate) fn launch_facts(&self) -> Facts {
         let active = self.selected_instance();
         let launch = self.ui.home.mods.launch();
-        let follows_nightly =
-            active.is_some_and(|i| i.version.is_none() && i.channel == instances::Channel::Nightly);
         Facts {
             signed_in: self.accounts.selected().is_some()
                 || sunrise_launcher::developer_offline::selected(),
@@ -411,11 +409,8 @@ impl Launcher {
             install_error: self.install_error.as_ref().map(|(_, e)| e.clone()),
             crash: self.crash.as_ref().map(|c| c.summary.clone()),
             build_gone: self.build_gone(),
-            update: self
-                .updates
-                .sunrise
-                .as_ref()
-                .filter(|_| follows_nightly)
+            update: active
+                .and_then(|i| i.game_update(self.game_releases()))
                 .map(|r| crate::sheets::build_name(&r.tag)),
             mods_off: launch.map_or(0, |summary| summary.mods_off),
             ..self.launch_activity()
@@ -438,7 +433,10 @@ impl Launcher {
             Act::StopBuild => self.stop_build(),
             Act::Notice { text, way_out } => self.open_notice(text.clone(), *way_out),
             Act::Update => {
-                if let Some(release) = &self.updates.sunrise {
+                if let Some(release) = self
+                    .selected_instance()
+                    .and_then(|i| i.game_update(self.game_releases()))
+                {
                     self.open_update_picker(release.tag.clone());
                 }
             }
