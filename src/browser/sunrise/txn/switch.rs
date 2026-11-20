@@ -340,6 +340,7 @@ impl Inventory {
                 let id = manifest.id.clone();
                 if row.as_ref().is_some_and(|row| {
                     row.source != browser::SourceId::Sunrise
+                        || row.project != id
                         || sunrise::mod_id(row) != Some(&id)
                         || row.version != manifest.version
                 }) {
@@ -395,8 +396,8 @@ fn outcomes(
         if chosen.contains_key(id.as_str()) {
             continue;
         }
-        let origin = old.row.as_ref().map_or(id.as_str(), |row| &row.project);
-        if let Some(revoked) = catalogue.revoked(origin, &old.digest) {
+        let origin = old.row.as_ref().map(|row| row.project.as_str());
+        if let Some(revoked) = sunrise::package_revocation(catalogue, id, &old.digest, origin) {
             effects
                 .removed
                 .push((old.manifest.name.clone(), revoked.reason.clone()));
@@ -441,7 +442,7 @@ fn candidates(
         let mut choices = Vec::new();
         let old = source.packages.get(&id);
         if let Some(old) = old.filter(|old| old.row.is_none()) {
-            if catalogue.revoked(&id, &old.digest).is_some() {
+            if sunrise::package_revocation(catalogue, &id, &old.digest, None).is_some() {
                 slots.insert(id, choices);
                 continue;
             }
@@ -1002,6 +1003,65 @@ mod tests {
         assert!(waiting["lantern"]
             .replacement(&registry, project, "26.5")
             .is_none());
+    }
+
+    #[test]
+    fn an_id_only_takedown_does_not_remove_local_bytes_but_a_matching_hash_does() {
+        let profile = tempfile::tempdir().unwrap();
+        let home = profile.path();
+        let root = home.join(mod_list::DIR);
+        fs::create_dir(&root).unwrap();
+        let file = root.join("my-lantern.smod");
+        let bytes = sunrise_launcher_smod::Package::write_files(
+            &format!("id='lantern'\nname='My lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']", manifest::API),
+            &[],
+        ).unwrap();
+        fs::write(&file, &bytes).unwrap();
+        fs::write(home.join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
+        let source = Inventory::read(home).unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let digest = index::sha256(&bytes);
+        let mut catalogue: index::Index = serde_json::from_value(serde_json::json!({
+            "schema":1, "projects":[], "revoked":[{"id":"lantern", "reason":"registry only"}],
+        }))
+        .unwrap();
+        let slots = candidates(&source, &catalogue, "26.4", work.path()).unwrap();
+        let preserved = &slots["lantern"][0];
+        assert_eq!(fs::read(&preserved.file).unwrap(), bytes);
+        assert!(preserved.on);
+        let (disabled, _, effects) = outcomes(
+            &source,
+            &BTreeMap::from([("lantern", preserved)]),
+            &catalogue,
+            &BTreeMap::new(),
+            |_| "no fit".into(),
+        )
+        .unwrap();
+        assert!(disabled.is_empty() && effects.is_empty());
+
+        // Both entries exist, and the broad one comes first: it must not hide exact proof.
+        catalogue.revoked.push(index::Revoked {
+            id: "lantern".into(),
+            sha256: Some(digest),
+            reason: "exact bytes".into(),
+            date: String::new(),
+        });
+        let slots = candidates(&source, &catalogue, "26.4", work.path()).unwrap();
+        assert!(slots["lantern"].is_empty());
+        let (_, waiting, effects) = outcomes(
+            &source,
+            &BTreeMap::new(),
+            &catalogue,
+            &BTreeMap::new(),
+            |_| "no fit".into(),
+        )
+        .unwrap();
+        assert!(waiting.is_empty());
+        assert_eq!(
+            effects.removed,
+            [("My lantern".into(), "exact bytes".into())]
+        );
+        assert_eq!(fs::read(file).unwrap(), bytes, "planning is private");
     }
 
     #[test]

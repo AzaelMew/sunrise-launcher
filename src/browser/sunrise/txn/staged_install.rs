@@ -159,8 +159,11 @@ impl StagedInstall {
     fn proposed_inventory(&self, index: &index::Index) -> Result<switch::Inventory, String> {
         let after = switch::Inventory::read(&self.stage)?;
         for (id, pkg) in &after.packages {
-            let origin = pkg.row.as_ref().map_or(id.as_str(), |row| &row.project);
-            if let Some(revoked) = index.revoked(origin, &pkg.digest).filter(|_| pkg.on) {
+            let origin = pkg.row.as_ref().map(|row| row.project.as_str());
+            if let Some(revoked) =
+                crate::browser::sunrise::package_revocation(index, id, &pkg.digest, origin)
+                    .filter(|_| pkg.on)
+            {
                 return Err(trf(
                     "{name} was taken down: {reason}",
                     &[("name", &pkg.manifest.name), ("reason", &revoked.reason)],

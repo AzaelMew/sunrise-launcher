@@ -1721,6 +1721,25 @@ fn verify_launch_arguments(
     Ok(())
 }
 
+/// Hashless takedowns name a registry project, not every package with its manifest ID.
+fn package_revocation<'a>(
+    index: &'a Index,
+    id: &str,
+    digest: &str,
+    registry_project: Option<&str>,
+) -> Option<&'a index::Revoked> {
+    match registry_project {
+        Some(project) => index.revoked(project, digest),
+        None => index.revoked.iter().find(|revoked| {
+            revoked.id == id
+                && revoked
+                    .sha256
+                    .as_ref()
+                    .is_some_and(|hash| hash.eq_ignore_ascii_case(digest))
+        }),
+    }
+}
+
 fn check_before_play(
     home: &Path,
     included: &[crate::native_status::Included],
@@ -1749,10 +1768,13 @@ fn check_before_play(
         let project = entries
             .iter()
             .find(|entry| {
-                entry.source == SourceId::Sunrise && entry.path(home).as_ref() == Some(&path)
+                entry.source == SourceId::Sunrise
+                    && entry.project == manifest.id
+                    && mod_id(entry) == Some(manifest.id.as_str())
+                    && entry.path(home).as_ref() == Some(&path)
             })
-            .map_or(manifest.id.as_str(), |entry| entry.project.as_str());
-        if let Some(revoked) = index.revoked(project, &hash) {
+            .map(|entry| entry.project.as_str());
+        if let Some(revoked) = package_revocation(&index, &manifest.id, &hash, project) {
             return Err(trf(
                 "{mod} was taken down: {reason} Turn it off in Mods before playing.",
                 &[("mod", &manifest.name), ("reason", &revoked.reason)],
