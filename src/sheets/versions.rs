@@ -26,6 +26,24 @@ pub(crate) struct State {
     /// The keyboard focus of each row, by line: a row that is not drawn has no element, so the
     /// handles live here for the arrow keys to land on a row before it is on screen.
     rows: std::collections::HashMap<usize, FocusHandle>,
+    /// The native mods' check against the build picked, while it runs (`None`) and once it ended.
+    check: Option<PickCheck>,
+}
+
+/// The SDK check of the native mods against one picked build.
+struct PickCheck {
+    key: String,
+    result: Option<Result<native_mods::UpdateCheck, String>>,
+}
+
+/// What the picked row can say about the native mods.
+enum Native {
+    /// The check is running.
+    Checking,
+    /// It could not run: offline, no SDK for that build, or native mods not allowed.
+    Unavailable,
+    /// The mods the check says don't work on that build (none when there are no native mods).
+    Off(Vec<(String, String)>),
 }
 
 /// The line the Up or Down key lands on from line `from` (None: no row has the keyboard):
@@ -63,15 +81,15 @@ struct Build {
 }
 
 /// "November 2026" for `2026-11`.
-/// The one line the picker says about the mods on the row picked: how many would be removed.
-fn picker_note(removed: usize) -> String {
-    match removed {
-        0 => tr("All your mods work with this version").to_string(),
-        1 => tr("1 of your mods isn't ready for this version and will be removed").to_string(),
-        n => trf(
-            "{count} of your mods aren't ready for this version and will be removed",
-            &[("count", &n.to_string())],
-        ),
+/// The one line the picked row says about the mods: what switching to it would remove.
+fn picker_note(native: &Native, removed: usize) -> String {
+    match (native, removed) {
+        (Native::Checking, _) => tr("Checking your mods…").to_string(),
+        (Native::Unavailable, _) => {
+            tr("Couldn't check your native mods for this version").to_string()
+        }
+        (Native::Off(_), 0) => tr("All your mods work with this version").to_string(),
+        (Native::Off(_), n) => trf("Removes {count} of your mods", &[("count", &n.to_string())]),
     }
 }
 
@@ -191,12 +209,60 @@ impl Launcher {
         self.reset_versions();
     }
 
+    /// Starts the native mods' check against the build just picked, on a worker, unless it is
+    /// the build kept or played, there are no native mods, or this check already ran.
+    fn check_pick(&mut self, tag: String, cx: &mut Context<Self>) {
+        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
+            return;
+        };
+        if native_status::enabled(&home).is_empty() {
+            return;
+        }
+        let key = check_key(&home, &tag);
+        if self
+            .ui
+            .sheets
+            .versions
+            .check
+            .as_ref()
+            .is_some_and(|c| c.key == key)
+        {
+            return;
+        }
+        self.ui.sheets.versions.check = Some(PickCheck {
+            key: key.clone(),
+            result: None,
+        });
+        let work = cx
+            .background_executor()
+            .spawn(async move { native_mods::update_check(&home, &tag).map_err(String::from) });
+        cx.spawn(async move |this, cx| {
+            let result = work.await;
+            let _ = this.update(cx, |this, cx| {
+                // A result for a pick the player has left is dropped.
+                if let Some(check) = this
+                    .ui
+                    .sheets
+                    .versions
+                    .check
+                    .as_mut()
+                    .filter(|c| c.key == key)
+                {
+                    check.result = Some(result);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn reset_versions(&mut self) {
         self.ui.sheets.error = None;
         let pinned = self.selected_instance().and_then(|i| i.version.clone());
         let v = &mut self.ui.sheets.versions;
         v.find.set(String::new());
         v.pick = pinned;
+        v.check = None;
         v.rows.clear();
     }
 
@@ -228,7 +294,8 @@ impl Launcher {
         };
         let (pinned, channel) = (instance.version.clone(), instance.channel);
         let plays = self.version_of(instance).cloned();
-        let has_native = !native_status::enabled(&instance.home).is_empty();
+        let home = instance.home.clone();
+        let has_native = !native_status::enabled(&home).is_empty();
         let releases: &[Release] = match &self.releases {
             Load::Ready(rows) => rows,
             _ => &[],
@@ -278,8 +345,29 @@ impl Launcher {
             }));
         let field = line_edit::mouse(field, cx, |this| &mut this.ui.sheets.versions.find);
 
+        // What switching would cost the mods, said on the row picked, never on a row not picked.
+        let note = pick
+            .as_ref()
+            .filter(|tag| Some(tag.as_str()) != current)
+            .map(|tag| {
+                let native = match &self.ui.sheets.versions.check {
+                    Some(c) if has_native && c.key == check_key(&home, tag) => match &c.result {
+                        None => Native::Checking,
+                        Some(Err(_)) => Native::Unavailable,
+                        Some(Ok(check)) => Native::Off(check.off.clone()),
+                    },
+                    Some(_) | None if has_native => Native::Checking,
+                    _ => Native::Off(Vec::new()),
+                };
+                let removed = match &native {
+                    Native::Off(off) => self.mods_removed_by(tag, off).len(),
+                    _ => 0,
+                };
+                picker_note(&native, removed)
+            });
         let shown = Rc::clone(&list);
         let (now, chosen) = (plays.clone(), pick.clone());
+        let said = note.clone();
         let scroll = self.ui.sheets.versions.scroll.clone();
         let rows = gpui::uniform_list(
             "alt-versions-list",
@@ -339,11 +427,15 @@ impl Launcher {
                                         .child(b.name.clone()),
                                 )
                                 .child(
-                                    muted(b.about.clone())
-                                        .flex_1()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_size(px(tokens::SMALL)),
+                                    muted(if on {
+                                        said.clone().unwrap_or_else(|| b.about.clone())
+                                    } else {
+                                        b.about.clone()
+                                    })
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(tokens::SMALL)),
                                 )
                                 .children(playing.then(|| {
                                     muted(tr("Playing now"))
@@ -361,6 +453,9 @@ impl Launcher {
                                 .hover(|s| s.bg(rgb(palette().hover)))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                     this.ui.sheets.versions.pick = Some(tag.clone());
+                                    if !playing {
+                                        this.check_pick(tag.clone(), cx);
+                                    }
                                     cx.notify();
                                 }))
                         }
@@ -372,16 +467,6 @@ impl Launcher {
         // As tall as what it lists, up to the room the window has; past that it scrolls.
         .h(px((list.len() as f32 * LINE_H)
             .min((self.window_height - 330.).clamp(LINE_H * 4., LINE_H * 9.))));
-        // What switching would cost the mods, tied to the row picked: the line under the list
-        // names that build, and the row says it short.
-        let note = pick.as_ref().and_then(|tag| {
-            let removals = self.mods_removed_by(tag);
-            let build = list.iter().find_map(|line| match line {
-                Line::Build(b) if &b.tag == tag => Some(b.name.clone()),
-                _ => None,
-            })?;
-            Some((build, picker_note(removals.len())))
-        });
         let nothing = list.is_empty().then(|| {
             muted(match (&self.releases, query.trim().is_empty()) {
                 (Load::Loading, _) => tr("Reading the list of builds…"),
@@ -465,9 +550,6 @@ impl Launcher {
                 .into(),
             ))
             .child(field)
-            .children(note.map(|(build, said)| {
-                muted(format!("{build}: {said}")).text_size(px(tokens::SMALL))
-            }))
             .children(native)
             .child(
                 div()
@@ -523,13 +605,18 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_says_how_many_mods_the_row_would_remove() {
-        assert_eq!(picker_note(0), "All your mods work with this version");
-        assert!(picker_note(1).starts_with("1 of your mods isn't ready"));
+    fn the_picker_says_what_the_row_would_remove_or_that_it_could_not_tell() {
+        let off = || Native::Off(Vec::new());
+        assert_eq!(picker_note(&Native::Checking, 0), "Checking your mods…");
         assert_eq!(
-            picker_note(2),
-            "2 of your mods aren't ready for this version and will be removed"
+            picker_note(&Native::Unavailable, 3),
+            "Couldn't check your native mods for this version"
         );
+        assert_eq!(
+            picker_note(&off(), 0),
+            "All your mods work with this version"
+        );
+        assert_eq!(picker_note(&off(), 2), "Removes 2 of your mods");
     }
 
     #[test]
