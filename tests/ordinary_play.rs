@@ -54,6 +54,7 @@ if [ "$1" = --launch-api ]; then
   printf '%s\n' '{"options":[{"name":"--developer-single-player"}]}'
   exit 0
 fi
+printf '%s\n' "${SUNRISE_SESSION_FILE-unset}" "${SUNRISE_LAUNCHER_EXE-unset}" "${SUNRISE_LAUNCHER_DEVELOPER_OFFLINE-unset}" "${FIXTURE_INSTANCE_ENV-unset}" > "$SUNRISE_HOME/game-env"
 { pwd; printf '%s\n' "$@"; } > "$SUNRISE_HOME/args.tmp"
 mv "$SUNRISE_HOME/args.tmp" "$SUNRISE_HOME/args"
 n=0
@@ -277,6 +278,40 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
     drop(socket);
     drop(to_mcp);
     assert!(mcp.0.wait().unwrap().success());
+}
+
+#[test]
+fn offline_play_keeps_protected_environment_filtered_after_jar_preparation() {
+    let fixture = Fixture::new();
+    fixture.configure(json!({
+        "env": {
+            "SUNRISE_SESSION_FILE":"not-the-selected-session",
+            "SUNRISE_LAUNCHER_EXE":"not-the-launcher",
+            "SUNRISE_LAUNCHER_DEVELOPER_OFFLINE":"0",
+            "FIXTURE_INSTANCE_ENV":"kept",
+        },
+        "pre_launch": "printf '%s\\n' \"${SUNRISE_SESSION_FILE-unset}\" \"${SUNRISE_LAUNCHER_EXE-unset}\" \"${SUNRISE_LAUNCHER_DEVELOPER_OFFLINE-unset}\" \"${FIXTURE_INSTANCE_ENV-unset}\" > hook-env",
+    }));
+    fs::write(fixture.home.join("finish"), []).unwrap();
+    let played = fixture
+        .launcher(&["play"])
+        .env("SUNRISE_SESSION_FILE", "inherited-stale-session")
+        .output()
+        .unwrap();
+    assert_eq!(
+        played.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&played.stderr)
+    );
+    for path in ["hook-env", "game-env"] {
+        assert_eq!(
+            fs::read_to_string(fixture.home.join(path)).unwrap(),
+            "unset\nunset\n1\nkept\n",
+            "{path}"
+        );
+    }
+    assert_resource_args(&fixture, &fixture.game_arguments());
 }
 
 #[test]

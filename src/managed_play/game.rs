@@ -61,12 +61,12 @@ impl Profile {
         cancellation: &Cancellation,
         mut command: Command,
         (launch, piped): (&crate::launch::Launch, bool),
-        prepare_jars: impl FnOnce(&mut Command) -> Result<(), String>,
+        prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
         check_account: impl FnOnce() -> Result<(), String>,
     ) -> Result<(Child, RuntimeGuard), StartError> {
         let wrapper = crate::launch::managed_wrapper(&mut command, launch);
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
-        prepare_jars(&mut command)?;
+        prepare_jars(&command)?;
         crate::launch::managed_pre_launch(&command, launch)?;
         self.spawn_selected(
             active,

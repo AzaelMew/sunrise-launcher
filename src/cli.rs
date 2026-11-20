@@ -1427,10 +1427,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 cmd.args(arg);
                 Ok(())
             };
-            let prepare_jars = |cmd: &mut Command, launch: &sunrise_launcher::launch::Launch| {
-                jars::prepare_launch(cmd, launch, jars::Permission::headless(allow_jar_downloads))
-                    .map_err(|error| error.to_string())
-            };
+            let jar_permission = jars::Permission::headless(allow_jar_downloads);
             let vars = instance.vars();
             let (started, played) = if instance.kind == instances::Kind::Pack {
                 let tag = instance.resolve_version(version.as_deref())?;
@@ -1445,7 +1442,8 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 )? {
                     eprintln!("{notice}");
                 }
-                prepare_jars(&mut cmd, &instance.launch)?;
+                jars::prepare_launch(&mut cmd, &instance.launch, jar_permission)
+                    .map_err(|error| error.to_string())?;
                 let command = sunrise_launcher::launch::wrap(cmd, &instance.launch)?;
                 (std::time::Instant::now(), attached(command))
             } else {
@@ -1462,7 +1460,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         backend::append_game_args(cmd);
                         add_arguments(cmd)
                     },
-                    prepare_jars,
+                    |cmd| jars::prepare_for_command(cmd, jar_permission).map_err(|e| e.to_string()),
                     Some(&registry_consent),
                     |progress| match progress {
                         managed_play::Progress::Prepare => {

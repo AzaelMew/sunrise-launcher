@@ -113,11 +113,7 @@ impl Session {
                     }
                     Ok(())
                 };
-                let prepare_jars =
-                    |cmd: &mut std::process::Command, launch: &sunrise_launcher::launch::Launch| {
-                        jars::prepare_launch(cmd, launch, Permission::headless(allow_jar_downloads))
-                            .map_err(|error| error.to_string())
-                    };
+                let jar_permission = Permission::headless(allow_jar_downloads);
                 let (client, tag, notices) = if instance.kind == instances::Kind::Pack {
                     let tag = instance.resolve_version(requested)?;
                     let mut cmd = backend::client(&tag)?;
@@ -126,7 +122,8 @@ impl Session {
                     let launch = Default::default();
                     let notices =
                         sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
-                    prepare_jars(&mut cmd, &launch)?;
+                    jars::prepare_launch(&mut cmd, &launch, jar_permission)
+                        .map_err(|error| error.to_string())?;
                     (Logged::start(Job::Client, cmd)?, tag, notices)
                 } else {
                     let accounts = Accounts::load();
@@ -143,7 +140,10 @@ impl Session {
                             backend::append_game_args(cmd);
                             add_arguments(cmd)
                         },
-                        prepare_jars,
+                        |cmd| {
+                            jars::prepare_for_command(cmd, jar_permission)
+                                .map_err(|e| e.to_string())
+                        },
                         None,
                         |_| {},
                     )?;

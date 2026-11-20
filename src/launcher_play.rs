@@ -266,9 +266,9 @@ impl Launcher {
                     backend::append_game_args(cmd);
                     Ok(())
                 },
-                |cmd, launch| {
+                |cmd| {
                     jar_launch::with_consent(&tx, |permission| {
-                        sunrise_launcher::jars::prepare_launch(cmd, launch, permission)
+                        sunrise_launcher::jars::prepare_for_command(cmd, permission)
                     })
                     .map_err(|error| error.to_string())
                 },

@@ -75,7 +75,7 @@ impl Client<'_> {
         self,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
-        prepare_jars: impl FnOnce(&mut Command, &crate::launch::Launch) -> Result<(), String>,
+        prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
         native_consent: NativeConsent<'_>,
         progress: impl Fn(Progress),
     ) -> Result<Started, StartError> {
@@ -151,7 +151,7 @@ impl Client<'_> {
                 &cancellation,
                 cmd,
                 (launch, self.piped),
-                |cmd| prepare_jars(cmd, launch),
+                prepare_jars,
                 || {
                     if let Some(uuid) = self.accepted_account.filter(|_| !offline) {
                         account::check_launch_account(&Accounts::load(), uuid)
