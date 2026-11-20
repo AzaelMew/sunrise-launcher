@@ -846,7 +846,6 @@
   "Move up": "Move up",
   "NEEDS YOU": "NEEDS YOU",
   "Native code": "Native code",
-  "Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed": "Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed",
   "Native mod adds {count} registry crates": "Native mod adds {count} registry crates",
   "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.": "Native mods are programs that run inside your game. Like any program you install, they can read and change your files. Allow them only if you trust who made them.",
   "Native mods can't be built on this computer: Sunrise has no game package for its system yet.": "Native mods can't be built on this computer: Sunrise has no game package for its system yet.",
@@ -1374,7 +1373,6 @@
   "Keep building in the background": "Keep building in the background",
   "Local file": "Local file",
   "Made for an older game version; it's checked before it runs.": "Made for an older game version; it's checked before it runs.",
-  "Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.": "Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.",
   "Needs a build": "Needs a build",
   "Needs an update": "Needs an update",
   "Needs an update for {build}. It comes back when its author releases one.": "Needs an update for {build}. It comes back when its author releases one.",
@@ -1468,5 +1466,7 @@
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
   "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
   "Sign in with Microsoft": "Пријави се са Microsoft-ом",
-  "{mod} didn't compile. The problem is in the mod, not in your game.": "{mod} didn't compile. The problem is in the mod, not in your game."
+  "{mod} didn't compile. The problem is in the mod, not in your game.": "{mod} didn't compile. The problem is in the mod, not in your game.",
+  "Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.": "Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.",
+  "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file": "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file"
 }
