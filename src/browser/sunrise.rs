@@ -434,6 +434,9 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
         ureq::Error::Status(code, _) => format!("The mod registry answered {code}."),
         ureq::Error::Transport(t) => format!("The mod registry can't be reached: {t}"),
     })?;
+    if response.status() != 200 || response.header("Content-Range").is_some() {
+        return Err(tr("The mod registry didn't send the full index.").to_string());
+    }
     let mut text = String::new();
     response
         .into_reader()
@@ -443,7 +446,26 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    Ok((Index::parse(&text)?, text))
+    Ok((parse_live(&text)?, text))
+}
+
+/// The authoritative wire response must distinguish a missing list from an empty list.
+/// Keep the tolerant reader for display, but never mark a projection as fetched.
+fn parse_live(text: &str) -> Result<Index, String> {
+    #[derive(serde::Deserialize)]
+    struct Complete {
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    serde_json::from_str::<Complete>(text).map_err(|error| {
+        trf(
+            "The mod registry didn't send a complete index: {error}",
+            &[("error", &error.to_string())],
+        )
+    })?;
+    Index::parse(text)
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
@@ -1181,6 +1203,7 @@ pub(super) fn install_set(
     approvals: &[installed::Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    index()?;
     let index = fetched_index().ok_or_else(|| {
         tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
             .to_string()

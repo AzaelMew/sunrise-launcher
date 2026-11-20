@@ -1490,5 +1490,7 @@
   "Updates": "Updates",
   "a development build of the launcher made it": "a development build of the launcher made it",
   "its backups are not where the launcher keeps them": "its backups are not where the launcher keeps them",
-  "Another launcher is working on this profile. Try again when it finishes.": "Another launcher is working on this profile. Try again when it finishes."
+  "Another launcher is working on this profile. Try again when it finishes.": "Another launcher is working on this profile. Try again when it finishes.",
+  "The mod registry didn't send the full index.": "The mod registry didn't send the full index.",
+  "The mod registry didn't send a complete index: {error}": "The mod registry didn't send a complete index: {error}"
 }

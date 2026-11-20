@@ -637,6 +637,28 @@ fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
 }
 
 #[test]
+fn an_authoritative_index_must_explicitly_list_projects_and_revocations() {
+    let complete = r#"{"schema":1,"projects":[],"revoked":[]}"#;
+    assert!(parse_live(complete).is_ok());
+    for partial in [
+        r#"{"schema":1,"projects":[]}"#,
+        r#"{"schema":1,"revoked":[]}"#,
+        r#"{"schema":1,"projects":[],"revoked":null}"#,
+    ] {
+        let error = parse_live(partial).unwrap_err();
+        assert!(error.contains("complete index"), "{error}");
+        let home = tempfile::tempdir().unwrap();
+        let cache = home.path().join("index.json");
+        fs::write(&cache, complete).unwrap();
+        let fallback = load(Err(error), &cache, false).unwrap();
+        assert!(
+            fallback.fetched().is_none(),
+            "a display fallback is not authoritative"
+        );
+    }
+}
+
+#[test]
 fn an_install_with_native_code_keeps_its_record_until_the_build_ends() {
     let home = scratch("txn-native");
     let index = native_sample(&home);
