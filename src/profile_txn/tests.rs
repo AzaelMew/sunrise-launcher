@@ -40,7 +40,9 @@ fn seal(owner: &mut Admission, switching: bool) -> Sealed<'_> {
         Intent::Install
     };
     let pointer = if switching { SWITCHED } else { INSTALLED };
-    let staging = owner.reserve(intent).unwrap();
+    let staging = owner
+        .reserve(intent, BTreeSet::from(["nightly-new".into()]))
+        .unwrap();
     let package_path = staging.path().join("candidate.smod");
     let list = staging.path().join("candidate-list");
     fs::write(&package_path, package("2.0.0")).unwrap();
@@ -73,6 +75,123 @@ fn pair(home: &Path, switching: bool, committed: bool) {
     }
 }
 
+const FIRST_POINTER: &[u8] = b"{\"base\":\"nightly-original\",\"generation\":1}\n";
+
+fn first_binding() -> Bootstrap {
+    Bootstrap::new(
+        "nightly-original".into(),
+        "preferred-first-image".into(),
+        [7; 16],
+        [3; 32],
+        serde_json::json!({"archive":"sunrise-linux-aarch64.tar.gz","revision":"original"}),
+    )
+}
+
+#[test]
+fn first_binding_and_signed_proof_survive_an_abandoned_prepare_and_pointer_undo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let mut owner = Admission::open(home, None).unwrap();
+    assert!(owner
+        .bind_bootstrap(
+            || Ok(first_binding()),
+            |_| Err::<(), _>("asset gone".into())
+        )
+        .is_err());
+    assert!(!home.join(RECORD).exists());
+    let chosen = owner
+        .bind_bootstrap(|| Ok(first_binding()), |_| Ok(()))
+        .unwrap();
+    let proven = owner
+        .prove_bootstrap(|binding| {
+            assert_eq!(binding, &chosen);
+            Ok(serde_json::json!({"sha256":"fixture-signed-proof"}))
+        })
+        .unwrap();
+    assert!(proven.proof.is_some());
+    let refs = references(home).unwrap();
+    assert_eq!(refs.targets, chosen.targets());
+    assert!(refs.before.is_none() && refs.after.is_none() && refs.pointer.is_none());
+    drop(owner);
+
+    for boundary in ["bootstrap:prepare", "bootstrap:pointer-renamed"] {
+        let actor = pause_actor(home, boundary, |_| {});
+        assert!(
+            Admission::open(home, None).is_err(),
+            "ongoing first Play holds admission"
+        );
+        let refs = references(home).unwrap(); // Reader takes no profile admission.
+        assert_eq!(refs.targets, chosen.targets());
+        assert!(refs.before.is_none());
+        if boundary.ends_with("prepare") {
+            assert!(refs.after.is_none() && refs.pointer.is_none());
+        } else {
+            assert_eq!(refs.after.as_deref(), Some(FIRST_POINTER));
+            assert_eq!(refs.pointer.as_deref(), Some(FIRST_POINTER));
+        }
+        let stage = read(home)
+            .unwrap()
+            .unwrap()
+            .operation()
+            .unwrap()
+            .stage
+            .path(home);
+        drop(actor);
+        let mut next = Admission::open(home, None).unwrap();
+        assert!(pointer_bytes(home).unwrap().is_none());
+        assert!(!stage.exists(), "settlement retires only the old attempt");
+        assert_eq!(
+            next.bind_bootstrap::<()>(
+                || panic!("new Nightly must not be selected"),
+                |_| panic!("existing reference is not being created")
+            )
+            .unwrap(),
+            proven
+        );
+        assert_eq!(
+            next.prove_bootstrap(|_| panic!("new SDK proof must not be fetched"))
+                .unwrap(),
+            proven
+        );
+    }
+    let mut owner = Admission::open(home, None).unwrap();
+    owner
+        .resume_bootstrap()
+        .unwrap()
+        .seal(FIRST_POINTER.to_vec(), &[])
+        .unwrap()
+        .publish(|| Ok(()))
+        .unwrap();
+    let refs = references(home).unwrap();
+    assert!(refs.targets.is_empty() && refs.before.is_none() && refs.after.is_none());
+    assert_eq!(refs.pointer.as_deref(), Some(FIRST_POINTER));
+    assert!(!home.join(RECORD).exists());
+    assert!(owner
+        .bind_bootstrap(|| panic!("a committed profile cannot rebind"), |_| Ok(()))
+        .is_err());
+}
+
+#[test]
+fn reference_snapshot_reads_exact_old_and_new_pointers_and_refuses_unowned_bytes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let mut owner = Admission::open(home, None).unwrap();
+    let staged = seal(&mut owner, false);
+    let refs = references(home).unwrap();
+    assert_eq!(refs.before.as_deref(), Some(OLD));
+    assert_eq!(refs.after.as_deref(), Some(INSTALLED));
+    assert_eq!(refs.pointer.as_deref(), Some(OLD));
+    fs::write(home.join(POINTER), SWITCHED).unwrap();
+    assert!(references(home).is_err());
+    fs::write(home.join(POINTER), OLD).unwrap();
+    drop(staged);
+    drop(owner);
+    drop(Admission::open(home, None).unwrap());
+    fs::write(home.join(RECORD), b"{\"version\":1}").unwrap();
+    assert!(references(home).is_err());
+}
+
 #[test]
 fn refused_cutoff_keeps_the_original_bytes_and_success_uses_the_sealed_pointer() {
     let tmp = tempfile::tempdir().unwrap();
@@ -99,7 +218,7 @@ fn no_space_at_marker_reverses_pointer_and_files_using_existing_allocations() {
     let mut admission = Admission::open(home, None).unwrap();
     let sealed = seal(&mut admission, false);
     let disk = read(home).unwrap().unwrap();
-    let stage = disk.stage(home);
+    let stage = disk.operation().unwrap().stage.path(home);
     assert_eq!(fs::read(stage.join("pointer-old")).unwrap(), OLD);
     let progress_file = stage.join("progress");
     let bytes_reserved = fs::metadata(&progress_file).unwrap().len();
@@ -147,7 +266,7 @@ fn unowned_bytes_and_unknown_records_are_never_replaced_or_removed() {
         .is_err());
     assert_eq!(fs::read(home.join(PACK)).unwrap(), package("9.0.0"));
     assert_eq!(fs::read(home.join(POINTER)).unwrap(), OLD);
-    let staging = admission.reserve(Intent::Install).unwrap();
+    let staging = admission.reserve(Intent::Install, BTreeSet::new()).unwrap();
     let outside = home.join("outside");
     fs::write(&outside, b"keep").unwrap();
     assert!(staging
@@ -217,9 +336,32 @@ fn journal_actor() {
     }
     let mut owner = Admission::claim(&home, None).unwrap();
     match action.as_str() {
+        "bootstrap:prepare" | "bootstrap:pointer-renamed" => {
+            let staging = owner.resume_bootstrap().unwrap();
+            if action.ends_with("prepare") {
+                fs::write(staging.path().join("incomplete-worker-output"), b"private").unwrap();
+                pause_here();
+                return;
+            }
+            let sealed = staging.seal(FIRST_POINTER.to_vec(), &[]).unwrap();
+            sealed
+                .0
+                .record
+                .publish_at(
+                    &home,
+                    || Ok(()),
+                    |_, boundary| {
+                        if boundary == Boundary::Renamed {
+                            pause_here();
+                        }
+                        Ok(())
+                    },
+                )
+                .unwrap();
+        }
         "undo-pointer" | "undo-list" | "retired" => {
             let disk = read(&home).unwrap().unwrap();
-            let last = disk.operation.ready.as_ref().unwrap().steps() - 1;
+            let last = disk.operation().unwrap().ready.as_ref().unwrap().steps() - 1;
             disk.complete(
                 &home,
                 |i| {
@@ -242,7 +384,7 @@ fn journal_actor() {
             let switching = intent == "switch";
             let sealed = seal(&mut owner, switching);
             let record = &sealed.0.record;
-            let steps = record.operation.ready.as_ref().unwrap().steps();
+            let steps = record.operation().unwrap().ready.as_ref().unwrap().steps();
             let index = usize::from(switching);
             let stop = match stage {
                 "directory-before" => (0, Boundary::BeforeRename),
@@ -362,7 +504,13 @@ fn a_killed_retirement_reclaims_its_exact_tree_but_never_a_loose_one() {
     fs::create_dir(&unrelated).unwrap();
     fs::write(unrelated.join("keep"), b"not part of the journal").unwrap();
     drop(pause_actor(home, "install:marker-durable", |_| {}));
-    let stage = read(home).unwrap().unwrap().stage(home);
+    let stage = read(home)
+        .unwrap()
+        .unwrap()
+        .operation()
+        .unwrap()
+        .stage
+        .path(home);
     let cleanup = pause_actor(home, "retired", |_| {});
     assert!(stage.is_dir());
     assert!(home.join(RETIRED).exists());

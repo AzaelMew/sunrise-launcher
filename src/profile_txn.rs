@@ -20,6 +20,7 @@ const RETIRED: &str = "mod-browser/install-txn.retired.json";
 const POINTER: &str = "mod-browser/active-build.json";
 const STAGE_PREFIX: &str = ".install-txn-";
 const VERSION: u64 = 2;
+const BOOTSTRAP_VERSION: u64 = 1;
 
 /// Moving a managed profile can change its path but never the filesystem identity of a
 /// directory referenced by an in-flight transaction.
@@ -81,6 +82,8 @@ impl Drop for Admission {
 }
 
 impl Admission {
+    /// Recovery can retire or restore references. Managed callers fence cache deletion
+    /// around admission; no cache guard is held by this lease while a worker runs.
     pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
         let lease = Self::claim(home, external_owner)?;
         lease.recover()?;
@@ -151,14 +154,80 @@ impl Admission {
         &self.home
     }
 
-    /// Build privately in the returned directory. It is reserved durably before a worker sees it.
-    /// Only the owning operation uses that path; worker-owned paths must be idle before seal.
-    pub fn reserve(&mut self, intent: Intent) -> Result<Staging<'_>, String> {
-        #[cfg(unix)]
-        if *self.transferred.get_mut() {
+    /// Reserve the candidate artifacts before exposing them. Hold the reference guard
+    /// while creating the reservation, not while compiling the private candidate.
+    pub fn reserve(
+        &mut self,
+        intent: Intent,
+        targets: BTreeSet<String>,
+    ) -> Result<Staging<'_>, String> {
+        if read(&self.home)?.is_some() {
             return Err(unsettled());
         }
-        if read(&self.home)?.is_some() || Identity::of(&self.home)? != self.identity {
+        self.stage(Record::new(self.identity, intent, targets, None))
+    }
+
+    /// Resolve first Play once. A pending binding, with its exact inputs and proof, wins
+    /// over a subsequent change to the release feed or profile defaults.
+    pub fn bind_bootstrap<G>(
+        &mut self,
+        choose: impl FnOnce() -> Result<Bootstrap, String>,
+        authorize: impl FnOnce(&Bootstrap) -> Result<G, String>,
+    ) -> Result<Bootstrap, String> {
+        if let Some(record) = read(&self.home)? {
+            return record.pending_bootstrap().cloned();
+        }
+        if pointer_bytes(&self.home)?.is_some() {
+            return Err(unsettled());
+        }
+        let binding = choose()?;
+        // Acquire cache publication exclusion only after resolving the candidate. The
+        // caller rechecks that exact candidate under its guard before it becomes a reference.
+        let _reference_guard = authorize(&binding)?;
+        let record = Record::new(
+            self.identity,
+            Intent::Install,
+            binding.targets(),
+            Some(binding.clone()),
+        );
+        record.verify_home(&self.home)?;
+        write(&self.home, &record)?;
+        Ok(binding)
+    }
+
+    /// Persist the accepted archive proof before consuming archive bytes, without rebinding.
+    /// Existing proofs are returned verbatim; the caller must decode and verify their schema.
+    pub fn prove_bootstrap(
+        &mut self,
+        prove: impl FnOnce(&Bootstrap) -> Result<serde_json::Value, String>,
+    ) -> Result<Bootstrap, String> {
+        let mut record = read(&self.home)?.ok_or_else(unsettled)?;
+        let binding = record.pending_bootstrap()?.clone();
+        if binding.proof.is_some() {
+            return Ok(binding);
+        }
+        let proof = prove(&binding)?;
+        let binding = Bootstrap {
+            proof: Some(proof),
+            ..binding
+        };
+        record.bootstrap = Some(binding.clone());
+        write(&self.home, &record)?;
+        Ok(binding)
+    }
+
+    /// Stage an attempt on the same binding. Reopening after a failed prepare or publish
+    /// cannot silently select a different tag, variant, profile identity, inputs or proof.
+    pub fn resume_bootstrap(&mut self) -> Result<Staging<'_>, String> {
+        let record = read(&self.home)?.ok_or_else(unsettled)?;
+        record.pending_bootstrap()?;
+        record.clean_binding_stage(&self.home)?;
+        self.stage(record)
+    }
+
+    fn stage(&mut self, mut record: Record) -> Result<Staging<'_>, String> {
+        #[cfg(unix)]
+        if *self.transferred.get_mut() {
             return Err(unsettled());
         }
         clean_retired(&self.home)?;
@@ -169,28 +238,30 @@ impl Admission {
             .rand_bytes(24)
             .tempdir_in(&root)
             .map_err(|e| at(&root, e))?;
-        let operation = Operation {
-            home: self.identity,
-            stage_id: Identity::of(stage.path())?,
-            stage_name: stage
-                .path()
-                .file_name()
-                .and_then(std::ffi::OsStr::to_str)
-                .ok_or_else(unsettled)?
-                .into(),
-            before: Image::at(&self.home.join(POINTER))?,
+        let pointer = self.home.join(POINTER);
+        record.operation = Some(Operation {
+            stage: Stage {
+                id: Identity::of(stage.path())?,
+                name: stage
+                    .path()
+                    .file_name()
+                    .and_then(std::ffi::OsStr::to_str)
+                    .ok_or_else(unsettled)?
+                    .to_owned(),
+            },
+            before: Image::at(&pointer)?,
+            previous_pointer: pointer_bytes(&self.home)?,
             ready: None,
-        };
-        if operation.home.volume != operation.stage_id.volume {
-            return Err(unsettled());
+        });
+        record.retirement = None;
+        record.verify_home(&self.home)?;
+        if let Some(binding) = record.undo_binding()? {
+            let saved = stage.path().join("binding-after-undo");
+            let bytes = serde_json::to_vec(&binding).map_err(|e| at(&saved, e))?;
+            durable::replace(stage.path(), &saved, &bytes).map_err(|e| at(&saved, e))?;
         }
         // A reported sync failure may still leave the record visible. Keep its directory.
         let path = stage.keep();
-        let record = Record {
-            version: VERSION,
-            intent,
-            operation,
-        };
         write(&self.home, &record)?;
         Ok(Staging {
             lease: self,
@@ -241,21 +312,105 @@ impl Image {
     }
 }
 
+/// First Play's durable binding, stored in the same journal as its pointer publish.
+/// Selection and proof are versioned 0c payloads; the journal owns the stable tags and
+/// frozen identities, while the artifact boundary validates those concrete payloads.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bootstrap {
+    version: u64,
+    pub base: String,
+    pub image: String,
+    pub profile: [u8; 16],
+    pub inputs: [u8; 32],
+    pub selection: serde_json::Value,
+    pub proof: Option<serde_json::Value>,
+}
+
+impl Bootstrap {
+    pub fn new(
+        base: String,
+        image: String,
+        profile: [u8; 16],
+        inputs: [u8; 32],
+        selection: serde_json::Value,
+    ) -> Self {
+        Self {
+            version: BOOTSTRAP_VERSION,
+            base,
+            image,
+            profile,
+            inputs,
+            selection,
+            proof: None,
+        }
+    }
+
+    fn targets(&self) -> BTreeSet<String> {
+        BTreeSet::from([self.base.clone(), self.image.clone()])
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {
     version: u64,
+    home: Identity,
     intent: Intent,
-    operation: Operation,
+    targets: BTreeSet<String>,
+    bootstrap: Option<Bootstrap>,
+    operation: Option<Operation>,
+    retirement: Option<Stage>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Stage {
+    id: Identity,
+    name: String,
+}
+
+impl Stage {
+    fn path(&self, home: &Path) -> PathBuf {
+        home.join("mod-browser").join(&self.name)
+    }
+
+    fn validate(&self, owner: Identity) -> Result<(), String> {
+        if owner.volume == self.id.volume
+            && self.name.strip_prefix(STAGE_PREFIX).is_some_and(|tail| {
+                !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_alphanumeric())
+            })
+        {
+            Ok(())
+        } else {
+            Err(unsettled())
+        }
+    }
+
+    fn verify(&self, home: &Path) -> Result<(), String> {
+        if Identity::of(&self.path(home))? == self.id {
+            Ok(())
+        } else {
+            Err(unsettled())
+        }
+    }
+
+    fn clean(&self, home: &Path) -> Result<(), String> {
+        let path = self.path(home);
+        if !absent(&path)? {
+            self.verify(home)?;
+            fs::remove_dir_all(&path).map_err(|e| at(&path, e))?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Operation {
-    home: Identity,
-    stage_id: Identity,
-    stage_name: String,
+    stage: Stage,
     before: Image,
+    previous_pointer: Option<Vec<u8>>,
     ready: Option<Ready>,
 }
 
@@ -264,8 +419,6 @@ struct Operation {
 struct Ready {
     directories: BTreeMap<PathBuf, Identity>,
     files: Vec<Step>,
-    // Keep immutable exact pointer bytes (not just a tag or a digest) for reference readers.
-    previous_pointer: Option<Vec<u8>>,
     next_pointer: Vec<u8>,
 }
 
@@ -298,19 +451,12 @@ impl Ready {
         if self
             .directories
             .iter()
-            .any(|(name, id)| !mod_root(name) || id.volume != op.home.volume)
+            .any(|(name, id)| !mod_root(name) || id.volume != op.stage.id.volume)
             || self.files.iter().any(|step| {
                 !valid_destination(&step.name)
                     || !names.insert(destination_key(&step.name))
-                    || step.parent.volume != op.home.volume
+                    || step.parent.volume != op.stage.id.volume
             })
-            || self
-                .previous_pointer
-                .as_ref()
-                .map_or(Image::Missing, |bytes| {
-                    Image::Sha256(Sha256::digest(bytes).into())
-                })
-                != op.before
             || self.next_pointer.is_empty()
         {
             return Err(unsettled());
@@ -347,23 +493,70 @@ fn read_at(home: &Path, name: &str) -> Result<Option<Record>, String> {
 
 fn read(home: &Path) -> Result<Option<Record>, String> {
     let record = read_at(home, RECORD)?;
-    if let Some(record) = &record {
-        record.verify_stage(home)?;
+    if let Some(operation) = record.as_ref().and_then(|record| record.operation.as_ref()) {
+        operation.stage.verify(home)?;
     }
     Ok(record)
 }
 
 fn clean_retired(home: &Path) -> Result<(), String> {
     if let Some(record) = read_at(home, RETIRED)? {
-        let stage = record.stage(home);
-        if !absent(&stage)? {
-            record.verify_stage(home)?;
-            fs::remove_dir_all(&stage).map_err(|e| at(&stage, e))?;
-        }
+        record.operation()?.stage.clean(home)?;
         let marker = home.join(RETIRED);
         durable::retire(&marker).map_err(|e| at(&marker, e))?;
     }
     Ok(())
+}
+
+/// Read reference evidence under the caller's cache-reference guard, without acquiring
+/// profile admission. Journal shape, staging identity and pointer file kinds are checked by
+/// the same parser used for recovery. 0c parses the exact pointer bytes as its `Active` type.
+pub struct References {
+    pub targets: BTreeSet<String>,
+    pub before: Option<Vec<u8>>,
+    pub after: Option<Vec<u8>>,
+    pub pointer: Option<Vec<u8>>,
+}
+
+pub fn references(home: &Path) -> Result<References, String> {
+    let active = read(home)?;
+    // A retirement rename can be visible before its durability barrier. Conservatively
+    // keep these references until admission can enforce the barrier and remove the record.
+    let retired = read_at(home, RETIRED)?;
+    if active.is_some() && retired.is_some() {
+        return Err(unsettled());
+    }
+    let mut refs = References {
+        targets: BTreeSet::new(),
+        before: None,
+        after: None,
+        pointer: pointer_bytes(home)?,
+    };
+    if let Some(record) = active.or(retired) {
+        refs.targets = record.targets;
+        if let Some(operation) = record.operation {
+            refs.before = operation.previous_pointer;
+            refs.after = operation.ready.map(|ready| ready.next_pointer);
+            if refs.pointer != refs.before && (refs.after.is_none() || refs.pointer != refs.after) {
+                return Err(unsettled());
+            }
+        } else if refs.pointer.is_some() {
+            return Err(unsettled());
+        }
+    }
+    Ok(refs)
+}
+
+fn pointer_bytes(home: &Path) -> Result<Option<Vec<u8>>, String> {
+    record_dir(home)?;
+    let file = home.join(POINTER);
+    match fs::symlink_metadata(&file) {
+        Ok(meta) if meta.is_file() && regular(&meta) => {
+            fs::read(&file).map(Some).map_err(|e| at(&file, e))
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        _ => Err(at(&file, unsettled())),
+    }
 }
 
 fn write(home: &Path, record: &Record) -> Result<(), String> {
@@ -403,8 +596,8 @@ impl<'a> Staging<'a> {
         &self.path
     }
 
-    /// Bind exact preimages and candidates while only private files exist. A `None` source
-    /// removes a file. Accept only launcher-managed package/list/sidecar names.
+    /// Bind exact preimages and candidates under the caller's reference guard, while only
+    /// private files exist. A `None` source removes a file. Accept only launcher-managed names.
     pub fn seal(
         mut self,
         pointer_bytes: Vec<u8>,
@@ -413,25 +606,19 @@ impl<'a> Staging<'a> {
         let home = self.lease.home();
         let stage = &self.path;
         self.record.verify_home(home)?;
-        self.record.verify_stage(home)?;
+        self.record.operation()?.stage.verify(home)?;
         let pointer = home.join(POINTER);
-        let before = self.record.operation.before;
+        let before = self.record.operation()?.before;
         if Image::at(&pointer)? != before {
             return Err(at(&pointer, unsettled()));
         }
         let older = stage.join("pointer-old");
         snapshot(&pointer, &older, before)?;
-        let previous_pointer = if before == Image::Missing {
-            None
-        } else {
-            Some(fs::read(&older).map_err(|e| at(&older, e))?)
-        };
         let newer = stage.join("pointer-new");
         durable::replace(stage, &newer, &pointer_bytes).map_err(|e| at(&newer, e))?;
         let mut plan = Ready {
             directories: BTreeMap::new(),
             files: Vec::new(),
-            previous_pointer,
             next_pointer: pointer_bytes,
         };
         for (i, (name, source)) in files.iter().enumerate() {
@@ -489,8 +676,8 @@ impl<'a> Staging<'a> {
                 after,
             });
         }
-        plan.validate(&self.record.operation)?;
-        self.record.operation.ready = Some(plan);
+        plan.validate(self.record.operation()?)?;
+        self.record.operation.as_mut().ok_or_else(unsettled)?.ready = Some(plan);
         progress::Slots::create(stage, self.record.digest()?).map_err(|e| at(stage, e))?;
         write(home, &self.record)?;
         Ok(Sealed(self))
@@ -575,30 +762,112 @@ enum Boundary {
 }
 
 impl Record {
-    fn stage(&self, home: &Path) -> PathBuf {
-        home.join("mod-browser").join(&self.operation.stage_name)
+    fn new(
+        home: Identity,
+        intent: Intent,
+        targets: BTreeSet<String>,
+        bootstrap: Option<Bootstrap>,
+    ) -> Self {
+        Self {
+            version: VERSION,
+            home,
+            intent,
+            targets,
+            bootstrap,
+            operation: None,
+            retirement: None,
+        }
     }
 
-    fn verify_home(&self, home: &Path) -> Result<(), String> {
-        let op = &self.operation;
-        if !op
-            .stage_name
-            .strip_prefix(STAGE_PREFIX)
-            .is_some_and(|tail| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_alphanumeric()))
-            || Identity::of(home)? != op.home
-            || op.home.volume != op.stage_id.volume
-        {
+    fn operation(&self) -> Result<&Operation, String> {
+        self.operation.as_ref().ok_or_else(unsettled)
+    }
+
+    fn pending_bootstrap(&self) -> Result<&Bootstrap, String> {
+        if self.operation.is_some() {
             return Err(unsettled());
         }
-        if let Some(plan) = &op.ready {
-            plan.validate(op)?;
+        self.bootstrap.as_ref().ok_or_else(unsettled)
+    }
+
+    fn undo_binding(&self) -> Result<Option<Self>, String> {
+        self.bootstrap
+            .as_ref()
+            .map(|bootstrap| {
+                let mut pending = Self::new(
+                    self.home,
+                    Intent::Install,
+                    self.targets.clone(),
+                    Some(bootstrap.clone()),
+                );
+                pending.retirement = Some(self.operation()?.stage.clone());
+                Ok(pending)
+            })
+            .transpose()
+    }
+
+    fn preallocated_binding(stage: &Path, binding: &Self) -> Result<PathBuf, String> {
+        let saved = stage.join("binding-after-undo");
+        if Image::at(&saved)? != Image::Sha256(binding.digest()?) {
+            return Err(at(&saved, unsettled()));
+        }
+        Ok(saved)
+    }
+
+    fn clean_binding_stage(&self, home: &Path) -> Result<(), String> {
+        if let Some(stage) = &self.retirement {
+            let record = home.join(RECORD);
+            durable::sync_restored(&record, &record, false).map_err(|e| at(&record, e))?;
+            stage.clean(home)?;
         }
         Ok(())
     }
 
-    fn verify_stage(&self, home: &Path) -> Result<(), String> {
-        if Identity::of(&self.stage(home))? != self.operation.stage_id {
+    fn verify_home(&self, home: &Path) -> Result<(), String> {
+        if self.home != Identity::of(home)?
+            || (self.bootstrap.is_none() && self.operation.is_none())
+            || (self.operation.is_some() && self.retirement.is_some())
+            || self.targets.iter().any(|tag| {
+                !tag.as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                    || tag.ends_with('.')
+                    || !tag
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.+@".contains(&b))
+            })
+        {
             return Err(unsettled());
+        }
+        if let Some(binding) = &self.bootstrap {
+            if !matches!(self.intent, Intent::Install)
+                || binding.version != BOOTSTRAP_VERSION
+                || binding.targets() != self.targets
+                || self
+                    .operation
+                    .as_ref()
+                    .is_some_and(|op| op.before != Image::Missing)
+            {
+                return Err(unsettled());
+            }
+        }
+        if let Some(stage) = &self.retirement {
+            stage.validate(self.home)?;
+        }
+        if let Some(op) = &self.operation {
+            op.stage.validate(self.home)?;
+            let before = op
+                .previous_pointer
+                .as_ref()
+                .map_or(Image::Missing, |bytes| {
+                    Image::Sha256(Sha256::digest(bytes).into())
+                });
+            if before != op.before {
+                return Err(unsettled());
+            }
+            if let Some(plan) = &op.ready {
+                plan.validate(op)?;
+            }
         }
         Ok(())
     }
@@ -614,10 +883,13 @@ impl Record {
         mut boundary: impl FnMut(usize, Boundary) -> Result<(), String>,
     ) -> Result<(), String> {
         self.verify_home(home)?;
-        self.verify_stage(home)?;
-        let stage = self.stage(home);
-        let op = &self.operation;
+        let op = self.operation()?;
+        op.stage.verify(home)?;
+        let stage = op.stage.path(home);
         let plan = op.ready.as_ref().ok_or_else(unsettled)?;
+        if let Some(binding) = self.undo_binding()? {
+            Self::preallocated_binding(&stage, &binding)?;
+        }
         let pointer = home.join(POINTER);
         let next = Image::Sha256(Sha256::digest(&plan.next_pointer).into());
         if Image::at(&pointer)? != op.before
@@ -713,10 +985,16 @@ impl Record {
     ) -> Result<bool, String> {
         use progress::{Phase, Slots};
         self.verify_home(home)?;
-        self.verify_stage(home)?;
-        let stage = self.stage(home);
         let pointer = home.join(POINTER);
-        let op = &self.operation;
+        let Some(op) = &self.operation else {
+            if !absent(&pointer)? {
+                return Err(unsettled());
+            }
+            self.clean_binding_stage(home)?;
+            return Ok(false);
+        };
+        op.stage.verify(home)?;
+        let stage = op.stage.path(home);
         let mut committed = false;
         if let Some(plan) = &op.ready {
             let next = Image::Sha256(Sha256::digest(&plan.next_pointer).into());
@@ -804,6 +1082,15 @@ impl Record {
             return Err(at(&pointer, unsettled()));
         }
         let file = home.join(RECORD);
+        if !committed {
+            if let Some(binding) = self.undo_binding()? {
+                let saved = Self::preallocated_binding(&stage, &binding)?;
+                durable::restore_move(&saved, &file).map_err(|e| at(&saved, e))?;
+                retired();
+                let _ = binding.clean_binding_stage(home);
+                return Ok(false);
+            }
+        }
         let retired_file = home.join(RETIRED);
         if !absent(&retired_file)? {
             return Err(at(&retired_file, unsettled()));
