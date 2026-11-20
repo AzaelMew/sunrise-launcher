@@ -1417,7 +1417,7 @@ fn installs_checked_turns_on_and_removes() {
 }
 
 #[test]
-fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
+fn managed_play_checks_actual_packages_and_never_writes_the_enable_list() {
     let root = tempfile::tempdir().unwrap();
     let home = root.path();
     let cache = home.join(CACHE);
@@ -1435,9 +1435,13 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
     assert!(mod_list::is_enabled(home, "coords_hud"));
 
     let mut index = Index::parse(&text).unwrap();
+    let mut installed = installed::Installed::load(home);
+    let pkg = installed.entries[0].path(home).unwrap();
+    installed.entries[0].checksum = format!("SHA-256:{}", "e".repeat(64));
+    installed.save(home).unwrap();
     index.revoked.push(index::Revoked {
         id: "coords_hud".into(),
-        sha256: None,
+        sha256: Some(index::sha256_file(&pkg).unwrap()),
         reason: "Test.".into(),
         date: String::new(),
     });
@@ -1452,11 +1456,40 @@ fn registry_play_warns_for_disk_cache_and_turns_off_only_from_a_live_index() {
 
     let live = load(Ok((index, text)), &cache, false).unwrap();
     assert!(live.fetched().is_some());
-    assert_eq!(
-        check_before_play(home, &[], || live.fetched()).unwrap(),
-        ["Coordinates HUD was taken down and is off: Test."]
-    );
-    assert!(!mod_list::is_enabled(home, "coords_hud"));
+    let list = home.join("sunrise-mods.txt");
+    let before = fs::read(&list).unwrap();
+    let error = check_before_play(home, &[], || live.fetched()).unwrap_err();
+    assert!(error.contains("was taken down: Test."), "{error}");
+    assert_eq!(fs::read(&list).unwrap(), before);
+    assert!(mod_list::is_enabled(home, "coords_hud"));
+    mod_list::set_enabled(home, "coords_hud", false).unwrap();
+    assert!(check_before_play(home, &[], || live.fetched())
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn managed_play_refuses_alternate_profile_resources_and_server_args() {
+    let home = tempfile::tempdir().unwrap();
+    let resources = tempfile::tempdir().unwrap();
+    let other = tempfile::tempdir().unwrap();
+    let new = || {
+        let mut cmd = std::process::Command::new("sunrise-client");
+        cmd.current_dir(home.path())
+            .env("SUNRISE_HOME", home.path());
+        cmd.arg("--resources").arg(resources.path());
+        cmd
+    };
+    let check =
+        |cmd: &std::process::Command| verify_launch_arguments(cmd, home.path(), resources.path());
+    assert!(check(&new()).is_ok());
+    assert!(check(new().arg("--resources").arg(other.path())).is_err());
+    assert!(check(new().arg("--resources").arg(resources.path())).is_err());
+    assert!(check(new().arg("--game-dir").arg(other.path())).is_err());
+    assert!(check(new().env("SUNRISE_HOME", other.path())).is_err());
+    assert!(check(new().arg("--home").arg(other.path())).is_err());
+    assert!(check(new().arg("--dev-mod").arg(other.path())).is_err());
+    assert!(check(new().arg("--dedicated")).is_err());
 }
 
 #[test]

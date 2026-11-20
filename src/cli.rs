@@ -1514,9 +1514,12 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             let started = std::time::Instant::now();
             let vars = instance.vars();
             cmd.envs(vars.iter().map(|(k, v)| (k, v)));
-            for notice in
-                sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &instance.launch)?
-            {
+            for notice in sunrise_launcher::browser::sunrise::before_play(
+                &mut cmd,
+                &tag,
+                &instance.launch,
+                &owner,
+            )? {
                 eprintln!("{notice}");
             }
             sunrise_launcher::jars::prepare_launch(
@@ -3164,7 +3167,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
             let mut cmd = backend::client(&tag)?;
             sunrise::pack::apply(&mut cmd, &work)?;
             let launch = Default::default();
-            for notice in sunrise::before_play(&mut cmd, &tag, &launch)? {
+            for notice in sunrise::before_play(&mut cmd, &tag, &launch, &owner)? {
                 eprintln!("{notice}");
             }
             sunrise_launcher::jars::prepare_launch(

@@ -475,7 +475,14 @@ pub(super) fn verify_included(base: &str, image: &str, home: &Path) -> Result<()
 }
 
 pub(super) fn verify_packages(home: &Path) -> Result<(), String> {
+    scan_packages(home).map(drop)
+}
+
+pub(in crate::browser::sunrise) fn scan_packages(
+    home: &Path,
+) -> Result<Vec<(sunrise_launcher_smod::manifest::Manifest, PathBuf)>, String> {
     use sunrise_launcher_smod::{manifest, mod_list};
+    let mut packages = Vec::new();
     let mut ids = std::collections::HashSet::new();
     for directory in [mod_list::DIR, mod_list::NATIVE_DIR] {
         let root = home.join(directory);
@@ -494,13 +501,14 @@ pub(super) fn verify_packages(home: &Path) -> Result<(), String> {
             let package =
                 manifest::Package::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             if (directory == mod_list::NATIVE_DIR) != package.manifest.native.is_some()
-                || !ids.insert(package.manifest.id)
+                || !ids.insert(package.manifest.id.clone())
             {
                 return Err(unsettled());
             }
+            packages.push((package.manifest, path));
         }
     }
-    Ok(())
+    Ok(packages)
 }
 
 pub(super) fn validate_tag(tag: &str) -> Result<(), String> {

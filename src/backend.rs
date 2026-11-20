@@ -4151,13 +4151,10 @@ pub fn spawn_attached(
 fn native_client_handoff(
     profile: Option<&crate::browser::sunrise::txn::Lease>,
 ) -> Result<Option<crate::local_json::LockedJson>, String> {
-    let Some(active) = profile
-        .map(crate::browser::sunrise::txn::Lease::active_build)
-        .transpose()?
-        .flatten()
-    else {
+    let Some(owner) = profile else {
         return Ok(None);
     };
+    let active = owner.verify_launch()?;
     crate::native_status::publication_guard(active.executable(), None)
 }
 

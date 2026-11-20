@@ -1664,22 +1664,69 @@ pub fn before_play(
     cmd: &mut std::process::Command,
     tag: &str,
     launch: &crate::launch::Launch,
+    owner: &txn::Lease,
 ) -> Result<Vec<String>, String> {
-    use sunrise_launcher_smod::selection::LaunchArguments;
-
     crate::launch::apply_environment(cmd, launch);
-    let args = LaunchArguments::for_command(cmd).map_err(|e| e.to_string())?;
-    if args.is_information_request() {
-        return Ok(Vec::new());
+    let Some(active) = owner.active_build()? else {
+        return Err(tr("This profile has no committed build to start.").into());
+    };
+    if active.executable() != tag {
+        return Err(tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
     }
+    verify_launch_arguments(cmd, owner.home(), &crate::backend::resources(tag))?;
     let included = crate::native_status::included(tag)?;
-    // The mod list lives with the game’s packages, not the separate cache/data home.
-    let notices = check_before_play(&args.context.game_dir, &included, || {
+    check_before_play(owner.home(), &included, || {
         index().ok()?;
         fetched_index()
-    })?;
-    crate::native_status::check_compiled_profile(&included, &args.context.game_dir)?;
-    Ok(notices)
+    })
+}
+
+fn verify_launch_arguments(
+    cmd: &std::process::Command,
+    home: &Path,
+    resources: &Path,
+) -> Result<(), String> {
+    use sunrise_launcher_smod::{
+        manifest::Side,
+        selection::{Argument, LaunchArguments},
+    };
+    let args = LaunchArguments::for_command(cmd).map_err(|e| e.to_string())?;
+    let cwd = cmd.get_current_dir().unwrap_or(Path::new("."));
+    let mut resource_args = args.rest.iter().filter_map(|arg| match arg {
+        Argument::Value(name, value) if name == "--resources" => Some(cwd.join(value)),
+        _ => None,
+    });
+    let actual = resource_args
+        .next()
+        .and_then(|path| path.canonicalize().ok());
+    let expected = resources.canonicalize().ok();
+    let home_matches = home.canonicalize().is_ok_and(|expected| {
+        args.context
+            .home
+            .canonicalize()
+            .is_ok_and(|path| path == expected)
+            && args
+                .context
+                .game_dir
+                .canonicalize()
+                .is_ok_and(|path| path == expected)
+    });
+    if args.installation_side() != Side::Client
+        || !args.context.dev_mods.is_empty()
+        || !home_matches
+        || actual.is_none()
+        || actual != expected
+        || resource_args.next().is_some()
+    {
+        return Err(tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn check_before_play(
@@ -1688,7 +1735,11 @@ fn check_before_play(
     load: impl FnOnce() -> Option<Arc<Index>>,
 ) -> Result<Vec<String>, String> {
     let entries = installed::Installed::load(home).entries;
-    if included.is_empty() && !entries.iter().any(|e| e.source == SourceId::Sunrise) {
+    let packages = txn::scan_packages(home)?;
+    if included.is_empty()
+        && packages.is_empty()
+        && !entries.iter().any(|e| e.source == SourceId::Sunrise)
+    {
         return Ok(Vec::new());
     }
     let Some(index) = load() else {
@@ -1696,9 +1747,33 @@ fn check_before_play(
             tr("Mods were not checked for registry takedowns.").into()
         ]);
     };
-    let lines = turn_off_revoked(&index, home)?;
-    // Switching the mod off in this profile cannot remove code from the selected binary.
-    for crate::native_status::Included { id, version, .. } in included {
+    // Reading revocations must never turn off a package in the committed profile.
+    // Identifying a file by its actual bytes also covers a game-owned update of that file.
+    for (manifest, path) in packages {
+        if !mod_list::is_enabled(home, &manifest.id) {
+            continue;
+        }
+        let hash = index::sha256_file(&path)?;
+        let project = entries
+            .iter()
+            .find(|entry| {
+                entry.source == SourceId::Sunrise && entry.path(home).as_ref() == Some(&path)
+            })
+            .map_or(manifest.id.as_str(), |entry| entry.project.as_str());
+        if let Some(revoked) = index.revoked(project, &hash) {
+            return Err(trf(
+                "{mod} was taken down: {reason} Turn it off in Mods before playing.",
+                &[("mod", &manifest.name), ("reason", &revoked.reason)],
+            ));
+        }
+    }
+    // A revocation can reach code embedded in the selected binary as well as package files.
+    for crate::native_status::Included {
+        id,
+        version,
+        sha256,
+    } in included
+    {
         let published = index
             .project(id)
             .and_then(|p| p.versions.iter().find(|v| &v.version == version));
@@ -1708,7 +1783,7 @@ fn check_before_play(
                 .flatten()
         });
         let revoked = index
-            .revoked(id, "")
+            .revoked(id, sha256)
             .or_else(|| published.and_then(|v| index.revoked(id, &v.file.sha256)))
             .or_else(|| installed_hash.and_then(|hash| index.revoked(id, hash)));
         if let Some(revoked) = revoked {
@@ -1726,7 +1801,22 @@ fn check_before_play(
             ));
         }
     }
-    Ok(lines)
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            if entry.source != SourceId::Sunrise
+                || !matches!(entry.kind, Kind::ResourcePack | Kind::Shader)
+            {
+                return None;
+            }
+            let hash = entry.checksum.strip_prefix("SHA-256:")?;
+            let revoked = index.revoked(&entry.project, hash)?;
+            Some(format!(
+                "{} was taken down: {} Remove it.",
+                entry.title, revoked.reason
+            ))
+        })
+        .collect())
 }
 
 pub mod auto;

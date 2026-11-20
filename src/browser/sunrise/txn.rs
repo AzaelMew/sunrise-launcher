@@ -30,11 +30,11 @@ mod staged_install;
 mod switch;
 mod switch_record;
 pub(crate) use build::require_current_update;
-pub(super) use build::waiting_packages;
 pub use build::{
     active_stamp, displayed_image, waiting_for_update, Active, Receipt, SwitchEffects, Target,
     WaitingMod,
 };
+pub(super) use build::{scan_packages, waiting_packages};
 pub(crate) use durable::replace as replace_local_record;
 pub(super) use staged_install::{
     detach_private_profile, expose_private_profile, seal_private_profile, StagedInstall,
@@ -436,6 +436,20 @@ impl Lease {
         binding.validate()?;
         write(&self.home, &record)?;
         Ok(proof)
+    }
+
+    /// Verify the durable generation and its input bytes at the last owned spawn boundary.
+    pub(crate) fn verify_launch(&self) -> Result<Active, String> {
+        if read(&self.home)?.is_some() {
+            return Err(unsettled());
+        }
+        let active = self.active_build()?.ok_or_else(unsettled)?;
+        active.verify_artifacts()?;
+        if active.inputs != build::inputs(&self.home)? {
+            return Err(unsettled());
+        }
+        build::verify_included(active.base(), active.executable(), &self.home)?;
+        Ok(active)
     }
 
     /// Verify the actual set; an old browser checksum is not evidence that the game failed

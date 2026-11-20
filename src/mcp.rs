@@ -117,8 +117,9 @@ impl Session {
                     cmd.args(extra.iter().filter_map(Value::as_str));
                 }
                 let launch = Default::default();
-                let notices =
-                    sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
+                let notices = sunrise_launcher::browser::sunrise::before_play(
+                    &mut cmd, &tag, &launch, &owner,
+                )?;
                 jars::prepare_launch(&mut cmd, &launch, Permission::headless(allow_jar_downloads))
                     .map_err(|error| error.to_string())?;
                 let client = Logged::start(Job::Client, cmd, Some(&owner))?;
