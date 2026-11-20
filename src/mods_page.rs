@@ -130,7 +130,7 @@ pub(super) enum Event {
     Done(Result<Finished, installed::InstallError>),
     /// The install found native code the plan didn't know of before the player had allowed
     /// it: the question to ask, whose answer starts the same install again.
-    NeedsConsent(Box<PendingConsent>),
+    NeedsConsent(Box<PendingConsent>, Box<queue::Request>),
     /// The native mods an install put in before it failed: a build takes them up.
     Brought(Vec<String>, Vec<undo::Touched>),
     /// What the automatic updates did (`sunrise::auto`).
@@ -170,6 +170,9 @@ pub(super) struct Mods {
     queue: queue::Queue,
     /// The start's automatic update runs: Play and installs wait for it.
     pub(super) updating: bool,
+    /// The install that asked the native-code question, whole (its profile, what it replaces,
+    /// its collection): the answer starts it again, and nothing behind it starts meanwhile.
+    pub(super) consent_request: Option<queue::Request>,
     /// A build switch whose mods are being moved first: the profile, and the pin it will get.
     pub(super) switching: Option<(String, Option<String>, instances::Channel)>,
     /// The profile the install that runs was asked for.
@@ -322,6 +325,7 @@ impl Mods {
             running: None,
             updating: false,
             switching: None,
+            consent_request: None,
             building: Vec::new(),
             undo: Vec::new(),
             world_ask: None,
@@ -367,9 +371,12 @@ impl Launcher {
                         busy.2 = f;
                     }
                 }
-                Event::NeedsConsent(ask) => {
+                Event::NeedsConsent(ask, request) => {
                     m.busy = None;
                     m.running = None;
+                    // The exact request waits, whole: the answer starts it again, and the
+                    // queue behind it does not move until then (`consent_request`).
+                    m.consent_request = Some(*request);
                     self.pending_consent = Some(*ask);
                     self.content_scroll
                         .handle
@@ -492,11 +499,16 @@ impl Launcher {
             .selected_instance()
             .map(|i| i.id.clone())
             .unwrap_or_default();
+        // A question that is about to start an install again holds the queue; one that was
+        // closed or left (another profile picked) lets go of its request.
+        if self.pending_consent.is_none() {
+            self.mods.consent_request = None;
+        }
         let step = self.mods.queue.next(
             &selected,
             self.mods.busy.is_some(),
             self.native_step.is_some(),
-            locked,
+            locked || self.mods.consent_request.is_some(),
         );
         changed |= step.is_some();
         match step {
@@ -629,6 +641,14 @@ impl Launcher {
         self.submit_install(request);
     }
 
+    /// The native-code question was accepted: the install it interrupted starts again, with its
+    /// own profile, approvals and mods, behind what already waits.
+    pub(crate) fn resume_install(&mut self) {
+        if let Some(request) = self.mods.consent_request.take() {
+            self.submit_install(request);
+        }
+    }
+
     /// The profile an install asked for now is bound to.
     fn queue_target(&self) -> queue::Target {
         queue::Target {
@@ -682,7 +702,7 @@ impl Launcher {
             self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);
         let tx = self.mods.tx.clone();
         let queue::Target { home, game, .. } = target.clone();
-        self.mods.running = Some(target);
+        self.mods.running = Some(target.clone());
         let retry = known.clone();
         let world = self.mods.world.clone().and_then(|path| {
             let (_, name) = self.mods.worlds.iter().find(|(p, _)| *p == path)?;
@@ -798,9 +818,21 @@ impl Launcher {
                 )))
             })();
             let _ = tx.send(match result {
-                Err(Stop::Consent) => {
-                    Event::NeedsConsent(Box::new(PendingConsent::Install(source, id, retry, None)))
-                }
+                Err(Stop::Consent) => Event::NeedsConsent(
+                    Box::new(PendingConsent::Install(
+                        source,
+                        id.clone(),
+                        retry.clone(),
+                        None,
+                    )),
+                    Box::new(queue::Request::One {
+                        target,
+                        source,
+                        id,
+                        known: retry.map(Box::new),
+                        replacing,
+                    }),
+                ),
                 Err(Stop::Failed(why)) => Event::Done(Err(why)),
                 Ok(finished) => Event::Done(Ok(finished)),
             });
@@ -1126,7 +1158,7 @@ impl Launcher {
         ));
         let tx = self.mods.tx.clone();
         let queue::Target { home, game, .. } = target.clone();
-        self.mods.running = Some(target);
+        self.mods.running = Some(target.clone());
         std::thread::spawn(move || {
             let native = std::cell::RefCell::new(Vec::new());
             let touched = std::cell::RefCell::new(Vec::new());
@@ -1192,7 +1224,10 @@ impl Launcher {
                 let _ = tx.send(Event::Brought(native.take(), touched.take()));
             }
             let _ = tx.send(if consent.get() {
-                Event::NeedsConsent(Box::new(PendingConsent::Collection(ids, shown)))
+                Event::NeedsConsent(
+                    Box::new(PendingConsent::Collection(ids.clone(), shown.clone())),
+                    Box::new(queue::Request::Many(target, ids, shown)),
+                )
             } else {
                 Event::Done(result.map_err(Into::into))
             });

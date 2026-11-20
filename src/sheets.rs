@@ -1111,6 +1111,12 @@ impl Launcher {
                     }
                     PendingConsent::Toggle(entry) => self.mods_switch(&entry),
                     PendingConsent::TurnOn(id, _) => self.turn_on_local(&id),
+                    PendingConsent::Install(..) | PendingConsent::Collection(..)
+                        if self.mods.consent_request.is_some() =>
+                    {
+                        // The install that found the native code starts again as it was.
+                        self.resume_install();
+                    }
                     PendingConsent::Install(source, id, known, _) => {
                         self.mods_install(source, id, known, None)
                     }
