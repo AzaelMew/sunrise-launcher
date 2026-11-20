@@ -97,13 +97,44 @@ pub fn install(
     side: Side,
     native_fits: impl Fn(&Project, &Version) -> bool,
 ) -> InstallPlan {
+    plan_install(index, requests, installed, game, side, native_fits, false).0
+}
+
+/// An exact operation cannot use a compatible subset, or report unexamined choices as no fit.
+#[derive(Debug)]
+pub enum WholeRefusal {
+    Inconsistent(String),
+    Unproved(String),
+}
+
+pub fn install_whole(
+    index: &Index,
+    requests: &[Request],
+    installed: &[InstalledMod],
+    game: &str,
+    side: Side,
+    native_fits: impl Fn(&Project, &Version) -> bool,
+) -> Result<InstallPlan, WholeRefusal> {
+    let (plan, refusal) = plan_install(index, requests, installed, game, side, native_fits, true);
+    refusal.map_or(Ok(plan), Err)
+}
+
+fn plan_install(
+    index: &Index,
+    requests: &[Request],
+    installed: &[InstalledMod],
+    game: &str,
+    side: Side,
+    native_fits: impl Fn(&Project, &Version) -> bool,
+    whole: bool,
+) -> (InstallPlan, Option<WholeRefusal>) {
     let mut plan = InstallPlan::default();
     let mut roots = Roots::new();
     for r in requests {
         roots.entry(&r.id).or_default().extend(r.version.as_deref());
     }
     if roots.is_empty() {
-        return plan;
+        return (plan, None);
     }
     for pins in roots.values_mut() {
         pins.sort_unstable();
@@ -118,8 +149,11 @@ pub fn install(
                 "{} has conflicting installed files ({} and {}): keep only one",
                 m.id, previous.version, m.version
             );
+            if whole {
+                return (plan, Some(WholeRefusal::Unproved(reason)));
+            }
             refuse(&mut plan, &roots, &reason);
-            return plan;
+            return (plan, None);
         }
     }
     let catalog = Catalog::new(index, game, side, native_fits, &present);
@@ -128,11 +162,20 @@ pub fn install(
         .filter_map(|&id| Some((id, catalog.mods.get(id)?.iter().find(|c| c.installed)?)))
         .collect();
 
-    let selected = match catalog.solve(&roots, &installed_choices) {
+    let mut budget = MAX_STATES;
+    let selected = match catalog.solve_with_budget(&roots, &installed_choices, &mut budget) {
         Ok(selected) => selected,
-        Err(reason) if roots.len() == 1 => {
-            refuse(&mut plan, &roots, &reason);
-            return plan;
+        Err(failure) if whole => {
+            let refusal = if failure.limited {
+                WholeRefusal::Unproved(failure.reason)
+            } else {
+                WholeRefusal::Inconsistent(failure.reason)
+            };
+            return (plan, Some(refusal));
+        }
+        Err(failure) if roots.len() == 1 => {
+            refuse(&mut plan, &roots, &failure.reason);
+            return (plan, None);
         }
         Err(_) => {
             let selected = catalog.solve_independent(&roots, &installed_choices, &mut plan);
@@ -207,7 +250,7 @@ pub fn install(
         .into_iter()
         .map(|(id, by)| (id, by.into_iter().collect()))
         .collect();
-    plan
+    (plan, None)
 }
 
 /// List installed mods that directly or transitively require `id`, from the indexed metadata
@@ -289,6 +332,7 @@ type Selected<'a> = BTreeMap<&'a str, &'a Candidate<'a>>;
 
 struct SolveFailure<'a> {
     reason: String,
+    limited: bool,
     // Installed artifacts whose replacement may make an explored assignment viable.
     replacements: BTreeSet<&'a str>,
 }
@@ -863,6 +907,7 @@ impl<'a> Catalog<'a> {
                 return Err(SolveFailure {
                     reason: failure
                         .unwrap_or_else(|| "no consistent versions for the requested mods".into()),
+                    limited: false,
                     replacements,
                 });
             }
@@ -872,6 +917,7 @@ impl<'a> Catalog<'a> {
                 "{}: dependency resolution limit reached; try fewer requests or pin a version",
                 roots.keys().copied().collect::<Vec<_>>().join(", ")
             ),
+            limited: true,
             replacements,
         })
     }

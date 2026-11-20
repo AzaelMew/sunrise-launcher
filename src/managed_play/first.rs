@@ -329,10 +329,7 @@ impl Profile {
                 || {
                     let choice = choose()?;
                     assert_requested(requested, &choice.base, &choice.image)?;
-                    let mut profile = [0; 16];
-                    while profile == [0; 16] {
-                        getrandom::fill(&mut profile).map_err(|e| e.to_string())?;
-                    }
+                    let profile = profile_identity()?;
                     let selection =
                         serde_json::to_value(&choice.selection).map_err(|e| e.to_string())?;
                     Ok(Bootstrap::new(
@@ -387,6 +384,14 @@ impl Profile {
     }
 }
 
+fn profile_identity() -> Result<[u8; 16], String> {
+    let mut profile = [0; 16];
+    while profile == [0; 16] {
+        getrandom::fill(&mut profile).map_err(|e| e.to_string())?;
+    }
+    Ok(profile)
+}
+
 pub(super) fn assert_requested(
     requested: Option<&str>,
     base: &str,
@@ -414,6 +419,7 @@ impl FirstAttempt<'_> {
     pub fn preferred_image(&self) -> &str {
         &self.bound.image
     }
+
     pub fn handoff(&self) -> ProfileHandoff<'_> {
         self.stage.handoff()
     }
@@ -587,6 +593,8 @@ pub(super) fn image_for_stage(
 pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
     lock_home(home).map_err(|e| at(home, e))
 }
+
+mod edits;
 
 #[cfg(test)]
 mod tests;

@@ -1002,6 +1002,8 @@ struct BuildOptions<'a> {
     /// The player chose to build without the mods that worlds were saved with.
     leave_out: bool,
     staging: Option<&'a crate::profile_txn::Staging<'a>>,
+    /// The complete candidate profile, including its staged content and selection.
+    exact_home: Option<&'a Path>,
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1315,7 +1317,9 @@ fn pipeline(
     // Native sources live beside the instance's sunrise-mods directory. Read
     // its policy before compiling, but never use dispatch overrides to stage
     // an incomplete or reversed Cargo library graph.
-    let instance = folder.parent().unwrap_or_else(|| Path::new("."));
+    let instance = options
+        .exact_home
+        .unwrap_or_else(|| folder.parent().unwrap_or_else(|| Path::new(".")));
     let overrides =
         dependencies::Overrides::read(&instance.join(sunrise_launcher_smod::mod_list::DIR))?;
     let settings = sunrise_launcher_smod::mod_list::ModList::load(instance);
@@ -1472,8 +1476,17 @@ fn pipeline(
     let shown = sdk
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
-    let blame = |e: String| -> Failed {
-        let going = compile_omissions(&e, &fitted, &mods, &declared);
+    let blame = |failure: tool::Failure| -> Failed {
+        let going = match failure.blame.as_ref() {
+            Some(tool::Blame {
+                mod_id,
+                kind: tool::BlameKind::Compile,
+            }) if options.exact_home.is_some() || fitted.contains(mod_id) => {
+                compile_omissions(mod_id, &mods, &declared)
+            }
+            _ => Vec::new(),
+        };
+        let e = blamed_text(failure);
         let Some(failed) = going.first() else {
             return Failed::Other(e);
         };
@@ -1482,8 +1495,16 @@ fn pipeline(
                 return stop;
             }
         }
+        let reason = if options.exact_home.is_some() {
+            trf(
+                "Couldn't compile {mod} for this game.",
+                &[("mod", &failed.id)],
+            )
+        } else {
+            fit::did_not_build(&failed.id)
+        };
         Failed::Mods {
-            error: format!("{}\n\n{e}", fit::did_not_build(&failed.id)),
+            error: format!("{reason}\n\n{e}"),
             left: going,
             compiling: true,
         }
@@ -1502,6 +1523,10 @@ fn pipeline(
         developer_key.as_deref().or(platform.cache_key()),
         &requested,
     )?;
+    if let Some(stage) = options.staging {
+        let _publication = crate::run_leases::installation().map_err(cache_error)?;
+        stage.retain_target(&version)?;
+    }
     let exists = target.directory(&version).join(".installed").is_file();
     // The steps around the mods' compile, timed like each command (`run_checked`), so the log
     // accounts for the whole build.
@@ -1695,7 +1720,7 @@ fn pipeline(
         );
         // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
-        let built = built.map_err(|failure| blame(blamed_text(failure)))?;
+        let built = built.map_err(blame)?;
         let libraries = workspace
             .verify_outputs(
                 &built,
@@ -1714,7 +1739,7 @@ fn pipeline(
             "Native mods route: {route}.",
             &[("route", built.route.name())],
         ))
-        .map_err(blame)?;
+        .map_err(Failed::Other)?;
         // The whole step; the tool's own build and the function replacement have their lines.
         append_log(&trf(
             "Mods compiled against the prebuilt game in {seconds} s",
@@ -1723,7 +1748,7 @@ fn pipeline(
                 &format!("{:.1}", compiling.elapsed().as_secs_f64()),
             )],
         ))
-        .map_err(blame)?;
+        .map_err(Failed::Other)?;
         cancellation.check()?;
         progress(Step::Install);
         let installing = std::time::Instant::now();
@@ -1749,16 +1774,11 @@ fn pipeline(
 /// The fitted mod identified by the compiler diagnostic, and every required dependent that
 /// would be missing its library. The same reasons guard worlds, drive retries and reach the player.
 fn compile_omissions(
-    error: &str,
-    fitted: &[String],
+    blamed_id: &str,
     mods: &[Bundle],
     declared: &[Vec<dependencies::Dependency>],
 ) -> Vec<LeftOut> {
-    let Some(bundle) = fitted.iter().find_map(|id| {
-        mods.iter().find(|bundle| {
-            &bundle.manifest.id == id && error.contains(&build_log::failed(&compiling_mod(id)))
-        })
-    }) else {
+    let Some(bundle) = mods.iter().find(|bundle| bundle.manifest.id == blamed_id) else {
         return Vec::new();
     };
     let pairs = mods
@@ -1954,6 +1974,7 @@ pub(crate) fn build_exact_client(
                     cancellation: cancellation.clone(),
                     staging: Some(staging),
                     registry_consent,
+                    exact_home: Some(home),
                     ..BuildOptions::default()
                 },
                 &progress,
@@ -2943,7 +2964,7 @@ mod tests {
                 }
                 let error = build_log::failed(&compiling_mod("lib"));
                 Err(Failed::Mods {
-                    left: compile_omissions(&error, &["lib".into()], &bundles, &deps),
+                    left: compile_omissions("lib", &bundles, &deps),
                     error,
                     compiling: true,
                 })

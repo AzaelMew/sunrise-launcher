@@ -1481,7 +1481,12 @@ fn check_baked_revocations(
 }
 
 pub mod auto;
+mod content_loss;
 mod dependencies;
 pub mod pack;
+mod registry_install;
+pub use registry_install::{
+    install_registry, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+};
 #[cfg(test)]
 mod tests;

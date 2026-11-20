@@ -191,6 +191,13 @@ impl Admission {
         self.stage(Record::new(self.identity, intent, targets, None))
     }
 
+    pub(crate) fn has_bootstrap(&self) -> Result<bool, String> {
+        match read(&self.home)? {
+            Some(record) => record.pending_bootstrap().map(|_| true),
+            None => Ok(false),
+        }
+    }
+
     /// Resolve first Play once. A pending binding, with its exact inputs and proof, wins
     /// over a subsequent change to the release feed or profile defaults.
     pub fn bind_bootstrap<G>(
@@ -647,6 +654,35 @@ impl<'a> Staging<'a> {
         self.lease.handoff()
     }
 
+    /// The journal may have acquired candidate references since this stage was opened,
+    /// but any other change means the stage no longer authorizes this operation.
+    fn live_record(&self) -> Result<Record, String> {
+        let home = self.lease.home();
+        let mut live = read(home)?.ok_or_else(unsettled)?;
+        if !self.record.targets.is_subset(&live.targets) {
+            return Err(unsettled());
+        }
+        let targets = std::mem::replace(&mut live.targets, self.record.targets.clone());
+        if live.digest()? != self.record.digest()? {
+            return Err(unsettled());
+        }
+        live.targets = targets;
+        live.operation()?.stage.verify(home)?;
+        Ok(live)
+    }
+
+    /// Hold the cache publication lock. Protect a candidate tag before it can be used
+    /// or published in the build cache, including while the profile pointer still names the old build.
+    pub(crate) fn retain_target(&self, tag: &str) -> Result<(), String> {
+        let home = self.lease.home();
+        let mut live = self.live_record()?;
+        if live.targets.insert(tag.to_owned()) {
+            live.verify_home(home)?;
+            write(home, &live)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn seal_pointer_replacing(
         self,
         previous: &[u8],
@@ -665,12 +701,12 @@ impl<'a> Staging<'a> {
         pointer_bytes: Vec<u8>,
         files: &[(PathBuf, Option<PathBuf>)],
     ) -> Result<Sealed<'a>, String> {
+        self.record = self.live_record()?;
         let home = self.lease.home();
         let stage = &self.path;
-        self.record.verify_home(home)?;
-        self.record.operation()?.stage.verify(home)?;
+        let record = &mut self.record;
         let pointer = home.join(POINTER);
-        let before = self.record.operation()?.before;
+        let before = record.operation()?.before;
         if Image::at(&pointer)? != before {
             return Err(at(&pointer, unsettled()));
         }
@@ -741,10 +777,10 @@ impl<'a> Staging<'a> {
                 after,
             });
         }
-        plan.validate(self.record.operation()?)?;
-        self.record.operation.as_mut().ok_or_else(unsettled)?.ready = Some(plan);
-        progress::Slots::create(stage, self.record.digest()?).map_err(|e| at(stage, e))?;
-        write(home, &self.record)?;
+        plan.validate(record.operation()?)?;
+        record.operation.as_mut().ok_or_else(unsettled)?.ready = Some(plan);
+        progress::Slots::create(stage, record.digest()?).map_err(|e| at(stage, e))?;
+        write(home, record)?;
         Ok(Sealed(self))
     }
 }
@@ -903,7 +939,7 @@ impl Record {
                 let mut pending = Self::new(
                     self.home,
                     Intent::Install,
-                    self.targets.clone(),
+                    bootstrap.targets(),
                     Some(bootstrap.clone()),
                 );
                 pending.retirement = Some(self.operation()?.stage.clone());
@@ -948,7 +984,11 @@ impl Record {
         if let Some(binding) = &self.bootstrap {
             if !matches!(self.intent, Intent::Install)
                 || binding.version != BOOTSTRAP_VERSION
-                || binding.targets() != self.targets
+                || if self.operation.is_some() {
+                    !binding.targets().is_subset(&self.targets)
+                } else {
+                    binding.targets() != self.targets
+                }
                 || self
                     .operation
                     .as_ref()
