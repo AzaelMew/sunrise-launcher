@@ -529,6 +529,13 @@ impl Launcher {
     /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
     pub(super) fn mods_switch(&mut self, e: &installed::Entry) {
         let home = self.mods.home();
+        let _owner = match sunrise::txn::Lease::admit(&home) {
+            Ok(owner) => owner,
+            Err(error) => {
+                self.mods.message = Some(Err(error));
+                return;
+            }
+        };
         // An update holds the folder: the window doesn't wait for it.
         let Some(_lock) = browser::try_lock_home(&home) else {
             self.mods.message = Some(Err(tr("Wait for the current operation to finish.").into()));

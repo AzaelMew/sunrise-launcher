@@ -44,6 +44,7 @@ pub enum Msg {
     JarClient {
         run: Option<String>,
         account: Option<String>,
+        profile_owner: Arc<crate::browser::sunrise::txn::Lease>,
         session_file: Option<PathBuf>,
         registry_notices: Vec<String>,
         prepared: Box<Result<Command, String>>,

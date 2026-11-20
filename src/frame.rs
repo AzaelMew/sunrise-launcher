@@ -302,7 +302,7 @@ impl Launcher {
     }
 
     /// Continue the same accepted Play after a launch step; never recapture the account.
-    pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
+    pub(super) fn resume_play(&mut self, mut intent: launcher_play::PlayIntent) {
         if self.client.is_some() || self.launch_busy() {
             return;
         }
@@ -313,6 +313,15 @@ impl Launcher {
         else {
             return;
         };
+        if intent.owner.is_none() {
+            match sunrise_launcher::browser::sunrise::txn::Lease::admit(&instance.home) {
+                Ok(owner) => intent.owner = Some(std::sync::Arc::new(owner)),
+                Err(error) => {
+                    self.client_error = Some(error);
+                    return;
+                }
+            }
+        }
         let target = self.profile_target(&instance);
         let Some(tag) = target.filter(|tag| self.installed.contains(tag)).cloned() else {
             let release = target.and_then(|tag| self.release_to_install(tag));

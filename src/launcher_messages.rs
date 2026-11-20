@@ -102,6 +102,7 @@ impl Launcher {
                 Msg::JarClient {
                     run,
                     account: accepted,
+                    profile_owner,
                     session_file,
                     registry_notices,
                     prepared,
@@ -126,7 +127,7 @@ impl Launcher {
                         }
                         native_status::check_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
-                        backend::spawn(Job::Client, cmd, self.tx.clone(), None)
+                        backend::spawn(Job::Client, cmd, self.tx.clone(), Some(&profile_owner))
                     });
                     match started {
                         Ok(r) => {

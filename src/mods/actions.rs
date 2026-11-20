@@ -195,6 +195,13 @@ impl Launcher {
         let Some(snapshot) = &mut self.ui.mods.snapshot else {
             return;
         };
+        let _owner = match sunrise::txn::Lease::admit(&snapshot.home) {
+            Ok(owner) => owner,
+            Err(error) => {
+                self.ui.mods.notice = Some(Err(error));
+                return;
+            }
+        };
         let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
             self.ui.mods.notice = Some(Err(tr("Wait for the current operation to finish.").into()));
             return;
@@ -234,6 +241,13 @@ impl Launcher {
             m.notice = Some(Err(tr("Nothing selected can be turned on yet.").to_string()));
             return;
         }
+        let _owner = match sunrise::txn::Lease::admit(&home) {
+            Ok(owner) => owner,
+            Err(error) => {
+                m.notice = Some(Err(error));
+                return;
+            }
+        };
         let Some(_lock) = sunrise_launcher::browser::try_lock_home(&home) else {
             m.notice = Some(Err(
                 tr("Wait for the current operation to finish.").to_string()
@@ -388,6 +402,10 @@ fn counted(count: usize, one: &'static str, many: &'static str) -> String {
 fn run(action: Action, home: &std::path::Path, tx: &Sender<Event>) {
     let refuse = |why: String| {
         let _ = tx.send(Event::Refused(why));
+    };
+    let _owner = match sunrise::txn::Lease::admit(home) {
+        Ok(owner) => owner,
+        Err(error) => return refuse(error),
     };
     let _lock = match sunrise_launcher::browser::lock_home(home) {
         Ok(lock) => lock,

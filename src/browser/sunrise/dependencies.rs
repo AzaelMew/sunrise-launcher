@@ -315,7 +315,7 @@ pub(super) fn remove_checked(
     home: &Path,
     wanted: &[(String, String)],
 ) -> Result<Vec<String>, String> {
-    let _lease = super::txn::Lease::acquire(home)?;
+    let _lease = super::txn::Lease::admit(home)?;
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     super::txn::settle_owned(home)?;
     if super::txn::has_build(home)? {
