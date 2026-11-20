@@ -942,11 +942,29 @@ fn windows_build_dir(real: &Path) -> PathBuf {
     // ProgramData is writable by every account, so the folder may be another account's: its
     // `bin` and `cargo\config.toml` would run as this player. Only a folder made here, or owned
     // by this account, is used.
-    let claim = |dir: &Path| fs::create_dir(dir).is_ok() || owned_by_this_account(dir);
+    // The parent is made with `create_dir_all` (ProgramData may be missing); only the final
+    // component is made with `create_dir`, which fails on a folder that already exists.
+    let claim = |dir: &Path| {
+        if let Some(parent) = dir.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        fs::create_dir(dir).is_ok() || owned_by_this_account(dir)
+    };
     if let Some(dir) = first_claimed_dir(&dir, claim) {
         return dir;
     }
-    short_path(real).filter(|p| tool_safe(p)).unwrap_or(dir)
+    // Never an unclaimed folder: the short name of the data folder, else a folder of this
+    // process's own in the temporary folder.
+    build_fallback(short_path(real), std::process::id(), &std::env::temp_dir())
+}
+
+/// The build folder when no numbered name could be claimed: `short` if it is [`tool_safe`],
+/// else a folder named for the process under `temp`, which no other account made.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn build_fallback(short: Option<PathBuf>, pid: u32, temp: &Path) -> PathBuf {
+    short
+        .filter(|p| tool_safe(p))
+        .unwrap_or_else(|| temp.join(format!("sunrise-launcher-{pid}")))
 }
 
 /// `base`, else `base-2`, `base-3`… (up to `base-9`): the first one `claim` takes, which makes
@@ -964,7 +982,9 @@ fn first_claimed_dir(base: &Path, claim: impl Fn(&Path) -> bool) -> Option<PathB
 }
 
 /// Whether the folder `path` is owned by the account this process runs as: the owner a folder
-/// it creates gets (the token's default owner), so an Administrator's own folders count too.
+/// it creates gets (the token's default owner). A folder the same player made in an elevated
+/// session is owned by Administrators, so it is passed over and a numbered folder is made
+/// instead: safe, but the toolchain is built again there.
 #[cfg(windows)]
 fn owned_by_this_account(path: &Path) -> bool {
     use std::os::windows::ffi::OsStrExt;
@@ -4564,6 +4584,23 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn with_every_name_taken_the_fallback_is_never_a_claimed_folder() {
+        let temp = Path::new("/scratch/tmp");
+        let short = Some(PathBuf::from("C:/PROGRA~3/ok"));
+        assert_eq!(
+            build_fallback(short, 7, temp),
+            PathBuf::from("C:/PROGRA~3/ok")
+        );
+        // No short name, or one that is no better than the long one.
+        let expected = temp.join("sunrise-launcher-7");
+        assert_eq!(build_fallback(None, 7, temp), expected);
+        assert_eq!(
+            build_fallback(Some(PathBuf::from("C:/Users/Ж/x")), 7, temp),
+            expected
+        );
     }
 
     #[test]
