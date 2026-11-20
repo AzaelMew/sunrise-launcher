@@ -271,7 +271,7 @@ fn backup_paths_stay_in_the_backup_folder() {
     let mut entry = installed::Installed::load(&home).entries.remove(0);
     entry.version = "../../outside".into();
     let kept = keep(&home, &entry).unwrap();
-    assert_eq!(kept.copy, "mod-browser/replaced/ruby");
+    assert!(kept.copy.starts_with("mod-browser/replaced/ruby."));
     assert!(home.join(&kept.copy).is_file());
 
     let outside = home.join("outside");
@@ -288,6 +288,54 @@ fn backup_paths_stay_in_the_backup_folder() {
     assert!(recover(&home).is_err());
     assert_eq!(fs::read(outside).unwrap(), b"untouched");
     fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn a_failed_restore_and_ledger_save_cannot_lose_the_backup_on_same_process_retry() {
+    let dir = scratch("failed-restore-save");
+    let home = dir.join("home");
+    let old = ruby(&dir, "1.0.0", &["lamp"], &[]);
+    let new = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
+    let first = index_of(&[("1.0.0", GAME, &old)]);
+    let ruby = first.project("ruby").unwrap();
+    let _lock = crate::browser::lock_home(&home).unwrap();
+    install_version_guarded(
+        &first,
+        true,
+        ruby,
+        &ruby.versions[0],
+        &home,
+        &|_| Ok(()),
+        &|_, _| {},
+    )
+    .unwrap();
+    let entry = installed::Installed::load(&home).entries.remove(0);
+    let kept = keep(&home, &entry).unwrap();
+    let ledger = fs::read(home.join(KEPT)).unwrap();
+    let target = entry.path(&home).unwrap();
+    fs::remove_file(&target).unwrap();
+    fs::create_dir(&target).unwrap(); // A directory occupying the live file makes the real restore fail.
+    let error = finish_failed_update(&home, &kept, |_, rows| {
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].session.is_none());
+        Err("injected save refusal".into())
+    })
+    .unwrap_err();
+    assert!(error.contains("restore failed") && error.contains("injected save refusal"));
+    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
+    // A file reappears, but not its exact bytes. The old updater used to copy that over its backup.
+    fs::remove_dir(&target).unwrap();
+    fs::write(&target, b"incomplete live bytes").unwrap();
+    let next = index_of(&[("1.1.0", GAME, &new), ("1.0.0", GAME, &old)]);
+    let report = run_with(&next, true, &home, &PLAY, &|_, _| {});
+    assert_eq!(report.held.len(), 1);
+    assert!(report.updated.is_empty());
+    assert_eq!(
+        fs::read(home.join(&kept.copy)).unwrap(),
+        fs::read(old).unwrap()
+    );
+    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
+    assert_eq!(fs::read(target).unwrap(), b"incomplete live bytes");
 }
 
 #[test]

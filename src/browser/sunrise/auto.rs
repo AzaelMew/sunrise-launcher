@@ -187,9 +187,17 @@ fn kept_list(home: &Path) -> Result<Vec<Kept>, String> {
     let list: Vec<Kept> = serde_json::from_slice(&bytes).map_err(|e| fail(&e))?;
     let mut seen = BTreeSet::new();
     if list.iter().any(|row| {
+        let first = format!("{KEPT_DIR}/{}", row.entry.project);
+        let fresh = row
+            .copy
+            .strip_prefix(&first)
+            .and_then(|rest| rest.strip_prefix('.'))
+            .is_some_and(|random| {
+                random.len() == 24 && random.bytes().all(|b| b.is_ascii_alphanumeric())
+            });
         row.entry.source != SourceId::Sunrise
             || !index::valid_id(&row.entry.project)
-            || row.copy != format!("{KEPT_DIR}/{}", row.entry.project)
+            || (row.copy != first && !fresh)
             || !seen.insert(row.entry.project.as_str())
     }) {
         return Err(fail(&io::ErrorKind::InvalidData));
@@ -274,6 +282,9 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
     let (Some(target), copy) = (kept.entry.path(home), home.join(&kept.copy)) else {
         return Err(format!("{} is outside the game folder", kept.entry.file));
     };
+    if !exact_package(home, &copy, &kept.entry.checksum) {
+        return Err(tr("The saved mod copy couldn't be checked.").into());
+    }
     fs::copy(&copy, &target).map_err(|e| format!("{}: {e}", target.display()))?;
     let mut list = installed::Installed::load(home);
     let ours =
@@ -298,19 +309,13 @@ pub fn recover(home: &Path) -> Result<(), String> {
     let notice = || {
         tr("A backup from an older mod update was kept because it couldn't be checked. You can still play.").to_owned()
     };
-    let (mine, earlier): (Vec<Kept>, Vec<Kept>) = kept_list(home)
-        .map_err(|_| notice())?
-        .into_iter()
-        .partition(|k| {
-            k.session
-                .as_ref()
-                .is_some_and(|id| Some(id) == SESSION.get())
-        });
-    if earlier.is_empty() {
+    let mut kept = kept_list(home).map_err(|_| notice())?;
+    if kept.is_empty() {
         return Ok(());
     }
     let installed = installed::Installed::load(home);
-    for old in &earlier {
+    // A session token is not evidence that the last attempt finished or rolled back.
+    for old in &kept {
         let mut rows = installed
             .entries
             .iter()
@@ -324,7 +329,15 @@ pub fn recover(home: &Path) -> Result<(), String> {
             return Err(notice());
         }
     }
-    save_kept(home, &mine).map_err(|_| notice())?;
+    let before = kept.len();
+    kept.retain(|row| {
+        row.session
+            .as_ref()
+            .is_some_and(|id| Some(id) == SESSION.get())
+    });
+    if kept.len() != before {
+        save_kept(home, &kept).map_err(|_| notice())?;
+    }
     // No longer referenced. Retain even proved copies in this standalone upgrade step;
     // the old format doesn't bind directory identity or provide a retirement barrier.
     Ok(())
@@ -338,10 +351,30 @@ fn keep(home: &Path, entry: &installed::Entry) -> Result<Kept, String> {
     if !index::valid_id(&entry.project) {
         return Err(format!("invalid registry project id {:?}", entry.project));
     }
-    let copy = format!("{KEPT_DIR}/{}", entry.project);
-    let to = home.join(&copy);
-    fs::create_dir_all(home.join(KEPT_DIR)).map_err(|e| e.to_string())?;
-    fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    let mut list = kept_list(home)?;
+    let dir = home.join(KEPT_DIR);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    if !fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_dir() && regular(&meta)) {
+        return Err(tr("The mod backup folder couldn't be checked.").into());
+    }
+    let mut fresh = tempfile::Builder::new()
+        .prefix(&format!("{}.", entry.project))
+        .rand_bytes(24)
+        .tempfile_in(&dir)
+        .map_err(|e| e.to_string())?;
+    let mut original = fs::File::open(&from).map_err(|e| format!("{}: {e}", from.display()))?;
+    io::copy(&mut original, fresh.as_file_mut())
+        .and_then(|_| fresh.as_file().sync_all())
+        .map_err(|e| format!("{}: {e}", fresh.path().display()))?;
+    if !exact_package(home, fresh.path(), &entry.checksum) {
+        return Err(tr("The saved mod copy couldn't be checked.").into());
+    }
+    let file = fresh
+        .path()
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .expect("generated ASCII filename");
+    let copy = format!("{KEPT_DIR}/{file}");
     let mut session = [0; 16];
     if let Some(id) = SESSION.get() {
         session = *id;
@@ -355,7 +388,8 @@ fn keep(home: &Path, entry: &installed::Entry) -> Result<Kept, String> {
         pid: std::process::id(),
         session: Some(session),
     };
-    let mut list = kept_list(home)?;
+    // Keep the exact allocated path even if saving returns after a partially visible transition.
+    fresh.keep().map_err(|e| e.to_string())?;
     list.retain(|k| k.entry.project != entry.project);
     list.push(kept.clone());
     save_kept(home, &list)?;
@@ -527,25 +561,8 @@ fn update(
         Ok(_) => Ok(None),
         Err(e) => {
             if let Some(kept) = &kept {
-                // Leave the backup and journal intact if restoring it fails.
-                if !finished(home, kept) {
-                    if let Err(restore_error) = restore(home, kept) {
-                        let mut list = kept_list(home)?;
-                        if let Some(record) = list
-                            .iter_mut()
-                            .find(|k| k.entry.project == kept.entry.project)
-                        {
-                            record.pid = 0;
-                            record.session = None;
-                        }
-                        let _ = save_kept(home, &list);
-                        return Err(format!("{e}; restore failed: {restore_error}"));
-                    }
-                }
-                let _ = fs::remove_file(home.join(&kept.copy));
-                let mut list = kept_list(home)?;
-                list.retain(|k| k.entry.project != kept.entry.project);
-                let _ = save_kept(home, &list);
+                finish_failed_update(home, kept, save_kept)
+                    .map_err(|restore| format!("{e}; {restore}"))?;
             }
             match held.into_inner() {
                 Some(why) => Ok(Some(why)),
@@ -553,6 +570,35 @@ fn update(
             }
         }
     }
+}
+
+/// Preserve the only preimage until its ledger transition succeeds. A failed transition leaves
+/// the row in place; later recovery checks its actual bytes even in the same process.
+fn finish_failed_update(
+    home: &Path,
+    kept: &Kept,
+    save: impl FnOnce(&Path, &[Kept]) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut list = kept_list(home)?;
+    if !finished(home, kept) {
+        if let Err(error) = restore(home, kept) {
+            if let Some(record) = list
+                .iter_mut()
+                .find(|k| k.entry.project == kept.entry.project)
+            {
+                record.pid = 0;
+                record.session = None;
+            }
+            return Err(match save(home, &list) {
+                Ok(()) => format!("restore failed: {error}"),
+                Err(save) => format!("restore failed: {error}; ledger save failed: {save}"),
+            });
+        }
+    }
+    list.retain(|k| k.entry.project != kept.entry.project);
+    save(home, &list)?;
+    let _ = fs::remove_file(home.join(&kept.copy));
+    Ok(())
 }
 
 #[cfg(test)]
