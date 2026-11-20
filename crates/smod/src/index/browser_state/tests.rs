@@ -84,7 +84,12 @@ fn already_published_manifest_is_synced_before_removing_the_sidecar() {
         assert_eq!(fs::read(&sidecar).unwrap(), pending);
         Err(io::Error::other("manifest sync failed"))
     });
-    assert!(result.unwrap_err().contains("manifest sync failed"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("manifest sync failed")
+    );
     assert_eq!(fs::read(&sidecar).unwrap(), pending);
 
     let calls = std::cell::RefCell::new(Vec::new());
@@ -117,6 +122,7 @@ fn unreadable_pending_entries_never_publish_a_manifest() {
     assert!(
         reconcile(home.path())
             .unwrap_err()
+            .to_string()
             .contains("pending entry too large")
     );
     assert!(!home.path().join(MANIFEST).exists());
@@ -144,10 +150,12 @@ fn real_game_row_keeps_its_fields_and_refuses_duplicate_or_aliased_claims() {
     };
     let old = row("1.0.0", b"old");
     let new = row("2.0.0", b"new");
+    let home = tempfile::tempdir().unwrap();
+    let package = home.path().join(file);
     let aliases = [
         "sunrise-mods//./ruby.smod",
         "other/../sunrise-mods/ruby.smod",
-        "/sunrise-mods/ruby.smod",
+        &package.to_string_lossy(),
         #[cfg(windows)]
         r"sunrise-mods\RUBY.smod",
         #[cfg(windows)]
@@ -155,8 +163,6 @@ fn real_game_row_keeps_its_fields_and_refuses_duplicate_or_aliased_claims() {
         #[cfg(windows)]
         "sunrise-mods/ruby.smod ",
     ];
-    let home = tempfile::tempdir().unwrap();
-    let package = home.path().join(file);
     fs::create_dir(package.parent().unwrap()).unwrap();
     fs::write(&package, b"new").unwrap();
     let journal = home.path().join(PENDING);

@@ -23,7 +23,7 @@ pub(super) fn install(
         .tempdir_in(home)
         .map_err(|e| format!("{}: {e}", home.display()))?;
     let installed = installed::Installed::read(home)?;
-    let claims = index::browser_state::Installed::load(home)?;
+    let claims = index::browser_state::Installed::read(home)?;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
@@ -60,6 +60,12 @@ pub(super) fn install(
     };
     plan.add(project, version, 0)?;
 
+    let claims = index::browser_state::Installed::read(home)?;
+    for (entry, staged) in &plan.selected {
+        if staged.is_some() {
+            super::check_claim(&claims, home, &entry.project, &entry.file)?;
+        }
+    }
     let mut changes = Vec::new();
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
@@ -322,4 +328,32 @@ fn publish(
         }
     }
     Ok(staged)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_later_publish_failure_restores_the_archive_that_was_already_moved() {
+        let home = tempfile::tempdir().unwrap();
+        let stage = tempfile::tempdir_in(home.path()).unwrap();
+        let old = home.path().join("ruby.smod");
+        let next = stage.path().join("ruby.smod");
+        let manifest = home.path().join(installed::MANIFEST);
+        fs::write(&old, b"old archive").unwrap();
+        fs::write(&next, b"new archive").unwrap();
+        fs::create_dir(&manifest).unwrap();
+        let next_manifest = stage.path().join(installed::MANIFEST);
+        fs::write(&next_manifest, b"new manifest").unwrap();
+
+        let error = publish(
+            stage,
+            vec![(next, old.clone()), (next_manifest, manifest.clone())],
+        )
+        .unwrap_err();
+        assert!(error.contains("not a regular file"), "{error}");
+        assert_eq!(fs::read(old).unwrap(), b"old archive");
+        assert!(manifest.is_dir());
+    }
 }

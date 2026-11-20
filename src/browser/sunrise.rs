@@ -1134,7 +1134,7 @@ fn install_version_guarded(
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     installed::recover_game_install(home)?;
     let mut list = installed::Installed::read(home)?;
-    let claims = index::browser_state::Installed::load(home)?;
+    let claims = index::browser_state::Installed::read(home)?;
     let install = Install {
         index,
         local,
@@ -1149,6 +1149,11 @@ fn install_version_guarded(
     guard(&path).inspect_err(|_| {
         let _ = fs::remove_file(&path);
     })?;
+    index::browser_state::Installed::read(home)
+        .and_then(|claims| check_claim(&claims, home, &p.id, &entry.file))
+        .inspect_err(|_| {
+            let _ = fs::remove_file(&path);
+        })?;
     let target = home.join(&entry.file);
     if let Some(dir) = target.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -1209,6 +1214,18 @@ type Prepared = (
     Option<PathBuf>,
 );
 
+fn check_claim(
+    claims: &index::browser_state::Installed,
+    home: &Path,
+    id: &str,
+    file: &str,
+) -> Result<(), String> {
+    claims.single(id)?;
+    claims
+        .check_other_claims(home, id, file)
+        .map_err(|problem| problem.render(trf))
+}
+
 impl Install<'_> {
     fn prepare(
         &self,
@@ -1229,7 +1246,7 @@ impl Install<'_> {
             true => format!("{}/{}.smod", crate::native_mods::INSTALLED, p.id),
             false => relative(project.kind, &p.id, &v.file.name)?,
         };
-        claims.check_install(&p.id, &relative)?;
+        check_claim(claims, self.home, &p.id, &relative)?;
         let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
         let old = list.entries.iter().find(|e| ours(e)).cloned();
         let mut unreadable = None;

@@ -35,6 +35,7 @@ impl From<GameInstallProblem> for String {
 /// hold the same, reentrant lock through their changes. No launcher journal is involved.
 pub fn recover_game_install(home: &Path) -> Result<(), GameInstallProblem> {
     sunrise_launcher_smod::index::browser_state::reconcile(home).map_err(|error| {
+        let error = error.details(crate::i18n::trf);
         // Relative file names and the cause are useful; the host's local path is not.
         let folder = home.display().to_string();
         let prefix = format!("{folder}{}", std::path::MAIN_SEPARATOR);

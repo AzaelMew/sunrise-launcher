@@ -6,8 +6,11 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
 use std::io::{self, ErrorKind, Read, Write};
-use std::path::{Component, Path};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod claims;
+pub use claims::ClaimProblem;
 
 pub const MANIFEST: &str = "mod-browser.json";
 pub const PENDING: &str = ".mod-browser.pending.json";
@@ -23,9 +26,45 @@ struct Pending {
     new: Value,
 }
 
+/// A recovery problem, with claim messages kept typed until the launcher translates them.
+#[derive(Debug)]
+pub enum RecoveryProblem {
+    Diagnostic(String),
+    Claim {
+        journal: PathBuf,
+        problem: ClaimProblem,
+    },
+}
+
+impl From<String> for RecoveryProblem {
+    fn from(detail: String) -> Self {
+        Self::Diagnostic(detail)
+    }
+}
+
+impl RecoveryProblem {
+    pub fn details(self, format: impl FnOnce(&'static str, &[(&str, &str)]) -> String) -> String {
+        match self {
+            Self::Diagnostic(detail) => detail,
+            Self::Claim { journal, problem } => {
+                format!("{}: {}", journal.display(), problem.render(format))
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for RecoveryProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Diagnostic(detail) => f.write_str(detail),
+            Self::Claim { journal, problem } => write!(f, "{}: {problem}", journal.display()),
+        }
+    }
+}
+
 /// Settle an interrupted game install. The usual case has no pending file and does not wait
 /// for a concurrent download. Writers still hold the home lock across read, modify and write.
-pub fn reconcile(home: &Path) -> Result<(), String> {
+pub fn reconcile(home: &Path) -> Result<(), RecoveryProblem> {
     let path = home.join(PENDING);
     // The common case does not need to take the shared game/launcher lock.
     if path
@@ -42,8 +81,9 @@ fn reconcile_locked(
     home: &Path,
     path: &Path,
     sync: impl Fn(&Path) -> io::Result<()>,
-) -> Result<(), String> {
-    let error = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+) -> Result<(), RecoveryProblem> {
+    let error =
+        |e: &dyn std::fmt::Display| RecoveryProblem::Diagnostic(format!("{}: {e}", path.display()));
     match path.symlink_metadata() {
         Ok(info) if !info.is_file() => return Err(error(&"not a regular file")),
         Ok(info) if info.len() > MAX_PENDING => return Err(error(&"pending entry too large")),
@@ -74,34 +114,32 @@ fn reconcile_locked(
     }
     hex64(sha).map_err(|e| error(&e))?;
 
+    // Read every raw row before reading the archive. Even an unpublished intent or an
+    // already-new manifest needs a clean ownership check before retiring the sidecar.
+    let manifest = home.join(MANIFEST);
+    let mut document = manifest_document(&manifest)?;
+    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", manifest.display());
+    let entries = document
+        .get_mut("entries")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| fail(&"entries must be an array"))?;
+    let mut list = Installed {
+        entries: std::mem::take(entries),
+    };
+    list.check_other_claims(home, &pending.id, &pending.file)
+        .map_err(|problem| RecoveryProblem::Claim {
+            journal: path.to_owned(),
+            problem,
+        })?;
+
     let target = home.join(&pending.file);
     let published = match target.symlink_metadata() {
-        Ok(info) if info.is_file() && info.len() <= MAX_FILE => sha256_file(&target)? == sha,
-        Ok(_) => false,
+        Ok(info) => info.len() <= MAX_FILE && sha256_file(&target)? == sha,
         Err(e) if e.kind() == ErrorKind::NotFound => false,
-        Err(e) => return Err(format!("{}: {e}", target.display())),
+        Err(e) => return Err(format!("{}: {e}", target.display()).into()),
     };
     if published {
-        let manifest = home.join(MANIFEST);
-        let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", manifest.display());
-        // Do not round-trip through the launcher's typed rows: other sources and future fields
-        // must survive recovery unchanged, and their file claims still count.
-        let mut document: Value = match fs::read(&manifest) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|e| fail(&e))?,
-            Err(e) if e.kind() == ErrorKind::NotFound => serde_json::json!({ "entries": [] }),
-            Err(e) => return Err(fail(&e)),
-        };
-        let entries = document
-            .get_mut("entries")
-            .and_then(Value::as_array_mut)
-            .ok_or_else(|| fail(&"entries must be an array"))?;
-        let mut list = Installed {
-            entries: std::mem::take(entries),
-        };
         let current = list.single(&pending.id)?.map(|i| &list.entries[i]);
-        if list.taken_by(&pending.file, &pending.id).is_some() {
-            return Err(error(&"another entry claims its file"));
-        }
         if current == Some(&pending.new) {
             // The row may be visible before its rename is durable.
             sync(&manifest).map_err(|e| fail(&e))?;
@@ -130,27 +168,17 @@ fn owned_by(entry: &Value, id: &str) -> bool {
     entry["source"] == "sunrise" && entry["project"] == id
 }
 
-/// A manifest file claim as a key that equal paths share: its components relative to the
-/// home, `.` ones left out, and on Windows with `\` a separator, case ignored and trailing dots
-/// and spaces dropped, as Win32 paths resolve them. `None` for a claim that can't be placed
-/// without the filesystem (absolute, or with `..`), which may alias any file.
-fn claim_key(path: &str) -> Option<Vec<String>> {
-    let mut key = Vec::new();
-    for component in Path::new(path).components() {
-        match component {
-            Component::CurDir => {}
-            Component::Normal(name) => {
-                let name = name.to_string_lossy();
-                key.push(if cfg!(windows) {
-                    name.trim_end_matches(['.', ' ']).to_ascii_lowercase()
-                } else {
-                    name.into_owned()
-                });
-            }
-            _ => return None,
+fn manifest_document(path: &Path) -> Result<Value, String> {
+    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => {
+            let bytes = fs::read(path).map_err(|error| fail(&error))?;
+            serde_json::from_slice(&bytes).map_err(|error| fail(&error))
         }
+        Ok(_) => Err(fail(&"not a regular file")),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(serde_json::json!({"entries": []})),
+        Err(error) => Err(fail(&error)),
     }
-    Some(key)
 }
 
 /// `mod-browser.json`, kept as JSON values so the launcher's entries this
@@ -162,24 +190,10 @@ pub struct Installed {
 }
 
 impl Installed {
-    /// Reads the raw rows after settling any pending game publication.
-    pub fn load(home: &Path) -> Result<Self, String> {
-        let _lock = lock_home(home).map_err(|e| format!("{}: {e}", home.display()))?;
-        reconcile(home)?;
-        Self::read(home)
-    }
-
-    fn read(home: &Path) -> Result<Self, String> {
+    /// Read raw manifest claims after recovery. The caller holds the shared home lock.
+    pub fn read(home: &Path) -> Result<Self, String> {
         let path = home.join(MANIFEST);
-        let text = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default());
-            }
-            Err(error) => return Err(format!("{}: {error}", path.display())),
-        };
-        let value: Value =
-            serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))?;
+        let value = manifest_document(&path)?;
         let entries = value["entries"]
             .as_array()
             .ok_or_else(|| format!("{}: entries must be an array", path.display()))?
@@ -197,22 +211,6 @@ impl Installed {
         }
     }
 
-    /// The title of another entry that owns `file` however its path is spelled, or whose path
-    /// can't be placed ([`claim_key`]) and so may own it.
-    pub fn taken_by(&self, file: &str, id: &str) -> Option<String> {
-        let key = claim_key(file);
-        self.entries
-            .iter()
-            .find(|e| {
-                !owned_by(e, id)
-                    && e["file"].as_str().is_some_and(|other| {
-                        let other = claim_key(other);
-                        other.is_none() || other == key
-                    })
-            })
-            .map(|e| e["title"].as_str().unwrap_or("another mod").to_owned())
-    }
-
     fn record(&mut self, entry: Value) {
         let id = entry["project"].clone();
         self.entries
@@ -220,13 +218,19 @@ impl Installed {
         self.entries.push(entry);
     }
 
-    /// Check ownership before a launcher install downloads or publishes a package.
-    pub fn check_install(&self, id: &str, file: &str) -> Result<(), String> {
-        self.single(id)?;
-        if let Some(other) = self.taken_by(file, id) {
-            return Err(format!("{file} belongs to {other}: remove it first."));
-        }
-        Ok(())
+    /// Check the destination and other rows. The caller holds the shared home lock, and
+    /// checks uniqueness of the target project's row separately.
+    pub fn check_other_claims(
+        &self,
+        home: &Path,
+        id: &str,
+        file: &str,
+    ) -> Result<(), ClaimProblem> {
+        claims::check_destination(
+            home,
+            file,
+            self.entries.iter().filter(|entry| !owned_by(entry, id)),
+        )
     }
 }
 
@@ -325,5 +329,7 @@ fn replace(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
+#[cfg(test)]
+mod claims_matrix_tests;
 #[cfg(test)]
 mod tests;

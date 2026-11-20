@@ -106,13 +106,14 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     );
     assert!(!home.join(installed::MANIFEST).exists());
 
-    // A failure after moving the mod files must also leave none behind.
+    // A manifest we can't read is refused before staging or downloading any packages.
     fs::create_dir(home.join(installed::MANIFEST)).unwrap();
-    assert!(run(&index).is_err());
-    assert!(fs::read_dir(home.join(mod_list::MODS_DIR))
-        .unwrap()
-        .next()
-        .is_none());
+    let refused = install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {
+        panic!("unreadable claims must refuse before download")
+    })
+    .unwrap_err();
+    assert!(refused.contains(installed::MANIFEST), "{refused}");
+    assert!(!home.join(mod_list::MODS_DIR).exists());
     assert!(!home.join("sunrise-mods.txt").exists());
     fs::remove_dir(home.join(installed::MANIFEST)).unwrap();
 
@@ -455,7 +456,7 @@ fn an_installed_entry_pointing_out_of_the_game_folder_is_refused() {
         home: &home,
         progress: &|_, _| {},
     };
-    let claims = index::browser_state::Installed::load(&home).unwrap();
+    let claims = index::browser_state::Installed::read(&home).unwrap();
     let result = install.prepare(p, &p.versions[0], &list, &claims, &home.join("staging"));
     assert!(result.is_err());
     assert_eq!(fs::read(&outside).unwrap(), b"not a zip");
@@ -1065,6 +1066,38 @@ fn duplicate_or_unplaceable_ownership_stops_a_registry_install_before_download()
         assert_eq!(fs::read(&path).unwrap(), before);
         assert_eq!(fs::read(home.join(&old.file)).unwrap(), bytes);
     }
+}
+
+#[test]
+fn registry_install_rechecks_ownership_before_moving_the_download() {
+    let home = tempfile::tempdir().unwrap();
+    let home = home.path();
+    let index = sample();
+    let project = index.project("coords_hud").unwrap();
+    let manifest = home.join(installed::MANIFEST);
+    let competing_claim = br#"{"entries":[{"source":"future-source","project":"other","title":"Other","file":"SUNRISE-MODS/COORDS_HUD.smod"}]}"#;
+    let refused = install_version_guarded(
+        &index,
+        true,
+        project,
+        &project.versions[0],
+        home,
+        &|staged| {
+            assert!(staged.is_file());
+            // Simulate an editor that doesn't honor the home lock during the download.
+            fs::write(&manifest, competing_claim).unwrap();
+            Ok(())
+        },
+        &|_, _| {},
+    )
+    .unwrap_err();
+    assert!(refused.contains("belongs to Other"), "{refused}");
+    assert_eq!(fs::read(manifest).unwrap(), competing_claim);
+    assert!(!home.join("sunrise-mods/coords_hud.smod").exists());
+    assert!(fs::read_dir(home.join("mod-browser/downloads"))
+        .unwrap()
+        .next()
+        .is_none());
 }
 
 #[test]
