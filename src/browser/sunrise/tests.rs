@@ -74,7 +74,8 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
     }
     let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
     let home = dir.path().join("profile");
-    let run = |index: &Index| install_from(index, true, &project, &home, GAME, false, &|_, _| {});
+    let run =
+        |index: &Index| install_from(index, true, &project, &home, GAME, false, true, &|_, _| {});
     let mut bad = index.clone();
     bad.projects.last_mut().unwrap().versions[0].file.sha256 = "0".repeat(64);
     assert!(run(&bad)
@@ -126,6 +127,25 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
         assert!(home.join(&entry.file).is_file());
         assert!(mod_list::is_enabled(&home, &entry.project));
     }
+    // Updating a mod that is off installs what it newly needs off too.
+    let fresh = dir.path().join("profile-off");
+    let off = install_from(
+        &index,
+        true,
+        &project,
+        &fresh,
+        GAME,
+        false,
+        false,
+        &|_, _| {},
+    )
+    .unwrap();
+    assert_eq!(off.len(), 2);
+    assert!(off.iter().all(|e| fresh.join(&e.file).is_file()));
+    assert!(off
+        .iter()
+        .all(|e| !mod_list::is_enabled(&fresh, &e.project)));
+
     let before = fs::read(home.join(installed::MANIFEST)).unwrap();
     fs::remove_file(dir.path().join("sunrise_creatures-1.0.0.smod")).unwrap();
     assert_eq!(run(&index).unwrap(), done[..1]);
@@ -134,6 +154,27 @@ fn a_required_mod_is_installed_once_and_refusals_leave_the_profile_intact() {
         fs::read_dir(home.join(mod_list::MODS_DIR)).unwrap().count(),
         2
     );
+
+    // A mod the player turned off is updated like any other and stays off, even though what it
+    // requires is off too; a manual install of it still asks for the dependency to be on.
+    mod_list::set_all_enabled(&home, &["fireflies", "sunrise_creatures"], false).unwrap();
+    let refused =
+        install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {}).unwrap_err();
+    assert!(refused.contains("installed but off"), "{refused}");
+    let kept = install_from(
+        &index,
+        true,
+        &project,
+        &home,
+        GAME,
+        false,
+        false,
+        &|_, _| {},
+    )
+    .unwrap();
+    assert_eq!(kept[0].project, "fireflies");
+    assert!(!mod_list::is_enabled(&home, "fireflies"));
+    assert!(!mod_list::is_enabled(&home, "sunrise_creatures"));
 }
 
 #[test]
@@ -700,7 +741,17 @@ fn a_registry_data_pack_is_checked_then_goes_into_a_world() {
         .collect();
     assert_eq!(found, ["lanterns"]);
     // Not into the game folder: into a world.
-    assert!(install_from(&index, true, &p, &dir.join("home"), GAME, false, &|_, _| {}).is_err());
+    assert!(install_from(
+        &index,
+        true,
+        &p,
+        &dir.join("home"),
+        GAME,
+        false,
+        true,
+        &|_, _| {}
+    )
+    .is_err());
     let (zip, number) =
         fetch_datapack_from(&index, true, &p, &dir.join("dl"), GAME, &|_| {}).unwrap();
     assert_eq!(number, "1.0.0");
@@ -862,9 +913,9 @@ fn installs_checked_turns_on_and_removes() {
     let home = scratch("install");
     let p = hud(&index);
     // An instance on another build's Minecraft version gets that version's file, or none.
-    let other = install_from(&index, true, &p, &home, "26.9", false, &|_, _| {}).unwrap_err();
+    let other = install_from(&index, true, &p, &home, "26.9", false, true, &|_, _| {}).unwrap_err();
     assert!(other.contains("no version for 26.9"), "{other}");
-    let done = install_from(&index, true, &p, &home, GAME, false, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, false, true, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "sunrise-mods/coords_hud.smod");
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert_eq!(
@@ -1024,7 +1075,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     let home = scratch("shader");
     let p = project_of(&index, index.project("glow").unwrap(), GAME).unwrap();
     assert_eq!(p.support(GAME), super::super::Support::Works);
-    let done = install_from(&index, true, &p, &home, GAME, false, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &p, &home, GAME, false, true, &|_, _| {}).unwrap();
     assert_eq!(done[0].file, "shaderpacks/glow-1.0.0.sshader");
     assert_eq!(done[0].kind, Kind::Shader);
     assert!(home.join("shaderpacks/glow-1.0.0.sshader").is_file());
@@ -1045,7 +1096,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     assert!(!home.join("shaderpacks/glow-1.0.0.sshader").exists());
     // A file of the same name the registry didn't put there is left alone.
     fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
-    let e = install_from(&index, true, &p, &home, GAME, false, &|_, _| {}).unwrap_err();
+    let e = install_from(&index, true, &p, &home, GAME, false, true, &|_, _| {}).unwrap_err();
     assert_eq!(
         e,
         "shaderpacks/glow-1.0.0.sshader is already there: move it away first."
@@ -1172,7 +1223,17 @@ fn install_takes_the_newest_version_this_build_can_install() {
     newer.capabilities = vec!["game-read".to_string()].into();
     versions.insert(0, newer);
     let home = scratch("newest-installable");
-    let done = install_from(&index, true, &hud(&index), &home, GAME, false, &|_, _| {}).unwrap();
+    let done = install_from(
+        &index,
+        true,
+        &hud(&index),
+        &home,
+        GAME,
+        false,
+        true,
+        &|_, _| {},
+    )
+    .unwrap();
     assert_eq!(done[0].version, "0.1.0");
     fs::remove_dir_all(&home).unwrap();
 }
@@ -1190,7 +1251,17 @@ fn install_keeps_the_takedown_reason_of_a_version_it_could_not_install_anyway() 
         date: String::new(),
     });
     let home = scratch("unsupported-and-revoked");
-    let e = install_from(&index, true, &hud(&index), &home, GAME, false, &|_, _| {}).unwrap_err();
+    let e = install_from(
+        &index,
+        true,
+        &hud(&index),
+        &home,
+        GAME,
+        false,
+        true,
+        &|_, _| {},
+    )
+    .unwrap_err();
     assert_eq!(e, "Coordinates HUD was taken down: Test.");
     fs::remove_dir_all(&home).unwrap();
 }
@@ -1344,7 +1415,7 @@ fn a_dependency_is_installed_at_the_version_the_plan_chose() {
     }
     let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
     let home = dir.path().join("profile");
-    let done = install_from(&index, true, &project, &home, GAME, false, &|_, _| {}).unwrap();
+    let done = install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {}).unwrap();
     let creatures = done
         .iter()
         .find(|e| e.project == "sunrise_creatures")

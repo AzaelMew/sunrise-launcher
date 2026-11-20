@@ -125,7 +125,11 @@ impl Launcher {
         let all_on = selected_here > 0 && selected_here == shown_ids.len();
         let n_sel = selected.len();
         let busy = self.mods_busy();
-        let with_update = selected.iter().filter(|r| r.update.is_some()).count();
+        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let with_update = {
+            let chosen: Vec<Row> = selected.iter().map(|r| (*r).clone()).collect();
+            model::plan_updates(&chosen, native_allowed).included.len()
+        };
         let bulk = |id: &'static str, label: String, enabled: bool, danger: bool| {
             let b = crate::frame::button(id, label);
             let b = if danger {
@@ -386,7 +390,8 @@ impl Launcher {
         let mut last: Option<Group> = None;
         let mut position = 0;
         let group_counts = |g: Group| visible.iter().filter(|&&i| rows[i].group() == g).count();
-        let updates_total = rows.iter().filter(|r| r.update.is_some()).count();
+        // Only what the plan would really update: with none, there is no button.
+        let update_all = model::update_all_button(&rows, native_allowed);
         for (n, &i) in visible.iter().enumerate() {
             let r = rows[i].clone();
             let g = r.group();
@@ -417,7 +422,7 @@ impl Launcher {
                     // The button has as much room above and below as beside it.
                     head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
                 }
-                if g == Group::Updates {
+                if let (Group::Updates, Some(updates_total)) = (g, update_all) {
                     let b = crate::frame::button(
                         "alt-update-all",
                         trf(
@@ -537,7 +542,12 @@ impl Launcher {
             .filter(|_| r.on)
             .and_then(|run| run.state_of(&r.id, &r.version));
         let failed = matches!(building, Some(State::Failed(_)));
-        let cells = model::cells(&r, error.as_deref(), building);
+        let cells = model::cells(
+            &r,
+            error.as_deref(),
+            building,
+            self.settings.native_mods_allowed_at.is_some(),
+        );
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,

@@ -162,6 +162,13 @@ enum SelfUpdate {
     Failed(String),
 }
 
+#[derive(Clone, Copy)]
+enum UpdateCheck {
+    Startup,
+    Scheduled,
+    ManualLauncher,
+}
+
 /// The last game the launcher started ended badly: what it left behind.
 #[derive(Clone)]
 struct Crash {
@@ -200,7 +207,10 @@ struct Launcher {
     long_list: cull::Cull,
     updates: Updates,
     checked: Option<Instant>,
-    update_error: Option<String>,
+    checking_updates: bool,
+    launcher_checked_now: Option<Instant>,
+    /// Home's launcher-update notice was dismissed: it stays away until the launcher restarts.
+    launcher_notice_hidden: bool,
     self_update: SelfUpdate,
     /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.
