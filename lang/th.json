@@ -1461,5 +1461,8 @@
   "Sunrise Launcher {version} available": "Sunrise Launcher {version} available",
   "Working…": "Working…",
   "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.": "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.",
-  "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again."
+  "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
+  "Removed 1 mod.": "Removed 1 mod.",
+  "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
 }
