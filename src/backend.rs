@@ -939,10 +939,84 @@ pub fn build_dir() -> PathBuf {
 #[cfg(windows)]
 fn windows_build_dir(real: &Path) -> PathBuf {
     let dir = ascii_build_dir(real, std::env::var_os("ProgramData").map(PathBuf::from));
-    if fs::create_dir_all(&dir).is_ok() {
+    // ProgramData is writable by every account, so the folder may be another account's: its
+    // `bin` and `cargo\config.toml` would run as this player. Only a folder made here, or owned
+    // by this account, is used.
+    let claim = |dir: &Path| fs::create_dir(dir).is_ok() || owned_by_this_account(dir);
+    if let Some(dir) = first_claimed_dir(&dir, claim) {
         return dir;
     }
     short_path(real).filter(|p| tool_safe(p)).unwrap_or(dir)
+}
+
+/// `base`, else `base-2`, `base-3`… (up to `base-9`): the first one `claim` takes, which makes
+/// the folder or finds it to be the caller's own. A folder someone else made is passed over.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn first_claimed_dir(base: &Path, claim: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let name = base.file_name()?.to_os_string();
+    std::iter::once(base.to_path_buf())
+        .chain((2..=9).map(|n| {
+            let mut next = name.clone();
+            next.push(format!("-{n}"));
+            base.with_file_name(next)
+        }))
+        .find(|dir| claim(dir))
+}
+
+/// Whether the folder `path` is owned by the account this process runs as: the owner a folder
+/// it creates gets (the token's default owner), so an Administrator's own folders count too.
+#[cfg(windows)]
+fn owned_by_this_account(path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows_sys::Win32::Security::{
+        EqualSid, GetTokenInformation, TokenOwner, OWNER_SECURITY_INFORMATION,
+        PSECURITY_DESCRIPTOR, PSID, TOKEN_OWNER, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    // SAFETY: every pointer handed over is to a live local; the token and the descriptor
+    // GetNamedSecurityInfoW allocates are released before returning, and the owner SID is only
+    // read while that descriptor is alive.
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let mut buffer = vec![0u64; 128];
+        let mut length = 0;
+        let got = GetTokenInformation(
+            token,
+            TokenOwner,
+            buffer.as_mut_ptr().cast(),
+            (buffer.len() * 8) as u32,
+            &mut length,
+        );
+        CloseHandle(token);
+        if got == 0 {
+            return false;
+        }
+        let ours: PSID = (*buffer.as_ptr().cast::<TOKEN_OWNER>()).Owner;
+        let mut owner: PSID = std::ptr::null_mut();
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        let status = GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut descriptor,
+        );
+        if status != 0 {
+            return false;
+        }
+        let same = !owner.is_null() && EqualSid(owner, ours) != 0;
+        LocalFree(descriptor);
+        same
+    }
 }
 
 /// The build folder for a data folder `real` whose path isn't [`ascii`]: in `program_data`
@@ -4458,6 +4532,22 @@ mod tests {
         let mode = fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert_eq!(fs::read(&file).unwrap(), b"{\"proxy\":\"http://u:p@h:1\"}");
+    }
+
+    #[test]
+    fn a_build_folder_made_by_another_account_is_passed_over() {
+        let base = Path::new("C:/ProgramData/sunrise-launcher-1a2b3c4d");
+        // The first two are taken by another account; the third is free.
+        let claimed = first_claimed_dir(base, |dir| {
+            let name = dir.file_name().unwrap().to_str().unwrap();
+            name.ends_with("-3")
+        });
+        assert_eq!(
+            claimed,
+            Some(PathBuf::from("C:/ProgramData/sunrise-launcher-1a2b3c4d-3"))
+        );
+        assert_eq!(first_claimed_dir(base, |_| true), Some(base.to_path_buf()));
+        assert_eq!(first_claimed_dir(base, |_| false), None);
     }
 
     #[test]
