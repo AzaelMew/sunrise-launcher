@@ -113,6 +113,7 @@ impl Launcher {
             pending_consent: None,
             consent_error: None,
             native_for: None,
+            native_attempts: Vec::new(),
             native_built_mods: Vec::new(),
             native_builds: Default::default(),
             native_log: Default::default(),

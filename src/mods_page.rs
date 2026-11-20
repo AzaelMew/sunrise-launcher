@@ -513,7 +513,6 @@ impl Launcher {
         let homes: Vec<_> = self.instances.list.iter().map(|i| i.home.clone()).collect();
         std::thread::spawn(move || {
             for home in &homes {
-                sunrise::auto::recover(home);
                 sunrise::txn::recover(home);
             }
         });
@@ -931,12 +930,13 @@ impl Launcher {
             None => native_mods::build_failures(&self.native_left_out_of(&instance)),
         };
         match build_cost(&brought, stopped.is_some(), failures) {
-            BuildCost::Nothing => sunrise::txn::done(&instance.home),
+            BuildCost::Nothing => sunrise::txn::done(&instance.home, &self.native_attempts),
             BuildCost::Rollback(ids) => {
                 // Every install since the build began goes back as the record says. If that
                 // can't be done the record stays, the profile takes no install until it can,
                 // and the player is told.
-                self.mods.message = match sunrise::txn::undo(&instance.home) {
+                self.mods.message = match sunrise::txn::undo(&instance.home, &self.native_attempts)
+                {
                     Ok(()) => stopped.clone().map(Err),
                     Err(e) => Some(Err(e)),
                 };
@@ -960,7 +960,7 @@ impl Launcher {
                     checksum: String::new(),
                 });
                 self.mods.removal.add(&instance.id, &entries, items);
-                sunrise::txn::done(&instance.home);
+                sunrise::txn::done(&instance.home, &self.native_attempts);
             }
         }
     }

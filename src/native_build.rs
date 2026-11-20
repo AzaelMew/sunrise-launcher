@@ -56,7 +56,8 @@ impl Launcher {
             return;
         };
         // The installs waiting for this build keep its tag in their record.
-        sunrise_launcher::browser::sunrise::txn::mark_build(&instance.home, &base);
+        self.native_attempts =
+            sunrise_launcher::browser::sunrise::txn::mark_build(&instance.home, &base);
         // The mods this build is given: its failure is read against them, even if another
         // instance is selected by the time it ends.
         self.native_built_mods = native_status::enabled(&self.mods.home())
