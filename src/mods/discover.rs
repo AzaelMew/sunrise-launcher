@@ -306,6 +306,10 @@ impl Launcher {
                 Some(name) => trf("Install to {profile}", &[("profile", name)]),
                 None => tr("Install").to_string(),
             };
+            // A control too long for the right of the facts (the build tools' size, the game
+            // running) takes a full-width row under them.
+            let wide = matches!(&stage, Some(install_state::Stage::BuildTools(_)))
+                || state == Some(InstallState::CloseGame);
             let control = if card_data.members.is_some() && !is_added {
                 let b = crate::frame::button(("alt-add", n), tr("Choose mods"));
                 let id = id.clone();
@@ -330,7 +334,7 @@ impl Launcher {
                             .bottom_0()
                             .child(crate::build::progress_bar(stage.fraction())),
                     );
-                Some(dim(b).into_any_element())
+                Some(dim(if wide { b.w_full() } else { b }).into_any_element())
             } else if is_added && !enabled.contains(&id) {
                 let id = id.clone();
                 Some(
@@ -365,6 +369,7 @@ impl Launcher {
                     _ => install_label.clone(),
                 };
                 let b = crate::frame::button(("alt-add", n), label);
+                let b = if wide { b.w_full() } else { b };
                 Some(match state {
                     Some(InstallState::Waiting | InstallState::CloseGame) => {
                         dim(b).into_any_element()
@@ -441,37 +446,40 @@ impl Launcher {
                 ),
                 (None, None) => control,
             };
-            let mut facts = match card_data.members {
+            let mut chips = match card_data.members {
                 Some(count) => vec![
                     badge(tr("Collection")),
                     muted(trf("{count} mods", &[("count", &count.to_string())])),
                     muted(model::downloads(card_data.downloads)),
                 ],
                 None => {
-                    let mut facts = vec![tag(card_data.make.label())];
+                    let mut chips = vec![tag(card_data.make.label())];
                     if card_data.unsigned {
-                        facts.push(tag(tr("Unsigned")));
+                        chips.push(tag(tr("Unsigned")));
                     }
-                    facts.push(muted(model::downloads(card_data.downloads)));
-                    facts
+                    chips.push(muted(model::downloads(card_data.downloads)));
+                    chips
                 }
             };
+            // The kind, whether it is signed and the downloads sit on one line; everything
+            // else the card says is a line of its own under them.
+            let mut lines: Vec<Div> = Vec::new();
             if let Some(line) = is_added
                 .then(|| self.mods.also.get(&id))
                 .flatten()
                 .and_then(|names| install_state::also_line(names))
             {
-                facts.push(muted(line).truncate());
+                lines.push(muted(line).truncate());
             }
             if let Some(line) = is_added
                 .then(|| self.mods.updated.get(&id))
                 .flatten()
                 .and_then(|moves| install_state::updated_line(moves))
             {
-                facts.push(muted(line).truncate());
+                lines.push(muted(line).truncate());
             }
             if let Some(error) = failed_here {
-                facts.push(
+                lines.push(
                     div()
                         .text_size(px(tokens::SMALL))
                         .text_color(c(palette().danger))
@@ -479,14 +487,29 @@ impl Launcher {
                 );
             }
             if card_data.library {
-                facts.insert(1, badge(tr("Library")));
+                chips.insert(1, badge(tr("Library")));
             }
             if let Some(name) = &card_data.part_of {
-                facts.push(muted(trf("Part of {collection}", &[("collection", name)])));
+                lines.push(muted(trf("Part of {collection}", &[("collection", name)])));
             }
             if card_data.builds_locally && card_data.fit.fits() {
-                facts.push(muted(tr("Builds on this computer")));
+                lines.push(muted(tr("Builds on this computer")));
             }
+            let facts = vec![div()
+                .w_full()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .min_w_0()
+                        .children(chips),
+                )
+                .children(lines)];
             let open = id.clone();
             grid = grid.child(
                 browse_card(
@@ -498,6 +521,7 @@ impl Launcher {
                     &card_data.summary,
                     facts,
                     control,
+                    wide,
                     note,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {

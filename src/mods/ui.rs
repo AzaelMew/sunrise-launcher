@@ -362,6 +362,7 @@ pub(super) fn browse_card(
     summary: &str,
     facts: Vec<Div>,
     control: Option<AnyElement>,
+    wide_control: bool,
     note: Option<String>,
 ) -> Stateful<Div> {
     div()
@@ -421,25 +422,28 @@ pub(super) fn browse_card(
                 )
                 // Cards in a row are as tall as the tallest: the last line sits at the bottom.
                 .child(div().flex_1())
-                .child(
-                    div()
-                        .flex()
-                        .items_end()
-                        .gap(px(8.))
+                .child({
+                    let facts = div()
+                        .flex_1()
                         .min_w_0()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_wrap()
-                                .items_center()
-                                .gap_x(px(8.))
-                                .gap_y(px(4.))
-                                .children(facts),
-                        )
-                        .children(control.map(|c| div().flex_none().child(c))),
-                )
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_x(px(8.))
+                        .gap_y(px(4.))
+                        .children(facts);
+                    let row = div().flex().min_w_0().gap(px(8.));
+                    if wide_control {
+                        // Under the facts, as wide as the card allows.
+                        row.flex_col()
+                            .child(facts)
+                            .children(control.map(|c| div().w_full().child(c)))
+                    } else {
+                        row.items_end()
+                            .child(facts)
+                            .children(control.map(|c| div().flex_none().child(c)))
+                    }
+                })
                 // Two lines at most: the whole sentence is the tooltip.
                 .children(note.map(|note| {
                     muted(note.clone())

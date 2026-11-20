@@ -500,6 +500,7 @@ impl Launcher {
                             &p.summary,
                             facts,
                             control,
+                            false,
                             note,
                         )
                         .on_click(cx.listener(
