@@ -703,8 +703,10 @@ pub(super) fn ask(
     let result = reply_line.and_then(|line| {
         let status = status?;
         match (line, status.code()) {
-            (None, code @ Some(2 | 3)) => Err(ended(code)),
-            (line, _) => reply(line.as_deref(), status.success()),
+            (line, Some(0)) => reply(line.as_deref(), true),
+            (line, Some(1)) => reply(line.as_deref(), false),
+            (None, code) => Err(ended(code)),
+            (Some(_), _) => Err(invalid_check_reply()),
         }
     });
     if result.is_err() {

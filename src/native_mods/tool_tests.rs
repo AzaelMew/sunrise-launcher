@@ -16,7 +16,9 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
             ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
             "EXIT1" => script.push_str("exit 1\n"),
+            "EXIT2" => script.push_str("exit 2\n"),
             "EXIT3" => script.push_str("exit 3\n"),
+            "SIGNAL" => script.push_str("kill -TERM $$\n"),
             event => script.push_str(&format!("echo '{event}'\n")),
         }
     }
@@ -306,11 +308,20 @@ fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies
     assert!(ask_sdk(&[refusal, "EXIT1"])
         .unwrap_err()
         .contains("fixture refused"));
-    for lines in [&[good, good][..], &[good, "EXIT1"], &[refusal]] {
+    for lines in [
+        &[good, good][..],
+        &[good, "EXIT1"],
+        &[refusal],
+        &[refusal, "EXIT2"],
+        &[refusal, "EXIT3"],
+        &[refusal, "SIGNAL"],
+    ] {
         assert!(ask_sdk(lines)
             .unwrap_err()
             .contains("incomplete or inconsistent"));
     }
+    assert!(ask_sdk(&["EXIT2"]).unwrap_err().contains("didn't accept"));
+    assert!(ask_sdk(&["EXIT3"]).unwrap_err().contains("too old"));
     let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
     let failed = r#"{"event":"failed","error":"another ending","blame":null,"used":[]}"#;
     let result = run(
