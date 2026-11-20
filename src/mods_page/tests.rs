@@ -126,34 +126,6 @@ fn a_builds_stop_for_worlds_becomes_the_world_question_that_builds_on_when_switc
 }
 
 #[test]
-fn a_question_or_a_removal_stops_the_play_that_waited_for_the_update() {
-    let mut out = AutoOutcome::default();
-    assert!(!out.blocks_play());
-    out.removals.push((
-        "main".into(),
-        vec![sunrise::auto::Removal {
-            id: "ruby".into(),
-            title: "Ruby".into(),
-            reason: "no version for 26.3".into(),
-        }],
-    ));
-    assert!(out.blocks_play());
-    let ask = WorldAsk {
-        instance: "main".into(),
-        question: sunrise_launcher::worlds::Question {
-            mods: vec!["ruby".into()],
-            worlds: vec!["Home".into()],
-        },
-        then: Then::Update,
-    };
-    let out = AutoOutcome {
-        asks: vec![ask],
-        ..AutoOutcome::default()
-    };
-    assert!(out.blocks_play());
-}
-
-#[test]
 fn only_a_build_that_stopped_for_another_reason_rolls_its_install_back() {
     use native_mods::Failed;
     let ok: Result<(), Failed> = Ok(());

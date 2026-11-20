@@ -59,7 +59,6 @@ fn play_names_the_step_it_is_at_while_the_game_starts() {
     for (step, label) in [
         (None, "Starting…"),
         (Some(backend::PlayStep::Assets), "Checking game files…"),
-        (Some(backend::PlayStep::Mods), "Updating mods…"),
         (Some(backend::PlayStep::SignIn), "Signing in…"),
     ] {
         let view = starting(step).view();
@@ -68,7 +67,7 @@ fn play_names_the_step_it_is_at_while_the_game_starts() {
     }
     // A step left over once the start is over says nothing.
     let done = Facts {
-        step: Some(backend::PlayStep::Mods),
+        step: Some(backend::PlayStep::Assets),
         ..idle()
     };
     assert_eq!(done.view().main, Main::Play);
@@ -614,9 +613,9 @@ fn the_way_out_is_the_said_problems_own() {
 }
 
 #[test]
-fn play_is_taken_while_the_mods_are_brought_up_to_date() {
+fn play_is_taken_while_the_mods_change() {
     let updating = Facts {
-        updating: true,
+        mutating: true,
         ..idle()
     };
     assert!(updating.busy(), "a second Play waits");

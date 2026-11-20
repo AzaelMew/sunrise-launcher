@@ -136,8 +136,6 @@ pub(super) enum Event {
     Brought(Vec<String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(AutoOutcome),
-    /// The same, for the Play that waited for the mods to be up to date.
-    PlayUpdated(AutoOutcome),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -344,12 +342,9 @@ impl Launcher {
         let mut done = false;
         let mut native = Vec::new();
         let mut native_in = None;
-        let mut play_ready = false;
-        let mut play_blocked = false;
         let mut switched = None;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
-            let is_play = matches!(event, Event::PlayUpdated(..));
             let m = &mut self.mods;
             match event {
                 Event::Progress(line, f) => {
@@ -424,18 +419,12 @@ impl Launcher {
                     native_in = m.running.as_ref().map(|t| t.instance.clone());
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(mut out) | Event::PlayUpdated(mut out) => {
-                    play_ready |= is_play;
-                    // A question or a list of mods to remove is a barrier: Play doesn't start
-                    // under it, the player presses Play again once it is answered.
-                    play_blocked |= is_play && out.blocks_play();
-                    if !is_play {
-                        m.updating = false;
-                        // A switch's pin is saved once the mods have moved to the new build,
-                        // unless a world question came up: that goes back through the switch.
-                        if let Some(switching) = m.switching.take() {
-                            switched = settle_switch(&mut out, switching);
-                        }
+                Event::AutoUpdated(mut out) => {
+                    m.updating = false;
+                    // A switch's pin is saved once the mods have moved to the new build,
+                    // unless a world question came up: that goes back through the switch.
+                    if let Some(switching) = m.switching.take() {
+                        switched = settle_switch(&mut out, switching);
                     }
                     let AutoOutcome {
                         lines,
@@ -471,12 +460,6 @@ impl Launcher {
         }
         if let Some((instance, version, channel)) = switched {
             self.save_switch(&instance, version, channel);
-        }
-        if play_ready {
-            self.play_step = None;
-            if let Some(intent) = self.play_when_updated.take().filter(|_| !play_blocked) {
-                self.resume_play_with(intent, true);
-            }
         }
         if let Some(instance) = native_in.filter(|_| !native.is_empty()) {
             self.mods.queue.build_after_install(&instance, native);
@@ -1323,13 +1306,6 @@ pub(crate) struct AutoOutcome {
     /// The mods that can't stay on the game a profile plays, by instance: listed for the
     /// player to continue.
     pub(crate) removals: Vec<(String, Vec<sunrise::auto::Removal>)>,
-}
-
-impl AutoOutcome {
-    /// A question to answer or mods to confirm for removal: Play doesn't start under either.
-    fn blocks_play(&self) -> bool {
-        !self.asks.is_empty() || !self.removals.is_empty()
-    }
 }
 
 /// What went wrong for mod `id` in the last install's build, for its card: the reason in one

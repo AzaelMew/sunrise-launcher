@@ -303,16 +303,7 @@ impl Launcher {
 
     /// Continue the same accepted Play after a launch step; never recapture the account.
     pub(super) fn resume_play(&mut self, intent: launcher_play::PlayIntent) {
-        self.resume_play_with(intent, false)
-    }
-
-    /// [`Self::resume_play`]; `mods_updated` once the mods were brought up to date for this Play.
-    pub(super) fn resume_play_with(
-        &mut self,
-        intent: launcher_play::PlayIntent,
-        mods_updated: bool,
-    ) {
-        if self.client.is_some() || (self.launch_busy() && !mods_updated) {
+        if self.client.is_some() || self.launch_busy() {
             return;
         }
         let Some(instance) = self
@@ -348,26 +339,6 @@ impl Launcher {
         if !backend::check_prepared(&tag) {
             self.play_when_prepared = Some((tag, intent));
             self.prepare(backend::MinecraftFrom::Install);
-            return;
-        }
-        // The mods come up to date first, so the build that follows takes the new versions up
-        // and the game starts on what was built.
-        if let (false, true, Some(game)) = (
-            mods_updated,
-            self.settings.auto_updates_mods(),
-            self.game_of(&instance),
-        ) {
-            let target = mods_page::AutoTarget { game, instance };
-            let native_allowed = self.settings.native_mods_allowed_at.is_some();
-            let tx = self.mods.tx.clone();
-            self.play_step = Some(backend::PlayStep::Mods);
-            self.play_when_updated = Some(intent);
-            std::thread::spawn(move || {
-                backend::play_step("updating registry mods");
-                let out =
-                    mods_page::auto_update(&[target], true, native_allowed, &Default::default());
-                let _ = tx.send(mods_page::Event::PlayUpdated(out));
-            });
             return;
         }
         self.native_error = None;
