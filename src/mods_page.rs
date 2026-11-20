@@ -193,7 +193,7 @@ pub(super) struct Mods {
     /// The mods that go once the player continues (`removal`).
     pub(crate) removal: removal::Pending,
     /// The native mods the running build was started to take up.
-    building: Vec<String>,
+    building: (String, Vec<String>),
     /// What the installs behind that build replaced or added.
     undo: Vec<undo::Touched>,
     /// How the last build of an install ended, when it cost the install: read by the card and
@@ -290,9 +290,11 @@ impl Mods {
         }
     }
 
-    /// Whether a build that takes up mod `id` is waiting to start or running.
-    pub(crate) fn builds(&self, id: &str) -> bool {
-        self.building.iter().any(|b| b == id) || self.queue.will_build(id)
+    /// Whether a build that takes up mod `id` in profile `instance` is waiting to start or
+    /// running. The same mod in another profile has its own.
+    pub(crate) fn builds(&self, instance: &str, id: &str) -> bool {
+        (self.building.0 == instance && self.building.1.iter().any(|b| b == id))
+            || self.queue.will_build(instance, id)
     }
 
     /// Whether the install of mod `id` waits for its turn.
@@ -328,7 +330,7 @@ impl Mods {
             updating: false,
             switching: None,
             consent_request: None,
-            building: Vec::new(),
+            building: Default::default(),
             undo: Vec::new(),
             world_ask: None,
             removal: Default::default(),
@@ -516,7 +518,7 @@ impl Launcher {
         match step {
             Some(queue::Step::Install(request)) => self.start_install(request),
             Some(queue::Step::Build(ids)) => {
-                self.mods.building = ids;
+                self.mods.building = (selected.clone(), ids);
                 self.build_native()
             }
             None => {}
@@ -954,7 +956,7 @@ impl Launcher {
         else {
             return;
         };
-        let brought = std::mem::take(&mut self.mods.building);
+        let (_, brought) = std::mem::take(&mut self.mods.building);
         let touched = undo::take_for(&mut self.mods.undo, &instance.home);
         if instance.is_pack_profile() {
             undo::clear(&instance.home);

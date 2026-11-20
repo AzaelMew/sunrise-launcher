@@ -68,16 +68,16 @@ impl Queue {
             .any(|r| matches!(r, Request::One { id: waiting, .. } if waiting == id))
     }
 
-    /// Whether the follow-up build is to take up mod `id`.
-    pub(super) fn will_build(&self, id: &str) -> bool {
-        self.build.iter().any(|(_, b)| b == id)
+    /// Whether the follow-up build of profile `instance` is to take up mod `id`.
+    pub(super) fn will_build(&self, instance: &str, id: &str) -> bool {
+        self.build.iter().any(|(i, b)| i == instance && b == id)
     }
 
     /// An install put native code in, in profile `instance`. Installs that follow each other
     /// share the one build.
     pub(super) fn build_after_install(&mut self, instance: &str, ids: Vec<String>) {
         for id in ids {
-            if !self.will_build(&id) {
+            if !self.will_build(instance, &id) {
                 self.build.push((instance.to_owned(), id));
             }
         }
@@ -254,9 +254,13 @@ mod tests {
             "nothing",
             "the game runs or Play prepares"
         );
-        assert!(queue.will_build("m"));
+        assert!(queue.will_build("main", "m"));
+        assert!(
+            !queue.will_build("other", "m"),
+            "the same id in another profile is not its build"
+        );
         assert_eq!(id_of(queue.next("main", false, false, false)), "build m");
-        assert!(queue.will_build("o") && !queue.will_build("m"));
+        assert!(queue.will_build("other", "o") && !queue.will_build("main", "m"));
         assert_eq!(
             id_of(queue.next("main", false, false, false)),
             "nothing",
@@ -304,5 +308,18 @@ mod tests {
             }
             _ => panic!("the held request starts"),
         }
+    }
+
+    #[test]
+    fn the_same_mod_installed_into_two_profiles_is_built_for_each() {
+        let mut queue = Queue::default();
+        queue.build_after_install("main", vec!["m".into()]);
+        queue.build_after_install("other", vec!["m".into()]);
+        assert_eq!(id_of(queue.next("main", false, false, false)), "build m");
+        assert!(
+            queue.will_build("other", "m"),
+            "the other profile's build was not dropped as a duplicate"
+        );
+        assert_eq!(id_of(queue.next("other", false, false, false)), "build m");
     }
 }
