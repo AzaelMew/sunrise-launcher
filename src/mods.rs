@@ -554,6 +554,7 @@ impl Launcher {
                     version: f.version,
                     github: f.origin.is_some(),
                     native,
+                    unreadable: f.icon.is_err(),
                 })
                 .collect();
             let chosen = sunrise::chosen(&home);
