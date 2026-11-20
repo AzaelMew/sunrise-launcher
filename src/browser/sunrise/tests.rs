@@ -1128,6 +1128,46 @@ fn registry_play_recovers_a_large_game_journal_before_checking_revocations() {
 }
 
 #[test]
+fn play_waits_for_a_writer_before_the_journal_is_visible_and_unlocks_before_fetching() {
+    use std::{sync::mpsc, thread, time::Duration};
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path();
+    let registry = sample();
+    let writer = crate::browser::lock_home(home).unwrap();
+    assert!(!home.join(index::browser_state::PENDING).exists());
+    assert!(!home.join(installed::MANIFEST).exists());
+    thread::scope(|scope| {
+        let (enter, entering) = mpsc::channel();
+        let (done, completion) = mpsc::channel();
+        let index = Arc::new(registry.clone());
+        scope.spawn(move || {
+            enter.send(()).unwrap();
+            let result = check_before_play(home, &[], || {
+                assert!(
+                    thread::scope(|scope| scope
+                        .spawn(|| { crate::browser::try_lock_home(home).is_some() })
+                        .join()
+                        .unwrap()),
+                    "Play must not hold the browser lock during a fetch"
+                );
+                Some(index)
+            });
+            done.send(result).unwrap();
+        });
+        entering.recv().unwrap();
+        assert_eq!(
+            completion.recv_timeout(Duration::from_millis(150)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        let (_, new) = interrupted_game_install(home, &registry, "Published during Play".into());
+        drop(writer);
+        assert!(completion.recv().unwrap().unwrap().is_empty());
+        assert!(!home.join(index::browser_state::PENDING).exists());
+        assert_eq!(installed::Installed::read(home).unwrap().entries, [new]);
+    });
+}
+
+#[test]
 fn play_admission_names_the_game_journal_and_leaves_other_profiles_playable() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();

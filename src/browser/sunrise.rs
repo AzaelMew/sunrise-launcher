@@ -1405,8 +1405,12 @@ fn check_before_play(
     included: &[crate::native_status::Included],
     load: impl FnOnce() -> Option<Arc<Index>>,
 ) -> Result<Vec<String>, String> {
-    installed::recover_game_install(home)?;
-    let entries = installed::Installed::read(home)?.entries;
+    let entries = {
+        // A writer can already hold the lock even though its pending file isn't visible yet.
+        let _lock = super::lock_home(home).map_err(|error| error.to_string())?;
+        installed::recover_game_install(home)?;
+        installed::Installed::read(home)?.entries
+    };
     if included.is_empty() && !entries.iter().any(|e| e.source == SourceId::Sunrise) {
         return Ok(Vec::new());
     }
