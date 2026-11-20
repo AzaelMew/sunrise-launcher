@@ -128,6 +128,9 @@ impl Finished {
 pub(super) enum Event {
     Progress(String, f32),
     Done(Result<Finished, String>),
+    /// The install found native code the plan didn't know of before the player had allowed
+    /// it: the question to ask, whose answer starts the same install again.
+    NeedsConsent(Box<PendingConsent>),
     /// The native mods an install put in before it failed: a build takes them up.
     Brought(Vec<String>, Vec<undo::Touched>),
     /// What the automatic updates did (`sunrise::auto`).
@@ -359,6 +362,14 @@ impl Launcher {
                         busy.1 = line;
                         busy.2 = f;
                     }
+                }
+                Event::NeedsConsent(ask) => {
+                    m.busy = None;
+                    m.running = None;
+                    self.pending_consent = Some(*ask);
+                    self.content_scroll
+                        .handle
+                        .set_offset(gpui::point(px(0.), px(0.)));
                 }
                 Event::Done(result) => {
                     done = true;
@@ -647,6 +658,7 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let queue::Target { home, game, .. } = target.clone();
         self.mods.running = Some(target);
+        let retry = known.clone();
         let world = self.mods.world.clone().and_then(|path| {
             let (_, name) = self.mods.worlds.iter().find(|(p, _)| *p == path)?;
             Some((path, name.clone()))
@@ -659,7 +671,7 @@ impl Launcher {
                     let _ = tx.send(Event::Progress(line.to_string(), f));
                 }
             };
-            let result = (|| -> Result<Finished, String> {
+            let result = (|| -> Result<Finished, Stop> {
                 let source = browser::source(source);
                 let p = match known {
                     Some(p) => p,
@@ -747,8 +759,35 @@ impl Launcher {
                     &[("mods", &names.join(", "))],
                 )))
             })();
-            let _ = tx.send(Event::Done(result));
+            let _ = tx.send(match result {
+                Err(Stop::Consent) => {
+                    Event::NeedsConsent(Box::new(PendingConsent::Install(source, id, retry, None)))
+                }
+                Err(Stop::Failed(why)) => Event::Done(Err(why)),
+                Ok(finished) => Event::Done(Ok(finished)),
+            });
         });
+    }
+}
+
+/// Why an install's thread stopped: it failed, or it needs the native-code question first.
+enum Stop {
+    Failed(String),
+    Consent,
+}
+
+impl From<String> for Stop {
+    fn from(why: String) -> Self {
+        Self::Failed(why)
+    }
+}
+
+impl From<installed::InstallError> for Stop {
+    fn from(error: installed::InstallError) -> Self {
+        match error {
+            installed::InstallError::NeedsNativeConsent { .. } => Self::Consent,
+            installed::InstallError::Message(why) => Self::Failed(why),
+        }
     }
 }
 
@@ -1034,6 +1073,7 @@ impl Launcher {
         std::thread::spawn(move || {
             let native = std::cell::RefCell::new(Vec::new());
             let touched = std::cell::RefCell::new(Vec::new());
+            let consent = std::cell::Cell::new(false);
             let result = (|| -> Result<Finished, String> {
                 // The whole set is planned once first: a conflict between picks refuses all of
                 // them before anything downloads. Each is then installed with what it needs.
@@ -1065,9 +1105,13 @@ impl Launcher {
                             done.into_iter().map(|e| e.title).collect()
                         })
                         .map_err(|why| {
+                            consent.set(matches!(
+                                why,
+                                installed::InstallError::NeedsNativeConsent { .. }
+                            ));
                             trf(
                                 "{mod} didn't install: {why}",
-                                &[("mod", &p.title), ("why", &why)],
+                                &[("mod", &p.title), ("why", &why.to_string())],
                             )
                         })
                 })?;
@@ -1084,7 +1128,11 @@ impl Launcher {
             if result.is_err() {
                 let _ = tx.send(Event::Brought(native.take(), touched.take()));
             }
-            let _ = tx.send(Event::Done(result));
+            let _ = tx.send(if consent.get() {
+                Event::NeedsConsent(Box::new(PendingConsent::Collection(ids, shown)))
+            } else {
+                Event::Done(result)
+            });
         });
     }
 }

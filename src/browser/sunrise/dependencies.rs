@@ -14,7 +14,7 @@ pub(super) fn install(
     version: &index::Version,
     native_allowed: bool,
     turn_on: bool,
-) -> Result<Vec<installed::Entry>, String> {
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let home = install.home;
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let staged = tempfile::Builder::new()
@@ -50,16 +50,10 @@ pub(super) fn install(
         |_, v| super::fits_game(v, &version.game),
     );
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
-        return Err(format!("{} can't be installed: {reason}", project.name));
+        return Err(format!("{} can't be installed: {reason}", project.name).into());
     }
     // Native code the plan names is refused before anything downloads; the files are checked
     // again below, for what the index doesn't declare.
-    let native_message = |native: &str| {
-        crate::i18n::trf(
-            "{name} needs {native}, which runs native code: allow native mods first.",
-            &[("name", &project.name), ("native", native)],
-        )
-    };
     if !native_allowed {
         let planned_native = planned
             .install
@@ -69,7 +63,9 @@ pub(super) fn install(
             .filter_map(|id| install.index.project(id))
             .find(|p| p.kind == index::Kind::NativeMod);
         if let Some(native) = planned_native {
-            return Err(native_message(&native.name));
+            return Err(installed::InstallError::NeedsNativeConsent {
+                native: native.name.clone(),
+            });
         }
     }
     let chosen: BTreeMap<String, String> = planned
@@ -97,7 +93,9 @@ pub(super) fn install(
             .iter()
             .find(|(e, _)| crate::native_status::is_native_file(&e.file))
         {
-            return Err(native_message(&entry.title));
+            return Err(installed::InstallError::NeedsNativeConsent {
+                native: entry.title.clone(),
+            });
         }
     }
 
@@ -129,7 +127,8 @@ pub(super) fn install(
                     return Err(format!(
                         "{} is installed in a different location: remove it first.",
                         entry.title
-                    ));
+                    )
+                    .into());
                 }
                 if old.file != entry.file {
                     stale.extend(old_path.filter(|path| plan.unreadable.contains(path)));
@@ -178,7 +177,7 @@ pub(super) fn install(
         match fs::copy(&saved, &next) {
             Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("{}: {e}", saved.display())),
+            Err(e) => return Err(format!("{}: {e}", saved.display()).into()),
         }
         let ids = enable.iter().map(String::as_str).collect::<Vec<_>>();
         mod_list::set_all_enabled(staged.path(), &ids, true)?;

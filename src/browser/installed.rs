@@ -217,6 +217,56 @@ fn add(
     Ok(())
 }
 
+/// Why an install didn't happen: native code the player hasn't allowed yet (the plan may not
+/// have known it was there), which the launcher answers by asking and trying again, or any
+/// other reason, in words.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InstallError {
+    /// Installing needs `native`, which runs native code, before the player has allowed it.
+    NeedsNativeConsent {
+        native: String,
+    },
+    Message(String),
+}
+
+#[cfg(test)]
+impl InstallError {
+    /// For tests that read the words of a refusal.
+    pub(crate) fn contains(&self, text: &str) -> bool {
+        self.to_string().contains(text)
+    }
+}
+
+impl From<String> for InstallError {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl From<&str> for InstallError {
+    fn from(message: &str) -> Self {
+        Self::Message(message.to_owned())
+    }
+}
+
+impl std::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NeedsNativeConsent { native } => f.write_str(&crate::i18n::trf(
+                "{native} runs native code: allow native mods first.",
+                &[("native", native)],
+            )),
+            Self::Message(message) => f.write_str(message),
+        }
+    }
+}
+
+impl From<InstallError> for String {
+    fn from(error: InstallError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Installs `project` (and what it needs) into the game folder `home`. A project already
 /// installed is updated to the version chosen. `replacing` are registry mods that are removed
 /// as part of the same install (the ones it can't live with): all or nothing. `progress` gets
@@ -229,19 +279,19 @@ pub fn install(
     game: &str,
     replacing: &[String],
     progress: &dyn Fn(&str, f32),
-) -> Result<Vec<Entry>, String> {
+) -> Result<Vec<Entry>, InstallError> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     if project.source == SourceId::Sunrise {
         return super::sunrise::install(project, home, game, replacing, progress);
     }
     let steps = plan(source, project, everything, game)?;
-    put(
+    Ok(put(
         source,
         steps,
         home,
         &|kind| kind.folder().expect("plan keeps folder kinds"),
         progress,
-    )
+    )?)
 }
 
 /// Downloads each step's file into `home`, in the folder `folder` names for its kind, and lists

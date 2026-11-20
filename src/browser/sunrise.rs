@@ -1026,7 +1026,7 @@ pub fn install(
     game: &str,
     replacing: &[String],
     progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, String> {
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let index = index()?;
     let index = if index
         .project(&project.id)
@@ -1080,6 +1080,7 @@ pub fn update_native(
         &[],
         progress,
     )
+    .map_err(String::from)
 }
 
 /// [`install`] from a trusted `index`.
@@ -1094,7 +1095,7 @@ fn install_from(
     turn_on: bool,
     replacing: &[String],
     progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, String> {
+) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let p = index
         .project(&project.id)
         .ok_or_else(|| format!("{} isn't in Sunrise's registry.", project.title))?;
@@ -1114,7 +1115,7 @@ fn install_from(
             turn_on,
         );
     }
-    install_version(index, local, p, v, home, progress).map(|e| vec![e])
+    Ok(vec![install_version(index, local, p, v, home, progress)?])
 }
 
 /// Downloads the newest version of the registry's data pack `project` into `folder`, checked
