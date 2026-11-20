@@ -1476,7 +1476,6 @@
   "Checking your mods…": "Checking your mods…",
   "Couldn't check your native mods for this version": "Couldn't check your native mods for this version",
   "Removes {count} of your mods": "Removes {count} of your mods",
-  "{name} needs {native}, which runs native code: allow native mods first.": "{name} needs {native}, which runs native code: allow native mods first.",
   "A modpack keeps the build it was made for. Make your own profile to change it.": "A modpack keeps the build it was made for. Make your own profile to change it.",
   "Removes {count} of your mods · still checking": "Removes {count} of your mods · still checking",
   "Couldn't check your mods for this version": "Couldn't check your mods for this version",
@@ -1486,5 +1485,6 @@
   "Needed": "Needed",
   "{mods} is needed and isn't available for your version": "{mods} is needed and isn't available for your version",
   "{mods} are needed and aren't available for your version": "{mods} are needed and aren't available for your version",
-  "{mod} couldn't be built": "{mod} couldn't be built"
+  "{mod} couldn't be built": "{mod} couldn't be built",
+  "{native} runs native code: allow native mods first.": "{native} runs native code: allow native mods first."
 }

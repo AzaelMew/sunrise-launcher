@@ -688,7 +688,12 @@ fn native_code_is_refused_without_the_choice_whoever_brings_it() {
     };
     // The requested mod is native itself.
     let (_, root) = install(&index);
-    assert!(root.unwrap_err().contains("runs native code"));
+    assert_eq!(
+        root.unwrap_err(),
+        installed::InstallError::NeedsNativeConsent {
+            native: "Coordinates HUD".into()
+        }
+    );
     // An index of the older format that doesn't list the dependency: the file does.
     for project in &mut index.projects {
         for version in &mut project.versions {
@@ -696,8 +701,13 @@ fn native_code_is_refused_without_the_choice_whoever_brings_it() {
         }
     }
     let (content, _) = install(&index);
-    let refused = content.unwrap_err();
-    assert!(refused.contains("runs native code"), "{refused}");
+    // The launcher asks and tries again on this outcome, not on its words.
+    assert_eq!(
+        content.unwrap_err(),
+        installed::InstallError::NeedsNativeConsent {
+            native: "Coordinates HUD".into()
+        }
+    );
     assert!(!home.join("sunrise-native-mods").exists());
     assert!(!home.join(installed::MANIFEST).exists());
     fs::remove_dir_all(home).unwrap();
@@ -1338,7 +1348,7 @@ fn installs_a_shader_pack_into_shaderpacks() {
     fs::write(home.join("shaderpacks/glow-1.0.0.sshader"), b"mine").unwrap();
     let e = install_from(&index, true, &p, &home, GAME, false, true, &[], &|_, _| {}).unwrap_err();
     assert_eq!(
-        e,
+        e.to_string(),
         "shaderpacks/glow-1.0.0.sshader is already there: move it away first."
     );
     fs::remove_dir_all(&home).unwrap();
@@ -1371,7 +1381,7 @@ fn refuses_a_changed_file_a_taken_id_and_local_files_from_the_real_registry() {
         date: String::new(),
     });
     let e = put(&taken_down, true, &home).unwrap_err();
-    assert_eq!(e, "Coordinates HUD was taken down: Test.");
+    assert_eq!(e.to_string(), "Coordinates HUD was taken down: Test.");
     fs::remove_dir_all(&home).unwrap();
 }
 
@@ -1504,7 +1514,7 @@ fn install_keeps_the_takedown_reason_of_a_version_it_could_not_install_anyway() 
         &|_, _| {},
     )
     .unwrap_err();
-    assert_eq!(e, "Coordinates HUD was taken down: Test.");
+    assert_eq!(e.to_string(), "Coordinates HUD was taken down: Test.");
     fs::remove_dir_all(&home).unwrap();
 }
 
