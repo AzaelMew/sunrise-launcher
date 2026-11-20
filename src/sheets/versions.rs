@@ -89,9 +89,13 @@ struct Build {
 fn picker_note(native: &Native, removed: Option<usize>) -> String {
     match (native, removed) {
         (_, None) => tr("Couldn't check your mods for this version").to_string(),
-        (Native::Unavailable, Some(_)) => {
+        (Native::Unavailable, Some(0)) => {
             tr("Couldn't check your native mods for this version").to_string()
         }
+        (Native::Unavailable, Some(n)) => trf(
+            "Removes {count} of your mods · couldn't check your native mods",
+            &[("count", &n.to_string())],
+        ),
         (Native::Checking, Some(0)) => tr("Checking your mods…").to_string(),
         (Native::Checking, Some(n)) => trf(
             "Removes {count} of your mods · still checking",
@@ -644,8 +648,13 @@ mod tests {
             "what is known is not hidden while the rest is checked"
         );
         assert_eq!(
-            picker_note(&Native::Unavailable, Some(3)),
+            picker_note(&Native::Unavailable, Some(0)),
             "Couldn't check your native mods for this version"
+        );
+        assert_eq!(
+            picker_note(&Native::Unavailable, Some(3)),
+            "Removes 3 of your mods · couldn't check your native mods",
+            "the count that is known stays when the native check failed"
         );
         assert_eq!(done(Some(0)), "All your mods work with this version");
         assert_eq!(done(Some(2)), "Removes 2 of your mods");
