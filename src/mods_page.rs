@@ -134,6 +134,11 @@ impl Mods {
         self.home.current()
     }
 
+    /// Whether the install of mod `id` waits for its turn.
+    pub(crate) fn waiting(&self, id: &str) -> bool {
+        self.queue.waits(id)
+    }
+
     pub(super) fn begin_build_consent(&mut self, selected: PathBuf) -> Arc<PathBuf> {
         self.home.begin_build_consent(selected)
     }
@@ -222,17 +227,32 @@ impl Launcher {
         if native {
             self.mods.queue.build_after_install();
         }
-        // The build that finishes an install goes through the Build button's entry, so its own
-        // planner decides what to build: native mods share a patch library, so one mod is
-        // never built alone. A build already running can't take the new mod in, so the one
-        // follow-up waits until it ends.
-        if self
-            .mods
-            .queue
-            .build_due(self.mods.busy.is_some(), self.native_step.is_some())
-        {
-            self.build_native();
-            changed = true;
+        // Installs that waited start in order. The build that finishes them goes through the
+        // Build button's entry, so its own planner decides what to build: native mods share a
+        // patch library, so one mod is never built alone. A build already running can't take
+        // a new mod in, so what was asked for meanwhile waits until it ends, and one
+        // follow-up build takes it all up.
+        let locked = matches!(
+            self.mods_lock(),
+            Some(crate::mods::Lock::GameRunning | crate::mods::Lock::Preparing)
+        );
+        let step =
+            self.mods
+                .queue
+                .next(self.mods.busy.is_some(), self.native_step.is_some(), locked);
+        changed |= step.is_some();
+        match step {
+            Some(queue::Step::Install(queue::Request::One {
+                source,
+                id,
+                known,
+                shown,
+            })) => self.mods_install(source, id, known.map(|p| *p), shown),
+            Some(queue::Step::Install(queue::Request::Many(ids, shown))) => {
+                self.mods_install_many(ids, shown)
+            }
+            Some(queue::Step::Build) => self.build_native(),
+            None => {}
         }
         for l in loaded {
             self.mods_loaded(l);
@@ -312,9 +332,6 @@ impl Launcher {
         known: Option<Project>,
         shown: Option<String>,
     ) {
-        if self.mods.busy.is_some() {
-            return;
-        }
         // The first native code: the trust notice, before anything is installed. The plan
         // decides, so a content mod that needs a native one asks too.
         let first_native = source == SourceId::Sunrise
@@ -325,6 +342,16 @@ impl Launcher {
             self.content_scroll
                 .handle
                 .set_offset(gpui::point(px(0.), px(0.)));
+            return;
+        }
+        // Behind an install or a build, and behind what already waits: one at a time, in order.
+        if self.mods.busy.is_some() || self.native_step.is_some() || self.mods.queue.is_waiting() {
+            self.mods.queue.push(queue::Request::One {
+                source,
+                id,
+                known: known.map(Box::new),
+                shown,
+            });
             return;
         }
         self.mods.message = None;
@@ -430,7 +457,7 @@ impl Launcher {
     /// stops the rest and names the mod; the ones before it stay installed. `shown` is the
     /// collection's name.
     pub(super) fn mods_install_many(&mut self, ids: Vec<String>, shown: String) {
-        if self.mods.busy.is_some() || ids.is_empty() {
+        if ids.is_empty() {
             return;
         }
         if self.settings.native_mods_allowed_at.is_none() && self.brings_native(&ids) {
@@ -438,6 +465,10 @@ impl Launcher {
             self.content_scroll
                 .handle
                 .set_offset(gpui::point(px(0.), px(0.)));
+            return;
+        }
+        if self.mods.busy.is_some() || self.native_step.is_some() || self.mods.queue.is_waiting() {
+            self.mods.queue.push(queue::Request::Many(ids, shown));
             return;
         }
         self.mods.message = None;

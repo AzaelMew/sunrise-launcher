@@ -42,6 +42,7 @@ mod packs;
 mod project;
 mod search;
 mod ui;
+pub(crate) use actions::Lock;
 pub(crate) use model::collection::run_in_order;
 pub(crate) use search::Installed;
 mod viewer;
