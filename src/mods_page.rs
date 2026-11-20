@@ -89,7 +89,12 @@ pub(crate) enum InstallFailure {
     /// The build stopped for a reason outside the mods (no network, the build tools didn't
     /// download, no room): the mods that went in were removed, the notice says why, and
     /// Install can be tried again.
-    Interrupted,
+    Interrupted {
+        /// The mods it put back or removed.
+        ids: Vec<String>,
+        /// Why it stopped, as the build said.
+        reason: String,
+    },
 }
 
 /// How an install ended well: what to tell the player, if anything (a registry mod says
@@ -822,8 +827,11 @@ impl Launcher {
                 {
                     let _ = installed::remove(&home, id);
                 }
+                self.mods.failed = Some(InstallFailure::Interrupted {
+                    ids: touched.iter().map(|t| t.id.clone()).chain(ids).collect(),
+                    reason: stopped.clone().unwrap_or_default(),
+                });
                 self.mods.message = stopped.map(Err);
-                self.mods.failed = Some(InstallFailure::Interrupted);
                 self.mods.reload_installed();
             }
             BuildCost::Failures(failures) => {
@@ -1133,6 +1141,25 @@ impl AutoOutcome {
     /// A question to answer or mods to confirm for removal: Play doesn't start under either.
     fn blocks_play(&self) -> bool {
         !self.asks.is_empty() || !self.removals.is_empty()
+    }
+}
+
+/// What went wrong for mod `id` in the last install's build, for its card: the reason in one
+/// plain line and the whole text for Details (a compile failure's log).
+pub(crate) fn build_failure_of(
+    failed: Option<&InstallFailure>,
+    id: &str,
+) -> Option<(String, String)> {
+    match failed? {
+        InstallFailure::ModsDidNotBuild(failures) => failures
+            .iter()
+            .find(|f| f.id == id)
+            .map(|f| (f.reason.clone(), f.log.clone())),
+        InstallFailure::Interrupted { ids, reason } if ids.iter().any(|i| i == id) => Some((
+            crate::mods::install_state::plain_failure(reason),
+            reason.clone(),
+        )),
+        InstallFailure::Interrupted { .. } => None,
     }
 }
 

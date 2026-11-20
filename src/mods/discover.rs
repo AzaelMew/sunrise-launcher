@@ -386,9 +386,41 @@ impl Launcher {
                 .card_error
                 .as_ref()
                 .filter(|e| e.id == id && stage.is_none());
+            // What a build that stopped or a mod that didn't compile says, when no install error
+            // is already on the card: its Details opens the same panel.
+            let build_failure = failed_here
+                .is_none()
+                .then(|| crate::mods_page::build_failure_of(self.mods.failed.as_ref(), &id))
+                .flatten();
             // A failed install keeps Install to try again, and a Details beside it.
-            let control = match failed_here {
-                Some(_) => Some(
+            let control = match (failed_here, &build_failure) {
+                (None, Some((line, details))) => {
+                    let (open_id, line, details) = (id.clone(), line.clone(), details.clone());
+                    let title = card_data.name.clone();
+                    Some(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                crate::frame::button(("alt-card-details", n), tr("Details"))
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.mods.card_error = Some(crate::mods_page::CardError {
+                                            id: open_id.clone(),
+                                            title: title.clone(),
+                                            line: line.clone(),
+                                            details: details.clone(),
+                                            open: true,
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                            .children(control)
+                            .into_any_element(),
+                    )
+                }
+                (Some(_), _) => Some(
                     div()
                         .flex()
                         .items_center()
@@ -407,7 +439,7 @@ impl Launcher {
                         .children(control)
                         .into_any_element(),
                 ),
-                None => control,
+                (None, None) => control,
             };
             let mut facts = match card_data.members {
                 Some(count) => vec![
