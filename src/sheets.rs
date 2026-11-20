@@ -39,6 +39,8 @@ pub(crate) enum Sheet {
     Search,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
+    /// Play was accepted while the registry worker is proving the new generation.
+    RegistryPlay,
 }
 
 /// The way out of a problem the play bar raised, as the Notice sheet's one action.
@@ -298,6 +300,7 @@ impl Launcher {
     pub(crate) fn blocking_dialog(&self) -> bool {
         self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
+            || self.mods.installs.question.is_some()
             || self.owner_screen_open
             || self.instances.dialog.is_some()
             || (self.ui.page == crate::frame::Page::Hosting && self.servers.create.is_some())
@@ -317,6 +320,12 @@ impl Launcher {
         self.ui.sheets.way_out = way_out;
     }
 
+    pub(crate) fn reset_install_question_sheet(&mut self) {
+        self.ui.sheets.ticked.0 = false;
+        self.ui.sheets.details = false;
+        self.consent_error = None;
+    }
+
     /// The worker asks before dependency build programs run. The sheet answers `reply`; losing the
     /// sheet answers no.
     pub(crate) fn registry_consent(&mut self, inventory: Consent, reply: Sender<bool>) {
@@ -334,6 +343,8 @@ impl Launcher {
             let _ = reply.send(false);
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
+        } else if let Some((_, reply)) = self.mods.installs.question.take() {
+            let _ = reply.send(false);
         }
         self.ui.sheet = None;
         self.ui.sheets.ticked = (false, false);
@@ -344,6 +355,7 @@ impl Launcher {
     pub(crate) fn sheet_escape(&mut self) -> bool {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
+            || self.mods.installs.question.is_some()
             || self.ui.sheet.is_some();
         if open {
             self.close_sheet();
@@ -545,12 +557,42 @@ impl Launcher {
         if self.pending_consent.is_some() {
             return Some(self.consent_sheet(cx));
         }
+        if self.mods.installs.question.is_some() {
+            return Some(self.registry_build_failed(cx));
+        }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
             Some(Sheet::AccountMenu) => self.account_menu(cx),
             Some(Sheet::Search) => Some(self.command_search(cx)),
+            Some(Sheet::RegistryPlay) => match self.registry_stage() {
+                Some(stage) => {
+                    use crate::mods_page::install::{stage_fraction, stage_label};
+                    let body = div()
+                        .flex()
+                        .flex_col()
+                        .child(title(tr("Getting ready to play").into()))
+                        .child(muted(stage_label(stage)))
+                        .children(
+                            stage_fraction(stage)
+                                .map(|f| crate::widgets::progress_bar(Some((f, f)), &self.theme)),
+                        )
+                        .child(div().flex().justify_end().child(
+                            button("hide-registry-play", tr("Keep browsing")).on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.close_sheet();
+                                    cx.notify();
+                                }),
+                            ),
+                        ));
+                    Some(frame("registry-play", 550., body, cx))
+                }
+                None => {
+                    self.ui.sheet = None;
+                    None
+                }
+            },
             Some(Sheet::ModBuild) => {
                 let sheet = self.build_modal(cx);
                 if sheet.is_none() {
@@ -575,6 +617,33 @@ impl Launcher {
             },
             None => None,
         }
+    }
+
+    fn registry_build_failed(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let (failure, _) = self
+            .mods
+            .installs
+            .question
+            .as_ref()
+            .expect("shown while the install waits");
+        let names = crate::mods::names(&failure.mods);
+        let show = self.ui.sheets.details;
+        let body = div().flex().flex_col()
+            .child(title(trf("Couldn't build {mods}", &[("mods", &names)])))
+            .child(muted(tr("Stay to leave your mods unchanged. Continue to install the checked packages that work. New mods that failed to build will stay off.")))
+            .children(show.then(|| div().id("install-why").max_h(px(180.)).overflow_y_scroll().child(crate::selectable::selectable(failure.detail.clone()))))
+            .child(div().flex().justify_end().gap(px(8.))
+                .child(button("install-show-why", if show { tr("Hide details") } else { tr("Show why") })
+                    .on_click(cx.listener(|this, _, _, cx| { this.ui.sheets.details ^= true; cx.notify(); })))
+                .child(button("install-stay", tr("Stay"))
+                    .on_click(cx.listener(|this, _, _, cx| { this.close_sheet(); cx.notify(); })))
+                .child(button("install-continue", tr("Continue"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some((_, answer)) = this.mods.installs.question.take() { let _ = answer.send(true); }
+                        this.ui.sheets.details = false;
+                        cx.notify();
+                    }))));
+        frame("registry-build-failed", 690., body, cx)
     }
 
     // ---- Resolve ----
@@ -914,7 +983,19 @@ impl Launcher {
             _ => trf("Allow {name} to run as native code?", &[("name", &name)]),
         };
         let rows = pending.map(PendingConsent::rows).unwrap_or_default();
-        let mods = if rows.is_empty() {
+        let mods = if let Some(PendingConsent::Registry(question, _)) = pending {
+            let list = div()
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .children(question.names.iter().cloned().map(|name| div().child(name)));
+            let provenance = if question.reviewed {
+                tr("Reviewed by the Sunrise registry and matched to its download checksums.")
+            } else {
+                tr("Local registry fixture; not from the Sunrise registry.")
+            };
+            fact(tr("Mods"), list.child(muted(provenance)), false)
+        } else if rows.is_empty() {
             fact(tr("Mods"), name.clone(), false)
         } else {
             let packages = div()
@@ -1036,10 +1117,9 @@ impl Launcher {
                         self.build_native_on(base, leave_out)
                     }
                     PendingConsent::Toggle(entry) => self.mods_switch(&entry),
-                    PendingConsent::Install(source, id, known, _) => {
-                        self.mods_install(source, id, known, None)
+                    PendingConsent::Registry(_, reply) => {
+                        let _ = reply.send(Ok(true));
                     }
-                    PendingConsent::Collection(ids, name) => self.mods_install_many(ids, name),
                     PendingConsent::Github(found, only) => self.github_install(found, only),
                 }
             }

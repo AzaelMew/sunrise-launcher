@@ -43,7 +43,6 @@ mod project;
 mod search;
 mod ui;
 pub(crate) use data_packs::names;
-pub(crate) use model::collection::{needs_consent, run_in_order};
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -593,7 +592,7 @@ impl Launcher {
             - 48.
     }
 
-    fn mods_home(&self) -> PathBuf {
+    pub(crate) fn mods_home(&self) -> PathBuf {
         self.selected_instance()
             .map(|i| i.home.clone())
             .unwrap_or_else(backend::game_home)
@@ -788,6 +787,23 @@ impl Launcher {
         });
     }
 
+    pub(crate) fn registry_compile_failure(&self, id: &str) -> Option<String> {
+        let snap = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .filter(|snap| snap.home == self.mods_home())?;
+        if snap.enabled.contains(id) {
+            return None;
+        }
+        snap.entries
+            .iter()
+            .find(|entry| entry.source == SourceId::Sunrise && entry.project == id)?
+            .compile_failure
+            .clone()
+    }
+
     /// The installed mods as rows. Uses only the index served over HTTPS this run for registry
     /// names and statuses. Never asks the network or writes.
     fn rows(&self) -> Vec<Row> {
@@ -849,7 +865,7 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.mods.busy.is_some()
+        self.ui.mods.busy.is_some() || self.registry_stage().is_some()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player
@@ -887,14 +903,8 @@ impl Launcher {
     /// The strip shown above either list: progress, or the last result.
     fn strip(&self, cx: &mut Context<Self>) -> Option<Div> {
         use ui::{c, muted};
-        let busy = self.ui.mods.busy.clone().or_else(|| {
-            self.mods
-                .busy
-                .as_ref()
-                .map(|(_, line, f)| (line.clone(), *f))
-        });
-        // A build is of mods: its strip is Mods' own. The play bar shows it on every page.
-        if let Some((line, f)) = busy {
+        // Registry installs use the global strip and the clicked card, not a third bar here.
+        if let Some((line, f)) = self.ui.mods.busy.clone() {
             return Some(
                 div()
                     .flex()

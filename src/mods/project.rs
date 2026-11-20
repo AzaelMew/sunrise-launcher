@@ -339,9 +339,7 @@ impl Launcher {
         }));
 
         // The right column: the action and what it changes, then the facts.
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let busy = self.mods_busy();
-        let native = p.make == Make::Native;
         let requires = p.requires.clone();
         // An update is offered here too: the version Add would install, over the one installed.
         let update = match (&installed_here, &p.will_install) {
@@ -350,70 +348,75 @@ impl Launcher {
             }
             _ => None,
         };
-        let action: AnyElement = match (&installed_here, &p.fit, &p.will_install) {
-            (Some(_), ..) if update.is_some() => {
-                let (from, to) = update.clone().unwrap_or_default();
-                let b = primary(
-                    "alt-project-update",
-                    trf("Update {from} → {to}", &[("from", &from), ("to", &to)]),
-                )
-                .w_full()
-                .h(px(tokens::ACTION));
-                if busy {
-                    dim(b).into_any_element()
-                } else {
-                    let id = p.id.clone();
-                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.update_mod(&id);
-                        cx.notify();
-                    }))
-                    .into_any_element()
-                }
-            }
-            (Some(_), ..) => div()
-                .h(px(tokens::ACTION))
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap(px(8.))
-                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                .border_1()
-                .border_color(c(palette().divider))
-                .text_color(c(palette().success))
-                .child(blocks::icon("check", 14., c(palette().success)))
-                .child(tr("Installed"))
-                .into_any_element(),
-            (None, fit, Some(_)) if fit.fits() => {
-                let label = match (native, native_allowed) {
-                    (true, false) => tr("Install…"),
-                    _ => tr("Install"),
-                };
-                let b = primary("alt-project-add", label)
+        let action: AnyElement = if let Some(progress) =
+            self.registry_card_control(&p.id, |label| {
+                dim(primary("alt-project-add", label)
+                    .w_full()
+                    .h(px(tokens::ACTION)))
+                .into_any_element()
+            }) {
+            progress
+        } else {
+            match (&installed_here, &p.fit, &p.will_install) {
+                (Some(_), ..) if update.is_some() => {
+                    let (from, to) = update.clone().unwrap_or_default();
+                    let b = primary(
+                        "alt-project-update",
+                        trf("Update {from} → {to}", &[("from", &from), ("to", &to)]),
+                    )
                     .w_full()
                     .h(px(tokens::ACTION));
-                if busy {
-                    dim(b).into_any_element()
-                } else {
-                    let id = p.id.clone();
-                    let name = p.name.clone();
-                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.add(id.clone(), name.clone());
-                        cx.notify();
-                    }))
-                    .into_any_element()
+                    if busy {
+                        dim(b).into_any_element()
+                    } else {
+                        let id = p.id.clone();
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.update_mod(&id);
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }
                 }
+                (Some(_), ..) => div()
+                    .h(px(tokens::ACTION))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.))
+                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                    .border_1()
+                    .border_color(c(palette().divider))
+                    .text_color(c(palette().success))
+                    .child(blocks::icon("check", 14., c(palette().success)))
+                    .child(tr("Installed"))
+                    .into_any_element(),
+                (None, fit, Some(_)) if fit.fits() => {
+                    let b = primary("alt-project-add", self.registry_install_label())
+                        .w_full()
+                        .h(px(tokens::ACTION));
+                    if self.mods_locked().is_some() {
+                        dim(b).into_any_element()
+                    } else {
+                        let id = p.id.clone();
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.add(id.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }
+                }
+                (None, fit, _) => div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(dim(primary("alt-project-add", tr("Install"))
+                        .w_full()
+                        .h(px(tokens::ACTION))))
+                    .child(note(fit.reason().unwrap_or_else(|| {
+                        tr("No version fits this build.").to_string()
+                    })))
+                    .into_any_element(),
             }
-            (None, fit, _) => div()
-                .flex()
-                .flex_col()
-                .gap(px(6.))
-                .child(dim(primary("alt-project-add", tr("Install"))
-                    .w_full()
-                    .h(px(tokens::ACTION))))
-                .child(note(fit.reason().unwrap_or_else(|| {
-                    tr("No version fits this build.").to_string()
-                })))
-                .into_any_element(),
         };
         // The version this panel is about: what would be installed, else what is.
         let shown_version = p
@@ -458,7 +461,7 @@ impl Launcher {
                 "alt-fact-code",
                 "shield",
                 tr("Native code").into(),
-                tr("Native code: it is built into the game on this computer and runs with full access to your computer. Its source was reviewed before it was listed.").into(),
+                tr("Native code: it is built into the game on this computer and runs with full access to your computer.").into(),
                 palette().accent_ink,
             ),
             Make::Content => fact(
@@ -644,6 +647,7 @@ impl Launcher {
                     .gap(px(12.))
                     .child(panel_head)
                     .child(action)
+                    .children(self.registry_card_outcome(&p.id, cx))
                     .child(facts)
                     .children(game_line)
                     .children(changes)
