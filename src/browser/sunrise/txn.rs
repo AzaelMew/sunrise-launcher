@@ -9,7 +9,7 @@
 //! build) and then *done* ([`done`], the build worked) or *undone* ([`undo`]). The record is
 //! written whole beside the old one and renamed over it; if it can't be written, nothing is
 //! published. One that can't be undone stays, and the profile takes no new install until it is.
-use crate::browser::installed::Replace;
+use crate::browser::installed::Approval;
 use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -44,7 +44,7 @@ struct Attempt {
     staging: PathBuf,
     steps: Vec<Step>,
     /// What the player approved removing with it, and whether they agreed to what worlds lose.
-    approvals: Vec<Replace>,
+    approvals: Vec<Approval>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -127,7 +127,7 @@ pub(super) fn begin(
     home: &Path,
     staged: &Path,
     changes: &[PathBuf],
-    approvals: &[Replace],
+    approvals: &[Approval],
 ) -> Result<String, String> {
     let mut record = read(home)?.unwrap_or_default();
     if record.attempts.iter().any(|a| a.state == State::Pending) {

@@ -129,6 +129,9 @@ pub(super) enum Event {
     /// The install found native code the plan didn't know of before the player had allowed
     /// it: the question to ask, whose answer starts the same install again.
     NeedsConsent(Box<PendingConsent>, Box<queue::Request>),
+    /// The install would drop what a saved world uses from these mods: the question to ask, and
+    /// the request that goes ahead if the player agrees.
+    NeedsWorlds(Vec<String>, Box<queue::Request>),
     /// The native mods an install put in before it failed: a build takes them up.
     Brought(Vec<String>),
     /// What the automatic updates did (`sunrise::auto`).
@@ -365,6 +368,22 @@ impl Launcher {
                     self.content_scroll
                         .handle
                         .set_offset(gpui::point(px(0.), px(0.)));
+                }
+                Event::NeedsWorlds(mods, request) => {
+                    m.busy = None;
+                    m.running = None;
+                    let instance = request.target().instance.clone();
+                    match sunrise_launcher::worlds::question(&request.target().home, &mods) {
+                        Ok(Some(question)) => {
+                            m.world_ask = Some(WorldAsk {
+                                instance,
+                                question,
+                                then: Then::Retry(request),
+                            })
+                        }
+                        Ok(None) => m.message = Some(Err(tr("Try the install again.").to_string())),
+                        Err(e) => m.message = Some(Err(e)),
+                    }
                 }
                 Event::Done(result) => {
                     done = true;
@@ -672,7 +691,9 @@ impl Launcher {
                 known,
                 replacing,
             } => self.start_install_one(target, source, id, known.map(|p| *p), replacing),
-            queue::Request::Many(target, ids, shown) => self.start_install_many(target, ids, shown),
+            queue::Request::Many(target, ids, shown, approvals) => {
+                self.start_install_many(target, ids, shown, approvals)
+            }
         }
     }
 
@@ -682,7 +703,7 @@ impl Launcher {
         source: SourceId,
         id: String,
         known: Option<Project>,
-        replacing: Vec<installed::Replace>,
+        replacing: Vec<installed::Approval>,
     ) {
         self.mods.message = None;
         self.mods.card_error = None;
@@ -812,6 +833,16 @@ impl Launcher {
                         replacing,
                     }),
                 ),
+                Err(Stop::Worlds(mods)) => Event::NeedsWorlds(
+                    mods,
+                    Box::new(queue::Request::One {
+                        target,
+                        source,
+                        id,
+                        known: retry.map(Box::new),
+                        replacing,
+                    }),
+                ),
                 Err(Stop::Failed(why)) => Event::Done(Err(why)),
                 Ok(finished) => Event::Done(Ok(finished)),
             });
@@ -822,6 +853,7 @@ impl Launcher {
 /// Why an install's thread stopped: it failed, or it needs the native-code question first.
 enum Stop {
     Failed(installed::InstallError),
+    Worlds(Vec<String>),
     Consent,
 }
 
@@ -835,6 +867,7 @@ impl From<installed::InstallError> for Stop {
     fn from(error: installed::InstallError) -> Self {
         match error {
             installed::InstallError::NeedsNativeConsent { .. } => Self::Consent,
+            installed::InstallError::NeedsWorlds { mods } => Self::Worlds(mods),
             other => Self::Failed(other),
         }
     }
@@ -858,6 +891,10 @@ impl Launcher {
             }
             Then::Install(ask) => self.install_replacing(*ask, &allow),
             Then::UpdateChosen(items) => self.update_allowing(items, allow),
+            Then::Retry(request) => {
+                let mods: Vec<String> = allow.into_iter().collect();
+                self.submit_install(request.approving(&mods));
+            }
             Then::Update => self.migrate_mods(&ask.instance, allow),
         }
     }
@@ -1092,10 +1129,12 @@ impl Launcher {
             replacing: ask
                 .entries
                 .into_iter()
-                .map(|(id, checksum)| installed::Replace {
-                    worlds_ok: worlds_ok.contains(&id),
-                    id,
-                    checksum,
+                .map(|(id, checksum)| {
+                    installed::Approval::Remove(installed::Replace {
+                        worlds_ok: worlds_ok.contains(&id),
+                        id,
+                        checksum,
+                    })
                 })
                 .collect(),
         };
@@ -1125,11 +1164,17 @@ impl Launcher {
                 .set_offset(gpui::point(px(0.), px(0.)));
             return;
         }
-        let request = queue::Request::Many(self.queue_target(), ids, shown);
+        let request = queue::Request::Many(self.queue_target(), ids, shown, Vec::new());
         self.submit_install(request);
     }
 
-    fn start_install_many(&mut self, target: queue::Target, ids: Vec<String>, shown: String) {
+    fn start_install_many(
+        &mut self,
+        target: queue::Target,
+        ids: Vec<String>,
+        shown: String,
+        approvals: Vec<installed::Approval>,
+    ) {
         self.mods.message = None;
         self.mods.busy = Some((
             shown.clone(),
@@ -1142,6 +1187,7 @@ impl Launcher {
         std::thread::spawn(move || {
             let native = std::cell::RefCell::new(Vec::new());
             let consent = std::cell::Cell::new(false);
+            let worlds = std::cell::RefCell::new(None);
             let result = (|| -> Result<Finished, String> {
                 // The whole set is planned once first: a conflict between picks refuses all of
                 // them before anything downloads. Each is then installed with what it needs.
@@ -1158,7 +1204,7 @@ impl Launcher {
                     let progress = |line: &str, f: f32| {
                         let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
                     };
-                    installed::install(&*source, &p, false, &home, &game, &[], &progress)
+                    installed::install(&*source, &p, false, &home, &game, &approvals, &progress)
                         .map(|done| {
                             native.borrow_mut().extend(
                                 done.iter()
@@ -1168,6 +1214,9 @@ impl Launcher {
                             done.into_iter().map(|e| e.title).collect()
                         })
                         .map_err(|why| {
+                            if let installed::InstallError::NeedsWorlds { mods } = &why {
+                                *worlds.borrow_mut() = Some(mods.clone());
+                            }
                             consent.set(matches!(
                                 why,
                                 installed::InstallError::NeedsNativeConsent { .. }
@@ -1190,10 +1239,16 @@ impl Launcher {
             if result.is_err() {
                 let _ = tx.send(Event::Brought(native.take()));
             }
-            let _ = tx.send(if consent.get() {
+            let worlds = worlds.take();
+            let _ = tx.send(if let Some(mods) = worlds {
+                Event::NeedsWorlds(
+                    mods,
+                    Box::new(queue::Request::Many(target, ids, shown, approvals)),
+                )
+            } else if consent.get() {
                 Event::NeedsConsent(
                     Box::new(PendingConsent::Collection(ids.clone(), shown.clone())),
-                    Box::new(queue::Request::Many(target, ids, shown)),
+                    Box::new(queue::Request::Many(target, ids, shown, approvals)),
                 )
             } else {
                 Event::Done(result.map_err(Into::into))
@@ -1322,6 +1377,8 @@ pub(crate) enum Then {
     Install(Box<BreakAsk>),
     /// The updates the player chose on the Installed list that would drop what a world may use.
     UpdateChosen(Vec<crate::mods::Included>),
+    /// An install that would drop what a world uses: it goes ahead as it was, with that agreed.
+    Retry(Box<queue::Request>),
 }
 
 /// A switch, update or install that waits for the player's answer: it would remove mods that

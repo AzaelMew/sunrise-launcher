@@ -952,3 +952,52 @@ fn a_profile_read_fresh_counts_its_installed_mods_that_do_not_fit_the_other_buil
     assert_eq!(gone[0].title, "Ruby");
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn an_install_that_replaces_a_package_dropping_what_a_world_uses_asks_before_publishing() {
+    let dir = scratch("auto-install-drops");
+    let old = ruby(&dir, "1.0.0", &["lamp", "ore"], &[]);
+    let new = ruby(&dir, "1.1.0", &["lamp"], &[]);
+    let index = index_of(&[("1.1.0", GAME, &new)]);
+    let home = dir.join("profile");
+    fs::create_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::copy(&old, home.join("sunrise-mods/ruby.smod")).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries.push(entry("1.0.0"));
+    list.save(&home).unwrap();
+    let project = super::super::project_of(&index, index.project("ruby").unwrap(), GAME).unwrap();
+    let install = |approvals: &[installed::Approval]| {
+        super::super::install_from(
+            &index,
+            true,
+            &project,
+            &home,
+            GAME,
+            true,
+            true,
+            approvals,
+            &|_, _| {},
+        )
+    };
+    // A world saved with ruby: nothing is published, and the question names the mod.
+    world_using(&home, "ruby");
+    let asked = install(&[]).unwrap_err();
+    assert!(
+        matches!(&asked, installed::InstallError::NeedsWorlds { mods } if mods == &["ruby"]),
+        "{asked:?}"
+    );
+    assert_eq!(installed_ruby(&home).0, "1.0.0");
+    assert!(!home.join("mod-browser/install-txn.json").exists());
+    // Worlds that can't be looked at stop it too.
+    let saves = fs::read(home.join("saves/Home/level.dat")).unwrap();
+    fs::remove_dir_all(home.join("saves")).unwrap();
+    fs::write(home.join("saves"), b"not a folder").unwrap();
+    assert!(install(&[]).is_err());
+    fs::remove_file(home.join("saves")).unwrap();
+    fs::create_dir_all(home.join("saves/Home")).unwrap();
+    fs::write(home.join("saves/Home/level.dat"), saves).unwrap();
+    // Agreed: it goes ahead.
+    install(&[installed::Approval::DropContent { id: "ruby".into() }]).unwrap();
+    assert_eq!(installed_ruby(&home).0, "1.1.0");
+    fs::remove_dir_all(&dir).unwrap();
+}

@@ -29,7 +29,21 @@ pub(super) fn install(
     // An approval that waited in a queue is read again here, under the lock: each mod it
     // removes must still be the file the player saw, and a world that uses it must have been
     // agreed to (worlds that can't be looked at stop the install).
-    for r in install.replacing {
+    let removes: Vec<&installed::Replace> = install
+        .approvals
+        .iter()
+        .filter_map(|a| match a {
+            installed::Approval::Remove(r) => Some(r),
+            installed::Approval::DropContent { .. } => None,
+        })
+        .collect();
+    let agreed = |id: &str| {
+        install
+            .approvals
+            .iter()
+            .any(|a| matches!(a, installed::Approval::DropContent { id: agreed } if agreed == id))
+    };
+    for r in &removes {
         let now = installed
             .entries
             .iter()
@@ -42,10 +56,9 @@ pub(super) fn install(
             .into());
         }
     }
-    let unagreed: Vec<String> = install
-        .replacing
+    let unagreed: Vec<String> = removes
         .iter()
-        .filter(|r| !r.worlds_ok)
+        .filter(|r| !r.worlds_ok && !agreed(&r.id))
         .map(|r| r.id.clone())
         .collect();
     let question = if unagreed.is_empty() {
@@ -54,16 +67,15 @@ pub(super) fn install(
         crate::worlds::question(home, &unagreed)?
     };
     if let Some(question) = question {
-        return Err(trf(
-            "A saved world uses {mods}: install again to be asked about it.",
-            &[("mods", &question.mods.join(", "))],
-        )
-        .into());
+        return Err(installed::InstallError::NeedsWorlds {
+            mods: question.mods,
+        });
     }
     // The mods this install replaces are out of the picture for the plan and go with it.
-    let (removing, kept): (Vec<_>, Vec<_>) = installed.entries.drain(..).partition(|e| {
-        e.source == SourceId::Sunrise && install.replacing.iter().any(|r| r.id == e.project)
-    });
+    let (removing, kept): (Vec<_>, Vec<_>) = installed
+        .entries
+        .drain(..)
+        .partition(|e| e.source == SourceId::Sunrise && removes.iter().any(|r| r.id == e.project));
     installed.entries = kept;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
@@ -131,6 +143,36 @@ pub(super) fn install(
         {
             return Err(installed::InstallError::NeedsNativeConsent {
                 native: entry.title.clone(),
+            });
+        }
+    }
+
+    // Every package this install replaces is compared with its staged replacement, under the
+    // lock: a mod that loses content (a block, an item) that a saved world may use asks the
+    // world question before anything is published, whoever brings the new version (the mod
+    // asked for or a dependency moving to another version). Worlds that can't be looked at,
+    // or a package that can't be compared, stop the install.
+    let mut drops = Vec::new();
+    for (entry, file) in &plan.selected {
+        let (Some(file), Some(old)) =
+            (file, plan.installed.find(SourceId::Sunrise, &entry.project))
+        else {
+            continue;
+        };
+        let Some(old_path) = old.path(home).filter(|p| !plan.unreadable.contains(p)) else {
+            continue;
+        };
+        if old_path.is_file()
+            && !agreed(&entry.project)
+            && !super::auto::dropped(&old_path, file)?.is_empty()
+        {
+            drops.push(entry.project.clone());
+        }
+    }
+    if !drops.is_empty() {
+        if let Some(question) = crate::worlds::question(home, &drops)? {
+            return Err(installed::InstallError::NeedsWorlds {
+                mods: question.mods,
             });
         }
     }
@@ -228,7 +270,7 @@ pub(super) fn install(
     let brings_native = done
         .iter()
         .any(|e| crate::native_status::is_native_file(&e.file));
-    let (staged, attempt) = publish(staged, changes, install.replacing)?;
+    let (staged, attempt) = publish(staged, changes, install.approvals)?;
     super::txn::commit(home, &attempt, staged, brings_native)?;
     Ok(done)
 }
@@ -442,7 +484,7 @@ impl Plan<'_> {
 fn publish(
     staged: tempfile::TempDir,
     changes: Vec<(Option<PathBuf>, PathBuf)>,
-    approvals: &[installed::Replace],
+    approvals: &[installed::Approval],
 ) -> Result<(tempfile::TempDir, String), String> {
     let home = staged
         .path()
