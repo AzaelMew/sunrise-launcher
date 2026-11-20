@@ -57,18 +57,6 @@ fn build_cost(
     }
 }
 
-/// An install that would break installed mods, waiting for the player's answer.
-pub(crate) struct BreakAsk {
-    source: SourceId,
-    pub(crate) id: String,
-    known: Option<Box<Project>>,
-    pub(crate) shown: Option<String>,
-    /// The mods it would break: id, title and what each needs.
-    pub(crate) broken: Vec<(String, String, String)>,
-    /// The exact file of each, by id and checksum, as the sheet showed them.
-    entries: Vec<(String, String)>,
-}
-
 /// An install that failed, as its card says it.
 pub(crate) struct CardError {
     pub(crate) id: String,
@@ -269,8 +257,6 @@ pub(super) struct Mods {
     pub(crate) updated: HashMap<String, Vec<(String, String, String)>>,
     /// Why the last install failed, on its card: one plain line, the whole text behind Details.
     pub(crate) card_error: Option<CardError>,
-    /// An install that would break installed mods, asked before anything is downloaded.
-    pub(crate) break_ask: Option<BreakAsk>,
     /// The mods that go once the player continues (`removal`).
     pub(crate) removal: removal::Pending,
     /// The native mods the running build was started to take up.
@@ -393,7 +379,6 @@ impl Mods {
             building: Default::default(),
             world_ask: None,
             removal: Default::default(),
-            break_ask: None,
             also: HashMap::new(),
             updated: HashMap::new(),
             card_error: None,
@@ -632,58 +617,20 @@ impl Launcher {
         known: Option<Project>,
         shown: Option<String>,
     ) {
-        // The first native code: the trust notice, before anything is installed. The plan
-        // decides, so a content mod that needs a native one asks too.
-        let first_native = source == SourceId::Sunrise
-            && self.settings.native_mods_allowed_at.is_none()
-            && self.brings_native(std::slice::from_ref(&id));
-        if first_native {
-            self.pending_consent = Some(PendingConsent::Install(source, id, known, shown));
-            self.content_scroll
-                .handle
-                .set_offset(gpui::point(px(0.), px(0.)));
-            return;
-        }
-        // An install the plan refuses because of what installed mods need would break them:
-        // one sheet asks first.
-        if source == SourceId::Sunrise {
-            let broken = self.would_break(std::slice::from_ref(&id));
-            if !broken.is_empty() {
-                let listed = installed::Installed::load(&self.mods.home()).entries;
-                let entries = broken
-                    .iter()
-                    .filter_map(|(id, ..)| {
-                        let e = listed.iter().find(|e| &e.project == id)?;
-                        Some((id.clone(), e.checksum.clone()))
-                    })
-                    .collect();
-                self.mods.break_ask = Some(BreakAsk {
-                    source,
-                    id,
-                    known: known.map(Box::new),
-                    shown,
-                    broken,
-                    entries,
-                });
-                return;
-            }
-        }
         let request = queue::Request::One {
             target: self.queue_target(),
             source,
             id,
             known: known.map(Box::new),
-            replacing: Vec::new(),
+            shown,
         };
         self.submit_install(request);
     }
 
-    /// The native-code question was accepted: the install it interrupted starts again, with its
-    /// own profile, approvals and mods, behind what already waits.
+    /// The native-code question answered the request already at the head of the queue.
     pub(crate) fn resume_install(&mut self) {
         if let Some(request) = self.mods.consent_request.take() {
-            // This is the intent that was already running, not another submission.
-            self.start_install(request);
+            self.mods.queue.resume(request);
         }
     }
 
@@ -738,17 +685,12 @@ impl Launcher {
                 source,
                 id,
                 known,
-                replacing,
-            } => self.start_install_one(
-                target,
-                (lease, fresh),
-                source,
-                id,
-                known.map(|p| *p),
-                replacing,
-            ),
-            queue::Request::Many(target, ids, shown, approvals) => {
-                self.start_install_many(target, (lease, fresh), ids, shown, approvals)
+                shown,
+            } => {
+                self.start_install_one(target, (lease, fresh), source, id, known.map(|p| *p), shown)
+            }
+            queue::Request::Many(target, ids, shown) => {
+                self.start_install_many(target, (lease, fresh), ids, shown)
             }
         }
     }
@@ -760,7 +702,7 @@ impl Launcher {
         source: SourceId,
         id: String,
         known: Option<Project>,
-        replacing: Vec<installed::Approval>,
+        shown: Option<String>,
     ) {
         self.mods.message = None;
         self.mods.card_error = None;
@@ -844,7 +786,6 @@ impl Launcher {
                         lease.clone(),
                         instance,
                         std::slice::from_ref(&p.id),
-                        &replacing,
                         &progress,
                     )?;
                     let finished = Finished::registry_install(plan.entries(), &before, &p.id);
@@ -870,17 +811,17 @@ impl Launcher {
             let _ = tx.send(match result {
                 Err(Stop::Consent) => Event::NeedsConsent(
                     Box::new(PendingConsent::Install(
-                        source,
-                        id.clone(),
-                        retry.clone(),
-                        None,
+                        shown
+                            .clone()
+                            .or_else(|| retry.as_ref().map(|p| p.title.clone()))
+                            .unwrap_or_else(|| id.clone()),
                     )),
                     Box::new(queue::Request::One {
                         target,
                         source,
                         id,
                         known: retry.map(Box::new),
-                        replacing,
+                        shown,
                     }),
                 ),
                 Err(Stop::ReadyInstall(prepared)) => Event::ReadyInstall(prepared),
@@ -971,7 +912,6 @@ impl Launcher {
             Then::Build(base) => {
                 self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
             }
-            Then::Install(ask) => self.install_replacing(*ask, &allow),
             Then::PreparedInstall(_) | Then::PreparedEdit(_) => unreachable!("handled above"),
         }
     }
@@ -1088,102 +1028,11 @@ impl Launcher {
         self.mods.installed_list.reset();
     }
 
-    /// The installed mods that installing the registry mods `ids` would break, by the index
-    /// already read.
-    fn would_break(&self, ids: &[String]) -> Vec<(String, String, String)> {
-        let entries = installed::Installed::load(&self.mods.home()).entries;
-        let held = sunrise::held_mods(&entries);
-        let Some(index) = sunrise::known_index() else {
-            return Vec::new();
-        };
-        sunrise::would_break(&index, ids, &held, &self.mods_game())
-            .into_iter()
-            .map(|b| {
-                let title = entries
-                    .iter()
-                    .find(|e| e.project == b.id)
-                    .map_or_else(|| b.id.clone(), |e| e.title.clone());
-                (b.id, title, b.needs)
-            })
-            .collect()
-    }
-
-    /// The answer to the break sheet: Install goes ahead and removes the mods it would break as
-    /// part of the install (all or nothing); Don't install leaves everything as it is. A mod a
-    /// saved world uses asks the world question first.
-    pub(crate) fn answer_break(&mut self, install: bool) {
-        let Some(ask) = self.mods.break_ask.take() else {
-            return;
-        };
-        if !install {
-            return;
-        }
-        let ids: Vec<String> = ask.broken.iter().map(|(id, ..)| id.clone()).collect();
-        let instance = self
-            .selected_instance()
-            .map(|i| i.id.clone())
-            .unwrap_or_default();
-        match sunrise_launcher::worlds::question(&self.mods.home(), &ids) {
-            Ok(Some(question)) => {
-                self.mods.world_ask = Some(WorldAsk {
-                    instance,
-                    question,
-                    then: Then::Install(Box::new(ask)),
-                });
-            }
-            Ok(None) => self.install_replacing(ask, &Default::default()),
-            // Worlds that can't be looked at stop the install: it removes mods they may use.
-            Err(e) => self.mods.message = Some(Err(e)),
-        }
-    }
-
-    /// Queues the install a break sheet asked for, with the mods it would break going in the
-    /// same transaction.
-    fn install_replacing(&mut self, ask: BreakAsk, worlds_ok: &std::collections::BTreeSet<String>) {
-        let request = queue::Request::One {
-            target: self.queue_target(),
-            source: ask.source,
-            id: ask.id,
-            known: ask.known,
-            replacing: ask
-                .entries
-                .into_iter()
-                .map(|(id, checksum)| {
-                    installed::Approval::Remove(installed::Replace {
-                        worlds_ok: worlds_ok.contains(&id),
-                        id,
-                        checksum,
-                    })
-                })
-                .collect(),
-        };
-        self.submit_install(request);
-    }
-
-    /// Whether installing the registry mods `ids` would put native code in, by the index
-    /// already read: false when none was.
-    fn brings_native(&self, ids: &[String]) -> bool {
-        let held = sunrise::held_mods(&installed::Installed::load(&self.mods.home()).entries);
-        sunrise::known_index()
-            .is_some_and(|index| sunrise::brings_native(&index, ids, &held, &self.mods_game()))
-    }
-
-    /// A collection's one Install, and Update all: the registry mods `ids` planned, asked about
-    /// and installed together with what they need, as one attempt (`installed::install_set`):
-    /// one world question for the set, and a failure leaves none of them installed. `shown` is
-    /// the name the page shows for it.
     pub(super) fn mods_install_many(&mut self, ids: Vec<String>, shown: String) {
         if ids.is_empty() {
             return;
         }
-        if self.settings.native_mods_allowed_at.is_none() && self.brings_native(&ids) {
-            self.pending_consent = Some(PendingConsent::Collection(ids, shown));
-            self.content_scroll
-                .handle
-                .set_offset(gpui::point(px(0.), px(0.)));
-            return;
-        }
-        let request = queue::Request::Many(self.queue_target(), ids, shown, Vec::new());
+        let request = queue::Request::Many(self.queue_target(), ids, shown);
         self.submit_install(request);
     }
 
@@ -1193,7 +1042,6 @@ impl Launcher {
         (lease, fresh): (Arc<sunrise::txn::Lease>, bool),
         ids: Vec<String>,
         shown: String,
-        approvals: Vec<installed::Approval>,
     ) {
         self.mods.message = None;
         self.mods.busy = Some((
@@ -1222,13 +1070,8 @@ impl Launcher {
                     .as_ref()
                     .ok_or_else(backend::no_version_installed)?;
                 let before = installed::Installed::load(&home).entries;
-                let plan = sunrise::prepare_registry_install(
-                    lease.clone(),
-                    instance,
-                    &ids,
-                    &approvals,
-                    &progress,
-                )?;
+                let plan =
+                    sunrise::prepare_registry_install(lease.clone(), instance, &ids, &progress)?;
                 let finished = Finished::registry_install(plan.entries(), &before, "");
                 PreparedInstall {
                     target: target.clone(),
@@ -1241,8 +1084,8 @@ impl Launcher {
             let _ = tx.send(match result {
                 Err(Stop::ReadyInstall(prepared)) => Event::ReadyInstall(prepared),
                 Err(Stop::Consent) => Event::NeedsConsent(
-                    Box::new(PendingConsent::Collection(ids.clone(), shown.clone())),
-                    Box::new(queue::Request::Many(target, ids, shown, approvals)),
+                    Box::new(PendingConsent::Install(shown.clone())),
+                    Box::new(queue::Request::Many(target, ids, shown)),
                 ),
                 Err(Stop::Failed(why)) => Event::Done(Err(why)),
                 Ok(finished) => Event::Done(Ok(finished)),
@@ -1288,8 +1131,6 @@ pub(crate) enum Then {
     /// A build that stopped for the question is made again, leaving those mods out: the build
     /// it was on.
     Build(String),
-    /// An install that removes mods a world uses.
-    Install(Box<BreakAsk>),
     /// The exact prepared set, image and locked world evidence to approve once.
     PreparedInstall(Box<PreparedInstall>),
     PreparedEdit(Box<PreparedEdit>),

@@ -58,8 +58,9 @@ fn install_inner(
     // An approval that waited in a queue is read again here, under the lock: each mod it
     // removes must still be the file the player saw, and a world that uses it must have been
     // agreed to (worlds that can't be looked at stop the install).
-    let removes: Vec<&installed::Replace> = install
-        .approvals
+    // The exact staged API does not accept a legacy approval to remove a conflict.
+    let approvals = if private { &[][..] } else { install.approvals };
+    let removes: Vec<&installed::Replace> = approvals
         .iter()
         .filter_map(|a| match a {
             installed::Approval::Remove(r) => Some(r),
@@ -67,8 +68,7 @@ fn install_inner(
         })
         .collect();
     let agreed = |id: &str| {
-        install
-            .approvals
+        approvals
             .iter()
             .any(|a| matches!(a, installed::Approval::DropContent { id: agreed } if agreed == id))
     };
@@ -77,9 +77,7 @@ fn install_inner(
             .entries
             .iter()
             .find(|e| e.source == SourceId::Sunrise && e.project == r.id);
-        if now.is_some_and(|e| e.checksum != r.checksum)
-            || private && now.is_none_or(|e| !exact_file(e, home, &r.checksum))
-        {
+        if now.is_some_and(|e| e.checksum != r.checksum) {
             return Err(trf(
                 "{mod} changed since you approved removing it. Install again to review it.",
                 &[("mod", &r.id)],
@@ -358,17 +356,6 @@ fn install_inner(
     Ok(done)
 }
 
-fn exact_file(entry: &installed::Entry, home: &Path, checksum: &str) -> bool {
-    entry.path(home).is_some_and(|p| {
-        checksum.strip_prefix("SHA-256:").is_some_and(|expected| {
-            index::sha256_file(&p).is_ok_and(|actual| actual.eq_ignore_ascii_case(expected))
-        })
-    })
-}
-
-/// Removes the registry mods in `wanted` (id and checksum: only a file that is still the one the
-/// player was shown goes) in one transaction, like an install: the record first, the files and
-/// the lists moved aside under the lock, a failure put back. Returns the ids that went.
 pub(super) fn remove_checked(
     home: &Path,
     wanted: &[(String, String)],

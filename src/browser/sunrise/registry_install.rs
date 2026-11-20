@@ -37,7 +37,6 @@ pub fn prepare_registry_install(
     owner: Arc<txn::Lease>,
     instance: &crate::instances::Instance,
     ids: &[String],
-    approvals: &[installed::Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<RegistryInstall, installed::InstallError> {
     let (index, evidence) = authoritative_index()?;
@@ -50,7 +49,7 @@ pub fn prepare_registry_install(
             index: &index,
             local: false,
             home: plan.stage(),
-            approvals,
+            approvals: &[],
             progress,
         },
         &asked,

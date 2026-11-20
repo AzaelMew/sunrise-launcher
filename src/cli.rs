@@ -2174,7 +2174,6 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 owner,
                 &instance,
                 std::slice::from_ref(&project.id),
-                &[],
                 &line,
             )?
             .commit(false);

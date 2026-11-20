@@ -2204,6 +2204,56 @@ fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
 }
 
 #[test]
+fn a_staged_conflict_never_removes_an_installed_package() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = conflict_index(dir.path());
+    let home = dir.path().join("profile");
+    let lamps = project_of(&index, index.project("lamps").unwrap(), GAME).unwrap();
+    install_from(
+        &index,
+        true,
+        &lamps,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    let row = installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "lamps")
+        .unwrap()
+        .clone();
+    let package = row.path(&home).unwrap();
+    let browser = home.join(installed::MANIFEST);
+    let enable = home.join(sunrise_launcher_smod::mod_list::FILE);
+    let paths = [&package, &browser, &enable];
+    let bytes = paths.map(|path| fs::read(path).unwrap());
+    let p = index.project("fireflies").unwrap();
+    let refused = dependencies::stage(
+        &Install {
+            index: &index,
+            local: true,
+            home: &home,
+            approvals: &[installed::Approval::Remove(installed::Replace {
+                id: "lamps".into(),
+                checksum: row.checksum,
+                worlds_ok: true,
+            })],
+            progress: &|_, _| {},
+        },
+        &[(p, &p.versions[0])],
+        false,
+        &Default::default(),
+    )
+    .unwrap_err();
+    assert!(matches!(refused, installed::InstallError::Conflict { mods, .. } if mods == ["lamps"]));
+    assert_eq!(paths.map(|path| fs::read(path).unwrap()), bytes);
+    assert!(!home.join("mod-browser/install-txn.json").exists());
+}
+
+#[test]
 fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
     let dir = tempfile::tempdir().unwrap();
     let index = conflict_index(dir.path());

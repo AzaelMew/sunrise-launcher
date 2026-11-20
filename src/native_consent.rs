@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
-    browser::{mod_list, Project, SourceId},
+    browser::mod_list,
     github_mods::Resolved,
     native_status::{BuildInput, Registry},
 };
@@ -16,11 +16,8 @@ pub(super) enum PendingConsent {
     Build(Vec<BuildInput>),
     /// One activation bound to the profile and explicit enable bit before asking.
     Edit(Box<crate::mods_page::ModEditRequest>),
-    /// The project to install by id, the project when the page had it, and the name the page or
-    /// card that asked was showing for it.
-    Install(SourceId, String, Option<Project>, Option<String>),
-    /// The registry mods of a collection to install together, and the collection's name.
-    Collection(Vec<String>, String),
+    /// The displayed title; the queue retains the original install request.
+    Install(String),
     Github(Resolved, Option<String>),
 }
 
@@ -42,13 +39,7 @@ impl PendingConsent {
                 count => crate::i18n::trf("{count} mods", &[("count", &count.to_string())]),
             },
             Self::Edit(request) => request.name.clone(),
-            // The mod as the page that asked names it ("JEI"), not its id ("jei").
-            Self::Install(_, id, project, shown) => shown
-                .clone()
-                .or_else(|| project.as_ref().map(|p| p.title.clone()))
-                .filter(|title| !title.is_empty())
-                .unwrap_or_else(|| id.clone()),
-            Self::Collection(_, name) => name.clone(),
+            Self::Install(name) => name.clone(),
             Self::Github(found, _) => found.label(),
         }
     }
@@ -130,7 +121,6 @@ pub(super) fn resolve(
             PendingConsent::ReadingBuild(_)
             | PendingConsent::Edit(_)
             | PendingConsent::Install(..)
-            | PendingConsent::Collection(..)
             | PendingConsent::Github(..) => {}
         }
     }
@@ -140,36 +130,6 @@ pub(super) fn resolve(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_install_is_named_as_its_page_names_the_mod() {
-        let project = |title: &str| Project {
-            source: SourceId::Sunrise,
-            id: "jei".into(),
-            slug: "jei".into(),
-            title: title.into(),
-            summary: String::new(),
-            author: String::new(),
-            downloads: 0,
-            page: String::new(),
-            icon: None,
-            license: String::new(),
-            kind: sunrise_launcher::browser::Kind::Mod,
-            game_versions: Vec::new(),
-            loaders: Vec::new(),
-            blocked: None,
-        };
-        let install = |p| PendingConsent::Install(SourceId::Sunrise, "jei".into(), p, None);
-        assert_eq!(install(Some(project("JEI"))).name(), "JEI");
-        assert_eq!(install(Some(project(""))).name(), "jei");
-        assert_eq!(install(None).name(), "jei");
-        // The name the page that asked was showing wins: an install by id alone has no other,
-        // and a project read earlier may carry the name from before a rename.
-        let shown =
-            |p| PendingConsent::Install(SourceId::Sunrise, "jei".into(), p, Some("JEI 2".into()));
-        assert_eq!(shown(None).name(), "JEI 2");
-        assert_eq!(shown(Some(project("JEI"))).name(), "JEI 2");
-    }
 
     #[test]
     fn a_build_names_a_package_as_the_registry_mod_only_when_its_file_is_the_registrys() {

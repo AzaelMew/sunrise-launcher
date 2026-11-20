@@ -21,16 +21,11 @@ pub(crate) enum Request {
         source: SourceId,
         id: String,
         known: Option<Box<Project>>,
-        /// Installed registry mods this install removes with it (the ones it can't live with).
-        replacing: Vec<sunrise_launcher::browser::installed::Approval>,
+        /// The title shown when this request was made, even if it later pauses for consent.
+        shown: Option<String>,
     },
-    /// A collection's mods, the collection's name and what the player approved.
-    Many(
-        Target,
-        Vec<String>,
-        String,
-        Vec<sunrise_launcher::browser::installed::Approval>,
-    ),
+    /// A collection's mods and title.
+    Many(Target, Vec<String>, String),
 }
 
 impl Request {
@@ -67,6 +62,11 @@ impl Queue {
         } else {
             Some(request)
         }
+    }
+
+    /// A running request that paused for consent was already ahead of every waiting request.
+    pub(super) fn resume(&mut self, request: Request) {
+        self.waiting.push_front(request);
     }
 
     /// Whether anything waits for its turn: a new request goes behind it.
@@ -141,7 +141,7 @@ mod tests {
             source: SourceId::Sunrise,
             id: id.into(),
             known: None,
-            replacing: Vec::new(),
+            shown: None,
         }
     }
 
@@ -190,7 +190,7 @@ mod tests {
         assert!(queue.submit(one("a"), true).is_none());
         assert!(queue
             .submit(
-                Request::Many(target(), vec!["x".into()], "Pack".into(), Vec::new()),
+                Request::Many(target(), vec!["x".into()], "Pack".into()),
                 true
             )
             .is_none());
@@ -295,35 +295,23 @@ mod tests {
             source: SourceId::Sunrise,
             id: "lumen".into(),
             known: None,
-            replacing: vec![sunrise_launcher::browser::installed::Approval::Remove(
-                sunrise_launcher::browser::installed::Replace {
-                    id: "lamps".into(),
-                    checksum: "SHA-256:1".into(),
-                    worlds_ok: false,
-                },
-            )],
+            shown: Some("Lumen".into()),
         };
-        // What came behind it waits while the question is open (the caller holds the queue)...
-        assert!(queue.submit(one("later"), false).is_some());
-        let mut queue = Queue::default();
         queue.submit(one("behind"), true);
         assert_eq!(id_of(queue.next("main", false, false, true)), "nothing");
-        // ...and the answer submits the held request again: it goes behind what waits, with
-        // its own profile, game and approvals, whatever is selected by then.
-        assert!(queue.submit(held, false).is_none());
-        assert_eq!(id_of(queue.next("main", false, false, false)), "behind");
+        queue.resume(held);
         match queue.next("main", false, false, false) {
-            Some(Step::Install(Request::One {
-                target, replacing, ..
-            })) => {
+            Some(Step::Install(Request::One { target, shown, .. })) => {
                 assert_eq!(
                     (target.instance.as_str(), target.game.as_str()),
                     ("other", "26.2")
                 );
-                assert_eq!(replacing.len(), 1);
+                assert_eq!(target.home, PathBuf::from("/home/other"));
+                assert_eq!(shown.as_deref(), Some("Lumen"));
             }
-            _ => panic!("the held request starts"),
+            _ => panic!("the held request starts before later work"),
         }
+        assert_eq!(id_of(queue.next("main", false, false, false)), "behind");
     }
 
     #[test]

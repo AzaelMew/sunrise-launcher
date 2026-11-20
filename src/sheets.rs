@@ -302,11 +302,8 @@ impl Launcher {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.mods.world_ask.is_some()
-            || self.mods.break_ask.is_some()
             || self.ui.sheet.is_some();
-        if self.mods.break_ask.is_some() {
-            self.answer_break(false);
-        } else if self.mods.world_ask.is_some() {
+        if self.mods.world_ask.is_some() {
             self.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
         } else if open {
             self.close_sheet();
@@ -466,9 +463,6 @@ impl Launcher {
         if self.mods.world_ask.is_some() {
             return Some(self.world_question_sheet(cx));
         }
-        if self.mods.break_ask.is_some() {
-            return Some(self.break_sheet(cx));
-        }
         if self.mods.card_error.as_ref().is_some_and(|e| e.open) {
             return Some(self.card_why_sheet(cx));
         }
@@ -498,81 +492,6 @@ impl Launcher {
             }
             None => None,
         }
-    }
-
-    // ---- An install that would break mods ----
-
-    /// Installing this mod would break installed mods: which, and what each needs. Not
-    /// installing is the default and what closing does.
-    fn break_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let (name, broken) = {
-            let ask = self
-                .mods
-                .break_ask
-                .as_ref()
-                .expect("shown only while asked");
-            (
-                ask.shown.clone().unwrap_or_else(|| ask.id.clone()),
-                ask.broken.clone(),
-            )
-        };
-        let heading = match broken.len() {
-            1 => trf(
-                "Installing {name} would break 1 of your mods",
-                &[("name", &name)],
-            ),
-            n => trf(
-                "Installing {name} would break {count} of your mods",
-                &[("name", &name), ("count", &n.to_string())],
-            ),
-        };
-        let go = match broken.len() {
-            1 => tr("Install and remove 1 mod").to_string(),
-            n => trf(
-                "Install and remove {count} mods",
-                &[("count", &n.to_string())],
-            ),
-        };
-        let body =
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(title(heading))
-                .children(broken.into_iter().map(
-                    |(_, mod_name, needs): (String, String, String)| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(mod_name))
-                            .child(muted(trf(
-                                "Works only with {needs}. It would be removed.",
-                                &[("needs", &needs)],
-                            )))
-                    },
-                ))
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .justify_end()
-                        .gap(px(10.))
-                        .child(button("alt-break-go", go).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.answer_break(true);
-                                cx.notify();
-                            },
-                        )))
-                        .child(
-                            crate::frame::primary("alt-break-stay", tr("Don't install")).on_click(
-                                cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.answer_break(false);
-                                    cx.notify();
-                                }),
-                            ),
-                        ),
-                );
-        frame("alt-break", 580., body, cx)
     }
 
     // ---- Removal ----
@@ -754,7 +673,6 @@ impl Launcher {
             _ => None,
         };
         let removing = matches!(ask.then, crate::mods_page::Then::PreparedEdit(_));
-        let installing = matches!(ask.then, crate::mods_page::Then::Install(_));
         let entries = self
             .instances
             .list
@@ -784,14 +702,7 @@ impl Launcher {
             } else if prepared.is_some() {
                 tr("This install may affect saved worlds").into()
             } else {
-                trf(
-                    if installing {
-                        "Installing removes {mods}"
-                    } else {
-                        "Switching removes {mods}"
-                    },
-                    &[("mods", &mods)],
-                )
+                trf("Switching removes {mods}", &[("mods", &mods)])
             }))
             .children(
                 prepared
@@ -985,11 +896,7 @@ impl Launcher {
     fn consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         if matches!(
             self.pending_consent,
-            Some(
-                PendingConsent::Install(..)
-                    | PendingConsent::Collection(..)
-                    | PendingConsent::Github(..)
-            )
+            Some(PendingConsent::Install(..) | PendingConsent::Github(..))
         ) {
             return self.first_native_sheet(cx);
         }
@@ -1146,16 +1053,9 @@ impl Launcher {
                         self.build_native_on(base, leave_out)
                     }
                     PendingConsent::Edit(request) => self.start_mod_edit(*request),
-                    PendingConsent::Install(..) | PendingConsent::Collection(..)
-                        if self.mods.consent_request.is_some() =>
-                    {
-                        // The install that found the native code starts again as it was.
+                    PendingConsent::Install(_) => {
                         self.resume_install();
                     }
-                    PendingConsent::Install(source, id, known, _) => {
-                        self.mods_install(source, id, known, None)
-                    }
-                    PendingConsent::Collection(ids, name) => self.mods_install_many(ids, name),
                     PendingConsent::Github(found, only) => self.github_install(found, only),
                 }
             }
