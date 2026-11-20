@@ -668,10 +668,9 @@ impl Launcher {
         self.build_native();
     }
 
+    /// Open a browser destination already checked by its caller.
     pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {
-        if url.starts_with("https://") {
-            cx.open_url(url);
-        }
+        cx.open_url(url);
     }
 
     /// What the notice strip says: the batch's own, else what the shared install path said.
