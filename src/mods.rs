@@ -46,6 +46,7 @@ mod ui;
 pub(crate) use actions::Lock;
 pub(crate) use data_packs::names;
 pub(crate) use model::collection::run_in_order;
+pub(crate) use model::Included;
 pub(crate) use search::Installed;
 mod viewer;
 use std::rc::Rc;
@@ -132,6 +133,9 @@ enum Event {
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
     Done(String, Vec<(String, String)>),
+    /// Updates that would drop what saved worlds may use: nothing was changed for them, the
+    /// world question comes.
+    Asked(Vec<model::Included>),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -491,6 +495,7 @@ impl Launcher {
                     m.busy = None;
                     m.notice = Some(Err(why));
                 }
+                Event::Asked(items) => self.ask_worlds_before_update(items),
                 Event::Done(said, failed) => {
                     m.busy = None;
                     m.errors.clear();
