@@ -635,6 +635,14 @@ fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
 }
 
 #[test]
+fn switch_cannot_seal_a_filtered_takedown_or_a_future_schema() {
+    assert!(parse_authoritative(r#"{"schema":1,"projects":[],"revoked":[]}"#).is_ok());
+    assert!(parse_authoritative(r#"{"schema":1,"projects":[]}"#).is_err());
+    assert!(parse_authoritative(r#"{"schema":2,"projects":[],"revoked":[]}"#).is_err());
+    assert!(parse_authoritative(r#"{"schema":1,"projects":[],"revoked":[{"id":"broken","sha256":"not-a-hash","reason":"removed"}]}"#).is_err());
+}
+
+#[test]
 fn an_authoritative_index_must_explicitly_list_projects_and_revocations() {
     let complete = r#"{"schema":1,"projects":[],"revoked":[]}"#;
     assert!(parse_live(complete).is_ok());

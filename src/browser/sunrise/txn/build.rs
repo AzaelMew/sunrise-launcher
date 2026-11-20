@@ -19,13 +19,13 @@ pub struct Target {
 impl Target {
     /// A legacy profile may already point at a derived image. Preserve that exact choice.
     pub fn legacy(tag: &str) -> Result<Self, String> {
-        valid_tag(tag)?;
+        validate_tag(tag)?;
         let base = if native_mods::is_native(tag) {
             native_mods::about(tag).ok_or_else(unsettled)?.base
         } else {
             tag.to_owned()
         };
-        valid_tag(&base)?;
+        validate_tag(&base)?;
         Ok(Self {
             base,
             preferred_image: tag.into(),
@@ -41,8 +41,8 @@ impl Target {
     }
 
     pub(super) fn validate(&self) -> Result<(), String> {
-        valid_tag(&self.base)?;
-        valid_tag(&self.preferred_image)
+        validate_tag(&self.base)?;
+        validate_tag(&self.preferred_image)
     }
 }
 
@@ -114,7 +114,7 @@ struct Artifact {
 
 impl Artifact {
     fn capture(tag: &str) -> Result<Self, String> {
-        valid_tag(tag)?;
+        validate_tag(tag)?;
         let dir = backend::version_dir(tag);
         require_dir(&dir)?;
         let path = dir.join(backend::CLIENT);
@@ -147,13 +147,28 @@ pub struct Active {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Receipt {
+pub struct Receipt {
     id: [u8; 16],
     names: Vec<String>,
     reasons: Vec<String>,
 }
 
+impl Receipt {
+    pub fn id(&self) -> [u8; 16] {
+        self.id
+    }
+    pub fn lines(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.names
+            .iter()
+            .map(String::as_str)
+            .zip(self.reasons.iter().map(String::as_str))
+    }
+}
+
 impl Active {
+    pub fn receipts(&self) -> &[Receipt] {
+        &self.receipts
+    }
     fn capture(
         profile: [u8; 16],
         generation: u64,
@@ -201,6 +216,50 @@ impl Active {
         Ok(next)
     }
 
+    pub(super) fn switched(
+        &self,
+        base: &str,
+        executable: &str,
+        staged: &Path,
+        removals: &[(String, String)],
+    ) -> Result<Self, String> {
+        let mut receipts = self.receipts.clone();
+        if !removals.is_empty() {
+            let mut id = [0; 16];
+            getrandom::fill(&mut id).map_err(|e| e.to_string())?;
+            let (names, reasons) = removals.iter().cloned().unzip();
+            receipts.push(Receipt { id, names, reasons });
+        }
+        Self::capture(
+            self.profile,
+            self.generation.checked_add(1).ok_or_else(unsettled)?,
+            base,
+            executable,
+            inputs(staged)?,
+            receipts,
+            staged,
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_receipt(mut self, sequence: u8) -> Self {
+        self.receipts.push(Receipt {
+            id: [sequence; 16],
+            names: vec![format!("mod-{sequence}")],
+            reasons: vec![format!("reason-{sequence}")],
+        });
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_switch(&self, tag: &str) -> Self {
+        let mut active = self.clone();
+        active.base.tag = tag.to_owned();
+        active.executable.tag = tag.to_owned();
+        active.generation += 1;
+        active
+    }
+
     pub fn base(&self) -> &str {
         &self.base.tag
     }
@@ -226,8 +285,17 @@ impl Active {
         if self.version != 1 || self.generation == 0 || self.profile == [0; 16] {
             return Err(unsettled());
         }
-        valid_tag(self.base())?;
-        valid_tag(self.executable())
+        let mut receipts = std::collections::HashSet::new();
+        if self.receipts.iter().any(|receipt| {
+            receipt.id == [0; 16]
+                || !receipts.insert(receipt.id)
+                || receipt.names.is_empty()
+                || receipt.names.len() != receipt.reasons.len()
+        }) {
+            return Err(unsettled());
+        }
+        validate_tag(self.base())?;
+        validate_tag(self.executable())
     }
 }
 
@@ -275,7 +343,7 @@ pub(super) fn verify_packages(home: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn valid_tag(tag: &str) -> Result<(), String> {
+pub(super) fn validate_tag(tag: &str) -> Result<(), String> {
     if tag.is_empty()
         || !tag.as_bytes()[0].is_ascii_alphanumeric()
         || tag.ends_with('.')
@@ -319,6 +387,26 @@ pub fn displayed_image(home: &Path) -> Option<String> {
 }
 
 impl Lease {
+    /// A delayed acknowledgement owns no authority over any other receipt or generation.
+    pub fn acknowledge_removal(&self, id: [u8; 16]) -> Result<bool, String> {
+        let _lock = super::locked(self.home())?;
+        if super::read(self.home())?.is_some() {
+            return Err(unsettled());
+        }
+        let Some(mut active) = self.active_build()? else {
+            return Ok(false);
+        };
+        let before = active.receipts.len();
+        active.receipts.retain(|receipt| receipt.id != id);
+        if active.receipts.len() == before {
+            return Ok(false);
+        }
+        let _publication =
+            crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        publish(self.home(), &active)?;
+        Ok(true)
+    }
+
     pub fn active_build(&self) -> Result<Option<Active>, String> {
         read(self.home())
     }

@@ -26,7 +26,10 @@ use std::path::{Path, PathBuf};
 
 mod build;
 mod durable;
-pub use build::{displayed_image, Active, Target};
+mod switch;
+mod switch_record;
+pub use build::{displayed_image, Active, Receipt, Target};
+pub use switch::Switch;
 
 const FILE: &str = "mod-browser/install-txn.json";
 const VERSION: u64 = 2;
@@ -127,6 +130,11 @@ impl Lease {
     pub fn recover_abandoned(&self) -> Result<(), String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.unwrap_or_default();
+        if matches!(record.intent, Intent::Switch { .. }) {
+            let _publication =
+                crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+            switch_record::recover(&self.home, &mut record)?;
+        }
         if record.pointer.is_some() {
             let _publication =
                 crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
@@ -236,8 +244,12 @@ struct Attempt {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 enum Intent {
-    Install { bootstrap: Option<build::Bootstrap> },
-    Switch { profile: [u8; 16], generation: u64 },
+    Install {
+        bootstrap: Option<build::Bootstrap>,
+    },
+    Switch {
+        operation: Box<switch_record::Journal>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -521,6 +533,11 @@ pub(crate) fn references(tag: &str) -> Result<bool, String> {
         let refers = |active: &Active| same(active.base()) || same(active.executable());
         let record = read(home)?;
         if let Some(record) = &record {
+            if let Intent::Switch { operation } = &record.intent {
+                if operation.references(tag)? {
+                    return Ok(true);
+                }
+            }
             if record.bootstrap().is_some_and(|pending| {
                 same(pending.target.base()) || same(pending.target.preferred_image())
             }) {
@@ -605,17 +622,10 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
                     && after.generation == 1
                     && after.base() == bootstrap.target.base()
             }
-            (
-                Intent::Switch {
-                    profile,
-                    generation,
-                },
-                Some(before),
-            ) => {
-                before.profile == *profile
-                    && after.profile == *profile
-                    && before.generation == *generation
-                    && after.generation.checked_sub(1) == Some(*generation)
+            (Intent::Install { bootstrap: None }, Some(before)) => {
+                before.profile == after.profile
+                    && before.base() == after.base()
+                    && after.generation.checked_sub(1) == Some(before.generation)
             }
             _ => false,
         };
@@ -623,9 +633,11 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
             return Err(kept(unsettled()));
         }
     }
-    // A Switch is not usable by the legacy Install callbacks.
-    if matches!(record.intent, Intent::Switch { .. }) && record.pointer.is_none() {
-        return Err(kept(unsettled()));
+    if let Intent::Switch { operation } = &record.intent {
+        if record.pointer.is_some() || !record.attempts.is_empty() {
+            return Err(kept(unsettled()));
+        }
+        operation.validate().map_err(kept)?;
     }
     use std::path::Component;
     let inside = |path: &Path| {
@@ -651,13 +663,16 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
 /// A failed persistence barrier is reported, even if the namespace change already happened.
 fn write(home: &Path, record: &Record) -> Result<(), String> {
     let file = home.join(FILE);
-    let persisted =
-        if record.attempts.is_empty() && record.pointer.is_none() && record.bootstrap().is_none() {
-            durable::retire(&file)
-        } else {
-            let text = serde_json::to_vec(record).map_err(|e| e.to_string())?;
-            durable::replace(home, &file, &text)
-        };
+    let persisted = if matches!(record.intent, Intent::Install { .. })
+        && record.attempts.is_empty()
+        && record.pointer.is_none()
+        && record.bootstrap().is_none()
+    {
+        durable::retire(&file)
+    } else {
+        let text = serde_json::to_vec(record).map_err(|e| e.to_string())?;
+        durable::replace(home, &file, &text)
+    };
     persisted.map_err(|e| format!("{}: {e}", file.display()))
 }
 
@@ -1053,7 +1068,9 @@ fn done(
 
 /// Whether installs of this profile wait for a build, or a restore is still owed.
 fn outstanding(home: &Path) -> bool {
-    read(home).map_or(true, |r| r.is_some_and(|r| !r.attempts.is_empty()))
+    read(home).map_or(true, |r| {
+        r.is_some_and(|r| !r.attempts.is_empty() || matches!(r.intent, Intent::Switch { .. }))
+    })
 }
 
 #[cfg(test)]
@@ -1398,7 +1415,7 @@ mod tests {
         assert!(!newer.exists() && !lease.outstanding());
     }
 
-    fn wait_to_be_killed() {
+    pub(super) fn wait_to_be_killed() {
         use std::io::Write;
         let mut out = io::stdout().lock();
         writeln!(out, "owner ready").unwrap();
@@ -1409,7 +1426,7 @@ mod tests {
     }
 
     /// Drives a child up to a durable boundary, then kills it without Rust destructors.
-    fn crash_process<T>(
+    pub(super) fn crash_process<T>(
         test: &str,
         home: &Path,
         worker: Option<&str>,

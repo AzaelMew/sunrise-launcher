@@ -415,11 +415,16 @@ fn load(
 }
 
 fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
-    use std::io::Read;
     if local {
         let text = fs::read_to_string(at).map_err(|e| format!("{at}: {e}"))?;
         return Ok((Index::parse_local(&text)?, text));
     }
+    let text = fetch_live_text(at)?;
+    Ok((parse_live(&text)?, text))
+}
+
+fn fetch_live_text(at: &str) -> Result<String, String> {
+    use std::io::Read;
     let spec = crate::proxy::spec_for(at);
     let agent = crate::net::keep("sunrise-index", spec.as_deref(), |proxy| {
         let builder = ureq::AgentBuilder::new()
@@ -446,7 +451,7 @@ fn fetch_index(at: &str, local: bool) -> Result<(Index, String), String> {
     if text.len() as u64 > MAX_INDEX {
         return Err("The mod registry index is too large.".into());
     }
-    Ok((parse_live(&text)?, text))
+    Ok(text)
 }
 
 /// The authoritative wire response must distinguish a missing list from an empty list.
@@ -466,6 +471,33 @@ fn parse_live(text: &str) -> Result<Index, String> {
         )
     })?;
     Index::parse(text)
+}
+
+/// No cached catalogue, display filtering, or locally configured substitute can authorize a
+/// switch. The complete response seals negative evidence too (a missing version/takedown).
+fn authoritative_index() -> Result<(Index, String), String> {
+    let text = fetch_live_text(INDEX_URL)?;
+    let index = parse_authoritative(&text)?;
+    Ok((index, index::sha256(text.as_bytes())))
+}
+
+fn parse_authoritative(text: &str) -> Result<Index, String> {
+    #[derive(serde::Deserialize)]
+    struct Complete {
+        schema: u32,
+        #[serde(rename = "projects")]
+        _projects: Vec<serde::de::IgnoredAny>,
+        #[serde(rename = "revoked")]
+        _revoked: Vec<serde::de::IgnoredAny>,
+    }
+    let complete: Complete = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    if complete.schema != index::SCHEMA {
+        return Err(tr("The mod registry didn't send the full index.").into());
+    }
+    let index: Index = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    // Do not silently discard any row: it can name a dependency or a revocation.
+    index.check()?;
+    Ok(index)
 }
 
 /// A project's ratings: 1 to 5 stars, their mean and how many.
