@@ -164,9 +164,12 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
     let wrapper = fixture.root.join("wrapper");
     script(
         &wrapper,
-        "#!/bin/sh\nprintf 'wrapped' > \"$SUNRISE_HOME/wrapper-ran\"\nexec \"$@\"\n",
+        "#!/bin/sh\nprintf 'wrapped' > \"$SUNRISE_HOME/wrapper-ran\"\n\"$@\"\nexit 43\n",
     );
-    fixture.configure(json!({"wrapper":format!("\"{}\"",wrapper.display())}));
+    fixture.configure(json!({
+        "wrapper":format!("\"{}\"",wrapper.display()),
+        "post_exit":"printf 'game ended' > post-exit",
+    }));
     let mut mcp = Running(
         fixture
             .launcher(&["mcp"])
@@ -227,8 +230,10 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
         .status()
         .unwrap()
         .success());
+    assert!(!fixture.home.join("post-exit").exists());
     fs::write(fixture.home.join("finish"), []).unwrap();
     assert_eq!(cli.0.wait().unwrap().code(), Some(7));
+    await_file(&fixture.home.join("post-exit"));
 
     let wrong = fixture
         .launcher(&["play", "--version", "developer-other"])

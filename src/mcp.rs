@@ -160,8 +160,8 @@ impl Session {
                 while !game_tools::listening() {
                     if let Some(result) = client.finished() {
                         return Err(format!(
-                            "The client stopped: {}\n{}",
-                            result.err().unwrap_or_default(),
+                            "Couldn't reach the client: {}\n{}",
+                            result.err().unwrap_or_else(|| "the game exited".into()),
                             client.tail(20).join("\n")
                         ));
                     }

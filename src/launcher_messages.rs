@@ -478,6 +478,14 @@ impl Launcher {
                         );
                     }
                 }
+                Msg::ClientObservationLost(error) => {
+                    self.client = None;
+                    self.client_run = None;
+                    self.client_started = None;
+                    self.client_vars.clear();
+                    self.come_back(cx);
+                    self.client_error = Some(error);
+                }
                 Msg::Exit(job, result) => {
                     // A preparation (or a build) ended: the disk may have changed under the pages.
                     backend::forget_prepared();

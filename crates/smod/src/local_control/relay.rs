@@ -83,6 +83,25 @@ impl Channel {
         self
     }
 
+    /// Read a piece of the post-spawn status or stop request without a launch deadline.
+    /// The transport remains nonblocking; absence of a reply is not a game exit.
+    pub fn poll_relay(&mut self, bytes: &mut [u8]) -> io::Result<Option<usize>> {
+        loop {
+            match self.stream.read(bytes) {
+                Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+                Ok(count) => return Ok(Some(count)),
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    pub fn write_relay(&mut self, bytes: &[u8], deadline: Instant) -> io::Result<()> {
+        self.deadline = deadline;
+        self.write_all(bytes)
+    }
+
     #[cfg(unix)]
     pub fn send_relay_claims(mut self, files: &[&std::fs::File]) -> io::Result<Self> {
         use rustix::net::{sendmsg, SendAncillaryBuffer, SendAncillaryMessage, SendFlags};

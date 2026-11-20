@@ -10,6 +10,7 @@ mod output_tests;
 pub mod owned;
 #[doc(hidden)]
 pub mod relay;
+mod relay_lifetime;
 mod relay_wrapper;
 #[cfg(unix)]
 pub mod supervisor;

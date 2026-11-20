@@ -2,6 +2,7 @@
 use super::{
     child::Child,
     leases::{ChildLeases, ProfileHandoff},
+    relay_lifetime::{self, RelayedGame},
     relay_wrapper::Wrapper,
 };
 use crate::managed_play::StartError;
@@ -64,12 +65,12 @@ struct Offer {
 enum Signal {
     Acquired,
     Commit,
-    Started,
+    Started(u32),
     Refused(String),
 }
 
 enum Confirmation {
-    Spawned,
+    Spawned(RelayedGame),
     Refused(io::Error),
     Unknown(io::Error),
 }
@@ -82,7 +83,9 @@ fn commit(channel: Channel) -> Confirmation {
         .send(&Signal::Commit)
         .and_then(Channel::receive::<Signal>);
     match reply {
-        Ok((_, Signal::Started)) => Confirmation::Spawned,
+        Ok((channel, Signal::Started(pid))) if pid != 0 => {
+            Confirmation::Spawned(RelayedGame::new(channel, pid))
+        }
         Ok((_, Signal::Refused(error))) => Confirmation::Refused(io::Error::other(error)),
         Ok(_) => Confirmation::Unknown(io::ErrorKind::InvalidData.into()),
         Err(error) => Confirmation::Unknown(error),
@@ -262,9 +265,13 @@ pub(crate) fn start(
     // Close the endpoint before returning failure (particularly if no relay ever connected).
     token.revoke();
     drop(endpoint);
-    let wrapper = wrapper.into_inner().unwrap();
+    let mut wrapper = wrapper.into_inner().unwrap();
     match outcome {
-        Ok(Confirmation::Spawned) => Ok(wrapper.child),
+        Ok(Confirmation::Spawned(game)) => {
+            let child = Child::relayed(game, &mut wrapper.child);
+            wrapper.retire();
+            Ok(child)
+        }
         Err(error) | Ok(Confirmation::Refused(error)) => {
             wrapper.retire();
             Err(failure(error).into())
@@ -363,8 +370,10 @@ fn run(mut args: impl Iterator<Item = OsString>) -> io::Result<i32> {
     };
     // The child already owns its claims. Even if the launcher never receives this
     // acknowledgment (or dies), the relay must not terminate the game.
-    let _ = channel.send(&Signal::Started);
-    let status = child.wait()?;
+    let status = match channel.send(&Signal::Started(child.id())) {
+        Ok(channel) => relay_lifetime::observe(child, channel)?,
+        Err(_) => child.wait()?,
+    };
     #[cfg(unix)]
     return super::supervisor::exit_code(status);
     #[cfg(windows)]

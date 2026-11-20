@@ -22,6 +22,13 @@ fn main() {
         match mode.to_str() {
             Some("--fixture-wrapper") => return wrapper(args),
             Some("--fixture-late") => return late(args),
+            Some("--fixture-wrapper-linger") => {
+                let home = backend::game_home();
+                fs::write(home.join("linger-live"), []).unwrap();
+                await_event(|| home.join("linger-stop").is_file());
+                fs::write(home.join("linger-stopped"), []).unwrap();
+                return;
+            }
             Some("--internal-game-relay") if std::env::var_os("FIXTURE_RELAY_CUT").is_some() => {
                 return post_commit_fixture(args);
             }
@@ -40,6 +47,8 @@ fn main() {
         Err(_) => {
             scenario("direct");
             scenario("wrapped");
+            scenario("different-status");
+            scenario("early-wrapper");
             scenario("failed");
         }
     }
@@ -60,6 +69,12 @@ fn scenario(mode: &str) {
             .stdin(Stdio::null());
         cmd
     };
+    if matches!(mode, "different-status" | "early-wrapper") {
+        assert!(process("owner").status().unwrap().success());
+        await_event(|| home.join("linger-stopped").is_file());
+        println!("{mode} reported the game's actual status without waiting for unrelated wrapper descendants");
+        return;
+    }
     if mode == "failed" {
         assert!(process("owner").status().unwrap().success());
         assert!(home.join("late-refused").is_file());
@@ -159,6 +174,44 @@ fn owner() {
         }
         launch
     };
+    if matches!(mode.as_str(), "different-status" | "early-wrapper") {
+        let (mut child, runtime) = profile
+            .spawn_configured(
+                &active,
+                &cancellation,
+                command(),
+                &wrap(mode.as_str()),
+                true,
+            )
+            .unwrap();
+        await_event(|| home.join("game-ready").is_file() && home.join("linger-live").is_file());
+        if mode == "early-wrapper" {
+            await_event(|| home.join("wrapper-finished").is_file());
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "the live game was confused with its wrapper"
+            );
+        }
+        drop(profile);
+        let log = backend::Logged::monitor_game(child, runtime);
+        assert!(log.finished().is_none());
+        fs::write(home.join("game-stop"), []).unwrap();
+        let mut result = None;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while result.is_none() {
+            result = log.finished();
+            assert!(
+                Instant::now() < deadline,
+                "the launcher waited for wrapper diagnostics or another Job member"
+            );
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        let status = result.unwrap().unwrap_err();
+        assert!(status.contains("23") && !status.contains("43"), "{status}");
+        assert!(!home.join("linger-stopped").exists());
+        fs::write(home.join("linger-stop"), []).unwrap();
+        return;
+    }
     if mode == "failed" {
         for case in ["none", "stall", "late"] {
             let result =
@@ -302,6 +355,24 @@ fn wrapper(mut args: impl Iterator<Item = std::ffi::OsString>) {
             .success());
         return;
     }
+    if mode == "different-status" || mode == "early-wrapper" {
+        let _linger = Guard(
+            Command::new(std::env::current_exe().unwrap())
+                .arg("--fixture-wrapper-linger")
+                .spawn()
+                .unwrap(),
+        );
+        let mut relay = Command::new(args.next().unwrap())
+            .args(args)
+            .spawn()
+            .unwrap();
+        await_event(|| home.join("game-ready").is_file());
+        if mode == "different-status" {
+            assert_eq!(relay.wait().unwrap().code(), Some(23));
+        }
+        fs::write(home.join("wrapper-finished"), []).unwrap();
+        std::process::exit(43);
+    }
     assert_eq!(mode, "close");
     use std::io::Write as _;
     std::io::stdout().write_all(&vec![b'o'; 256 << 10]).unwrap();
@@ -403,6 +474,12 @@ fn game() {
         .starts_with(backend::data_dir().join("run")));
     fs::write(home.join("game-ready"), []).unwrap();
     await_event(|| home.join("game-stop").is_file());
+    if matches!(
+        std::env::var(MODE).as_deref(),
+        Ok("different-status" | "early-wrapper")
+    ) {
+        std::process::exit(23);
+    }
 }
 
 #[track_caller]

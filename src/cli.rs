@@ -1477,12 +1477,12 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                     eprintln!("{notice}");
                 }
                 let started = std::time::Instant::now();
-                let result = game
+                let status = game
                     .child
                     .wait()
-                    .map_err(|error| error.to_string())
-                    .and_then(attached_status);
-                (started, result)
+                    .map_err(sunrise_launcher::process::child::unconfirmed_exit)?;
+                game.runtime.game_exited();
+                (started, attached_status(status))
             };
             if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
                 eprintln!("Play time not saved: {e}");

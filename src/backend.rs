@@ -3304,6 +3304,7 @@ impl Logged {
                         }
                     }
                     Msg::Exit(_, result) => *e.lock().unwrap() = Some(result),
+                    Msg::ClientObservationLost(error) => *e.lock().unwrap() = Some(Err(error)),
                     _ => {}
                 }
             }
@@ -4162,8 +4163,16 @@ pub struct Running {
 /// Launcher-owned tree-lock primitives and optional Windows runtime state.
 pub struct RuntimeGuard {
     _leases: Vec<crate::run_leases::Claim>,
+    pub(crate) managed_session: Option<PathBuf>,
     #[cfg(windows)]
     _windows: Option<crate::windows_runtime::Guard>,
+}
+
+impl RuntimeGuard {
+    /// Only a verified process exit retires a managed session early.
+    pub fn game_exited(mut self) {
+        crate::account::discard_launch_session(self.managed_session.take());
+    }
 }
 
 #[cfg(windows)]
@@ -4211,6 +4220,7 @@ fn prepare_runtime(
         cmd,
         RuntimeGuard {
             _leases: leases,
+            managed_session: None,
             #[cfg(windows)]
             _windows: guard,
         },
@@ -4307,36 +4317,59 @@ fn monitor(
         crate::process::owned::CHILDREN.track_group(pid);
     }
     let stdin = child.stdin.take();
+    let relayed = child.is_relayed();
+    let forwarding = Arc::new(Mutex::new(true));
     let mut readers = Vec::new();
     for stream in [child.stdout.take(), child.stderr.take()]
         .into_iter()
         .flatten()
     {
         let tx = tx.clone();
+        let forwarding = Arc::clone(&forwarding);
         readers.push(std::thread::spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
-                let _ = tx.send(Msg::Line(job, line));
+                let live = forwarding.lock().unwrap();
+                if !*live || tx.send(Msg::Line(job, line)).is_err() {
+                    break;
+                }
             }
         }));
     }
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
     std::thread::spawn(move || {
-        for r in readers {
-            let _ = r.join();
+        if !relayed {
+            for r in readers {
+                let _ = r.join();
+            }
         }
+        // Wrapper output can stay open after the game itself has exited.
         let status = loop {
             if let Some(s) = waited.lock().unwrap().try_wait().transpose() {
                 break s;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
+        *forwarding.lock().unwrap() = false;
+        if relayed {
+            if let Err(error) = status {
+                let _ = tx.send(Msg::ClientObservationLost(
+                    crate::process::child::unconfirmed_exit(error),
+                ));
+                return;
+            }
+        }
         let result = match status {
-            Ok(s) if s.success() => Ok(()),
-            Ok(s) => Err(format!("Exited with {s}")),
+            Ok(s) => {
+                runtime.game_exited();
+                if s.success() {
+                    Ok(())
+                } else {
+                    Err(format!("Exited with {s}"))
+                }
+            }
             Err(e) => Err(e.to_string()),
         };
-        drop(runtime);
         if group {
             crate::process::owned::CHILDREN.release(pid);
         }

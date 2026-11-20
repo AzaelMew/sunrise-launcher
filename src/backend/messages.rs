@@ -15,6 +15,8 @@ pub enum Msg {
     DiskUse(Vec<(String, u64)>),
     Line(Job, String),
     Exit(Job, Result<(), String>),
+    /// A relayed game acknowledged creation, but its actual exit was not observed.
+    ClientObservationLost(String),
     /// Boxed: two releases, the largest message by far.
     Updates(Box<Updates>),
     LauncherChecked(Box<Result<Option<Release>, String>>),

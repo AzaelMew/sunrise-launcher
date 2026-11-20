@@ -162,14 +162,17 @@ impl Client<'_> {
             )
         })();
         match started {
-            Ok((child, runtime)) => Ok(Started {
-                child,
-                runtime,
-                executable: tag.into(),
-                notice,
-                registry_notices,
-                owner: !offline,
-            }),
+            Ok((child, mut runtime)) => {
+                runtime.managed_session = session_file;
+                Ok(Started {
+                    child,
+                    runtime,
+                    executable: tag.into(),
+                    notice,
+                    registry_notices,
+                    owner: !offline,
+                })
+            }
             Err(error) => {
                 if !matches!(error, StartError::UnknownSpawn(_)) {
                     account::discard_launch_session(session_file);
