@@ -284,6 +284,13 @@ fn publish(
     staged: tempfile::TempDir,
     changes: Vec<(PathBuf, PathBuf)>,
 ) -> Result<tempfile::TempDir, String> {
+    let home = staged
+        .path()
+        .parent()
+        .expect("staged in the profile")
+        .to_path_buf();
+    let targets: Vec<PathBuf> = changes.iter().map(|(_, to)| to.clone()).collect();
+    super::journal::begin(&home, staged.path(), &targets)?;
     let mut undo = Vec::new();
     for (i, (from, to)) in changes.into_iter().enumerate() {
         let result = (|| -> io::Result<()> {
@@ -319,6 +326,7 @@ fn publish(
             }
             let message = format!("Cannot install {}: {e}", to.display());
             return Err(if rollback_errors.is_empty() {
+                super::journal::finish(&home);
                 message
             } else {
                 format!(
@@ -329,5 +337,6 @@ fn publish(
             });
         }
     }
+    super::journal::finish(&home);
     Ok(staged)
 }

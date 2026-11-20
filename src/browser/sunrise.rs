@@ -1455,6 +1455,7 @@ fn check_before_play(
 
 pub mod auto;
 mod dependencies;
+mod journal;
 pub mod pack;
 #[cfg(test)]
 mod tests;
