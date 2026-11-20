@@ -151,6 +151,52 @@ pub fn brings_native(
     })
 }
 
+/// An installed mod that installing would break: one the plan updates a dependency out from
+/// under.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Broken {
+    pub id: String,
+    /// What it needs that the plan would replace, as the registry names it ("flywheel ^0.3").
+    pub needs: String,
+}
+
+/// The installed mods that installing `ids` would break: the plan refuses because of what they
+/// need, and installing works without them. By the index; one installed file the index doesn't
+/// know is not judged. Empty when the plan works, or fails for another reason.
+pub fn would_break(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+) -> Vec<Broken> {
+    let Err(refusal) = check_set(index, ids, held, game) else {
+        return Vec::new();
+    };
+    held.iter()
+        .filter(|m| !ids.contains(&m.id))
+        .filter(|m| {
+            let without: Vec<_> = held.iter().filter(|h| h.id != m.id).cloned().collect();
+            check_set(index, ids, &without, game).is_ok()
+        })
+        .filter_map(|m| {
+            let version = index
+                .project(&m.id)?
+                .versions
+                .iter()
+                .find(|v| v.version == m.version)?;
+            let dep = version
+                .dependencies
+                .iter()
+                .flatten()
+                .find(|d| !d.optional && refusal.contains(&d.id))?;
+            Some(Broken {
+                id: m.id.clone(),
+                needs: format!("{} {}", dep.id, dep.version),
+            })
+        })
+        .collect()
+}
+
 /// The index read last in this run, without asking the network: for what must not wait.
 pub fn known_index() -> Option<Arc<Index>> {
     LOADED.lock().unwrap().as_ref().map(|l| l.index.clone())
