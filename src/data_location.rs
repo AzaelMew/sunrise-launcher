@@ -72,7 +72,7 @@ static LOCATION: Mutex<Option<Result<Option<Roots>>>> = Mutex::new(None);
 /// A startup failure falls back to the default folders, so a window can still open.
 static FORCE_DEFAULT: AtomicBool = AtomicBool::new(false);
 static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
-static STARTUP_LEASE: Mutex<Option<File>> = Mutex::new(None);
+static STARTUP_LEASE: Mutex<Option<MigrationLease>> = Mutex::new(None);
 
 fn location() -> std::sync::MutexGuard<'static, Option<Result<Option<Roots>>>> {
     LOCATION
@@ -244,9 +244,20 @@ pub fn resolve_at(bootstrap: &Path) -> Result<Option<Roots>> {
     Ok(Some(canonical))
 }
 
+/// Keeps the bootstrap lock held until the lease is dropped.
+pub struct MigrationLease(File);
+
+impl Drop for MigrationLease {
+    fn drop(&mut self) {
+        // A concurrent Unix fork can hold the same file description until exec, even
+        // with close-on-exec set. Release the lock without waiting for that copy to close.
+        let _ = self.0.unlock();
+    }
+}
+
 /// Hold until process exit. Workers must enter before acquiring this shared lease.
 /// Override-based isolated runs do not touch the user's bootstrap lock.
-pub fn acquire_startup_lock() -> Result<Option<File>> {
+pub fn acquire_startup_lock() -> Result<Option<MigrationLease>> {
     if overridden("SUNRISE_LAUNCHER_HOME") && overridden("SUNRISE_HOME") {
         Ok(None)
     } else {
@@ -254,11 +265,11 @@ pub fn acquire_startup_lock() -> Result<Option<File>> {
     }
 }
 
-pub fn acquire_lock_at(bootstrap: &Path) -> Result<File> {
+pub fn acquire_lock_at(bootstrap: &Path) -> Result<MigrationLease> {
     lock_at(bootstrap, false)
 }
 
-fn lock_at(bootstrap: &Path, exclusive: bool) -> Result<File> {
+fn lock_at(bootstrap: &Path, exclusive: bool) -> Result<MigrationLease> {
     let bootstrap = &pointer_path(bootstrap)?;
     let parent = bootstrap
         .parent()
@@ -283,7 +294,7 @@ fn lock_at(bootstrap: &Path, exclusive: bool) -> Result<File> {
             path.display()
         )
     })?;
-    Ok(file)
+    Ok(MigrationLease(file))
 }
 
 pub fn migrate_current(source: &Roots, target: &Path, progress: impl FnMut(&str)) -> Result<Roots> {
@@ -341,7 +352,7 @@ fn migrate_locked(
     bootstrap: &Path,
     mut progress: impl FnMut(&str),
     prepare: impl FnOnce(&Roots, &Roots) -> Result<()>,
-    _lease: &File,
+    _lease: &MigrationLease,
 ) -> Result<Roots> {
     let source = validate_roots(source)?;
     if let Some(current) = resolve_at(bootstrap)? {
