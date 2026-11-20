@@ -1084,6 +1084,7 @@ impl Launcher {
                         self.build_native_on(base, leave_out)
                     }
                     PendingConsent::Toggle(entry) => self.mods_switch(&entry),
+                    PendingConsent::TurnOn(id, _) => self.turn_on_local(&id),
                     PendingConsent::Install(source, id, known, _) => {
                         self.mods_install(source, id, known, None)
                     }
