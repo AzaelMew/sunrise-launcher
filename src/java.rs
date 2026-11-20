@@ -160,15 +160,18 @@ pub fn minecraft_runtimes(runtime: &Path) -> Vec<PathBuf> {
     for component in children(runtime) {
         for platform in children(&component) {
             let home = platform.join(component.file_name().unwrap_or_default());
-            for home in [home.join("jre.bundle/Contents/Home"), home] {
-                if home.join("bin").join(java_program()).is_file() {
-                    homes.push(home);
-                    break;
-                }
-            }
+            homes.extend(home_in(&home));
         }
     }
     homes
+}
+
+/// The Java home in a Mojang runtime folder: macOS runtimes keep it in `jre.bundle/Contents/Home`,
+/// the others in the folder itself. `None` when neither holds a java program.
+pub fn home_in(dir: &Path) -> Option<PathBuf> {
+    [dir.join("jre.bundle/Contents/Home"), dir.to_path_buf()]
+        .into_iter()
+        .find(|home| home.join("bin").join(java_program()).is_file())
 }
 
 /// Java homes installed on this computer: JAVA_HOME, the PATH's, then the folders installers use,
@@ -302,11 +305,7 @@ pub fn install(need: &Need, log: &dyn Fn(String)) -> Result<Runtime, String> {
         &mojang::CANCEL,
         log,
     )?;
-    let home = ["jre.bundle/Contents/Home", ""]
-        .iter()
-        .map(|sub| home.join(sub))
-        .find(|h| h.join("release").is_file())
-        .unwrap_or(home);
+    let home = home_in(&home).unwrap_or(home);
     runtime(home, Source::Mojang)
         .ok_or_else(|| format!("Mojang's {} has no usable java", need.component))
 }

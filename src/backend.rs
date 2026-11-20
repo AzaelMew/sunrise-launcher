@@ -2138,6 +2138,41 @@ fn java(
     } else {
         crate::jdk::find_runtime
     };
+    java_with(find, major, games, manifest, &|component, missing| {
+        // Mojang builds its Linux Java for glibc: without glibc's loader (NixOS without nix-ld,
+        // musl distributions) it cannot start, so don't download it.
+        if cfg!(all(target_os = "linux", target_arch = "x86_64"))
+            && !Path::new(GLIBC_LOADER).exists()
+        {
+            return Err(format!(
+                "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({GLIBC_LOADER} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead."
+            ));
+        }
+        let fetch = |url: &str| -> Result<Vec<u8>, String> {
+            let mut body = Vec::new();
+            get(url)?
+                .into_reader()
+                .read_to_end(&mut body)
+                .map_err(|e| e.to_string())?;
+            Ok(body)
+        };
+        let runtime = data_dir().join("minecraft").join("runtime");
+        mojang::java_runtime(component, &runtime, 8, &fetch, &mojang::CANCEL, log).map_err(|e| {
+            format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
+        })
+    })
+}
+
+/// [`java`] with its Java lookup (`find`) and Mojang download (`download` of a runtime
+/// component, given what was missing) passed in. A downloaded runtime's home is looked up
+/// through [`crate::java::home_in`], so a macOS `jre.bundle` is entered.
+fn java_with(
+    find: impl Fn(i64, &[PathBuf]) -> Result<crate::jdk::Jdk, String>,
+    major: i64,
+    games: &[PathBuf],
+    manifest: &Path,
+    download: &dyn Fn(&str, &str) -> Result<PathBuf, String>,
+) -> Result<PathBuf, String> {
     if let Ok(jdk) = find(major, &[]) {
         return Ok(jdk.home());
     }
@@ -2157,26 +2192,8 @@ fn java(
     let component = read_json(manifest)
         .and_then(|json| json["javaVersion"]["component"].as_str().map(String::from))
         .ok_or_else(|| missing.clone())?;
-    // Mojang builds its Linux Java for glibc: without glibc's loader (NixOS without nix-ld,
-    // musl distributions) it cannot start, so don't download it.
-    if cfg!(all(target_os = "linux", target_arch = "x86_64")) && !Path::new(GLIBC_LOADER).exists() {
-        return Err(format!(
-            "{missing}\n  • Minecraft's own Java from Mojang needs glibc ({GLIBC_LOADER} is missing; on NixOS, enable programs.nix-ld), so install compatible Java instead."
-        ));
-    }
-    let fetch = |url: &str| -> Result<Vec<u8>, String> {
-        let mut body = Vec::new();
-        get(url)?
-            .into_reader()
-            .read_to_end(&mut body)
-            .map_err(|e| e.to_string())?;
-        Ok(body)
-    };
-    let runtime = data_dir().join("minecraft").join("runtime");
-    let home = mojang::java_runtime(&component, &runtime, 8, &fetch, &mojang::CANCEL, log)
-        .map_err(|e| {
-        format!("{missing}\n  • Sunrise also tried to download Minecraft's own Java from Mojang, but: {e}")
-    })?;
+    let home = download(&component, &missing)?;
+    let home = crate::java::home_in(&home).unwrap_or(home);
     find(major, &[home]).map(|jdk| jdk.home())
 }
 
