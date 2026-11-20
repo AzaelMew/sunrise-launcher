@@ -1,11 +1,12 @@
 //! Everything that is not UI: GitHub, installs, resource preparation, the game's processes and
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
+use crate::process::child::Child;
 use crate::{account, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -4041,7 +4042,7 @@ pub enum Job {
 /// A running process; its output arrives as `Msg::Line`, its end as `Msg::Exit`.
 pub struct Running {
     pub child: Arc<Mutex<Child>>,
-    pub stdin: Option<ChildStdin>,
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
 }
 
 /// Launcher-owned tree-lock primitives and optional Windows runtime state.
@@ -4049,6 +4050,15 @@ pub struct RuntimeGuard {
     _leases: Vec<crate::run_leases::Claim>,
     #[cfg(windows)]
     _windows: Option<crate::windows_runtime::Guard>,
+}
+
+#[cfg(windows)]
+impl RuntimeGuard {
+    pub(crate) fn windows(&self) -> Result<&crate::windows_runtime::Guard, String> {
+        self._windows.as_ref().ok_or_else(|| {
+            crate::i18n::tr("The profile's runtime copy was not prepared.").to_owned()
+        })
+    }
 }
 
 pub use crate::run_leases::control::startup_cleanup;
@@ -4133,7 +4143,22 @@ pub fn spawn_holding(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = play_log::spawn(&mut cmd)?;
+    let child = play_log::spawn(&mut cmd)?.into();
+    Ok(monitor(job, child, tx, runtime, hold))
+}
+
+/// Use the same streams, process monitor and crash reporting for an admitted game's child.
+pub fn monitor_game(child: Child, tx: Sender<Msg>, runtime: RuntimeGuard) -> Running {
+    monitor(Job::Client, child, tx, runtime, None)
+}
+
+fn monitor(
+    job: Job,
+    mut child: Child,
+    tx: Sender<Msg>,
+    runtime: RuntimeGuard,
+    hold: Option<sunrise_launcher_smod::locks::Locked>,
+) -> Running {
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
@@ -4141,15 +4166,10 @@ pub fn spawn_holding(
     }
     let stdin = child.stdin.take();
     let mut readers = Vec::new();
-    let out = child
-        .stdout
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    let err = child
-        .stderr
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    for stream in [out, err].into_iter().flatten() {
+    for stream in [child.stdout.take(), child.stderr.take()]
+        .into_iter()
+        .flatten()
+    {
         let tx = tx.clone();
         readers.push(std::thread::spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
@@ -4181,7 +4201,7 @@ pub fn spawn_holding(
         drop(hold);
         let _ = tx.send(Msg::Exit(job, result));
     });
-    Ok(Running { child, stdin })
+    Running { child, stdin }
 }
 
 /// The launcher's appearance, as older launchers saved it: a theme is one look now, and a saved

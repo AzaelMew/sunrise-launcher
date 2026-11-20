@@ -14,6 +14,8 @@ use std::{
 pub struct ChildLeases {
     claims: Vec<Claim>,
     data: PathBuf,
+    #[cfg(windows)]
+    extra: Vec<File>,
 }
 impl ChildLeases {
     /// Acquire the shared gate, then each held tree. Fails immediately on contention.
@@ -26,6 +28,8 @@ impl ChildLeases {
         Ok(Self {
             claims,
             data: data.canonicalize()?,
+            #[cfg(windows)]
+            extra: Vec::new(),
         })
     }
     /// Create exactly one native child inside the isolated holder. Inherits that holder's cwd
@@ -83,8 +87,22 @@ impl ChildLeases {
         )
     }
 
+    #[cfg(windows)]
+    pub(crate) fn retain(&mut self, files: [&File; 2]) -> io::Result<()> {
+        self.extra.extend(
+            files
+                .into_iter()
+                .map(File::try_clone)
+                .collect::<io::Result<Vec<_>>>()?,
+        );
+        Ok(())
+    }
+
     fn files(&self) -> Vec<&File> {
-        self.claims.iter().flat_map(Claim::files).collect()
+        let claims = self.claims.iter().flat_map(Claim::files);
+        #[cfg(windows)]
+        let claims = claims.chain(self.extra.iter());
+        claims.collect()
     }
     #[cfg(unix)]
     pub fn spawn(self, command: std::process::Command) -> io::Result<std::process::Child> {

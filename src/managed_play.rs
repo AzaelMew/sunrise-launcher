@@ -2,6 +2,7 @@
 //! this boundary owns the types, verification and interpretation of its saved pointers.
 mod artifact;
 mod first;
+mod game;
 mod inputs;
 mod resources;
 mod roots;
@@ -175,6 +176,14 @@ impl Active {
 
     pub fn verify_program(&self, path: &Path) -> Result<(), String> {
         self.executable.verify_program(path)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn verify_runtime_copy(&self, directory: &Path) -> Result<(), String> {
+        if Artifact::capture_at(self.executable(), directory)? != self.executable {
+            return Err(unsettled());
+        }
+        Ok(())
     }
 
     /// Hash the actual image, including runtime dependencies and the signed archive marker.

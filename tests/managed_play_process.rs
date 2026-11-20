@@ -1,0 +1,184 @@
+//! Real launched images (including the copied Windows runtime); no account or signed game.
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::{Child, Command, Stdio},
+    time::{Duration, Instant},
+};
+use sunrise_launcher::{
+    backend,
+    managed_play::{FirstBuild, Profile},
+    native_mods::{Cancellation, Profile as BuildMode},
+};
+
+const ROLE: &str = "SUNRISE_MANAGED_PLAY_PROCESS_TEST";
+const BUILD: &str = "v0.7.1";
+
+fn main() {
+    match std::env::var(ROLE).as_deref() {
+        Ok("owner") => owner(),
+        Ok("contender") => contender(),
+        Ok("game") => game(),
+        Ok(role) => panic!("unexpected fixture role {role}"),
+        Err(_) => scenario(),
+    }
+}
+
+fn scenario() {
+    let root = tempfile::tempdir().unwrap();
+    let root_path = root.path().canonicalize().unwrap();
+    let home = root_path.join("game");
+    fs::create_dir(&home).unwrap();
+    let process = |role| {
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.env(ROLE, role)
+            .env("SUNRISE_HOME", &home)
+            .env("SUNRISE_LAUNCHER_HOME", root_path.join("launcher"))
+            .env("XDG_CONFIG_HOME", root_path.join("config"))
+            .stdin(Stdio::null());
+        cmd
+    };
+    let contender = Guard(process("contender").spawn().unwrap());
+    await_event(|| home.join("contender-ready").is_file());
+    let mut owner = Guard(process("owner").spawn().unwrap());
+    await_event(|| home.join("game-ready").is_file() && home.join("game-spawned").is_file());
+    owner.0.kill().unwrap();
+    assert!(!owner.0.wait().unwrap().success());
+    fs::write(home.join("try-while-live"), []).unwrap();
+    await_event(|| home.join("still-locked").is_file());
+    fs::write(home.join("game-stop"), []).unwrap();
+    await_event(|| home.join("unlocked").is_file());
+    let mut contender = contender;
+    assert!(contender.0.wait().unwrap().success());
+    println!("direct managed Play retained cache and profile claims after launcher death");
+}
+
+fn owner() {
+    let home = backend::game_home();
+    let executable = backend::version_dir(BUILD).join(if cfg!(windows) {
+        "sunrise-client.exe"
+    } else {
+        "sunrise-client"
+    });
+    let resources = backend::resources(BUILD);
+    fs::create_dir_all(&resources).unwrap();
+    fs::copy(std::env::current_exe().unwrap(), &executable).unwrap();
+    fs::write(executable.with_file_name(".installed"), []).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    let mut profile = Profile::open(&home, None).unwrap();
+    let cancellation = Cancellation::default();
+    let first = profile
+        .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+        .unwrap();
+    let image = first
+        .exact_image(BuildMode::Optimized, &cancellation, |_| {}, None)
+        .unwrap();
+    let active = first.commit(&image, &cancellation).unwrap();
+    let command = || {
+        let mut cmd = Command::new(&executable);
+        cmd.current_dir(&home)
+            .env(ROLE, "game")
+            .env("SUNRISE_RUNTIME_ENTRY", "fake record")
+            .env("SUNRISE_RUNTIME_HOLDER", "fake holder")
+            .arg("--resources")
+            .arg(active.resource_path());
+        cmd
+    };
+    let outside = home.with_file_name("other");
+    fs::create_dir(&outside).unwrap();
+    for flag in [
+        "--home",
+        "--gameDir",
+        "--dev-mod",
+        "--resources",
+        "--dedicated",
+    ] {
+        let mut wrong = command();
+        wrong.arg(flag).arg(&outside);
+        assert!(
+            profile
+                .spawn_direct(&active, &cancellation, wrong, false)
+                .is_err(),
+            "accepted {flag}"
+        );
+        assert!(!home.join("game-ready").exists());
+    }
+    let (_child, _runtime) = profile
+        .spawn_direct(&active, &cancellation, command(), false)
+        .unwrap();
+    drop(profile);
+    fs::write(home.join("game-spawned"), []).unwrap();
+    await_event(|| false);
+}
+
+fn contender() {
+    let home = backend::game_home();
+    fs::write(home.join("contender-ready"), []).unwrap();
+    await_event(|| home.join("try-while-live").is_file());
+    assert!(Profile::open(&home, None).is_err());
+    // Test a fresh runtime claim, not a higher-level check of the active pointer.
+    assert!(!can_lock_build(&backend::version_dir(BUILD)));
+    fs::write(home.join("still-locked"), []).unwrap();
+    await_event(|| Profile::open(&home, None).is_ok());
+    await_event(|| can_lock_build(&backend::version_dir(BUILD)));
+    fs::write(home.join("unlocked"), []).unwrap();
+}
+
+fn can_lock_build(path: &Path) -> bool {
+    use sunrise_launcher_smod::{
+        locks::LockMode,
+        runtime_leases::{open_directory, Registry},
+    };
+    let dir = open_directory(path).unwrap();
+    let registry = Registry::existing(&backend::data_dir()).unwrap();
+    registry.lock(&dir, LockMode::Exclusive).is_ok()
+}
+
+fn game() {
+    let home = backend::game_home();
+    let cmd: Vec<_> = std::env::args_os().collect();
+    assert_eq!(cmd[1], "--resources");
+    let resources = PathBuf::from(&cmd[2]);
+    assert_eq!(
+        fs::read(resources.join("sunrise-resources.json")).unwrap(),
+        b"{}"
+    );
+    assert_ne!(
+        std::env::var("SUNRISE_RUNTIME_ENTRY").ok().as_deref(),
+        Some("fake record")
+    );
+    assert!(std::env::var_os("SUNRISE_RUNTIME_HOLDER").is_none());
+    assert_eq!(std::env::var("SUNRISE_NO_DATA_FILE").unwrap(), "1");
+    assert_eq!(
+        std::env::current_dir().unwrap().canonicalize().unwrap(),
+        home.canonicalize().unwrap()
+    );
+    #[cfg(windows)]
+    assert!(std::env::current_exe()
+        .unwrap()
+        .starts_with(backend::data_dir().join("run")));
+    fs::write(home.join("game-ready"), []).unwrap();
+    await_event(|| home.join("game-stop").is_file());
+}
+
+#[track_caller]
+fn await_event(mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(90);
+    while !ready() {
+        assert!(
+            Instant::now() < deadline,
+            "managed Play process fixture timed out"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+struct Guard(Child);
+impl Drop for Guard {
+    fn drop(&mut self) {
+        if self.0.try_wait().ok() == Some(None) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
