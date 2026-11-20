@@ -1093,15 +1093,18 @@ fn a_mod_is_unknown_not_unfit_until_there_is_a_game_to_judge_by() {
     let idx = zoo();
     let all = cards(&idx, "");
     assert!(all.iter().all(|c| c.fit == Fit::Unknown));
-    let f = Filters {
+    // "Fits my game" is main's rule: only what fits shows under it, unknown included as not
+    // fitting; "Checking…" can only be seen where the switch is off.
+    let on = Filters {
         fits_only: true,
         ..Filters::default()
     };
-    assert_eq!(
-        discover(&all, &f).len(),
-        2,
-        "Fits my game puts away only what is known not to fit"
-    );
+    assert!(discover(&all, &on).is_empty());
+    let off = Filters {
+        fits_only: false,
+        ..Filters::default()
+    };
+    assert_eq!(discover(&all, &off).len(), 2);
     assert!(cards(&idx, GAME).iter().all(|c| c.fit == Fit::Fits));
 }
 
