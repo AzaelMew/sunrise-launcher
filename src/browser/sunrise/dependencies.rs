@@ -52,27 +52,24 @@ pub(super) fn install(
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
         return Err(format!("{} can't be installed: {reason}", project.name));
     }
-    // Native code a dependency would bring in follows the player's one-time choice. The plan
-    // says so before anything downloads: the install interface asks first, and this is what
-    // holds for the headless ones.
+    // Native code the plan names is refused before anything downloads; the files are checked
+    // again below, for what the index doesn't declare.
+    let native_message = |native: &str| {
+        crate::i18n::trf(
+            "{name} needs {native}, which runs native code: allow native mods first.",
+            &[("name", &project.name), ("native", native)],
+        )
+    };
     if !native_allowed {
-        let native = planned
+        let planned_native = planned
             .install
             .iter()
             .map(|m| &m.id)
             .chain(planned.update.iter().map(|u| &u.id))
-            .filter(|id| **id != project.id)
-            .find(|id| {
-                install
-                    .index
-                    .project(id)
-                    .is_some_and(|p| p.kind == index::Kind::NativeMod)
-            });
-        if let Some(id) = native {
-            return Err(format!(
-                "{} needs {id}, which runs native code: allow native mods first.",
-                project.name
-            ));
+            .filter_map(|id| install.index.project(id))
+            .find(|p| p.kind == index::Kind::NativeMod);
+        if let Some(native) = planned_native {
+            return Err(native_message(&native.name));
         }
     }
     let chosen: BTreeMap<String, String> = planned
@@ -91,6 +88,18 @@ pub(super) fn install(
         chosen,
     };
     plan.add(project, version, 0)?;
+    // Native code follows the player's one-time choice, whatever brings it: the mod asked
+    // for or any of what it needs, by the files themselves, not by what the index declares.
+    // The install interface asks first; this is what holds for the headless ones.
+    if !native_allowed {
+        if let Some((entry, _)) = plan
+            .selected
+            .iter()
+            .find(|(e, _)| crate::native_status::is_native_file(&e.file))
+        {
+            return Err(native_message(&entry.title));
+        }
+    }
 
     let mut changes = Vec::new();
     let mut done = Vec::new();
