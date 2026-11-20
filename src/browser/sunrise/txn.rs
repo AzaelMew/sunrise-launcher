@@ -531,14 +531,14 @@ impl Lease {
     ) -> Result<String, String> {
         let prior = self.active_build()?;
         let inputs = build::inputs(&self.home)?;
-        build::verify_packages(&self.home)?;
+        let repaired = switch::Inventory::browser_repair(&self.home)?;
         if let Some(prior) = &prior {
             prior.require_waiting_off(&self.home)?;
             prior.verify_artifacts()?;
             if prior.base() != target.base() || prior.executable() != target.preferred_image() {
                 return Err(unsettled());
             }
-            if prior.inputs == inputs {
+            if prior.inputs == inputs && repaired.is_none() {
                 build::verify_included(prior.base(), prior.executable(), &self.home)?;
                 return Ok(prior.executable().into());
             }
@@ -568,7 +568,38 @@ impl Lease {
             )
             .map_err(|e| e.to_string())?
         };
-        if let Some(prior) = prior {
+        if let Some(repaired) = repaired {
+            let (root, mut next) = if let Some(prior) = prior {
+                let next = prior.adopt(&image, inputs, &self.home)?;
+                (self.reserve_install_set(&prior)?, next)
+            } else {
+                let record = read(&self.home)?.ok_or_else(unsettled)?;
+                let next = record
+                    .bootstrap()
+                    .ok_or_else(unsettled)?
+                    .active(&image, &self.home)?;
+                (self.reserve_first_install(target)?.0, next)
+            };
+            let result = (|| {
+                let relative = PathBuf::from(crate::browser::installed::MANIFEST);
+                let path = root.join("reconciled-browser");
+                fs::write(&path, &repaired).map_err(|e| format!("{}: {e}", path.display()))?;
+                next.inputs = build::inputs_with_browser(&self.home, Some(&repaired))?;
+                self.seal_staged_set(&next, &[(relative, Some(path))])?;
+                self.publish_staged_set(|| {
+                    if build::inputs(&self.home)? != inputs {
+                        return Err(unsettled());
+                    }
+                    next.verify_artifacts()?;
+                    next.verify_resources()?;
+                    cancellation.publication_guard(&image)
+                })
+            })();
+            if result.is_err() {
+                self.recover_abandoned()?;
+            }
+            result?;
+        } else if let Some(prior) = prior {
             self.adopt_image(&prior, &image, inputs, cancellation)?;
         } else {
             self.commit_bootstrap(&image, cancellation)?;
@@ -2065,7 +2096,7 @@ mod tests {
         let manifest = serde_json::to_vec(&serde_json::json!({"entries":[{
             "source":"sunrise", "project":"lantern", "slug":"lantern", "title":"Lantern",
             "kind":"mod", "version":"1.0.0", "number":"1.0.0", "file":relative,
-            "checksum":format!("SHA-256:{}", index::sha256(&old)), "page":"",
+            "checksum":format!("SHA-256:{}", index::sha256(&old)), "page":"", "future":{"keep":17},
         }]}))
         .unwrap();
         let row_file = first.join(crate::browser::installed::MANIFEST);
@@ -2166,10 +2197,23 @@ mod tests {
             owner.verify_launch().is_err(),
             "old generation cannot start"
         );
+        let mut wrong: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        wrong["entries"][0]["project"] = "another-owner".into();
+        let wrong = serde_json::to_vec(&wrong).unwrap();
+        fs::write(&row_file, &wrong).unwrap();
+        assert!(prepare(&owner, &target).is_err());
+        assert_eq!(fs::read(&row_file).unwrap(), wrong);
+        fs::write(&row_file, &manifest).unwrap();
         assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
         assert!(owner.verify_launch().is_ok());
         assert_eq!(fs::read(first.join(&relative)).unwrap(), new);
-        assert_eq!(fs::read(row_file).unwrap(), manifest);
+        let repaired: serde_json::Value =
+            serde_json::from_slice(&fs::read(&row_file).unwrap()).unwrap();
+        let row = &repaired["entries"][0];
+        assert_eq!(row["version"], "1.1.0");
+        assert_eq!(row["number"], "1.1.0");
+        assert_eq!(row["checksum"], format!("SHA-256:{}", index::sha256(&new)));
+        assert_eq!(row["future"], serde_json::json!({"keep":17}));
         assert_eq!(fs::read(first.join(mod_list::FILE)).unwrap(), truncated);
         assert!(!mod_list::ModList::load(&first).enabled.contains("lantern"));
         let original = owner.active_build().unwrap().unwrap().test_receipt(1);
@@ -2195,7 +2239,33 @@ mod tests {
         assert_eq!(copy.inputs, original.inputs);
         assert!(copy.receipts().is_empty());
         assert_eq!(build::read(&first).unwrap().unwrap().receipts().len(), 1);
-        let owner = Lease::admit(&first).unwrap();
+        let owner = std::sync::Arc::new(Lease::admit(&first).unwrap());
+        let staged = StagedInstall::begin(owner.clone(), original).unwrap();
+        let (entry, digest) = staged.package("lantern").unwrap();
+        assert_eq!(entry.unwrap().version, "1.1.0");
+        assert_eq!(digest, index::sha256(&new));
+        crate::browser::mod_list::set_enabled(staged.stage(), "lantern", true).unwrap();
+        let catalogue: index::Index = serde_json::from_value(serde_json::json!({
+            "schema": 1, "projects": [], "revoked": [],
+        }))
+        .unwrap();
+        staged
+            .prepare(
+                &catalogue,
+                &[],
+                crate::native_mods::Profile::Optimized,
+                |_| {},
+                None,
+            )
+            .unwrap()
+            .commit(false, || Ok(()))
+            .unwrap();
+        assert!(owner.verify_launch().is_ok());
+        assert!(crate::browser::mod_list::is_enabled(&first, "lantern"));
+        assert_eq!(
+            fs::read(&row_file).unwrap(),
+            serde_json::to_vec(&repaired).unwrap()
+        );
         fs::write(base.join(crate::backend::CLIENT), b"different executable").unwrap();
         assert!(owner
             .play_target(|| panic!("a corrupted artifact is not a fresh profile"))

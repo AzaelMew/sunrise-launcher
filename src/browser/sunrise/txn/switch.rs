@@ -288,18 +288,29 @@ impl Drop for Switch {
 
 impl Inventory {
     pub(super) fn read(home: &Path) -> Result<Self, String> {
+        Self::read_rows(home, false).map(|(inventory, _)| inventory)
+    }
+
+    pub(super) fn browser_repair(home: &Path) -> Result<Option<Vec<u8>>, String> {
+        let (inventory, changed) = Self::read_rows(home, true)?;
+        changed
+            .then(|| serde_json::to_vec(&inventory.browser).map_err(|e| e.to_string()))
+            .transpose()
+    }
+
+    fn read_rows(home: &Path, repair: bool) -> Result<(Self, bool), String> {
         build::verify_packages(home)?;
-        let browser = match build::optional_bytes(&home.join(installed::MANIFEST))? {
+        let mut browser = match build::optional_bytes(&home.join(installed::MANIFEST))? {
             None => serde_json::json!({ "entries": [] }),
             Some(bytes) => serde_json::from_slice(&bytes)
                 .map_err(|e| bad(&home.join(installed::MANIFEST), e))?,
         };
         let rows = browser
-            .get("entries")
-            .and_then(serde_json::Value::as_array)
+            .get_mut("entries")
+            .and_then(serde_json::Value::as_array_mut)
             .ok_or_else(unsettled)?;
         let mut tracked = BTreeMap::new();
-        for raw in rows {
+        for (position, raw) in rows.iter().enumerate() {
             let Some(file) = raw.get("file").and_then(serde_json::Value::as_str) else {
                 continue;
             };
@@ -311,12 +322,13 @@ impl Inventory {
                 serde_json::from_value(raw.clone()).map_err(|e| e.to_string())?;
             if !installed::in_folders(&row.file)
                 || row.kind != browser::Kind::Mod
-                || tracked.insert(path, row).is_some()
+                || tracked.insert(path, (position, row)).is_some()
             {
                 return Err(unsettled());
             }
         }
         let mut packages = BTreeMap::new();
+        let mut changed = false;
         for folder in [mod_list::DIR, mod_list::NATIVE_DIR] {
             let dir = home.join(folder);
             let entries = match fs::read_dir(&dir) {
@@ -333,21 +345,38 @@ impl Inventory {
                     .strip_prefix(home)
                     .map_err(|e| e.to_string())?
                     .to_owned();
-                let row = tracked.remove(&relative);
                 let manifest = manifest::Package::read(&file)
                     .map_err(|e| bad(&file, e))?
                     .manifest;
                 let id = manifest.id.clone();
-                if row.as_ref().is_some_and(|row| {
-                    row.source != browser::SourceId::Sunrise
-                        || row.project != id
-                        || sunrise::mod_id(row) != Some(&id)
-                        || row.version != manifest.version
-                }) {
-                    return Err(unsettled());
-                }
                 let on = browser::mod_list::is_enabled(home, &id);
                 let digest = index::sha256_file(&file)?;
+                let row = if let Some((position, mut row)) = tracked.remove(&relative) {
+                    if row.source != browser::SourceId::Sunrise
+                        || row.project != id
+                        || sunrise::mod_id(&row) != Some(&id)
+                        || (!repair && row.version != manifest.version)
+                    {
+                        return Err(unsettled());
+                    }
+                    let checksum = format!("SHA-256:{digest}");
+                    if repair
+                        && (row.version != manifest.version
+                            || !row.checksum.eq_ignore_ascii_case(&checksum))
+                    {
+                        row.version.clone_from(&manifest.version);
+                        row.number.clone_from(&manifest.version);
+                        row.checksum = checksum;
+                        let raw = &mut rows[position];
+                        raw["version"] = serde_json::Value::from(row.version.clone());
+                        raw["number"] = serde_json::Value::from(row.number.clone());
+                        raw["checksum"] = serde_json::Value::from(row.checksum.clone());
+                        changed = true;
+                    }
+                    Some(row)
+                } else {
+                    None
+                };
                 let pkg = Package {
                     manifest,
                     digest,
@@ -368,11 +397,14 @@ impl Inventory {
             .map(String::from_utf8)
             .transpose()
             .map_err(|e| e.to_string())?;
-        Ok(Self {
-            packages,
-            browser,
-            selection,
-        })
+        Ok((
+            Self {
+                packages,
+                browser,
+                selection,
+            },
+            changed,
+        ))
     }
 }
 

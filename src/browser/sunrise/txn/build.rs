@@ -790,9 +790,26 @@ pub(super) fn require_dir(path: &Path) -> Result<(), String> {
 /// Take the identity from the actual bytes, not a display/cache manifest. Order and file
 /// boundaries are explicit; a rebuild cannot substitute a changed package at the same path.
 pub(super) fn inputs(home: &Path) -> Result<[u8; 32], String> {
-    fn item(hash: &mut Sha256, root: &Path, rel: &str) -> Result<(), String> {
+    inputs_with_browser(home, None)
+}
+
+pub(super) fn inputs_with_browser(
+    home: &Path,
+    repaired: Option<&[u8]>,
+) -> Result<[u8; 32], String> {
+    fn item(
+        hash: &mut Sha256,
+        root: &Path,
+        rel: &str,
+        replacement: Option<&[u8]>,
+    ) -> Result<(), String> {
         hash.update((rel.len() as u64).to_le_bytes());
         hash.update(rel.as_bytes());
+        if let Some(bytes) = replacement {
+            hash.update(b"f");
+            hash.update(Sha256::digest(bytes));
+            return Ok(());
+        }
         let path = root.join(rel);
         let io_error = |e| format!("{}: {e}", path.display());
         let meta = match fs::symlink_metadata(&path) {
@@ -814,7 +831,7 @@ pub(super) fn inputs(home: &Path) -> Result<[u8; 32], String> {
             names.sort_unstable();
             for name in names {
                 let name = name.to_str().ok_or_else(unsettled)?;
-                item(hash, root, &format!("{rel}/{name}"))?;
+                item(hash, root, &format!("{rel}/{name}"), None)?;
             }
             hash.update(b"]");
         } else if meta.is_file() {
@@ -831,8 +848,14 @@ pub(super) fn inputs(home: &Path) -> Result<[u8; 32], String> {
 
     use sunrise_launcher_smod::mod_list::{DIR, FILE, NATIVE_DIR};
     let mut hash = Sha256::new();
-    for rel in [DIR, NATIVE_DIR, FILE, crate::browser::installed::MANIFEST] {
-        item(&mut hash, home, rel)?;
+    for rel in [DIR, NATIVE_DIR, FILE] {
+        item(&mut hash, home, rel, None)?;
     }
+    item(
+        &mut hash,
+        home,
+        crate::browser::installed::MANIFEST,
+        repaired,
+    )?;
     Ok(hash.finalize().into())
 }
