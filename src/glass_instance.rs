@@ -30,7 +30,7 @@ impl Launcher {
         )
     }
 
-    fn game_releases(&self) -> &[Release] {
+    pub(crate) fn game_releases(&self) -> &[Release] {
         match &self.releases {
             Load::Ready(releases) => releases,
             _ => &[],

@@ -333,17 +333,6 @@ fn architecture_for_pe_machine(machine: u16) -> Option<GameArchitecture> {
     }
 }
 
-fn installation_matches_game_architecture(tag: &str, settings: &Settings) -> bool {
-    if !can_choose_game_architecture() {
-        return true;
-    }
-    let Some(target) = selected_game_architecture(settings) else {
-        return true;
-    };
-    installed_game_architecture(tag)
-        .is_some_and(|installed| installed_architecture_matches(target, installed))
-}
-
 fn installed_architecture_matches(
     target: GameArchitecture,
     installed: InstalledGameArchitecture,
@@ -412,31 +401,59 @@ pub(crate) fn native_mod_architecture_error() -> Option<String> {
         .map(|message| crate::i18n::tr(message).to_string())
 }
 
-/// Refuse to launch an explicit game architecture until this version has been installed for it.
+/// Refuse an explicit game architecture mismatch. CLI Play and server startup do not fetch a
+/// catalogue to guess whether the exact installation can still be repaired.
 pub fn game_architecture_launch_error(tag: &str) -> Option<String> {
+    game_architecture_launch_error_with_catalogue(tag, &[])
+}
+
+/// The window can recommend a Versions reinstall only when it offers that exact repair.
+pub fn game_architecture_launch_error_with_catalogue(
+    tag: &str,
+    releases: &[Release],
+) -> Option<String> {
     if !can_choose_game_architecture() {
         return None;
     }
-    let settings = Settings::load();
-    if settings.game_architecture == GameArchitecture::Auto
-        || installation_matches_game_architecture(tag, &settings)
-    {
+    let choice = Settings::load().game_architecture;
+    if choice == GameArchitecture::Auto {
         return None;
     }
-    let target = selected_game_architecture(&settings)?;
-    let installed = installed_game_architecture(tag).map(|a| a.binary);
+    architecture_mismatch_for(
+        tag,
+        releases,
+        choice,
+        std::env::consts::ARCH,
+        installed_game_architecture(tag),
+    )
+}
+
+fn architecture_mismatch_for(
+    tag: &str,
+    releases: &[Release],
+    choice: GameArchitecture,
+    process: &str,
+    installed: Option<InstalledGameArchitecture>,
+) -> Option<String> {
+    if installed.is_some_and(|have| installed_architecture_matches(choice, have)) {
+        return None;
+    }
     let label = |arch| match arch {
         GameArchitecture::X64 => "x64".to_owned(),
         GameArchitecture::Arm64 => "ARM64".to_owned(),
         GameArchitecture::Auto => crate::i18n::tr("Automatic").to_string(),
     };
+    let available = architecture_reinstall_for(releases, tag, choice, process, installed).is_some();
     let installed = installed
-        .map(label)
+        .map(|have| label(have.binary))
         .unwrap_or_else(|| crate::i18n::tr("Unknown").to_string());
-    let selected = label(target);
     Some(crate::i18n::trf(
-        "This version has a {installed} game build, but Settings selects {selected}. Install the selected build from Versions before launching.",
-        &[("installed", &installed), ("selected", &selected)],
+        if available {
+            "This version has a {installed} game build, but Settings selects {selected}. Install the selected build from Versions before launching."
+        } else {
+            "This version has a {installed} game build, but Settings selects {selected}. Switch back to the installed architecture or Automatic, or choose another available build."
+        },
+        &[("installed", &installed), ("selected", &label(choice))],
     ))
 }
 
@@ -5686,6 +5703,53 @@ pub fn {f}("
                 .is_none(),
             "a stale ARM64 catalogue cannot repair to x64"
         );
+    }
+
+    #[test]
+    fn architecture_launch_guidance_never_offers_an_unavailable_repair() {
+        use GameArchitecture::{Arm64, X64};
+        let stable = "26.3-0.1.0";
+        let nightly = "nightly-2026-11-20-aaaaaaa";
+        let release = |tag: &str, nightly: Option<String>| Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((
+                "https://example.invalid/sunrise-windows-arm64.zip".into(),
+                1,
+            )),
+            prerelease: false,
+            nightly,
+        };
+        let catalogue = [
+            release(stable, None),
+            release(nightly, Some("nightly".into())),
+        ];
+        let installed = Some(InstalledGameArchitecture {
+            requested: X64,
+            binary: X64,
+        });
+        for tag in ["v2026.10.13", "nightly-2026-11-19-bbbbbbb"] {
+            let help =
+                architecture_mismatch_for(tag, &catalogue, Arm64, "x86_64", installed).unwrap();
+            assert!(!help.contains("Versions"), "{help}");
+            assert!(help.contains("Switch back to the installed architecture or Automatic, or choose another available build."), "{help}");
+        }
+        for tag in [stable, nightly] {
+            assert!(
+                architecture_mismatch_for(tag, &catalogue, Arm64, "x86_64", installed)
+                    .unwrap()
+                    .contains("Install the selected build from Versions")
+            );
+            assert!(
+                !architecture_mismatch_for(tag, &[], Arm64, "x86_64", installed)
+                    .unwrap()
+                    .contains("Versions")
+            );
+        }
+        assert!(architecture_mismatch_for(stable, &catalogue, X64, "x86_64", installed).is_none());
     }
 
     #[test]
