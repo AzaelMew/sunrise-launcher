@@ -723,19 +723,32 @@ impl Launcher {
             .servers
             .log
             .iter()
-            .map(|l| {
+            .enumerate()
+            .map(|(n, l)| {
                 div()
                     .when(l.starts_with("> "), |d| {
                         d.text_color(rgb(palette().accent_ink))
                     })
-                    .child(l.clone())
+                    .child(crate::selectable::Selectable::styled(
+                        ("host-console-line", n),
+                        gpui::StyledText::new(l.clone()),
+                    ))
             })
             .collect();
+        let whole = self
+            .servers
+            .log
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join("\n");
         let log = div()
             .id("host-console")
             .track_scroll(&self.servers.console_scroll.handle)
             .h(px(220.))
-            .px(px(16.))
+            .pl(px(16.))
+            // Room for the copy button.
+            .pr(px(44.))
             .pb(px(10.))
             .overflow_y_scroll()
             .font_family(theme::MONO)
@@ -785,7 +798,14 @@ impl Launcher {
                     .pb(px(10.))
                     .child(label("Console")),
             )
-            .child(log)
+            .child(
+                div()
+                    .relative()
+                    .child(log)
+                    .when(!whole.is_empty(), |d| {
+                        d.child(crate::code_box::copy_button("host-console".into(), whole))
+                    }),
+            )
             .child(
                 div()
                     .flex()
