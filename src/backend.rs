@@ -1265,20 +1265,27 @@ pub fn install(release: &Release, progress: impl Fn(f32)) -> Result<(), String> 
         None if is_game_tag(tag) => signed_digest(tag, asset)?,
         None => return Err(format!("{tag} is not a Sunrise release.")),
     };
+    // Keep the signed release facts in the same directory publication as the executable.
+    // Older builds can lack this file; the reader then uses research-lock.json as before.
+    let source = release.nightly.as_deref().unwrap_or(tag);
+    let facts = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE))
+        .ok()
+        .flatten()
+        .and_then(|bytes| {
+            release_file_digest(release, source)
+                .ok()
+                .map(|sha| (bytes, sha))
+        });
     install_as(
         release,
         tag,
         &sha256,
         selected_game_architecture(&settings),
+        facts
+            .as_ref()
+            .map(|(bytes, sha)| (bytes.as_slice(), sha.as_str())),
         progress,
-    )?;
-    // An older build publishes no release file; `played` then reads its research-lock.json.
-    let source = release.nightly.as_deref().unwrap_or(tag);
-    let bytes = fetch_small(&crate::signed::asset_url(source, RELEASE_FILE));
-    if let (Ok(Some(bytes)), Ok(sha256)) = (bytes, release_file_digest(release, source)) {
-        let _ = keep_release_file(&version_dir(tag), &bytes, &sha256);
-    }
-    Ok(())
+    )
 }
 
 /// The build's facts a launcher reads first (docs/api/release-file.md), signed beside its archives.
@@ -1303,7 +1310,21 @@ fn keep_release_file(dir: &Path, bytes: &[u8], sha256: &str) -> Result<(), Strin
     if sunrise_launcher_release_verify::sha256_hex(bytes) != sha256 {
         return Err(format!("{RELEASE_FILE}: not the signed file"));
     }
-    fs::write(dir.join(RELEASE_FILE), bytes).map_err(|e| format!("{RELEASE_FILE}: {e}"))
+    let file = dir.join(RELEASE_FILE);
+    let write = match fs::File::create_new(&file) {
+        Ok(mut file) => file.write_all(bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            if crate::native_cache::checked(&file, false).is_ok_and(|meta| meta.is_some())
+                && fs::read(&file).is_ok_and(|archived| archived == bytes)
+            {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    };
+    write.map_err(|e| format!("{RELEASE_FILE}: {e}"))
 }
 
 /// The asset `release` installs from: the fallback when [`game_releases_with`] took it (its file

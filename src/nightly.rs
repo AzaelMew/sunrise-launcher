@@ -72,8 +72,9 @@ pub(crate) const INSTALLED_TIME: &str = ".nightly-time";
 
 /// Keeps the publication time that came with an installed Nightly.
 pub(crate) fn record_install_time(dir: &Path, release: &Release) -> std::io::Result<()> {
+    use std::io::Write as _;
     if release.nightly.is_some() && !release.time.is_empty() {
-        fs::write(dir.join(INSTALLED_TIME), &release.time)?;
+        fs::File::create_new(dir.join(INSTALLED_TIME))?.write_all(release.time.as_bytes())?;
     }
     Ok(())
 }

@@ -477,6 +477,17 @@ pub(crate) fn publish(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Under the installation publication fence, expose a complete private tree without replacing
+/// anything. Lock keys use the directory identity, which the same-volume rename retains.
+pub(crate) fn publish_build(from: &Path, to: &Path) -> Result<(), Error> {
+    use crate::browser::sunrise::txn::durable;
+    publish(from)?;
+    fs::File::create_new(from.join(".installed"))?;
+    durable::flush_tree(from)?;
+    durable::move_new_directory(from, to)?;
+    Ok(())
+}
+
 /// Register older installations before startup can offer cleanup. Never scan Cargo artifacts.
 pub(crate) fn publish_existing() -> Result<(), Error> {
     let data = crate::backend::data_dir();

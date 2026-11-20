@@ -2483,7 +2483,7 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, |_| {}).unwrap();
+            backend::install_as(&release, tag, &sha256, None, None, |_| {}).unwrap();
             server.join().unwrap();
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
@@ -2495,8 +2495,42 @@ mod tests {
         install_release(old);
         let base = base_for(None, &backend::installed(), false).unwrap();
         assert_eq!(base, old);
+        // A cache request that reaches an existing tag must not replace it, even if a server
+        // now returns a different signed archive. No network is needed to refuse the collision.
+        let colliding = backend::Release {
+            tag: old.into(),
+            name: old.into(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some(("http://127.0.0.1:1/replaced.tar.gz".into(), 1)),
+            prerelease: false,
+            nightly: None,
+        };
+        backend::install_as(&colliding, old, &sha256, None, None, |_| {}).unwrap();
+        assert!(backend::install_as(&colliding, old, &"0".repeat(64), None, None, |_| {}).is_err());
+        assert_eq!(
+            fs::read(backend::version_dir(old).join(backend::CLIENT)).unwrap(),
+            b"release game"
+        );
         let binary = dir("player-flow").join("built");
         fs::write(&binary, b"native game").unwrap();
+        let collision = backend::version_dir("native-private-collision");
+        fs::create_dir(&collision).unwrap();
+        fs::write(collision.join("held"), b"existing tree").unwrap();
+        assert!(install(
+            &base,
+            "native-private-collision",
+            Target::Client,
+            &binary,
+            &[],
+            &serde_json::json!({}),
+            &[],
+            &Cancellation::default()
+        )
+        .is_err());
+        assert_eq!(fs::read(collision.join("held")).unwrap(), b"existing tree");
+        assert!(!collision.join(".installed").exists());
         let native = "native-player-flow";
         install(
             &base,

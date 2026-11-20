@@ -121,7 +121,7 @@ pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// Flush a private complete profile before its directory is made visible in one step.
-pub(super) fn flush_tree(path: &Path) -> io::Result<()> {
+pub(crate) fn flush_tree(path: &Path) -> io::Result<()> {
     let meta = fs::symlink_metadata(path)?;
     if !super::build::regular(&meta) {
         return Err(io::ErrorKind::InvalidData.into());
@@ -145,7 +145,7 @@ pub(super) fn flush_tree(path: &Path) -> io::Result<()> {
 }
 
 /// Rename a prepared directory into an absent destination, or undo that move.
-pub(super) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(not(windows))]
     sync_directory(from)?;
     crate::instances::publish_new_folder(from, to)?;

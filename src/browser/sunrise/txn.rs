@@ -25,7 +25,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod build;
-mod durable;
+pub(crate) mod durable;
 mod staged_install;
 mod switch;
 mod switch_record;
