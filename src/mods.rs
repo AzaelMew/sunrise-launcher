@@ -523,22 +523,13 @@ impl Launcher {
         }
         if self.ui.mods.snapshot.as_ref().is_none_or(|s| s.key != key) {
             let entries = installed::Installed::load(&home).entries;
-            let local = |native: bool| {
-                move |f: native_status::Installed| model::Local {
-                    id: f.id,
-                    name: f.name,
-                    version: f.version,
-                    github: f.origin.is_some(),
-                    native,
-                }
-            };
-            let local: Vec<model::Local> = native_status::untracked(&home)
+            let found: Vec<(native_status::Installed, bool)> = native_status::untracked(&home)
                 .into_iter()
-                .map(local(true))
+                .map(|f| (f, true))
                 .chain(
                     native_status::untracked_wasm(&home)
                         .into_iter()
-                        .map(local(false)),
+                        .map(|f| (f, false)),
                 )
                 .collect();
             let mut enabled: HashSet<String> = entries
@@ -547,12 +538,24 @@ impl Launcher {
                 .filter(|id| mod_list::is_enabled(&home, id))
                 .map(str::to_owned)
                 .collect();
+            // A file that can't be read has no id of its own (its file name is only a label), so
+            // it is never on: it must not borrow the on state of a working mod of that name.
             enabled.extend(
-                local
+                found
                     .iter()
-                    .filter(|l| mod_list::is_enabled(&home, &l.id))
-                    .map(|l| l.id.clone()),
+                    .filter(|(f, _)| f.icon.is_ok() && mod_list::is_enabled(&home, &f.id))
+                    .map(|(f, _)| f.id.clone()),
             );
+            let local: Vec<model::Local> = found
+                .into_iter()
+                .map(|(f, native)| model::Local {
+                    id: f.id,
+                    name: f.name,
+                    version: f.version,
+                    github: f.origin.is_some(),
+                    native,
+                })
+                .collect();
             let chosen = sunrise::chosen(&home);
             self.ui.mods.snapshot = Some(Snapshot {
                 key,
