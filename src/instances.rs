@@ -911,6 +911,7 @@ fn create_with_publish(
         .transpose()?;
     let active = if let Some(source) = &source {
         let _inputs = source.lock_inputs()?;
+        let _worlds = crate::worlds::lock_saved_worlds(&source.home().join("saves"))?;
         copy_home(source.home(), &contents).map_err(create_error)?;
         source.stage_copy(&contents)?
     } else {
@@ -1044,13 +1045,16 @@ pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> 
 }
 
 fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
+    let saves = from.join("saves");
     let mut pending = vec![(from.to_owned(), to.to_owned())];
     while let Some((source, target)) = pending.pop() {
         fs::create_dir(&target)?;
         for entry in fs::read_dir(&source)? {
             let entry = entry?;
             let name = entry.file_name();
-            if source == from && NOT_COPIED.iter().any(|n| name == *n) {
+            if (source == from && NOT_COPIED.iter().any(|n| name == *n))
+                || (source.parent() == Some(&saves) && name == crate::worlds::LOCK)
+            {
                 continue;
             }
             let path = entry.path();

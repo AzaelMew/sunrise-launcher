@@ -57,7 +57,7 @@ fn active_worlds_cannot_be_backed_up_copied_or_deleted() {
 
     assert!(backup(&home, &w).is_err());
     assert!(copy_in(&home, "Active").is_err());
-    assert!(delete(&w).is_err());
+    assert!(delete_world(&w).is_err());
     assert!(!home.join("backups").exists());
     assert!(!home.join("saves/Active (1)").exists());
     assert_eq!(fs::read(dir.join("region/r.0.0.mca")).unwrap(), [7u8; 1000]);

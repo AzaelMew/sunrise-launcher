@@ -2299,7 +2299,8 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             let source = source.get();
             let p = source.project(&project)?;
             if let Some(world) = world {
-                let world = sunrise_launcher::worlds::find(&home, &world)?;
+                let profile = sunrise_launcher::managed_play::Profile::open_selected(&instance)?;
+                let world = sunrise_launcher::worlds::find(profile.home(), &world)?;
                 let done = installed::install_datapack(
                     &*source,
                     &p,
@@ -2987,8 +2988,10 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         WorldsCmd::Backup { world, instance } => {
-            let home = home(instance)?;
-            let zip = worlds::backup(&home, &worlds::find(&home, &world)?)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let home = profile.home();
+            let zip = worlds::backup(home, &worlds::find(home, &world)?)?;
             match as_json {
                 true => json(serde_json::json!({ "backup": zip })),
                 false => println!("{}", zip.display()),
@@ -3002,9 +3005,7 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         WorldsCmd::Delete { world, instance } => {
-            let home = home(instance)?;
-            let w = worlds::find(&home, &world)?;
-            worlds::delete(&w)?;
+            let w = worlds::delete(&profile(instance)?, &world)?;
             println!("{} is in the trash.", w.name);
         }
         WorldsCmd::DatapackList { world, instance } => {
@@ -3030,7 +3031,9 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             file,
             instance,
         } => {
-            let w = worlds::find(&home(instance)?, &world)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::add(&w.path, &file)?;
             println!(
                 "Added {} to {}: the game turns it on when the world opens.",
@@ -3042,7 +3045,9 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             pack,
             instance,
         } => {
-            let w = worlds::find(&home(instance)?, &world)?;
+            let profile =
+                sunrise_launcher::managed_play::Profile::open_selected(&profile(instance)?)?;
+            let w = worlds::find(profile.home(), &world)?;
             let p = datapacks::find(&w.path, &pack)?;
             datapacks::remove(&w.path, &p)?;
             println!("{} is in the trash.", p.file);

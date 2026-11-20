@@ -176,6 +176,12 @@ impl Profile {
         .map_err(Into::into)
     }
 
+    /// Admit a previously selected profile before a launcher operation touches its files.
+    pub fn open_selected(instance: &crate::instances::Instance) -> Result<Self, String> {
+        Self::open_instance(&backend::game_home(), &backend::data_dir(), instance)
+            .map_err(Into::into)
+    }
+
     pub(crate) fn open_instance(
         game: &Path,
         cache: &Path,

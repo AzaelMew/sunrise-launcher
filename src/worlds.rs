@@ -9,12 +9,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
 
 /// The lock a running game holds on a world; vanilla's backups leave it out.
-const LOCK: &str = "session.lock";
+pub(crate) const LOCK: &str = "session.lock";
 /// The latest `LastPlayed` kept: the end of year 9999, in milliseconds. A later time does not fit a
 /// Windows `SystemTime`, and adding it panics.
 const MAX_LAST_PLAYED_MILLIS: u64 = 253_402_300_799_000;
 
-struct WorldLock(fs::File);
+pub(crate) struct WorldLock(fs::File);
 
 impl Drop for WorldLock {
     fn drop(&mut self) {
@@ -26,14 +26,66 @@ impl Drop for WorldLock {
 
 /// Hold the same exclusive lock as the game until a filesystem operation finishes.
 fn lock_world(world: &World) -> Result<WorldLock, String> {
+    lock_saved_dir(&world.path)
+}
+
+pub(crate) fn lock_saved_dir(world: &Path) -> Result<WorldLock, String> {
+    let error = |e: &dyn std::fmt::Display| {
+        crate::i18n::trf(
+            "Could not lock world {world}: {error}",
+            &[
+                (
+                    "world",
+                    &world.file_name().unwrap_or_default().to_string_lossy(),
+                ),
+                ("error", &e.to_string()),
+            ],
+        )
+    };
+    let parent = world
+        .parent()
+        .ok_or_else(|| error(&std::io::ErrorKind::InvalidInput))?;
+    for dir in [parent, world] {
+        let folder = fs::symlink_metadata(dir).map_err(|e| error(&e))?;
+        if !folder.is_dir() || crate::native_cache::linked(&folder) {
+            return Err(error(&std::io::ErrorKind::InvalidInput));
+        }
+    }
+    let path = world.join(LOCK);
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+        Ok(_) => return Err(error(&std::io::ErrorKind::InvalidInput)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(error(&e)),
+    }
     let lock = fs::File::options()
         .write(true)
         .create(true)
         .truncate(false)
-        .open(world.path.join(LOCK))
-        .map_err(|e| e.to_string())?;
-    lock.try_lock().map_err(|e| e.to_string())?;
+        .open(path)
+        .map_err(|e| error(&e))?;
+    lock.try_lock().map_err(|e| error(&e))?;
     Ok(WorldLock(lock))
+}
+
+/// During a profile snapshot, keep every copied save directory closed to the game.
+pub(crate) fn lock_saved_worlds(saves: &Path) -> Result<Vec<WorldLock>, String> {
+    let entries = match fs::symlink_metadata(saves) {
+        Ok(meta) if meta.is_dir() && !crate::native_cache::linked(&meta) => fs::read_dir(saves),
+        Ok(_) => Err(std::io::ErrorKind::InvalidInput.into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+    .map_err(|e| e.to_string())?;
+    let mut claims = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        let meta = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            claims.push(lock_saved_dir(&path)?);
+        }
+    }
+    Ok(claims)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -381,12 +433,7 @@ fn backup_at(
 /// Copies the world into a new folder of the same `saves/`, named "<name> (1)", "<name> (2)"...
 /// and gives the copy that name in its level.dat so the game's list tells them apart.
 pub fn copy(instance: &crate::instances::Instance, query: &str) -> Result<World, String> {
-    let profile = crate::managed_play::Profile::open_instance(
-        &crate::backend::game_home(),
-        &crate::backend::data_dir(),
-        instance,
-    )
-    .map_err(String::from)?;
+    let profile = crate::managed_play::Profile::open_selected(instance)?;
     copy_admitted(profile, query, |_| {})
 }
 
@@ -482,7 +529,14 @@ fn rename_level(world: &Path, name: &str) -> std::io::Result<()> {
 }
 
 /// Moves the world to the system's trash, where the player can still get it back.
-pub fn delete(world: &World) -> Result<(), String> {
+pub fn delete(instance: &crate::instances::Instance, query: &str) -> Result<World, String> {
+    let profile = crate::managed_play::Profile::open_selected(instance)?;
+    let world = find(profile.home(), query)?;
+    delete_world(&world)?;
+    Ok(world)
+}
+
+fn delete_world(world: &World) -> Result<(), String> {
     let lock = lock_world(world)?;
     // Match server deletion: Windows cannot move the folder with this handle open.
     // If the game opens it after the probe, its handle prevents the move instead.
