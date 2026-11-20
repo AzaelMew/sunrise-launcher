@@ -68,7 +68,7 @@ fn regular(meta: &fs::Metadata) -> bool {
 
 fn unsettled() -> String {
     crate::i18n::tr(
-        "An earlier install couldn't be settled. Its transaction was kept. Nothing was changed.",
+        "Sunrise couldn't settle the profile's install transaction. The profile can't be used yet. Any recovery data was kept.",
     )
     .into()
 }
