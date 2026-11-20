@@ -529,7 +529,7 @@ pub(super) fn surface_file(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
     Ok(kept)
 }
 
-/// The folder of `sdk`'s build data (`points.json`, `internals.json`, `loops.json`,
+/// The folder of `sdk`'s build data (`internals.json`, `loops.json`,
 /// `functions.json`): unpacked once, then used again on its stamp.
 pub(super) fn build_data(sdk: &Sdk, base: &Base) -> Result<PathBuf, Refusal> {
     const NAME: &str = "build-data.tar.xz";

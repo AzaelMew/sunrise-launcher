@@ -94,10 +94,6 @@ fn digest_tree(root: &Path, hash: &mut Sha256) -> Result<(), String> {
     Ok(())
 }
 
-/// The wasm standard library the packager copies from beside the game program, on every platform
-/// (it is not an executable, so it has no `EXE_SUFFIX`).
-const WASM_STD: &str = "sunrise-wasm-std.wasm";
-
 /// Where a checkout keeps the resources its own preparation made, one folder per Minecraft version.
 const CHECKOUT_RESOURCES: &str = ".local/sunrise-client";
 
@@ -180,22 +176,11 @@ pub fn install(checkout: &Path, program: &Path, trusted: bool) -> Result<String,
     if !checkout.join("exporters/manifest.json").is_file() {
         missing.push("exporters/manifest.json".into());
     }
-    // The packager copies the wasm standard library from beside the game, whatever mods follow.
-    let wasm_std = program.with_file_name(WASM_STD);
-    let wasm_std_missing = !wasm_std.is_file();
-    if wasm_std_missing {
-        missing.push(WASM_STD.into());
-    }
     if !missing.is_empty() {
-        let mut message = trf(
+        return Err(trf(
             "Missing developer packaging inputs: {files}. Build the game program (the --program file) and its companions with cargo build -p sunrise-game -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.",
             &[("files", &missing.join(", "))],
-        );
-        if wasm_std_missing {
-            message.push(' ');
-            message.push_str(&trf("Generate the wasm standard library from the same checkout with cargo run --locked -p cargo-sunrise-mod -- wasm-std {path}", &[("path", &wasm_std.display().to_string())]));
-        }
-        return Err(message);
+        ));
     }
     let (revision, snapshot) = committed_snapshot(&checkout)?;
     let _publication =
@@ -384,57 +369,24 @@ mod tests {
     ];
     const REMEDY: &str = "Build the game program (the --program file) and its companions with cargo build -p sunrise-game -p sunrise-client-lib --bin sunrise-ctl -p sunrise-perf --bin sunrise-perf -p sunrise-prepare -p sunrise-server. Run sunrise-prepare compile-exporters --root CHECKOUT, then copy its server, client and manifest.json into CHECKOUT/exporters/.";
     #[test]
-    fn a_missing_wasm_standard_library_is_named_with_its_generation_command_before_packaging() {
-        let (_folder, checkout, program) = packaging_inputs(&COMPANIONS);
-        let error = install(&checkout, &program, true).unwrap_err();
-        let expected_path = program
-            .canonicalize()
-            .unwrap()
-            .with_file_name("sunrise-wasm-std.wasm");
-        assert_eq!(
-            error,
-            format!(
-                "Missing developer packaging inputs: sunrise-wasm-std.wasm. {REMEDY} Generate the wasm standard library from the same checkout with cargo run --locked -p cargo-sunrise-mod -- wasm-std {}",
-                expected_path.display()
-            )
-        );
-    }
-    #[test]
-    fn the_wasm_standard_library_is_reported_beside_the_other_missing_inputs() {
+    fn missing_packaging_inputs_are_listed_before_running_the_packager() {
         let (_folder, checkout, program) = packaging_inputs(&["sunrise-ctl"]);
         let error = install(&checkout, &program, true).unwrap_err();
-        let missing = [
-            format!("sunrise-perf{}", std::env::consts::EXE_SUFFIX),
-            format!("sunrise-prepare{}", std::env::consts::EXE_SUFFIX),
-            format!("sunrise-server{}", std::env::consts::EXE_SUFFIX),
-            "sunrise-wasm-std.wasm".to_owned(),
-        ]
-        .join(", ");
-        assert!(
-            error.starts_with(&format!("Missing developer packaging inputs: {missing}. {REMEDY} Generate the wasm standard library")),
-            "{error}"
+        let missing = ["sunrise-perf", "sunrise-prepare", "sunrise-server"]
+            .map(|name| format!("{name}{}", std::env::consts::EXE_SUFFIX))
+            .join(", ");
+        assert_eq!(
+            error,
+            format!("Missing developer packaging inputs: {missing}. {REMEDY}")
         );
     }
     #[test]
-    fn a_present_wasm_standard_library_passes_the_preflight_without_a_hint() {
+    fn all_packaging_inputs_pass_preflight() {
         let (_folder, checkout, program) = packaging_inputs(&COMPANIONS);
-        fs::write(program.with_file_name("sunrise-wasm-std.wasm"), "").unwrap();
-        // The checkout is no git repository, so the install stops at its snapshot, before the packager.
+        // The checkout has no Git repository, so the install stops before running the packager.
         assert_eq!(
             install(&checkout, &program, true).unwrap_err(),
             "The developer checkout has no HEAD commit."
-        );
-        let (_other, checkout, program) =
-            packaging_inputs(&["sunrise-ctl", "sunrise-perf", "sunrise-prepare"]);
-        fs::write(program.with_file_name("sunrise-wasm-std.wasm"), "").unwrap();
-        let error = install(&checkout, &program, true).unwrap_err();
-        assert!(
-            error.starts_with("Missing developer packaging inputs: sunrise-server"),
-            "{error}"
-        );
-        assert!(
-            !error.contains("Generate the wasm standard library"),
-            "{error}"
         );
     }
     #[test]
