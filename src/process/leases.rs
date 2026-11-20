@@ -118,6 +118,51 @@ impl ChildLeases {
         child
     }
 }
+/// Give exactly this Unix child a reference to the profile lock's open description.
+/// The command owns the CLOEXEC duplicate in the parent until its pre-exec hook is dropped.
+#[cfg(unix)]
+pub(crate) fn inherit_profile(command: &mut std::process::Command, file: &File) -> io::Result<()> {
+    use std::os::{
+        fd::{AsRawFd, FromRawFd},
+        unix::process::CommandExt,
+    };
+    // SAFETY: file is a live owned descriptor; duplicate it above the stdio slots.
+    let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fcntl returned a new owned descriptor.
+    let file = unsafe { File::from_raw_fd(fd) };
+    // SAFETY: only an async-signal-safe fcntl runs after fork; the closure owns the fd.
+    unsafe {
+        command.pre_exec(move || {
+            // A pipe can occupy an otherwise closed stdio slot; preserve the configured
+            // streams if Command's dup2 had no need to clear CLOEXEC.
+            for fd in 0..3 {
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                if flags < 0 {
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() == Some(libc::EBADF) {
+                        continue;
+                    }
+                    return Err(error);
+                }
+                if flags & libc::FD_CLOEXEC != 0
+                    && libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            let fd = file.as_raw_fd();
+            if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 pub(super) mod windows;
 #[cfg(windows)]
