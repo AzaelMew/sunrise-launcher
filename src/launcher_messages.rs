@@ -356,9 +356,15 @@ impl Launcher {
                     let plays = self
                         .selected_instance()
                         .map(|i| (i.id.as_str(), self.version_of(i).map(String::as_str)));
-                    if let Some(play) =
-                        crate::mods::build_run::play_on_finish(wanted, &result, plays)
-                    {
+                    // A question or a list of mods to remove that the build left stops this Play.
+                    let decision_open =
+                        !self.mods.removal.is_empty() || self.mods.world_ask.is_some();
+                    if let Some(play) = crate::mods::build_run::play_on_finish(
+                        wanted,
+                        &result,
+                        plays,
+                        decision_open,
+                    ) {
                         // The game is what the player asked for: its window gets out of the way.
                         if shown {
                             self.close_sheet();

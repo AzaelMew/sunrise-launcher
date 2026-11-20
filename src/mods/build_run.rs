@@ -366,13 +366,16 @@ pub(crate) fn stop_asked(run: Option<&mut Run>, wanted: &mut Option<PlayIntent>)
 
 /// Selects the Play handoff when a `Native` result completes. Resume only on the profile that
 /// asked, still playing the game just built. A skipped mod doesn't stop this: the build still
-/// gave a game. Keep the original account.
+/// gave a game. Keep the original account. `decision_open`: the build left a question or a list
+/// of mods to remove for the player: the game doesn't start under it (Play is pressed again
+/// once it is answered).
 pub(crate) fn play_on_finish(
     wanted: Option<PlayIntent>,
     result: &Result<String, native_mods::Failed>,
     plays: Option<(&str, Option<&str>)>,
+    decision_open: bool,
 ) -> Option<PlayIntent> {
-    let play = wanted?;
+    let play = wanted.filter(|_| !decision_open)?;
     let built = result.as_deref().ok()?;
     let (selected, version) = plays?;
     (play.instance == selected && version == Some(built)).then_some(play)
@@ -633,7 +636,7 @@ mod tests {
         let playing = Some(("autumn", version));
         // Auto-launch on success: the same profile on the game just built, and the account
         // that originally pressed Play, independent of who is selected when the build ends.
-        let ready = play_on_finish(Some(press_play()), &built, playing).unwrap();
+        let ready = play_on_finish(Some(press_play()), &built, playing, false).unwrap();
         assert_eq!(ready.account.as_deref(), Some("original-account"));
         // A mod the build skipped doesn't block: the build still gave a game. Closing the
         // window changes none of these: what starts the game is the build's result.
@@ -641,12 +644,13 @@ mod tests {
         skipped.step(&unfit("jei"));
         skipped.done();
         assert_eq!(skipped.counts().needs_update, 1);
-        assert!(play_on_finish(Some(press_play()), &built, playing).is_some());
+        assert!(play_on_finish(Some(press_play()), &built, playing, false).is_some());
         // Cancel, or a build that stopped: no game, so no launch.
         assert!(play_on_finish(
             Some(press_play()),
             &Err(native_mods::Failed::Nothing),
-            playing
+            playing,
+            false
         )
         .is_none());
         // Cancel pressed, and the build ended well all the same (the press came after its last
@@ -655,12 +659,22 @@ mod tests {
         let mut wanted = Some(press_play());
         stop_asked(Some(&mut late), &mut wanted);
         assert!(!late.for_play);
-        assert!(play_on_finish(wanted, &built, playing).is_none());
+        assert!(play_on_finish(wanted, &built, playing, false).is_none());
         late.done();
         assert_eq!(late.headline(), "Your mods are ready");
+        // The build left a question or a list of mods to remove: the game waits for the answer.
+        assert!(play_on_finish(Some(press_play()), &built, playing, true).is_none());
         // Another profile was picked meanwhile, or this one's game changed.
-        assert!(play_on_finish(Some(press_play()), &built, Some(("winter", version))).is_none());
-        assert!(play_on_finish(Some(press_play()), &built, Some(("autumn", Some("v1")))).is_none());
+        assert!(
+            play_on_finish(Some(press_play()), &built, Some(("winter", version)), false).is_none()
+        );
+        assert!(play_on_finish(
+            Some(press_play()),
+            &built,
+            Some(("autumn", Some("v1"))),
+            false
+        )
+        .is_none());
     }
 
     #[test]
