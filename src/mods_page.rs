@@ -281,17 +281,6 @@ impl Mods {
                 self.undo.push(t);
             }
         }
-        // In the profile too: a launcher that closes before the build ends puts them back.
-        for home in self
-            .undo
-            .iter()
-            .map(|t| t.home.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-        {
-            if let Err(e) = undo::keep(&home, &self.undo) {
-                eprintln!("Couldn't keep the build's undo list: {e}");
-            }
-        }
     }
 
     /// Whether a build that takes up mod `id` is waiting to start or running.
@@ -776,6 +765,13 @@ impl Launcher {
                     &[("mods", &names.join(", "))],
                 )))
             })();
+            // Kept in the profile before the install reports done, so a launcher that closes
+            // before the build ends puts the mods back at its next start.
+            if let Ok(finished) = &result {
+                if !finished.native.is_empty() {
+                    undo::keep(&home, &finished.touched);
+                }
+            }
             let _ = tx.send(match result {
                 Err(Stop::Consent) => {
                     Event::NeedsConsent(Box::new(PendingConsent::Install(source, id, retry, None)))
@@ -1150,6 +1146,11 @@ impl Launcher {
             })();
             // The members that went in before one failed stay installed: the native ones among
             // them are still built.
+            match &result {
+                Ok(finished) if !finished.native.is_empty() => undo::keep(&home, &finished.touched),
+                Err(_) if !native.borrow().is_empty() => undo::keep(&home, &touched.borrow()),
+                _ => {}
+            }
             if result.is_err() {
                 let _ = tx.send(Event::Brought(native.take(), touched.take()));
             }

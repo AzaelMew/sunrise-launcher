@@ -122,18 +122,57 @@ struct Record {
     on: bool,
 }
 
-/// Keeps `touched`, the ones in profile `home`, in the profile until the build ends. The list
-/// is written after the files it names, so a cut-off write leaves nothing half-read.
-pub(super) fn keep(home: &Path, touched: &[Touched]) -> Result<(), String> {
+/// The list kept in profile `home`: what the build's earlier installs touched.
+fn kept(home: &Path) -> Vec<Touched> {
     let folder = home.join(FOLDER);
-    let mine: Vec<&Touched> = touched.iter().filter(|t| t.home == home).collect();
-    let _ = std::fs::remove_dir_all(&folder);
-    if mine.is_empty() {
-        return Ok(());
+    let Ok(text) = std::fs::read_to_string(folder.join(LIST)) else {
+        return Vec::new();
+    };
+    let records: Vec<Record> = serde_json::from_str(&text).unwrap_or_default();
+    records
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            let prior = match r.entry {
+                None => None,
+                Some(entry) => Some(Prior {
+                    entry,
+                    on: r.on,
+                    file: std::fs::read(folder.join(format!("{i}.bin"))).ok()?,
+                }),
+            };
+            Some(Touched {
+                home: home.to_owned(),
+                id: r.id,
+                prior,
+            })
+        })
+        .collect()
+}
+
+/// Keeps `touched`, the mods an install touched in profile `home`, beside what the build's
+/// earlier installs kept (the state before the earliest install stays). The install thread
+/// calls it before it reports done, so a launcher that closes or crashes from then on
+/// leaves the list. The list is written after the files it names: a cut-off write leaves
+/// nothing half-read. A failure is logged; the in-memory list still undoes the build.
+pub(super) fn keep(home: &Path, touched: &[Touched]) {
+    let mut all = kept(home);
+    for t in touched.iter().filter(|t| t.home == home) {
+        if !all.iter().any(|have| have.id == t.id) {
+            all.push(t.clone());
+        }
     }
+    if let Err(e) = write(home, &all) {
+        eprintln!("Couldn't keep the build's undo list: {e}");
+    }
+}
+
+fn write(home: &Path, all: &[Touched]) -> Result<(), String> {
+    let folder = home.join(FOLDER);
+    let _ = std::fs::remove_dir_all(&folder);
     std::fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
     let mut records = Vec::new();
-    for (i, t) in mine.iter().enumerate() {
+    for (i, t) in all.iter().enumerate() {
         if let Some(prior) = &t.prior {
             let file = folder.join(format!("{i}.bin"));
             std::fs::write(&file, &prior.file).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -157,37 +196,10 @@ pub(super) fn clear(home: &Path) {
 /// At start, for a profile whose build never ended: puts its mods back as the list says. A
 /// mod that can't be put back keeps the list for the next start.
 pub(crate) fn recover(home: &Path) {
-    let folder = home.join(FOLDER);
-    let Ok(text) = std::fs::read_to_string(folder.join(LIST)) else {
-        // No list, or a write that was cut off before the list: nothing was installed under it.
-        let _ = std::fs::remove_dir_all(&folder);
-        return;
-    };
-    let records: Vec<Record> = serde_json::from_str(&text).unwrap_or_default();
     let mut undone = true;
-    for (i, r) in records.into_iter().enumerate().rev() {
-        let prior = match r.entry {
-            None => None,
-            Some(entry) => match std::fs::read(folder.join(format!("{i}.bin"))) {
-                Ok(file) => Some(Prior {
-                    entry,
-                    on: r.on,
-                    file,
-                }),
-                Err(e) => {
-                    eprintln!("Couldn't read the kept file of {}: {e}", r.id);
-                    undone = false;
-                    continue;
-                }
-            },
-        };
-        let touched = Touched {
-            home: home.to_owned(),
-            id: r.id,
-            prior,
-        };
-        if let Err(e) = touched.undo() {
-            eprintln!("Couldn't put {} back: {e}", touched.id);
+    for t in kept(home).iter().rev() {
+        if let Err(e) = t.undo() {
+            eprintln!("Couldn't put {} back: {e}", t.id);
             undone = false;
         }
     }
@@ -281,7 +293,20 @@ mod tests {
         mod_list::set_enabled(home, "flywheel", true).unwrap();
         mod_list::set_enabled(home, "lamps", true).unwrap();
         let kept = touched(home, &[new, added], &priors);
-        keep(home, &kept).unwrap();
+        // Two installs of the one build keep their lists one after the other, the second
+        // naming flywheel again with the state the first one left (which is not the prior).
+        keep(home, &kept[..1]);
+        let later = touched(
+            home,
+            &[entry("flywheel", "0.4.0", "sunrise-mods/flywheel.smod")],
+            &capture(
+                home,
+                &installed::Installed::load(home).entries,
+                "flywheel",
+                "26.3",
+            ),
+        );
+        keep(home, &[later, kept[1..].to_vec()].concat());
 
         // The launcher is gone: nothing in memory. Its next start reads the profile.
         drop(kept);
@@ -309,7 +334,7 @@ mod tests {
         let mut list = installed::Installed::default();
         list.entries.push(added.clone());
         list.save(home).unwrap();
-        keep(home, &touched(home, &[added], &[])).unwrap();
+        keep(home, &touched(home, &[added], &[]));
         assert!(
             home.join(FOLDER).join(LIST).is_file(),
             "kept while it waits"
