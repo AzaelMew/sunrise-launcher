@@ -21,6 +21,21 @@ pub(crate) struct GameProof {
     facts: Option<String>,
 }
 
+impl GameProof {
+    pub(crate) fn saved(value: serde_json::Value) -> Result<Self, String> {
+        let proof: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+        let digest = |s: &str| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        };
+        if !digest(&proof.archive) || proof.facts.as_deref().is_some_and(|s| !digest(s)) {
+            return Err(crate::i18n::tr("The saved game download proof is invalid.").into());
+        }
+        Ok(proof)
+    }
+}
+
 impl GameDownload {
     pub(crate) fn select(release: &Release) -> Result<Self, String> {
         let settings = Settings::load();

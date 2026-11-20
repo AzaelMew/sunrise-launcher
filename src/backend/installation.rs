@@ -2,7 +2,7 @@
 use super::*;
 
 mod bound;
-pub(crate) use bound::GameDownload;
+pub(crate) use bound::{GameDownload, GameProof};
 
 pub(crate) const ARCHIVE_ID: &str = ".sunrise-archive-sha256";
 

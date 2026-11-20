@@ -116,12 +116,22 @@ fn unrun(error: std::io::Error) -> String {
 fn run(
     mut command: Command,
     out: &mut dyn FnMut(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
 ) -> Result<(ExitStatus, Vec<String>), String> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
+    use crate::process::{leases::StagedChild, owned::Owned};
+    let mut child = if let Some(profile) = profile {
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+        Owned::spawn_staged(command, profile, StagedChild::Prepare)
+    } else {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        Owned::spawn(&mut command)
+    }
+    .map_err(unrun)?;
+    drop(child.child().stdin.take());
     let stderr = child.child().stderr.take().expect("piped");
     let errors = std::thread::spawn(move || tail(stderr));
     let mut read = 0;
@@ -135,6 +145,24 @@ fn run(
     }
     let status = child.wait().map_err(unrun)?;
     Ok((status, errors.join().unwrap_or_default()))
+}
+
+pub(crate) fn run_staged(
+    command: Command,
+    profile: crate::process::leases::ProfileHandoff<'_>,
+    line: &dyn Fn(String),
+) -> Result<(), String> {
+    let (status, errors) = run(command, &mut |text| line(text), Some(profile))?;
+    for error in errors {
+        line(error);
+    }
+    if !status.success() {
+        return Err(crate::i18n::trf(
+            "The game's preparer stopped ({status}).",
+            &[("status", &status.to_string())],
+        ));
+    }
+    Ok(())
 }
 
 /// The most a preparer's standard output is read for, and the most of its error output kept (its last lines).
@@ -171,14 +199,18 @@ fn tail(stream: impl std::io::Read) -> Vec<String> {
 /// The JSON reply on the last stdout line of `command`, when the preparer has the subcommand (exit 2 means it doesn't); its log lines go to `line`.
 fn reply(command: Command, line: &dyn Fn(String)) -> Result<Option<Value>, String> {
     let mut last = None;
-    let (status, errors) = run(command, &mut |text| {
-        let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        match value["message"].as_str() {
-            Some(message) => line(message.to_owned()),
-            None if value.is_object() => last = Some(value),
-            None => {}
-        }
-    })?;
+    let (status, errors) = run(
+        command,
+        &mut |text| {
+            let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+            match value["message"].as_str() {
+                Some(message) => line(message.to_owned()),
+                None if value.is_object() => last = Some(value),
+                None => {}
+            }
+        },
+        None,
+    )?;
     if status.code() == Some(2) {
         return Ok(None);
     }
@@ -217,6 +249,7 @@ pub fn sounds(
     root: &Path,
     minecraft: &Path,
     line: &dyn Fn(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
 ) -> Result<Option<()>, String> {
     let mut command = crate::process::command(binary);
     command
@@ -226,7 +259,7 @@ pub fn sounds(
         .arg(root)
         .arg("--minecraft-dir")
         .arg(minecraft);
-    let (status, errors) = run(command, &mut |text| line(text))?;
+    let (status, errors) = run(command, &mut |text| line(text), profile)?;
     match status.code() {
         Some(0) => Ok(Some(())),
         Some(2) => Ok(None),
@@ -385,7 +418,7 @@ esac"#,
                 jdk: true
             })
         );
-        let error = sounds(&binary, &dir, &dir, &log).unwrap_err();
+        let error = sounds(&binary, &dir, &dir, &log, None).unwrap_err();
         assert_eq!(error, "no sound index");
         assert_eq!(
             *lines.borrow(),
@@ -394,7 +427,7 @@ esac"#,
 
         let old = fake(&dir.join("old"), "exit 2");
         assert_eq!(needs(&old, &dir, &log).unwrap(), None);
-        assert_eq!(sounds(&old, &dir, &dir, &log).unwrap(), None);
+        assert_eq!(sounds(&old, &dir, &dir, &log, None).unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

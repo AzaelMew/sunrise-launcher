@@ -102,7 +102,17 @@ impl Admission {
     /// Recovery can retire or restore references. Managed callers fence cache deletion
     /// around admission; no cache guard is held by this lease while a worker runs.
     pub fn open(home: &Path, external_owner: Option<&Path>) -> Result<Self, String> {
+        Self::open_fenced(home, external_owner, || Ok(()))
+    }
+
+    /// Acquire the caller's reference guards after the profile, never the reverse.
+    pub(crate) fn open_fenced<G>(
+        home: &Path,
+        external_owner: Option<&Path>,
+        fence: impl FnOnce() -> Result<G, String>,
+    ) -> Result<Self, String> {
         let lease = Self::claim(home, external_owner)?;
+        let _fence = fence()?;
         lease.recover()?;
         Ok(lease)
     }

@@ -2489,6 +2489,15 @@ fn ensure_server_jar(
 
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
 pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
+    sounds_staged(tag, minecraft, log, None);
+}
+
+pub(crate) fn sounds_staged(
+    tag: &str,
+    minecraft: &Path,
+    log: &dyn Fn(String),
+    profile: Option<crate::process::leases::ProfileHandoff<'_>>,
+) {
     use crate::i18n::{tr, trf};
     let tag = resources_owner(tag);
     let tag = tag.as_str();
@@ -2496,7 +2505,7 @@ pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
     let result = match crate::preparer::binary(&dir) {
-        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log)
+        Some(binary) => crate::preparer::sounds(&binary, &dir, minecraft, log, profile)
             .and_then(|done| done.ok_or_else(|| crate::preparer::too_old(tag))),
         None => Err(crate::preparer::too_old(tag)),
     };
