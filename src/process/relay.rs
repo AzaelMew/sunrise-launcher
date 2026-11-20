@@ -1,7 +1,7 @@
 //! The wrapper receives a one-use invocation, never the profile or cache capabilities.
 use super::{
     child::Child,
-    leases::{ChildLeases, ProfileHandoff},
+    leases::{ChildLeases, ProfileHandoff, Streams},
     relay_lifetime::{self, RelayedGame},
     relay_wrapper::Wrapper,
 };
@@ -146,7 +146,7 @@ pub(crate) fn start(
     prefix: &[OsString],
     leases: &ChildLeases,
     profile: ProfileHandoff<'_>,
-    piped: bool,
+    streams: Streams<'_>,
 ) -> Result<Child, StartError> {
     let invocation = Invocation {
         marker: Marker::runtime().map_err(|e| e.to_string())?,
@@ -203,7 +203,7 @@ pub(crate) fn start(
             })
             .collect(),
     };
-    let wrapper = Wrapper::start(command, piped).map_err(failure)?;
+    let wrapper = Wrapper::start(command, streams).map_err(failure)?;
     #[cfg(windows)]
     let job = wrapper
         .child

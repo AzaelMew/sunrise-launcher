@@ -10,6 +10,35 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Where a started game's stdin, stdout and stderr go.
+#[derive(Clone, Copy)]
+pub enum Streams<'a> {
+    /// The caller's own: a game `sunrise-launcher play` started from a terminal.
+    Attached,
+    /// Pipes the launcher reads, for its console view.
+    Piped,
+    /// The file for stdout and stderr, and an empty stdin: nothing the game writes depends on
+    /// the launcher, which closes under it (`Settings::keep_open_while_playing` off).
+    Logged(&'a File),
+}
+
+impl Streams<'_> {
+    /// Pipes, or the caller's own streams.
+    pub fn from_piped(piped: bool) -> Self {
+        if piped {
+            Streams::Piped
+        } else {
+            Streams::Attached
+        }
+    }
+
+    /// Whether the game leaves the caller's terminal: its own streams and, on Unix, its own
+    /// process group.
+    pub fn detached(self) -> bool {
+        !matches!(self, Streams::Attached)
+    }
+}
+
 /// Independent open descriptions: dropping the creator never explicitly unlocks the child.
 pub struct ChildLeases {
     claims: Vec<Claim>,
@@ -56,18 +85,19 @@ impl ChildLeases {
     }
 
     /// Start the selected game with the committed profile and cache claims in one
-    /// child creation. A configured terminal stays attached; a UI launch gets streams.
+    /// child creation. A configured terminal stays attached; a UI launch gets pipes, or a log
+    /// file when the launcher closes under the game.
     pub fn spawn_game(
         self,
         command: std::process::Command,
         profile: ProfileHandoff<'_>,
-        piped: bool,
+        streams: Streams<'_>,
     ) -> io::Result<super::child::Child> {
         #[cfg(unix)]
         {
             profile
                 .spawn_unix(
-                    profile_streams(command, piped),
+                    game_streams(command, streams)?,
                     &self.files(),
                     Some(&self.data),
                 )
@@ -80,10 +110,11 @@ impl ChildLeases {
             windows::Start {
                 runtime_root: Some(&self.data),
                 profile: Some(profile.file),
-                attached: !piped,
+                attached: !streams.detached(),
+                streams: logged_handles(streams),
                 ..windows::Start::default()
             },
-            piped,
+            matches!(streams, Streams::Piped),
         )
     }
 
@@ -199,6 +230,36 @@ pub(crate) fn spawn_preparer(
     )
 }
 
+/// [`profile_streams`], or the log file and an empty stdin.
+#[cfg(unix)]
+pub(super) fn game_streams(
+    mut command: std::process::Command,
+    streams: Streams<'_>,
+) -> io::Result<std::process::Command> {
+    if let Streams::Logged(log) = streams {
+        command
+            .stdin(std::process::Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log.try_clone()?);
+        return Ok(command);
+    }
+    Ok(profile_streams(command, matches!(streams, Streams::Piped)))
+}
+
+/// The log file's handle for a game's stdout and stderr; its stdin is NUL.
+#[cfg(windows)]
+fn logged_handles(streams: Streams<'_>) -> Option<[windows_sys::Win32::Foundation::HANDLE; 3]> {
+    use std::os::windows::io::AsRawHandle;
+    match streams {
+        Streams::Logged(log) => Some([
+            std::ptr::null_mut(),
+            log.as_raw_handle(),
+            log.as_raw_handle(),
+        ]),
+        Streams::Attached | Streams::Piped => None,
+    }
+}
+
 #[cfg(unix)]
 fn profile_streams(mut command: std::process::Command, piped: bool) -> std::process::Command {
     if piped {
@@ -307,17 +368,18 @@ pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<supe
 #[cfg(windows)]
 pub(super) fn spawn_windows_wrapper(
     command: &std::process::Command,
-    piped: bool,
+    streams: Streams<'_>,
 ) -> io::Result<super::child::Child> {
     spawn_windows_command(
         command,
         &[],
         windows::Start {
             wrapper: true,
-            attached: !piped,
+            attached: !streams.detached(),
+            streams: logged_handles(streams),
             ..windows::Start::default()
         },
-        piped,
+        matches!(streams, Streams::Piped),
     )
 }
 

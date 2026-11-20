@@ -61,7 +61,8 @@ pub struct Client<'a> {
     pub accepted_account: Option<&'a str>,
     /// An explicit command-line account still requires ownership in a developer build.
     pub explicit_account: bool,
-    pub piped: bool,
+    /// Where the game's output goes: the terminal, the launcher's pipes, or a log file.
+    pub streams: crate::process::leases::Streams<'a>,
 }
 
 pub struct Started {
@@ -155,7 +156,7 @@ impl Client<'_> {
                 &active,
                 cancellation,
                 cmd,
-                (launch, self.piped, &|line| {
+                (launch, self.streams, &|line| {
                     progress(Progress::HookLine(line))
                 }),
                 prepare_jars,
