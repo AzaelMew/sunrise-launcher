@@ -78,6 +78,7 @@ struct Open {
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
+    collection: bool,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
 }
@@ -252,6 +253,9 @@ fn read_local(home: &Path) -> Vec<model::Local> {
             name: f.name,
             version: f.version,
             github: f.origin.is_some(),
+            source: f
+                .origin
+                .and_then(|o| model::SourceLink::read(&o.source_url())),
             native,
             unreadable: f.icon.is_err(),
         }
@@ -310,14 +314,26 @@ impl Launcher {
             self.ui.mods.picks = None;
         }
         let parent = (self.ui.page == Page::Project)
-            .then(|| self.ui.mods.open.as_ref().map(|o| o.id.clone()))
-            .flatten()
-            .filter(|open| self.is_collection(open));
+            .then(|| {
+                self.ui
+                    .mods
+                    .open
+                    .as_ref()
+                    .filter(|o| o.collection)
+                    .map(|o| o.id.clone())
+            })
+            .flatten();
         self.ui.page = Page::Project;
-        self.mods_load_page(id, from);
+        self.mods_load_page(id, from, None);
         if let Some(open) = self.ui.mods.open.as_mut() {
             open.parent = parent;
         }
+    }
+
+    fn mods_show_installed_project(&mut self, row: Row) {
+        let id = row.entry.as_ref().map_or(&row.id, |e| &e.project).clone();
+        self.ui.page = Page::Project;
+        self.mods_load_page(id, Page::Installed, Some(row));
     }
 
     fn is_collection(&self, id: &str) -> bool {
@@ -477,7 +493,7 @@ impl Launcher {
                     self.ui.mods.selection.retain(|id| rows.contains(id));
                 }
                 Event::Page(id, page) => {
-                    if let Some(open) = m.open.as_mut().filter(|o| o.id == id) {
+                    if let Some(open) = m.open.as_mut().filter(|o| o.id == id && o.page.is_none()) {
                         open.page = Some(page);
                     }
                 }
@@ -606,15 +622,23 @@ impl Launcher {
         });
     }
 
-    fn mods_load_page(&mut self, id: String, from: Page) {
+    fn mods_load_page(&mut self, id: String, from: Page, installed: Option<Row>) {
+        self.ui.mods.facts_open = false;
+        let collection = installed.is_none() && self.is_collection(&id);
+        let (page, installed) = match installed {
+            Some(row) if row.entry.is_none() => (Some(Ok(Box::new(row.installed_details()))), None),
+            other => (None, other),
+        };
+        // Collections read the index when drawn; local files already have all their details.
+        let load = !collection && page.is_none();
         self.ui.mods.open = Some(Open {
             id: id.clone(),
             from,
-            page: None,
+            page,
+            collection,
             parent: None,
         });
-        // A collection's page reads the index when it draws.
-        if self.is_collection(&id) {
+        if !load {
             return;
         }
         let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
@@ -627,6 +651,10 @@ impl Launcher {
                     .map(Box::new)
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
             });
+            let result = match (result, installed) {
+                (Err(_), Some(row)) => Ok(Box::new(row.installed_details())),
+                (result, _) => result,
+            };
             let _ = tx.send(Event::Page(id, result));
         });
     }
@@ -899,6 +927,7 @@ mod enabled_tests {
             name: id.into(),
             version: String::new(),
             github: false,
+            source: None,
             native: false,
             unreadable: false,
         };

@@ -354,30 +354,37 @@ impl SourceLink {
     }
 }
 
-/// Everything the project page shows, read from the index in one go.
+/// Facts only the registry can provide; locally installed packages don't invent them.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct About {
+    pub(super) license: String,
+    pub(super) downloads: u64,
+    pub(super) updated: String,
+    pub(super) side: &'static str,
+    pub(super) signed: bool,
+}
+
+/// Everything the project page shows, read from the index or a local installation.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Page {
     pub(super) id: String,
     pub(super) name: String,
     pub(super) authors: Vec<String>,
     pub(super) description: String,
-    pub(super) license: String,
     pub(super) source: Option<SourceLink>,
-    pub(super) downloads: u64,
-    pub(super) updated: String,
+    pub(super) about: Option<About>,
     pub(super) categories: Vec<String>,
     pub(super) screenshots: Vec<String>,
     pub(super) icon: Option<String>,
-    pub(super) make: Make,
-    pub(super) side: &'static str,
+    pub(super) make: Option<Make>,
+    /// The installed version when the registry doesn't describe this project.
+    pub(super) installed: Option<String>,
     pub(super) versions: Vec<VersionLine>,
     pub(super) fit: Fit,
     /// The newest version that fits: what Add installs.
     pub(super) will_install: Option<VersionLine>,
     /// What the registry says about who made it and what it may do (`trust_and_capabilities`).
     pub(super) trust: Vec<String>,
-    /// Its author signs its files.
-    pub(super) signed: bool,
     /// Native code made for another game build than the one played: checked before it runs.
     pub(super) another_build: bool,
     /// Mods the newest version lists as part of itself (a registry modpack's rule; a mod rarely has any).
@@ -419,24 +426,27 @@ pub(super) fn page(
         name: p.name.clone(),
         authors: p.authors.clone(),
         description: p.description.clone(),
-        license: p.license.clone(),
         source: SourceLink::read(&p.source),
-        downloads: p.downloads,
-        updated: lines
-            .iter()
-            .map(|l| l.published.clone())
-            .max()
-            .unwrap_or_default(),
+        about: Some(About {
+            license: p.license.clone(),
+            downloads: p.downloads,
+            updated: lines
+                .iter()
+                .map(|l| l.published.clone())
+                .max()
+                .unwrap_or_default(),
+            side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
+            signed: p.key.is_some(),
+        }),
         categories: p.categories.clone(),
         screenshots: p.screenshots.clone(),
         icon: p.icon.clone(),
-        make,
-        side: side_label(p.versions.first().and_then(|v| v.side.as_ref())),
+        make: Some(make),
+        installed: None,
         fit: fit_of(index, p, game),
         will_install,
         versions: lines,
         trust,
-        signed: p.key.is_some(),
         another_build,
         requires: p
             .versions
@@ -606,6 +616,29 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
 }
 
 impl Row {
+    /// The same details view works without a registry entry or a network connection.
+    pub(super) fn installed_details(self) -> Page {
+        Page {
+            id: self.id,
+            name: self.title,
+            authors: Vec::new(),
+            description: String::new(),
+            source: self.local.and_then(|local| local.source),
+            about: None,
+            categories: Vec::new(),
+            screenshots: Vec::new(),
+            icon: self.icon,
+            make: self.make,
+            installed: Some(self.version),
+            versions: Vec::new(),
+            fit: Fit::Unknown,
+            will_install: None,
+            trust: Vec::new(),
+            another_build: false,
+            requires: Vec::new(),
+        }
+    }
+
     pub(super) fn native(&self) -> bool {
         self.make == Some(Make::Native)
     }
@@ -630,6 +663,7 @@ pub(super) struct Local {
     pub(super) name: String,
     pub(super) version: String,
     pub(super) github: bool,
+    pub(super) source: Option<SourceLink>,
     /// Native code, which needs permission and a build; else a package of `sunrise-mods/`,
     /// which runs as wasm or carries content only.
     pub(super) native: bool,
