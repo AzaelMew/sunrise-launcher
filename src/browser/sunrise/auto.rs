@@ -459,8 +459,8 @@ pub(super) fn run_with(
 
 /// One update the player chose, by the path the automatic update takes: the replaced file is
 /// kept until the update is done (an interrupted one is rolled back), the mod's on/off state is
-/// never touched, and a content mod whose new version drops something worlds may use, or any
-/// code mod, is held: `Ok(Some(why))`, nothing changed. Native mods have their own path.
+/// never touched, and a content mod whose new version drops something a saved world may use
+/// waits for the player's answer: `Ok(Some(why))`, nothing changed.
 pub fn update_to(
     index: &Index,
     project: &str,

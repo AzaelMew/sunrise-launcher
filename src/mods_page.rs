@@ -61,6 +61,8 @@ pub(super) enum Event {
     Done(Result<Finished, String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(Vec<String>, Vec<WorldAsk>),
+    /// The same, for the Play that waited for the mods to be up to date.
+    PlayUpdated(Vec<String>, Vec<WorldAsk>),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -231,8 +233,10 @@ impl Launcher {
         let mut loaded = Vec::new();
         let mut done = false;
         let mut native = Vec::new();
+        let mut play_ready = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
+            let is_play = matches!(event, Event::PlayUpdated(..));
             let m = &mut self.mods;
             match event {
                 Event::Progress(line, f) => {
@@ -258,7 +262,8 @@ impl Launcher {
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(lines, asks) => {
+                Event::AutoUpdated(lines, asks) | Event::PlayUpdated(lines, asks) => {
+                    play_ready |= is_play;
                     // The first question waits for its answer; later ones come with the next run.
                     if m.world_ask.is_none() {
                         m.world_ask = asks.into_iter().next();
@@ -274,6 +279,12 @@ impl Launcher {
         if done {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
+        }
+        if play_ready {
+            self.play_step = None;
+            if let Some(intent) = self.play_when_updated.take() {
+                self.resume_play_with(intent, true);
+            }
         }
         if !native.is_empty() {
             self.mods.queue.build_after_install(native);
@@ -682,9 +693,9 @@ pub(super) fn auto_update(
 
 /// What the automatic updates did: the notice's lines, and the questions to put to the player.
 #[derive(Default)]
-pub(super) struct AutoOutcome {
-    pub(super) lines: Vec<String>,
-    pub(super) asks: Vec<WorldAsk>,
+pub(crate) struct AutoOutcome {
+    pub(crate) lines: Vec<String>,
+    pub(crate) asks: Vec<WorldAsk>,
 }
 
 /// A switch or update that waits for the player's answer: it would remove mods that saved
