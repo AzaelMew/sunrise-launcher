@@ -171,14 +171,14 @@ pub fn switch_question(
     index: &Index,
     home: &Path,
     ctx: &Context,
-) -> Option<crate::worlds::Question> {
+) -> Result<Option<crate::worlds::Question>, String> {
     let ids: Vec<String> = installed::Installed::load(home)
         .entries
         .iter()
         .filter(|entry| matches!(decide(index, entry, ctx), Decision::Remove(_)))
         .map(|entry| entry.project.clone())
         .collect();
-    crate::worlds::question(home, &ids).ok().flatten()
+    crate::worlds::question(home, &ids)
 }
 
 /// [`removals`] for what game folder `home` has installed now, read from its list: the picker
@@ -477,9 +477,15 @@ pub(super) fn run_with(
             )),
         }
     }
-    report.ask = crate::worlds::question(home, &asked.into_inner())
-        .ok()
-        .flatten();
+    // Worlds that can't be looked at leave every mod they might use where it is, and the player
+    // is told why: a mod held back with no question and no reason would stay a mystery.
+    match crate::worlds::question(home, &asked.into_inner()) {
+        Ok(ask) => report.ask = ask,
+        Err(e) => report.failed.push(trf(
+            "Your worlds couldn't be checked, so mods they may use were left as they are: {error}",
+            &[("error", &e)],
+        )),
+    }
     report
 }
 
