@@ -96,7 +96,6 @@ impl ModsState {
         self.confirm = None;
         self.reviewed_home = None;
         self.menu = None;
-        self.unfit_open = None;
         self.have.set(String::new());
         self.row_filter = model::RowFilter::default();
         self.reveal = None;
@@ -151,8 +150,6 @@ mod tests {
                 index: None,
                 game: "26.3",
                 enabled: &on,
-                unbuilt: &HashSet::new(),
-                native_allowed: true,
                 chosen: &Default::default(),
                 local: &local,
             },

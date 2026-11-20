@@ -132,8 +132,6 @@ enum Event {
     Refused(String),
     /// A batch ended: what it said, and which mods failed and why.
     Done(String, Vec<(String, String)>),
-    /// "Check for update" asked the registry again: the mod's name, and the newer version found.
-    Checked(String, Result<Option<String>, String>),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -192,15 +190,10 @@ pub(crate) struct ModsState {
     limit: usize,
     /// The Installed row whose "?" is open (a mod not on this build), and whether its
     /// technical details show.
-    unfit_open: Option<String>,
-    unfit_details: bool,
     /// The build the build window shows: running, or ended and not yet closed.
     pub(crate) build: Option<build_run::Run>,
     /// Build was pressed and the build has not started yet (it asks for permission first).
     pub(crate) build_wanted: bool,
-    /// Whether Installed drew its Build button in the frame being drawn (the page is drawn
-    /// before the status strip).
-    pub(crate) build_button_drawn: bool,
     /// Whether a mod page's Details (who made it, how it is checked) is open.
     facts_open: bool,
     /// Discover or Installed, as the player last chose on Mods and on Packs this session.
@@ -241,11 +234,8 @@ impl Default for ModsState {
             notice: None,
             errors: HashMap::new(),
             limit: 0,
-            unfit_open: None,
-            unfit_details: false,
             build: None,
             build_wanted: false,
-            build_button_drawn: false,
             facts_open: false,
             last_mods: None,
             last_packs: None,
@@ -509,7 +499,6 @@ impl Launcher {
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
-                Event::Checked(title, found) => self.checked(title, found),
                 Event::Refused(why) => {
                     m.busy = None;
                     m.notice = Some(Err(why));
@@ -662,50 +651,18 @@ impl Launcher {
         let Some(snap) = &self.ui.mods.snapshot else {
             return Vec::new();
         };
-        let unbuilt: HashSet<String> = match !snap.local.is_empty()
-            || snap
-                .entries
-                .iter()
-                .any(|e| native_status::is_native_file(&e.file))
-        {
-            true => {
-                self.native_mod_unbuilt("");
-                self.mods
-                    .native_state
-                    .borrow()
-                    .as_ref()
-                    .map(|(_, _, ids)| ids.iter().cloned().collect())
-                    .unwrap_or_default()
-            }
-            false => HashSet::new(),
-        };
         let index = sunrise::fetched_index();
         let game = self.mods_game();
-        let mut rows = model::rows(
+        model::rows(
             &snap.entries,
             &model::World {
                 index: index.as_deref(),
                 game: &game,
                 enabled: &snap.enabled,
-                unbuilt: &unbuilt,
-                native_allowed: self.settings.native_mods_allowed_at.is_some(),
                 chosen: &snap.chosen,
                 local: &snap.local,
             },
-        );
-        // A mod the game was made without isn't waiting for a build: it waits for its author.
-        let left = self.native_left_out();
-        if !left.is_empty() {
-            let on = self
-                .selected_instance()
-                .and_then(|i| self.version_of(i))
-                .map(|tag| crate::sheets::build_name(tag))
-                .unwrap_or_default();
-            model::mark_left_out(&mut rows, &left, &on, crate::sheets::build_name);
-            // A row that no longer needs the player moves out of that group.
-            model::sort(&mut rows);
-        }
-        rows
+        )
     }
 
     /// Whether another install or update holds the folder right now.
@@ -723,11 +680,6 @@ impl Launcher {
     /// stays where they are: the play bar shows how far it is.
     fn build(&mut self) {
         self.build_native();
-    }
-
-    /// Allow… on a row: the native-code question, with what it builds.
-    fn allow(&mut self) {
-        self.request_native_build_consent();
     }
 
     pub(super) fn open_url(url: &str, cx: &mut Context<Self>) {

@@ -79,16 +79,4 @@ impl Launcher {
             }
         }
     }
-
-    /// Whether native mod `id` of the selected instance waits for a build ([`Self::native_state_of`]).
-    pub(super) fn native_mod_unbuilt(&self, id: &str) -> bool {
-        if let Some(instance) = self.selected_instance() {
-            self.native_state_of(instance);
-        }
-        self.mods
-            .native_state
-            .borrow()
-            .as_ref()
-            .is_some_and(|(_, _, unbuilt)| unbuilt.iter().any(|u| u == id))
-    }
 }

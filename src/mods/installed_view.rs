@@ -25,7 +25,6 @@ impl Launcher {
             .child(header)
             .children(self.strip(cx));
 
-        self.ui.mods.build_button_drawn = false;
         let rows = self.rows();
         if rows.is_empty() {
             return page
@@ -53,10 +52,6 @@ impl Launcher {
 
         let filter = self.ui.mods.row_filter.clone();
         let visible = model::visible(&rows, &filter);
-        // Whether this page draws the Build button, and with it a running build's bar: the
-        // status strip, drawn after the page, leaves its own bar out only then.
-        let build = model::build_in_head(&rows, &visible);
-        self.ui.mods.build_button_drawn = build.is_some();
         let shown_ids: Rc<Vec<String>> = Rc::new(
             visible
                 .iter()
@@ -368,7 +363,6 @@ impl Launcher {
             if last != Some(g) {
                 last = Some(g);
                 let (title, count) = match g {
-                    Group::NeedsYou => (tr("NEEDS YOU"), group_counts(g)),
                     Group::Updates => (tr("UPDATES"), group_counts(g)),
                     Group::Rest => (tr("EVERYTHING ELSE"), group_counts(g)),
                 };
@@ -388,10 +382,6 @@ impl Launcher {
                                 &[("title", title), ("count", &count.to_string())],
                             ))),
                     );
-                if let Some(waiting) = build.filter(|_| g == Group::NeedsYou) {
-                    // The button has as much room above and below as beside it.
-                    head = head.py(px(14.)).child(self.build_button(waiting, busy, cx));
-                }
                 if let (Group::Updates, Some(updates_total)) = (g, update_all) {
                     let b = crate::frame::button(
                         "alt-update-all",
@@ -506,77 +496,38 @@ impl Launcher {
         // kind and version move under the name with the status after them, in fixed places
         // too; the action and the switch keep theirs.
         let wide = self.content_width() >= 860.;
-        use super::build_run::State;
-        let building = self
-            .build_here()
-            .filter(|_| r.on)
-            .and_then(|run| run.state_of(&r.id, &r.version));
-        let failed = matches!(building, Some(State::Failed(_)));
         let cells = model::cells(
             &r,
             error.as_deref(),
-            building,
             self.settings.native_mods_allowed_at.is_some(),
         );
         let tone = |tone: model::Tone| match tone {
             model::Tone::Warning => palette().warning,
             model::Tone::Info => palette().info,
-            model::Tone::Accent => palette().accent_ink,
-            model::Tone::Success => palette().success,
             model::Tone::Muted => palette().muted,
         };
-        let status_cell: AnyElement = match (&cells.status, r.unfit.clone()) {
-            (Some(_), Some(unfit)) if cells.popover => {
-                self.unfit(n, &r, unfit, cx).into_any_element()
-            }
-            // A mod the last build could not build: its status opens that build's window
-            // again, where Details and the build log are.
-            (Some(said), _) if failed && said.label == tr("Failed") => {
-                status(said.icon, said.label.clone(), tone(said.tone))
-                    .id(("alt-row-failed", n))
-                    .reach()
-                    .min_w_0()
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(c(palette().text)))
-                    .tooltip(crate::glass_ui::tip(said.tip.clone()))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.open_sheet(crate::sheets::Sheet::ModBuild);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            }
-            (Some(said), _) => status(said.icon, said.label.clone(), tone(said.tone))
+        let status_cell: AnyElement = match &cells.status {
+            Some(said) => status(said.icon, said.label.clone(), tone(said.tone))
                 .id(("alt-row-status", n))
                 .min_w_0()
                 .tooltip(crate::glass_ui::tip(said.tip.clone()))
                 .into_any_element(),
-            (None, _) => div().into_any_element(),
+            None => div().into_any_element(),
         };
         let action = cells.action.map(|action| {
-            let (id, label) = match action {
-                model::RowAction::Allow => ("alt-row-allow", tr("Allow…")),
-                model::RowAction::Update => ("alt-row-update", tr("Update")),
-            };
-            let b = crate::frame::button((id, n), label);
+            let model::RowAction::Update = action;
+            let b = crate::frame::button(("alt-row-update", n), tr("Update"));
             if busy {
                 return dim(b);
             }
             let row = r.clone();
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                match action {
-                    model::RowAction::Allow => this.allow(),
-                    model::RowAction::Update => this.update_one(&row),
-                }
+                this.update_one(&row);
                 cx.notify();
             }))
         });
         let sw = {
-            let s = ui::switch(("alt-row-switch", n), r.on).when(cells.unavailable, |s| {
-                s.opacity(0.52).tooltip(crate::glass_ui::tip(tr(
-                    "Enabled for this profile, but not included in the build.",
-                )))
-            });
+            let s = ui::switch(("alt-row-switch", n), r.on);
             if cells.switch {
                 let row = r.clone();
                 s.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -729,182 +680,5 @@ impl Launcher {
                 .justify_end()
                 .child(sw),
         )
-    }
-
-    /// Where a row's switch would be, for a mod the game was made without: "Not on Nov 17" and
-    /// a "?" that says why in one sentence, the changed items for its author, and the way on.
-    fn unfit(&mut self, n: usize, r: &Row, unfit: model::Unfit, cx: &mut Context<Self>) -> Div {
-        use crate::frame::button;
-        let open = self.ui.mods.unfit_open.as_deref() == Some(r.id.as_str());
-        let id = r.id.clone();
-        let help = status(
-            "information-circle",
-            tr("Needs an update"),
-            palette().warning,
-        )
-        .id(("alt-unfit-help", n))
-        .reach()
-        // Its glyph stands where every other row's does.
-        .px(px(8.))
-        .ml(px(-8.))
-        .h(px(28.))
-        .when(open, |d| d.bg(c(palette().hover)))
-        .hover(|s| s.bg(c(palette().hover)))
-        .cursor_pointer()
-        .tooltip(crate::glass_ui::tip(trf(
-            "{mod} needs an update for {build}. It comes back when its author releases one.",
-            &[("mod", &r.title), ("build", &unfit.on)],
-        )))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            let m = &mut this.ui.mods;
-            m.unfit_open = match m.unfit_open.as_ref() == Some(&id) {
-                true => None,
-                false => Some(id.clone()),
-            };
-            m.unfit_details = false;
-            cx.stop_propagation();
-            cx.notify();
-        }));
-        let said = open.then(|| {
-            let sentence = match &unfit.made_for {
-                Some((_, made)) => trf(
-                    "{mod} needs an update for {on}. It was made for {made}, and comes back when its author releases a new version. It stays installed.",
-                    &[("mod", &r.title), ("on", &unfit.on), ("made", made)],
-                ),
-                None => trf(
-                    "{mod} needs an update for {on}. It comes back when its author releases a new version. It stays installed.",
-                    &[("mod", &r.title), ("on", &unfit.on)],
-                ),
-            };
-            let details = self.ui.mods.unfit_details;
-            let technical = (!unfit.changes.is_empty()).then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .id("alt-unfit-details")
-.reach()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_size(px(tokens::SMALL))
-                            .text_color(c(palette().muted))
-                            .cursor_pointer()
-                            .child(blocks::icon(
-                                if details { "chevron-down" } else { "chevron-right" },
-                                12.,
-                                c(palette().muted),
-                            ))
-                            .child(tr("Details"))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.ui.mods.unfit_details = !this.ui.mods.unfit_details;
-                                cx.stop_propagation();
-                                cx.notify();
-                            })),
-                    )
-                    .children(details.then(|| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(4.))
-                            .children(unfit.changes.iter().map(|change| {
-                                div()
-                                    .text_size(px(tokens::SMALL))
-                                    .font_family(crate::theme::MONO)
-                                    .text_color(c(palette().muted))
-                                    .child(change.clone())
-                            }))
-                    }))
-            });
-            // One way on: a version that fits when the registry has a newer one, else back to
-            // the build it was made for when that build is still here.
-            let action = match (&r.update, &unfit.made_for) {
-                (Some(_), _) => {
-                    let b = button(
-                        "alt-unfit-update",
-                        trf("Update {mod}", &[("mod", &r.title)]),
-                    );
-                    let row = r.clone();
-                    Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ui.mods.unfit_open = None;
-                        this.update_one(&row);
-                        cx.stop_propagation();
-                        cx.notify();
-                    })))
-                }
-                (None, Some((tag, made))) if self.installed.contains(tag) => {
-                    let b = button(
-                        "alt-unfit-stay",
-                        trf("Stay on {build}", &[("build", made)]),
-                    );
-                    let tag = tag.clone();
-                    Some(b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.ui.mods.unfit_open = None;
-                        this.stay_on(tag.clone());
-                        cx.stop_propagation();
-                        cx.notify();
-                    })))
-                }
-                _ => {
-                    let id = r.id.clone();
-                    Some(button("alt-unfit-check", tr("Check for update")).on_click(
-                        cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.check_mod_update(&id);
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    ))
-                }
-            };
-            // Opens under the "?", or over it when the row is low in the window.
-            let popup = div()
-                    .w(px(360.))
-                    .max_w(px(self.content_width() - 28.))
-                    .p(px(14.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(10.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .border_1()
-                    .border_color(c(palette().line))
-                    .bg(c(palette().raised))
-                    .shadow_lg()
-                    .occlude()
-                    .child(div().text_size(px(tokens::LABEL)).child(sentence))
-                    .children(technical)
-                    .children(action.map(|a| div().flex().justify_end().child(a)));
-            gpui::deferred(
-                div().absolute().top(px(24.)).right_0().child(
-                    gpui::anchored()
-                        .anchor(gpui::Anchor::TopRight)
-                        .snap_to_window_with_margin(px(8.))
-                        .child(popup),
-                ),
-            )
-            .with_priority(10)
-        });
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(8.))
-            .child(div().relative().flex_none().child(help).children(said))
-    }
-
-    /// "Stay on Nov 16" for a mod made for it: the setup stays on that build, where the mod
-    /// runs. The next Play builds there as usual.
-    fn stay_on(&mut self, tag: String) {
-        let Some(id) = self.selected_instance().map(|i| i.id.clone()) else {
-            return;
-        };
-        if !self.guard() {
-            return;
-        }
-        match instances::edit(&id, |meta| meta.version = Some(tag)) {
-            Ok(_) => self.reload_instances(),
-            Err(e) => self.ui.mods.notice = Some(Err(e)),
-        }
     }
 }
