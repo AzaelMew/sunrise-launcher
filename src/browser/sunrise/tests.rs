@@ -428,7 +428,7 @@ fn a_mod_install_with_dependencies_keeps_the_unreadable_file_it_replaces() {
         approvals: &[],
         progress: &|_, _| {},
     };
-    dependencies::install(&install, p, &p.versions[0], false, true).unwrap();
+    dependencies::install(&install, &[(p, &p.versions[0])], false, true).unwrap();
     assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
     let kept: Vec<_> = fs::read_dir(home.join("mod-browser/unreadable"))
         .unwrap()
@@ -512,7 +512,7 @@ fn a_failed_install_with_dependencies_leaves_no_copy_of_the_unreadable_file() {
         approvals: &[],
         progress: &|_, _| {},
     };
-    assert!(dependencies::install(&install, p, &p.versions[0], false, true).is_err());
+    assert!(dependencies::install(&install, &[(p, &p.versions[0])], false, true).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"not a zip");
     assert!(!home.join("mod-browser/unreadable").exists());
     fs::remove_dir_all(home).unwrap();
@@ -677,13 +677,13 @@ fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_n
         approvals: &[],
         progress: &|_, _| {},
     };
-    let refused = dependencies::install(&install, p, &p.versions[0], false, true).unwrap_err();
+    let refused = dependencies::install(&install, &[(p, &p.versions[0])], false, true).unwrap_err();
     assert!(refused.contains("runs native code"), "{refused}");
     // Refused from the plan: nothing was downloaded or written.
     assert!(!home.join(installed::MANIFEST).exists());
     assert!(!home.join("sunrise-native-mods").exists());
     assert!(!home.join(mod_list::MODS_DIR).exists());
-    let done = dependencies::install(&install, p, &p.versions[0], true, true).unwrap();
+    let done = dependencies::install(&install, &[(p, &p.versions[0])], true, true).unwrap();
     assert_eq!(
         done.iter().map(|e| e.project.as_str()).collect::<Vec<_>>(),
         ["fireflies", "coords_hud"]
@@ -710,8 +710,7 @@ fn native_code_is_refused_without_the_choice_whoever_brings_it() {
                     approvals: &[],
                     progress: &|_, _| {},
                 },
-                project,
-                &project.versions[0],
+                &[(project, &project.versions[0])],
                 false,
                 true,
             )
@@ -940,7 +939,7 @@ fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file(
             approvals: &[],
             progress: &|_, _| {},
         };
-        let done = dependencies::install(&install, p, &p.versions[0], true, true).unwrap();
+        let done = dependencies::install(&install, &[(p, &p.versions[0])], true, true).unwrap();
         assert_eq!(done[0].file, "sunrise-native-mods/coords_hud.smod");
         assert!(home.join("sunrise-native-mods/coords_hud.smod").is_file());
         assert!(!old.exists());
@@ -979,7 +978,7 @@ fn a_mod_install_with_dependencies_replaces_an_entry_whose_file_is_gone() {
         approvals: &[],
         progress: &|_, _| {},
     };
-    dependencies::install(&install, p, &p.versions[0], false, true).unwrap();
+    dependencies::install(&install, &[(p, &p.versions[0])], false, true).unwrap();
     assert!(index::inspect(&index::Kind::Mod, &path).is_ok());
     assert!(!home.join("mod-browser/unreadable").exists());
     fs::remove_dir_all(home).unwrap();
@@ -1986,6 +1985,45 @@ fn conflict_index(dir: &Path) -> Index {
         });
     }
     index
+}
+
+#[test]
+fn several_mods_install_as_one_attempt_and_one_failure_publishes_none_of_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = conflict_index(dir.path());
+    let both = ["lamps", "creatures"]
+        .map(|id| project_of(&index, index.project(id).unwrap(), GAME).unwrap());
+    let set = |home: &Path| {
+        install_set_from(
+            &index,
+            true,
+            &both,
+            home,
+            GAME,
+            false,
+            true,
+            &[],
+            &|_, _| {},
+        )
+    };
+    let home = dir.path().join("whole");
+    let done = set(&home).unwrap();
+    assert_eq!(done.len(), 2, "{done:?}");
+    for id in ["lamps", "creatures"] {
+        assert!(mod_list::is_enabled(&home, id));
+        assert!(installed::Installed::load(&home)
+            .find(SourceId::Sunrise, id)
+            .is_some());
+    }
+    assert!(!home.join("mod-browser/install-txn.json").exists());
+    // The second one's file is gone: the first one, which downloaded fine, is not published.
+    let apart = dir.path().join("cut");
+    fs::remove_file(dir.path().join("creatures-1.0.0.smod")).unwrap();
+    assert!(set(&apart).is_err());
+    assert!(installed::Installed::load(&apart).entries.is_empty());
+    assert!(!apart.join("sunrise-mods/lamps.smod").exists());
+    assert!(!mod_list::is_enabled(&apart, "lamps"));
+    assert!(!apart.join("mod-browser/install-txn.json").exists());
 }
 
 #[test]

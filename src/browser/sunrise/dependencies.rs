@@ -9,14 +9,19 @@ use sunrise_launcher_smod::index::resolve::{self, Request, RequestResult};
 use sunrise_launcher_smod::manifest::Side;
 use sunrise_launcher_smod::mod_list::FILE as ENABLED;
 
+/// Installs the `asked` projects, each at its version, and what they need, as one attempt: the
+/// plan, the world question and the publish cover the whole set, so a failure anywhere leaves
+/// none of it published.
 pub(super) fn install(
     install: &Install<'_>,
-    project: &index::Project,
-    version: &index::Version,
+    asked: &[(&index::Project, &index::Version)],
     native_allowed: bool,
     turn_on: bool,
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let home = install.home;
+    let game = asked
+        .first()
+        .map_or("", |(_, version)| version.game.as_str());
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let staged = tempfile::Builder::new()
         .prefix(".installed-mods-")
@@ -82,23 +87,28 @@ pub(super) fn install(
     let held = super::held_mods(&installed.entries);
     let planned = resolve::install(
         install.index,
-        &[Request {
-            id: project.id.clone(),
-            version: Some(version.version.clone()),
-        }],
+        &asked
+            .iter()
+            .map(|(project, version)| Request {
+                id: project.id.clone(),
+                version: Some(version.version.clone()),
+            })
+            .collect::<Vec<_>>(),
         &held,
-        &version.game,
+        game,
         Side::Both,
-        |_, v| super::fits_game(v, &version.game),
+        |_, v| super::fits_game(v, game),
     );
-    if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
-        return Err(super::explain(
-            install.index,
-            std::slice::from_ref(&project.id),
-            &held,
-            &version.game,
-            format!("{} can't be installed: {reason}", project.name),
-        ));
+    for (project, _) in asked {
+        if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
+            return Err(super::explain(
+                install.index,
+                std::slice::from_ref(&project.id),
+                &held,
+                game,
+                format!("{} can't be installed: {reason}", project.name),
+            ));
+        }
     }
     // Native code the plan names is refused before anything downloads; the files are checked
     // again below, for what the index doesn't declare.
@@ -131,7 +141,26 @@ pub(super) fn install(
         turn_on,
         chosen,
     };
-    plan.add(project, version, 0)?;
+    for (project, version) in asked {
+        // One that an earlier project of the set needs is already in the plan, and is now also
+        // one the player asked for.
+        if let Some((entry, _)) = plan
+            .selected
+            .iter_mut()
+            .find(|(e, _)| e.project == project.id)
+        {
+            if entry.version != version.version {
+                return Err(format!(
+                    "{} {} was asked for, but another mod of the set needs {}.",
+                    project.name, version.version, entry.version
+                )
+                .into());
+            }
+            entry.dependency = false;
+            continue;
+        }
+        plan.add(project, version, 0)?;
+    }
     // Native code follows the player's one-time choice, whatever brings it: the mod asked
     // for or any of what it needs, by the files themselves, not by what the index declares.
     // The install interface asks first; this is what holds for the headless ones.
@@ -189,11 +218,12 @@ pub(super) fn install(
         .filter(|e| e.source == SourceId::Sunrise && mod_list::is_off(home, &e.project))
         .map(|e| e.project.clone())
         .collect();
-    let mut enable = if turn_on && !off.contains(&project.id) {
-        vec![project.id.clone()]
-    } else {
-        Vec::new()
-    };
+    let wanted = |id: &str| asked.iter().any(|(project, _)| project.id == id);
+    let mut enable: Vec<String> = asked
+        .iter()
+        .map(|(project, _)| project.id.clone())
+        .filter(|id| turn_on && !off.contains(id))
+        .collect();
     for (entry, file) in plan.selected {
         if let Some(file) = file {
             let was_off = off.contains(&entry.project);
@@ -220,11 +250,11 @@ pub(super) fn install(
                 .entries
                 .retain(|e| e.source != SourceId::Sunrise || e.project != entry.project);
             plan.installed.entries.push(entry.clone());
-            if turn_on && entry.project != project.id && !was_off {
+            if turn_on && !wanted(&entry.project) && !was_off {
                 enable.push(entry.project.clone());
             }
             done.push(entry);
-        } else if entry.project == project.id {
+        } else if wanted(&entry.project) {
             done.push(entry);
         }
     }
