@@ -421,7 +421,6 @@ impl Lease {
             )
             .map_err(|e| e.to_string())?
         };
-        crate::native_status::check_permission(&image)?;
         if let Some(prior) = prior {
             let _lock = locked(&self.home)?;
             let path = self.home.join(build::FILE);
@@ -432,6 +431,7 @@ impl Lease {
             let _publication =
                 crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
             let next = prior.adopt(&image, inputs, &self.home)?;
+            let _permission = cancellation.publication_guard(&image)?;
             publish_pointer(
                 &self.home,
                 &mut Record::default(),
@@ -440,13 +440,17 @@ impl Lease {
                 |_| {},
             )?;
         } else {
-            self.commit_bootstrap(&image)?;
+            self.commit_bootstrap(&image, cancellation)?;
         }
         Ok(image)
     }
 
     /// Commit the matched image, or keep the bootstrap binding if publication is interrupted.
-    pub fn commit_bootstrap(&self, image: &str) -> Result<Active, String> {
+    fn commit_bootstrap(
+        &self,
+        image: &str,
+        cancellation: &crate::native_mods::Cancellation,
+    ) -> Result<Active, String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.ok_or_else(unsettled)?;
         let _publication =
@@ -455,6 +459,7 @@ impl Lease {
             .bootstrap()
             .ok_or_else(unsettled)?
             .active(image, &self.home)?;
+        let _permission = cancellation.publication_guard(image)?;
         publish_pointer(&self.home, &mut record, None, &active, |_| {})?;
         Ok(active)
     }
@@ -1870,7 +1875,12 @@ mod tests {
         let bytes = fs::read(scene.home().join(FILE)).unwrap();
         fs::write(&scene.dep, "a different package").unwrap();
         assert!(owner.bind_bootstrap(|| panic!("no retargeting")).is_err());
-        assert!(owner.commit_bootstrap("nightly-original").is_err());
+        assert!(owner
+            .commit_bootstrap(
+                "nightly-original",
+                &crate::native_mods::Cancellation::default()
+            )
+            .is_err());
         assert_eq!(fs::read(scene.home().join(FILE)).unwrap(), bytes);
         assert!(owner.active_build().unwrap().is_none());
     }

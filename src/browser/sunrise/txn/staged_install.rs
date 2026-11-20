@@ -117,7 +117,7 @@ impl StagedInstall {
             }
             self.prior.verify_artifacts()?;
             next.verify_artifacts()?;
-            crate::native_status::check_permission(next.executable())
+            cancellation.publication_guard(next.executable())
         })?;
         self.published = true;
         Ok(())
@@ -134,14 +134,20 @@ impl Drop for StagedInstall {
     }
 }
 
-/// Seal a new private profile before its name becomes visible. The caller keeps the lease and
-/// rechecks the artifact identities under the publication lock immediately before the rename.
+/// The verified contents of a private profile, without any live handle inside its tree.
+pub(in crate::browser::sunrise) struct SealedProfile {
+    active: Active,
+    native_grant: Option<crate::backend::NativeGrant>,
+}
+
+/// Seal a new private profile before its name becomes visible. The caller keeps the lifecycle
+/// gate and rechecks the artifact identities under the publication lock before rename.
 pub(in crate::browser::sunrise) fn seal_private_profile(
     owner: Arc<Lease>,
     base: &str,
     profile: native_mods::Profile,
     progress: impl Fn(native_mods::Step),
-) -> Result<Active, String> {
+) -> Result<SealedProfile, String> {
     let home = owner.home();
     let inventory = switch::Inventory::read(home)?;
     let chosen = chosen(&inventory);
@@ -158,17 +164,22 @@ pub(in crate::browser::sunrise) fn seal_private_profile(
     let binding = build::Bootstrap::bind(home, target)?;
     let active = binding.active(&image, home)?;
     build::publish(home, &active)?;
-    Ok(active)
+    Ok(SealedProfile {
+        active,
+        native_grant: cancellation.grant()?,
+    })
 }
 
 pub(in crate::browser::sunrise) fn expose_private_profile(
     stage: &Path,
     destination: &Path,
-    active: &Active,
+    sealed: &SealedProfile,
 ) -> Result<(), String> {
     let _publication = crate::run_leases::installation().map_err(native_mods::cache_error)?;
-    active.verify_artifacts()?;
+    sealed.active.verify_artifacts()?;
     durable::flush_tree(stage).map_err(|e| at(stage, e))?;
+    let _permission =
+        crate::native_status::publication_guard(sealed.active.executable(), sealed.native_grant)?;
     durable::move_new_directory(stage, destination).map_err(|e| at(destination, e))
 }
 

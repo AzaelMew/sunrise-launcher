@@ -364,9 +364,9 @@ impl Lease {
         write(home, &record)
     }
 
-    pub(crate) fn publish_staged_set(
+    pub(crate) fn publish_staged_set<G>(
         &self,
-        cutoff: impl FnOnce() -> Result<(), String>,
+        cutoff: impl FnOnce() -> Result<G, String>,
     ) -> Result<(), String> {
         let _lock = super::locked(self.home())?;
         let _publication =
@@ -394,10 +394,10 @@ fn operation(record: &mut Record) -> Result<&mut Journal, String> {
     }
 }
 
-fn publish(
+fn publish<G>(
     home: &Path,
     record: &mut Record,
-    cutoff: impl FnOnce() -> Result<(), String>,
+    cutoff: impl FnOnce() -> Result<G, String>,
     mut boundary: impl FnMut(Phase),
 ) -> Result<(), String> {
     let journal = operation(record)?;
@@ -438,11 +438,14 @@ fn publish(
             return Err(unsettled());
         }
     }
-    cutoff()?;
+    let mut permission = Some(cutoff()?);
     journal.phase = Phase::Publishing;
     for step in 0..=count {
         operation(record)?.frontier = step + 1;
         write(home, record)?;
+        // A revoke that got the guard first refused the cutoff. A later revoke cannot undo
+        // a locally committing generation, and doesn't wait for its data-file operations.
+        drop(permission.take());
         let journal = operation(record)?;
         if step == count {
             durable::replace(
@@ -660,6 +663,80 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn revocation_before_cutoff_refuses_and_after_cutoff_cannot_undo_publication() {
+        use crate::{backend::Settings, local_json::LockedJson};
+        for revoke_first in [true, false] {
+            let home = tempfile::tempdir().unwrap();
+            let home = home.path();
+            let data = home.join("launcher-data");
+            let set_grant = |allowed: bool| {
+                let file = LockedJson::open(&data, "settings.json").unwrap();
+                if allowed {
+                    file.write(&serde_json::json!({"native_mods_allowed_at":123,"native_consent_revision":1})).unwrap();
+                } else {
+                    file.write(&serde_json::json!({"native_consent_revision":2}))
+                        .unwrap();
+                }
+            };
+            set_grant(true);
+            let grant = Settings::native_grant_from(&data).unwrap().unwrap();
+            let owner = Lease::admit(home).unwrap();
+            let prior = Bootstrap::bind(home, Target::legacy("nightly-original").unwrap())
+                .unwrap()
+                .test_active();
+            build::publish(home, &prior).unwrap();
+            let stage = owner.reserve_switch(&prior, "nightly-new").unwrap();
+            let source = stage.join("candidate");
+            fs::write(&source, "mod.lantern:true\n").unwrap();
+            owner
+                .seal_staged_set(
+                    &prior.test_switch("nightly-new"),
+                    &[(PathBuf::from("sunrise-mods.txt"), Some(source))],
+                )
+                .unwrap();
+            let mut record = read(home).unwrap().unwrap();
+            if revoke_first {
+                set_grant(false);
+            }
+            let mut late = false;
+            let committed = publish(
+                home,
+                &mut record,
+                || grant.hold_in(&data),
+                |phase| {
+                    if phase == Phase::Publishing && !late {
+                        late = true;
+                        let (done, reply) = std::sync::mpsc::channel();
+                        let data = data.clone();
+                        std::thread::spawn(move || {
+                            let file = LockedJson::open(&data, "settings.json").unwrap();
+                            file.write(&serde_json::json!({"native_consent_revision":2}))
+                                .unwrap();
+                            done.send(()).unwrap();
+                        });
+                        reply
+                            .recv_timeout(std::time::Duration::from_secs(10))
+                            .expect("permission guard should be released after recording cutoff");
+                    }
+                },
+            );
+            assert_eq!(committed.is_err(), revoke_first);
+            assert_eq!(late, !revoke_first);
+            recover(home, &mut record).unwrap();
+            assert_eq!(
+                owner.active_build().unwrap().unwrap().base(),
+                if revoke_first {
+                    "nightly-original"
+                } else {
+                    "nightly-new"
+                }
+            );
+            assert_eq!(home.join("sunrise-mods.txt").exists(), !revoke_first);
+            assert!(Settings::native_grant_from(&data).unwrap().is_none());
+        }
     }
 
     #[test]

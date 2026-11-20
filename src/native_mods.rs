@@ -306,8 +306,7 @@ fn blamed_text(failed: tool::Failure) -> String {
 }
 
 pub fn sync_internals(folder: &Path) -> Result<serde_json::Value, Failed> {
-    require_consent()?;
-    internals_sync::check(folder).map_err(Failed::Other)
+    internals_sync::check(folder)
 }
 
 pub fn cache_error(error: crate::storage::Error) -> String {
@@ -984,7 +983,10 @@ impl From<Failed> for String {
 
 /// Refuse before staging, fetching a prebuilt game or downloading a compiler.
 pub fn require_consent() -> Result<(), Failed> {
-    if backend::Settings::native_allowed().map_err(Failed::Other)? {
+    if backend::Settings::native_grant()
+        .map_err(Failed::Other)?
+        .is_some()
+    {
         Ok(())
     } else {
         Err(Failed::NoConsent)
@@ -1875,8 +1877,7 @@ pub fn build(
     registry_consent: impl Fn(&Consent) -> bool,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
-    cancellation.check()?;
-    require_consent()?;
+    cancellation.admit_native_work()?;
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
@@ -1988,8 +1989,7 @@ pub fn build_exact_client(
     cancellation: &Cancellation,
     progress: impl Fn(Step),
 ) -> Result<String, Failed> {
-    cancellation.check()?;
-    require_consent()?;
+    cancellation.admit_native_work()?;
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
@@ -2098,8 +2098,8 @@ pub fn build_server(
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
 ) -> Result<PathBuf, Failed> {
-    require_consent()?;
     let cancellation = Cancellation::default();
+    cancellation.admit_native_work()?;
     logged(|cache| {
         if output.symlink_metadata().is_ok() {
             return Err(trf(

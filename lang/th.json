@@ -1536,5 +1536,7 @@
   "{mod} needs an update from its author before it can be turned on.": "{mod} needs an update from its author before it can be turned on.",
   "Removed": "Removed",
   "Sunrise asks again before building or starting native mods. Installed files and on/off choices stay as they are.": "Sunrise asks again before building or starting native mods. Installed files and on/off choices stay as they are.",
-  "Native mod permission could not be saved.": "Native mod permission could not be saved."
+  "Native mod permission could not be saved.": "Native mod permission could not be saved.",
+  "Native mod permission changed. Start again.": "Native mod permission changed. Start again.",
+  "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build.": "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build."
 }

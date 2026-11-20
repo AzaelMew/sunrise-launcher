@@ -58,6 +58,7 @@ mod release_notes;
 mod settings_io;
 pub use release_assets::PLATFORMS;
 pub use release_notes::{markdown_to_text, notes_summary};
+pub(crate) use settings_io::NativeGrant;
 pub use settings_io::SettingsBaseline;
 
 /// `a == b`, in a const context.
@@ -4176,7 +4177,21 @@ pub fn spawn_attached(
     cmd: &mut Command,
     profile: Option<&crate::browser::sunrise::txn::Lease>,
 ) -> std::io::Result<Child> {
+    let _permission = native_client_handoff(profile).map_err(std::io::Error::other)?;
     crate::run_leases::spawn(cmd, false, profile)
+}
+
+fn native_client_handoff(
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+) -> Result<Option<crate::local_json::LockedJson>, String> {
+    let Some(active) = profile
+        .map(crate::browser::sunrise::txn::Lease::active_build)
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    crate::native_status::publication_guard(active.executable(), None)
 }
 
 pub fn spawn(
@@ -4235,7 +4250,14 @@ pub fn spawn_holding(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = play_log::spawn(&mut cmd, profile)?;
+    let mut child = {
+        let _permission = if job == Job::Client {
+            native_client_handoff(profile)?
+        } else {
+            None
+        };
+        play_log::spawn(&mut cmd, profile)?
+    };
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
