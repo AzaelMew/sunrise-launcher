@@ -88,26 +88,24 @@ fn build_consent_binds_an_unopened_mods_page_to_the_selected_profile() {
 }
 
 #[test]
-fn a_build_ending_removes_the_mods_it_could_not_keep() {
+fn a_build_ending_costs_the_install_only_what_it_could_not_keep() {
     let failure = |id: &str| native_mods::BuildFailure {
         id: id.into(),
         reason: "r".into(),
         log: "l".into(),
     };
     let brought = ["a".to_string(), "b".to_string()];
-    let (gone, told) = removed_after_build(&brought, false, vec![failure("b"), failure("old")]);
     assert_eq!(
-        gone,
-        ["b", "old"],
-        "a switch's build removes the others too"
+        build_cost(&brought, false, vec![failure("b"), failure("old")]),
+        BuildCost::Failures(vec![failure("b"), failure("old")]),
+        "a switch's build lists the others too"
     );
-    assert_eq!(told, [failure("b"), failure("old")]);
-    let (gone, told) = removed_after_build(&brought, false, Vec::new());
-    assert!(gone.is_empty() && told.is_empty());
+    assert_eq!(build_cost(&brought, false, Vec::new()), BuildCost::Nothing);
     // The build stopped outside the mods: every mod it was started for goes.
-    let (gone, told) = removed_after_build(&brought, true, vec![failure("b")]);
-    assert_eq!(gone, ["a", "b"]);
-    assert!(told.is_empty());
+    assert_eq!(
+        build_cost(&brought, true, vec![failure("b")]),
+        BuildCost::Rollback(vec!["a".into(), "b".into()])
+    );
 }
 
 #[test]

@@ -249,7 +249,7 @@ fn a_game_switch_moves_each_mod_to_its_newest_fitting_version_and_removes_the_re
 }
 
 #[test]
-fn a_switch_run_removes_the_mods_that_cannot_stay_and_says_so() {
+fn a_switch_run_lists_the_mods_that_cannot_stay_and_removes_none() {
     let dir = scratch("auto-switch-run");
     let a = ruby(&dir, "1.0.0", &["a"], &[]);
     let index = index_of(&[("1.0.0", "26.2", &a)]);
@@ -260,10 +260,11 @@ fn a_switch_run_removes_the_mods_that_cannot_stay_and_says_so() {
     list.entries.push(entry("1.0.0"));
     list.save(&home).unwrap();
     let report = run_with(&index, true, &home, &PLAY, &Default::default(), &|_, _| {});
-    assert_eq!(report.removed.len(), 1, "{report:?}");
-    assert!(installed::Installed::load(&home).entries.is_empty());
-    assert!(!home.join("sunrise-mods/ruby.smod").exists());
-    assert!(report.lines()[0].contains("Ruby"));
+    assert_eq!(report.remove.len(), 1, "{report:?}");
+    assert_eq!(report.remove[0].title, "Ruby");
+    // Nothing is removed until the player confirms.
+    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    assert!(home.join("sunrise-mods/ruby.smod").is_file());
     fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -841,7 +842,7 @@ fn a_switch_that_would_remove_a_mod_a_world_uses_asks_and_changes_nothing_until_
         (ask.mods.as_slice(), ask.worlds.as_slice()),
         (&["ruby".to_string()][..], &["Home".to_string()][..])
     );
-    assert!(report.removed.is_empty());
+    assert!(report.remove.is_empty());
     assert_eq!(
         installed::Installed::load(&home).entries.len(),
         1,
@@ -852,7 +853,10 @@ fn a_switch_that_would_remove_a_mod_a_world_uses_asks_and_changes_nothing_until_
     let allow = BTreeSet::from(["ruby".to_string()]);
     let report = run_with(&index, true, &home, &PLAY, &allow, &|_, _| {});
     assert!(report.ask.is_none());
-    assert_eq!(report.removed.len(), 1);
-    assert!(installed::Installed::load(&home).entries.is_empty());
+    assert_eq!(
+        report.remove.len(),
+        1,
+        "answered: it goes on the list to confirm"
+    );
     fs::remove_dir_all(&dir).unwrap();
 }
