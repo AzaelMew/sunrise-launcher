@@ -170,6 +170,8 @@ pub(super) struct Mods {
     queue: queue::Queue,
     /// The start's automatic update runs: Play and installs wait for it.
     pub(super) updating: bool,
+    /// A build switch whose mods are being moved first: the profile, and the pin it will get.
+    pub(super) switching: Option<(String, Option<String>, instances::Channel)>,
     /// The profile the install that runs was asked for.
     running: Option<queue::Target>,
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
@@ -319,6 +321,7 @@ impl Mods {
             queue: Default::default(),
             running: None,
             updating: false,
+            switching: None,
             building: Vec::new(),
             undo: Vec::new(),
             world_ask: None,
@@ -352,6 +355,7 @@ impl Launcher {
         let mut native_in = None;
         let mut play_ready = false;
         let mut play_blocked = false;
+        let mut switched = None;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let is_play = matches!(event, Event::PlayUpdated(..));
@@ -414,13 +418,18 @@ impl Launcher {
                     native_in = m.running.as_ref().map(|t| t.instance.clone());
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(out) | Event::PlayUpdated(out) => {
+                Event::AutoUpdated(mut out) | Event::PlayUpdated(mut out) => {
                     play_ready |= is_play;
                     // A question or a list of mods to remove is a barrier: Play doesn't start
                     // under it, the player presses Play again once it is answered.
                     play_blocked |= is_play && out.blocks_play();
                     if !is_play {
                         m.updating = false;
+                        // A switch's pin is saved once the mods have moved to the new build,
+                        // unless a world question came up: that goes back through the switch.
+                        if let Some(switching) = m.switching.take() {
+                            switched = settle_switch(&mut out, switching);
+                        }
                     }
                     let AutoOutcome {
                         lines,
@@ -453,6 +462,9 @@ impl Launcher {
         if done {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
+        }
+        if let Some((instance, version, channel)) = switched {
+            self.save_switch(&instance, version, channel);
         }
         if play_ready {
             self.play_step = None;
@@ -510,9 +522,11 @@ impl Launcher {
             .instances
             .list
             .iter()
-            .map(|i| AutoTarget {
-                instance: i.clone(),
-                game: self.game_of(i),
+            .filter_map(|i| {
+                Some(AutoTarget {
+                    instance: i.clone(),
+                    game: self.game_of(i)?,
+                })
             })
             .collect();
         let tx = self.mods.tx.clone();
@@ -837,7 +851,7 @@ impl Launcher {
     }
 
     /// Brings every mod of profile `instance` to the game it plays now, on a worker: the update
-    /// of a switch or of a question answered. `allow` are the mods a world may lose.
+    /// of a question answered. `allow` are the mods a world may lose.
     pub(super) fn migrate_mods(
         &mut self,
         instance: &str,
@@ -846,10 +860,24 @@ impl Launcher {
         let Some(instance) = self.instances.list.iter().find(|i| i.id == instance) else {
             return;
         };
-        let target = AutoTarget {
-            instance: instance.clone(),
-            game: self.game_of(instance),
+        let Some(game) = self.game_of(instance) else {
+            return;
         };
+        self.update_mods(
+            AutoTarget {
+                instance: instance.clone(),
+                game,
+            },
+            allow,
+        );
+    }
+
+    /// Runs the updates of `target` on a worker, whatever the setting for routine updates says.
+    pub(super) fn update_mods(
+        &mut self,
+        target: AutoTarget,
+        allow: std::collections::BTreeSet<String>,
+    ) {
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let tx = self.mods.tx.clone();
         self.mods.updating = true;
@@ -1213,6 +1241,21 @@ pub(super) fn auto_update(
         }
     }
     out
+}
+
+/// A switch whose mods have moved: its pin to save, unless the update asked the world question,
+/// which then goes back through the switch (answering it runs the switch again).
+fn settle_switch(
+    out: &mut AutoOutcome,
+    (instance, version, channel): (String, Option<String>, instances::Channel),
+) -> Option<(String, Option<String>, instances::Channel)> {
+    match out.asks.first_mut() {
+        Some(ask) => {
+            ask.then = Then::Switch(version, channel);
+            None
+        }
+        None => Some((instance, version, channel)),
+    }
 }
 
 /// What the automatic updates did: the notice's lines, and the questions to put to the player.

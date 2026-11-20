@@ -1268,13 +1268,22 @@ impl Launcher {
         let mut staged = instance.clone();
         staged.version = version.clone();
         staged.channel = channel;
-        let ctx = sunrise_launcher::browser::sunrise::auto::Context {
-            in_pack: sunrise_launcher::browser::sunrise::auto::in_pack(&instance.home),
-            game: &self.game_of(&staged),
-            native_allowed: self.settings.native_mods_allowed_at.is_some(),
-        };
-        let question = sunrise_launcher::browser::sunrise::known_index().and_then(|index| {
-            sunrise_launcher::browser::sunrise::auto::switch_question(&index, &instance.home, &ctx)
+        // A build that isn't downloaded says nothing about its game: what it would remove can't
+        // be told yet, and the mods are judged when it is installed (Play's update asks the
+        // world question then, before anything is built).
+        let question = self.game_of(&staged).and_then(|game| {
+            let ctx = sunrise_launcher::browser::sunrise::auto::Context {
+                in_pack: sunrise_launcher::browser::sunrise::auto::in_pack(&instance.home),
+                game: &game,
+                native_allowed: self.settings.native_mods_allowed_at.is_some(),
+            };
+            sunrise_launcher::browser::sunrise::known_index().and_then(|index| {
+                sunrise_launcher::browser::sunrise::auto::switch_question(
+                    &index,
+                    &instance.home,
+                    &ctx,
+                )
+            })
         });
         let id = instance.id.clone();
         match question {
@@ -1289,9 +1298,10 @@ impl Launcher {
         }
     }
 
-    /// Saves the new pin, then moves every mod on to it, whatever the setting for routine
-    /// updates says: a switch is not a routine update. `allow` are the mods the player let a
-    /// world lose.
+    /// Moves every mod on to the build, whatever the setting for routine updates says (a switch
+    /// is not a routine update), and saves the new pin once they have moved. `allow` are the
+    /// mods the player let a world lose. A build that isn't downloaded has no game to move
+    /// the mods to: its pin is saved at once and the mods follow when it is installed.
     pub(crate) fn commit_switch(
         &mut self,
         id: &str,
@@ -1303,6 +1313,34 @@ impl Launcher {
             self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
             return;
         }
+        let Some(instance) = self.instances.list.iter().find(|i| i.id == id) else {
+            return;
+        };
+        let mut staged = instance.clone();
+        staged.version = version.clone();
+        staged.channel = channel;
+        match self.game_of(&staged) {
+            Some(game) if !instance.is_pack_profile() => {
+                self.mods.switching = Some((id.to_owned(), version, channel));
+                self.update_mods(
+                    crate::mods_page::AutoTarget {
+                        instance: staged,
+                        game,
+                    },
+                    allow,
+                );
+            }
+            _ => self.save_switch(id, version, channel),
+        }
+    }
+
+    /// Saves the pin of a switch.
+    pub(crate) fn save_switch(
+        &mut self,
+        id: &str,
+        version: Option<String>,
+        channel: instances::Channel,
+    ) {
         match instances::edit(id, |m| {
             m.version = version;
             m.channel = Some(channel);
@@ -1310,7 +1348,6 @@ impl Launcher {
             Ok(_) => {
                 self.ui.sheets.error = None;
                 self.reload_instances();
-                self.migrate_mods(id, allow);
             }
             Err(e) => self.ui.sheets.error = Some(e),
         }
