@@ -1895,6 +1895,11 @@ pub fn build(
                 || cancellation.check(),
             )?;
             instances::edit(&instance.id, |meta| {
+                // A modpack keeps the build it was made for: it plays that one, plain.
+                if instance.is_pack_profile() {
+                    meta.built = None;
+                    return;
+                }
                 let unchanged = meta.version == instance.version
                     && meta.channel.unwrap_or_default() == instance.channel;
                 if unchanged {
@@ -1917,6 +1922,11 @@ pub fn build(
         // A version or channel the player saved while this built wins: the build stays
         // available, the instance keeps their choice.
         instances::edit(&instance.id, |meta| {
+            // A modpack's recorded build never changes: its native build is kept beside it.
+            if instance.is_pack_profile() {
+                meta.built = Some(built.version.clone());
+                return;
+            }
             let unchanged = meta.version == instance.version
                 && meta.channel.unwrap_or_default() == instance.channel;
             if unchanged {

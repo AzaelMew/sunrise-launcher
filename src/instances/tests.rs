@@ -824,6 +824,18 @@ fn a_modpacks_profile_keeps_its_build_whoever_asks() {
         Store::load(&data).instances["pack:cozy"].version.as_deref(),
         Some("1.0")
     );
+    // Its native build is kept beside the recorded one, which stays; a build that isn't made
+    // from the recorded version (here, one with no record at all) is not played.
+    let kept = edit_in(&game, &data, "pack:cozy", |m| {
+        m.built = Some("1.0-native-abc".into())
+    })
+    .unwrap();
+    assert_eq!(kept.version.as_deref(), Some("1.0"));
+    let saved = &Store::load(&data).instances["pack:cozy"];
+    assert_eq!(
+        (saved.version.as_deref(), saved.built.as_deref()),
+        (Some("1.0"), Some("1.0-native-abc"))
+    );
     // Everything else about it is still the player's to change.
     edit_in(&game, &data, "pack:cozy", |m| m.name = Some("Warm".into())).unwrap();
     fs::remove_dir_all(root).unwrap();

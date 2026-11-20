@@ -259,6 +259,11 @@ pub struct Meta {
     /// launcher's own version, which follows updates.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// The native build made for a modpack's profile from its recorded `version`: a derived
+    /// build, kept apart from that version, which stays the build the pack was made for. The
+    /// profile plays it only while its base is still that version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub built: Option<String>,
     /// The builds "latest" means for it; missing is [`Channel::Nightly`].
     #[serde(
         default,
@@ -349,7 +354,8 @@ pub struct Instance {
     pub home: PathBuf,
     pub icon: Option<Icon>,
     pub group: Option<String>,
-    /// Its pinned Sunrise version, if any (`Meta::version`).
+    /// Its pinned Sunrise version, if any (`Meta::version`; a modpack's own native build when it
+    /// has one, `Meta::built`).
     pub version: Option<String>,
     /// Which builds it follows when it keeps no version.
     pub channel: Channel,
@@ -486,7 +492,14 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
                 name: meta.name.unwrap_or(name),
                 icon: meta.icon,
                 group: meta.group,
-                version: meta.version,
+                // A modpack's own native build, while it is made from the version it records.
+                version: meta
+                    .built
+                    .filter(|built| {
+                        crate::native_mods::about(built)
+                            .is_some_and(|about| Some(&about.base) == meta.version.as_ref())
+                    })
+                    .or(meta.version),
                 channel: meta.channel.unwrap_or_default(),
                 native_profile: meta
                     .native_profile
