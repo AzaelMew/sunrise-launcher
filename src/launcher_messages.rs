@@ -39,8 +39,8 @@ impl Launcher {
                     if let (Ok(_), Some(checked)) = (&r, self.checked) {
                         self.perf.record_since("launcher.release_list_ms", checked);
                     }
-                    if let Ok(list) = &r {
-                        sunrise_launcher::nightly::note_published(list);
+                    if r.is_ok() {
+                        self.refresh_installed();
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
                     // Once the list is in (or failed), each instance resolves to the build it plays.

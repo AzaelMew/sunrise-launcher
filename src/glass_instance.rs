@@ -101,7 +101,7 @@ fn profile_target<'a>(
     pin.or_else(|| channel.play_target(releases, installed, nightly, launcher_version))
 }
 
-/// Every Nightly published with a build for this platform, newest first, then the installed
+/// The current Nightly if published for this platform, then the installed
 /// versions that list lacks (older Nightlies, imported builds). Picking one not installed installs
 /// it on Create. Never a build made with mods (as on Versions): that is one profile's, made from
 /// its mods with the player's permission, not a game to start another profile on.

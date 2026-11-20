@@ -1103,6 +1103,32 @@ pub fn play_installations(selected: Option<&str>) -> (Vec<String>, Option<String
     (installed, nightly)
 }
 
+/// Accept the current rolling Nightly as offline evidence when it is already installed on
+/// the newest date. Do this on the release worker before the window can use that catalogue.
+pub fn note_play_catalogue(releases: &[Release]) -> Result<(), String> {
+    crate::nightly::note_published(releases);
+    let Some(current) = crate::instances::Channel::Nightly.builds(releases).next() else {
+        return Ok(());
+    };
+    let versions = versions_dir();
+    if !versions.join(&current.tag).join(COMPLETE).is_file() {
+        return Ok(());
+    }
+    let _publication =
+        crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+    let installed = installed_in(&versions);
+    let newest_date = installed
+        .iter()
+        .find_map(|tag| crate::nightly::date_of(tag));
+    if newest_date.is_some()
+        && newest_date == crate::nightly::date_of(&current.tag)
+        && installed.contains(&current.tag)
+    {
+        crate::nightly::record_current(&versions, &current.tag).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 fn installed_in(versions: &Path) -> Vec<String> {
     let mut tags: Vec<String> = fs::read_dir(versions)
         .into_iter()

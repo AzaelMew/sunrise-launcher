@@ -377,6 +377,13 @@ impl Launcher {
             let message = match check {
                 UpdateCheck::Startup => {
                     let updates = backend::releases_and_updates(|releases| {
+                        if let Ok(list) = &releases {
+                            if let Err(error) = backend::note_play_catalogue(list) {
+                                eprintln!(
+                                    "Could not remember the current installed Nightly: {error}"
+                                );
+                            }
+                        }
                         let _ = tx.send(Msg::Releases(releases));
                     });
                     Msg::Updates(Box::new(updates))

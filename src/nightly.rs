@@ -376,6 +376,68 @@ mod tests {
     }
 
     #[test]
+    fn a_current_already_installed_nightly_stays_current_after_going_offline() {
+        use crate::instances::Channel::Nightly;
+        use std::process::Command;
+        const ACTOR: &str = "SUNRISE_TEST_ACCEPT_ALREADY_INSTALLED_NIGHTLY";
+        if std::env::var_os(ACTOR).is_none() {
+            let root = tempfile::tempdir().unwrap();
+            assert!(Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "nightly::tests::a_current_already_installed_nightly_stays_current_after_going_offline"])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .status().unwrap().success());
+            return;
+        }
+        let data = backend::data_dir();
+        let versions = data.join("versions");
+        let old = "nightly-2033-06-07-bbbbbbb".to_owned();
+        let current = "nightly-2033-06-07-aaaaaaa".to_owned();
+        let catalogue = [nightly_release(&current, "2033-06-07", "11:05")];
+        for tag in [&old, &current] {
+            let dir = backend::version_dir(tag);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join(INSTALLED_TIME), "11:05").unwrap();
+            fs::write(dir.join(".installed"), "").unwrap();
+        }
+        fs::write(
+            data.join("settings.json"),
+            serde_json::json!({"selected": old}).to_string(),
+        )
+        .unwrap();
+        let profile = crate::instances::selection().unwrap();
+        assert_eq!(profile.channel, Nightly);
+        assert_eq!(
+            profile.resolve_version(None).unwrap(),
+            old,
+            "pre-receipt saved choice"
+        );
+        assert!(!versions.join(CURRENT_INSTALL).exists());
+        let (installed, known) = backend::play_installations(Some(&old));
+        let online = profile
+            .channel
+            .play_target(&catalogue, &installed, known.as_ref(), Some(&old))
+            .unwrap();
+        assert_eq!(online, &current);
+        backend::note_play_catalogue(&catalogue).unwrap();
+        assert_eq!(
+            fs::read_to_string(versions.join(CURRENT_INSTALL)).unwrap(),
+            current
+        );
+        assert_eq!(&profile.resolve_version(None).unwrap(), online);
+        let next_day = "nightly-2033-06-08-ccccccc";
+        fs::create_dir(backend::version_dir(next_day)).unwrap();
+        fs::write(backend::version_dir(next_day).join(".installed"), "").unwrap();
+        record_current(&versions, next_day).unwrap();
+        backend::note_play_catalogue(&catalogue).unwrap();
+        assert_eq!(
+            fs::read_to_string(versions.join(CURRENT_INSTALL)).unwrap(),
+            next_day
+        );
+    }
+
+    #[test]
     fn an_installed_nightly_records_its_publication_time() {
         let dir = tempfile::tempdir().unwrap();
         let release = nightly_release("nightly-2033-06-07-bbbbbbb", "2033-06-07", "18:05");
