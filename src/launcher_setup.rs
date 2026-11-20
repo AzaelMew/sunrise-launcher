@@ -110,7 +110,6 @@ impl Launcher {
             play_after_build: None,
             native_error: None,
             native_failed_mods: Vec::new(),
-            native_worlds: None,
             pending_consent: None,
             consent_error: None,
             native_for: None,

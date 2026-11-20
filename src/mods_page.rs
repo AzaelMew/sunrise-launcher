@@ -512,6 +512,10 @@ impl Launcher {
         if answer == sunrise_launcher::worlds::Answer::Stay {
             return;
         }
+        if let Some(base) = ask.build_on {
+            self.build_native_on(Some(base), true);
+            return;
+        }
         let Some(instance) = self.instances.list.iter().find(|i| i.id == ask.instance) else {
             return;
         };
@@ -668,6 +672,7 @@ pub(super) fn auto_update(
                 out.asks.push(WorldAsk {
                     instance: i.id.clone(),
                     question,
+                    build_on: None,
                 });
             }
         }
@@ -689,6 +694,24 @@ pub(crate) struct WorldAsk {
     /// The instance whose profile it is.
     pub(crate) instance: String,
     pub(crate) question: sunrise_launcher::worlds::Question,
+    /// For a build that stopped for the question: the build it was on. Switching anyway
+    /// builds on it again, leaving those mods out.
+    pub(crate) build_on: Option<String>,
+}
+
+impl WorldAsk {
+    /// The question a build's stop for worlds puts: the mods it would have left out and the
+    /// worlds saved with them.
+    pub(crate) fn from_stop(instance: String, stake: &native_mods::AtStake) -> Self {
+        Self {
+            instance,
+            question: sunrise_launcher::worlds::Question {
+                mods: stake.mods.clone(),
+                worlds: stake.worlds.clone(),
+            },
+            build_on: Some(stake.base.clone()),
+        }
+    }
 }
 
 #[cfg(test)]

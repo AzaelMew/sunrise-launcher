@@ -36,7 +36,7 @@ impl Launcher {
         self.pending_consent = None;
         self.native_error = None;
         self.native_failed_mods.clear();
-        self.native_worlds = None;
+        self.mods.world_ask = None;
         self.mods.unbuilt = None;
         // This attempt's own log, starting empty: an open panel shows it rather than the last
         // attempt's (`native_log_page`).

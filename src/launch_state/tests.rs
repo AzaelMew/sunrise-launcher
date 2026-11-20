@@ -145,7 +145,6 @@ fn a_build_under_way_has_stop_and_keeps_its_old_error_quiet() {
     let view = Facts {
         building: true,
         native_error: Some(LONG.into()),
-        held: Some("Nov 17".into()),
         update: Some("Nov 17".into()),
         mods_off: 2,
         ..idle()
@@ -263,46 +262,6 @@ fn problems_win_in_the_order_the_launch_meets_them() {
         next(&mut facts);
     }
     assert_eq!(facts.view().said, None);
-}
-
-#[test]
-fn a_held_update_speaks_for_the_build_and_is_fixed_in_its_sheet() {
-    let held = Facts {
-        native_error: Some(LONG.into()),
-        held: Some("Nov 17".into()),
-        update: Some("Nov 17".into()),
-        ..idle()
-    };
-    let view = held.view();
-    assert_eq!(
-        view.said.as_deref(),
-        Some("The update to Nov 17 is on hold")
-    );
-    assert!(!view.failed);
-    assert_eq!(view.act, Some(Act::Resolve));
-    assert_eq!(Act::Resolve.label(), "Fix…");
-    assert_eq!(
-        view.strip(),
-        Some((
-            "The update to Nov 17 is on hold".into(),
-            StripAct::Act(Act::Resolve)
-        ))
-    );
-    // Nothing is resolved while something runs; another problem is still said first.
-    let busy = Facts {
-        mutating: true,
-        ..held.clone()
-    };
-    assert_eq!(busy.view().act, None);
-    let other = Facts {
-        crash: Some("The game stopped early.".into()),
-        ..held
-    };
-    assert_eq!(
-        other.view().said.as_deref(),
-        Some("The game stopped early.")
-    );
-    assert_eq!(other.view().act, Some(Act::Resolve));
 }
 
 #[test]

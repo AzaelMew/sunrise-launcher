@@ -1,8 +1,6 @@
-//! The three sheets: Resolve (a held update), Build consent and
-//! the game-build chooser. Everything here reads or acts through the existing workers:
+//! The sheets: Build consent, the world question and the game-build chooser. Everything here
+//! reads or acts through the existing workers:
 //!
-//! * **Resolve** reads [`native_mods::update_check`] (or the build's worlds stop, `native_worlds`)
-//!   and acts with [`Launcher::build_native_on`]; Stay writes nothing.
 //! * **Consent** is the real `pending_consent` and `native_consent::resolve`; the registry-crate
 //!   permission is the worker's own mid-build question (`Msg::NativeRegistryConsent`).
 //! * **Build** edits the selected instance's pin and channel with `instances::edit`.
@@ -26,8 +24,6 @@ const TAB_STOPS: usize = 512;
 pub(crate) enum Sheet {
     /// The game-build chooser, a popover under Home's build picker.
     Build,
-    /// Choose what to do with a held update.
-    Resolve,
     /// A problem's whole text, opened from the play bar's one sentence.
     Notice,
     /// The worlds a data pack goes into (`mods::data_packs`).
@@ -72,8 +68,6 @@ pub(crate) struct SheetsState {
     /// The unticked boxes of the sheet on screen: native code, dependency programs.
     ticked: (bool, bool),
     error: Option<String>,
-    /// The Resolve sheet shows what the check said word for word.
-    details: bool,
     /// What the Notice sheet says, and the way out it offers.
     notice: String,
     way_out: Option<WayOut>,
@@ -97,28 +91,6 @@ pub(super) fn check_key(home: &std::path::Path, to: &str) -> String {
     format!("{}{to}", native_status::fingerprint(home, Some(to)))
 }
 
-/// A held update as the bottom bar and the Resolve sheet read it.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Held {
-    /// The build waiting, as people read it ("Nov 17").
-    pub(crate) to: String,
-    /// The build played now.
-    pub(crate) plays: String,
-    /// The mods that don't work with it, by id.
-    pub(crate) mods: Vec<String>,
-    /// What the check or the stopped build said, word for word: for a mod's author, behind
-    /// "Details".
-    pub(crate) details: Vec<String>,
-    /// Worlds that would lose a mod's content.
-    pub(crate) worlds: Vec<String>,
-    /// A mod the tool refuses on any build: there is nothing to update to.
-    pub(crate) blocked: bool,
-    /// The raw build the update goes to (`build_native_on`).
-    base: String,
-    /// It is a build that already stopped for worlds, not a check.
-    stopped: bool,
-}
-
 /// `Nov 17` for a dated build, else the tag.
 pub(crate) fn build_name(tag: &str) -> String {
     // A game built with mods is named by the build it was made from.
@@ -130,25 +102,6 @@ pub(crate) fn build_name(tag: &str) -> String {
     sunrise_launcher::nightly::date_of(tag)
         .map(sunrise_launcher::nightly::day)
         .unwrap_or_else(|| tag.to_owned())
-}
-
-impl Held {
-    fn of_check(check: UpdateCheck, plays: &str) -> Option<Self> {
-        // `update_summary` is one line when every mod fits and a head plus one line per mod that
-        // does not otherwise; a refusal or a world at stake is a hold as well. A fit is an offer
-        // (the old Build card's), not a hold.
-        let held = check.blocked || !check.worlds.is_empty() || check.summary.contains('\n');
-        held.then(|| Self {
-            to: build_name(&check.to),
-            plays: build_name(plays),
-            mods: check.off.iter().map(|(id, _)| id.clone()).collect(),
-            details: check.summary.lines().map(str::to_owned).collect(),
-            worlds: check.worlds,
-            blocked: check.blocked,
-            base: check.to,
-            stopped: false,
-        })
-    }
 }
 
 fn card() -> Div {
@@ -305,7 +258,6 @@ impl Launcher {
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
         self.ui.sheets.error = None;
-        self.ui.sheets.details = false;
         self.ui.sheet = Some(sheet);
     }
 
@@ -351,51 +303,6 @@ impl Launcher {
             self.close_sheet();
         }
         open
-    }
-
-    /// The update the bar should call held, if there is one. It only *reads*: a build that stopped
-    /// for worlds (`native_worlds`), or the result of the check the player started from the Build
-    /// sheet ([`Self::check_native`]). It never runs a check itself, because a check stages
-    /// files into the real build folder.
-    pub(crate) fn held_update(&self) -> Option<Held> {
-        self.held_real(|| match self.check_state() {
-            CheckState::Done(check) => Some(check),
-            _ => None,
-        })
-    }
-
-    /// The launch status uses the background snapshot's check key, not a new mod scan.
-    pub(crate) fn held_for_launch(&self, check_key: Option<&str>) -> Option<Held> {
-        self.held_real(|| {
-            self.settings.native_mods_allowed_at?;
-            let memo = self.ui.sheets.update.borrow();
-            let memo = memo
-                .as_ref()
-                .filter(|memo| Some(memo.key.as_str()) == check_key)?;
-            memo.result.as_ref()?.as_ref().ok().cloned()
-        })
-    }
-
-    fn held_real(&self, checked: impl FnOnce() -> Option<UpdateCheck>) -> Option<Held> {
-        let instance = self.selected_instance()?;
-        let plays = self.version_of(instance)?.clone();
-        if let Some(stake) = self
-            .native_worlds
-            .as_ref()
-            .filter(|_| self.native_for.as_deref() == Some(instance.id.as_str()))
-        {
-            return Some(Held {
-                to: build_name(&stake.base),
-                plays: build_name(&plays),
-                mods: stake.mods.clone(),
-                details: stake.text.split("\n\n").map(str::to_owned).collect(),
-                worlds: stake.worlds.clone(),
-                blocked: false,
-                base: stake.base.clone(),
-                stopped: true,
-            });
-        }
-        Held::of_check(checked()?, &plays)
     }
 
     /// Where the selected setup's native-mod check against the newer installed build stands.
@@ -570,14 +477,6 @@ impl Launcher {
                 }
                 sheet
             }
-            Some(Sheet::Resolve) => match self.held_update() {
-                Some(held) => Some(self.resolve_sheet(held, cx)),
-                None => {
-                    // Nothing is held any more (it was resolved elsewhere): close quietly.
-                    self.ui.sheet = None;
-                    None
-                }
-            },
             None => None,
         }
     }
@@ -646,229 +545,6 @@ impl Launcher {
                     ),
             );
         frame("alt-world-question", 560., body, cx)
-    }
-
-    // ---- Resolve ----
-
-    /// An update is out and some mods don't work with it yet: which, and the two ways on.
-    /// Staying is the default and what closing does; nothing here runs until a button is pressed.
-    fn resolve_sheet(&mut self, held: Held, cx: &mut Context<Self>) -> Stateful<Div> {
-        let Held {
-            to,
-            plays,
-            mods,
-            details,
-            worlds,
-            blocked,
-            base,
-            ..
-        } = held;
-        let known = self.mods_named(&mods);
-        let names: Vec<String> = known.iter().map(|(name, _)| name.clone()).collect();
-        let them = match names.as_slice() {
-            [one] => one.clone(),
-            _ => tr("them").to_string(),
-        };
-        let heading = match (blocked, names.as_slice()) {
-            (true, _) => trf("{to} is out, but one of your mods stops it", &[("to", &to)]),
-            (false, [one]) => trf(
-                "{to} is out, but {mod} doesn't work with it yet",
-                &[("to", &to), ("mod", one)],
-            ),
-            (false, many) => trf(
-                "{to} is out, but {count} of your mods don't work with it yet",
-                &[("to", &to), ("count", &many.len().to_string())],
-            ),
-        };
-        let lead = if blocked {
-            trf(
-                "One of your mods can't be built for any game build. Remove it under Mods, or wait for its author. Until then you keep playing {plays}.",
-                &[("plays", &plays)],
-            )
-        } else {
-            trf(
-                "You can keep playing {plays} and wait, or update without {them}.",
-                &[("plays", &plays), ("them", &them)],
-            )
-        };
-
-        // The mods, each with what can be done about it right here.
-        let mut can_update = false;
-        let waiting = known.iter().filter(|(_, newer)| newer.is_none()).count();
-        let mut list = div()
-            .id("alt-resolve-list")
-            .flex()
-            .flex_col()
-            .max_h(px(280.))
-            .overflow_y_scroll()
-            .rounded(crate::tokens::r(crate::tokens::R_CARD))
-            .border_1()
-            .border_color(rgb(palette().line))
-            .bg(rgb(palette().background));
-        for (n, (id, (name, newer))) in mods.iter().zip(&known).enumerate() {
-            // Only a mod that can do something here gets a line under its name; the ones that
-            // wait for their author are said once, under the list.
-            let about = newer.as_ref().map(|version| {
-                trf(
-                    "Version {version} is out. Update it, then check the game update again.",
-                    &[("version", version)],
-                )
-            });
-            let update = newer.as_ref().map(|_| {
-                can_update = true;
-                let id = id.clone();
-                button(
-                    ElementId::named_usize("alt-resolve-mod", n),
-                    trf("Update {mod}", &[("mod", name)]),
-                )
-                .bg(rgb(palette().text))
-                .border_color(rgb(palette().text))
-                .text_color(rgb(palette().background))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.close_sheet();
-                    this.update_mod(&id);
-                    cx.notify();
-                }))
-            });
-            list = list.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(12.))
-                    .px(px(14.))
-                    .py(px(8.))
-                    .when(n > 0, |d| d.border_t_1().border_color(rgb(palette().line)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(name.clone()))
-                            .children(about.map(muted)),
-                    )
-                    .children(update),
-            );
-        }
-
-        // The mods with no newer version, said once for all of them.
-        let wait_line = (waiting > 0).then(|| {
-            muted(match waiting {
-                1 => tr("It needs an update from its author; when one is out, it shows here and under Mods.").to_string(),
-                _ => tr("They need updates from their authors; when one is out, it shows here and under Mods.").to_string(),
-            })
-        });
-
-        // What updating without them does, said before the button that does it.
-        let without = (!blocked).then(|| {
-            let kept = trf(
-                "Updating without {them} turns it off; it isn't removed, and you can turn it back on when it fits.",
-                &[("them", &them)],
-            );
-            match worlds.as_slice() {
-                [] => kept,
-                saved => format!(
-                    "{kept} {}",
-                    trf(
-                        "{worlds}: opened without the mod, a world loses what the mod added to it, for good. Back it up first in the game (Edit World, then Make Backup) if you want to keep it.",
-                        &[("worlds", &saved.join(", "))],
-                    )
-                ),
-            }
-        });
-
-        let stay = button(
-            "alt-resolve-stay",
-            trf("Stay on {build} for now", &[("build", &plays)]),
-        )
-        // Recommended, unless a mod can simply be updated.
-        .when(!can_update, |b| {
-            b.bg(rgb(palette().text))
-                .border_color(rgb(palette().text))
-                .text_color(rgb(palette().background))
-        })
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            // Staying is what already happens: nothing is written.
-            this.close_sheet();
-            cx.notify();
-        }));
-        let go = (!blocked).then(|| {
-            button(
-                "alt-resolve-update",
-                trf("Update without {them}", &[("them", &them)]),
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.close_sheet();
-                this.build_native_on(Some(base.clone()), true);
-                cx.notify();
-            }))
-        });
-
-        let open = self.ui.sheets.details;
-        let more = div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(
-                div()
-                    .id("alt-resolve-details")
-                    .tab_index(0)
-                    .seen()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_size(px(tokens::SMALL))
-                    .text_color(rgb(palette().muted))
-                    .cursor_pointer()
-                    .child(blocks::icon(
-                        if open {
-                            "chevron-down"
-                        } else {
-                            "chevron-right"
-                        },
-                        11.,
-                        rgb(palette().muted).into(),
-                    ))
-                    .child(tr("Details"))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.ui.sheets.details = !this.ui.sheets.details;
-                        cx.notify();
-                    })),
-            )
-            .children(open.then(|| {
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .p(px(12.))
-                    .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
-                    .bg(rgb(palette().field))
-                    .font_family(crate::theme::MONO)
-                    .text_size(px(tokens::CAPTION))
-                    .text_color(rgb(palette().muted))
-                    .children(details)
-            }));
-
-        let body = div()
-            .flex()
-            .flex_col()
-            .child(title(heading))
-            .child(div().text_size(px(tokens::BODY)).child(lead))
-            .children((!mods.is_empty()).then_some(list))
-            .children(wait_line)
-            .children(without.map(muted))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_end()
-                    .gap(px(8.))
-                    .children(go)
-                    .child(stay),
-            )
-            .child(more);
-        frame("alt-resolve", 580., body, cx)
     }
 
     /// What went wrong, in full: each paragraph on its own, with one way out.
@@ -1245,40 +921,7 @@ impl Launcher {
                     .child(error),
                 div().child(check("alt-check-again", "Check again", cx)),
             ]),
-            CheckState::Done(done) => match Held::of_check(done.clone(), "") {
-                Some(_) => block(vec![
-                    muted(trf(
-                        "The update to {to} is on hold: some mods don't fit.",
-                        &[("to", &build_name(&done.to))],
-                    ))
-                    .text_size(px(tokens::SMALL)),
-                    div().child(
-                        button("alt-check-resolve", tr("Resolve…")).on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                this.open_sheet(Sheet::Resolve);
-                                cx.notify();
-                            },
-                        )),
-                    ),
-                ]),
-                None => {
-                    let base = done.to.clone();
-                    block(vec![
-                        muted(done.summary.clone()).text_size(px(tokens::SMALL)),
-                        div().child(
-                            button(
-                                "alt-check-build",
-                                trf("Build on {to}", &[("to", &build_name(&done.to))]),
-                            )
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.close_sheet();
-                                this.build_native_on(Some(base.clone()), false);
-                                cx.notify();
-                            })),
-                        ),
-                    ])
-                }
-            },
+            CheckState::Done(done) => block(vec![muted(done.summary).text_size(px(tokens::SMALL))]),
         })
     }
 
@@ -1595,42 +1238,6 @@ fn consent_footer(note: &str, cancel: Stateful<Div>, go: Stateful<Div>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn check(summary: String, worlds: &[&str], blocked: bool) -> UpdateCheck {
-        UpdateCheck {
-            to: "nightly-2026-11-17-abcdef0".into(),
-            summary,
-            worlds: worlds.iter().map(|w| w.to_string()).collect(),
-            blocked,
-            off: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn a_fit_is_an_offer_and_a_misfit_is_a_hold() {
-        let fits = native_mods::fit::update_summary("Nov 17", 2, &[]);
-        assert!(Held::of_check(check(fits, &[], false), "nightly-2026-11-14-0000000").is_none());
-        let off = [("jei".to_string(), "made for another game".to_string())];
-        let summary = native_mods::fit::update_summary("Nov 17", 2, &off);
-        let mut misfit = check(summary, &[], false);
-        misfit.off = off.to_vec();
-        let held = Held::of_check(misfit, "nightly-2026-11-14-0000000")
-            .expect("a mod that does not fit holds the update");
-        assert_eq!(
-            (held.to.as_str(), held.plays.as_str()),
-            ("Nov 17", "Nov 14")
-        );
-        assert_eq!(held.mods, ["jei"]);
-        assert!(held.details[1].starts_with("jei does not"));
-    }
-
-    #[test]
-    fn a_refusal_or_a_world_at_stake_holds_even_on_one_line() {
-        let refused = Held::of_check(check("one mod is refused".into(), &[], true), "x").unwrap();
-        assert!(refused.blocked);
-        let worlds = Held::of_check(check("Move?".into(), &["Harbor"], false), "x").unwrap();
-        assert_eq!(worlds.worlds, ["Harbor"]);
-    }
 
     #[test]
     fn dated_builds_read_as_a_day() {
