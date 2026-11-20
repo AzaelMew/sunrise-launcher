@@ -1,13 +1,11 @@
 //! `sunrise-mod.toml`, a mod's manifest, and the `.smod` file around it.
 //!
-//! Raw injection schema adapted from horizon-mixins (Copyright (c) 2026 levzzz),
+//! Native mixin schema adapted from horizon-mixins (Copyright (c) 2026 levzzz),
 //! MIT licensed; see `HORIZON_MIXINS_LICENSE` and `THIRD_PARTY_NOTICES.md`.
-pub mod inject;
 mod jar;
 pub mod loops;
 pub mod mixin;
 mod runtime_files;
-mod wasm;
 pub use jar::{
     JarConflict, JarInputsError, JarRef, JarRequirement, MissingJar, collect_jar_requirements,
     missing_jars,
@@ -15,19 +13,38 @@ pub use jar::{
 pub use runtime_files::{
     MAX_RUNTIME_FILE, MAX_RUNTIME_FILES, MAX_RUNTIME_TOTAL, RUNTIME_DIR, RuntimeData, RuntimeTable,
 };
-pub use wasm::{MAX_WASM, Wasm, WasmError, sha512_of};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha512};
 use std::{
     fmt,
     io::Read,
     path::{Path, PathBuf},
 };
 
+/// Checks a SHA-512 written as 128 lowercase hex digits, the form `[[jar]]` uses too.
+pub(crate) fn sha512_hex(value: &str) -> Result<(), &'static str> {
+    if value.len() == 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        Ok(())
+    } else {
+        Err("must be 128 lowercase hex digits")
+    }
+}
+
+/// The lowercase SHA-512 of `bytes`.
+pub fn sha512_of(bytes: &[u8]) -> String {
+    Sha512::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// The manifest's file name in a `.smod` or a mod folder.
 pub const MANIFEST: &str = "sunrise-mod.toml";
-/// Executable components are not content and are refused in a `.smod`.
-pub const WASM: &str = "mod.wasm";
 /// Ids no mod or pack may take: the mod site's own pages under `/mods/` (a project's page is
 /// `/mods/<id>`), and the names of the pages below an id.
 pub const RESERVED_IDS: [&str; 7] = [
@@ -51,10 +68,6 @@ pub const API: &str = "0.2";
 const RESERVED_NAMESPACES: [&str; 3] = ["minecraft", "c", "sunrise"];
 /// A mod's saved settings, shared by native mods and modpack overrides.
 pub const STORAGE_DIR: &str = ".sunrise-mod-data";
-/// wasm32's whole address space in MiB (4 GiB): the most a mod may declare in `wasm_memory_mib`,
-/// and an instance's group memory cap unless the player lowers it (`sunrise-mods.txt`).
-pub const MAX_WASM_MEMORY_MIB: u32 = 4096;
-
 /// The largest manifest this build reads.
 /// Maximum manifest bytes accepted by package readers and developer tools.
 pub const MAX_MANIFEST: u64 = 32 << 20;
@@ -115,23 +128,12 @@ pub struct Manifest {
     pub jar: Vec<JarRef>,
     /// Exact build pins and support modules for a code mod.
     pub native: Option<Native>,
-    /// A wasm mod's `mod.wasm`, its toolchain and what it was linked against.
-    pub wasm: Option<Wasm>,
-    /// The data files of the package's `runtime/` folder, each with its SHA-512: for a native and
-    /// a wasm mod alike. Not pack data.
+    /// A native mod's `runtime/` files, each with its SHA-512. Not pack data.
     #[serde(default)]
     pub runtime: Option<RuntimeTable>,
-    /// The linear memory, in MiB (1 to [`MAX_WASM_MEMORY_MIB`]), this wasm mod or library expects
-    /// its dependency group to have. The group gets the largest any member declares, up to the
-    /// instance's cap; with none declared it gets 1 GiB. Native mods are not wasm groups: they
-    /// share the game's memory, and the key means nothing to them.
-    #[serde(default)]
-    pub wasm_memory_mib: Option<u32>,
     /// Game internals used by this mod, fingerprinted against its pinned build.
     #[serde(default)]
     pub internals: Vec<Internal>,
-    #[serde(default, deserialize_with = "inject::rows")]
-    pub inject: Vec<inject::Inject>,
     /// Free-form values other mods read through `PackageInfo::property`.
     #[serde(default)]
     pub properties: std::collections::BTreeMap<String, Property>,
@@ -402,83 +404,13 @@ impl Internal {
 
 impl Manifest {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let both = || {
-            format!(
-                "{MANIFEST}: a mod is [native] or [wasm], not both; only [native] tables \
-                 compile game code, so a wasm mod has no mixin, bridge, state or module"
-            )
-        };
-        // A wasm manifest whose only fault is its `[native]` table is told that, not which
-        // pin a half-written `[native]` lacks. Any other error stays the one reported.
-        // A wasm mod's loop row is refused by its own name, whatever else the manifest holds.
-        let wasm_loop = || {
-            let table = toml::from_str::<toml::Table>(text).ok()?;
-            table.get("wasm")?;
-            let row = table.get("native")?.get("loop")?.as_array()?.first()?;
-            Some(format!(
-                "{MANIFEST}: {}",
-                loops::LoopError::Wasm {
-                    id: format!(
-                        "{}:{}",
-                        table.get("id").and_then(toml::Value::as_str).unwrap_or("?"),
-                        row.get("id").and_then(toml::Value::as_str).unwrap_or("?")
-                    ),
-                    target: row
-                        .get("loop")
-                        .and_then(toml::Value::as_str)
-                        .unwrap_or("?")
-                        .to_owned()
-                }
-            ))
-        };
-        let m: Manifest = toml::from_str(text).map_err(|e| {
-            // Serde knows the rejected field; this owning boundary supplies its provenance.
-            if let Ok(table) = toml::from_str::<toml::Table>(text)
-                && let Some(rows) = table.get("inject").and_then(toml::Value::as_array)
-            {
-                for row in rows {
-                    if let Some(Err(error)) = row.as_table().cloned().map(inject::row) {
-                        let field = |key| row.get(key).and_then(toml::Value::as_str).unwrap_or("?");
-                        let id = table.get("id").and_then(toml::Value::as_str).unwrap_or("?");
-                        return format!(
-                            "{MANIFEST}: {id}:{}: {}: {error}",
-                            field("id"),
-                            field("at")
-                        );
-                    }
-                }
-            }
-            let native_alone = toml::from_str::<toml::Table>(text).is_ok_and(|mut table| {
-                table.contains_key("wasm")
-                    && table.remove("native").is_some()
-                    && table.try_into::<Manifest>().is_ok()
-            });
-            if native_alone {
-                wasm_loop().unwrap_or_else(both)
-            } else {
-                format!("{MANIFEST}: {e}")
-            }
-        })?;
-        inject::Inject::check_all(&m.inject, &m.id, m.native.is_some() || m.wasm.is_some())
-            .map_err(|e| e.to_string())?;
-        for entry in &m.inject {
-            if m.dependencies
-                .keys()
-                .any(|id| entry.at.split("::").next() == Some(id.replace('-', "_").as_str()))
-            {
-                return Err(format!(
-                    "{}: target {} is another mod's function; use the library mod's own hooks and functions",
-                    entry.id, entry.at
-                ));
-            }
-        }
+        let m: Manifest = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+
         Internal::check_all(&m.internals)?;
-        if !m.internals.is_empty() && m.native.is_none() && m.wasm.is_none() {
-            return Err(format!(
-                "{MANIFEST}: internals need a [native] or [wasm] mod"
-            ));
+        if !m.internals.is_empty() && m.native.is_none() {
+            return Err(format!("{MANIFEST}: internals need a [native] mod"));
         }
-        if m.runtime.is_some() && m.native.is_none() && m.wasm.is_none() {
+        if m.runtime.is_some() && m.native.is_none() {
             return Err(format!(
                 "{MANIFEST}: a content mod has no code, so no [runtime]"
             ));
@@ -522,21 +454,6 @@ impl Manifest {
                 return Err(format!("{MANIFEST}: rule for {id}: url is not https://"));
             }
         }
-        if let Some(mib) = m.wasm_memory_mib
-            && !(1..=MAX_WASM_MEMORY_MIB).contains(&mib)
-        {
-            return Err(format!(
-                "{MANIFEST}: wasm_memory_mib {mib} is not 1 to {MAX_WASM_MEMORY_MIB} (wasm32's 4 GiB)"
-            ));
-        }
-        if m.native.is_some() && m.wasm.is_some() {
-            if let Some(refusal) = wasm_loop() {
-                return Err(refusal);
-            }
-            return Err(format!(
-                "{MANIFEST}: a mod is [native] or [wasm], not both; only [native] tables compile game code, so a wasm mod has no mixin, bridge, state or module"
-            ));
-        }
         mixin::Mixin::check_all(
             m.native
                 .as_ref()
@@ -576,8 +493,7 @@ impl Manifest {
         }
         if let Some(native) = &m.native {
             // Native source edits share one id space.
-            let mut ids: std::collections::HashSet<_> =
-                m.inject.iter().map(|entry| &entry.id).collect();
+            let mut ids = std::collections::HashSet::new();
             for id in native
                 .mixin
                 .iter()
@@ -777,60 +693,12 @@ impl Package {
         self.manifest.native.is_some()
     }
 
-    /// Whether the package carries Rust source: a native mod, or a wasm mod built from it.
-    fn has_source(&self) -> bool {
-        self.manifest.native.is_some()
-            || self
-                .manifest
-                .wasm
-                .as_ref()
-                .is_some_and(|w| w.built_with().is_none())
-    }
-
-    /// The package's `mod.wasm`, checked against its `[wasm]` section.
-    pub fn read_wasm(path: &Path) -> Result<Vec<u8>, String> {
-        Self::read(path)?.wasm(path)
-    }
-
-    /// The `mod.wasm` of this package, read from `path`, checked against its `[wasm]` section.
-    pub fn wasm(&self, path: &Path) -> Result<Vec<u8>, String> {
-        let wasm = self
-            .manifest
-            .wasm
-            .as_ref()
-            .ok_or(WasmError::Undeclared.to_string())?;
-        // Read at most one byte past the cap, so an oversized file is refused unread.
-        let mut bytes = Vec::new();
-        let read = if path.is_dir() {
-            std::fs::File::open(path.join(WASM))
-                .map_err(|e| format!("{WASM}: {e}"))?
-                .take(MAX_WASM + 1)
-                .read_to_end(&mut bytes)
-        } else {
-            #[cfg(target_arch = "wasm32")]
-            return Err("archive I/O is unavailable on wasm32".into());
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-                let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-                zip.by_name(WASM)
-                    .map_err(|_| WasmError::Missing.to_string())?
-                    .take(MAX_WASM + 1)
-                    .read_to_end(&mut bytes)
-            }
-        };
-        read.map_err(|e| format!("{WASM}: {e}"))?;
-        wasm.check(&bytes).map_err(|e| e.to_string())?;
-        Ok(bytes)
-    }
-
     /// Read a flat `.smod` or project folder, without executing native code.
     pub fn read(path: &Path) -> Result<Self, String> {
         let metadata = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
         let mut icon = None;
         let mut has_cargo = false;
         let mut has_source = false;
-        let has_wasm;
         let toml = if metadata.is_dir() {
             for old in [
                 "sunrise-native.json",
@@ -871,7 +739,6 @@ impl Package {
                 Err(e) => return Err(format!("icon.png: {e}")),
             }
             check_folder_file(path, MANIFEST)?;
-            has_wasm = std::fs::symlink_metadata(path.join(WASM)).is_ok();
             for (name, _) in crate::files::folder_files(path)? {
                 check_folder_file(path, &name)?;
             }
@@ -901,7 +768,7 @@ impl Package {
                 return Self::read_zip(&mut zip);
             }
         };
-        let mut package = Self::from_parts(&toml, icon, has_cargo, has_source, has_wasm)?;
+        let mut package = Self::from_parts(&toml, icon, has_cargo, has_source)?;
         package.check_runtime_layout(&crate::files::runtime_folder_files(path)?)?;
         match std::fs::File::open(path.join(crate::layouts::FILE)) {
             Ok(file) => {
@@ -910,10 +777,6 @@ impl Package {
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(format!("layouts.json: {e}")),
-        }
-        if let Some(wasm) = &package.manifest.wasm {
-            let bytes = std::fs::read(path.join(WASM)).map_err(|e| format!("{WASM}: {e}"))?;
-            wasm.check(&bytes).map_err(|e| e.to_string())?;
         }
         Ok(package)
     }
@@ -924,7 +787,6 @@ impl Package {
         let mut icon = None;
         let mut has_cargo = false;
         let mut has_source = false;
-        let mut has_wasm = false;
         let mut entries = Vec::new();
         let mut layouts = None;
         let mut uses = false;
@@ -946,11 +808,6 @@ impl Package {
                 continue;
             }
             has_cargo |= name == "Cargo.toml";
-            // The one executable a package may carry, checked against `[wasm]` below.
-            if name == WASM && matches!(mode & 0o170000, 0 | 0o100000) {
-                has_wasm = true;
-                continue;
-            }
             if name == crate::layouts::FILE && matches!(mode & 0o170000, 0 | 0o100000) {
                 if layouts.is_some() {
                     return Err("duplicate layouts.json".into());
@@ -1006,22 +863,13 @@ impl Package {
         if toml.len() as u64 > MAX_MANIFEST {
             return Err(format!("{MANIFEST}: over {} MiB", MAX_MANIFEST >> 20));
         }
-        let mut package = Self::from_parts(&toml, icon, has_cargo, has_source, has_wasm)?;
-        if uses && package.manifest.native.is_none() && package.manifest.wasm.is_none() {
+        let mut package = Self::from_parts(&toml, icon, has_cargo, has_source)?;
+        if uses && !package.is_native() {
             return Err(format!("a content mod has no code, so no {USES_FILE}"));
-        }
-        if let Some(wasm) = &package.manifest.wasm {
-            let mut bytes = Vec::new();
-            zip.by_name(WASM)
-                .map_err(|e| format!("{WASM}: {e}"))?
-                .take(MAX_WASM + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|e| format!("{WASM}: {e}"))?;
-            wasm.check(&bytes).map_err(|e| e.to_string())?;
         }
         package.layouts = layouts.unwrap_or_default();
         package.check_runtime_layout(&runtime)?;
-        if package.has_source() || package.manifest.wasm.is_some() {
+        if package.is_native() {
             let mut names = std::collections::HashSet::new();
             let mut source_count = 0usize;
             let mut source_bytes = 0u64;
@@ -1041,7 +889,6 @@ impl Package {
                         && name != crate::layouts::FILE
                         && name != USES_FILE
                         && name != "icon.png"
-                        && !(name == WASM && package.manifest.wasm.is_some())
                         && !name.starts_with("runtime/")
                         && !name.starts_with("assets/")
                         && !name.starts_with("data/")
@@ -1081,7 +928,7 @@ impl Package {
     /// Refuse a `runtime/` folder that is not the one `[runtime]` lists: an extra, a missing or an
     /// oversized file, each named. `found` is each file below `runtime/` and its size.
     fn check_runtime_layout(&self, found: &[(String, u64)]) -> Result<(), String> {
-        if !found.is_empty() && !self.has_source() && self.manifest.wasm.is_none() {
+        if !found.is_empty() && !self.is_native() {
             return Err("a content mod has no code, so no runtime/ folder".into());
         }
         RuntimeTable::check_layout(self.manifest.runtime.as_ref(), found)
@@ -1139,7 +986,6 @@ impl Package {
         icon: Option<crate::icon::Icon>,
         has_cargo: bool,
         has_source: bool,
-        has_wasm: bool,
     ) -> Result<Self, String> {
         let manifest = Manifest::parse(text)?;
         let package = Package {
@@ -1147,13 +993,8 @@ impl Package {
             icon,
             layouts: Default::default(),
         };
-        if has_cargo != package.has_source() || has_source != has_cargo {
-            return Err("inconsistent code declaration ([native] or [wasm]) and source".into());
-        }
-        match (has_wasm, package.manifest.wasm.is_some()) {
-            (true, false) => return Err(WasmError::Undeclared.to_string()),
-            (false, true) => return Err(WasmError::Missing.to_string()),
-            _ => {}
+        if has_cargo != package.is_native() || has_source != has_cargo {
+            return Err("inconsistent code declaration ([native]) and source".into());
         }
         Ok(package)
     }
@@ -1193,11 +1034,6 @@ impl Package {
         if let Some(icon) = &self.icon {
             files.insert("icon.png".to_string(), icon.bytes().to_vec());
         }
-        if let Some(wasm) = &self.manifest.wasm {
-            let bytes = std::fs::read(root.join(WASM)).map_err(|e| format!("{WASM}: {e}"))?;
-            wasm.check(&bytes).map_err(|e| e.to_string())?;
-            files.insert(WASM.to_owned(), bytes);
-        }
         if let Some(runtime) = self.read_runtime(root)? {
             for name in runtime.names() {
                 files.insert(
@@ -1206,7 +1042,7 @@ impl Package {
                 );
             }
         }
-        if self.has_source() {
+        if self.is_native() {
             fn walk(
                 root: &Path,
                 dir: &Path,
@@ -1319,15 +1155,11 @@ impl Package {
             zip.write_all(bytes).map_err(|e| e.to_string())
         };
         put(MANIFEST, manifest_text.as_bytes())?;
+        let code = manifest.native.is_some();
         for (name, bytes) in files {
-            let code = manifest.native.is_some() || manifest.wasm.is_some();
             let source = code && source_file(name) && plain_path(name);
             if *name == crate::layouts::FILE {
                 crate::layouts::Layouts::read(*bytes)?;
-                put(name, bytes)?;
-                continue;
-            }
-            if *name == WASM && manifest.wasm.is_some() {
                 put(name, bytes)?;
                 continue;
             }
@@ -1521,39 +1353,6 @@ mod tests {
             (Side::Client, DependencyOrder::After)
         );
         assert!(serde_json::from_str::<Side>("\"Both\"").is_err());
-    }
-
-    #[test]
-    fn injections_at_dependency_functions_are_refused_by_name() {
-        let text = format!(
-            "{EXAMPLE}[native]\ngame='26.3'\nmixins='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\nsunrise='0123456789012345678901234567890123456789'\n[dependencies]\nchemlib='1'\n[[inject]]\nid='listen'\nat='chemlib::transfer'\nkind='head'\nwith='listen'\n"
-        );
-        let error = Manifest::parse(&text).unwrap_err();
-        assert!(
-            error.contains("chemlib::transfer") && error.contains("own hooks and functions"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn declared_wasm_memory_is_one_mib_to_wasm32s_four_gib() {
-        let declare = |value: &str| {
-            Manifest::parse(&EXAMPLE.replace(
-                "capabilities = [\"registries\"]\n",
-                &format!("capabilities = [\"registries\"]\nwasm_memory_mib = {value}\n"),
-            ))
-        };
-        assert_eq!(Manifest::parse(EXAMPLE).unwrap().wasm_memory_mib, None);
-        assert_eq!(declare("1").unwrap().wasm_memory_mib, Some(1));
-        assert_eq!(declare("4096").unwrap().wasm_memory_mib, Some(4096));
-        for value in ["0", "4097"] {
-            assert!(
-                declare(value)
-                    .unwrap_err()
-                    .contains(&format!("wasm_memory_mib {value} is not 1 to 4096")),
-                "{value}"
-            );
-        }
     }
 
     #[test]
@@ -2041,76 +1840,6 @@ issues = \"http://example.org/issues\"
     }
 
     #[test]
-    fn a_wasm_mod_carries_exactly_its_declared_module() {
-        // A minimal valid shared member: a `dylink.0` section and the three guest exports.
-        let module = wat::parse_str(
-            r#"(module (@custom "dylink.0" "\01\04\00\00\00\00")
-                (func (export "sunrise_layout")) (func (export "sunrise_in")) (func (export "sunrise_hook")))"#,
-        )
-        .unwrap();
-        let text = format!(
-            "{}\n[wasm]\nsha512 = \"{}\"\ntoolchain = \"1.99.1\"\nbuilt_with = \"test\"\n",
-            EXAMPLE.trim_end(),
-            sha512_of(&module)
-        );
-        let bytes = Package::write_files(&text, &[(WASM, &module)]).unwrap();
-        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
-        assert!(Package::read_zip(&mut zip).unwrap().manifest.wasm.is_some());
-        let error = Package::write_files(&text, &[(WASM, b"\0asm\x02\0\0\0")]).unwrap_err();
-        assert_eq!(error, WasmError::Hash.to_string());
-        assert_eq!(
-            Package::write_files(&text, &[]).unwrap_err(),
-            WasmError::Missing.to_string()
-        );
-        let both = format!(
-            "{text}\n[native]\ngame = \"g\"\nsunrise = \"{0}\"\nmixins = \"{0}\"\n",
-            "a".repeat(40)
-        );
-        assert!(
-            Manifest::parse(&both)
-                .unwrap_err()
-                .contains("a mod is [native] or [wasm], not both; only [native] tables compile game code, so a wasm mod has no mixin, bridge, state or module")
-        );
-    }
-
-    #[test]
-    fn wasm_packages_refuse_unknown_native_fields() {
-        use sha2::{Digest, Sha512};
-        use std::io::Write;
-        let module = b"\0asm\x01\0\0\0";
-        let base = format!(
-            "{EXAMPLE}[wasm]\nsha512='{:x}'\ntoolchain='1.99.1'\n",
-            Sha512::digest(module)
-        );
-        let foreign = "[native]\ngame='26.3'\nsunrise='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\nmixins='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'\n[[native.injection]]\nid='non_raw'\ntarget='game::tick'\nkind='HEAD'\nhelper='src/count.rs'\n";
-        let missing_raw = foreign.replace("helper='src/count.rs'\n", "");
-        assert!(
-            Manifest::parse(&format!("{base}{missing_raw}"))
-                .unwrap_err()
-                .contains("a mod is [native] or [wasm], not both")
-        );
-        for unified in [""] {
-            assert!(Manifest::parse(&format!("{base}{unified}")).is_ok());
-            // Build an input archive directly: the public writer rightly refuses its manifest.
-            let text = format!("{base}{foreign}{unified}");
-            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-            for (name, bytes) in [(MANIFEST, text.as_bytes()), (WASM, module.as_slice())] {
-                zip.start_file(name, zip::write::SimpleFileOptions::default())
-                    .unwrap();
-                zip.write_all(bytes).unwrap();
-            }
-            let mut archive = zip::ZipArchive::new(zip.finish().unwrap()).unwrap();
-            let error = Package::read_zip(&mut archive)
-                .err()
-                .expect("unknown native field refused before package classification");
-            assert!(
-                error.contains("a mod is [native] or [wasm], not both"),
-                "{error}"
-            );
-        }
-    }
-
-    #[test]
     fn content_round_trips_and_executable_files_are_refused() {
         use std::io::Write;
         let root = std::env::temp_dir().join(format!("sunrise-mods-{}", std::process::id()));
@@ -2146,27 +1875,15 @@ issues = \"http://example.org/issues\"
             zip.write_all(bytes).unwrap();
             zip.finish().unwrap();
             let error = Package::read(&archive).err().unwrap();
-            // The one place a module may sit is refused for want of `[wasm]`.
-            let expected = if *name == WASM {
-                WasmError::Undeclared.to_string()
-            } else {
-                "unsupported executable file".to_string()
-            };
-            assert!(error.contains(&expected), "{name}: {error}");
+            assert!(
+                error.contains("unsupported executable file"),
+                "{name}: {error}"
+            );
             if name.starts_with("assets/") {
                 let error = Package::read(&dir).err().unwrap();
                 assert!(
                     error.contains("unsupported executable file"),
                     "{name}: {error}"
-                );
-            } else if std::fs::symlink_metadata(dir.join(WASM)).is_ok() {
-                // On disk `./mod.wasm` is the top-level module too, and so is `MOD.WASM` where the
-                // filesystem ignores case (Windows, macOS).
-                let undeclared = WasmError::Undeclared.to_string();
-                assert_eq!(
-                    Package::read(&dir).err(),
-                    Some(undeclared),
-                    "unpackaged {name}"
                 );
             } else {
                 assert!(Package::read(&dir).is_ok(), "unpackaged {name}");
