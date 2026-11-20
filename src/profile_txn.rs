@@ -767,24 +767,17 @@ fn valid_destination(path: &Path) -> bool {
             (first == "mod-browser" && matches!(file.to_str(), Some("pack.json" | "pack.spack")))
                 || ((first == DIR || first == NATIVE_DIR)
                     && file.to_str().is_some_and(|name| {
-                        // A prospective 8.3 alias can be synthesized only after a
-                        // long filename is inserted; neither entry id can prove it yet.
-                        if cfg!(windows)
-                            && name.split('.').next().is_some_and(|stem| {
-                                stem.len() <= 8
-                                    && stem.rsplit_once('~').is_some_and(|(_, serial)| {
-                                        !serial.is_empty()
-                                            && serial.bytes().all(|byte| byte.is_ascii_digit())
-                                    })
-                            })
-                        {
-                            return false;
-                        }
-                        (name.ends_with(".smod") && crate::browser::safe_name(name).is_some())
-                            || (first == NATIVE_DIR
-                                && name
-                                    .strip_suffix(".origin.json")
-                                    .is_some_and(sunrise_launcher_smod::index::valid_id))
+                        // Before either leaf exists, neither native identity nor a
+                        // Unicode fold can rule out filesystem-specific aliases.
+                        sunrise_launcher_smod::index::browser_state::portable_ascii_component(name)
+                            && ((name.ends_with(".smod")
+                                && !name.starts_with('.')
+                                && name.len() <= 200
+                                && !name.contains('\x7f'))
+                                || (first == NATIVE_DIR
+                                    && name
+                                        .strip_suffix(".origin.json")
+                                        .is_some_and(sunrise_launcher_smod::index::valid_id)))
                     }))
         }
         _ => false,
@@ -792,15 +785,12 @@ fn valid_destination(path: &Path) -> bool {
 }
 
 fn destination_key(path: &Path) -> String {
-    // Use a conservative shared spelling even on a case-sensitive volume. A saved profile
-    // can move to a volume that folds case or composes/decomposes the same basename.
-    let name = path
-        .file_name()
+    // All admitted leaves are portable ASCII. Keep the same key even on a
+    // case-sensitive volume so moving a profile cannot introduce an alias.
+    path.file_name()
+        .and_then(std::ffi::OsStr::to_str)
         .expect("validated destination")
-        .to_string_lossy();
-    let normalize = icu_normalizer::ComposingNormalizer::new_nfkc();
-    let folded = unicase::UniCase::new(normalize.normalize(&name)).to_folded_case();
-    normalize.normalize(&folded).into_owned()
+        .to_ascii_lowercase()
 }
 
 fn unique_entry(path: &Path, entries: &mut BTreeSet<Identity>) -> Result<(), String> {

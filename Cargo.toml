@@ -79,9 +79,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 png = "0.18"
 cap-std = "3"
 cap-fs-ext = "3"
-# Already used by URL and MIME handling; transaction names also need portable alias keys.
-icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
-unicase = "2"
 
 # Native builds at low priority (rust_toolchain::low_priority); already in the lockfile.
 [target.'cfg(unix)'.dependencies]

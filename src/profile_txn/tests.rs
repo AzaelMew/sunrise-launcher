@@ -341,6 +341,34 @@ fn composed_and_decomposed_destinations_cannot_enter_one_plan() {
 }
 
 #[test]
+fn absent_nonportable_leaves_and_ascii_case_aliases_are_refused_before_cutoff() {
+    for names in [
+        vec!["lan\u{034f}tern.smod"], // Default ignorable, not just a non-ASCII letter.
+        vec!["LANTER~1.smod"],
+        vec!["CONOUT$.smod"],
+        vec!["lantern.smod", "Lantern.smod"],
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        initialized(home, false);
+        let mut owner = Admission::open(home, None).unwrap();
+        let stage = owner.reserve(Intent::Install, BTreeSet::new()).unwrap();
+        let changes = names
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let source = stage.path().join(i.to_string());
+                fs::write(&source, package("2.0.0")).unwrap();
+                (Path::new("sunrise-mods").join(name), Some(source))
+            })
+            .collect::<Vec<_>>();
+        assert!(stage.seal(INSTALLED.to_vec(), &changes).is_err());
+        assert!(!home.join("sunrise-mods").exists());
+        assert_eq!(fs::read(home.join(POINTER)).unwrap(), OLD);
+    }
+}
+
+#[test]
 fn different_basenames_that_gain_the_same_file_identity_are_refused_before_cutoff() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
