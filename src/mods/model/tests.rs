@@ -620,6 +620,7 @@ fn every_reason_a_build_left_a_mod_out_is_shown_and_counted() {
         left("addon", Why::Needs("lib".into())),
         LeftOut {
             detail: Some(Detail {
+                log: None,
                 made_for: Some("nightly-2026-11-16-abc".into()),
                 changes: vec!["a hook moved".into()],
             }),
@@ -676,6 +677,7 @@ fn every_row_fills_the_same_columns_whatever_it_has_to_say() {
             version: "1.0".into(),
             why: Why::Unfit("made for Nov 16".into()),
             detail: Some(Detail {
+                log: None,
                 made_for: None,
                 changes: vec!["src/lib.rs:3 builds it".into()],
             }),
