@@ -16,6 +16,7 @@ use std::{
 };
 
 const RECORD: &str = "mod-browser/install-txn.json";
+const RETIRED: &str = "mod-browser/install-txn.retired.json";
 const POINTER: &str = "mod-browser/active-build.json";
 const STAGE_PREFIX: &str = ".install-txn-";
 const VERSION: u64 = 2;
@@ -160,6 +161,7 @@ impl Admission {
         if read(&self.home)?.is_some() || Identity::of(&self.home)? != self.identity {
             return Err(unsettled());
         }
+        clean_retired(&self.home)?;
         let root = record_dir(&self.home)?;
         fs::create_dir_all(&root).map_err(|e| at(&root, e))?;
         let stage = tempfile::Builder::new()
@@ -199,7 +201,10 @@ impl Admission {
 
     fn recover(&self) -> Result<(), String> {
         if let Some(record) = read(&self.home)? {
-            record.complete(&self.home, |_| {})?;
+            record.complete(&self.home, |_| {}, || {})?;
+        } else {
+            // No mutation is in flight. A retained cleanup record cannot block Play.
+            let _ = clean_retired(&self.home);
         }
         Ok(())
     }
@@ -348,6 +353,19 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
     Ok(record)
 }
 
+fn clean_retired(home: &Path) -> Result<(), String> {
+    if let Some(record) = read_at(home, RETIRED)? {
+        let stage = record.stage(home);
+        if !absent(&stage)? {
+            record.verify_stage(home)?;
+            fs::remove_dir_all(&stage).map_err(|e| at(&stage, e))?;
+        }
+        let marker = home.join(RETIRED);
+        durable::retire(&marker).map_err(|e| at(&marker, e))?;
+    }
+    Ok(())
+}
+
 fn write(home: &Path, record: &Record) -> Result<(), String> {
     let path = home.join(RECORD);
     let bytes = serde_json::to_vec(record).map_err(|e| at(&path, e))?;
@@ -492,7 +510,7 @@ impl Sealed<'_> {
             return Err(unsettled());
         }
         let result = record.publish_at(home, cutoff, |_, _| Ok(()));
-        if record.complete(home, |_| {})? {
+        if record.complete(home, |_| {}, || {})? {
             Ok(())
         } else {
             result
@@ -687,7 +705,12 @@ impl Record {
         boundary(plan.steps(), Boundary::DurableMarker)
     }
 
-    fn complete(&self, home: &Path, mut restored: impl FnMut(usize)) -> Result<bool, String> {
+    fn complete(
+        &self,
+        home: &Path,
+        mut restored: impl FnMut(usize),
+        retired: impl FnOnce(),
+    ) -> Result<bool, String> {
         use progress::{Phase, Slots};
         self.verify_home(home)?;
         self.verify_stage(home)?;
@@ -781,8 +804,14 @@ impl Record {
             return Err(at(&pointer, unsettled()));
         }
         let file = home.join(RECORD);
-        durable::retire(&file).map_err(|e| at(&file, e))?;
-        let _ = fs::remove_dir_all(stage);
+        let retired_file = home.join(RETIRED);
+        if !absent(&retired_file)? {
+            return Err(at(&retired_file, unsettled()));
+        }
+        durable::restore_move(&file, &retired_file).map_err(|e| at(&file, e))?;
+        retired();
+        // The exact generation is already settled. If cleanup fails, leave proof for retry.
+        let _ = clean_retired(home);
         Ok(committed)
     }
 }

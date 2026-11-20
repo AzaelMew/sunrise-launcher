@@ -88,6 +88,7 @@ fn refused_cutoff_keeps_the_original_bytes_and_success_uses_the_sealed_pointer()
     seal(&mut admission, false).publish(|| Ok(())).unwrap();
     pair(home, false, true);
     assert!(!home.join(RECORD).exists());
+    assert!(!home.join(RETIRED).exists());
 }
 
 #[test]
@@ -216,16 +217,24 @@ fn journal_actor() {
     }
     let mut owner = Admission::claim(&home, None).unwrap();
     match action.as_str() {
-        "undo-pointer" | "undo-list" => {
+        "undo-pointer" | "undo-list" | "retired" => {
             let disk = read(&home).unwrap().unwrap();
             let last = disk.operation.ready.as_ref().unwrap().steps() - 1;
-            disk.complete(&home, |i| {
-                if (action == "undo-pointer" && i == last)
-                    || (action == "undo-list" && i == last - 1)
-                {
-                    pause_here();
-                }
-            })
+            disk.complete(
+                &home,
+                |i| {
+                    if (action == "undo-pointer" && i == last)
+                        || (action == "undo-list" && i == last - 1)
+                    {
+                        pause_here();
+                    }
+                },
+                || {
+                    if action == "retired" {
+                        pause_here();
+                    }
+                },
+            )
             .unwrap();
         }
         _ => {
@@ -342,6 +351,31 @@ fn another_process_sees_only_the_exact_old_or_committed_generation_after_kills()
         );
         assert!(!home.join(RECORD).exists());
     }
+}
+
+#[test]
+fn a_killed_retirement_reclaims_its_exact_tree_but_never_a_loose_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let unrelated = home.join("mod-browser/.install-txn-unowned");
+    fs::create_dir(&unrelated).unwrap();
+    fs::write(unrelated.join("keep"), b"not part of the journal").unwrap();
+    drop(pause_actor(home, "install:marker-durable", |_| {}));
+    let stage = read(home).unwrap().unwrap().stage(home);
+    let cleanup = pause_actor(home, "retired", |_| {});
+    assert!(stage.is_dir());
+    assert!(home.join(RETIRED).exists());
+    assert!(Admission::open(home, None).is_err());
+    drop(cleanup);
+    drop(Admission::open(home, None).unwrap());
+    assert!(!stage.exists());
+    assert!(!home.join(RETIRED).exists());
+    assert_eq!(
+        fs::read(unrelated.join("keep")).unwrap(),
+        b"not part of the journal"
+    );
+    pair(home, false, true);
 }
 
 #[test]
