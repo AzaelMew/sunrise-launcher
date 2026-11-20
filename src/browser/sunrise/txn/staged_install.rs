@@ -12,23 +12,44 @@ use sunrise_launcher_smod::mod_list;
 /// The profile stays admitted while a complete candidate and optional sidecars are prepared.
 pub(in crate::browser::sunrise) struct StagedInstall {
     owner: Arc<Lease>,
-    prior: Active,
+    basis: Basis,
     input: [u8; 32],
     before: switch::Inventory,
     stage: PathBuf,
     published: bool,
 }
 
+enum Basis {
+    Committed(Active),
+    First(build::Bootstrap),
+}
+
 impl StagedInstall {
     pub fn begin(owner: Arc<Lease>, prior: Active) -> Result<Self, String> {
         prior.verify_artifacts()?;
+        Self::copy_current(owner, |owner| {
+            Ok((owner.reserve_install_set(&prior)?, Basis::Committed(prior)))
+        })
+    }
+
+    pub fn first(owner: Arc<Lease>, bound: &Target) -> Result<Self, String> {
+        Self::copy_current(owner, |owner| {
+            let (root, binding) = owner.reserve_first_install(bound)?;
+            Ok((root, Basis::First(binding)))
+        })
+    }
+
+    fn copy_current(
+        owner: Arc<Lease>,
+        reserve: impl FnOnce(&Lease) -> Result<(PathBuf, Basis), String>,
+    ) -> Result<Self, String> {
         let before = switch::Inventory::read(owner.home())?;
         let input = build::inputs(owner.home())?;
-        let root = owner.reserve_install_set(&prior)?;
+        let (root, basis) = reserve(&owner)?;
         let stage = root.join("candidate");
         let plan = Self {
             owner,
-            prior,
+            basis,
             input,
             before,
             stage,
@@ -55,6 +76,13 @@ impl StagedInstall {
         &self.stage
     }
 
+    pub fn base(&self) -> &str {
+        match &self.basis {
+            Basis::Committed(prior) => prior.base(),
+            Basis::First(binding) => binding.target.base(),
+        }
+    }
+
     pub fn prepare(
         self,
         sidecars: &[&str],
@@ -76,7 +104,7 @@ impl StagedInstall {
         }
         let cancellation = native_mods::Cancellation::for_profile(self.owner.clone());
         let image = verify_candidate(
-            self.prior.base(),
+            self.base(),
             &self.stage,
             profile,
             &cancellation,
@@ -133,9 +161,13 @@ impl StagedInstall {
                 &serde_json::to_vec(&browser).map_err(|e| e.to_string())?,
             )?;
         }
-        let next = self
-            .prior
-            .adopt(&image, build::inputs(&self.stage)?, &self.stage)?;
+        let candidate_inputs = build::inputs(&self.stage)?;
+        let next = match &self.basis {
+            Basis::Committed(prior) => prior.adopt(&image, candidate_inputs, &self.stage)?,
+            Basis::First(binding) => {
+                binding.first_generation(&image, &self.stage, candidate_inputs)?
+            }
+        };
         if build::inputs(home)? != self.input {
             return Err(unsettled());
         }
@@ -186,7 +218,10 @@ impl ReadyInstall {
             if let Some(fence) = &self.fence {
                 fence.revalidate(home)?;
             }
-            self.install.prior.verify_artifacts()?;
+            match &self.install.basis {
+                Basis::Committed(prior) => prior.verify_artifacts()?,
+                Basis::First(binding) => binding.verify_artifact()?,
+            }
             self.next.verify_artifacts()?;
             self.next.verify_resources()?;
             self.cancellation.publication_guard(self.next.executable())

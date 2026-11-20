@@ -313,50 +313,28 @@ impl From<InstallError> for String {
     }
 }
 
-/// Installs `project` (and what it needs) into the game folder `home`. A project already
-/// installed is updated to the version chosen. `approvals` are what the player agreed to: registry
-/// mods removed as part of the same install (the ones it can't live with), all or nothing, and
-/// the world content that may be lost. `progress` gets
-/// a line per file and the fraction.
+/// Installs a browser pack and any dependencies. Registry mods use the exact-profile
+/// install plan instead. `progress` receives a line per file and its fraction.
 pub fn install(
     source: &dyn Source,
     project: &Project,
     everything: bool,
     home: &Path,
     game: &str,
-    approvals: &[Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, InstallError> {
     let lease = super::sunrise::txn::Lease::admit(home)?;
-    if project.source == SourceId::Sunrise && project.kind == Kind::Mod {
-        if let Some(active) = lease.active_build()? {
-            return Ok(super::sunrise::prepare_registry_install(
-                std::sync::Arc::new(lease),
-                active,
-                std::slice::from_ref(&project.id),
-                approvals,
-                crate::native_mods::Profile::Optimized,
-                progress,
-            )?
-            .commit(false)?);
-        }
-    }
-    let entries = lease.install(source, project, everything, game, approvals, progress)?;
-    // Standalone installs have no follow-up worker. A successful command is final; the
-    // native mods are installed, but need the separate native-build command before use.
-    lease.finish_standalone()?;
-    Ok(entries)
+    lease.install(source, project, everything, game, progress)
 }
 
 impl super::sunrise::txn::Lease {
-    /// Installs into the leased profile. The launcher keeps the lease if a build is owed.
+    /// Installs a browser pack into the leased profile.
     pub fn install(
         &self,
         source: &dyn Source,
         project: &Project,
         everything: bool,
         game: &str,
-        approvals: &[Approval],
         progress: &dyn Fn(&str, f32),
     ) -> Result<Vec<Entry>, InstallError> {
         let home = self.home();
@@ -365,7 +343,7 @@ impl super::sunrise::txn::Lease {
             return Err(super::sunrise::txn::unsettled().into());
         }
         if project.source == SourceId::Sunrise {
-            return super::sunrise::install(project, home, game, approvals, progress);
+            return super::sunrise::install(project, home, game, progress);
         }
         let steps = plan(source, project, everything, game)?;
         Ok(put(
@@ -375,17 +353,6 @@ impl super::sunrise::txn::Lease {
             &|kind| kind.folder().expect("plan keeps folder kinds"),
             progress,
         )?)
-    }
-
-    /// Installs the registry mods together: one world question and one transaction for the set.
-    pub fn install_set(
-        &self,
-        projects: &[Project],
-        game: &str,
-        approvals: &[Approval],
-        progress: &dyn Fn(&str, f32),
-    ) -> Result<Vec<Entry>, InstallError> {
-        super::sunrise::install_set(projects, self.home(), game, approvals, progress)
     }
 }
 

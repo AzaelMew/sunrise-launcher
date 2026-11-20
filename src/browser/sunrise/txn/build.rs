@@ -67,6 +67,42 @@ impl Target {
         Ok(target)
     }
 
+    /// Both the headless Play path and the first managed Install resolve through the
+    /// same pin/channel rules as Home. Call this only while holding profile admission.
+    pub fn for_profile(instance: &crate::instances::Instance) -> Result<Self, String> {
+        let installed = backend::installed();
+        let selected = backend::Settings::load()
+            .selected
+            .filter(|tag| installed.contains(tag));
+        let rows = if instance.version.is_none() {
+            backend::releases()
+        } else {
+            Ok(Vec::new())
+        };
+        let tag = crate::instances::profile_target(
+            instance.version.as_ref(),
+            instance.channel,
+            rows.as_deref().unwrap_or(&[]),
+            &installed,
+            selected.as_ref(),
+        )
+        .cloned()
+        .ok_or_else(|| {
+            rows.as_ref()
+                .err()
+                .cloned()
+                .unwrap_or_else(backend::no_version_installed)
+        })?;
+        Self::first_play(&tag, |base| {
+            let rows = if instance.version.is_some() {
+                backend::releases()?
+            } else {
+                rows?
+            };
+            Ok(rows.into_iter().find(|release| release.tag == base))
+        })
+    }
+
     pub(super) fn check_installed(&self) -> Result<(), String> {
         for bound in self.installed.iter().chain(self.preferred.iter()) {
             if *bound != Artifact::capture(&bound.tag)? {
@@ -182,12 +218,23 @@ impl Bootstrap {
 
     pub(super) fn active(&self, image: &str, home: &Path) -> Result<Active, String> {
         self.verify(home)?;
+        self.first_generation(image, home, self.inputs)
+    }
+
+    /// The frozen candidate has its own inputs; the caller's admission separately checks
+    /// the saved legacy inputs before selecting or publishing this first generation.
+    pub(super) fn first_generation(
+        &self,
+        image: &str,
+        home: &Path,
+        inputs: [u8; 32],
+    ) -> Result<Active, String> {
         self.verify_artifact()?;
         Active::capture(
             self.profile,
             1,
             (&self.target.base, image),
-            self.inputs,
+            inputs,
             Vec::new(),
             home,
             None,

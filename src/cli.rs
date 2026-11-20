@@ -1115,64 +1115,9 @@ pub(crate) fn play_image(
         ));
     }
     let owner = Arc::new(Lease::admit(&instance.home)?);
-    let target = owner.play_target(|| {
-        let installed = backend::installed();
-        let selected = backend::Settings::load()
-            .selected
-            .filter(|t| installed.contains(t));
-        let rows = if instance.version.is_none() {
-            backend::releases()
-        } else {
-            Ok(Vec::new())
-        };
-        let tag = instances::profile_target(
-            instance.version.as_ref(),
-            instance.channel,
-            rows.as_deref().unwrap_or(&[]),
-            &installed,
-            selected.as_ref(),
-        )
-        .cloned()
-        .ok_or_else(|| {
-            rows.as_ref()
-                .err()
-                .cloned()
-                .unwrap_or_else(backend::no_version_installed)
-        })?;
-        Target::first_play(&tag, |base| {
-            let rows = if instance.version.is_some() {
-                backend::releases()?
-            } else {
-                rows?
-            };
-            Ok(rows.into_iter().find(|release| release.tag == base))
-        })
-    })?;
-    let base = target.base();
-    if owner.needs_bootstrap_download(&target)? {
-        owner.install_bootstrap(&target, progress(base.to_owned()))?;
-    }
-    if owner.active_build()?.is_none() && !backend::check_prepared(base) {
-        let _prepare = backend::prepare_lock(base)?;
-        let minecraft = backend::Settings::load()
-            .minecraft_dir
-            .unwrap_or_else(|| sunrise_launcher::preparer::minecraft_dir(None));
-        let (cmd, minecraft) =
-            backend::preparer(base, &minecraft, backend::MinecraftFrom::Install, &|line| {
-                eprintln!("{line}")
-            })?;
-        backend::sounds(base, &minecraft, &|line| eprintln!("{line}"));
-        let prepare = backend::Logged::start(backend::Job::Prepare, cmd, Some(&owner))?;
-        if let Err(error) = prepare.wait() {
-            let tail = prepare.tail(12).join("\n");
-            return Err(if tail.is_empty() {
-                error
-            } else {
-                format!("{error}\n{tail}")
-            });
-        }
-        backend::forget_prepared();
-        backend::need_prepared(base)?;
+    let target = owner.play_target(|| Target::for_profile(instance))?;
+    if owner.active_build()?.is_none() {
+        owner.prepare_bound(&target, progress(target.base().to_owned()))?;
     }
     let cancel = native_mods::Cancellation::for_profile(owner.clone());
     let display = native_progress(std::io::stderr().is_terminal());
@@ -2220,17 +2165,22 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     let game = backend::played_version_id_by(instance.version.as_deref());
     let entry_json = |e: &installed::Entry| serde_json::to_value(e).unwrap_or_default();
     let line = |label: &str, f: f32| progress(label.to_string())(f);
-    let from_registry = installed::Installed::load(&home)
-        .entries
-        .iter()
-        .any(|e| e.source == SourceId::Sunrise);
-    if from_registry && sunrise::index().is_ok() {
-        if let Some(index) = sunrise::fetched_index() {
-            for said in sunrise::turn_off_revoked(&index, &home)? {
-                eprintln!("{said}");
-            }
+    let install_project = |source: &dyn sunrise_launcher::browser::Source,
+                           project: &sunrise_launcher::browser::Project,
+                           everything: bool| {
+        if project.source == SourceId::Sunrise && project.kind == Kind::Mod {
+            let owner = Arc::new(sunrise::txn::Lease::admit(&home)?);
+            return sunrise::prepare_registry_install(
+                owner,
+                &instance,
+                std::slice::from_ref(&project.id),
+                &[],
+                &line,
+            )?
+            .commit(false);
         }
-    }
+        installed::install(source, project, everything, &home, &game, &line).map_err(Into::into)
+    };
     let on = matches!(action, ModsCmd::Enable { .. });
     match action {
         ModsCmd::List { .. } => {
@@ -2396,7 +2346,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
                 return Ok(());
             }
-            let done = installed::install(&*source, &p, everything, &home, &game, &[], &line)?;
+            let done = install_project(&*source, &p, everything)?;
             if as_json {
                 json(done.iter().map(entry_json).collect());
             }
@@ -2430,8 +2380,7 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     }
                     Some(_) => {
                         let p = source.project(&e.project)?;
-                        let done =
-                            installed::install(&*source, &p, true, &home, &game, &[], &line)?;
+                        let done = install_project(&*source, &p, true)?;
                         for done in done {
                             println!("{} {}: {}", done.title, done.number, done.file);
                         }

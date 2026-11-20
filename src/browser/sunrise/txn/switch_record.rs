@@ -56,7 +56,7 @@ pub(super) struct Journal {
     home: Identity,
     staging: String,
     staging_id: Identity,
-    before: Vec<u8>,
+    before: Option<Vec<u8>>,
     target: String,
     after: Option<Vec<u8>>,
     directories: BTreeMap<PathBuf, Identity>,
@@ -67,17 +67,27 @@ pub(super) struct Journal {
 }
 
 impl Journal {
-    pub(super) fn validate(&self, same_base: bool) -> Result<(), String> {
-        let before = build::parse(&self.before)?;
+    pub(super) fn validate(
+        &self,
+        same_base: bool,
+        bootstrap: Option<&build::Bootstrap>,
+    ) -> Result<(), String> {
+        let before = self.before.as_deref().map(build::parse).transpose()?;
+        let (profile, generation) = match (before.as_ref(), bootstrap) {
+            (Some(before), None) if (before.base() == self.target) == same_base => {
+                (before.profile, before.generation)
+            }
+            (None, Some(bootstrap)) if same_base && bootstrap.target.base() == self.target => {
+                (bootstrap.profile, 0)
+            }
+            _ => return Err(unsettled()),
+        };
         build::validate_tag(&self.target)?;
         let mut destinations = BTreeSet::new();
-        if (before.base() == self.target) != same_base
-            || !self
-                .staging
-                .strip_prefix(".install-txn-")
-                .is_some_and(|name| {
-                    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric())
-                })
+        if !self
+            .staging
+            .strip_prefix(".install-txn-")
+            .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric()))
             || self.frontier > self.steps() + 1
             || self
                 .directories
@@ -100,10 +110,11 @@ impl Journal {
             }
             (Phase::Ready | Phase::Publishing | Phase::Undoing | Phase::Committed, Some(after)) => {
                 let after = build::parse(after)?;
-                if after.profile != before.profile
-                    || after.generation.checked_sub(1) != Some(before.generation)
+                if after.profile != profile
+                    || after.generation.checked_sub(1) != Some(generation)
                     || after.base() != self.target
-                    || (same_base && !before.same_base_artifact(&after))
+                    || (same_base
+                        && before.is_some_and(|before| !before.same_base_artifact(&after)))
                     || (self.phase == Phase::Ready && self.frontier != 0)
                     || (self.phase == Phase::Committed && self.frontier != self.steps() + 1)
                 {
@@ -116,7 +127,7 @@ impl Journal {
     }
 
     pub(super) fn references(&self, tag: &str) -> Result<bool, String> {
-        let before = build::parse(&self.before)?;
+        let before = self.before.as_deref().map(build::parse).transpose()?;
         let after = self.after.as_deref().map(build::parse).transpose()?;
         let same = |name: &str| {
             if cfg!(windows) {
@@ -126,8 +137,7 @@ impl Journal {
             }
         };
         Ok(same(&self.target)
-            || same(before.base())
-            || same(before.executable())
+            || before.is_some_and(|before| same(before.base()) || same(before.executable()))
             || after.is_some_and(|image| same(image.executable())))
     }
 
@@ -217,27 +227,51 @@ impl Lease {
     /// Reserve this profile before producing any candidate files. The private directory stays
     /// named in the record if the process dies; the next admission cancels it before Play.
     pub(super) fn reserve_switch(&self, prior: &Active, target: &str) -> Result<PathBuf, String> {
-        self.reserve_staged(prior, target, false)
+        self.reserve_staged(Some(prior), target, None, false)
+            .map(|(path, _)| path)
     }
 
     pub(crate) fn reserve_install_set(&self, prior: &Active) -> Result<PathBuf, String> {
-        self.reserve_staged(prior, prior.base(), true)
+        self.reserve_staged(Some(prior), prior.base(), None, true)
+            .map(|(path, _)| path)
+    }
+
+    pub(super) fn reserve_first_install(
+        &self,
+        bound: &super::Target,
+    ) -> Result<(PathBuf, build::Bootstrap), String> {
+        let (path, bootstrap) = self.reserve_staged(None, bound.base(), Some(bound), true)?;
+        Ok((path, bootstrap.ok_or_else(unsettled)?))
     }
 
     fn reserve_staged(
         &self,
-        prior: &Active,
+        prior: Option<&Active>,
         target: &str,
+        bound: Option<&super::Target>,
         same_base: bool,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<(PathBuf, Option<build::Bootstrap>), String> {
         let home = self.home();
         let _lock = super::locked(home)?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
-        let before = build::optional_bytes(&home.join(build::FILE))?.ok_or_else(unsettled)?;
-        if read(home)?.is_some() || build::parse(&before)? != *prior {
-            return Err(unsettled());
-        }
+        let before = build::optional_bytes(&home.join(build::FILE))?;
+        let record = read(home)?;
+        let bootstrap = match (prior, before.as_deref(), record.as_ref()) {
+            (Some(prior), Some(before), None) if build::parse(before)? == *prior => None,
+            (None, None, Some(record))
+                if same_base && record.staged().is_none() && record.pointer.is_none() =>
+            {
+                let binding = record.bootstrap().cloned().ok_or_else(unsettled)?;
+                if bound != Some(&binding.target) {
+                    return Err(unsettled());
+                }
+                binding.verify(home)?;
+                binding.verify_artifact()?;
+                Some(binding)
+            }
+            _ => return Err(unsettled()),
+        };
         let root = home.join("mod-browser");
         let dir = tempfile::Builder::new()
             .prefix(".install-txn-")
@@ -261,11 +295,11 @@ impl Lease {
             files: Vec::new(),
             frontier: 0,
         };
-        journal.validate(same_base)?;
+        journal.validate(same_base, bootstrap.as_ref())?;
         let operation = Box::new(journal);
         let intent = if same_base {
             Intent::Install {
-                bootstrap: None,
+                bootstrap: bootstrap.clone().map(Box::new),
                 staged: Some(operation),
             }
         } else {
@@ -280,7 +314,7 @@ impl Lease {
                 ..Record::default()
             },
         )?;
-        Ok(path)
+        Ok((path, bootstrap))
     }
 
     pub(crate) fn seal_staged_set(
@@ -294,6 +328,7 @@ impl Lease {
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let mut record = read(home)?.ok_or_else(unsettled)?;
         let same_base = matches!(record.intent, Intent::Install { .. });
+        let bootstrap = record.bootstrap().cloned();
         let journal = operation(&mut record)?;
         if journal.phase != Phase::Staging {
             return Err(unsettled());
@@ -360,7 +395,7 @@ impl Lease {
         }
         journal.after = Some(serde_json::to_vec(next).map_err(|e| e.to_string())?);
         journal.phase = Phase::Ready;
-        journal.validate(same_base)?;
+        journal.validate(same_base, bootstrap.as_ref())?;
         write(home, &record)
     }
 
@@ -406,7 +441,7 @@ fn publish<G>(
     }
     journal.verify_roots(home)?;
     let pointer = home.join(build::FILE);
-    if build::optional_bytes(&pointer)?.as_ref() != Some(&journal.before) {
+    if build::optional_bytes(&pointer)? != journal.before {
         return Err(unsettled());
     }
     let directories = journal.directories.len();
@@ -491,13 +526,15 @@ fn recover_at(
     record: &mut Record,
     mut before_advance: impl FnMut(usize),
 ) -> Result<(), String> {
+    let bootstrap = record.bootstrap().cloned();
     let journal = operation(record)?;
+    let committed = journal.phase == Phase::Committed;
     let staging = journal.staging(home);
     journal.verify_roots(home)?;
     let pointer = home.join(build::FILE);
     match journal.phase {
         Phase::Staging | Phase::Ready => {
-            if build::optional_bytes(&pointer)?.as_ref() != Some(&journal.before) {
+            if build::optional_bytes(&pointer)? != journal.before {
                 return Err(unsettled());
             }
         }
@@ -525,14 +562,18 @@ fn recover_at(
                 let step = journal.frontier - 1;
                 if step == journal.steps() {
                     let live = build::optional_bytes(&pointer)?;
-                    if live.as_ref() != Some(&journal.before) {
+                    let discarded = staging.join("discarded-pointer");
+                    if live != journal.before {
                         if live != journal.after {
                             return Err(unsettled());
                         }
-                        durable::replace(home, &pointer, &journal.before)
-                            .map_err(|e| fail_at(&pointer, e))?;
+                        match &journal.before {
+                            Some(bytes) => durable::replace(home, &pointer, bytes),
+                            None => durable::restore_move(&pointer, &discarded),
+                        }
+                        .map_err(|e| fail_at(&pointer, e))?;
                     }
-                    durable::sync_restored(&pointer, &pointer, false)
+                    durable::sync_restored(&pointer, &discarded, journal.before.is_none())
                         .map_err(|e| fail_at(&pointer, e))?;
                 } else if step < journal.directories.len() {
                     let (source, target, id) = journal.directory(home, step)?;
@@ -582,12 +623,18 @@ fn recover_at(
                 operation(record)?.frontier = step;
                 write(home, record)?;
             }
-            if build::optional_bytes(&pointer)?.as_ref() != Some(&operation(record)?.before) {
+            if build::optional_bytes(&pointer)? != operation(record)?.before {
                 return Err(unsettled());
             }
         }
     }
     *record = Record::default();
+    if !committed {
+        record.intent = Intent::Install {
+            bootstrap: bootstrap.map(Box::new),
+            staged: None,
+        };
+    }
     write(home, record)?;
     let _ = fs::remove_dir_all(staging);
     Ok(())
@@ -611,21 +658,28 @@ mod tests {
         let (kind, boundary) = boundary.split_once('-').unwrap();
         let home = PathBuf::from(home);
         let owner = Lease::admit(&home).unwrap();
-        let prior = Bootstrap::bind(&home, Target::legacy("nightly-original").unwrap())
-            .unwrap()
-            .test_active()
-            .test_receipt(1);
-        build::publish(&home, &prior).unwrap();
-        let (stage, next) = if kind == "install" {
-            (
-                owner.reserve_install_set(&prior).unwrap(),
-                prior.test_switch("nightly-original"),
-            )
+        let target = Target::legacy("nightly-original").unwrap();
+        let (stage, next) = if kind == "first" {
+            let bound = owner.bind_bootstrap(|| Ok(target)).unwrap();
+            let (stage, binding) = owner.reserve_first_install(&bound).unwrap();
+            (stage, binding.test_active())
         } else {
-            (
-                owner.reserve_switch(&prior, "nightly-new").unwrap(),
-                prior.test_switch("nightly-new"),
-            )
+            let prior = Bootstrap::bind(&home, target)
+                .unwrap()
+                .test_active()
+                .test_receipt(1);
+            build::publish(&home, &prior).unwrap();
+            if kind == "install" {
+                (
+                    owner.reserve_install_set(&prior).unwrap(),
+                    prior.test_switch("nightly-original"),
+                )
+            } else {
+                (
+                    owner.reserve_switch(&prior, "nightly-new").unwrap(),
+                    prior.test_switch("nightly-new"),
+                )
+            }
         };
         let package = stage.join("candidate.smod");
         fs::write(&package, b"new mod").unwrap();
@@ -773,7 +827,7 @@ mod tests {
 
     #[test]
     fn admission_after_staged_kills_restores_the_old_or_committed_exact_set() {
-        for (kind, boundary) in ["switch", "install"]
+        for (kind, boundary) in ["switch", "install", "first"]
             .into_iter()
             .flat_map(|kind| ["root", "files", "pointer", "marker"].map(|b| (kind, b)))
         {
@@ -811,7 +865,10 @@ mod tests {
                     "browser::sunrise::txn::switch_record::tests::live_switch_recovery_process";
                 crash_process(actor, home, Some("pointer"), || {
                     assert!(Lease::admit(home).is_err());
-                    assert_eq!(build::read(home).unwrap().unwrap().generation(), 1);
+                    assert_eq!(
+                        build::read(home).unwrap().map(|active| active.generation()),
+                        (kind != "first").then_some(1)
+                    );
                     assert!(home.join("sunrise-mods/new.smod").is_file());
                 });
                 crash_process(actor, home, Some("package"), || {
@@ -824,12 +881,13 @@ mod tests {
                 });
             }
             let admission = Lease::admit(home).unwrap();
-            let committed = admission.active_build().unwrap().unwrap();
+            let committed = admission.active_build().unwrap();
             assert_eq!(
                 fs::read(home.join("sunrise-native-mods/keep-exact.smod")).unwrap(),
                 b"retained bytes"
             );
             if boundary == "marker" {
+                let committed = committed.unwrap();
                 assert_eq!(build::waiting_for_update(home)["waiting"].reason, "no fit");
                 assert!(crate::browser::mod_list::set_enabled(home, "waiting", true).is_err());
                 assert_eq!(
@@ -840,12 +898,15 @@ mod tests {
                         "nightly-original"
                     }
                 );
-                assert_eq!(committed.generation(), 2);
+                assert_eq!(committed.generation(), if kind == "first" { 1 } else { 2 });
                 assert_eq!(
                     fs::read(home.join("sunrise-mods/new.smod")).unwrap(),
                     b"new mod"
                 );
-                assert!(admission.acknowledge_switch([1; 16]).unwrap());
+                assert_eq!(
+                    admission.acknowledge_switch([1; 16]).unwrap(),
+                    kind != "first"
+                );
                 drop(admission);
                 let reopened = Lease::admit(home).unwrap();
                 assert!(!reopened.acknowledge_switch([1; 16]).unwrap());
@@ -865,24 +926,37 @@ mod tests {
                     b"mod.waiting:false\n"
                 );
             } else {
-                assert_eq!(committed.base(), "nightly-original");
-                assert_eq!(committed.generation(), 1);
+                if kind == "first" {
+                    assert!(committed.is_none());
+                    let bound = admission
+                        .play_target(|| panic!("retained first-install binding"))
+                        .unwrap();
+                    assert_eq!(bound.base(), "nightly-original");
+                    assert!(read(home).unwrap().unwrap().staged().is_none());
+                } else {
+                    let committed = committed.unwrap();
+                    assert_eq!(committed.base(), "nightly-original");
+                    assert_eq!(committed.generation(), 1);
+                    assert_eq!(
+                        committed
+                            .receipts()
+                            .iter()
+                            .map(super::super::Receipt::id)
+                            .collect::<Vec<_>>(),
+                        [[1; 16]]
+                    );
+                }
                 assert!(build::waiting_for_update(home).is_empty());
                 assert!(!home.join("sunrise-mods").exists());
-                assert_eq!(
-                    committed
-                        .receipts()
-                        .iter()
-                        .map(super::super::Receipt::id)
-                        .collect::<Vec<_>>(),
-                    [[1; 16]]
-                );
                 assert_eq!(
                     fs::read(home.join("sunrise-mods.txt")).unwrap(),
                     b"mod.waiting:true\n"
                 );
             }
-            assert!(read(home).unwrap().is_none());
+            assert_eq!(
+                read(home).unwrap().is_none(),
+                kind != "first" || boundary == "marker"
+            );
         }
     }
 }

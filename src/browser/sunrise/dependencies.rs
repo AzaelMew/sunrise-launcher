@@ -12,6 +12,7 @@ use sunrise_launcher_smod::mod_list::FILE as ENABLED;
 /// Installs the `asked` projects, each at its version, and what they need, as one attempt: the
 /// plan, the world question and the publish cover the whole set, so a failure anywhere leaves
 /// none of it published.
+#[cfg(test)]
 pub(super) fn install(
     install: &Install<'_>,
     asked: &[(&index::Project, &index::Version)],

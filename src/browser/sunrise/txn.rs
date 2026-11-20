@@ -173,17 +173,6 @@ impl Lease {
         Ok(())
     }
 
-    pub(in crate::browser) fn finish_standalone(&self) -> Result<(), String> {
-        let _lock = locked(&self.home)?;
-        let ids: Vec<_> = read(&self.home)?
-            .unwrap_or_default()
-            .attempts
-            .into_iter()
-            .map(|attempt| attempt.id)
-            .collect();
-        self.done(&ids)
-    }
-
     pub fn outstanding(&self) -> bool {
         outstanding(&self.home)
     }
@@ -408,6 +397,41 @@ impl Lease {
         let download = target.download.as_ref().ok_or_else(unsettled)?;
         let proof = self.bootstrap_proof(target, || download.prove(target.base()))?;
         download.install(target.base(), &proof, progress)
+    }
+
+    /// Complete local preparation for a previously bound first build. The worker inherits
+    /// this profile's lease while it prepares the base; no profile files are written here.
+    pub fn prepare_bound(&self, target: &Target, progress: impl Fn(f32)) -> Result<(), String> {
+        if self.needs_bootstrap_download(target)? {
+            self.install_bootstrap(target, progress)?;
+        }
+        let base = target.base();
+        if crate::backend::check_prepared(base) {
+            return Ok(());
+        }
+        let _prepare = crate::backend::prepare_lock(base)?;
+        let minecraft = crate::backend::Settings::load()
+            .minecraft_dir
+            .unwrap_or_else(|| crate::preparer::minecraft_dir(None));
+        let log = |line| eprintln!("{line}");
+        let (cmd, minecraft) = crate::backend::preparer(
+            base,
+            &minecraft,
+            crate::backend::MinecraftFrom::Install,
+            &log,
+        )?;
+        crate::backend::sounds(base, &minecraft, &log);
+        let worker = crate::backend::Logged::start(crate::backend::Job::Prepare, cmd, Some(self))?;
+        if let Err(error) = worker.wait() {
+            let tail = worker.tail(12).join("\n");
+            return Err(if tail.is_empty() {
+                error
+            } else {
+                format!("{error}\n{tail}")
+            });
+        }
+        crate::backend::forget_prepared();
+        crate::backend::need_prepared(base)
     }
 
     /// Check the accepted intent again and persist proof before any archive bytes are requested.
@@ -766,11 +790,13 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
         }
     }
     if let Some(operation) = record.staged() {
-        if record.pointer.is_some() || record.bootstrap().is_some() || !record.attempts.is_empty() {
+        if record.pointer.is_some() || !record.attempts.is_empty() {
             return Err(kept(unsettled()));
         }
         let same_base = matches!(record.intent, Intent::Install { .. });
-        operation.validate(same_base).map_err(kept)?;
+        operation
+            .validate(same_base, record.bootstrap())
+            .map_err(kept)?;
     }
     use std::path::Component;
     let inside = |path: &Path| {

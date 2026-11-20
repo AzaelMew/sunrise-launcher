@@ -663,6 +663,66 @@ mod tests {
     }
 
     #[test]
+    fn first_registry_install_commits_verified_files_and_generation_one_together() {
+        let dir = scratch("first-registry-install");
+        let index = registry(&dir, true, "");
+        let existing = install_fixture(&index, "cozy", &dir.join("sunrise-packs")).unwrap();
+        let base = txn::Lease::admit(&home(&existing.work))
+            .unwrap()
+            .active_build()
+            .unwrap()
+            .unwrap()
+            .base()
+            .to_string();
+        let home = dir.join("new-profile");
+        fs::create_dir(&home).unwrap();
+        let owner = Arc::new(txn::Lease::admit(&home).unwrap());
+        let bound = owner
+            .bind_bootstrap(|| {
+                txn::Target::first_play(&base, |_| panic!("fixture base is installed"))
+            })
+            .unwrap();
+        owner
+            .prepare_bound(&bound, |_| panic!("already prepared"))
+            .unwrap();
+        let plan = txn::StagedInstall::first(owner.clone(), &bound).unwrap();
+        let candidate = index.project("coords_hud").unwrap();
+        let entries = super::super::dependencies::stage(
+            &super::super::Install {
+                index: &index,
+                local: true,
+                home: plan.stage(),
+                approvals: &[],
+                progress: &|_, _| {},
+            },
+            &[(candidate, &candidate.versions[0])],
+            false,
+            &Default::default(),
+        )
+        .unwrap();
+        let file = PathBuf::from(&entries[0].file);
+        let ready = plan
+            .prepare(&[], native_mods::Profile::Optimized, |_| {})
+            .unwrap();
+        assert!(owner.active_build().unwrap().is_none());
+        assert!(!home.join(&file).exists());
+        assert!(!ready.question().needed());
+        ready.commit(false, || Ok(())).unwrap();
+        let active = owner.active_build().unwrap().unwrap();
+        assert_eq!(active.base(), base);
+        assert_eq!(active.generation(), 1);
+        assert_eq!(
+            idx::sha256_file(&home.join(file)).unwrap(),
+            candidate.versions[0].file.sha256
+        );
+        assert!(mod_list::is_enabled(&home, "coords_hud"));
+        assert!(owner.verify_launch().is_ok());
+        assert!(!home.join("mod-browser/install-txn.json").exists());
+        drop(owner);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn same_base_approval_commits_only_the_frozen_set_and_world_evidence() {
         use sunrise_launcher_nbt::{write_named, Limits, NamedTag, Tag};
         let dir = scratch("same-base-approval");

@@ -40,20 +40,6 @@ impl Request {
             Request::One { target, .. } | Request::Many(target, ..) => target,
         }
     }
-
-    /// The same request with the player's answer to the world question added: they agreed to
-    /// what saved worlds lose from `mods`.
-    pub(crate) fn approving(mut self, mods: &[String]) -> Request {
-        let (Request::One {
-            replacing: approvals,
-            ..
-        }
-        | Request::Many(_, _, _, approvals)) = &mut self;
-        approvals.extend(mods.iter().map(|id| {
-            sunrise_launcher::browser::installed::Approval::DropContent { id: id.clone() }
-        }));
-        self
-    }
 }
 
 /// What runs next.
@@ -351,32 +337,5 @@ mod tests {
             "the other profile's build was not dropped as a duplicate"
         );
         assert_eq!(id_of(queue.next("other", false, false, false)), "build m");
-    }
-
-    #[test]
-    fn the_answer_to_the_world_question_goes_with_the_request_it_stopped() {
-        let held = Request::One {
-            target: target(),
-            source: SourceId::Sunrise,
-            id: "lumen".into(),
-            known: None,
-            replacing: Vec::new(),
-        };
-        let held = held.approving(&["flywheel".to_string()]);
-        assert_eq!(held.target().instance, "main");
-        match held {
-            Request::One { replacing, .. } => assert_eq!(
-                replacing,
-                [
-                    sunrise_launcher::browser::installed::Approval::DropContent {
-                        id: "flywheel".into()
-                    }
-                ]
-            ),
-            _ => panic!("one"),
-        }
-        let many = Request::Many(target(), vec!["a".into()], "Pack".into(), Vec::new())
-            .approving(&["b".to_string()]);
-        assert!(matches!(many, Request::Many(_, _, _, approvals) if approvals.len() == 1));
     }
 }

@@ -1188,74 +1188,32 @@ pub fn remove_checked(home: &Path, wanted: &[(String, String)]) -> Result<Vec<St
     dependencies::remove_checked(home, wanted)
 }
 
-/// Installs a registry project into the game folder `home`: its newest version for this game that
-/// the game the player runs can load, downloaded into `mod-browser/downloads/`, checked against
-/// the index, then moved into place. A mod is `sunrise-mods/<id>.smod`, turned on in
-/// `sunrise-mods.txt`.
+/// Installs a resource or shader pack into the game folder. Registry mods instead go
+/// through the exact-profile candidate and cannot reach this direct writer.
 pub(super) fn install(
     project: &Project,
     home: &Path,
     game: &str,
-    approvals: &[installed::Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let index = index()?;
-    let index = if index
+    let p = index
         .project(&project.id)
-        .is_some_and(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
-    {
-        fetched_index().ok_or_else(|| {
-            tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-                .to_string()
-        })?
-    } else {
-        index
-    };
-    install_from(
+        .filter(|p| matches!(p.kind, index::Kind::ResourcePack | index::Kind::ShaderPack))
+        .ok_or_else(txn::unsettled)?;
+    let version = newest(&index, p, game)?;
+    Ok(vec![install_version(
         &index,
         local(),
-        project,
+        p,
+        version,
         home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        true,
-        approvals,
         progress,
-    )
+    )?])
 }
 
-/// Installs the registry mods `projects` together (what each needs too) as one attempt: one plan,
-/// one world question and one publish for the set, so a failure leaves none of them installed.
-pub(super) fn install_set(
-    projects: &[Project],
-    home: &Path,
-    game: &str,
-    approvals: &[installed::Approval],
-    progress: &dyn Fn(&str, f32),
-) -> Result<Vec<installed::Entry>, installed::InstallError> {
-    index()?;
-    let index = fetched_index().ok_or_else(|| {
-        tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
-            .to_string()
-    })?;
-    install_set_from(
-        &index,
-        local(),
-        projects,
-        home,
-        game,
-        crate::backend::Settings::load()
-            .native_mods_allowed_at
-            .is_some(),
-        true,
-        approvals,
-        progress,
-    )
-}
-
-/// [`install_set`] from a trusted `index`; every project must be a mod.
+/// Exercise the dependency planner and legacy record directly in local fixtures.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn install_set_from(
     index: &Index,
@@ -1320,6 +1278,7 @@ mod registry_install;
 pub use registry_install::{prepare_registry_install, RegistryInstall};
 
 /// [`install`] from a trusted `index`.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn install_from(
     index: &Index,
