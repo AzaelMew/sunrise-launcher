@@ -50,12 +50,17 @@ const B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 static NO_PINS: std::sync::LazyLock<std::collections::BTreeMap<String, String>> =
     std::sync::LazyLock::new(Default::default);
 
+static NO_WAITING: std::sync::LazyLock<
+    std::collections::BTreeMap<String, sunrise_launcher::browser::sunrise::txn::WaitingMod>,
+> = std::sync::LazyLock::new(Default::default);
+
 fn world<'a>(index: &'a Index, enabled: &'a HashSet<String>) -> World<'a> {
     World {
         index: Some(index),
         game: GAME,
         enabled,
         chosen: &NO_PINS,
+        waiting: &NO_WAITING,
         local: &[],
     }
 }

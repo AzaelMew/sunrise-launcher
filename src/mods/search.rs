@@ -151,6 +151,7 @@ mod tests {
                 game: "26.3",
                 enabled: &on,
                 chosen: &Default::default(),
+                waiting: &Default::default(),
                 local: &local,
             },
         )

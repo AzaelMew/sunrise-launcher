@@ -41,6 +41,9 @@ pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
 /// of them change or, when the write fails, none do.
 pub fn set_all_enabled(home: &Path, ids: &[&str], on: bool) -> Result<(), String> {
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
+    if on {
+        super::sunrise::txn::require_current_update(home, ids)?;
+    }
     let path = home.join(MODS_LIST);
     let text = fs::read_to_string(&path).unwrap_or_default();
     let keys: Vec<String> = ids.iter().map(|id| format!("mod.{id}")).collect();

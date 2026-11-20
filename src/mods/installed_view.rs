@@ -440,6 +440,9 @@ impl Launcher {
         let status_cell: AnyElement = match &cells.status {
             Some(said) => status(said.icon, said.label.clone(), tone(said.tone))
                 .id(("alt-row-status", n))
+                .when(matches!(r.need, Some(model::Need::Waiting(_))), |label| {
+                    label.flex_1()
+                })
                 .min_w_0()
                 .tooltip(crate::glass_ui::tip(said.tip.clone()))
                 .into_any_element(),

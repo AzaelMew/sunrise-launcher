@@ -195,6 +195,11 @@ fn valid_destination(path: &Path) -> bool {
     }
 }
 
+pub(super) fn valid_package_destination(path: &Path) -> bool {
+    use sunrise_launcher_smod::mod_list::{DIR, NATIVE_DIR};
+    (path.starts_with(DIR) || path.starts_with(NATIVE_DIR)) && valid_destination(path)
+}
+
 fn destination_key(path: &Path) -> String {
     let path = path.to_string_lossy();
     if cfg!(windows) || cfg!(target_os = "macos") {
@@ -613,7 +618,20 @@ mod tests {
         let package = stage.join("candidate.smod");
         fs::write(&package, b"new mod").unwrap();
         let source = stage.join("candidate");
-        fs::write(&source, b"new list").unwrap();
+        fs::write(&source, b"mod.waiting:false\n").unwrap();
+        let waiting = PathBuf::from("sunrise-native-mods/keep-exact.smod");
+        let Image::Sha256(digest) = Image::at(&home.join(&waiting)).unwrap() else {
+            panic!("package fixture missing");
+        };
+        let next = next.test_waiting(
+            "waiting",
+            build::WaitingMod {
+                file: waiting,
+                digest,
+                reason: "no fit".into(),
+                was_on: true,
+            },
+        );
         owner
             .seal_staged_set(
                 &next.test_receipt(2),
@@ -652,7 +670,13 @@ mod tests {
         {
             let home = tempfile::tempdir().unwrap();
             let home = home.path();
-            fs::write(home.join("sunrise-mods.txt"), b"old list").unwrap();
+            fs::create_dir(home.join("sunrise-native-mods")).unwrap();
+            fs::write(
+                home.join("sunrise-native-mods/keep-exact.smod"),
+                b"retained bytes",
+            )
+            .unwrap();
+            fs::write(home.join("sunrise-mods.txt"), b"mod.waiting:true\n").unwrap();
             crash_process(
                 "browser::sunrise::txn::switch_record::tests::live_switch_process",
                 home,
@@ -662,9 +686,9 @@ mod tests {
                     assert_eq!(
                         fs::read(home.join("sunrise-mods.txt")).unwrap(),
                         if boundary == "root" {
-                            b"old list"
+                            b"mod.waiting:true\n".as_slice()
                         } else {
-                            b"new list"
+                            b"mod.waiting:false\n".as_slice()
                         }
                     );
                     assert!(home.join("sunrise-mods").is_dir());
@@ -672,7 +696,13 @@ mod tests {
             );
             let admission = Lease::admit(home).unwrap();
             let committed = admission.active_build().unwrap().unwrap();
+            assert_eq!(
+                fs::read(home.join("sunrise-native-mods/keep-exact.smod")).unwrap(),
+                b"retained bytes"
+            );
             if boundary == "marker" {
+                assert_eq!(build::waiting_for_update(home)["waiting"].reason, "no fit");
+                assert!(crate::browser::mod_list::set_enabled(home, "waiting", true).is_err());
                 assert_eq!(
                     committed.base(),
                     if kind == "switch" {
@@ -686,24 +716,29 @@ mod tests {
                     fs::read(home.join("sunrise-mods/new.smod")).unwrap(),
                     b"new mod"
                 );
-                assert!(admission.acknowledge_removal([1; 16]).unwrap());
+                assert!(admission.acknowledge_switch([1; 16]).unwrap());
                 drop(admission);
                 let reopened = Lease::admit(home).unwrap();
-                assert!(!reopened.acknowledge_removal([1; 16]).unwrap());
+                assert!(!reopened.acknowledge_switch([1; 16]).unwrap());
                 let pointer = reopened.active_build().unwrap().unwrap();
                 assert_eq!(pointer.receipts().len(), 1);
                 assert_eq!(pointer.receipts()[0].id(), [2; 16]);
                 assert_eq!(
-                    pointer.receipts()[0].lines().collect::<Vec<_>>(),
-                    [("mod-2", "reason-2")]
+                    pointer.receipts()[0].effects().waiting_for_update,
+                    [("waiting".to_owned(), "no fit".to_owned())]
+                );
+                assert_eq!(
+                    pointer.receipts()[0].effects().removed.clone(),
+                    [("mod-2".into(), "reason-2".into())]
                 );
                 assert_eq!(
                     fs::read(home.join("sunrise-mods.txt")).unwrap(),
-                    b"new list"
+                    b"mod.waiting:false\n"
                 );
             } else {
                 assert_eq!(committed.base(), "nightly-original");
                 assert_eq!(committed.generation(), 1);
+                assert!(build::waiting_for_update(home).is_empty());
                 assert!(!home.join("sunrise-mods").exists());
                 assert_eq!(
                     committed
@@ -715,7 +750,7 @@ mod tests {
                 );
                 assert_eq!(
                     fs::read(home.join("sunrise-mods.txt")).unwrap(),
-                    b"old list"
+                    b"mod.waiting:true\n"
                 );
             }
             assert!(read(home).unwrap().is_none());

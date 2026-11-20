@@ -168,20 +168,10 @@ impl Launcher {
     pub(super) fn switch_build_sheet(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let state = &self.ui.sheets.switch_build;
         let plan = state.plan.as_ref();
-        let report: Vec<(&str, &str)> = if let Some(plan) = plan {
-            plan.removals()
-                .iter()
-                .map(|(n, r)| (n.as_str(), r.as_str()))
-                .collect()
-        } else {
-            state
-                .report
-                .as_ref()
-                .into_iter()
-                .flat_map(|(_, receipt)| receipt.lines())
-                .collect()
-        };
-        let shown = if plan.is_none() && report.is_empty() {
+        let report = plan
+            .map(|plan| plan.effects())
+            .or_else(|| state.report.as_ref().map(|(_, receipt)| receipt.effects()));
+        let shown = if plan.is_none() && report.is_none_or(|effects| effects.is_empty()) {
             div().child(title(tr("Switching game builds…").into()))
         } else {
             let headline = if plan.is_some() {
@@ -210,20 +200,26 @@ impl Launcher {
                             .map(|line| div().child(line)),
                     );
             }
-            if !report.is_empty() {
-                panel = panel.child(
-                    div().child(trf(
-                        "Removed mods: {mods}",
-                        &[(
-                            "mods",
-                            &report
-                                .iter()
-                                .map(|(name, _)| *name)
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                        )],
-                    )),
-                );
+            let groups = report
+                .into_iter()
+                .flat_map(|effects| {
+                    [
+                        (tr("Turned off"), &effects.waiting_for_update),
+                        (tr("Removed"), &effects.removed),
+                    ]
+                })
+                .filter(|(_, mods)| !mods.is_empty())
+                .collect::<Vec<_>>();
+            for (heading, mods) in &groups {
+                let names = mods
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                panel = panel.child(div().child(trf(
+                    "{status}: {mods}",
+                    &[("status", heading), ("mods", &names)],
+                )));
             }
             let mut actions = div().flex().flex_wrap().justify_end().gap(px(8.));
             let close = if plan.is_some() {
@@ -240,9 +236,9 @@ impl Launcher {
             if let Some((home, receipt)) = &state.report {
                 let home = home.clone();
                 let id = receipt.id();
-                actions = actions.child(button("ack-switch-removals", tr("Got it")).on_click(
+                actions = actions.child(button("ack-switch-effects", tr("Got it")).on_click(
                     cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        match Lease::admit(&home).and_then(|owner| owner.acknowledge_removal(id)) {
+                        match Lease::admit(&home).and_then(|owner| owner.acknowledge_switch(id)) {
                             Ok(_) => this.close_sheet(),
                             Err(error) => this.ui.sheets.error = Some(error),
                         }
@@ -250,7 +246,7 @@ impl Launcher {
                     }),
                 ));
             }
-            if !report.is_empty() {
+            if !groups.is_empty() {
                 actions = actions.child(button("switch-why", tr("Show why")).on_click(
                     cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.ui.sheets.switch_build.details ^= true;
@@ -258,9 +254,12 @@ impl Launcher {
                     }),
                 ));
                 if state.details {
-                    let details = report
+                    let details = groups
                         .iter()
-                        .map(|(name, reason)| format!("{name}: {reason}"))
+                        .flat_map(|(heading, mods)| {
+                            mods.iter()
+                                .map(move |(name, reason)| format!("{heading} — {name}: {reason}"))
+                        })
                         .collect::<Vec<_>>()
                         .join("\n\n");
                     panel = panel.child(div().child(details.clone()));

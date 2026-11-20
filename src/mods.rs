@@ -107,6 +107,7 @@ struct Snapshot {
     entries: Vec<Entry>,
     enabled: HashSet<String>,
     chosen: std::collections::BTreeMap<String, String>,
+    waiting: std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
     /// Mod files the registry didn't install: on/off is editable, the files are not.
     local: Vec<model::Local>,
     /// The hand-placed packages are being read off the window thread (`Event::Local`): `local`
@@ -116,7 +117,11 @@ struct Snapshot {
 
 enum Event {
     /// The hand-placed mods read for the folder and fingerprint the snapshot was made for.
-    Local(String, Vec<model::Local>),
+    Local(
+        String,
+        Vec<model::Local>,
+        std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
+    ),
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
     Page(String, Result<Box<model::Page>, String>),
     Progress(String, f32),
@@ -467,10 +472,11 @@ impl Launcher {
                     m.catalog = Catalog::Ready(cards, categories)
                 }
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
-                Event::Local(key, local) => {
+                Event::Local(key, local, waiting) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
                         snap.local = local;
+                        snap.waiting = waiting;
                         snap.reading = false;
                     }
                     let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
@@ -523,7 +529,11 @@ impl Launcher {
         let home = self.mods_home();
         self.mods
             .follow_home(self.selected_instance().map(|i| i.home.clone()));
-        let key = native_status::fingerprint(&home, None);
+        let key = format!(
+            "{}\n{:?}",
+            native_status::fingerprint(&home, None),
+            sunrise::txn::active_stamp(&home)
+        );
         let moved = self
             .ui
             .mods
@@ -545,18 +555,22 @@ impl Launcher {
             let entries = installed::Installed::load(&home).entries;
             // Reading every hand-placed package takes long with many of them: it is done on a
             // worker, and the rows of the same folder known before stay until it answers.
-            let local: Vec<model::Local> = self
+            let (local, waiting) = self
                 .ui
                 .mods
                 .snapshot
                 .take()
                 .filter(|s| s.home == home)
-                .map(|s| s.local)
+                .map(|s| (s.local, s.waiting))
                 .unwrap_or_default();
             let (tx, worker_home, worker_key) =
                 (self.ui.mods.tx.clone(), home.clone(), key.clone());
             std::thread::spawn(move || {
-                let _ = tx.send(Event::Local(worker_key, read_local(&worker_home)));
+                let _ = tx.send(Event::Local(
+                    worker_key,
+                    read_local(&worker_home),
+                    sunrise::txn::waiting_for_update(&worker_home),
+                ));
             });
             let enabled = enabled_ids(&home, &entries, &local);
             let chosen = sunrise::chosen(&home);
@@ -566,6 +580,7 @@ impl Launcher {
                 entries,
                 enabled,
                 chosen,
+                waiting,
                 local,
                 reading: true,
             });
@@ -646,6 +661,7 @@ impl Launcher {
                 game: &game,
                 enabled: &snap.enabled,
                 chosen: &snap.chosen,
+                waiting: &snap.waiting,
                 local: &snap.local,
             },
         )
