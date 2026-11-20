@@ -12,8 +12,8 @@
 //! A content mod (`.smod`) whose new version drops a block, item, entity, effect, menu or
 //! creative tab the installed one has waits for the player (its blocks would vanish from their
 //! worlds): the notice says which. The file an update replaces is kept in
-//! `mod-browser/replaced/` until the next start: an update cut short (a crash between moving the
-//! file and saving the list) is rolled back from it then.
+//! `mod-browser/replaced/` until the next start. A leftover ledger is only advisory: never
+//! restore over, or delete, live packages based on that ledger.
 use super::{install_version_guarded, Index};
 use crate::browser::{installed, Kind, SourceId};
 use crate::i18n::trf;
@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use sunrise_launcher_smod::index;
 
 /// Where replaced files wait for the next start, and their list.
@@ -156,32 +158,84 @@ struct Kept {
     entry: installed::Entry,
     /// Its copy, relative to the game folder.
     copy: String,
-    /// The launcher process that replaced it: its own updates aren't cleared before it ends.
     pid: u32,
+    /// Current-process entries are not retired while this updater is still using them. A PID
+    /// alone isn't evidence: a legacy row may name a PID the OS has since reused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session: Option<[u8; 16]>,
 }
 
-fn kept_list(home: &Path) -> Vec<Kept> {
-    let list: Vec<Kept> = fs::read_to_string(home.join(KEPT))
-        .ok()
-        .and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_default();
-    list.into_iter()
-        .filter(|kept| {
-            Path::new(&kept.copy)
-                .strip_prefix(KEPT_DIR)
-                .ok()
-                .and_then(Path::to_str)
-                .and_then(crate::browser::safe_name)
-                .is_some()
-        })
-        .collect()
+static SESSION: OnceLock<[u8; 16]> = OnceLock::new();
+
+fn kept_list(home: &Path) -> Result<Vec<Kept>, String> {
+    let path = home.join(KEPT);
+    let fail = |error: &dyn std::fmt::Display| format!("{}: {error}", path.display());
+    let root = path.parent().expect("browser folder");
+    match fs::symlink_metadata(root) {
+        Ok(meta) if meta.is_dir() && regular(&meta) => (),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(fail(&e)),
+        Ok(_) => return Err(fail(&io::ErrorKind::InvalidData)),
+    }
+    match fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() && regular(&meta) => (),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(fail(&e)),
+        Ok(_) => return Err(fail(&io::ErrorKind::InvalidData)),
+    }
+    let bytes = fs::read(&path).map_err(|e| fail(&e))?;
+    let list: Vec<Kept> = serde_json::from_slice(&bytes).map_err(|e| fail(&e))?;
+    let mut seen = BTreeSet::new();
+    if list.iter().any(|row| {
+        row.entry.source != SourceId::Sunrise
+            || !index::valid_id(&row.entry.project)
+            || row.copy != format!("{KEPT_DIR}/{}", row.entry.project)
+            || !seen.insert(row.entry.project.as_str())
+    }) {
+        return Err(fail(&io::ErrorKind::InvalidData));
+    }
+    Ok(list)
+}
+
+fn regular(meta: &fs::Metadata) -> bool {
+    if meta.file_type().is_symlink() {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 {
+            return false;
+        }
+    }
+    true
+}
+
+fn exact_package(home: &Path, path: &Path, checksum: &str) -> bool {
+    let Some(hash) = checksum.strip_prefix("SHA-256:") else {
+        return false;
+    };
+    let mut parent = path.parent();
+    while let Some(dir) = parent.filter(|dir| *dir != home) {
+        if !fs::symlink_metadata(dir).is_ok_and(|meta| meta.is_dir() && regular(&meta)) {
+            return false;
+        }
+        parent = dir.parent();
+    }
+    parent == Some(home)
+        && fs::symlink_metadata(path).is_ok_and(|meta| meta.is_file() && regular(&meta))
+        && index::sha256_file(path).is_ok_and(|actual| actual.eq_ignore_ascii_case(hash))
 }
 
 fn save_kept(home: &Path, list: &[Kept]) -> Result<(), String> {
     let path = home.join(KEPT);
     if list.is_empty() {
-        let _ = fs::remove_file(&path);
-        return Ok(());
+        return match fs::remove_file(&path) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                Err(format!("{}: {e}", path.display()))
+            }
+            _ => Ok(()),
+        };
     }
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -236,30 +290,47 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
     list.save(home)
 }
 
-/// At start: each file an earlier launcher replaced is dropped when its update finished, put back
-/// when it didn't.
-pub fn recover(home: &Path) {
-    let _lock = match crate::browser::lock_home(home) {
-        Ok(guard) => guard,
-        Err(e) => {
-            eprintln!("Cannot lock mod browser in {}: {e}", home.display());
-            return;
-        }
+/// Retire only advisory entries proved redundant. The legacy updater still owns the live
+/// ledger name here, so unreadable or ambiguous evidence stays in place and refuses *updates*,
+/// not Play. Can't move just the ledger away: the updater could overwrite a retained copy.
+fn recover(home: &Path) -> Result<(), String> {
+    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    let notice = || {
+        trf(
+        "An older mod-update backup in {folder} was kept because it couldn't be verified. You can still play.",
+        &[("folder", &home.join("mod-browser").display().to_string())],
+    )
     };
-    let me = std::process::id();
-    let (mut mine, earlier): (Vec<Kept>, Vec<Kept>) =
-        kept_list(home).into_iter().partition(|k| k.pid == me);
-    for k in earlier {
-        if !finished(home, &k) {
-            if let Err(e) = restore(home, &k) {
-                eprintln!("Couldn't put {} back: {e}", k.entry.title);
-                mine.push(k);
-                continue;
-            }
-        }
-        let _ = fs::remove_file(home.join(&k.copy));
+    let (mine, earlier): (Vec<Kept>, Vec<Kept>) = kept_list(home)
+        .map_err(|_| notice())?
+        .into_iter()
+        .partition(|k| {
+            k.session
+                .as_ref()
+                .is_some_and(|id| Some(id) == SESSION.get())
+        });
+    if earlier.is_empty() {
+        return Ok(());
     }
-    let _ = save_kept(home, &mine);
+    let installed = installed::Installed::load(home);
+    for old in &earlier {
+        let mut rows = installed
+            .entries
+            .iter()
+            .filter(|row| row.source == SourceId::Sunrise && row.project == old.entry.project);
+        let current = rows.next().filter(|_| rows.next().is_none());
+        if !current.is_some_and(|row| {
+            row.path(home)
+                .is_some_and(|path| exact_package(home, &path, &row.checksum))
+        }) || !exact_package(home, &home.join(&old.copy), &old.entry.checksum)
+        {
+            return Err(notice());
+        }
+    }
+    save_kept(home, &mine).map_err(|_| notice())?;
+    // No longer referenced. Retain even proved copies in this standalone upgrade step;
+    // the old format doesn't bind directory identity or provide a retirement barrier.
+    Ok(())
 }
 
 /// Keeps the file `entry` installed before it is replaced.
@@ -274,12 +345,20 @@ fn keep(home: &Path, entry: &installed::Entry) -> Result<Kept, String> {
     let to = home.join(&copy);
     fs::create_dir_all(home.join(KEPT_DIR)).map_err(|e| e.to_string())?;
     fs::copy(&from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    let mut session = [0; 16];
+    if let Some(id) = SESSION.get() {
+        session = *id;
+    } else {
+        getrandom::fill(&mut session).map_err(|e| e.to_string())?;
+        session = *SESSION.get_or_init(|| session);
+    }
     let kept = Kept {
         entry: entry.clone(),
         copy,
         pid: std::process::id(),
+        session: Some(session),
     };
-    let mut list = kept_list(home);
+    let mut list = kept_list(home)?;
     list.retain(|k| k.entry.project != entry.project);
     list.push(kept.clone());
     save_kept(home, &list)?;
@@ -298,7 +377,12 @@ pub fn run(
     // The start's run and Play's never touch a folder at once.
     static ONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-    recover(home);
+    if let Err(notice) = recover(home) {
+        return Some(Report {
+            held: vec![notice],
+            ..Report::default()
+        });
+    }
     if !enabled {
         return None;
     }
@@ -322,17 +406,14 @@ pub(super) fn run_with(
             };
         }
     };
-    recover(home);
-    let pending: BTreeSet<String> = kept_list(home)
-        .into_iter()
-        .filter(|kept| kept.pid != std::process::id())
-        .map(|kept| kept.entry.project)
-        .collect();
+    if let Err(notice) = recover(home) {
+        return Report {
+            held: vec![notice],
+            ..Report::default()
+        };
+    }
     let mut report = Report::default();
     for entry in installed::Installed::load(home).entries {
-        if pending.contains(&entry.project) {
-            continue;
-        }
         let Decision::Update(v) = decide(index, &entry, ctx) else {
             continue;
         };
@@ -362,7 +443,6 @@ pub fn update_to(
     home: &Path,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Option<String>, String> {
-    recover(home);
     let entry = installed::Installed::load(home)
         .find(SourceId::Sunrise, project)
         .cloned()
@@ -408,6 +488,7 @@ fn update(
     progress: &dyn Fn(&str, f32),
 ) -> Result<Option<String>, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    recover(home)?;
     let list = installed::Installed::load(home);
     let Some(current) = list.find(entry.source, &entry.project) else {
         return Ok(None);
@@ -452,19 +533,20 @@ fn update(
                 // Leave the backup and journal intact if restoring it fails.
                 if !finished(home, kept) {
                     if let Err(restore_error) = restore(home, kept) {
-                        let mut list = kept_list(home);
+                        let mut list = kept_list(home)?;
                         if let Some(record) = list
                             .iter_mut()
                             .find(|k| k.entry.project == kept.entry.project)
                         {
                             record.pid = 0;
+                            record.session = None;
                         }
                         let _ = save_kept(home, &list);
                         return Err(format!("{e}; restore failed: {restore_error}"));
                     }
                 }
                 let _ = fs::remove_file(home.join(&kept.copy));
-                let mut list = kept_list(home);
+                let mut list = kept_list(home)?;
                 list.retain(|k| k.entry.project != kept.entry.project);
                 let _ = save_kept(home, &list);
             }
