@@ -78,6 +78,8 @@ pub(super) struct Finished {
     native: Vec<String>,
     /// What came in with the mod (its dependencies), by title, for "Also installed".
     also: Vec<String>,
+    /// The dependencies it moved to another version: title, before, after.
+    updated: Vec<(String, String, String)>,
 }
 
 impl Finished {
@@ -86,6 +88,7 @@ impl Finished {
             said: Some(said),
             native: Vec::new(),
             also: Vec::new(),
+            updated: Vec::new(),
         }
     }
 }
@@ -133,6 +136,8 @@ pub(super) struct Mods {
     pub(crate) world_ask: Option<WorldAsk>,
     /// What came in with each mod installed this run, by id (the card's "Also installed").
     pub(crate) also: HashMap<String, Vec<String>>,
+    /// The dependencies each moved to another version (the card's "Also updated").
+    pub(crate) updated: HashMap<String, Vec<(String, String, String)>>,
     /// Why the last install failed, on its card: one plain line, the whole text behind Details.
     pub(crate) card_error: Option<CardError>,
     /// An install that would break installed mods, asked before anything is downloaded.
@@ -264,6 +269,7 @@ impl Mods {
             break_ask: None,
             break_cleared: false,
             also: HashMap::new(),
+            updated: HashMap::new(),
             card_error: None,
             failed: None,
             native_state: Default::default(),
@@ -317,7 +323,8 @@ impl Launcher {
                     m.message = match result {
                         Ok(finished) => {
                             if let Some(id) = id {
-                                m.also.insert(id, finished.also);
+                                m.also.insert(id.clone(), finished.also);
+                                m.updated.insert(id, finished.updated);
                             }
                             native.extend(finished.native);
                             finished.said.map(|said| {
@@ -582,6 +589,7 @@ impl Launcher {
                         ],
                     )));
                 }
+                let before = installed::Installed::load(&home).entries;
                 let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
                 if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
                     return Ok(Finished {
@@ -594,7 +602,17 @@ impl Launcher {
                         also: done
                             .iter()
                             .filter(|e| e.project != p.id)
+                            .filter(|e| !before.iter().any(|b| b.project == e.project))
                             .map(|e| e.title.clone())
+                            .collect(),
+                        updated: done
+                            .iter()
+                            .filter_map(|e| {
+                                let was = before.iter().find(|b| b.project == e.project)?;
+                                (e.project != p.id && was.number != e.number).then(|| {
+                                    (e.title.clone(), was.number.clone(), e.number.clone())
+                                })
+                            })
                             .collect(),
                     });
                 }
@@ -856,6 +874,7 @@ impl Launcher {
                     said: None,
                     native: native.into_inner(),
                     also: Vec::new(),
+                    updated: Vec::new(),
                 })
             })();
             let _ = tx.send(Event::Done(result));

@@ -431,6 +431,13 @@ impl Launcher {
             {
                 facts.push(muted(line).truncate());
             }
+            if let Some(line) = is_added
+                .then(|| self.mods.updated.get(&id))
+                .flatten()
+                .and_then(|moves| install_state::updated_line(moves))
+            {
+                facts.push(muted(line).truncate());
+            }
             if let Some(error) = failed_here {
                 facts.push(
                     div()
