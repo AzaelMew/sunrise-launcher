@@ -32,6 +32,9 @@ const KEPT: &str = "mod-browser/replaced.json";
 #[derive(Debug, PartialEq)]
 pub enum Decision<'a> {
     Update(&'a index::Version),
+    /// The mod can't stay: taken down, or no version of it fits the game the profile plays.
+    /// Why, as the player reads it.
+    Remove(String),
     /// Not updated automatically, or nothing newer.
     Skip,
 }
@@ -40,6 +43,8 @@ pub enum Decision<'a> {
 pub struct Context<'a> {
     pub in_pack: bool,
     pub game: &'a str,
+    /// Whether the player allowed native mods: they update only then.
+    pub native_allowed: bool,
 }
 
 /// What an automatic update did: `Title version` updated, what waits for the player and why,
@@ -47,6 +52,8 @@ pub struct Context<'a> {
 #[derive(Debug, Default, PartialEq)]
 pub struct Report {
     pub updated: Vec<String>,
+    /// Mods taken out of the profile, `Title: why`.
+    pub removed: Vec<String>,
     pub held: Vec<String>,
     pub failed: Vec<String>,
 }
@@ -61,6 +68,12 @@ impl Report {
                 &[("list", &self.updated.join(", "))],
             ));
         }
+        if !self.removed.is_empty() {
+            out.push(trf(
+                "Removed, because they can't work with this version: {list}.",
+                &[("list", &self.removed.join("; "))],
+            ));
+        }
         out.extend(self.held.iter().cloned());
         out.extend(self.failed.iter().cloned());
         out
@@ -72,12 +85,15 @@ pub fn in_pack(home: &Path) -> bool {
     home.ends_with("home") && home.parent().is_some_and(super::pack::is_pack)
 }
 
-/// Whether `entry` updates automatically, and to what.
+/// What becomes of `entry` on the game `ctx.game`: its newest version that fits, even across
+/// Minecraft versions (the game was switched or updated); removed when it was taken down or no
+/// version of it fits. Native mods never lose their place here: whether one rebuilds on the new
+/// game is for the build to say, so only an update is decided for them.
 pub fn decide<'a>(index: &'a Index, entry: &installed::Entry, ctx: &Context) -> Decision<'a> {
-    let skip_native = crate::native_status::is_native_file(&entry.file);
+    let native = crate::native_status::is_native_file(&entry.file);
     if entry.source != SourceId::Sunrise
         || ctx.in_pack
-        || skip_native
+        || (native && !ctx.native_allowed)
         || entry.kind == Kind::DataPack
     {
         return Decision::Skip;
@@ -85,20 +101,68 @@ pub fn decide<'a>(index: &'a Index, entry: &installed::Entry, ctx: &Context) -> 
     let Some(p) = index.project(&entry.project) else {
         return Decision::Skip;
     };
-    let Some(target) = index.installable(p, ctx.game) else {
-        return Decision::Skip;
-    };
-    // Versions are newest first: only forward, from a version the index still lists.
-    let at = |version: &str| p.versions.iter().position(|v| v.version == version);
-    let (Some(now), Some(next)) = (at(&entry.version), at(&target.version)) else {
-        return Decision::Skip;
-    };
-    let same_game = p.versions[now].game == target.game;
-    let native_next = p.kind == index::Kind::NativeMod;
-    if next >= now || !same_game || native_next {
-        return Decision::Skip;
+    let target = index.installable(p, ctx.game);
+    let hash = entry.checksum.strip_prefix("SHA-256:").unwrap_or_default();
+    if let Some(taken) = index.revoked(&p.id, hash).filter(|_| target.is_none()) {
+        return Decision::Remove(trf("taken down: {reason}", &[("reason", &taken.reason)]));
     }
-    Decision::Update(target)
+    // Versions are newest first.
+    let at = |version: &str| p.versions.iter().position(|v| v.version == version);
+    let Some(now) = at(&entry.version) else {
+        return Decision::Skip;
+    };
+    let Some(target) = target else {
+        let fits = p.versions[now].game == ctx.game;
+        return match native || fits {
+            true => Decision::Skip,
+            false => Decision::Remove(trf("no version for {game}", &[("game", ctx.game)])),
+        };
+    };
+    let Some(next) = at(&target.version) else {
+        return Decision::Skip;
+    };
+    let moved = p.versions[now].game != target.game;
+    match next < now || (moved && next != now) {
+        true => Decision::Update(target),
+        false => Decision::Skip,
+    }
+}
+
+/// A mod a game switch to `game` would remove, and why.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Removal {
+    pub id: String,
+    pub title: String,
+    pub reason: String,
+}
+
+/// The mods the profile's `entries` would lose on the build that plays `ctx.game`: what
+/// [`decide`] removes, and `native_off`, the native mods (id, why) the SDK check says don't
+/// work on it (`native_mods::update_check`). For the version picker.
+pub fn removals(
+    index: &Index,
+    entries: &[installed::Entry],
+    ctx: &Context,
+    native_off: &[(String, String)],
+) -> Vec<Removal> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let reason = match decide(index, entry, ctx) {
+                Decision::Remove(reason) => reason,
+                _ => native_off
+                    .iter()
+                    .find(|(id, _)| Some(id.as_str()) == super::mod_id(entry))?
+                    .1
+                    .clone(),
+            };
+            Some(Removal {
+                id: entry.project.clone(),
+                title: entry.title.clone(),
+                reason,
+            })
+        })
+        .collect()
 }
 
 /// The kinds a content mod declares one file each for (`data/<namespace>/sunrise/<kind>/<id>.json`), as notices name them.
@@ -334,8 +398,19 @@ pub(super) fn run_with(
         if pending.contains(&entry.project) {
             continue;
         }
-        let Decision::Update(v) = decide(index, &entry, ctx) else {
-            continue;
+        let v = match decide(index, &entry, ctx) {
+            Decision::Update(v) => v,
+            Decision::Remove(why) => {
+                match installed::remove(home, &entry.project) {
+                    Ok(_) => report.removed.push(format!("{}: {why}", entry.title)),
+                    Err(e) => report.failed.push(trf(
+                        "{title} wasn't removed: {error}",
+                        &[("title", &entry.title), ("error", &e)],
+                    )),
+                }
+                continue;
+            }
+            Decision::Skip => continue,
         };
         let p = index.project(&entry.project).expect("decide found it");
         match update(index, local, p, v, &entry, home, progress) {

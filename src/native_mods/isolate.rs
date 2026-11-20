@@ -53,23 +53,36 @@ pub struct BuildFailure {
     pub log: String,
 }
 
-/// The mods of `left` whose own compile failed. A mod left out because another failed, or
-/// because it doesn't fit, is not one: only the build output naming it as the one that failed
-/// puts it here.
+/// The mods of `left` that can't stay: one whose own compile failed (the build output names
+/// it as the one that failed, with the compiler's log), one that doesn't fit the build, and one
+/// that needs a mod of those. Mods left out for another reason (a clash, another version)
+/// aren't on it.
 pub fn build_failures(left: &[LeftOut]) -> Vec<BuildFailure> {
     left.iter()
-        .filter(|l| l.why == Why::DidNotBuild)
-        .map(|l| BuildFailure {
-            id: l.id.clone(),
-            reason: trf(
-                "{mod} didn't compile. The problem is in the mod, not in your game.",
-                &[("mod", &l.id)],
-            ),
-            log: l
-                .detail
-                .as_ref()
-                .and_then(|d| d.log.clone())
-                .unwrap_or_default(),
+        .filter_map(|l| {
+            let (reason, log) = match &l.why {
+                Why::DidNotBuild => (
+                    trf(
+                        "{mod} didn't compile. The problem is in the mod, not in your game.",
+                        &[("mod", &l.id)],
+                    ),
+                    l.detail.as_ref().and_then(|d| d.log.clone()),
+                ),
+                Why::Unfit(line) => (line.clone(), None),
+                Why::Needs(other) => (
+                    trf(
+                        "it needs {library}, which doesn't fit",
+                        &[("library", other)],
+                    ),
+                    None,
+                ),
+                Why::OtherVersion | Why::Clash(_) => return None,
+            };
+            Some(BuildFailure {
+                id: l.id.clone(),
+                reason,
+                log: log.unwrap_or_default(),
+            })
         })
         .collect()
 }
@@ -385,10 +398,14 @@ mod tests {
             [
                 ("broken", "error[E0425] in broken"),
                 ("also", "error[E0308] in also"),
+                ("needy", ""),
+                ("old", ""),
             ],
-            "only a mod whose own compile failed, each with its own output"
+            "a mod whose own compile failed, each with its own output"
         );
-        assert!(failures.iter().all(|f| f.reason.contains(&f.id)));
+        assert_eq!(failures[3].reason, "made for another build");
+        let clash = left("c", Why::Clash("d".into()), None);
+        assert!(build_failures(&[clash, left("o", Why::OtherVersion, None)]).is_empty());
         // The record a build keeps carries the log, so the list survives a restart.
         keep(&home, "base-1", &all).unwrap();
         assert_eq!(build_failures(&kept(&home, "base-1")), failures);

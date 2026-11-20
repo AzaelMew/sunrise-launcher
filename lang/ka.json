@@ -1458,5 +1458,8 @@
   "Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.": "Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.",
   "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file": "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file",
   "Close the game to install": "Close the game to install",
-  "Couldn't build on your computer": "Couldn't build on your computer"
+  "Couldn't build on your computer": "Couldn't build on your computer",
+  "Removed, because they can't work with this version: {list}.": "Removed, because they can't work with this version: {list}.",
+  "no version for {game}": "no version for {game}",
+  "{title} wasn't removed: {error}": "{title} wasn't removed: {error}"
 }
