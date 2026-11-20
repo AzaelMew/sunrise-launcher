@@ -249,6 +249,74 @@ fn no_space_at_marker_reverses_pointer_and_files_using_existing_allocations() {
 }
 
 #[test]
+fn composed_and_decomposed_destinations_cannot_enter_one_plan() {
+    let composed = PathBuf::from("sunrise-mods/café.smod");
+    let decomposed = PathBuf::from("sunrise-mods/cafe\u{301}.smod");
+    assert_ne!(composed, decomposed);
+    for existing in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        initialized(home, existing);
+        if existing {
+            fs::write(home.join(&composed), package("1.0.0")).unwrap();
+            // On normalization-insensitive volumes the second spelling can already open
+            // the first file. On other volumes it is a prospective across-volume alias.
+            if let Some(other) = Identity::file_at(&home.join(&decomposed)).unwrap() {
+                assert!(Identity::file_at(&home.join(&composed)).unwrap() == Some(other));
+            }
+        }
+        let mut owner = Admission::open(home, None).unwrap();
+        let stage = owner.reserve(Intent::Install, BTreeSet::new()).unwrap();
+        let one = stage.path().join("one");
+        let two = stage.path().join("two");
+        fs::write(&one, package("2.0.0")).unwrap();
+        fs::write(&two, package("3.0.0")).unwrap();
+        assert!(stage
+            .seal(
+                INSTALLED.to_vec(),
+                &[
+                    (composed.clone(), Some(one)),
+                    (decomposed.clone(), Some(two))
+                ]
+            )
+            .is_err());
+        assert_eq!(fs::read(home.join(POINTER)).unwrap(), OLD);
+        if existing {
+            assert_eq!(fs::read(home.join(&composed)).unwrap(), package("1.0.0"));
+        } else {
+            assert!(!home.join("sunrise-mods").exists());
+        }
+    }
+}
+
+#[test]
+fn different_basenames_that_gain_the_same_file_identity_are_refused_before_cutoff() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let first = home.join(PACK);
+    let second = PathBuf::from("sunrise-mods/second.smod");
+    fs::write(home.join(&second), package("1.0.0")).unwrap();
+    let mut owner = Admission::open(home, None).unwrap();
+    let stage = owner.reserve(Intent::Install, BTreeSet::new()).unwrap();
+    let sealed = stage
+        .seal(
+            INSTALLED.to_vec(),
+            &[(PACK.into(), None), (second.clone(), None)],
+        )
+        .unwrap();
+    // Preserve both before-hashes but alias the second entry just before publish.
+    fs::remove_file(home.join(&second)).unwrap();
+    fs::hard_link(&first, home.join(&second)).unwrap();
+    assert!(sealed
+        .publish::<()>(|| panic!("alias must be refused before cutoff"))
+        .is_err());
+    assert_eq!(fs::read(&first).unwrap(), package("1.0.0"));
+    assert_eq!(fs::read(home.join(&second)).unwrap(), package("1.0.0"));
+    assert_eq!(fs::read(home.join(POINTER)).unwrap(), OLD);
+}
+
+#[test]
 fn unowned_bytes_and_unknown_records_are_never_replaced_or_removed() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();

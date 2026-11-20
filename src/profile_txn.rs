@@ -24,7 +24,7 @@ const BOOTSTRAP_VERSION: u64 = 1;
 
 /// Moving a managed profile can change its path but never the filesystem identity of a
 /// directory referenced by an in-flight transaction.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     volume: u64,
@@ -43,6 +43,22 @@ impl Identity {
             volume: meta.dev(),
             inode: meta.ino(),
         })
+    }
+
+    fn file_at(path: &Path) -> Result<Option<Self>, String> {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if regular(&meta) && meta.is_file() => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            _ => return Err(at(path, unsettled())),
+        }
+        let file = fs::File::open(path).map_err(|e| at(path, e))?;
+        let meta = cap_std::fs::File::from_std(file)
+            .metadata()
+            .map_err(|e| at(path, e))?;
+        Ok(Some(Self {
+            volume: meta.dev(),
+            inode: meta.ino(),
+        }))
     }
 }
 
@@ -454,7 +470,7 @@ impl Ready {
             .any(|(name, id)| !mod_root(name) || id.volume != op.stage.id.volume)
             || self.files.iter().any(|step| {
                 !valid_destination(&step.name)
-                    || !names.insert(destination_key(&step.name))
+                    || !names.insert((step.parent, destination_key(&step.name)))
                     || step.parent.volume != op.stage.id.volume
             })
             || self.next_pointer.is_empty()
@@ -626,6 +642,7 @@ impl<'a> Staging<'a> {
             files: Vec::new(),
             next_pointer: pointer_bytes,
         };
+        let mut entries = BTreeSet::new();
         for (i, (name, source)) in files.iter().enumerate() {
             if !valid_destination(name) {
                 return Err(unsettled());
@@ -647,6 +664,7 @@ impl<'a> Staging<'a> {
                 }
                 _ => Identity::of(&parent_path)?,
             };
+            unique_entry(&live, &mut entries)?;
             let before = Image::at(&live)?;
             snapshot(&live, &stage.join(format!("old-{i}")), before)?;
             let after = if let Some(source) = source {
@@ -728,6 +746,19 @@ fn valid_destination(path: &Path) -> bool {
             (first == "mod-browser" && matches!(file.to_str(), Some("pack.json" | "pack.spack")))
                 || ((first == DIR || first == NATIVE_DIR)
                     && file.to_str().is_some_and(|name| {
+                        // A prospective 8.3 alias can be synthesized only after a
+                        // long filename is inserted; neither entry id can prove it yet.
+                        if cfg!(windows)
+                            && name.split('.').next().is_some_and(|stem| {
+                                stem.len() <= 8
+                                    && stem.rsplit_once('~').is_some_and(|(_, serial)| {
+                                        !serial.is_empty()
+                                            && serial.bytes().all(|byte| byte.is_ascii_digit())
+                                    })
+                            })
+                        {
+                            return false;
+                        }
                         (name.ends_with(".smod") && crate::browser::safe_name(name).is_some())
                             || (first == NATIVE_DIR
                                 && name
@@ -740,12 +771,24 @@ fn valid_destination(path: &Path) -> bool {
 }
 
 fn destination_key(path: &Path) -> String {
-    let path = path.to_string_lossy();
-    if cfg!(windows) || cfg!(target_os = "macos") {
-        path.to_lowercase()
-    } else {
-        path.into_owned()
+    // Use a conservative shared spelling even on a case-sensitive volume. A saved profile
+    // can move to a volume that folds case or composes/decomposes the same basename.
+    let name = path
+        .file_name()
+        .expect("validated destination")
+        .to_string_lossy();
+    let normalize = icu_normalizer::ComposingNormalizer::new_nfkc();
+    let folded = unicase::UniCase::new(normalize.normalize(&name)).to_folded_case();
+    normalize.normalize(&folded).into_owned()
+}
+
+fn unique_entry(path: &Path, entries: &mut BTreeSet<Identity>) -> Result<(), String> {
+    // Existing files also need a filesystem identity check. Two distinct spellings can
+    // address the same entry through names the portable key doesn't know (or hard links).
+    if Identity::file_at(path)?.is_some_and(|identity| !entries.insert(identity)) {
+        return Err(at(path, unsettled()));
     }
+    Ok(())
 }
 
 fn target(home: &Path, file: &Step) -> Result<PathBuf, String> {
@@ -914,6 +957,7 @@ impl Record {
                 return Err(at(&dst, unsettled()));
             }
         }
+        let mut entries = BTreeSet::new();
         for (i, file) in plan.files.iter().enumerate() {
             let name = if plan
                 .directories
@@ -926,6 +970,7 @@ impl Record {
             } else {
                 target(home, file)?
             };
+            unique_entry(&name, &mut entries)?;
             if Image::at(&name)? != file.before
                 || Image::at(&stage.join(format!("old-{i}")))? != file.before
                 || Image::at(&stage.join(format!("new-{i}")))? != file.after
