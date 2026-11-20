@@ -1495,5 +1495,7 @@
   "Your mods are being updated. Wait for it to finish before changing mods.": "Your mods are being updated. Wait for it to finish before changing mods.",
   "Needs {mod}, which isn't available for your version": "Needs {mod}, which isn't available for your version",
   "Can't be installed with the mods you have": "Can't be installed with the mods you have",
-  "Your worlds couldn't be checked, so mods they may use were left as they are: {error}": "Your worlds couldn't be checked, so mods they may use were left as they are: {error}"
+  "Your worlds couldn't be checked, so mods they may use were left as they are: {error}": "Your worlds couldn't be checked, so mods they may use were left as they are: {error}",
+  "{mod} changed since you approved removing it. Install again to review it.": "{mod} changed since you approved removing it. Install again to review it.",
+  "A saved world uses {mods}: install again to be asked about it.": "A saved world uses {mods}: install again to be asked about it."
 }

@@ -1136,7 +1136,7 @@ pub fn install(
     project: &Project,
     home: &Path,
     game: &str,
-    replacing: &[String],
+    replacing: &[installed::Replace],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let index = index()?;
@@ -1205,7 +1205,7 @@ fn install_from(
     game: &str,
     native_allowed: bool,
     turn_on: bool,
-    replacing: &[String],
+    replacing: &[installed::Replace],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let p = index
@@ -1383,7 +1383,7 @@ struct Install<'a> {
     local: bool,
     home: &'a Path,
     /// Installed registry mods removed by this install, in the same transaction.
-    replacing: &'a [String],
+    replacing: &'a [installed::Replace],
     progress: &'a dyn Fn(&str, f32),
 }
 

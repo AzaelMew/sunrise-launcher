@@ -1972,7 +1972,15 @@ fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
     )
     .is_err());
 
-    let replacing = ["lamps".to_string()];
+    let replacing = [installed::Replace {
+        id: "lamps".into(),
+        checksum: installed::Installed::load(&home)
+            .find(SourceId::Sunrise, "lamps")
+            .unwrap()
+            .checksum
+            .clone(),
+        worlds_ok: false,
+    }];
     install_from(
         &index,
         true,
@@ -1997,6 +2005,77 @@ fn an_install_that_replaces_a_conflicting_mod_removes_it_with_the_install() {
     assert!(!mod_list::is_enabled(&home, "lamps"));
     assert!(mod_list::is_enabled(&home, "fireflies"));
     assert!(!home.join("mod-browser/install-journal.json").exists());
+}
+
+#[test]
+fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = conflict_index(dir.path());
+    let home = dir.path().join("profile");
+    let lamps = project_of(&index, index.project("lamps").unwrap(), GAME).unwrap();
+    let go = |lamps_replaced: &installed::Replace| {
+        let fireflies = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+        install_from(
+            &index,
+            true,
+            &fireflies,
+            &home,
+            GAME,
+            false,
+            true,
+            std::slice::from_ref(lamps_replaced),
+            &|_, _| {},
+        )
+    };
+    install_from(
+        &index,
+        true,
+        &lamps,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    let approved = installed::Replace {
+        id: "lamps".into(),
+        checksum: installed::Installed::load(&home)
+            .find(SourceId::Sunrise, "lamps")
+            .unwrap()
+            .checksum
+            .clone(),
+        worlds_ok: false,
+    };
+    // The file changed while the approval waited: nothing is removed.
+    let stale = installed::Replace {
+        checksum: "SHA-256:other".into(),
+        ..approved.clone()
+    };
+    let refused = go(&stale).unwrap_err();
+    assert!(refused.contains("changed since you approved"), "{refused}");
+    assert!(installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "lamps")
+        .is_some());
+    // A world now uses it, and nobody agreed to what it loses.
+    let world = home.join("saves/Home");
+    fs::create_dir_all(&world).unwrap();
+    fs::write(world.join("level.dat"), b"not nbt").unwrap();
+    let refused = go(&approved).unwrap_err();
+    assert!(refused.contains("A saved world uses"), "{refused}");
+    assert!(installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "lamps")
+        .is_some());
+    // Agreed: it goes ahead. Worlds that can't be looked at stop it when nobody agreed.
+    go(&installed::Replace {
+        worlds_ok: true,
+        ..approved
+    })
+    .unwrap();
+    assert!(installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "lamps")
+        .is_none());
 }
 
 #[test]
@@ -2026,7 +2105,15 @@ fn an_install_that_replaces_a_mod_and_then_fails_leaves_that_mod_installed() {
     broken.versions[0].file.url = format!("file://{}", dir.path().join("missing.smod").display());
     let fireflies = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
 
-    let replacing = ["lamps".to_string()];
+    let replacing = [installed::Replace {
+        id: "lamps".into(),
+        checksum: installed::Installed::load(&home)
+            .find(SourceId::Sunrise, "lamps")
+            .unwrap()
+            .checksum
+            .clone(),
+        worlds_ok: false,
+    }];
     assert!(install_from(
         &index,
         true,

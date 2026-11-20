@@ -69,6 +69,8 @@ pub(crate) struct BreakAsk {
     pub(crate) shown: Option<String>,
     /// The mods it would break: id, title and what each needs.
     pub(crate) broken: Vec<(String, String, String)>,
+    /// The exact file of each, by id and checksum, as the sheet showed them.
+    entries: Vec<(String, String)>,
 }
 
 /// An install that failed, as its card says it.
@@ -621,12 +623,21 @@ impl Launcher {
         if source == SourceId::Sunrise {
             let broken = self.would_break(std::slice::from_ref(&id));
             if !broken.is_empty() {
+                let listed = installed::Installed::load(&self.mods.home()).entries;
+                let entries = broken
+                    .iter()
+                    .filter_map(|(id, ..)| {
+                        let e = listed.iter().find(|e| &e.project == id)?;
+                        Some((id.clone(), e.checksum.clone()))
+                    })
+                    .collect();
                 self.mods.break_ask = Some(BreakAsk {
                     source,
                     id,
                     known: known.map(Box::new),
                     shown,
                     broken,
+                    entries,
                 });
                 return;
             }
@@ -692,7 +703,7 @@ impl Launcher {
         source: SourceId,
         id: String,
         known: Option<Project>,
-        replacing: Vec<String>,
+        replacing: Vec<installed::Replace>,
     ) {
         self.mods.message = None;
         self.mods.card_error = None;
@@ -765,7 +776,8 @@ impl Launcher {
                 }
                 let before = installed::Installed::load(&home).entries;
                 let tracked = p.source == SourceId::Sunrise && p.kind == PackKind::Mod;
-                let priors = undo::capture(&home, &before, &p.id, &game, &replacing);
+                let removing: Vec<String> = replacing.iter().map(|r| r.id.clone()).collect();
+                let priors = undo::capture(&home, &before, &p.id, &game, &removing);
                 // Kept in the profile before anything is published, so that a launcher that
                 // closes from here on puts the mods back at its next start.
                 let previous = tracked.then(|| undo::begin(&home, &before, &priors));
@@ -877,7 +889,7 @@ impl Launcher {
             Then::Switch(version, channel) => {
                 self.commit_switch(&ask.instance, version, channel, allow)
             }
-            Then::Install(ask) => self.install_replacing(*ask),
+            Then::Install(ask) => self.install_replacing(*ask, &allow),
             Then::UpdateChosen(items) => self.update_allowing(items, allow),
             Then::Update => self.migrate_mods(&ask.instance, allow),
         }
@@ -1107,7 +1119,7 @@ impl Launcher {
                     then: Then::Install(Box::new(ask)),
                 });
             }
-            Ok(None) => self.install_replacing(ask),
+            Ok(None) => self.install_replacing(ask, &Default::default()),
             // Worlds that can't be looked at stop the install: it removes mods they may use.
             Err(e) => self.mods.message = Some(Err(e)),
         }
@@ -1115,13 +1127,21 @@ impl Launcher {
 
     /// Queues the install a break sheet asked for, with the mods it would break going in the
     /// same transaction.
-    fn install_replacing(&mut self, ask: BreakAsk) {
+    fn install_replacing(&mut self, ask: BreakAsk, worlds_ok: &std::collections::BTreeSet<String>) {
         let request = queue::Request::One {
             target: self.queue_target(),
             source: ask.source,
             id: ask.id,
             known: ask.known,
-            replacing: ask.broken.into_iter().map(|(id, ..)| id).collect(),
+            replacing: ask
+                .entries
+                .into_iter()
+                .map(|(id, checksum)| installed::Replace {
+                    worlds_ok: worlds_ok.contains(&id),
+                    id,
+                    checksum,
+                })
+                .collect(),
         };
         self.submit_install(request);
     }
