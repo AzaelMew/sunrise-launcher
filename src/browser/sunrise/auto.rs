@@ -181,6 +181,22 @@ pub fn switch_question(
     crate::worlds::question(home, &ids).ok().flatten()
 }
 
+/// [`removals`] for what game folder `home` has installed now, read from its list: the picker
+/// asks about a profile whatever the Mods page has or hasn't loaded.
+pub fn removals_at(
+    index: &Index,
+    home: &Path,
+    ctx: &Context,
+    native_off: &[(String, String)],
+) -> Vec<Removal> {
+    removals(
+        index,
+        &installed::Installed::load(home).entries,
+        ctx,
+        native_off,
+    )
+}
+
 /// The kinds a content mod declares one file each for (`data/<namespace>/sunrise/<kind>/<id>.json`), as notices name them.
 const DECLARED: [(&str, &str); 6] = [
     ("block", "block"),

@@ -831,9 +831,11 @@ impl Launcher {
                     .selected_instance()
                     .map(|i| i.id.clone())
                     .unwrap_or_default();
-                let titles: std::collections::HashMap<String, String> = self
-                    .mods
-                    .installed
+                let entries = self
+                    .selected_instance()
+                    .map(|i| installed::Installed::load(&i.home).entries)
+                    .unwrap_or_default();
+                let titles: std::collections::HashMap<String, String> = entries
                     .iter()
                     .map(|e| (e.project.clone(), e.title.clone()))
                     .collect();
@@ -844,7 +846,6 @@ impl Launcher {
                     log: Some(f.log),
                     checksum: String::new(),
                 });
-                let entries = self.mods.installed.clone();
                 self.mods.removal.add(&instance, &entries, items);
             }
         }
@@ -920,22 +921,25 @@ impl Launcher {
     }
 
     /// The mods switching the selected profile to the game build `tag` would remove, by the
-    /// index already read and the SDK check of the native mods (`native_off`).
+    /// index already read, the profile's own list and the SDK check of the native mods
+    /// (`native_off`). None when no index has been read: that is not "none".
     pub(crate) fn mods_removed_by(
         &self,
         tag: &str,
         native_off: &[(String, String)],
-    ) -> Vec<sunrise::auto::Removal> {
-        let (Some(index), Some(instance)) = (sunrise::known_index(), self.selected_instance())
-        else {
-            return Vec::new();
-        };
+    ) -> Option<Vec<sunrise::auto::Removal>> {
+        let (index, instance) = (sunrise::known_index()?, self.selected_instance()?);
         let ctx = sunrise::auto::Context {
             in_pack: sunrise::auto::in_pack(&instance.home),
             game: &backend::played_version_id_by(Some(tag)),
             native_allowed: self.settings.native_mods_allowed_at.is_some(),
         };
-        sunrise::auto::removals(&index, &self.mods.installed, &ctx, native_off)
+        Some(sunrise::auto::removals_at(
+            &index,
+            &instance.home,
+            &ctx,
+            native_off,
+        ))
     }
 
     /// The answer to the break sheet: Install goes ahead and removes the mods it would break as
@@ -1130,6 +1134,19 @@ impl AutoOutcome {
     fn blocks_play(&self) -> bool {
         !self.asks.is_empty() || !self.removals.is_empty()
     }
+}
+
+/// The display names of the mods `ids`, from the installed `entries`; the id when the list
+/// doesn't have it.
+pub(crate) fn titles(entries: &[installed::Entry], ids: &[String]) -> Vec<String> {
+    ids.iter()
+        .map(|id| {
+            entries
+                .iter()
+                .find(|e| &e.project == id)
+                .map_or_else(|| id.clone(), |e| e.title.clone())
+        })
+        .collect()
 }
 
 /// What goes on once the player answers Switch anyway to a world question.

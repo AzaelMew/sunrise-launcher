@@ -327,18 +327,6 @@ impl Launcher {
             if cards.iter().any(|c| c.id == id && c.members.is_some()))
     }
 
-    /// The installed mods `ids` as people read them: each one's name, and the newer version the
-    /// registry has for it when there is one. Reads what is already in memory.
-    pub(crate) fn mods_named(&self, ids: &[String]) -> Vec<(String, Option<String>)> {
-        let rows = self.rows();
-        ids.iter()
-            .map(|id| match rows.iter().find(|r| &r.id == id) {
-                Some(row) => (row.title.clone(), row.update.clone()),
-                None => (id.clone(), None),
-            })
-            .collect()
-    }
-
     /// The native mods turned on for the selected setup, as a build's lines name them: id,
     /// title, version and picture.
     pub(crate) fn mods_lines(&mut self) -> Vec<(String, String, String, Option<String>)> {
