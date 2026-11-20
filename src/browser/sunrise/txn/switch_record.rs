@@ -1,7 +1,8 @@
 //! The exact, bounded live steps of a Switch. No registry, resolver or compiler participates in
 //! the publishing phase or in recovery.
 use super::{
-    build, durable, read, unsettled, write, Active, FirstSwitch, Image, Intent, Lease, Record,
+    build, durable, read, unsettled, write, write_at, Active, FirstSwitch, Image, Intent, Lease,
+    Record,
 };
 use cap_fs_ext::MetadataExt;
 use cap_std::{ambient_authority, fs::Dir};
@@ -457,7 +458,7 @@ impl Lease {
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let mut record = read(self.home())?.ok_or_else(unsettled)?;
-        let result = publish(self.home(), &mut record, cutoff, |_| {});
+        let result = publish(self.home(), &mut record, cutoff, |_, _, _| {});
         if let Err(error) = result {
             // The on-disk marker is authority even if writing it reported an error.
             let mut disk = read(self.home())?.ok_or_else(unsettled)?;
@@ -479,11 +480,18 @@ fn operation(record: &mut Record) -> Result<&mut Journal, String> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Boundary {
+    BeforeRename,
+    Renamed,
+    Durable,
+}
+
 fn publish<G>(
     home: &Path,
     record: &mut Record,
     cutoff: impl FnOnce() -> Result<G, String>,
-    mut boundary: impl FnMut(Phase),
+    mut boundary: impl FnMut(Phase, usize, Boundary),
 ) -> Result<(), String> {
     let journal = operation(record)?;
     if journal.phase != Phase::Ready {
@@ -532,11 +540,14 @@ fn publish<G>(
         // a locally committing generation, and doesn't wait for its data-file operations.
         drop(permission.take());
         let journal = operation(record)?;
+        boundary(Phase::Publishing, step, Boundary::BeforeRename);
+        let renamed = || boundary(Phase::Publishing, step, Boundary::Renamed);
         if step == count {
-            durable::replace(
+            durable::replace_at(
                 home,
                 &pointer,
                 journal.after.as_deref().ok_or_else(unsettled)?,
+                renamed,
             )
             .map_err(|error| fail_at(&pointer, error))?;
         } else if step < directories {
@@ -544,26 +555,32 @@ fn publish<G>(
             if Identity::of(&source)? != id {
                 return Err(unsettled());
             }
-            durable::move_new_directory(&source, &target).map_err(|e| fail_at(&target, e))?;
+            durable::move_new_directory_at(&source, &target, renamed)
+                .map_err(|e| fail_at(&target, e))?;
         } else {
             let i = step - directories;
             let target = journal.file_target(home, i)?;
             let staging = journal.staging(home);
             match (&journal.files[i].before, &journal.files[i].after) {
                 (Image::Missing, Image::Missing) => {}
-                (_, Image::Missing) => {
-                    durable::restore_move(&target, &staging.join(format!("removed-{i}")))
-                        .map_err(|error| fail_at(&target, error))?
-                }
-                _ => durable::restore_move(&staging.join(format!("new-{i}")), &target)
+                (_, Image::Missing) => durable::restore_move_at(
+                    &target,
+                    &staging.join(format!("removed-{i}")),
+                    renamed,
+                )
+                .map_err(|error| fail_at(&target, error))?,
+                _ => durable::restore_move_at(&staging.join(format!("new-{i}")), &target, renamed)
                     .map_err(|error| fail_at(&target, error))?,
             }
         }
-        boundary(Phase::Publishing);
+        boundary(Phase::Publishing, step, Boundary::Durable);
     }
     operation(record)?.phase = Phase::Committed;
-    write(home, record)?;
-    boundary(Phase::Committed);
+    boundary(Phase::Committed, count, Boundary::BeforeRename);
+    write_at(home, record, || {
+        boundary(Phase::Committed, count, Boundary::Renamed)
+    })?;
+    boundary(Phase::Committed, count, Boundary::Durable);
     Ok(())
 }
 
@@ -746,7 +763,7 @@ mod tests {
             }
         };
         let package = stage.join("candidate.smod");
-        fs::write(&package, b"new mod").unwrap();
+        fs::write(&package, new_package()).unwrap();
         let source = stage.join("candidate");
         fs::write(&source, b"mod.waiting:false\n").unwrap();
         let waiting = PathBuf::from("sunrise-native-mods/keep-exact.smod");
@@ -772,24 +789,35 @@ mod tests {
             )
             .unwrap();
         let mut record = read(&home).unwrap().unwrap();
-        let mut steps = 0;
+        let (phase, step, when) = match boundary {
+            "root" => (Phase::Publishing, 0, Boundary::Durable),
+            "files" => (Phase::Publishing, 2, Boundary::Durable),
+            "before-file" => (Phase::Publishing, 2, Boundary::BeforeRename),
+            "renamed-file" => (Phase::Publishing, 2, Boundary::Renamed),
+            "pointer" => (Phase::Publishing, 3, Boundary::Durable),
+            "before-pointer" => (Phase::Publishing, 3, Boundary::BeforeRename),
+            "renamed-pointer" => (Phase::Publishing, 3, Boundary::Renamed),
+            "before-marker" => (Phase::Committed, 3, Boundary::BeforeRename),
+            "renamed-marker" => (Phase::Committed, 3, Boundary::Renamed),
+            "marker" => (Phase::Committed, 3, Boundary::Durable),
+            _ => unreachable!(),
+        };
         publish(
             &home,
             &mut record,
             || Ok(()),
-            |phase| {
-                steps += 1;
-                if (phase == Phase::Publishing
-                    && ((boundary == "root" && steps == 1)
-                        || (boundary == "files" && steps == 3)
-                        || (boundary == "pointer" && steps == 4)))
-                    || (phase == Phase::Committed && boundary == "marker")
-                {
+            |at, i, event| {
+                if (at, i, event) == (phase, step, when) {
                     wait_to_be_killed();
                 }
             },
         )
         .unwrap();
+    }
+
+    fn new_package() -> Vec<u8> {
+        use sunrise_launcher_smod::{manifest, Package};
+        Package::write_files(&format!("id='newfixture'\nname='New fixture'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n", manifest::API), &[]).unwrap()
     }
 
     #[test]
@@ -833,8 +861,8 @@ mod tests {
                 home,
                 &mut record,
                 || grant.hold_in(&data),
-                |phase| {
-                    if phase == Phase::Publishing && !late {
+                |phase, _, when| {
+                    if phase == Phase::Publishing && when == Boundary::Durable && !late {
                         late = true;
                         let (done, reply) = std::sync::mpsc::channel();
                         let data = data.clone();
@@ -891,10 +919,21 @@ mod tests {
 
     #[test]
     fn admission_after_staged_kills_restores_the_old_or_committed_exact_set() {
-        for (kind, boundary) in ["switch", "install", "first", "unbound", "pending"]
+        let ordinary = ["switch", "install", "first", "unbound", "pending"]
             .into_iter()
-            .flat_map(|kind| ["root", "files", "pointer", "marker"].map(|b| (kind, b)))
-        {
+            .flat_map(|kind| ["root", "files", "pointer", "marker"].map(|b| (kind, b)));
+        let frontiers = [
+            "before-file",
+            "renamed-file",
+            "before-pointer",
+            "renamed-pointer",
+            "before-marker",
+            "renamed-marker",
+        ]
+        .into_iter()
+        .map(|boundary| ("switch", boundary));
+        for (kind, boundary) in ordinary.chain(frontiers) {
+            let committed_marker = matches!(boundary, "renamed-marker" | "marker");
             let first_generation = matches!(kind, "first" | "unbound" | "pending");
             let retained = matches!(kind, "first" | "pending");
             let home = tempfile::tempdir().unwrap();
@@ -921,6 +960,27 @@ mod tests {
                         }
                     );
                     assert!(home.join("sunrise-mods").is_dir());
+                    assert_eq!(
+                        home.join("sunrise-mods/new.smod").is_file(),
+                        !matches!(boundary, "root" | "before-file")
+                    );
+                    if !first_generation {
+                        assert_eq!(
+                            build::read(home).unwrap().unwrap().generation(),
+                            if matches!(
+                                boundary,
+                                "pointer"
+                                    | "renamed-pointer"
+                                    | "before-marker"
+                                    | "renamed-marker"
+                                    | "marker"
+                            ) {
+                                2
+                            } else {
+                                1
+                            }
+                        );
+                    }
                 },
             );
             if boundary == "pointer" {
@@ -952,7 +1012,7 @@ mod tests {
                 fs::read(home.join("sunrise-native-mods/keep-exact.smod")).unwrap(),
                 b"retained bytes"
             );
-            if boundary == "marker" {
+            if committed_marker {
                 let committed = committed.unwrap();
                 assert_eq!(build::waiting_for_update(home)["waiting"].reason, "no fit");
                 assert!(crate::browser::mod_list::set_enabled(home, "waiting", true).is_err());
@@ -967,7 +1027,7 @@ mod tests {
                 assert_eq!(committed.generation(), if first_generation { 1 } else { 2 });
                 assert_eq!(
                     fs::read(home.join("sunrise-mods/new.smod")).unwrap(),
-                    b"new mod"
+                    new_package()
                 );
                 assert_eq!(
                     admission.acknowledge_switch([1; 16]).unwrap(),
@@ -1021,10 +1081,7 @@ mod tests {
                     b"mod.waiting:true\n"
                 );
             }
-            assert_eq!(
-                read(home).unwrap().is_none(),
-                !retained || boundary == "marker"
-            );
+            assert_eq!(read(home).unwrap().is_none(), !retained || committed_marker);
         }
     }
 }

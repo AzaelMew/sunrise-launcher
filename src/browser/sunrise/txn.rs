@@ -1031,6 +1031,10 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
 /// Writes the full record before replacing the old one. An empty one retires the live file.
 /// A failed persistence barrier is reported, even if the namespace change already happened.
 fn write(home: &Path, record: &Record) -> Result<(), String> {
+    write_at(home, record, || {})
+}
+
+fn write_at(home: &Path, record: &Record, renamed: impl FnOnce()) -> Result<(), String> {
     let file = home.join(FILE);
     let persisted = if record.staged().is_none()
         && record.attempts.is_empty()
@@ -1041,7 +1045,7 @@ fn write(home: &Path, record: &Record) -> Result<(), String> {
         durable::retire(&file)
     } else {
         let text = serde_json::to_vec(record).map_err(|e| e.to_string())?;
-        durable::replace(home, &file, &text)
+        durable::replace_at(home, &file, &text, renamed)
     };
     persisted.map_err(|e| format!("{}: {e}", file.display()))
 }

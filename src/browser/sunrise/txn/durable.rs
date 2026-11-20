@@ -4,6 +4,15 @@ use std::io::{self, Write};
 use std::path::Path;
 
 pub(crate) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()> {
+    replace_at(home, record, bytes, || {})
+}
+
+pub(super) fn replace_at(
+    home: &Path,
+    record: &Path,
+    bytes: &[u8],
+    renamed: impl FnOnce(),
+) -> io::Result<()> {
     let dir = record.parent().expect("inside the profile");
     fs::create_dir_all(dir)?;
     let mut next = tempfile::Builder::new().prefix(".txn-").tempfile_in(dir)?;
@@ -13,11 +22,14 @@ pub(crate) fn replace(home: &Path, record: &Path, bytes: &[u8]) -> io::Result<()
     {
         let staged = next.into_temp_path();
         let _ = home;
-        move_through(&staged, record)
+        move_through(&staged, record)?;
+        renamed();
+        Ok(())
     }
     #[cfg(not(windows))]
     {
         fs::rename(next.path(), record)?;
+        renamed();
         sync_directory(dir)?;
         // `mod-browser` may have just been created, and its own name must survive too.
         sync_directory(home)?;
@@ -98,6 +110,10 @@ pub(super) fn sync_restored(to: &Path, backup: &Path, missing: bool) -> io::Resu
 /// A restore is also a same-filesystem rename. Flush its data and both changed directories
 /// before the journal can advance to an older step that may touch the same target again.
 pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
+    restore_move_at(from, to, || {})
+}
+
+pub(super) fn restore_move_at(from: &Path, to: &Path, renamed: impl FnOnce()) -> io::Result<()> {
     #[cfg(windows)]
     let file = File::options().write(true).open(from)?;
     #[cfg(not(windows))]
@@ -106,11 +122,14 @@ pub(super) fn restore_move(from: &Path, to: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
         drop(file);
-        move_through(from, to)
+        move_through(from, to)?;
+        renamed();
+        Ok(())
     }
     #[cfg(not(windows))]
     {
         fs::rename(from, to)?;
+        renamed();
         for path in [from, to] {
             sync_directory(path.parent().expect("inside the profile"))?;
         }
@@ -146,9 +165,18 @@ pub(crate) fn flush_tree(path: &Path) -> io::Result<()> {
 
 /// Rename a prepared directory into an absent destination, or undo that move.
 pub(crate) fn move_new_directory(from: &Path, to: &Path) -> io::Result<()> {
+    move_new_directory_at(from, to, || {})
+}
+
+pub(super) fn move_new_directory_at(
+    from: &Path,
+    to: &Path,
+    renamed: impl FnOnce(),
+) -> io::Result<()> {
     #[cfg(not(windows))]
     sync_directory(from)?;
     crate::instances::publish_new_folder(from, to)?;
+    renamed();
     #[cfg(not(windows))]
     for path in [from, to] {
         sync_directory(path.parent().expect("inside the profile"))?;
