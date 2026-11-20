@@ -332,8 +332,8 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
     list.save(home)
 }
 
-/// At start: each file an earlier launcher replaced is dropped when its update finished, put back
-/// when it didn't.
+/// At start: what an earlier launcher left in the profile is undone (`txn::settle`, which also
+/// reconciles the files of this module once).
 pub fn recover(home: &Path) {
     let _lock = match crate::browser::lock_home(home) {
         Ok(guard) => guard,
@@ -343,9 +343,16 @@ pub fn recover(home: &Path) {
         }
     };
     // A cut-off publish is undone before anything else; installs waiting for their build stay.
+    // The first settle of a profile also reconciles the files this module left (`recover_kept`).
     if let Err(e) = super::txn::settle(home) {
         eprintln!("{e}");
     }
+}
+
+/// With the profile locked, and only from `txn`'s first use of it: each file an earlier launcher
+/// replaced is dropped when its update finished, put back when it didn't. Nothing else recovers
+/// `replaced.json`.
+pub(super) fn recover_kept(home: &Path) {
     let me = std::process::id();
     let (mut mine, earlier): (Vec<Kept>, Vec<Kept>) =
         kept_list(home).into_iter().partition(|k| k.pid == me);

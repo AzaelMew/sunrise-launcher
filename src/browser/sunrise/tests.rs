@@ -649,12 +649,14 @@ fn an_install_with_native_code_keeps_its_record_until_the_build_ends() {
     assert!(record.is_file(), "native code waits for its build");
     assert!(home.join("sunrise-mods").is_dir() || home.join("sunrise-native-mods").is_dir());
     // The build stopped for a reason outside the mods: the install is undone whole.
-    txn::undo(&home).unwrap();
+    let waiting = txn::mark_build(&home, "tag");
+    assert_eq!(waiting.len(), 1);
+    txn::undo(&home, &waiting).unwrap();
     assert!(installed::Installed::load(&home).entries.is_empty());
     assert!(!record.exists());
     // The build worked: the install is done, and a restart changes nothing.
     install();
-    txn::done(&home);
+    txn::done(&home, &txn::mark_build(&home, "tag"));
     assert!(!record.exists());
     assert!(txn::recover(&home));
     assert!(installed::Installed::load(&home)

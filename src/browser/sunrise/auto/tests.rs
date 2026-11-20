@@ -338,6 +338,7 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
         }],
     )
     .unwrap();
+    super::super::txn::restart();
     recover(&home);
     assert!(!home.join(&kept[0].copy).exists());
     assert!(kept_list(&home).is_empty());
@@ -431,6 +432,7 @@ fn backup_paths_stay_in_the_backup_folder() {
         }],
     )
     .unwrap();
+    super::super::txn::restart();
     recover(&home);
     assert_eq!(fs::read(outside).unwrap(), b"untouched");
     fs::remove_dir_all(dir).unwrap();
@@ -460,6 +462,7 @@ fn failed_restore_keeps_its_record_for_retry() {
     let target = entry.path(&home).unwrap();
     fs::remove_file(&target).unwrap();
     fs::create_dir(&target).unwrap();
+    super::super::txn::restart();
     recover(&home);
     assert_eq!(kept_list(&home).len(), 1);
     assert!(home.join(&kept.copy).is_file());
@@ -470,6 +473,7 @@ fn failed_restore_keeps_its_record_for_retry() {
     assert_eq!(kept_list(&home).len(), 1);
     assert!(home.join(&kept.copy).is_file());
     fs::remove_dir(target).unwrap();
+    super::super::txn::restart();
     recover(&home);
     assert_eq!(
         installed_ruby(&home),

@@ -9,6 +9,13 @@
 //! build) and then *done* ([`done`], the build worked) or *undone* ([`undo`]). The record is
 //! written whole beside the old one and renamed over it; if it can't be written, nothing is
 //! published. One that can't be undone stays, and the profile takes no new install until it is.
+//!
+//! The record's root names its kind ([`Kind`]): `install` now, and a version switch's attempt
+//! later, never both in one file. A record of another kind, another version or that can't be read
+//! blocks the profile and is never guessed at. [`begin`], [`done`], [`undo`] and the cleanup act
+//! only on the attempt ids they are given, so a late call from an older build can't touch a newer
+//! attempt. The files earlier development builds and the automatic updates left are reconciled
+//! once per profile, under the same lock, before anything else ([`reconcile_legacy`]).
 use crate::browser::installed::Approval;
 use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
@@ -45,13 +52,21 @@ struct Attempt {
     steps: Vec<Step>,
     /// What the player approved removing with it, and whether they agreed to what worlds lose.
     approvals: Vec<Approval>,
+    /// The build tag it waits for, once that build began.
+    build: Option<String>,
+}
+
+/// What the record's attempts are of: one kind in a file.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Kind {
+    Install,
 }
 
 #[derive(Serialize, Deserialize)]
 struct Record {
     version: u64,
-    /// The build tag the installs wait for, once it started.
-    build: Option<String>,
+    kind: Kind,
     attempts: Vec<Attempt>,
 }
 
@@ -59,7 +74,7 @@ impl Default for Record {
     fn default() -> Self {
         Self {
             version: VERSION,
-            build: None,
+            kind: Kind::Install,
             attempts: Vec::new(),
         }
     }
@@ -153,12 +168,17 @@ pub(super) fn begin(
         })
         .collect::<Result<Vec<_>, String>>()?;
     let id = relative(staged)?.display().to_string();
+    // An attempt id is only ever begun once.
+    if record.attempts.iter().any(|a| a.id == id) {
+        return Err(unsettled());
+    }
     record.attempts.push(Attempt {
         id: id.clone(),
         state: State::Pending,
         staging: relative(staged)?,
         steps,
         approvals: approvals.to_vec(),
+        build: None,
     });
     write(home, &record)?;
     Ok(id)
@@ -267,12 +287,103 @@ pub(super) fn commit(
     }
 }
 
-/// With the profile locked: puts back every attempt, newest first, each leaving the record as
-/// it is restored. One that can't be restored keeps the record (and its staging folder) and
-/// returns the error; the profile takes no new install until it is.
-pub fn undo(home: &Path) -> Result<(), String> {
+/// The profile's lock, for every change of the record: it holds across threads and across
+/// launcher processes (`lock_home`).
+fn locked(home: &Path) -> Result<crate::browser::HomeLockGuard, String> {
+    crate::browser::lock_home(home).map_err(|e| format!("{}: {e}", home.display()))
+}
+
+/// The profiles whose legacy files this process has reconciled.
+static RECONCILED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// For tests of a start: the launcher begins again knowing nothing of what it reconciled.
+#[cfg(test)]
+pub(super) fn restart() {
+    RECONCILED.lock().unwrap().clear();
+}
+
+/// Once per profile in this process, under its lock and before the record is used: the files
+/// that earlier launchers left are reconciled, and nothing recovers them on its own afterwards.
+/// The install journal of a development build is undone like an attempt cut off before it was
+/// published; the automatic updates' kept files are put back or dropped (`auto::recover_kept`);
+/// the undo record of a development build is not understood any more and blocks the profile,
+/// kept as it is.
+fn reconcile_legacy(home: &Path) -> Result<(), String> {
+    let key = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    if RECONCILED.lock().is_ok_and(|done| done.contains(&key)) {
+        return Ok(());
+    }
+    let kept = |file: &Path, why: String| {
+        trf(
+            "{file} is kept as it is and can't be used: {why}",
+            &[("file", &file.display().to_string()), ("why", &why)],
+        )
+    };
+    let undo_record = home.join("mod-browser/build-undo.json");
+    if undo_record.exists() {
+        return Err(kept(
+            &undo_record,
+            tr("a development build of the launcher made it").to_string(),
+        ));
+    }
+    let journal = home.join("mod-browser/install-journal.json");
+    if journal.exists() {
+        let steps: Vec<Step> = fs::read_to_string(&journal)
+            .map_err(|e| e.to_string())
+            .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
+            .map_err(|e| kept(&journal, e))?;
+        // Its staging folder is the one its backups are in, a folder of the profile's own.
+        let staging = steps
+            .first()
+            .and_then(|step| step.backup.parent())
+            .map(Path::to_path_buf);
+        if let Some(staging) = staging {
+            let ours = staging.components().count() == 1
+                && staging
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(".installed-mods-"));
+            if !ours {
+                return Err(kept(
+                    &journal,
+                    tr("its backups are not where the launcher keeps them").to_string(),
+                ));
+            }
+            let attempt = Attempt {
+                id: staging.display().to_string(),
+                state: State::Pending,
+                staging,
+                steps,
+                approvals: Vec::new(),
+                build: None,
+            };
+            if !restore(home, &attempt) {
+                return Err(unsettled());
+            }
+        }
+        fs::remove_file(&journal).map_err(|e| format!("{}: {e}", journal.display()))?;
+    }
+    super::auto::recover_kept(home);
+    if let Ok(mut done) = RECONCILED.lock() {
+        done.push(key);
+    }
+    Ok(())
+}
+
+/// Puts back the attempts `ids` names, newest first, each leaving the record as it is
+/// restored; the others stay as they are. An attempt that a later one (not named) was made on
+/// top of is not undone, and one that can't be restored keeps the record (and its staging
+/// folder) and returns the error: the profile takes no new install until it is.
+pub fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
+    let _lock = locked(home)?;
+    reconcile_legacy(home)?;
     let mut record = read(home)?.unwrap_or_default();
-    while let Some(attempt) = record.attempts.last() {
+    let named = |a: &Attempt| ids.contains(&a.id);
+    if let Some(first) = record.attempts.iter().position(named) {
+        if record.attempts[first..].iter().any(|a| !named(a)) {
+            return Err(unsettled());
+        }
+    }
+    while let Some(attempt) = record.attempts.last().filter(|a| named(a)) {
         if !restore(home, attempt) {
             return Err(unsettled());
         }
@@ -286,6 +397,8 @@ pub fn undo(home: &Path) -> Result<(), String> {
 /// does first, so a half-moved set of files never has another install on top of it. Published
 /// attempts wait for their build and stay.
 pub fn settle(home: &Path) -> Result<(), String> {
+    let _lock = locked(home)?;
+    reconcile_legacy(home)?;
     let mut record = read(home)?.unwrap_or_default();
     while let Some(attempt) = record.attempts.last().filter(|a| a.state == State::Pending) {
         if !restore(home, attempt) {
@@ -300,7 +413,17 @@ pub fn settle(home: &Path) -> Result<(), String> {
 /// At start: undoes whatever an earlier launcher left, published installs whose build never
 /// ended included. True when nothing is left to undo.
 pub fn recover(home: &Path) -> bool {
-    match undo(home) {
+    let result = locked(home).and_then(|_lock| {
+        reconcile_legacy(home)?;
+        let ids: Vec<String> = read(home)?
+            .unwrap_or_default()
+            .attempts
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+        undo(home, &ids)
+    });
+    match result {
         Ok(()) => true,
         Err(e) => {
             eprintln!("{e}");
@@ -309,21 +432,45 @@ pub fn recover(home: &Path) -> bool {
     }
 }
 
-/// The build for the outstanding installs began: its tag is kept with them.
-pub fn mark_build(home: &Path, tag: &str) {
-    if let Ok(Some(mut record)) = read(home) {
-        record.build = Some(tag.to_owned());
-        let _ = write(home, &record);
+/// A build for the installs that wait began: its tag is kept with each, and their ids are
+/// returned for the build's end to act on ([`done`], [`undo`]) and nothing else.
+pub fn mark_build(home: &Path, tag: &str) -> Vec<String> {
+    let Ok(_lock) = locked(home) else {
+        return Vec::new();
+    };
+    let Ok(Some(mut record)) = read(home) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for attempt in record
+        .attempts
+        .iter_mut()
+        .filter(|a| a.state == State::Published)
+    {
+        attempt.build = Some(tag.to_owned());
+        ids.push(attempt.id.clone());
+    }
+    match write(home, &record) {
+        Ok(()) => ids,
+        Err(_) => Vec::new(),
     }
 }
 
-/// The build worked: the installs are done, and their backups go.
-pub fn done(home: &Path) {
-    if let Ok(Some(record)) = read(home) {
-        for attempt in &record.attempts {
-            let _ = fs::remove_dir_all(home.join(&attempt.staging));
-        }
-        let _ = write(home, &Record::default());
+/// The build worked: the installs `ids` names are done, and their backups go. A later attempt
+/// stays.
+pub fn done(home: &Path, ids: &[String]) {
+    let Ok(_lock) = locked(home) else {
+        return;
+    };
+    if let Ok(Some(mut record)) = read(home) {
+        record.attempts.retain(|attempt| {
+            let finished = ids.contains(&attempt.id);
+            if finished {
+                let _ = fs::remove_dir_all(home.join(&attempt.staging));
+            }
+            !finished
+        });
+        let _ = write(home, &record);
     }
 }
 
@@ -451,7 +598,7 @@ mod tests {
         let id = scene.begin(&staged);
         scene.publish(&staged, 3);
         commit(scene.home(), &id, staged, true).unwrap();
-        done(scene.home());
+        done(scene.home(), &[id]);
         assert!(!kept.exists() && !scene.home().join(FILE).exists());
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
         assert!(recover(scene.home()));
@@ -512,14 +659,26 @@ mod tests {
         assert!(kept.join("old-0").is_file(), "the backups stay");
         assert!(scene.home().join(FILE).is_file(), "and so does the record");
         let next = staging(scene.home());
-        let refused = begin(scene.home(), next.path(), &[scene.dep.clone()], &[]).unwrap_err();
+        let refused = begin(
+            scene.home(),
+            next.path(),
+            std::slice::from_ref(&scene.dep),
+            &[],
+        )
+        .unwrap_err();
         assert!(refused.contains("still being undone"), "{refused}");
         assert!(settle(scene.home()).is_err());
         // Cleared: the restore works, and the profile takes installs again.
         fs::remove_dir_all(&scene.dep).unwrap();
         assert!(recover(scene.home()));
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
-        assert!(begin(scene.home(), next.path(), &[scene.dep.clone()], &[]).is_ok());
+        assert!(begin(
+            scene.home(),
+            next.path(),
+            std::slice::from_ref(&scene.dep),
+            &[]
+        )
+        .is_ok());
     }
 
     #[test]
@@ -528,7 +687,13 @@ mod tests {
         // The record's place is a folder: it can be neither read nor replaced.
         fs::create_dir_all(scene.home().join(FILE).join("x")).unwrap();
         let staged = staging(scene.home());
-        assert!(begin(scene.home(), staged.path(), &[scene.dep.clone()], &[]).is_err());
+        assert!(begin(
+            scene.home(),
+            staged.path(),
+            std::slice::from_ref(&scene.dep),
+            &[]
+        )
+        .is_err());
         scene.publish(&staged, 0);
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
     }
@@ -541,7 +706,13 @@ mod tests {
         let text = r#"{"version": 2, "attempts": []}"#;
         fs::write(&file, text).unwrap();
         let staged = staging(scene.home());
-        assert!(begin(scene.home(), staged.path(), &[scene.dep.clone()], &[]).is_err());
+        assert!(begin(
+            scene.home(),
+            staged.path(),
+            std::slice::from_ref(&scene.dep),
+            &[]
+        )
+        .is_err());
         assert!(!recover(scene.home()));
         assert!(settle(scene.home()).is_err());
         assert_eq!(fs::read_to_string(&file).unwrap(), text);
@@ -577,5 +748,119 @@ mod tests {
         assert!(message.contains("restart the launcher"), "{message}");
         assert!(kept.join("old-0").is_file());
         assert!(scene.home().join(FILE).is_file());
+    }
+
+    /// A published native install, left waiting for its build: its id.
+    fn waiting(scene: &Scene) -> String {
+        let staged = staging(scene.home());
+        let id = scene.begin(&staged);
+        scene.publish(&staged, 3);
+        commit(scene.home(), &id, staged, true).unwrap();
+        id
+    }
+
+    #[test]
+    fn a_late_done_or_undo_only_touches_the_attempts_it_names() {
+        let scene = scene();
+        let first = waiting(&scene);
+        let build = mark_build(scene.home(), "tag");
+        assert_eq!(build, std::slice::from_ref(&first));
+        // A newer install published after the build began.
+        let second = staging(scene.home());
+        let newer = scene.home().join("sunrise-mods/newer.smod");
+        let newer_id = begin(
+            scene.home(),
+            second.path(),
+            std::slice::from_ref(&newer),
+            &[],
+        )
+        .unwrap();
+        fs::write(&newer, "newer").unwrap();
+        commit(scene.home(), &newer_id, second, true).unwrap();
+        // The older build's end can't undo the older attempt from under the newer one, and
+        // a done for an id nobody has changes nothing.
+        assert!(undo(scene.home(), &build).is_err());
+        done(scene.home(), &["nothing".to_string()]);
+        assert!(outstanding(scene.home()));
+        // Its end can clear its own attempt and leave the newer one.
+        done(scene.home(), &build);
+        assert!(outstanding(scene.home()));
+        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
+        assert!(newer.is_file());
+        undo(scene.home(), &[newer_id]).unwrap();
+        assert!(!newer.exists() && !outstanding(scene.home()));
+    }
+
+    #[test]
+    fn an_attempt_is_begun_once_and_a_record_of_another_kind_blocks_the_profile() {
+        let scene = scene();
+        let staged = staging(scene.home());
+        let id = scene.begin(&staged);
+        assert!(begin(
+            scene.home(),
+            staged.path(),
+            std::slice::from_ref(&scene.dep),
+            &[]
+        )
+        .is_err());
+        abandon(scene.home(), &id).unwrap();
+        // A switch's record (a later kind) or a newer layout is neither guessed at nor removed.
+        let file = scene.home().join(FILE);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        for text in [
+            r#"{"version":1,"kind":"switch","attempts":[]}"#,
+            r#"{"version":2,"kind":"install","attempts":[]}"#,
+            r#"{"version":1,"attempts":[]}"#,
+        ] {
+            fs::write(&file, text).unwrap();
+            let staged = staging(scene.home());
+            assert!(begin(
+                scene.home(),
+                staged.path(),
+                std::slice::from_ref(&scene.dep),
+                &[]
+            )
+            .is_err());
+            assert!(!recover(scene.home()));
+            assert!(outstanding(scene.home()));
+            assert!(mark_build(scene.home(), "tag").is_empty());
+            assert_eq!(fs::read_to_string(&file).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn the_files_earlier_builds_left_are_reconciled_once_under_the_same_gate() {
+        let scene = scene();
+        // An install journal of a development build, cut off after replacing the dependency.
+        let staged = staging(scene.home());
+        let name = staged.path().file_name().unwrap().to_owned();
+        let _ = staged.keep();
+        let backup = Path::new(&name).join("old-0");
+        fs::rename(&scene.dep, scene.home().join(&backup)).unwrap();
+        fs::write(&scene.dep, "flywheel 0.4").unwrap();
+        let journal = scene.home().join("mod-browser/install-journal.json");
+        fs::create_dir_all(journal.parent().unwrap()).unwrap();
+        let steps = serde_json::json!([{ "to": "sunrise-mods/flywheel.smod", "existed": true, "backup": backup }]);
+        fs::write(&journal, steps.to_string()).unwrap();
+        assert!(recover(scene.home()));
+        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
+        assert!(!journal.exists() && !scene.home().join(&name).exists());
+        // A journal that points outside the launcher's staging folders is kept and blocks.
+        let other = tempfile::tempdir().unwrap();
+        let blocked = other.path();
+        fs::create_dir_all(blocked.join("mod-browser")).unwrap();
+        let text = r#"[{"to":"a","existed":true,"backup":"somewhere/old-0"}]"#;
+        fs::write(blocked.join("mod-browser/install-journal.json"), text).unwrap();
+        assert!(settle(blocked).is_err());
+        assert_eq!(
+            fs::read_to_string(blocked.join("mod-browser/install-journal.json")).unwrap(),
+            text
+        );
+        // An undo record of a development build is not understood: kept, blocking.
+        let third = tempfile::tempdir().unwrap();
+        fs::create_dir_all(third.path().join("mod-browser")).unwrap();
+        fs::write(third.path().join("mod-browser/build-undo.json"), "{}").unwrap();
+        assert!(settle(third.path()).is_err());
+        assert!(third.path().join("mod-browser/build-undo.json").is_file());
     }
 }
