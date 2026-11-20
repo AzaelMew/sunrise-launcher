@@ -4,12 +4,22 @@
 //! an optional `icon` (a PNG in base64), `acceptTextures`, `acceptedCodeOfConduct` and `hidden`.
 //! The launcher only adds and removes entries: every other field of every entry is written back
 //! as it was read.
+use crate::i18n::tr;
+use base64::alphabet::STANDARD as ALPHABET;
+use base64::engine::general_purpose::{GeneralPurpose, GeneralPurposeConfig};
+use base64::engine::DecodePaddingMode;
 use base64::Engine;
 use std::fs;
+use std::net::Ipv6Addr;
 use std::path::Path;
 use sunrise_launcher_nbt::{self as nbt, Compound, JavaString, Limits, NamedTag, Tag};
 
 const FILE: &str = "servers.dat";
+/// Base64 as Java's decoder reads it: the trailing `=` may be there or not.
+const ICON_BASE64: GeneralPurpose = GeneralPurpose::new(
+    &ALPHABET,
+    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Server {
     pub name: String,
@@ -95,7 +105,7 @@ impl List {
                 ip: text(e, "ip"),
                 icon: Some(text(e, "icon"))
                     .filter(|s| !s.is_empty())
-                    .and_then(|s| base64::engine::general_purpose::STANDARD.decode(s).ok()),
+                    .and_then(|s| ICON_BASE64.decode(s).ok()),
             })
             .collect()
     }
@@ -105,6 +115,9 @@ impl List {
         let (name, ip) = (name.trim(), ip.trim());
         if ip.is_empty() {
             return Err("A server needs an address.".into());
+        }
+        if !valid_address(ip) {
+            return Err(tr("That is not a server address: use a name or IP address, then an optional port from 0 to 65535.").into());
         }
         let name = if name.is_empty() {
             "Minecraft Server"
@@ -137,11 +150,21 @@ impl List {
 
     /// Writes the list as the game does: a new file first, the old one kept as `servers.dat_old`.
     pub fn save(&self, home: &Path) -> Result<(), String> {
+        // The game writes the shown servers first, then the hidden ones.
+        let (shown, hidden_entries): (Vec<&Compound>, Vec<&Compound>) =
+            self.entries.iter().partition(|e| !hidden(e));
         let root = NamedTag {
             name: "".into(),
             tag: Tag::compound([(
                 "servers",
-                Tag::List(self.entries.iter().cloned().map(Tag::Compound).collect()),
+                Tag::List(
+                    shown
+                        .into_iter()
+                        .chain(hidden_entries)
+                        .cloned()
+                        .map(Tag::Compound)
+                        .collect(),
+                ),
             )]),
         };
         let bytes = nbt::write_named(&root, Limits::default()).map_err(|e| e.to_string())?;
@@ -155,6 +178,33 @@ impl List {
             .and_then(|()| fs::rename(&new, &current));
         written.map_err(|e| format!("Could not save the server list: {e}"))
     }
+}
+
+/// Whether `address` is a host with an optional `:port`, as the game's Add Server screen takes it:
+/// a name or IPv4 address, or an IPv6 address (in `[...]` when a port follows), and a port of
+/// digits from 0 to 65535 (none is fine).
+fn valid_address(address: &str) -> bool {
+    let (host, port, bracketed) = match address.strip_prefix('[') {
+        Some(rest) => match rest.split_once(']') {
+            Some((host, "")) => (host, "", true),
+            Some((host, after)) => match after.strip_prefix(':') {
+                Some(port) => (host, port, true),
+                None => return false,
+            },
+            None => return false,
+        },
+        None => match address.split_once(':') {
+            Some((host, port)) if !port.contains(':') => (host, port, false),
+            _ => (address, "", false),
+        },
+    };
+    let host_ok = match bracketed || host.contains(':') {
+        true => host.parse::<Ipv6Addr>().is_ok(),
+        false => !host.is_empty() && !host.contains(|c: char| c.is_whitespace() || c.is_control()),
+    };
+    let port_ok = port.is_empty()
+        || (port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok());
+    host_ok && port_ok
 }
 
 /// The shown server a command names: its position from 1, its name (any case) or its address.

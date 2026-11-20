@@ -141,3 +141,105 @@ fn a_server_without_a_name_gets_the_games_default() {
         "Minecraft Server"
     );
 }
+
+#[test]
+fn an_address_the_game_would_refuse_is_not_saved() {
+    let mut list = List {
+        entries: Vec::new(),
+    };
+    for bad in [
+        "example.com:notaport",
+        "example.com:65536",
+        "example.com:-1",
+        "example.com:+80",
+        "[::1]junk",
+        "[::1",
+        "[nothost]:25565",
+        "::zz",
+        ":25565",
+        "my server.net",
+    ] {
+        assert!(list.add("x", bad).is_err(), "{bad} should be refused");
+    }
+    assert!(list.servers().is_empty());
+    for good in [
+        "example.com",
+        "example.com:25565",
+        "example.com:0",
+        "example.com:65535",
+        "192.168.0.2:1",
+        "[::1]",
+        "[::1]:25570",
+        "fe80::1",
+    ] {
+        assert!(list.add("x", good).is_ok(), "{good} should be saved");
+    }
+    assert_eq!(list.servers().len(), 8);
+}
+
+#[test]
+fn a_picture_saved_without_its_padding_still_decodes() {
+    let home = scratch("icon-padding");
+    // Four bytes encode to "iVBORw==" with padding, "iVBORw" without it.
+    let png = [0x89, b'P', b'N', b'G'];
+    for icon in ["iVBORw==", "iVBORw"] {
+        let root = NamedTag {
+            name: "".into(),
+            tag: Tag::compound([(
+                "servers",
+                Tag::List(vec![Tag::compound([
+                    ("name", s("A")),
+                    ("ip", s("a.example")),
+                    ("icon", s(icon)),
+                ])]),
+            )]),
+        };
+        fs::write(
+            home.join(FILE),
+            nbt::write_named(&root, Limits::default()).unwrap(),
+        )
+        .unwrap();
+        let servers = List::load(&home).servers();
+        assert_eq!(servers[0].icon.as_deref(), Some(&png[..]), "{icon}");
+    }
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn saving_writes_the_shown_servers_before_the_hidden_ones() {
+    let home = scratch("save-order");
+    let entry_of = |name: &str, hidden: i8| {
+        Tag::compound([
+            ("name", s(name)),
+            ("ip", s("x.example")),
+            ("hidden", Tag::Byte(hidden)),
+        ])
+    };
+    let root = NamedTag {
+        name: "".into(),
+        tag: Tag::compound([(
+            "servers",
+            Tag::List(vec![
+                entry_of("direct-1", 1),
+                entry_of("one", 0),
+                entry_of("direct-2", 1),
+                entry_of("two", 0),
+            ]),
+        )]),
+    };
+    fs::write(
+        home.join(FILE),
+        nbt::write_named(&root, Limits::default()).unwrap(),
+    )
+    .unwrap();
+    List::load(&home).save(&home).unwrap();
+    let names: Vec<String> = entries(&home)
+        .iter()
+        .map(|e| match e.get("name") {
+            Some(Tag::String(n)) => n.to_string_lossy(),
+            other => panic!("no name: {other:?}"),
+        })
+        .collect();
+    assert_eq!(names, ["one", "two", "direct-1", "direct-2"]);
+    fs::remove_dir_all(home).unwrap();
+}
