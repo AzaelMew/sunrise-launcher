@@ -615,7 +615,7 @@ pub fn kind_of(file: &Path) -> Result<Kind, String> {
         // The game loads a resource pack file only when its name ends in `.zip`.
         if !name.ends_with(".zip") {
             return Err(trf(
-                "{name} is not a pack: packs are .zip or .sshader files.",
+                "{name} must be named with a lowercase .zip ending for the game to load it",
                 &[("name", &name)],
             ));
         }
@@ -743,8 +743,15 @@ pub fn add_local(home: &Path, kind: Kind, file: &Path) -> Result<Pack, String> {
             )
         })?;
         // What is checked is the copy that gets put in place.
-        let found = kind_of(temp.path())
-            .map_err(|e| e.replace(&temp.path().display().to_string(), &name.to_string_lossy()))?;
+        let found = kind_of(temp.path()).map_err(|e| {
+            let shown = name.to_string_lossy();
+            let temp_name = temp.path().file_name().map(|n| n.to_string_lossy());
+            let e = e.replace(&temp.path().display().to_string(), &shown);
+            match temp_name {
+                Some(t) => e.replace(&*t, &shown),
+                None => e,
+            }
+        })?;
         if found != kind {
             return Err(trf(
                 "{file} is a {found} pack, not a {kind} pack.",
