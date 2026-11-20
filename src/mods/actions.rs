@@ -159,20 +159,30 @@ impl Launcher {
             if let Some(Err(e)) = self.mods.message.take() {
                 self.ui.mods.notice = Some(Err(e));
             }
-        } else if let Some(snapshot) = &mut self.ui.mods.snapshot {
-            let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
-                self.ui.mods.notice =
-                    Some(Err(tr("Wait for the current operation to finish.").into()));
-                return;
-            };
-            self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, &row.id, true) {
-                Ok(()) => {
-                    snapshot.key.clear();
-                    None
-                }
-                Err(e) => Some(Err(e)),
-            };
+        } else if row.native() && self.settings.native_mods_allowed_at.is_none() {
+            // A hand-copied native mod asks the same one question a registry one does.
+            self.pending_consent = Some(PendingConsent::TurnOn(row.id.clone(), row.title.clone()));
+        } else {
+            self.turn_on_local(&row.id);
         }
+    }
+
+    /// Turns on a mod that isn't from the registry.
+    pub(crate) fn turn_on_local(&mut self, id: &str) {
+        let Some(snapshot) = &mut self.ui.mods.snapshot else {
+            return;
+        };
+        let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
+            self.ui.mods.notice = Some(Err(tr("Wait for the current operation to finish.").into()));
+            return;
+        };
+        self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, id, true) {
+            Ok(()) => {
+                snapshot.key.clear();
+                None
+            }
+            Err(e) => Some(Err(e)),
+        };
     }
 
     /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods

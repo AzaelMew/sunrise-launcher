@@ -15,6 +15,9 @@ pub(super) enum PendingConsent {
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
     Toggle(Entry),
+    /// A mod copied into the folder by hand, to be turned on (its id and title): nothing is
+    /// turned on until the choice is made.
+    TurnOn(String, String),
     /// The project to install by id, the project when the page had it, and the name the page or
     /// card that asked was showing for it.
     Install(SourceId, String, Option<Project>, Option<String>),
@@ -41,6 +44,7 @@ impl PendingConsent {
                 count => crate::i18n::trf("{count} mods", &[("count", &count.to_string())]),
             },
             Self::Toggle(entry) => entry.title.clone(),
+            Self::TurnOn(_, title) => title.clone(),
             // The mod as the page that asked names it ("JEI"), not its id ("jei").
             Self::Install(_, id, project, shown) => shown
                 .clone()
@@ -132,6 +136,7 @@ pub(super) fn resolve(
                 }
             }
             PendingConsent::ReadingBuild(_)
+            | PendingConsent::TurnOn(..)
             | PendingConsent::Install(..)
             | PendingConsent::Collection(..)
             | PendingConsent::Github(..) => {}
@@ -339,5 +344,23 @@ mod tests {
                 "the action cannot execute twice"
             );
         }
+    }
+
+    #[test]
+    fn declining_the_question_for_a_hand_copied_mod_turns_nothing_on() {
+        let home = tempfile::tempdir().unwrap();
+        let mut settings = sunrise_launcher::backend::Settings::default();
+        let mut pending = Some(PendingConsent::TurnOn("mine".into(), "Mine".into()));
+        assert_eq!(pending.as_ref().unwrap().name(), "Mine");
+        assert!(
+            resolve(&mut pending, false, true, &mut settings, home.path())
+                .unwrap()
+                .is_none()
+        );
+        assert!(!sunrise_launcher::browser::mod_list::is_enabled(
+            home.path(),
+            "mine"
+        ));
+        assert!(settings.native_mods_allowed_at.is_none());
     }
 }
