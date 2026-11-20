@@ -39,6 +39,16 @@ fn build_cost(
     }
 }
 
+/// An install that would break installed mods, waiting for the player's answer.
+pub(crate) struct BreakAsk {
+    source: SourceId,
+    pub(crate) id: String,
+    known: Option<Box<Project>>,
+    pub(crate) shown: Option<String>,
+    /// The mods it would break: id, title and what each needs.
+    pub(crate) broken: Vec<(String, String, String)>,
+}
+
 /// An install that failed, as its card says it.
 pub(crate) struct CardError {
     pub(crate) id: String,
@@ -124,6 +134,10 @@ pub(super) struct Mods {
     pub(crate) also: HashMap<String, Vec<String>>,
     /// Why the last install failed, on its card: one plain line, the whole text behind Details.
     pub(crate) card_error: Option<CardError>,
+    /// An install that would break installed mods, asked before anything is downloaded.
+    pub(crate) break_ask: Option<BreakAsk>,
+    /// The player answered the break sheet: the install it asked about goes ahead.
+    break_cleared: bool,
     /// The mods that go once the player continues (`removal`).
     pub(crate) removal: Option<removal::Removal>,
     /// The native mods the running build was started to take up.
@@ -246,6 +260,8 @@ impl Mods {
             building: Vec::new(),
             world_ask: None,
             removal: None,
+            break_ask: None,
+            break_cleared: false,
             also: HashMap::new(),
             card_error: None,
             failed: None,
@@ -469,6 +485,21 @@ impl Launcher {
                 .set_offset(gpui::point(px(0.), px(0.)));
             return;
         }
+        // An install the plan refuses because of what installed mods need would break them:
+        // one sheet asks first.
+        if source == SourceId::Sunrise && !std::mem::take(&mut self.mods.break_cleared) {
+            let broken = self.would_break(std::slice::from_ref(&id));
+            if !broken.is_empty() {
+                self.mods.break_ask = Some(BreakAsk {
+                    source,
+                    id,
+                    known: known.map(Box::new),
+                    shown,
+                    broken,
+                });
+                return;
+            }
+        }
         // Behind an install or a build, and behind what already waits: one at a time, in order.
         if self.mods.busy.is_some() || self.native_step.is_some() || self.mods.queue.is_waiting() {
             self.mods.queue.push(queue::Request::One {
@@ -691,6 +722,46 @@ impl Launcher {
         }
         self.mods.reload_installed();
         self.mods.installed_list.reset();
+    }
+
+    /// The installed mods that installing the registry mods `ids` would break, by the index
+    /// already read.
+    fn would_break(&self, ids: &[String]) -> Vec<(String, String, String)> {
+        let entries = installed::Installed::load(&self.mods.home()).entries;
+        let held = sunrise::held_mods(&entries);
+        let Some(index) = sunrise::known_index() else {
+            return Vec::new();
+        };
+        sunrise::would_break(&index, ids, &held, &self.mods_game())
+            .into_iter()
+            .map(|b| {
+                let title = entries
+                    .iter()
+                    .find(|e| e.project == b.id)
+                    .map_or_else(|| b.id.clone(), |e| e.title.clone());
+                (b.id, title, b.needs)
+            })
+            .collect()
+    }
+
+    /// The answer to the break sheet: Install removes the mods it would break, then installs;
+    /// Don't install leaves everything as it is.
+    pub(crate) fn answer_break(&mut self, install: bool) {
+        let Some(ask) = self.mods.break_ask.take() else {
+            return;
+        };
+        if !install {
+            return;
+        }
+        let home = self.mods.home();
+        for (id, ..) in &ask.broken {
+            if let Err(e) = installed::remove(&home, id) {
+                self.mods.message = Some(Err(e));
+                return;
+            }
+        }
+        self.mods.break_cleared = true;
+        self.mods_install(ask.source, ask.id, ask.known.map(|p| *p), ask.shown);
     }
 
     /// Whether installing the registry mods `ids` would put native code in, by the index

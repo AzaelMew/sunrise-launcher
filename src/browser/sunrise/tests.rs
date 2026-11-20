@@ -636,6 +636,68 @@ fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_n
 }
 
 #[test]
+fn an_install_the_plan_refuses_for_what_an_installed_mod_needs_names_that_mod() {
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, number: &str, needs: Option<(&str, &str)>| {
+        let mut version = base.versions[0].clone();
+        version.version = number.into();
+        version.file.sha256 = index::sha256(format!("{id}{number}").as_bytes());
+        version.requires.clear();
+        version.dependencies = needs.map(|(dep, range)| {
+            vec![index::Dependency {
+                id: dep.into(),
+                version: range.into(),
+                optional: false,
+                side: None,
+            }]
+        });
+        version
+    };
+    for (id, versions) in [
+        (
+            "creatures",
+            vec![
+                make("creatures", "2.0.0", None),
+                make("creatures", "1.0.0", None),
+            ],
+        ),
+        (
+            "lamps",
+            vec![make("lamps", "1.0.0", Some(("creatures", "^1")))],
+        ),
+        (
+            "fireflies",
+            vec![make("fireflies", "1.0.0", Some(("creatures", "^2")))],
+        ),
+    ] {
+        index.projects.push(index::Project {
+            id: id.into(),
+            name: id.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        });
+    }
+    let held = |id: &str, version: &str| index::resolve::InstalledMod {
+        id: id.into(),
+        version: version.into(),
+        sha256: Some(index::sha256(format!("{id}{version}").as_bytes())),
+    };
+    let held = [held("creatures", "1.0.0"), held("lamps", "1.0.0")];
+    let broken = would_break(&index, &["fireflies".to_string()], &held, GAME);
+    assert_eq!(
+        broken,
+        [Broken {
+            id: "lamps".into(),
+            needs: "creatures ^1".into()
+        }]
+    );
+    // Installed alone, it breaks nothing.
+    assert!(would_break(&index, &["lamps".to_string()], &held, GAME).is_empty());
+}
+
+#[test]
 fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file() {
     for gone in [false, true] {
         let home = scratch(if gone { "flip-gone" } else { "flip-unreadable" });

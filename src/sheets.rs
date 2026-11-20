@@ -296,8 +296,11 @@ impl Launcher {
         let open = self.ui.sheets.registry.is_some()
             || self.pending_consent.is_some()
             || self.mods.world_ask.is_some()
+            || self.mods.break_ask.is_some()
             || self.ui.sheet.is_some();
-        if self.mods.world_ask.is_some() {
+        if self.mods.break_ask.is_some() {
+            self.answer_break(false);
+        } else if self.mods.world_ask.is_some() {
             self.answer_world_question(sunrise_launcher::worlds::Answer::Stay);
         } else if open {
             self.close_sheet();
@@ -457,6 +460,9 @@ impl Launcher {
         if self.mods.world_ask.is_some() {
             return Some(self.world_question_sheet(cx));
         }
+        if self.mods.break_ask.is_some() {
+            return Some(self.break_sheet(cx));
+        }
         if self.mods.removal.is_some() {
             return Some(self.removal_sheet(cx));
         }
@@ -482,6 +488,81 @@ impl Launcher {
             }
             None => None,
         }
+    }
+
+    // ---- An install that would break mods ----
+
+    /// Installing this mod would break installed mods: which, and what each needs. Not
+    /// installing is the default and what closing does.
+    fn break_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let (name, broken) = {
+            let ask = self
+                .mods
+                .break_ask
+                .as_ref()
+                .expect("shown only while asked");
+            (
+                ask.shown.clone().unwrap_or_else(|| ask.id.clone()),
+                ask.broken.clone(),
+            )
+        };
+        let heading = match broken.len() {
+            1 => trf(
+                "Installing {name} would break 1 of your mods",
+                &[("name", &name)],
+            ),
+            n => trf(
+                "Installing {name} would break {count} of your mods",
+                &[("name", &name), ("count", &n.to_string())],
+            ),
+        };
+        let go = match broken.len() {
+            1 => tr("Install and remove 1 mod").to_string(),
+            n => trf(
+                "Install and remove {count} mods",
+                &[("count", &n.to_string())],
+            ),
+        };
+        let body =
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(title(heading))
+                .children(broken.into_iter().map(
+                    |(_, mod_name, needs): (String, String, String)| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(mod_name))
+                            .child(muted(trf(
+                                "Works only with {needs}. It would be removed.",
+                                &[("needs", &needs)],
+                            )))
+                    },
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .justify_end()
+                        .gap(px(10.))
+                        .child(button("alt-break-go", go).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.answer_break(true);
+                                cx.notify();
+                            },
+                        )))
+                        .child(
+                            crate::frame::primary("alt-break-stay", tr("Don't install")).on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    this.answer_break(false);
+                                    cx.notify();
+                                }),
+                            ),
+                        ),
+                );
+        frame("alt-break", 580., body, cx)
     }
 
     // ---- Removal ----

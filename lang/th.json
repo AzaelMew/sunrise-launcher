@@ -1474,5 +1474,11 @@
   "Not available for your version (made for {game})": "Not available for your version (made for {game})",
   "Native mods run as part of the game": "Native mods run as part of the game",
   "They can do anything a program on your computer can.": "They can do anything a program on your computer can.",
-  " The first one also downloads Sunrise's build tools (at least {size}).": " The first one also downloads Sunrise's build tools (at least {size})."
+  " The first one also downloads Sunrise's build tools (at least {size}).": " The first one also downloads Sunrise's build tools (at least {size}).",
+  "Installing {name} would break 1 of your mods": "Installing {name} would break 1 of your mods",
+  "Installing {name} would break {count} of your mods": "Installing {name} would break {count} of your mods",
+  "Install and remove 1 mod": "Install and remove 1 mod",
+  "Install and remove {count} mods": "Install and remove {count} mods",
+  "Works only with {needs}. It would be removed.": "Works only with {needs}. It would be removed.",
+  "Don't install": "Don't install"
 }
