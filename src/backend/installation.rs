@@ -49,6 +49,7 @@ pub(crate) fn install_as(
         )
         .map_err(|e| e.to_string())?;
     }
+    version_storage::mark_downloaded(&top)?;
     let target = version_dir(tag);
     let _ = fs::remove_dir_all(&target);
     fs::rename(&top, &target).map_err(|e| e.to_string())?;

@@ -550,7 +550,16 @@ pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> 
     Ok(homes)
 }
 
+/// Storage checks profile state while holding the publication lock, without editing old metadata.
+pub(crate) fn list_for_storage() -> Vec<Instance> {
+    scan_profiles(&backend::game_home(), &backend::data_dir(), false)
+}
+
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
+    scan_profiles(game_home, data, true)
+}
+
+fn scan_profiles(game_home: &Path, data: &Path, prune_stale: bool) -> Vec<Instance> {
     let mut store = Store::load(data);
     let mut found = vec![(
         DEFAULT.to_string(),
@@ -571,7 +580,7 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     // the metadata lock, so an old listing cannot drop a concurrently created profile's record.
     let root = game_home.join(OWN);
     let missing_from_list = |id: &String| id != DEFAULT && !id.contains(':') && !own.contains(id);
-    if root.is_dir() && store.instances.keys().any(missing_from_list) {
+    if prune_stale && root.is_dir() && store.instances.keys().any(missing_from_list) {
         match Store::mutate(data, |live| {
             live.instances.retain(|id, _| {
                 !missing_from_list(id) || crate::browser::safe_name(id) != Some(id.as_str())

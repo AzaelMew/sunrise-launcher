@@ -1840,7 +1840,7 @@ mod tests {
         assert_eq!(owner.active_build().unwrap().unwrap().generation, 1);
         drop(owner);
         assert!(matches!(
-            crate::cache_cleanup::delete_version(&base, true),
+            crate::cache_cleanup::delete_version(&base, || Ok(())),
             Err(crate::storage::Error::IncompleteUnit)
         ));
         assert!(base.join(crate::backend::CLIENT).is_file());

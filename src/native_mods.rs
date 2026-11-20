@@ -554,9 +554,13 @@ fn about_in(dir: &Path) -> Option<About> {
 /// The newest installed release or Nightly in `installed` (newest first).
 /// Installed native clients retain their base's prepared data even when not selected.
 pub(crate) fn resource_dependents(tag: &str) -> bool {
+    resource_dependent(tag).is_some()
+}
+
+pub(crate) fn resource_dependent(tag: &str) -> Option<String> {
     backend::installed()
-        .iter()
-        .any(|version| about(version).is_some_and(|about| about.base == tag))
+        .into_iter()
+        .find(|version| about(version).is_some_and(|about| about.base == tag))
 }
 
 /// The newest installed release or Nightly in the launcher's newest-first build list.

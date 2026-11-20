@@ -6,7 +6,7 @@
 //! research-lock.json, preparer sources and prepared resources) with the picked program in
 //! place of that version's own, as a native build is (`native_mods::install`).
 //!
-//! Nothing signed it: the Versions page says so. Its tag (`imported-<date>-<sha>`) is no
+//! Nothing signed it: Storage labels it as imported. Its tag (`imported-<date>-<sha>`) is no
 //! release's, so no update replaces it, prunes it or moves the selection off it.
 
 use crate::backend::{self, CLIENT};
@@ -91,10 +91,24 @@ fn base_for(
     }
 }
 
-/// Installs the game program at `path` (or the one inside an archive there) as a new version on
-/// the game files of `requested` (default: [`base_for`]), prepared from another version where it
-/// can be, and selects it. Importing the same program again selects the version it made before.
+/// Whether the picker has a usable installed base, using the same selection as import.
+pub fn can_import(installed: &[String], selected: Option<&str>) -> bool {
+    base_for(installed, None, selected).is_ok()
+}
+
+/// The CLI imports the build and makes it the launcher-wide selection.
 pub fn import(path: &Path, requested: Option<&str>) -> Result<String, String> {
+    let tag = install(path, requested)?;
+    // Read again: the window may have saved other settings during the copy.
+    let mut settings = backend::Settings::load();
+    settings.selected = Some(tag.clone());
+    settings.save()?;
+    Ok(tag)
+}
+
+/// Installs a program (or the one inside an archive) as a new version on the game files of
+/// `requested` (default: [`base_for`]). In the window a profile chooses it like any other build.
+pub fn install(path: &Path, requested: Option<&str>) -> Result<String, String> {
     let file = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
@@ -115,10 +129,6 @@ pub fn import(path: &Path, requested: Option<&str>) -> Result<String, String> {
         ));
     }
     backend::reuse_prepared_for(&tag);
-    // Read again: the window may have saved other settings during the copy.
-    let mut settings = backend::Settings::load();
-    settings.selected = Some(tag.clone());
-    settings.save()?;
     Ok(tag)
 }
 
