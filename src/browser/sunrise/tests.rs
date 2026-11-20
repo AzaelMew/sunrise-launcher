@@ -1069,6 +1069,77 @@ fn duplicate_or_unplaceable_ownership_stops_a_registry_install_before_download()
 }
 
 #[test]
+fn installers_never_move_an_aliased_old_archive_under_a_different_name() {
+    for (batch, late_claim) in [(false, false), (true, false), (false, true), (true, true)] {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path();
+        let index = sample();
+        let mut old = put(&index, true, home).unwrap().remove(0);
+        let target = home.join(&old.file);
+        old.file = "sunrise-mods/old_coords.smod".into();
+        old.version = "0.0.1".into();
+        let old_path = home.join(&old.file);
+        fs::rename(&target, &old_path).unwrap();
+        fs::write(&old_path, b"unreadable archive").unwrap();
+        let manifest = home.join(installed::MANIFEST);
+        let contested = serde_json::to_vec(&serde_json::json!({"entries": [old, {
+            "source": "future-source", "project": "other", "title": "Other owner",
+            "file": "SUNRISE-MODS/OLD_COORDS.smod"
+        }]}))
+        .unwrap();
+        if late_claim {
+            fs::write(
+                &manifest,
+                serde_json::to_vec(&serde_json::json!({"entries": [old]})).unwrap(),
+            )
+            .unwrap();
+        } else {
+            fs::write(&manifest, &contested).unwrap();
+        }
+        let during_download = |_: &str, _: f32| {
+            assert!(
+                late_claim,
+                "already-contested ownership must refuse before downloading"
+            );
+            fs::write(&manifest, &contested).unwrap();
+        };
+        let refused = if batch {
+            install_from(
+                &index,
+                true,
+                &hud(&index),
+                home,
+                GAME,
+                false,
+                true,
+                &during_download,
+            )
+            .unwrap_err()
+        } else {
+            let p = index.project("coords_hud").unwrap();
+            install_version_guarded(
+                &index,
+                true,
+                p,
+                &p.versions[0],
+                home,
+                &|_| Ok(()),
+                &during_download,
+            )
+            .unwrap_err()
+        };
+        assert!(
+            refused.contains("sunrise-mods/old_coords.smod belongs to Other owner"),
+            "batch={batch} late_claim={late_claim}: {refused}"
+        );
+        assert_eq!(fs::read(manifest).unwrap(), contested);
+        assert_eq!(fs::read(old_path).unwrap(), b"unreadable archive");
+        assert!(!target.exists());
+        assert!(!home.join("mod-browser/unreadable").exists());
+    }
+}
+
+#[test]
 fn registry_install_rechecks_ownership_before_moving_the_download() {
     let home = tempfile::tempdir().unwrap();
     let home = home.path();

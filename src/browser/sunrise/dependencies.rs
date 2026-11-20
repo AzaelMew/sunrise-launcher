@@ -61,11 +61,6 @@ pub(super) fn install(
     plan.add(project, version, 0)?;
 
     let claims = index::browser_state::Installed::read(home)?;
-    for (entry, staged) in &plan.selected {
-        if staged.is_some() {
-            super::check_claim(&claims, home, &entry.project, &entry.file)?;
-        }
-    }
     let mut changes = Vec::new();
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
@@ -77,7 +72,15 @@ pub(super) fn install(
     };
     for (entry, file) in plan.selected {
         if let Some(file) = file {
-            if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
+            let old = plan.installed.find(SourceId::Sunrise, &entry.project);
+            super::check_replacement_claims(
+                &claims,
+                home,
+                &entry.project,
+                &entry.file,
+                old.map(|old| old.file.as_str()),
+            )?;
+            if let Some(old) = old {
                 // A file that is gone or no longer parses is replaced wherever the new one goes
                 // (a native mod and a plain one live in different places); a good one is not.
                 let old_path = old.path(home);

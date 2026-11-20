@@ -1149,8 +1149,19 @@ fn install_version_guarded(
     guard(&path).inspect_err(|_| {
         let _ = fs::remove_file(&path);
     })?;
+    let previous = list
+        .find(SourceId::Sunrise, &p.id)
+        .filter(|old| old.file != entry.file);
     index::browser_state::Installed::read(home)
-        .and_then(|claims| check_claim(&claims, home, &p.id, &entry.file))
+        .and_then(|claims| {
+            check_replacement_claims(
+                &claims,
+                home,
+                &p.id,
+                &entry.file,
+                previous.map(|old| old.file.as_str()),
+            )
+        })
         .inspect_err(|_| {
             let _ = fs::remove_file(&path);
         })?;
@@ -1174,11 +1185,7 @@ fn install_version_guarded(
         }
         return Err(format!("{}: {e}", target.display()));
     }
-    if let Some(old) = list
-        .find(SourceId::Sunrise, &p.id)
-        .filter(|old| old.file != entry.file)
-        .and_then(|old| old.path(home))
-    {
+    if let Some(old) = previous.and_then(|old| old.path(home)) {
         let _ = fs::remove_file(old);
     }
     list.entries
@@ -1214,16 +1221,24 @@ type Prepared = (
     Option<PathBuf>,
 );
 
-fn check_claim(
+fn check_replacement_claims(
     claims: &index::browser_state::Installed,
     home: &Path,
     id: &str,
     file: &str,
+    previous: Option<&str>,
 ) -> Result<(), String> {
     claims.single(id)?;
-    claims
-        .check_other_claims(home, id, file)
-        .map_err(|problem| problem.render(trf))
+    let check = |file| {
+        claims
+            .check_other_claims(home, id, file)
+            .map_err(|problem| problem.render(trf))
+    };
+    check(file)?;
+    if let Some(old) = previous.filter(|old| *old != file) {
+        check(old)?;
+    }
+    Ok(())
 }
 
 impl Install<'_> {
@@ -1246,9 +1261,12 @@ impl Install<'_> {
             true => format!("{}/{}.smod", crate::native_mods::INSTALLED, p.id),
             false => relative(project.kind, &p.id, &v.file.name)?,
         };
-        check_claim(claims, self.home, &p.id, &relative)?;
-        let ours = |e: &installed::Entry| e.source == SourceId::Sunrise && e.project == p.id;
-        let old = list.entries.iter().find(|e| ours(e)).cloned();
+        let old = list.find(SourceId::Sunrise, &p.id).cloned();
+        let previous = old
+            .as_ref()
+            .filter(|old| old.version != v.version)
+            .map(|old| old.file.as_str());
+        check_replacement_claims(claims, self.home, &p.id, &relative, previous)?;
         let mut unreadable = None;
         if let Some(old) = &old {
             let mut different = old.kind != project.kind;
