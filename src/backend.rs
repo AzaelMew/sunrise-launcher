@@ -4413,7 +4413,7 @@ impl Settings {
         let json =
             serde_json::to_vec_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
         let written = fs::create_dir_all(&dir)
-            .and_then(|()| fs::write(&tmp, json))
+            .and_then(|()| write_private(&tmp, &json))
             .and_then(|()| fs::rename(&tmp, &path));
         if let Err(e) = written {
             let _ = fs::remove_file(&tmp);
@@ -4421,6 +4421,17 @@ impl Settings {
         }
         Ok(())
     }
+}
+
+/// Writes `bytes` to `path` readable by its owner alone (the file may hold proxy credentials);
+/// the mode applies where the file is created, and a file already there is emptied first.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(bytes)
 }
 
 #[cfg(test)]
@@ -4436,6 +4447,18 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_files_are_readable_by_their_owner_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.tmp");
+        write_private(&file, b"{\"proxy\":\"http://u:p@h:1\"}").unwrap();
+        let mode = fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(fs::read(&file).unwrap(), b"{\"proxy\":\"http://u:p@h:1\"}");
+    }
 
     #[test]
     fn the_launchers_build_is_its_selected_one_when_installed_else_the_newest() {
