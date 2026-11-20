@@ -455,7 +455,11 @@ impl Launcher {
                     if card_data.unsigned {
                         chips.push(tag(tr("Unsigned")));
                     }
-                    chips.push(muted(model::downloads(card_data.downloads)));
+                    chips.push(
+                        muted(model::downloads(card_data.downloads))
+                            .min_w_0()
+                            .truncate(),
+                    );
                     chips
                 }
             };
