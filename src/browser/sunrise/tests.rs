@@ -387,7 +387,9 @@ fn an_installed_file_that_cannot_be_read_is_refused_not_moved_aside() {
     list.save(&home).unwrap();
     let p = index.project("coords_hud").unwrap();
     let error = install_version(&index, true, p, &p.versions[0], &home, &|_, _| {}).unwrap_err();
-    assert!(error.contains("not a regular file"), "{error}");
+    // Unix opens the directory and says it isn't a regular file; Windows refuses to open it
+    // (access denied). Either way the update names the file, refuses and leaves it.
+    assert!(error.contains("coords_hud.smod"), "{error}");
     assert!(path.is_dir());
     assert!(!home.join("mod-browser/unreadable").exists());
     fs::remove_dir_all(home).unwrap();
