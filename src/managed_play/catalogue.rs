@@ -27,9 +27,14 @@ pub(super) fn inspect(
                 && (e.kind != Kind::Mod || packages.iter().any(|p| p.path == home.join(&e.file)))
         })
         .collect();
-    // Native code outside the managed rows can also supply an exact taken-down file.
+    // An untracked native package may share a registry ID without being that mod's bytes.
+    // Check only hash-specific takedowns here; proved registry rows are checked below.
     let native = packages.iter().filter(|package| {
-        package.manifest.native.is_some() && mod_list::is_enabled(home, &package.manifest.id)
+        package.manifest.native.is_some()
+            && mod_list::is_enabled(home, &package.manifest.id)
+            && !entries
+                .iter()
+                .any(|row| row.kind == Kind::Mod && row.project == package.manifest.id)
     });
     if entries.is_empty() && native.clone().next().is_none() {
         return Ok(Vec::new());
@@ -47,7 +52,13 @@ pub(super) fn inspect(
     };
     for package in native {
         let hash = index::sha256_file(&package.path)?;
-        if let Some(revoked) = index.revoked(&package.manifest.id, &hash) {
+        if let Some(revoked) = index.revoked.iter().find(|row| {
+            row.id == package.manifest.id
+                && row
+                    .sha256
+                    .as_ref()
+                    .is_some_and(|listed| listed.eq_ignore_ascii_case(&hash))
+        }) {
             return Err(refused(&package.manifest.name, &revoked.reason));
         }
     }

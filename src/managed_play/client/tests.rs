@@ -133,6 +133,19 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     )
     .unwrap();
     assert_eq!(crate::native_status::enabled(&home).len(), 1);
+    let mut listed = index::Index::default();
+    listed.revoked.push(index::Revoked {
+        id: "native_lantern".into(),
+        sha256: None,
+        reason: "only the listed project was taken down".into(),
+        date: String::new(),
+    });
+    assert!(
+        catalogue::inspect(&home, || Some(Arc::new(listed.clone())))
+            .unwrap()
+            .is_empty(),
+        "an ID-wide takedown is not evidence against a local native archive"
+    );
     let error = client
         .ready(
             &mut profile,
@@ -140,11 +153,24 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
             |_, _| Ok(()),
             (&cancellation, None),
             |step| assert!(!matches!(step, Progress::Native(_)), "started native work"),
-            || revoked("native_lantern", index::sha256_file(&native).unwrap()),
+            || {
+                let hash = index::sha256_file(&native).unwrap().to_ascii_uppercase();
+                listed.revoked.push(index::Revoked {
+                    id: "native_lantern".into(),
+                    sha256: Some(hash),
+                    reason: "exact native digest was taken down".into(),
+                    date: String::new(),
+                });
+                Some(Arc::new(listed))
+            },
         )
         .expect_err("native input was taken down");
     let error = String::from(error);
     assert!(error.contains("Native lantern was taken down"), "{error}");
+    assert!(
+        error.contains("exact native digest was taken down"),
+        "{error}"
+    );
     assert_eq!(profile.active().unwrap(), Some(active));
 }
 
