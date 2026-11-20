@@ -15,23 +15,23 @@ use std::{
 };
 use sunrise_launcher_smod::{
     index,
-    manifest::{self, Manifest, Side},
+    manifest::{self, Manifest},
     mod_list,
 };
 
 const MAX_TRIALS: usize = 20_000;
 
-struct Package {
-    manifest: Manifest,
-    digest: String,
+pub(super) struct Package {
+    pub(super) manifest: Manifest,
+    pub(super) digest: String,
     relative: PathBuf,
     file: PathBuf,
     row: Option<installed::Entry>,
-    on: bool,
+    pub(super) on: bool,
 }
 
-struct Inventory {
-    packages: BTreeMap<String, Package>,
+pub(super) struct Inventory {
+    pub(super) packages: BTreeMap<String, Package>,
     browser: serde_json::Value,
     selection: Option<String>,
 }
@@ -200,7 +200,7 @@ impl Switch {
             return Err(unsettled());
         }
         let files = changes(home, prepared.path(), &source, &chosen)?;
-        owner.seal_switch(&next, &files)?;
+        owner.seal_staged_set(&next, &files)?;
         Ok(Self {
             owner,
             prior,
@@ -247,7 +247,7 @@ impl Switch {
         self.prior.verify_artifacts()?;
         self.next.verify_artifacts()?;
         crate::native_status::check_permission(self.next.executable())?;
-        self.owner.publish_switch(cutoff)?;
+        self.owner.publish_staged_set(cutoff)?;
         self.live = false;
         Ok((!self.removals.is_empty()).then(|| {
             self.next
@@ -270,7 +270,7 @@ impl Drop for Switch {
 }
 
 impl Inventory {
-    fn read(home: &Path) -> Result<Self, String> {
+    pub(super) fn read(home: &Path) -> Result<Self, String> {
         build::verify_packages(home)?;
         let browser = match build::optional_bytes(&home.join(installed::MANIFEST))? {
             None => serde_json::json!({ "entries": [] }),
@@ -485,7 +485,7 @@ fn candidates(
                     .iter()
                     .filter(|(_, need)| {
                         let need = need.details();
-                        !need.optional && need.side != Side::Server
+                        !need.optional
                     })
                     .map(|(id, _)| id.clone()),
             );
@@ -539,9 +539,7 @@ fn best_survivor_set<'a>(
                             .iter()
                             .filter(|(id, need)| {
                                 let need = need.details();
-                                !need.optional
-                                    && need.side != Side::Server
-                                    && chosen.contains_key(id.as_str())
+                                !need.optional && chosen.contains_key(id.as_str())
                             })
                             .map(|(id, _)| id.as_str()),
                     );
@@ -596,20 +594,19 @@ fn best_survivor_set<'a>(
     Ok(())
 }
 
-fn fits(chosen: &BTreeMap<&str, &Package>) -> bool {
+pub(super) fn fits(chosen: &BTreeMap<&str, &Package>) -> bool {
     let mut namespaces = BTreeSet::new();
     for pkg in chosen.values() {
-        if pkg.manifest.side == Side::Server
-            || (pkg.on
-                && std::iter::once(&pkg.manifest.id)
-                    .chain(&pkg.manifest.namespaces)
-                    .any(|ns| !namespaces.insert(ns)))
+        if pkg.on
+            && std::iter::once(&pkg.manifest.id)
+                .chain(&pkg.manifest.namespaces)
+                .any(|ns| !namespaces.insert(ns))
         {
             return false;
         }
         for (id, need) in &pkg.manifest.dependencies {
             let need = need.details();
-            if need.optional || need.side == Side::Server {
+            if need.optional {
                 continue;
             }
             if chosen.get(id.as_str()).is_none_or(|other| {
@@ -623,7 +620,6 @@ fn fits(chosen: &BTreeMap<&str, &Package>) -> bool {
         for (id, rule) in &pkg.manifest.incompatible {
             let rule = rule.details();
             if pkg.on
-                && rule.side != Side::Server
                 && chosen.get(id.as_str()).is_some_and(|other| {
                     other.on
                         && Version::parse(&other.manifest.version)
@@ -637,37 +633,37 @@ fn fits(chosen: &BTreeMap<&str, &Package>) -> bool {
     true
 }
 
+pub(super) fn copy_tree(src: &Path, dst: &Path, top: bool) -> Result<(), String> {
+    fs::create_dir_all(dst).map_err(|e| bad(dst, e))?;
+    for entry in fs::read_dir(src).map_err(|e| bad(src, e))? {
+        let entry = entry.map_err(|e| bad(src, e))?;
+        let file = entry.path();
+        let target = dst.join(entry.file_name());
+        let meta = fs::symlink_metadata(&file).map_err(|e| bad(&file, e))?;
+        if !build::regular(&meta) {
+            return Err(unsettled());
+        }
+        if meta.is_dir() {
+            copy_tree(&file, &target, false)?;
+        } else if meta.is_file() {
+            if !(top && file.extension().is_some_and(|ext| ext == "smod")) {
+                fs::copy(&file, &target).map_err(|e| bad(&file, e))?;
+            }
+        } else {
+            return Err(unsettled());
+        }
+    }
+    Ok(())
+}
 fn stage_set(
     home: &Path,
     stage: &Path,
     source: &Inventory,
     chosen: &BTreeMap<&str, &Package>,
 ) -> Result<(), String> {
-    fn copy_opaque(src: &Path, dst: &Path, top: bool) -> Result<(), String> {
-        fs::create_dir_all(dst).map_err(|e| bad(dst, e))?;
-        for entry in fs::read_dir(src).map_err(|e| bad(src, e))? {
-            let entry = entry.map_err(|e| bad(src, e))?;
-            let file = entry.path();
-            let target = dst.join(entry.file_name());
-            let meta = fs::symlink_metadata(&file).map_err(|e| bad(&file, e))?;
-            if !build::regular(&meta) {
-                return Err(unsettled());
-            }
-            if meta.is_dir() {
-                copy_opaque(&file, &target, false)?;
-            } else if meta.is_file() {
-                if !(top && file.extension().is_some_and(|ext| ext == "smod")) {
-                    fs::copy(&file, &target).map_err(|e| bad(&file, e))?;
-                }
-            } else {
-                return Err(unsettled());
-            }
-        }
-        Ok(())
-    }
     for folder in [mod_list::DIR, mod_list::NATIVE_DIR] {
         match fs::symlink_metadata(home.join(folder)) {
-            Ok(_) => copy_opaque(&home.join(folder), &stage.join(folder), true)?,
+            Ok(_) => copy_tree(&home.join(folder), &stage.join(folder), true)?,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => return Err(bad(&home.join(folder), e)),
         }
@@ -730,7 +726,7 @@ fn stage_set(
     Ok(())
 }
 
-fn build_candidate(
+pub(super) fn build_candidate(
     tag: &str,
     stage: &Path,
     profile: native_mods::Profile,
@@ -767,7 +763,7 @@ fn build_candidate(
                     .iter()
                     .filter(|(_, need)| {
                         let need = need.details();
-                        !need.optional && need.side != Side::Server
+                        !need.optional
                     })
                     .map(|(id, _)| id.as_str()),
             );
@@ -792,7 +788,7 @@ fn build_candidate(
     Ok(image)
 }
 
-fn changes(
+pub(super) fn changes(
     home: &Path,
     stage: &Path,
     old: &Inventory,

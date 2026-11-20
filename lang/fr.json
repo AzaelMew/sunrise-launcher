@@ -1520,5 +1520,8 @@
   "Applying the switch.": "Applying the switch.",
   "A dedicated server needs its own folder and verified launch settings, separate from a game profile.": "A dedicated server needs its own folder and verified launch settings, separate from a game profile.",
   "A dedicated server cannot use a profile’s native client build.": "A dedicated server cannot use a profile’s native client build.",
-  "The server command cannot change its server folder.": "The server command cannot change its server folder."
+  "The server command cannot change its server folder.": "The server command cannot change its server folder.",
+  "Play this modpack once before updating it.": "Play this modpack once before updating it.",
+  "The modpack or its exact game build could not be verified. Nothing was installed.": "The modpack or its exact game build could not be verified. Nothing was installed.",
+  "The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.": "The proposed mod set has incompatible packages or missing dependencies. Nothing was installed."
 }
