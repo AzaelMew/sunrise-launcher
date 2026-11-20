@@ -411,8 +411,7 @@ impl Storage {
             let root = Root::open(&instance.home)?;
             old_logs(&mut entries, &root)?;
             unused_jars(&mut entries, &root)?;
-            // Include retired caches in cleanup without recording them as used at launch.
-            for relative in [".sunrise-cache", "wasm-cache", "cache"] {
+            for relative in [".sunrise-cache", "cache"] {
                 add(&mut entries, &root, relative, Category::OtherCaches)?;
             }
         }
