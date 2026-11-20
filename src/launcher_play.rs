@@ -123,7 +123,9 @@ impl Launcher {
                     backend::set_prepare_step(backend::PrepareStep::Prepare);
                     p
                 })
-                .and_then(|cmd| backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some(lock)));
+                .and_then(|cmd| {
+                    backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some(lock), None)
+                });
             // A running preparer sends its own Exit when it ends.
             if let Err(e) = result {
                 let _ = tx.send(Msg::Exit(Job::Prepare, Err(e)));

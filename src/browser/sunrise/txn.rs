@@ -34,13 +34,18 @@ const VERSION: u64 = 1;
 pub struct Lease {
     home: PathBuf,
     file: fs::File,
+    #[cfg(unix)]
+    transferred: std::sync::atomic::AtomicBool,
 }
 
+#[cfg(unix)]
 impl Drop for Lease {
     fn drop(&mut self) {
         // A concurrent fork can briefly inherit the handle before exec closes it. On normal
         // release unlock explicitly, rather than leaving it to the last inherited handle.
-        let _ = self.file.unlock();
+        if !*self.transferred.get_mut() {
+            let _ = self.file.unlock();
+        }
     }
 }
 
@@ -49,21 +54,46 @@ impl Lease {
         fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
         let path = home.join(".install-txn.lock");
         let fail = |e| format!("{}: {e}", path.display());
-        let file = fs::File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&path)
-            .map_err(fail)?;
-        match file.try_lock() {
-            Ok(()) => Ok(Some(Self {
-                home: home.to_path_buf(),
-                file,
-            })),
-            Err(fs::TryLockError::WouldBlock) => Ok(None),
-            Err(fs::TryLockError::Error(e)) => Err(fail(e)),
+        let mut open = fs::File::options();
+        open.read(true).write(true).create(true).truncate(false);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // Sharing exclusion is owned by the kernel file object, including inherited
+            // duplicates. A byte-range lock would die with the opening process.
+            open.share_mode(0);
         }
+        let file = match open.open(&path) {
+            Ok(file) => file,
+            #[cfg(windows)]
+            Err(e) if matches!(e.raw_os_error(), Some(32 | 33)) => return Ok(None),
+            Err(e) => return Err(fail(e)),
+        };
+        #[cfg(unix)]
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Ok(None),
+            Err(fs::TryLockError::Error(e)) => return Err(fail(e)),
+        }
+        Ok(Some(Self {
+            home: home.to_path_buf(),
+            file,
+            #[cfg(unix)]
+            transferred: std::sync::atomic::AtomicBool::new(false),
+        }))
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn inherit(&self, command: &mut std::process::Command) -> io::Result<()> {
+        crate::process::leases::inherit_profile(command, &self.file)?;
+        self.transferred
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn file(&self) -> &fs::File {
+        &self.file
     }
 
     pub fn acquire(home: &Path) -> Result<Self, String> {
@@ -999,10 +1029,19 @@ mod tests {
     }
 
     /// Drives a child up to a durable boundary, then kills it without Rust destructors.
-    fn crash_process<T>(test: &str, home: &Path, inspect: impl FnOnce() -> T) -> T {
+    fn crash_process<T>(
+        test: &str,
+        home: &Path,
+        worker: Option<&str>,
+        inspect: impl FnOnce() -> T,
+    ) -> T {
         use std::io::{BufRead, BufReader};
         use std::process::{Command, Stdio};
-        let mut child = Command::new(std::env::current_exe().unwrap())
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        if let Some(worker) = worker {
+            command.env("SUNRISE_TEST_LIVE_PROFILE_WORKER", worker);
+        }
+        let mut child = command
             .args(["--exact", test, "--nocapture"])
             .env("SUNRISE_TEST_INSTALL_OWNER", home)
             .stdin(Stdio::piped())
@@ -1044,7 +1083,34 @@ mod tests {
         fs::write(file, b"new mod").unwrap();
         commit(home, &id, staged, true).unwrap();
         lease.mark_build("tag").unwrap();
+        let worker = std::env::var_os("SUNRISE_TEST_LIVE_PROFILE_WORKER");
+        let mut sdk = None;
+        let mut game = None;
+        if let Some(worker) = worker {
+            use std::process::{Command, Stdio};
+            let mut cmd = Command::new(std::env::current_exe().unwrap());
+            cmd.args([
+                "--exact",
+                "browser::sunrise::txn::tests::live_profile_worker",
+                "--nocapture",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+            if worker == "sdk" {
+                sdk = Some(crate::process::owned::Owned::spawn_profile(&mut cmd, &lease).unwrap());
+            } else {
+                game = Some(crate::run_leases::spawn(&mut cmd, true, Some(&lease)).unwrap());
+            }
+            let ready = home.join("worker-ready");
+            let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !ready.is_file() && std::time::Instant::now() < limit {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(ready.is_file());
+        }
         wait_to_be_killed();
+        drop((sdk, game));
     }
 
     #[test]
@@ -1056,6 +1122,7 @@ mod tests {
         let (skipped, refused) = crash_process(
             "browser::sunrise::txn::tests::live_owner_process",
             home,
+            None,
             || {
                 (
                     !recover(home) && file.is_file() && home.join(FILE).is_file(),
@@ -1069,6 +1136,56 @@ mod tests {
         );
         assert!(recover(home));
         assert!(!file.exists() && !home.join(FILE).exists());
+    }
+
+    #[test]
+    fn live_profile_worker() {
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = Path::new(&home);
+        fs::write(home.join("worker-ready"), b"").unwrap();
+        let limit = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !home.join("stop-worker").is_file() && std::time::Instant::now() < limit {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    #[ignore = "daily"]
+    fn a_dead_launcher_is_not_abandoned_while_its_profile_child_lives() {
+        for worker in ["sdk", "game"] {
+            let scene = scene();
+            let home = scene.home();
+            let file = home.join("sunrise-mods/added.smod");
+            crash_process(
+                "browser::sunrise::txn::tests::live_owner_process",
+                home,
+                Some(worker),
+                || (),
+            );
+            let blocked = !recover(home) && file.is_file() && home.join(FILE).is_file();
+            // End the child even if the preceding check failed.
+            fs::write(home.join("stop-worker"), b"").unwrap();
+            let limit = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            let recovered = loop {
+                if recover(home) {
+                    break true;
+                }
+                if std::time::Instant::now() >= limit {
+                    break false;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert!(
+                blocked,
+                "the surviving {worker} pinned the transaction after launcher death"
+            );
+            assert!(
+                recovered && !file.exists() && !home.join(FILE).exists(),
+                "recovered after the {worker} exited"
+            );
+        }
     }
 
     // Kill recovery after carrying out a reverse move, before writing its next frontier.
@@ -1128,6 +1245,7 @@ mod tests {
         crash_process(
             "browser::sunrise::txn::tests::live_undo_process",
             home,
+            None,
             || (),
         );
         assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
