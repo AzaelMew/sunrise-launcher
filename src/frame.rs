@@ -649,6 +649,7 @@ impl Launcher {
         let top = self.modal(layers.pop(), window, cx);
         frame = frame.children(layers).children(top);
         frame = frame.children(self.viewer(window, cx));
+        frame = frame.children(self.toast_float());
         self.pictures.free_retired(window);
         let scenery = self
             .ui

@@ -2070,6 +2070,15 @@ pub fn download_version_for_owner(
     Ok(dir)
 }
 
+/// What a player with no account signed in can do: a sentence that stands alone, and reads as one
+/// more bullet after a list of places Sunrise looked.
+fn sign_in_to_download(version: &str) -> String {
+    crate::i18n::trf(
+        "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads {version} from Mojang itself.",
+        &[("version", version)],
+    )
+}
+
 /// What [`download_for_owner`] does with the owner gate's answer: Mojang's files only for its
 /// `owner`, an account the services said owns the game just now.
 fn download_for(
@@ -2109,10 +2118,7 @@ fn download_for(
             "\n  • No signed-in account owns Minecraft: Java Edition, so Sunrise can't download it."
                 .into(),
         ),
-        Err(_) => Err(format!(
-            "\n  • Or sign in with the Microsoft account that owns Minecraft: Sunrise then \
-             downloads {v} from Mojang itself."
-        )),
+        Err(_) => Err(format!("\n  • {}", sign_in_to_download(v))),
     }
 }
 
@@ -4849,6 +4855,20 @@ mod tests {
         }
         assert!(asked.lock().unwrap().is_empty());
         assert!(!dir.exists());
+        // With no account, the message stands alone once its bullet is taken off.
+        let said = download_for(
+            &pins,
+            &dir,
+            Err(account::NoOwner::default()),
+            false,
+            &fetch,
+            &log,
+        )
+        .unwrap_err();
+        assert_eq!(
+            said.trim_start_matches("\n  • "),
+            "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads 26.3 from Mojang itself."
+        );
         // An owner: Mojang is asked (and the download fails here, without network).
         let owner = account::Account {
             uuid: "069a79f444e94726a5befca90e38aaf5".into(),
