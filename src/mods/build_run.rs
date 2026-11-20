@@ -630,6 +630,7 @@ mod tests {
         let press_play = || PlayIntent {
             instance: "autumn".into(),
             account: Some("original-account".into()),
+            owner: None,
         };
         let built = Ok("native-abc".to_owned());
         let version = Some("native-abc");

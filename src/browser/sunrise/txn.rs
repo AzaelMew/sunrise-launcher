@@ -103,6 +103,14 @@ impl Lease {
         })
     }
 
+    /// Admit a new operation: claim the profile, then settle any transaction whose last owner
+    /// has gone. Returning the lease couples the admission result to the operation's lifetime.
+    pub fn admit(home: &Path) -> Result<Self, String> {
+        let lease = Self::acquire(home)?;
+        lease.recover_abandoned()?;
+        Ok(lease)
+    }
+
     pub fn home(&self) -> &Path {
         &self.home
     }
@@ -116,6 +124,17 @@ impl Lease {
             undo_last(&self.home, &mut record)?;
         }
         Ok(())
+    }
+
+    pub(in crate::browser) fn finish_standalone(&self) -> Result<(), String> {
+        let _lock = locked(&self.home)?;
+        let ids: Vec<_> = read(&self.home)?
+            .unwrap_or_default()
+            .attempts
+            .into_iter()
+            .map(|attempt| attempt.id)
+            .collect();
+        self.done(&ids)
     }
 
     pub fn outstanding(&self) -> bool {
@@ -1254,6 +1273,32 @@ mod tests {
         assert!(recover(home));
         scene.is_as_it_was();
         assert!(!home.join(FILE).exists());
+    }
+
+    #[test]
+    fn a_new_intent_settles_an_abandoned_profile_without_waiting_for_startup() {
+        let scene = scene();
+        let current = Lease::admit(scene.home()).unwrap();
+        let id = waiting(&scene);
+        assert_eq!(current.mark_build("tag").unwrap(), [id]);
+        // A second launcher was already running. Admission cannot start Play on these bytes.
+        assert!(Lease::admit(scene.home()).is_err());
+        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
+        drop(current);
+        let next = Lease::admit(scene.home()).unwrap();
+        scene.is_as_it_was();
+        assert!(!next.outstanding());
+        assert!(
+            Lease::admit(scene.home()).is_err(),
+            "the next operation kept the gate"
+        );
+        drop(next);
+        fs::write(scene.home().join(FILE), "not a transaction").unwrap();
+        assert!(Lease::admit(scene.home()).is_err());
+        assert_eq!(
+            fs::read_to_string(scene.home().join(FILE)).unwrap(),
+            "not a transaction"
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@ use progress::{native_progress, progress};
 use clap::{Parser, Subcommand};
 use sunrise_launcher::account::{self, Accounts};
 use sunrise_launcher::backend::{self, Release};
+use sunrise_launcher::browser::sunrise;
 use sunrise_launcher::github_mods;
 use sunrise_launcher::i18n::{tr, trf};
 use sunrise_launcher::instances;
@@ -32,6 +33,7 @@ fn parse_storage_row(value: &str) -> Result<ClearStorage, String> {
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 #[derive(Parser)]
 #[command(
     name = crate::identity::EXECUTABLE,
@@ -1099,9 +1101,9 @@ fn json(value: serde_json::Value) {
 }
 
 /// Runs a game process in this terminal and reports how it ended.
-fn attached(cmd: Command) -> Result<i32, String> {
+fn attached(cmd: Command, profile: Option<&sunrise::txn::Lease>) -> Result<i32, String> {
     let (mut cmd, _runtime) = backend::prepare_command(cmd)?;
-    let status = backend::spawn_attached(&mut cmd, None)
+    let status = backend::spawn_attached(&mut cmd, profile)
         .and_then(|mut child| child.wait())
         .map_err(|e| format!("Could not start {:?}: {e}", cmd.get_program()))?;
     #[cfg(unix)]
@@ -1293,6 +1295,8 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(name)?,
                 None => instances::selection()?,
             };
+            let owner = Arc::new(sunrise::txn::Lease::admit(&target.home)?);
+            let cancellation = native_mods::Cancellation::for_profile(owner);
             let target = match profile {
                 Some(profile) => {
                     instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
@@ -1314,7 +1318,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, if leave_out_mods { native_mods::LeaveOut::Everything } else { native_mods::LeaveOut::Nothing }, &native_mods::Cancellation::default(), steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, if leave_out_mods { native_mods::LeaveOut::Everything } else { native_mods::LeaveOut::Nothing }, &cancellation, steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1365,7 +1369,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             let (preparer, minecraft) =
                 backend::preparer(&tag, &minecraft, from, &|line| eprintln!("{line}"))?;
             backend::sounds(&tag, &minecraft, &|line| println!("{line}"));
-            let code = attached(preparer)?;
+            let code = attached(preparer, None)?;
             if code != 0 {
                 return Ok(code);
             }
@@ -1386,6 +1390,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(&name)?,
                 None => instances::selection()?,
             };
+            let owner = sunrise::txn::Lease::admit(&instance.home)?;
             // Who plays this launch only.
             let who = match account {
                 Some(who) => Some(
@@ -1431,7 +1436,10 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
-            let played = attached(sunrise_launcher::launch::wrap(cmd, &instance.launch)?);
+            let played = attached(
+                sunrise_launcher::launch::wrap(cmd, &instance.launch)?,
+                Some(&owner),
+            );
             if let Err(e) = instances::record_play(&instance.id, started.elapsed()) {
                 eprintln!("Play time not saved: {e}");
             }
@@ -1454,7 +1462,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
-            return attached(cmd);
+            return attached(cmd, None);
         }
         Cmd::Notes { tag } => {
             let r = backend::release_notes(tag.as_deref())?;
@@ -2374,15 +2382,18 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 }
             }
         }
-        ModsCmd::Remove { project, .. } if github_mods::origin(&home, &project).is_some() => {
-            github_mods::remove(&home, &project)?;
-            println!("Removed {project} (installed from GitHub).");
-        }
         ModsCmd::Remove { project, .. } => {
-            let e = installed::remove(&home, &project)?;
-            println!("Removed {} ({}).", e.title, e.file);
+            let _owner = sunrise::txn::Lease::admit(&home)?;
+            if github_mods::origin(&home, &project).is_some() {
+                github_mods::remove(&home, &project)?;
+                println!("Removed {project} (installed from GitHub).");
+            } else {
+                let e = installed::remove(&home, &project)?;
+                println!("Removed {} ({}).", e.title, e.file);
+            }
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
+            let _owner = sunrise::txn::Lease::admit(&home)?;
             let e = installed::Installed::load(&home)
                 .lookup(&project)
                 .cloned()
@@ -3027,9 +3038,11 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
             version,
             allow_jar_downloads,
         } => {
+            let work = work(&pack)?;
+            let owner = sunrise::txn::Lease::admit(&sunrise::pack::home(&work))?;
             let tag = backend::resolve_version(version.as_deref())?;
             let mut cmd = backend::client(&tag)?;
-            sunrise::pack::apply(&mut cmd, &work(&pack)?)?;
+            sunrise::pack::apply(&mut cmd, &work)?;
             let launch = Default::default();
             for notice in sunrise::before_play(&mut cmd, &tag, &launch)? {
                 eprintln!("{notice}");
@@ -3040,7 +3053,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
-            return attached(cmd);
+            return attached(cmd, Some(&owner));
         }
         ModpackCmd::Remove { pack } => sunrise::pack::remove(&work(&pack)?)?,
     }
@@ -3141,7 +3154,7 @@ mod tests {
                 std::io::stderr().is_terminal()
             ),
         );
-        assert_eq!(attached(command).unwrap(), code);
+        assert_eq!(attached(command, None).unwrap(), code);
         std::process::exit(code);
     }
 

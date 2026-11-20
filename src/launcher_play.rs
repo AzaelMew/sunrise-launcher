@@ -5,6 +5,7 @@ use super::*;
 pub(crate) struct PlayIntent {
     pub instance: String,
     pub account: Option<String>,
+    pub owner: Option<std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>>,
 }
 
 impl PlayIntent {
@@ -12,6 +13,7 @@ impl PlayIntent {
         Self {
             instance,
             account: selected.map(|a| a.uuid.clone()),
+            owner: None,
         }
     }
 }

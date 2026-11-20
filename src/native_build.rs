@@ -71,13 +71,20 @@ impl Launcher {
         // the same lease and attempt IDs; worker and UI keep the owner alive through reaping.
         use sunrise_launcher::browser::sunrise::txn::Lease;
         let batch = (|| {
-            let lease = match self.mods.install_owners.get(&instance.id) {
+            let lease = match self
+                .mods
+                .install_owners
+                .get(&instance.id)
+                .or_else(|| {
+                    self.play_after_build
+                        .as_ref()
+                        .filter(|play| play.instance == instance.id)
+                        .and_then(|play| play.owner.as_ref())
+                })
+                .or_else(|| self.native_attempts.as_ref().map(|(lease, _)| lease))
+            {
                 Some(lease) => lease.clone(),
-                None => {
-                    let lease = Lease::acquire(&instance.home)?;
-                    lease.recover_abandoned()?;
-                    std::sync::Arc::new(lease)
-                }
+                None => std::sync::Arc::new(Lease::admit(&instance.home)?),
             };
             let ids = lease.mark_build(&base)?;
             Ok::<_, String>((lease, ids))

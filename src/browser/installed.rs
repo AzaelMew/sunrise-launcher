@@ -327,8 +327,12 @@ pub fn install(
     approvals: &[Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<Entry>, InstallError> {
-    super::sunrise::txn::Lease::acquire(home)?
-        .install(source, project, everything, game, approvals, progress)
+    let lease = super::sunrise::txn::Lease::admit(home)?;
+    let entries = lease.install(source, project, everything, game, approvals, progress)?;
+    // Standalone installs have no follow-up worker. A successful command is final; the
+    // native mods are installed, but need the separate native-build command before use.
+    lease.finish_standalone()?;
+    Ok(entries)
 }
 
 impl super::sunrise::txn::Lease {

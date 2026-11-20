@@ -9,6 +9,15 @@ impl Launcher {
         self.load_auth_statuses(false);
         if let (Some(tag), Some(intent)) = (self.starting_client.take(), self.starting_play.take())
         {
+            let Some(owner) = intent.owner else {
+                if let Ok(Some(session)) = session {
+                    account::discard_launch_session(session.file);
+                }
+                self.client_error = Some(
+                    tr("This profile no longer exists. Choose another profile to play.").into(),
+                );
+                return;
+            };
             let mut cmd = backend::client_command(&tag);
             let pass = match session {
                 Ok(pass) => pass,
@@ -58,7 +67,7 @@ impl Launcher {
                 None => {
                     let Some(instance) = instances::list()
                         .into_iter()
-                        .find(|i| i.id == intent.instance)
+                        .find(|i| i.id == intent.instance && i.home == owner.home())
                     else {
                         self.client_error = Some(
                             tr("This profile no longer exists. Choose another profile to play.")
@@ -100,7 +109,7 @@ impl Launcher {
                 tag,
                 launch,
                 run,
-                intent.account,
+                (intent.account, owner),
                 session_file,
                 self.tx.clone(),
             );

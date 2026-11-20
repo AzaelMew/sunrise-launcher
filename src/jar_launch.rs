@@ -19,7 +19,7 @@ pub fn client(
     tag: String,
     launch: Launch,
     run: Option<String>,
-    account: Option<String>,
+    (account, profile_owner): (Option<String>, std::sync::Arc<sunrise::txn::Lease>),
     session_file: Option<PathBuf>,
     tx: Sender<Msg>,
 ) {
@@ -36,6 +36,7 @@ pub fn client(
         if let Err(mpsc::SendError(Msg::JarClient { session_file, .. })) = tx.send(Msg::JarClient {
             run,
             account,
+            profile_owner,
             session_file,
             registry_notices,
             prepared: Box::new(prepared),
