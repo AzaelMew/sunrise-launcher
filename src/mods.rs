@@ -673,7 +673,10 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.mods.busy.is_some()
+        self.ui.mods.busy.is_some()
+            || self.mods.busy.is_some()
+            || self.mods.updating
+            || self.play_when_updated.is_some()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player

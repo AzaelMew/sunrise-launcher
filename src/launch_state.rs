@@ -21,6 +21,9 @@ pub(crate) struct Facts {
     pub step: Option<backend::PlayStep>,
     /// Mods are being added, removed or updated.
     pub mutating: bool,
+    /// The mods are being brought up to date, at start or for a Play that waits for it: Play is
+    /// taken until that ends, so no second Play or install starts in between.
+    pub updating: bool,
     /// The game runs.
     pub running: bool,
     /// An account is selected, or the developer's offline Play is on.
@@ -196,6 +199,7 @@ impl Facts {
     /// Something is under way that Play waits for (`Launcher::launch_busy`).
     pub(crate) fn busy(&self) -> bool {
         self.mutating
+            || self.updating
             || self.installing.is_some()
             || self.preparing
             || self.building
@@ -212,7 +216,7 @@ impl Facts {
             Main::Building
         } else if self.starting {
             self.step.map_or(Main::Starting, Main::Step)
-        } else if self.mutating {
+        } else if self.mutating || self.updating {
             Main::ChangingMods
         } else if self.running {
             Main::Stop
@@ -391,6 +395,7 @@ impl Launcher {
             starting: self.starting_client.is_some(),
             step: self.play_step,
             mutating: self.mutating(),
+            updating: self.play_when_updated.is_some() || self.mods.updating,
             running: self.client.is_some(),
             ..Facts::default()
         }
