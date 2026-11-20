@@ -61,13 +61,13 @@ impl ChildLeases {
     ) -> io::Result<super::child::Child> {
         #[cfg(unix)]
         {
-            spawn_unix(
-                profile_streams(command, piped),
-                &self.files(),
-                Some(&self.data),
-                Some(profile.share()),
-            )
-            .map(Into::into)
+            profile
+                .spawn_unix(
+                    profile_streams(command, piped),
+                    &self.files(),
+                    Some(&self.data),
+                )
+                .map(Into::into)
         }
         #[cfg(windows)]
         spawn_windows_command(
@@ -108,12 +108,18 @@ pub enum StagedChild {
     Compiler,
 }
 
-impl<'a> ProfileHandoff<'a> {
+impl ProfileHandoff<'_> {
     #[cfg(unix)]
-    fn share(self) -> &'a File {
+    fn spawn_unix(
+        self,
+        command: std::process::Command,
+        roots: &[&File],
+        runtime_root: Option<&Path>,
+    ) -> io::Result<std::process::Child> {
+        let child = spawn_unix(command, roots, runtime_root, Some(self.file))?;
         self.handed_off
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        self.file
+        Ok(child)
     }
 
     pub(super) fn spawn(
@@ -124,13 +130,8 @@ impl<'a> ProfileHandoff<'a> {
         #[cfg(unix)]
         {
             let _ = role;
-            spawn_unix(
-                profile_streams(command, true),
-                &[],
-                None,
-                Some(self.share()),
-            )
-            .map(Into::into)
+            self.spawn_unix(profile_streams(command, true), &[], None)
+                .map(Into::into)
         }
         #[cfg(windows)]
         spawn_windows_command(

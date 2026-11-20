@@ -877,16 +877,27 @@ fn await_fixture(mut ready: impl FnMut() -> bool) {
 
 #[cfg(unix)]
 #[test]
-fn admission_without_handoff_does_not_leave_an_incidental_fork_holding_the_gate() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path();
-    initialized(home, true);
-    let owner = Admission::open(home, None).unwrap();
-    // A fork before exec has the same open description, even with CLOEXEC set.
-    let not_an_admitted_child = owner.file.try_clone().unwrap();
-    drop(owner);
-    assert!(Admission::open(home, None).is_ok());
-    drop(not_an_admitted_child);
+fn admission_without_successful_handoff_does_not_leave_an_incidental_fork_holding_the_gate() {
+    use crate::process::{leases::StagedChild, owned::Owned};
+    for fail_spawn in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        initialized(home, true);
+        let owner = Admission::open(home, None).unwrap();
+        // A fork before exec has the same open description, even with CLOEXEC set.
+        let not_an_admitted_child = owner.file.try_clone().unwrap();
+        if fail_spawn {
+            let child = Owned::spawn_staged(
+                std::process::Command::new(home.join("no-such-executable")),
+                owner.handoff(),
+                StagedChild::Prepare,
+            );
+            assert_eq!(child.err().unwrap().kind(), io::ErrorKind::NotFound);
+        }
+        drop(owner);
+        assert!(Admission::open(home, None).is_ok());
+        drop(not_an_admitted_child);
+    }
 }
 
 #[test]
