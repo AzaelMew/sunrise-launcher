@@ -79,16 +79,14 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
     };
     let lines = plan.question().lines();
     if as_json {
-        writeln!(output, "{}", serde_json::json!({"profile":instance.id,"from":plan.prior(),"to":tag,"world_risks":lines,"planned_removals":plan.removals()}))
+        writeln!(output, "{}", serde_json::json!({"profile":instance.id,"from":plan.prior(),"to":tag,"world_risks":lines,"waiting_for_update":plan.effects().waiting_for_update,"removed":plan.effects().removed}))
             .map_err(|e| e.to_string())?;
     } else {
         writeln!(output, "{} → {tag}", plan.prior()).map_err(|e| e.to_string())?;
         for line in lines {
             terminal_line(&mut output, &line).map_err(|e| e.to_string())?;
         }
-        for (name, reason) in plan.removals() {
-            terminal_line(&mut output, &format!("{name}: {reason}")).map_err(|e| e.to_string())?;
-        }
+        show_effects(&mut output, plan.effects()).map_err(|e| e.to_string())?;
     }
     output.flush().map_err(|e| e.to_string())?;
     if plan.question().needed()
@@ -119,6 +117,18 @@ fn terminal_line(output: &mut impl Write, line: &str) -> io::Result<()> {
     writeln!(output, "{safe}")
 }
 
+fn show_effects(output: &mut impl Write, effects: &sunrise::txn::SwitchEffects) -> io::Result<()> {
+    for (heading, mods) in [
+        (tr("Turned off"), &effects.waiting_for_update),
+        (tr("Removed"), &effects.removed),
+    ] {
+        for (name, reason) in mods {
+            terminal_line(output, &format!("{heading} — {name}: {reason}"))?;
+        }
+    }
+    Ok(())
+}
+
 fn approve(tty: bool, mut input: impl BufRead, output: &mut impl Write) -> io::Result<bool> {
     if !tty {
         return Ok(false);
@@ -138,11 +148,13 @@ fn result(
     receipt: Option<&sunrise::txn::Receipt>,
     as_json: bool,
 ) -> io::Result<()> {
+    let empty = sunrise::txn::SwitchEffects::default();
+    let effects = receipt.map_or(&empty, |r| r.effects());
     if as_json {
         writeln!(
             output,
             "{}",
-            serde_json::json!({"profile":instance.id,"build":tag,"changed":changed,"removed":receipt.map(|r| r.lines().collect::<Vec<_>>()).unwrap_or_default()})
+            serde_json::json!({"profile":instance.id,"build":tag,"changed":changed,"waiting_for_update":effects.waiting_for_update,"removed":effects.removed})
         )?;
     } else {
         writeln!(
@@ -150,11 +162,7 @@ fn result(
             "{}",
             trf("Profile game build: {build}", &[("build", tag)])
         )?;
-        if let Some(receipt) = receipt {
-            for (name, reason) in receipt.lines() {
-                terminal_line(output, &format!("{name}: {reason}"))?;
-            }
-        }
+        show_effects(output, effects)?;
     }
     output.flush()
 }

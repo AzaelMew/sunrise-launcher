@@ -17,6 +17,7 @@ pub(super) fn install(
     asked: &[(&index::Project, &index::Version)],
     native_allowed: bool,
     turn_on: bool,
+    waiting: &BTreeMap<String, super::txn::WaitingMod>,
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
     let home = install.home;
     let game = asked
@@ -140,6 +141,7 @@ pub(super) fn install(
         unreadable: Vec::new(),
         turn_on,
         chosen,
+        waiting,
     };
     for (project, version) in asked {
         // One that an earlier project of the set needs is already in the plan, and is now also
@@ -210,7 +212,8 @@ pub(super) fn install(
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.
     let mut stale = Vec::new();
-    // What was installed and off stays off when it is updated, the mod asked for or a dependency.
+    // Keep the player's off choice. An explicitly updated waiting mod was switched off by the
+    // launcher, so restore its previous on choice only when its replacement is staged.
     let off: Vec<String> = plan
         .installed
         .entries
@@ -250,7 +253,10 @@ pub(super) fn install(
                 .entries
                 .retain(|e| e.source != SourceId::Sunrise || e.project != entry.project);
             plan.installed.entries.push(entry.clone());
-            if turn_on && !wanted(&entry.project) && !was_off {
+            let resumes = was_off
+                && wanted(&entry.project)
+                && waiting.get(&entry.project).is_some_and(|mod_| mod_.was_on);
+            if turn_on && (resumes || !was_off && !wanted(&entry.project)) {
                 enable.push(entry.project.clone());
             }
             done.push(entry);
@@ -383,6 +389,7 @@ struct Plan<'a> {
     turn_on: bool,
     /// The version the index plan chose for each mod it installs or updates.
     chosen: BTreeMap<String, String>,
+    waiting: &'a BTreeMap<String, super::txn::WaitingMod>,
 }
 
 impl Plan<'_> {
@@ -390,9 +397,13 @@ impl Plan<'_> {
         if depth > installed::MAX_DEPTH {
             return Err(format!("{}'s dependencies go too deep.", p.name));
         }
-        let (mut entry, download, unreadable) =
-            self.install
-                .prepare(p, v, &self.installed, &self.staged.join(&p.id))?;
+        let (mut entry, download, unreadable) = self.install.prepare(
+            p,
+            v,
+            &self.installed,
+            &self.staged.join(&p.id),
+            self.waiting.get(&p.id),
+        )?;
         self.unreadable.extend(unreadable);
         let (path, facts) = match download {
             Some((path, facts)) => {

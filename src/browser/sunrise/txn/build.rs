@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(super) const FILE: &str = "mod-browser/active-build.json";
 
@@ -87,6 +87,7 @@ impl Bootstrap {
             base,
             inputs: self.inputs,
             receipts: Vec::new(),
+            waiting: Default::default(),
         }
     }
 
@@ -143,25 +144,45 @@ pub struct Active {
     executable: Artifact,
     pub(super) inputs: [u8; 32],
     receipts: Vec<Receipt>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    waiting: std::collections::BTreeMap<String, WaitingMod>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WaitingMod {
+    pub(super) file: PathBuf,
+    pub(super) digest: [u8; 32],
+    pub reason: String,
+    pub(in crate::browser::sunrise) was_on: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SwitchEffects {
+    pub waiting_for_update: Vec<(String, String)>,
+    pub removed: Vec<(String, String)>,
+}
+
+impl SwitchEffects {
+    pub fn is_empty(&self) -> bool {
+        self.waiting_for_update.is_empty() && self.removed.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
     id: [u8; 16],
-    names: Vec<String>,
-    reasons: Vec<String>,
+    effects: SwitchEffects,
 }
 
 impl Receipt {
     pub fn id(&self) -> [u8; 16] {
         self.id
     }
-    pub fn lines(&self) -> impl Iterator<Item = (&str, &str)> {
-        self.names
-            .iter()
-            .map(String::as_str)
-            .zip(self.reasons.iter().map(String::as_str))
+    pub fn effects(&self) -> &SwitchEffects {
+        &self.effects
     }
 }
 
@@ -196,12 +217,13 @@ impl Active {
             executable,
             inputs,
             receipts,
+            waiting: Default::default(),
         })
     }
 
     pub(super) fn adopt(&self, image: &str, inputs: [u8; 32], home: &Path) -> Result<Self, String> {
         let generation = self.generation.checked_add(1).ok_or_else(unsettled)?;
-        let next = Self::capture(
+        let mut next = Self::capture(
             self.profile,
             generation,
             self.base(),
@@ -213,6 +235,12 @@ impl Active {
         if next.base != self.base {
             return Err(unsettled());
         }
+        for (id, item) in &self.waiting {
+            if item.matches(home)? {
+                next.waiting.insert(id.clone(), item.clone());
+            }
+        }
+        next.require_waiting_off(home)?;
         Ok(next)
     }
 
@@ -221,16 +249,16 @@ impl Active {
         base: &str,
         executable: &str,
         staged: &Path,
-        removals: &[(String, String)],
+        effects: SwitchEffects,
+        waiting: std::collections::BTreeMap<String, WaitingMod>,
     ) -> Result<Self, String> {
         let mut receipts = self.receipts.clone();
-        if !removals.is_empty() {
+        if !effects.is_empty() {
             let mut id = [0; 16];
             getrandom::fill(&mut id).map_err(|e| e.to_string())?;
-            let (names, reasons) = removals.iter().cloned().unzip();
-            receipts.push(Receipt { id, names, reasons });
+            receipts.push(Receipt { id, effects });
         }
-        Self::capture(
+        let mut next = Self::capture(
             self.profile,
             self.generation.checked_add(1).ok_or_else(unsettled)?,
             base,
@@ -238,16 +266,43 @@ impl Active {
             inputs(staged)?,
             receipts,
             staged,
-        )
+        )?;
+        next.waiting = waiting;
+        next.require_waiting_off(staged)?;
+        Ok(next)
+    }
+
+    pub(super) fn require_waiting_off(&self, home: &Path) -> Result<(), String> {
+        for (id, item) in &self.waiting {
+            if crate::browser::mod_list::is_enabled(home, id) && item.matches(home)? {
+                return Err(crate::i18n::trf(
+                    "{mod} needs an update from its author before it can be turned on.",
+                    &[("mod", id)],
+                ));
+            }
+        }
+        Ok(())
     }
 
     #[cfg(test)]
     pub(super) fn test_receipt(mut self, sequence: u8) -> Self {
         self.receipts.push(Receipt {
             id: [sequence; 16],
-            names: vec![format!("mod-{sequence}")],
-            reasons: vec![format!("reason-{sequence}")],
+            effects: SwitchEffects {
+                waiting_for_update: self
+                    .waiting
+                    .keys()
+                    .map(|id| (id.clone(), "no fit".into()))
+                    .collect(),
+                removed: vec![(format!("mod-{sequence}"), format!("reason-{sequence}"))],
+            },
         });
+        self
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_waiting(mut self, id: &str, item: WaitingMod) -> Self {
+        self.waiting.insert(id.to_owned(), item);
         self
     }
 
@@ -295,12 +350,16 @@ impl Active {
         }
         let mut receipts = std::collections::HashSet::new();
         if self.receipts.iter().any(|receipt| {
-            receipt.id == [0; 16]
-                || !receipts.insert(receipt.id)
-                || receipt.names.is_empty()
-                || receipt.names.len() != receipt.reasons.len()
+            receipt.id == [0; 16] || !receipts.insert(receipt.id) || receipt.effects.is_empty()
         }) {
             return Err(unsettled());
+        }
+        for (id, mod_) in &self.waiting {
+            if !sunrise_launcher_smod::index::valid_id(id)
+                || !super::switch_record::valid_package_destination(&mod_.file)
+            {
+                return Err(unsettled());
+            }
         }
         validate_tag(self.base())?;
         validate_tag(self.executable())
@@ -394,9 +453,82 @@ pub fn displayed_image(home: &Path) -> Option<String> {
         .map(|active| active.executable.tag)
 }
 
+impl WaitingMod {
+    fn matches(&self, home: &Path) -> Result<bool, String> {
+        Ok(Image::at(&home.join(&self.file))? == Image::Sha256(self.digest))
+    }
+
+    /// The newest candidate the registry can offer that is not the exact disabled bytes.
+    /// The install still has to verify its dependencies and, for native code, build it.
+    pub fn replacement<'a>(
+        &self,
+        index: &sunrise_launcher_smod::index::Index,
+        project: &'a sunrise_launcher_smod::index::Project,
+        game: &str,
+    ) -> Option<&'a sunrise_launcher_smod::index::Version> {
+        project.versions.iter().find(|v| {
+            crate::browser::sunrise::fits_game(v, game)
+                && !self.same_package(v)
+                && index.revoked(&project.id, &v.file.sha256).is_none()
+        })
+    }
+
+    pub(in crate::browser::sunrise) fn same_package(
+        &self,
+        version: &sunrise_launcher_smod::index::Version,
+    ) -> bool {
+        version.file.sha256.eq_ignore_ascii_case(&format!(
+            "{:x}",
+            sha2::digest::Output::<Sha256>::from(self.digest)
+        ))
+    }
+}
+
+pub(in crate::browser::sunrise) fn waiting_packages(
+    home: &Path,
+) -> Result<std::collections::BTreeMap<String, WaitingMod>, String> {
+    let Some(active) = read(home)? else {
+        return Ok(Default::default());
+    };
+    let mut waiting = std::collections::BTreeMap::new();
+    for (id, item) in active.waiting {
+        if item.matches(home)? {
+            waiting.insert(id, item);
+        }
+    }
+    Ok(waiting)
+}
+
+/// Installed display only. Admission reads and validates the same file independently.
+pub fn waiting_for_update(home: &Path) -> std::collections::BTreeMap<String, WaitingMod> {
+    waiting_packages(home).unwrap_or_default()
+}
+
+pub fn active_stamp(home: &Path) -> Option<(u64, Option<std::time::SystemTime>)> {
+    let meta = fs::metadata(home.join(FILE)).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+pub(crate) fn require_current_update(home: &Path, ids: &[&str]) -> Result<(), String> {
+    let Some(active) = read(home)? else {
+        return Ok(());
+    };
+    for id in ids {
+        if let Some(item) = active.waiting.get(*id) {
+            if item.matches(home)? {
+                return Err(crate::i18n::trf(
+                    "{mod} needs an update from its author before it can be turned on.",
+                    &[("mod", id)],
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Lease {
     /// A delayed acknowledgement owns no authority over any other receipt or generation.
-    pub fn acknowledge_removal(&self, id: [u8; 16]) -> Result<bool, String> {
+    pub fn acknowledge_switch(&self, id: [u8; 16]) -> Result<bool, String> {
         let _lock = super::locked(self.home())?;
         if super::read(self.home())?.is_some() {
             return Err(unsettled());

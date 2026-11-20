@@ -29,7 +29,12 @@ mod durable;
 mod staged_install;
 mod switch;
 mod switch_record;
-pub use build::{displayed_image, Active, Receipt, Target};
+pub(crate) use build::require_current_update;
+pub(super) use build::waiting_packages;
+pub use build::{
+    active_stamp, displayed_image, waiting_for_update, Active, Receipt, SwitchEffects, Target,
+    WaitingMod,
+};
 pub(super) use staged_install::{
     detach_private_profile, expose_private_profile, seal_private_profile, StagedInstall,
 };
@@ -382,6 +387,7 @@ impl Lease {
         let inputs = build::inputs(&self.home)?;
         build::verify_packages(&self.home)?;
         if let Some(prior) = &prior {
+            prior.require_waiting_off(&self.home)?;
             prior.verify_artifacts()?;
             if prior.base() != target.base() || prior.executable() != target.preferred_image() {
                 return Err(unsettled());

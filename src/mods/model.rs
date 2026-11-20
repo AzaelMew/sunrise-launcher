@@ -425,6 +425,8 @@ pub(super) fn page(
 pub(super) enum Need {
     /// Taken down by the registry: it can't be turned on.
     TakenDown(String),
+    /// Retained at the same path after a Switch but unusable on the active build.
+    Waiting(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -516,13 +518,20 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
             why.to_owned(),
         );
     }
-    if let Some(Need::TakenDown(why)) = &row.need {
-        say(
+    match &row.need {
+        Some(Need::TakenDown(why)) => say(
             "cancel-01",
             tr("Taken down").into(),
             Tone::Warning,
             trf("Taken down: {reason}", &[("reason", why)]),
-        );
+        ),
+        Some(Need::Waiting(why)) => say(
+            "information-circle",
+            tr("Needs an update from its author").into(),
+            Tone::Warning,
+            why.clone(),
+        ),
+        None => {}
     }
     if let Some(to) = &row.update {
         say(
@@ -562,8 +571,7 @@ pub(super) fn cells(row: &Row, error: Option<&str>) -> Cells {
         version: row.version.clone(),
         status: said.into_iter().next().map(|first| Status { tip, ..first }),
         action: row.update.as_ref().map(|_| RowAction::Update),
-        switch: !matches!(row.need, Some(Need::TakenDown(_)))
-            && !row.local.as_ref().is_some_and(|l| l.unreadable),
+        switch: row.need.is_none() && !row.local.as_ref().is_some_and(|l| l.unreadable),
     }
 }
 
@@ -580,6 +588,8 @@ pub(super) struct World<'a> {
     pub(super) enabled: &'a HashSet<String>,
     /// The versions the player picked, by project id.
     pub(super) chosen: &'a std::collections::BTreeMap<String, String>,
+    pub(super) waiting:
+        &'a std::collections::BTreeMap<String, sunrise_launcher::browser::sunrise::txn::WaitingMod>,
     /// Native files the browser didn't install.
     pub(super) local: &'a [Local],
 }
@@ -615,16 +625,21 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
                 (_, true) => Some(Make::Native),
                 (m, false) => m,
             };
-            let on = w.enabled.contains(&id);
+            let waiting = w.waiting.get(&id);
+            let on = waiting.is_none() && w.enabled.contains(&id);
             let taken_down = w.index.and_then(|i| {
                 let hash = e.checksum.strip_prefix("SHA-256:").unwrap_or_default();
                 i.revoked(&e.project, hash).map(|r| r.reason.clone())
             });
-            let need = taken_down.map(Need::TakenDown);
-            let update = w
-                .index
-                .zip(p)
-                .and_then(|(i, p)| newer(i, p, &e.version, w.game));
+            let need = taken_down
+                .map(Need::TakenDown)
+                .or_else(|| waiting.map(|w| Need::Waiting(w.reason.clone())));
+            let update = w.index.zip(p).and_then(|(index, project)| match waiting {
+                Some(mod_) => mod_
+                    .replacement(index, project, w.game)
+                    .map(|v| v.version.clone()),
+                None => newer(index, project, &e.version, w.game),
+            });
             Some(Row {
                 title: p.map_or_else(|| id.clone(), |p| p.name.clone()),
                 id,
@@ -644,7 +659,8 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
         })
         .collect();
     out.extend(w.local.iter().map(|l| {
-        let on = !l.unreadable && w.enabled.contains(&l.id);
+        let waiting = (!l.unreadable).then(|| w.waiting.get(&l.id)).flatten();
+        let on = !l.unreadable && waiting.is_none() && w.enabled.contains(&l.id);
         Row {
             id: l.id.clone(),
             title: l.name.clone(),
@@ -652,7 +668,7 @@ pub(super) fn rows(entries: &[Entry], w: &World) -> Vec<Row> {
             make: l.native.then_some(Make::Native),
             version: l.version.clone(),
             on,
-            need: None,
+            need: waiting.map(|mod_| Need::Waiting(mod_.reason.clone())),
             registry_unchecked: false,
             update: None,
             dependency: false,
@@ -730,7 +746,7 @@ pub(super) fn visible(rows: &[Row], f: &RowFilter) -> Vec<usize> {
 
 /// Why "Update all" leaves out `r`'s update, if it does.
 pub(super) fn update_refusal(r: &Row) -> Option<String> {
-    r.pinned
+    (r.pinned && !matches!(r.need, Some(Need::Waiting(_))))
         .then(|| tr("you chose its version: update it on its own").to_string())
 }
 
@@ -754,6 +770,7 @@ pub(super) fn turn_on_plan<'a>(
             Some(Need::TakenDown(why)) => {
                 no.push((*r, trf("taken down: {reason}", &[("reason", why)])))
             }
+            Some(Need::Waiting(why)) => no.push((*r, why.clone())),
             _ if r.native() && !native_allowed => no.push((
                 *r,
                 tr("native code needs your permission first").to_string(),

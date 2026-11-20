@@ -1,9 +1,9 @@
 //! Stage the complete replacement set, hold save evidence, then publish exactly that set.
-use super::{build, unsettled, Active, Lease};
+use super::{build, unsettled, Active, Lease, SwitchEffects};
 use crate::{
     backend,
     browser::{self, installed, sunrise},
-    i18n::{tr, trf},
+    i18n::tr,
     native_mods, worlds,
 };
 use semver::Version;
@@ -21,6 +21,7 @@ use sunrise_launcher_smod::{
 
 const MAX_TRIALS: usize = 20_000;
 
+#[derive(Clone)]
 pub(super) struct Package {
     pub(super) manifest: Manifest,
     pub(super) digest: String,
@@ -46,7 +47,7 @@ pub struct Switch {
     index: String,
     fence: worlds::switch::Fence,
     question: worlds::SwitchQuestion,
-    removals: Vec<(String, String)>,
+    effects: SwitchEffects,
     live: bool,
 }
 
@@ -132,35 +133,32 @@ impl Switch {
             }
             Ok(false)
         })?;
-        let (chosen, prepared, image) = solved.ok_or_else(unsettled)?;
-        let removals: Vec<_> = source
-            .packages
-            .iter()
-            .filter(|(id, _)| !chosen.contains_key(id.as_str()))
-            .map(|(id, old)| {
-                let reason = if let Some(error) = native_refusals.get(id) {
+        let (mut chosen, prepared, image) = solved.ok_or_else(unsettled)?;
+        let prior_waiting = build::waiting_packages(home)?;
+        let (disabled, waiting, effects) =
+            outcomes(&source, &chosen, &catalogue, &prior_waiting, |id| {
+                if let Some(error) = native_refusals.get(id) {
                     error.clone()
-                } else if let Some(revoked) = old
-                    .row
-                    .as_ref()
-                    .and_then(|row| catalogue.revoked(&row.project, &old.digest))
-                {
-                    revoked.reason.clone()
                 } else if slots[id].is_empty() {
                     tr("No compatible version was found for this game build.").into()
                 } else {
                     tr("It cannot stay with the other mods on this build.").into()
-                };
-                (old.manifest.name.clone(), reason)
-            })
-            .collect();
+                }
+            })?;
+        // The build trial proved the surviving enabled set. Keep incompatible exact packages
+        // disabled in the final candidate; they must never enter an activation trial.
+        if !disabled.is_empty() {
+            chosen.extend(disabled.iter().map(|(id, package)| (id.as_str(), package)));
+            stage_set(home, prepared.path(), &source, &chosen)?;
+        }
         let changed: Vec<_> = source
             .packages
             .iter()
             .filter(|(id, pkg)| {
                 pkg.on
                     && chosen.get(id.as_str()).is_none_or(|next| {
-                        next.digest != pkg.digest
+                        !next.on
+                            || next.digest != pkg.digest
                             || pkg.manifest.native.is_some()
                             || !pkg.manifest.dependencies.is_empty()
                     })
@@ -195,7 +193,7 @@ impl Switch {
                 let first = order.next()?.0;
                 order.next().is_none().then_some(first)
             })?;
-        let next = prior.switched(tag, &image, prepared.path(), &removals)?;
+        let next = prior.switched(tag, &image, prepared.path(), effects.clone(), waiting)?;
         if build::inputs(home)? != initial_inputs {
             return Err(unsettled());
         }
@@ -209,7 +207,7 @@ impl Switch {
             index,
             fence,
             question,
-            removals,
+            effects,
             live: true,
         })
     }
@@ -227,8 +225,8 @@ impl Switch {
     pub fn question(&self) -> &worlds::SwitchQuestion {
         &self.question
     }
-    pub fn removals(&self) -> &[(String, String)] {
-        &self.removals
+    pub fn effects(&self) -> &SwitchEffects {
+        &self.effects
     }
 
     pub fn commit(
@@ -249,11 +247,11 @@ impl Switch {
         crate::native_status::check_permission(self.next.executable())?;
         self.owner.publish_staged_set(cutoff)?;
         self.live = false;
-        Ok((!self.removals.is_empty()).then(|| {
+        Ok((!self.effects.is_empty()).then(|| {
             self.next
                 .receipts()
                 .last()
-                .expect("new removal receipt")
+                .expect("new switch receipt")
                 .clone()
         }))
     }
@@ -358,6 +356,56 @@ impl Inventory {
     }
 }
 
+type Outcomes = (
+    BTreeMap<String, Package>,
+    BTreeMap<String, build::WaitingMod>,
+    SwitchEffects,
+);
+
+fn outcomes(
+    source: &Inventory,
+    chosen: &BTreeMap<&str, &Package>,
+    catalogue: &index::Index,
+    prior_waiting: &BTreeMap<String, build::WaitingMod>,
+    reason: impl Fn(&str) -> String,
+) -> Result<Outcomes, String> {
+    let mut disabled = BTreeMap::new();
+    let mut waiting = BTreeMap::new();
+    let mut effects = SwitchEffects::default();
+    for (id, old) in &source.packages {
+        if chosen.contains_key(id.as_str()) {
+            continue;
+        }
+        let origin = old.row.as_ref().map_or(id.as_str(), |row| &row.project);
+        if let Some(revoked) = catalogue.revoked(origin, &old.digest) {
+            effects
+                .removed
+                .push((old.manifest.name.clone(), revoked.reason.clone()));
+            continue;
+        }
+        let reason = reason(id);
+        let super::Image::Sha256(digest) = super::Image::at(&old.file)? else {
+            return Err(unsettled());
+        };
+        waiting.insert(
+            id.clone(),
+            build::WaitingMod {
+                file: old.relative.clone(),
+                digest,
+                reason: reason.clone(),
+                was_on: old.on || prior_waiting.get(id).is_some_and(|old| old.was_on),
+            },
+        );
+        effects
+            .waiting_for_update
+            .push((old.manifest.name.clone(), reason));
+        let mut keep = old.clone();
+        keep.on = false;
+        disabled.insert(id.clone(), keep);
+    }
+    Ok((disabled, waiting, effects))
+}
+
 fn candidates(
     source: &Inventory,
     catalogue: &index::Index,
@@ -374,11 +422,9 @@ fn candidates(
         let mut choices = Vec::new();
         let old = source.packages.get(&id);
         if let Some(old) = old.filter(|old| old.row.is_none()) {
-            if let Some(revoked) = catalogue.revoked(&id, &old.digest) {
-                return Err(trf(
-                    "The exact local mod {mod} was taken down: {reason}",
-                    &[("mod", &id), ("reason", &revoked.reason)],
-                ));
+            if catalogue.revoked(&id, &old.digest).is_some() {
+                slots.insert(id, choices);
+                continue;
             }
             if old.manifest.api != manifest::API {
                 return Err(unsettled());
@@ -829,6 +875,97 @@ fn too_many() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_fit_keeps_the_exact_native_package_off_but_a_takedown_removes_it() {
+        let profile = tempfile::tempdir().unwrap();
+        let home = profile.path();
+        let root = home.join(mod_list::NATIVE_DIR);
+        fs::create_dir(&root).unwrap();
+        let mut rows = Vec::new();
+        for (id, name) in [("lantern", "Lantern"), ("revoked", "Revoked")] {
+            let bytes = sunrise_launcher_smod::Package::write_files(
+                &format!(
+                    "id='{id}'\nname='{name}'\nversion='2.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{}'\nmixins='{}'\n",
+                    manifest::API, "a".repeat(40), "b".repeat(40),
+                ),
+                &[("src/lib.rs", b""), ("Cargo.toml", b"[package]\nname='fixture'\nversion='2.0.0'\n")],
+            ).unwrap();
+            let file = format!("{}/{id}.smod", mod_list::NATIVE_DIR);
+            fs::write(home.join(&file), &bytes).unwrap();
+            rows.push(serde_json::json!({
+                "source":"sunrise", "project":id, "slug":id, "title":name, "kind":"mod",
+                "version":"2.0.0", "number":"2.0.0", "file":file,
+                "checksum":format!("SHA-256:{}", index::sha256(&bytes)), "page":"",
+            }));
+        }
+        fs::write(
+            home.join(mod_list::FILE),
+            "mod.lantern:true\nmod.revoked:true\n",
+        )
+        .unwrap();
+        fs::write(
+            home.join(installed::MANIFEST),
+            serde_json::to_vec(&serde_json::json!({"entries":rows})).unwrap(),
+        )
+        .unwrap();
+        let source = Inventory::read(home).unwrap();
+        let index: index::Index = serde_json::from_value(serde_json::json!({
+            "schema": 1, "projects": [], "revoked": [{"id":"revoked","reason":"taken down"}],
+        }))
+        .unwrap();
+        let stage = tempfile::tempdir().unwrap();
+        let slots = candidates(&source, &index, "26.4", stage.path()).unwrap();
+        assert!(slots.values().all(Vec::is_empty));
+        let (retained, waiting, effects) =
+            outcomes(&source, &BTreeMap::new(), &index, &BTreeMap::new(), |_| {
+                "no fit".into()
+            })
+            .unwrap();
+        assert_eq!(
+            effects.waiting_for_update,
+            [("Lantern".to_owned(), "no fit".to_owned())]
+        );
+        assert_eq!(
+            effects.removed,
+            [("Revoked".to_owned(), "taken down".to_owned())]
+        );
+        assert!(waiting["lantern"].was_on);
+        let chosen = retained.iter().map(|(id, p)| (id.as_str(), p)).collect();
+        stage_set(home, stage.path(), &source, &chosen).unwrap();
+        let after = Inventory::read(stage.path()).unwrap();
+        let kept = &after.packages["lantern"];
+        assert_eq!(kept.relative, source.packages["lantern"].relative);
+        assert_eq!(kept.digest, source.packages["lantern"].digest);
+        assert!(!kept.on);
+        assert!(crate::native_status::enabled(stage.path()).is_empty());
+        assert!(!after.packages.contains_key("revoked"));
+        assert_eq!(
+            installed::Installed::load(stage.path()).entries[0].file,
+            rows[0]["file"].as_str().unwrap()
+        );
+
+        // An older compatible patch is an eligible update, but not a new label for the same bytes.
+        let registry: index::Index = serde_json::from_value(serde_json::json!({
+            "schema":1, "projects":[{
+                "id":"lantern", "kind":"native-mod", "name":"Lantern", "summary":"Fixture", "authors":["Someone"], "license":"MIT", "source":"https://github.com/example/lantern", "versions":[
+                    {"version":"2.0.0", "published":"2026-11-19", "api":manifest::API, "game":"26.4", "file":{"name":"lantern.smod", "url":"https://example.test/same", "size":128, "sha256":kept.digest}},
+                    {"version":"1.9.5", "published":"2026-11-20", "api":manifest::API, "game":"26.4", "file":{"name":"lantern.smod", "url":"https://example.test/new", "size":128, "sha256":"a".repeat(64)}}
+                ]
+            }], "revoked":[],
+        })).unwrap();
+        let project = registry.project("lantern").unwrap();
+        assert_eq!(
+            waiting["lantern"]
+                .replacement(&registry, project, "26.4")
+                .unwrap()
+                .version,
+            "1.9.5"
+        );
+        assert!(waiting["lantern"]
+            .replacement(&registry, project, "26.5")
+            .is_none());
+    }
 
     #[test]
     fn an_all_compatible_set_does_not_enumerate_every_lower_rank() {

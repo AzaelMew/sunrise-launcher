@@ -1505,7 +1505,6 @@
   "Switching game builds…": "Switching game builds…",
   "Switch game builds?": "Switch game builds?",
   "Switched game builds": "Switched game builds",
-  "Removed mods: {mods}": "Removed mods: {mods}",
   "Copy details": "Copy details",
   "Got it": "Got it",
   "Mod compatibility is checked when you keep this build.": "Mod compatibility is checked when you keep this build.",
@@ -1523,5 +1522,9 @@
   "The server command cannot change its server folder.": "The server command cannot change its server folder.",
   "Play this modpack once before updating it.": "Play this modpack once before updating it.",
   "The modpack or its exact game build could not be verified. Nothing was installed.": "The modpack or its exact game build could not be verified. Nothing was installed.",
-  "The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.": "The proposed mod set has incompatible packages or missing dependencies. Nothing was installed."
+  "The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.": "The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.",
+  "{status}: {mods}": "{status}: {mods}",
+  "Needs an update from its author": "Needs an update from its author",
+  "{mod} needs an update from its author before it can be turned on.": "{mod} needs an update from its author before it can be turned on.",
+  "Removed": "Removed"
 }

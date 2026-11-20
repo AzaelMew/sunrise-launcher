@@ -1268,13 +1268,23 @@ fn install_set_from(
     approvals: &[installed::Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<Vec<installed::Entry>, installed::InstallError> {
+    let waiting = txn::waiting_packages(home)?;
     let mut asked = Vec::new();
     for project in projects {
         let p = index
             .project(&project.id)
             .filter(|p| matches!(p.kind, index::Kind::Mod | index::Kind::NativeMod))
             .ok_or_else(|| format!("{} isn't a mod in Sunrise's registry.", project.title))?;
-        asked.push((p, newest(index, p, game)?));
+        let version = match waiting.get(&p.id) {
+            Some(waiting) => waiting.replacement(index, p, game).ok_or_else(|| {
+                trf(
+                    "{mod} needs an update from its author before it can be turned on.",
+                    &[("mod", &p.name)],
+                )
+            })?,
+            None => newest(index, p, game)?,
+        };
+        asked.push((p, version));
     }
     dependencies::install(
         &Install {
@@ -1287,6 +1297,7 @@ fn install_set_from(
         &asked,
         native_allowed,
         turn_on,
+        &waiting,
     )
 }
 
@@ -1419,7 +1430,7 @@ fn install_version_guarded(
         progress,
     };
     let (entry, file, unreadable) =
-        install.prepare(p, v, &list, &home.join("mod-browser/downloads"))?;
+        install.prepare(p, v, &list, &home.join("mod-browser/downloads"), None)?;
     let Some((path, _)) = file else {
         return Ok(entry);
     };
@@ -1497,6 +1508,7 @@ impl Install<'_> {
         v: &index::Version,
         list: &installed::Installed,
         staging: &Path,
+        waiting: Option<&txn::WaitingMod>,
     ) -> Result<Prepared, String> {
         let index = self.index;
         let project = project_of(index, p, &v.game)
@@ -1552,7 +1564,9 @@ impl Install<'_> {
                 ));
             }
         }
-        if old.as_ref().is_some_and(|o| o.version == v.version) {
+        if old.as_ref().is_some_and(|o| o.version == v.version)
+            && waiting.is_none_or(|item| item.same_package(v))
+        {
             return Ok((old.expect("checked"), None, None));
         }
         let target = self.home.join(&relative);
