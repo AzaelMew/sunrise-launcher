@@ -459,7 +459,7 @@ impl Launcher {
                     &card_data.summary,
                     facts,
                     control,
-                    note.or_else(|| failed_here.filter(|e| e.open).map(|e| e.details.clone())),
+                    note,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.mods_show_project(open.clone());

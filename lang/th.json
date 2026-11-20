@@ -1472,5 +1472,6 @@
   "All your mods work with this version": "All your mods work with this version",
   "1 of your mods isn't ready for this version and will be removed": "1 of your mods isn't ready for this version and will be removed",
   "{count} of your mods aren't ready for this version and will be removed": "{count} of your mods aren't ready for this version and will be removed",
-  "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like.": "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like."
+  "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like.": "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like.",
+  "{mod} couldn't be installed": "{mod} couldn't be installed"
 }

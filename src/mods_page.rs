@@ -52,6 +52,7 @@ pub(crate) struct BreakAsk {
 /// An install that failed, as its card says it.
 pub(crate) struct CardError {
     pub(crate) id: String,
+    pub(crate) title: String,
     pub(crate) line: String,
     pub(crate) details: String,
     /// Details is open.
@@ -303,6 +304,9 @@ impl Launcher {
                     let id = m.busy.take().map(|(id, ..)| id);
                     m.card_error = match (&result, &id) {
                         (Err(why), Some(id)) => Some(CardError {
+                            title: sunrise::known_index()
+                                .and_then(|index| index.project(id).map(|p| p.name.clone()))
+                                .unwrap_or_else(|| id.clone()),
                             id: id.clone(),
                             line: crate::mods::install_state::plain_failure(why),
                             details: why.clone(),
