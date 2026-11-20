@@ -4498,6 +4498,25 @@ mod tests {
     }
 
     #[test]
+    fn a_server_jar_whose_version_file_has_no_sha1_is_kept_and_not_checked() {
+        let dir = std::env::temp_dir().join(format!("sunrise-jar-nosha-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let jar = dir.join("server-jars/26.3.jar");
+        let manifest = serde_json::json!({"downloads": {"server": {
+            "url": "https://piston-data.mojang.com/server.jar"}}});
+        let nothing = |_: String| {};
+        let served = |_: &str| Ok(b"whatever came down".to_vec());
+        // With nothing to check against, a download is kept as it came.
+        ensure_server_jar(&jar, &manifest, &served, &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), b"whatever came down");
+        // And a cached jar is trusted, not fetched again.
+        let refuse = |_: &str| -> Result<Vec<u8>, String> { Err("fetched".into()) };
+        ensure_server_jar(&jar, &manifest, &refuse, &nothing).unwrap();
+        assert_eq!(fs::read(&jar).unwrap(), b"whatever came down");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn the_launchers_build_is_its_selected_one_when_installed_else_the_newest() {
         let installed = ["v0.4.0".to_owned(), "v0.3.0".to_owned()];
         assert_eq!(launcher_build(Some("v0.3.0"), &installed), Some("v0.3.0"));
