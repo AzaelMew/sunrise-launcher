@@ -352,11 +352,12 @@ impl Launcher {
         }
         // The mods come up to date first, so the build that follows takes the new versions up
         // and the game starts on what was built.
-        if !mods_updated && self.settings.auto_updates_mods() {
-            let target = mods_page::AutoTarget {
-                game: self.game_of(&instance),
-                instance,
-            };
+        if let (false, true, Some(game)) = (
+            mods_updated,
+            self.settings.auto_updates_mods(),
+            self.game_of(&instance),
+        ) {
+            let target = mods_page::AutoTarget { game, instance };
             let native_allowed = self.settings.native_mods_allowed_at.is_some();
             let tx = self.mods.tx.clone();
             self.play_step = Some(backend::PlayStep::Mods);

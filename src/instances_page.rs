@@ -76,14 +76,17 @@ impl Launcher {
     }
 
     /// The Minecraft version `instance`'s own build plays: what its mods and packs are for.
-    pub(super) fn game_of(&self, instance: &Instance) -> String {
-        backend::played_version_id_by(self.version_of(instance).map(String::as_str))
+    /// None while that build isn't downloaded: it says nothing about itself, and the launcher's
+    /// own game is not its.
+    pub(super) fn game_of(&self, instance: &Instance) -> Option<String> {
+        backend::game_of_build(self.version_of(instance)?)
     }
 
     /// The Minecraft version the Mods page installs and updates for: the selected instance's build, else the launcher's.
     pub(super) fn mods_game(&self) -> String {
         self.selected_instance()
-            .map_or_else(sunrise_launcher::browser::game, |i| self.game_of(i))
+            .and_then(|i| self.game_of(i))
+            .unwrap_or_else(sunrise_launcher::browser::game)
     }
 
     pub(super) fn select_instance(&mut self, instance: &Instance) {
