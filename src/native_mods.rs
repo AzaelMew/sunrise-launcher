@@ -2223,6 +2223,41 @@ mod tests {
     }
 
     #[test]
+    fn a_good_enabled_mod_still_builds_beside_a_broken_file() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        fs::write(native.join("aaa.smod"), b"old format").unwrap();
+        let mut zip = zip::ZipWriter::new(fs::File::create(native.join("zed.smod")).unwrap());
+        let manifest = format!(
+            "id='zed_mod'\nname='Zed'\nversion='0.1.0'\napi='0.2'\ncapabilities=['registries']\n[native]\ngame='{}'\nsunrise='{}'\nmixins='{}'\n",
+            crate::backend::PINNED_GAME,
+            "a".repeat(40),
+            "b".repeat(40)
+        );
+        for (name, text) in [
+            ("Cargo.toml", "[package]\nname='zed_mod'\nversion='0.1.0'\n"),
+            ("src/lib.rs", "fn hook() {}"),
+            ("sunrise-mod.toml", manifest.as_str()),
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(text.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        crate::browser::mod_list::set_enabled(home.path(), "zed_mod", true).unwrap();
+        let out = home.path().join("out");
+        let staged = stage_installed(home.path(), out.clone()).unwrap();
+        assert_eq!(staged, Some(out.clone()));
+        assert_eq!(
+            fs::read_to_string(out.join("zed_mod/src/lib.rs")).unwrap(),
+            "fn hook() {}"
+        );
+        assert!(!out.join("aaa").exists());
+    }
+
+    #[test]
     fn stop_before_worker_start_aborts_before_any_step() {
         // The GUI owns one handle and gives the worker a clone before showing Stop. Schedule
         // the stop first, then enter the real build worker. This needs no game or valid paths:
