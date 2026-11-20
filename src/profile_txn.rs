@@ -84,9 +84,20 @@ pub struct Admission {
     home: PathBuf,
     identity: Identity,
     file: fs::File,
+    #[cfg(unix)]
+    handed_off: std::sync::atomic::AtomicBool,
 }
 
-// Close the Unix description / Windows handle without explicitly unlocking the child's copy.
+#[cfg(unix)]
+impl Drop for Admission {
+    fn drop(&mut self) {
+        if !*self.handed_off.get_mut() {
+            // An unrelated concurrent fork may temporarily hold a copy until exec.
+            // It was never given admission. Only an intentional handoff needs close-only.
+            let _ = self.file.unlock();
+        }
+    }
+}
 impl Admission {
     /// Recovery can retire or restore references. Managed callers fence cache deletion
     /// around admission; no cache guard is held by this lease while a worker runs.
@@ -138,6 +149,8 @@ impl Admission {
             home: home.into(),
             identity,
             file,
+            #[cfg(unix)]
+            handed_off: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -611,7 +624,11 @@ impl<'a> Staging<'a> {
     /// Borrow this stage's existing admission for a preparation or native worker. The
     /// worker may outlive the launcher, but only the launcher may seal proved output.
     pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
-        crate::process::leases::ProfileHandoff(&self.lease.file)
+        crate::process::leases::ProfileHandoff {
+            file: &self.lease.file,
+            #[cfg(unix)]
+            handed_off: &self.lease.handed_off,
+        }
     }
 
     /// Bind exact preimages and candidates under the caller's reference guard, while only

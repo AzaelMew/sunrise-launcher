@@ -819,6 +819,20 @@ fn await_fixture(mut ready: impl FnMut() -> bool) {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn admission_without_handoff_does_not_leave_an_incidental_fork_holding_the_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let owner = Admission::open(home, None).unwrap();
+    // A fork before exec has the same open description, even with CLOEXEC set.
+    let not_an_admitted_child = owner.file.try_clone().unwrap();
+    drop(owner);
+    assert!(Admission::open(home, None).is_ok());
+    drop(not_an_admitted_child);
+}
+
 #[test]
 fn staged_child_survives_launcher_death_and_blocks_an_already_open_launcher() {
     let tmp = tempfile::tempdir().unwrap();
@@ -890,5 +904,6 @@ fn the_same_admission_seals_after_a_staged_worker_exits() {
         "publication keeps the owning profile"
     );
     drop(owner);
-    assert!(Admission::open(home, None).is_ok());
+    // An unrelated fork may still briefly own a CLOEXEC reference to the handed-off file.
+    await_fixture(|| Admission::open(home, None).is_ok());
 }

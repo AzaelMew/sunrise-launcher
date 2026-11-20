@@ -62,7 +62,11 @@ impl ChildLeases {
 
 /// Borrow the owning profile gate through exactly one spawn. Parent and child close their
 /// references independently; neither releases the other's exclusion.
-pub struct ProfileHandoff<'a>(pub(crate) &'a File);
+pub struct ProfileHandoff<'a> {
+    pub(crate) file: &'a File,
+    #[cfg(unix)]
+    pub(crate) handed_off: &'a std::sync::atomic::AtomicBool,
+}
 
 /// Preparation only needs the profile gate. The compiler also needs the existing Windows
 /// Job cutover (the Unix compiler uses its worker executable for process-tree proof).
@@ -86,12 +90,14 @@ impl ProfileHandoff<'_> {
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
-            spawn_unix(command, &[], None, Some(self.0)).map(Into::into)
+            self.handed_off
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            spawn_unix(command, &[], None, Some(self.file)).map(Into::into)
         }
         #[cfg(windows)]
         spawn_piped(
             &command,
-            Some(self.0),
+            Some(self.file),
             matches!(role, StagedChild::Compiler),
         )
     }
