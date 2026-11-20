@@ -548,7 +548,7 @@ fn an_unavailable_system_trash_does_not_put_back_or_delete_a_profile() {
     );
     let other = create_in(&home, &data, "Survival", None).unwrap();
     assert_eq!(other.home, instance.home);
-    assert!(retired.starts_with(home.join(RETIRED)));
+    assert!(retired.starts_with(home.canonicalize().unwrap().join(RETIRED)));
     assert!(retired.is_dir());
     fs::remove_dir_all(root).unwrap();
 }
