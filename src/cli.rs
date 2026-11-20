@@ -584,7 +584,7 @@ enum Cmd {
     /// Download and install a release (a tag such as v2026.10.13, or "latest")
     Install { tag: String },
     /// Install a local unsigned developer build from a trusted checkout
-    #[command(about = tr("Install a local unsigned developer build from a trusted checkout"), after_help = tr("Example: sunrise-launcher developer-install CHECKOUT --program CHECKOUT/target/debug/sunrise-client --trust-unsigned\nThis executes the checkout's build code and an unsigned game with your rights. Trust both before continuing."), long_about = tr("Install a local unsigned developer build. This runs the checkout's build code through cargo run -p xtask -- package. Commit tracked changes and rebuild first. Build sunrise-ctl, sunrise-prepare and sunrise-server beside the game, generate sunrise-wasm-std.wasm beside it with cargo run --locked -p cargo-sunrise-mod -- wasm-std PATH, and compile exporters into the checkout's exporters folder. Native builds use the saved local source commit, including unpublished commits. Select this base explicitly; automatic updates never replace it."))]
+    #[command(about = tr("Install a local unsigned developer build from a trusted checkout"), after_help = tr("Example: sunrise-launcher developer-install CHECKOUT --program CHECKOUT/target/debug/sunrise-client --trust-unsigned\nThis executes the checkout's build code and an unsigned game with your rights. Trust both before continuing."), long_about = tr("Install a local unsigned developer build. This runs the checkout's build code through cargo run -p xtask -- package. Commit tracked changes and rebuild first. Build sunrise-ctl, sunrise-prepare and sunrise-server beside the game, and compile exporters into the checkout's exporters folder. Native builds use the saved local source commit, including unpublished commits. Select this base explicitly; automatic updates never replace it."))]
     DeveloperInstall(developer_builds::DeveloperInstall),
     /// Remove an installed version
     Remove { tag: String },
@@ -687,8 +687,7 @@ enum Cmd {
     },
     /// Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod projects against the profile's exact
     /// Sunrise source revision with the launcher's own Rust, as the version the profile then
-    /// plays. Not sandboxed: the mods' code runs with your rights. With no native mod found (content
-    /// and wasm mods need no build), it says there is nothing to build and exits successfully; a
+    /// plays. Not sandboxed: the mods' code runs with your rights. If there are no native mods to build, it exits successfully; a
     /// server export still fails, as no engine is made
     NativeBuild {
         /// Discover internal uses through compiler diagnostics. Prints resolved declarations
@@ -701,8 +700,7 @@ enum Cmd {
         #[arg(long, requires = "catalog")]
         catalog_output: Option<PathBuf>,
         /// A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them
-        /// (default: the native mods installed and turned on in the profile). Server exports
-        /// also read wasm internals declarations from .smod packages directly in this folder
+        /// (default: the native mods installed and turned on in the profile)
         folder: Option<PathBuf>,
         /// Export mode: build a standalone dedicated-server engine into this folder instead of
         /// a profile's build. Needs a mod FOLDER; no profile is read or changed, and no
