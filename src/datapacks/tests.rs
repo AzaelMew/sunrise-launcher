@@ -165,3 +165,21 @@ fn a_data_pack_mcmeta_with_a_byte_order_mark_or_comments_is_listed() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_data_pack_without_a_description_is_not_listed() {
+    let root = scratch("no-description");
+    let packs = root.join("datapacks");
+    zip_file(&packs.join("Bare.zip"), &[("pack.mcmeta", "{}")]);
+    fs::create_dir_all(packs.join("NoText")).unwrap();
+    fs::write(
+        packs.join("NoText/pack.mcmeta"),
+        r#"{"pack":{"pack_format":88}}"#,
+    )
+    .unwrap();
+    fs::create_dir_all(packs.join("Fine")).unwrap();
+    fs::write(packs.join("Fine/pack.mcmeta"), META).unwrap();
+    let names: Vec<String> = list(&root).into_iter().map(|p| p.file).collect();
+    assert_eq!(names, ["Fine"]);
+    fs::remove_dir_all(&root).unwrap();
+}
