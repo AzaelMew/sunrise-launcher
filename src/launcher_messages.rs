@@ -250,6 +250,9 @@ impl Launcher {
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
+                    if let Some(error) = &updates.launcher_error {
+                        settings::log_launcher_check_failure(error, |line| eprintln!("{line}"));
+                    }
                     self.updates = *updates;
                     if self.settings.auto_install() {
                         self.install_update();
@@ -266,7 +269,12 @@ impl Launcher {
                             self.updates.launcher = release;
                             self.updates.launcher_error = None;
                         }
-                        Err(error) => self.updates.launcher_error = Some(error),
+                        Err(error) => {
+                            settings::log_launcher_check_failure(&error, |line| {
+                                eprintln!("{line}")
+                            });
+                            self.updates.launcher_error = Some(error)
+                        }
                     }
                 }
                 Msg::NativeConsentRead(read, inputs) => {
