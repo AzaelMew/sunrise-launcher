@@ -167,8 +167,8 @@ impl Launcher {
                     let resume = self
                         .ui
                         .after_install
-                        .take()
-                        .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
+                        .take_if(|(_, wanted)| *wanted == tag)
+                        .filter(|_| result.is_ok());
                     match result {
                         Ok(()) => {
                             if as_update.is_some()
@@ -196,23 +196,23 @@ impl Launcher {
                                     &before,
                                 )
                             }) && (!for_instance || self.launcher_version().is_none());
-                            if select {
-                                self.settings.selected = Some(tag.clone());
-                            }
-                            // Pruning reads settings from disk: protect the selection only once
-                            // it has been saved there. A failed save leaves all versions in place.
-                            if self.save_settings() {
-                                let tx = self.tx.clone();
-                                std::thread::spawn(move || {
-                                    let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
-                                });
+                            if resume.is_none() {
+                                if select {
+                                    self.settings.selected = Some(tag.clone());
+                                }
+                                // Pruning reads settings from disk: protect the selection only once
+                                // it has been saved there. A failed save leaves all versions in place.
+                                if self.save_settings() {
+                                    let tx = self.tx.clone();
+                                    std::thread::spawn(move || {
+                                        let _ = tx.send(Msg::Pruned(backend::prune_old_versions()));
+                                    });
+                                }
                             }
                         }
                         Err(e) => self.install_error = Some((tag, e)),
                     }
-                    if let Some((intent, _)) =
-                        resume.filter(|(_, wanted)| self.selected() == Some(wanted))
-                    {
+                    if let Some((intent, _)) = resume {
                         self.resume_play(intent);
                     }
                     if let Some(next) = self.install_next.take() {
@@ -291,6 +291,25 @@ impl Launcher {
                     self.native_progress = Some(step.progress());
                     if let Some(run) = &mut self.ui.mods.build {
                         run.step(&step);
+                    }
+                }
+                Msg::PlayImage(result) => {
+                    self.native_cancellation = None;
+                    self.native_step = None;
+                    self.native_progress = None;
+                    let wanted = self.play_after_build.take();
+                    match result {
+                        Ok(tag) => {
+                            self.installed = backend::installed();
+                            self.reload_instances();
+                            if let Some(intent) = wanted.filter(|intent| {
+                                self.selected_instance()
+                                    .is_some_and(|instance| instance.id == intent.instance)
+                            }) {
+                                self.play(intent, tag);
+                            }
+                        }
+                        Err(error) => self.client_error = Some(error),
                     }
                 }
                 Msg::Native(result) => {
@@ -374,7 +393,9 @@ impl Launcher {
                         if shown {
                             self.close_sheet();
                         }
-                        self.play(play);
+                        if let Ok(tag) = result {
+                            self.play(play, tag);
+                        }
                     }
                 }
                 Msg::LauncherProgress(p) => {
@@ -423,10 +444,7 @@ impl Launcher {
                             self.preparing = false;
                             // Play pressed before the version was prepared plays now.
                             if let Some((tag, intent)) = self.play_when_prepared.take() {
-                                if error.is_none()
-                                    && self.selected() == Some(&tag)
-                                    && backend::check_prepared(&tag)
-                                {
+                                if error.is_none() && backend::check_prepared(&tag) {
                                     self.resume_play(intent);
                                 }
                             }

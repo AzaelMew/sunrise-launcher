@@ -3250,9 +3250,13 @@ pub struct Logged {
 pub const LOG_KEEP: usize = 2000;
 
 impl Logged {
-    pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
+    pub fn start(
+        job: Job,
+        cmd: Command,
+        profile: Option<&crate::browser::sunrise::txn::Lease>,
+    ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let running = spawn(job, cmd, tx, None)?;
+        let running = spawn(job, cmd, tx, profile)?;
         let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());

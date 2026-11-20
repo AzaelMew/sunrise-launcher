@@ -87,7 +87,12 @@ impl Session {
                     Some(name) => instances::find(name)?,
                     None => instances::selection()?,
                 };
-                let tag = instance.resolve_version(arg_str(args, "version"))?;
+                if arg_str(args, "version").is_some() {
+                    return Err(
+                        tr("Choose a game build in the profile before pressing Play.").into(),
+                    );
+                }
+                let (owner, tag) = crate::cli::play_image(&instance)?;
                 let mut cmd = backend::client(&tag)?;
                 instances::apply(&mut cmd, &instance)?;
                 cmd.args(game_tools::control_args());
@@ -116,7 +121,7 @@ impl Session {
                     sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
                 jars::prepare_launch(&mut cmd, &launch, Permission::headless(allow_jar_downloads))
                     .map_err(|error| error.to_string())?;
-                let client = Logged::start(Job::Client, cmd)?;
+                let client = Logged::start(Job::Client, cmd, Some(&owner))?;
                 // Started once its control socket answers, as sunrise-ctl launch waits.
                 let deadline = std::time::Instant::now() + Duration::from_secs(120);
                 while !game_tools::listening() {
@@ -162,7 +167,7 @@ impl Session {
                     Permission::headless(allow_jar_downloads),
                 )
                 .map_err(|error| error.to_string())?;
-                let server = Logged::start(Job::Server, cmd)?;
+                let server = Logged::start(Job::Server, cmd, None)?;
                 std::thread::sleep(Duration::from_secs(3));
                 let tail = server.tail(15).join("\n");
                 if let Some(result) = server.finished() {

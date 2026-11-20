@@ -1495,5 +1495,7 @@
   "The mod registry didn't send a complete index: {error}": "The mod registry didn't send a complete index: {error}",
   "{file} doesn't match either version of the interrupted install. Nothing further was undone.": "{file} doesn't match either version of the interrupted install. Nothing further was undone.",
   "The profile changed while its first build was being prepared. Nothing was switched.": "The profile changed while its first build was being prepared. Nothing was switched.",
-  "The profile's saved game build does not match the files on disk.": "The profile's saved game build does not match the files on disk."
+  "The profile's saved game build does not match the files on disk.": "The profile's saved game build does not match the files on disk.",
+  "The build did not include every enabled mod. Nothing was switched.": "The build did not include every enabled mod. Nothing was switched.",
+  "Choose a game build in the profile before pressing Play.": "Choose a game build in the profile before pressing Play."
 }

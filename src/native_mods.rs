@@ -1978,6 +1978,55 @@ pub fn build(
     })
 }
 
+/// Compiles one exact input set for Play or a staged transaction. This route neither retries
+/// without a mod nor edits profile metadata. Its caller must verify the resulting inventory
+/// and publish the chosen generation while still holding the admission lease.
+pub fn build_exact_client(
+    base: &str,
+    home: &Path,
+    profile: Profile,
+    cancellation: &Cancellation,
+    progress: impl Fn(Step),
+) -> Result<String, Failed> {
+    cancellation.check()?;
+    require_consent()?;
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Err(Failed::Other(error));
+    }
+    logged_then(
+        |cache| {
+            let lease = cache.map_err(|error| Failed::Other(error.into()))?;
+            fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+            let staged = tempfile::Builder::new()
+                .prefix(".native-input-")
+                .tempdir_in(root())
+                .map_err(|e| e.to_string())?;
+            let folder =
+                stage_installed(home, staged.path().join("mods"))?.ok_or(Failed::Nothing)?;
+            let built = pipeline(
+                lease,
+                base,
+                &folder,
+                profile,
+                Target::Client,
+                BuildOptions {
+                    cancellation: cancellation.clone(),
+                    ..BuildOptions::default()
+                },
+                &progress,
+            )?;
+            if !built.left_out.is_empty() {
+                return Err(Failed::Other(
+                    tr("The build did not include every enabled mod. Nothing was switched.").into(),
+                ));
+            }
+            cancellation.check()?;
+            Ok(built.version)
+        },
+        |_| {},
+    )
+}
+
 /// Clearing the pin must play the checked base both in the window and on the command line.
 /// Nightly follows the launcher's selection. Stable follows the newest installed Stable choice
 /// in the window, or Nightly when the known catalogue has no Stable release. With no catalogue,

@@ -96,6 +96,10 @@ impl Launcher {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
+        self.prepare_tag(tag, from);
+    }
+
+    pub(super) fn prepare_tag(&mut self, tag: String, from: backend::MinecraftFrom) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
@@ -138,13 +142,7 @@ impl Launcher {
         self.download_seen = None;
     }
 
-    pub(super) fn play(&mut self, intent: PlayIntent) {
-        // A press that starts nothing says why, where Play's errors show: the button can look
-        // ready when it is not (a version prepared elsewhere and since removed, a debug preview).
-        let Some(tag) = self.selected().cloned() else {
-            self.client_error = Some(tr("Install a Sunrise game build first.").into());
-            return;
-        };
+    pub(super) fn play(&mut self, intent: PlayIntent, tag: String) {
         if let Some(why) = self.why_not_now(&tag) {
             self.client_error = Some(why);
             return;

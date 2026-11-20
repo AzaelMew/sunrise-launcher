@@ -92,28 +92,15 @@ impl Bootstrap {
 
     pub(super) fn active(&self, image: &str, home: &Path) -> Result<Active, String> {
         self.verify(home)?;
-        let base = Artifact::capture(&self.target.base)?;
-        let executable = Artifact::capture(image)?;
-        if image != base.tag
-            && native_mods::about(image)
-                .is_none_or(|about| about.base != base.tag || !about.left_out.is_empty())
-        {
-            return Err(unsettled());
-        }
-        let included = native_status::included(image)?;
-        native_status::check_compiled_profile(&included, home)?;
-        if native_status::enabled(home).len() != included.len() {
-            return Err(crate::i18n::tr("This native build doesn't say exactly which mods it includes. Rebuild the mods or choose another game build.").into());
-        }
-        Ok(Active {
-            version: 1,
-            profile: self.profile,
-            generation: 1,
-            base,
-            executable,
-            inputs: self.inputs,
-            receipts: Vec::new(),
-        })
+        Active::capture(
+            self.profile,
+            1,
+            &self.target.base,
+            image,
+            self.inputs,
+            Vec::new(),
+            home,
+        )
     }
 }
 
@@ -154,19 +141,66 @@ pub struct Active {
     pub(super) generation: u64,
     base: Artifact,
     executable: Artifact,
-    inputs: [u8; 32],
+    pub(super) inputs: [u8; 32],
     receipts: Vec<Receipt>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Receipt {
+pub(super) struct Receipt {
     id: [u8; 16],
     names: Vec<String>,
     reasons: Vec<String>,
 }
 
 impl Active {
+    fn capture(
+        profile: [u8; 16],
+        generation: u64,
+        base: &str,
+        image: &str,
+        inputs: [u8; 32],
+        receipts: Vec<Receipt>,
+        home: &Path,
+    ) -> Result<Self, String> {
+        verify_included(base, image, home)?;
+        if self::inputs(home)? != inputs {
+            return Err(unsettled());
+        }
+        let base = Artifact::capture(base)?;
+        let executable = if image == base.tag {
+            base.clone()
+        } else {
+            Artifact::capture(image)?
+        };
+        Ok(Self {
+            version: 1,
+            profile,
+            generation,
+            base,
+            executable,
+            inputs,
+            receipts,
+        })
+    }
+
+    pub(super) fn adopt(&self, image: &str, inputs: [u8; 32], home: &Path) -> Result<Self, String> {
+        let generation = self.generation.checked_add(1).ok_or_else(unsettled)?;
+        let next = Self::capture(
+            self.profile,
+            generation,
+            self.base(),
+            image,
+            inputs,
+            self.receipts.clone(),
+            home,
+        )?;
+        if next.base != self.base {
+            return Err(unsettled());
+        }
+        Ok(next)
+    }
+
     pub fn base(&self) -> &str {
         &self.base.tag
     }
@@ -195,6 +229,50 @@ impl Active {
         valid_tag(self.base())?;
         valid_tag(self.executable())
     }
+}
+
+pub(super) fn verify_included(base: &str, image: &str, home: &Path) -> Result<(), String> {
+    if image != base
+        && native_mods::about(image)
+            .is_none_or(|about| about.base != base || !about.left_out.is_empty())
+    {
+        return Err(unsettled());
+    }
+    let included = native_status::included(image)?;
+    native_status::check_compiled_profile(&included, home)?;
+    if native_status::enabled(home).len() != included.len() {
+        return Err(crate::i18n::tr("This native build doesn't say exactly which mods it includes. Rebuild the mods or choose another game build.").into());
+    }
+    Ok(())
+}
+
+pub(super) fn verify_packages(home: &Path) -> Result<(), String> {
+    use sunrise_launcher_smod::{manifest, mod_list};
+    let mut ids = std::collections::HashSet::new();
+    for directory in [mod_list::DIR, mod_list::NATIVE_DIR] {
+        let root = home.join(directory);
+        let entries = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("{}: {e}", root.display())),
+        };
+        for entry in entries {
+            let path = entry
+                .map_err(|e| format!("{}: {e}", root.display()))?
+                .path();
+            if path.extension().is_none_or(|ext| ext != "smod") {
+                continue;
+            }
+            let package =
+                manifest::Package::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if (directory == mod_list::NATIVE_DIR) != package.manifest.native.is_some()
+                || !ids.insert(package.manifest.id)
+            {
+                return Err(unsettled());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn valid_tag(tag: &str) -> Result<(), String> {
@@ -230,6 +308,14 @@ pub(super) fn publish(home: &Path, active: &Active) -> Result<(), String> {
     let path = home.join(FILE);
     let bytes = serde_json::to_vec(active).map_err(|e| e.to_string())?;
     durable::replace(home, &path, &bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+// An advisory label for lists only. Launches and mutations must use an admitted lease.
+pub fn displayed_image(home: &Path) -> Option<String> {
+    read(home)
+        .ok()
+        .flatten()
+        .map(|active| active.executable.tag)
 }
 
 impl Lease {
@@ -275,7 +361,7 @@ pub(super) fn require_dir(path: &Path) -> Result<(), String> {
 
 /// Take the identity from the actual bytes, not a display/cache manifest. Order and file
 /// boundaries are explicit; a rebuild cannot substitute a changed package at the same path.
-fn inputs(home: &Path) -> Result<[u8; 32], String> {
+pub(super) fn inputs(home: &Path) -> Result<[u8; 32], String> {
     fn item(hash: &mut Sha256, root: &Path, rel: &str) -> Result<(), String> {
         hash.update((rel.len() as u64).to_le_bytes());
         hash.update(rel.as_bytes());
