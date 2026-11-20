@@ -39,6 +39,29 @@ pub(super) fn install(
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
         return Err(format!("{} can't be installed: {reason}", project.name));
     }
+    // Native code a dependency would bring in follows the player's one-time choice. The plan
+    // says so before anything downloads: the install interface asks first, and this is what
+    // holds for the headless ones.
+    if !native_allowed {
+        let native = planned
+            .install
+            .iter()
+            .map(|m| &m.id)
+            .chain(planned.update.iter().map(|u| &u.id))
+            .filter(|id| **id != project.id)
+            .find(|id| {
+                install
+                    .index
+                    .project(id)
+                    .is_some_and(|p| p.kind == index::Kind::NativeMod)
+            });
+        if let Some(id) = native {
+            return Err(format!(
+                "{} needs {id}, which runs native code: allow native mods first.",
+                project.name
+            ));
+        }
+    }
     let chosen: BTreeMap<String, String> = planned
         .install
         .into_iter()
@@ -51,7 +74,6 @@ pub(super) fn install(
         installed,
         selected: Vec::new(),
         unreadable: Vec::new(),
-        native_allowed,
         turn_on,
         chosen,
     };
@@ -143,7 +165,6 @@ struct Plan<'a> {
     selected: Vec<(installed::Entry, Option<PathBuf>)>,
     /// Installed files that no longer parse and are about to be replaced.
     unreadable: Vec<PathBuf>,
-    native_allowed: bool,
     /// False when an installed mod that is off is being updated and must stay off.
     turn_on: bool,
     /// The version the index plan chose for each mod it installs or updates.
@@ -251,11 +272,6 @@ impl Plan<'_> {
                     Some(reason) => format!("taken down: {reason}"),
                     None => format!("no matching version for Minecraft {game}"),
                 })?;
-            if p.kind == index::Kind::NativeMod && !self.native_allowed {
-                return Err(
-                    "it runs native code; install it explicitly to grant permission first".into(),
-                );
-            }
             v
         };
         self.add(p, v, depth)

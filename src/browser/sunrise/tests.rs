@@ -542,11 +542,9 @@ fn native_sample(home: &Path) -> Index {
     index
 }
 
-#[test]
-fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
-    let home = scratch("brings-native");
-    let mut index = native_sample(&home);
-    let native_hash = index.projects[0].versions[0].file.sha256.clone();
+/// The native sample with "fireflies" added: a content mod that needs the native `coords_hud`.
+fn fireflies_needing_a_native_mod(home: &Path) -> Index {
+    let mut index = native_sample(home);
     // A content mod that needs the native one.
     let manifest = "id='fireflies'\nname='Fireflies'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[dependencies]\ncoords_hud = '^0.1'";
     let bytes = sunrise_launcher_smod::Package::write_files(manifest, &[]).unwrap();
@@ -555,6 +553,7 @@ fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
     let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
     let mut project = sample().project("coords_hud").unwrap().clone();
     project.id = "fireflies".into();
+    project.key = None;
     project.name = "Fireflies".into();
     let v = &mut project.versions[0];
     v.version = "1.0.0".into();
@@ -575,6 +574,17 @@ fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
         signature: None,
     };
     index.projects.push(project);
+    index
+}
+
+#[test]
+fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
+    let home = scratch("brings-native");
+    let index = fireflies_needing_a_native_mod(&home);
+    let native_hash = index.project("coords_hud").unwrap().versions[0]
+        .file
+        .sha256
+        .clone();
     let ask = |ids: &[&str], held: &[index::resolve::InstalledMod]| {
         let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
         brings_native(&index, &ids, held, GAME)
@@ -594,6 +604,34 @@ fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
         "the native mod is already installed"
     );
     assert!(!ask(&["nothing_like_it"], &[]), "no plan, no claim");
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn a_native_dependency_installs_under_the_choice_and_is_refused_before_it_with_nothing_fetched() {
+    let home = scratch("native-dependency");
+    let index = fireflies_needing_a_native_mod(&home);
+    let p = index.project("fireflies").unwrap();
+    let install = Install {
+        index: &index,
+        local: true,
+        home: &home,
+        progress: &|_, _| {},
+    };
+    let refused = dependencies::install(&install, p, &p.versions[0], false, true).unwrap_err();
+    assert!(refused.contains("coords_hud"), "{refused}");
+    // Refused from the plan: nothing was downloaded or written.
+    assert!(!home.join(installed::MANIFEST).exists());
+    assert!(!home.join("sunrise-native-mods").exists());
+    assert!(!home.join(mod_list::MODS_DIR).exists());
+    let done = dependencies::install(&install, p, &p.versions[0], true, true).unwrap();
+    assert_eq!(
+        done.iter().map(|e| e.project.as_str()).collect::<Vec<_>>(),
+        ["fireflies", "coords_hud"]
+    );
+    assert!(done[1].dependency);
+    assert!(home.join("sunrise-native-mods/coords_hud.smod").is_file());
+    assert!(mod_list::is_enabled(&home, "coords_hud"));
     fs::remove_dir_all(home).unwrap();
 }
 
