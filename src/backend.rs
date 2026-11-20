@@ -4505,7 +4505,11 @@ fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options.open(path)?.write_all(bytes)
+    let mut file = options.open(path)?;
+    // A file left by a crashed run keeps its old mode when opened: tighten it too.
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    file.write_all(bytes)
 }
 
 #[cfg(test)]
@@ -4532,6 +4536,34 @@ mod tests {
         let mode = fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
         assert_eq!(fs::read(&file).unwrap(), b"{\"proxy\":\"http://u:p@h:1\"}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_leftover_looser_file_is_made_private_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.1.tmp");
+        fs::write(&file, b"old old old").unwrap();
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&file, b"new").unwrap();
+        assert_eq!(
+            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&file).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_settings_leaves_settings_json_private() {
+        use std::os::unix::fs::PermissionsExt;
+        Settings::default().save().unwrap();
+        let mode = fs::metadata(data_dir().join("settings.json"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
