@@ -550,6 +550,28 @@ impl Lease {
     pub fn active_build(&self) -> Result<Option<Active>, String> {
         read(self.home())
     }
+
+    /// Copy only the admitted generation, not pending work or another profile's receipts.
+    pub(crate) fn stage_copy(&self, destination: &Path) -> Result<Option<Active>, String> {
+        if super::read(self.home())?.is_some() {
+            return Err(unsettled());
+        }
+        let Some(mut active) = self.active_build()? else {
+            return Ok(None);
+        };
+        active.verify_artifacts()?;
+        if active.inputs != inputs(self.home())? || active.inputs != inputs(destination)? {
+            return Err(unsettled());
+        }
+        active.require_waiting_off(destination)?;
+        verify_included(active.base(), active.executable(), destination)?;
+        getrandom::fill(&mut active.profile).map_err(|e| e.to_string())?;
+        active.generation = 1;
+        active.receipts.clear();
+        active.validate()?;
+        publish(destination, &active)?;
+        Ok(Some(active))
+    }
 }
 
 pub(super) fn optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {

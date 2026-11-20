@@ -26,6 +26,8 @@ const OWN: &str = "instances";
 /// Where a new instance is put together, in the game's home (the same disk as [`OWN`], so
 /// moving it there is one rename). Never listed: an instance exists once it is whole.
 const STAGING: &str = ".new-instance";
+/// Initial choices published with the folder, used until the metadata store can record them.
+const CREATED_WITH: &str = ".profile-creation.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -583,6 +585,38 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
             Err(e) => eprintln!("Sunrise: instances.json is not saved: {e}"),
         }
     }
+    // A crash or store error after the folder rename cannot unpublish a playable profile.
+    // Recover initial choices only for rows not yet recorded, using the live sidecar under lock.
+    let initial = |id: &str| {
+        fs::read(root.join(id).join(CREATED_WITH))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Meta>(&bytes).ok())
+    };
+    let pending: Vec<_> = own
+        .iter()
+        .filter(|id| !store.instances.contains_key(*id))
+        .filter_map(|id| initial(id).map(|meta| (id, meta)))
+        .collect();
+    if !pending.is_empty() {
+        match Store::mutate(data, |live| {
+            for (id, _) in &pending {
+                if let Some(meta) = initial(id) {
+                    live.instances.entry((*id).clone()).or_insert(meta);
+                }
+            }
+            Ok(live.clone())
+        }) {
+            Ok(live) => store = live,
+            Err(error) => {
+                eprintln!(
+                    "Sunrise: profile choices could not be copied to instances.json: {error}"
+                );
+                store
+                    .instances
+                    .extend(pending.into_iter().map(|(id, meta)| (id.clone(), meta)));
+            }
+        }
+    }
     // An instance an earlier launcher made for Minecraft: Java Edition is not listed: its folder
     // and its record in `instances.json` stay as they are.
     own.retain(|slug| store.instances.get(slug).is_none_or(|m| m.java.is_none()));
@@ -784,6 +818,8 @@ const NOT_COPIED: &[&str] = &[
     "crash-reports",
     "sessions",
     "mod-browser",
+    ".install-txn.lock",
+    CREATED_WITH,
     ".sunrise-cache",
     // Far terrain's copies of what servers sent, rebuilt as the instance plays.
     "server-terrain",
@@ -802,7 +838,8 @@ pub fn create(name: &str, from: Option<&str>) -> Result<Instance, String> {
 /// [`create`], with everything else the New Profile dialog chose, as one step: `picture` (None
 /// keeps what a copy brought, `Some(None)` leaves it without one) and `choose`, which sets the
 /// rest of its choices. An instance appears only once its folder, picture and choices are all in
-/// place; a failure leaves nothing behind, so the same name can be tried again.
+/// place. A later metadata-store failure is repaired from the published profile, never by
+/// deleting it.
 pub fn create_with(
     name: &str,
     from: Option<&str>,
@@ -874,53 +911,70 @@ fn create_whole_in(
     // own path, so dropping the guard can never clean up a reused path after publication.
     let stage = tempfile::tempdir_in(&staging).map_err(create_error)?;
     let contents = stage.path().join("home");
-    let staged = || -> std::io::Result<()> {
-        if let Some(from) = from {
-            copy_home(&from.home, &contents)?;
-        } else {
-            fs::create_dir(&contents)?;
-            for f in PLAYER_FILES {
-                let source = game_home.join(f);
-                if source.is_file() {
-                    fs::copy(source, contents.join(f))?;
-                }
+    use crate::browser::sunrise::txn::{durable, Lease};
+    let source = from
+        .map(|instance| Lease::admit(&instance.home))
+        .transpose()?;
+    if let Some(source) = &source {
+        copy_home(source.home(), &contents).map_err(create_error)?;
+    } else {
+        fs::create_dir(&contents).map_err(create_error)?;
+        for f in PLAYER_FILES {
+            let source = game_home.join(f);
+            if source.is_file() {
+                fs::copy(source, contents.join(f)).map_err(create_error)?;
             }
         }
-        let icon = contents.join(PICTURE);
-        match picture {
-            Some(Some(png)) => fs::write(icon, png)?,
-            Some(None) if icon.is_file() => fs::remove_file(icon)?,
-            _ => {}
-        }
-        creation_parent(&root, OWN)?;
-        publish_new_folder(&contents, &dir)
-    };
-    staged().map_err(create_error)?;
-    let recorded = crate::run_leases::publish(&dir)
-        .map_err(crate::native_mods::cache_error)
-        .and_then(|()| {
-            Store::mutate(data, |store| {
-                // A folder removed outside the launcher may still have metadata. A new folder
-                // never inherits its launch settings.
-                let mut meta = Meta {
-                    name: (name != slug).then(|| name.to_string()),
-                    icon: from.and_then(|f| f.icon.clone()),
-                    group: from.and_then(|f| f.group.clone()),
-                    ..Meta::default()
-                };
-                choose(&mut meta);
-                store.instances.insert(slug.clone(), meta);
-                Ok(())
-            })
-        });
-    if let Err(e) = recorded {
-        // A no-replace rename put this attempt's folder here. Don't follow a redirected parent
-        // even on the failure path.
-        if creation_parent(&root, OWN).is_ok() {
-            let _ = fs::remove_dir_all(&dir);
-        }
-        return Err(e);
     }
+    let active = source
+        .as_ref()
+        .map(|source| source.stage_copy(&contents))
+        .transpose()?
+        .flatten();
+    let icon = contents.join(PICTURE);
+    match picture {
+        Some(Some(png)) => fs::write(icon, png).map_err(create_error)?,
+        Some(None) if icon.is_file() => fs::remove_file(icon).map_err(create_error)?,
+        _ => {}
+    }
+    {
+        let _publication =
+            crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        let present = match fs::symlink_metadata(&dir) {
+            Ok(_) => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(create_error(e)),
+        };
+        if present {
+            return Err(name_taken(name));
+        }
+        // Forget any metadata of a folder removed outside the launcher, before this folder can
+        // be seen. No concurrent creation can publish that name until this fence is released.
+        Store::mutate(data, |store| {
+            store.instances.remove(&slug);
+            Ok(())
+        })?;
+        let mut meta = Meta {
+            name: (name != slug).then(|| name.to_string()),
+            icon: from.and_then(|f| f.icon.clone()),
+            group: from.and_then(|f| f.group.clone()),
+            ..Meta::default()
+        };
+        choose(&mut meta);
+        if let Some(active) = &active {
+            active.verify_artifacts()?;
+            meta.version = Some(active.base().to_owned());
+            meta.built = None;
+        }
+        let choices = serde_json::to_vec(&meta).map_err(|e| e.to_string())?;
+        fs::write(contents.join(CREATED_WITH), choices).map_err(create_error)?;
+        crate::run_leases::publish(&contents).map_err(crate::native_mods::cache_error)?;
+        durable::flush_tree(&contents).map_err(create_error)?;
+        creation_parent(&root, OWN).map_err(create_error)?;
+        durable::move_new_directory(&contents, &dir).map_err(create_error)?;
+    }
+    // Irrevocably visible. `list_in` repairs missing ancillary metadata without rolling back
+    // the rename, including if an earlier process died before it could return from this call.
     find_in(&list_in(game_home, data), &slug)
 }
 
@@ -1004,32 +1058,30 @@ pub(crate) fn publish_new_folder(from: &Path, to: &Path) -> std::io::Result<()> 
 }
 
 fn copy_home(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        if NOT_COPIED.iter().any(|n| name == *n) {
-            continue;
-        }
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            copy_dir(&path, &to.join(&name))?;
-        } else {
-            fs::copy(&path, to.join(&name))?;
-        }
-    }
-    Ok(())
-}
-
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for entry in fs::read_dir(from)? {
-        let entry = entry?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&entry.path(), &target)?;
-        } else {
-            fs::copy(entry.path(), target)?;
+    let mut pending = vec![(from.to_path_buf(), to.to_path_buf())];
+    while let Some((source, target)) = pending.pop() {
+        fs::create_dir(&target)?;
+        for entry in fs::read_dir(&source)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            if source == from && NOT_COPIED.iter().any(|n| name == *n) {
+                continue;
+            }
+            let path = entry.path();
+            let meta = path.symlink_metadata()?;
+            if sunrise_launcher_smod::runtime_leases::linked(&meta) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{} is a link", path.display()),
+                ));
+            }
+            if meta.is_dir() {
+                pending.push((path, target.join(name)));
+            } else if meta.is_file() {
+                fs::copy(path, target.join(name))?;
+            } else {
+                return Err(std::io::ErrorKind::InvalidData.into());
+            }
         }
     }
     Ok(())

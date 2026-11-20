@@ -1858,7 +1858,29 @@ mod tests {
             .unwrap();
         fs::write(first.join(sunrise_launcher_smod::mod_list::FILE), b"").unwrap();
         assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
-        assert_eq!(owner.active_build().unwrap().unwrap().generation, 2);
+        let original = owner.active_build().unwrap().unwrap().test_receipt(1);
+        assert_eq!(original.generation, 2);
+        build::publish(&first, &original).unwrap();
+        // Another launcher cannot copy the source while its current lease is held.
+        assert!(crate::instances::create("copied", Some("first")).is_err());
+        drop(owner);
+        let copied = crate::instances::create_with("copied", Some("first"), None, |meta| {
+            meta.version = Some("nightly-new".into());
+        })
+        .unwrap();
+        let copy = Lease::admit(&copied.home)
+            .unwrap()
+            .active_build()
+            .unwrap()
+            .unwrap();
+        assert_ne!(copy.profile, original.profile);
+        assert_eq!(copy.generation, 1);
+        assert!(copy.same_base_artifact(&original));
+        assert_eq!(copy.executable(), original.executable());
+        assert_eq!(copy.inputs, original.inputs);
+        assert!(copy.receipts().is_empty());
+        assert_eq!(build::read(&first).unwrap().unwrap().receipts().len(), 1);
+        let owner = Lease::admit(&first).unwrap();
         fs::write(base.join(crate::backend::CLIENT), b"different executable").unwrap();
         assert!(owner
             .play_target(|| panic!("a corrupted artifact is not a fresh profile"))

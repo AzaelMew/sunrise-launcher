@@ -162,10 +162,13 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     }
     assert!(!data.join("settings.json").exists());
 
-    // The empty one has only the player's options and name; the copy has the worlds and
-    // packs, never the sessions, logs, data collection or other instances.
+    // The empty one has only the player's options and name, apart from its own creation record;
+    // the copy has the worlds and packs, never another home's launcher state or sessions.
     assert_eq!(empty.home, home.join("instances/survival"));
-    let empty_files: Vec<PathBuf> = files(&empty.home).into_keys().collect();
+    let empty_files: Vec<PathBuf> = files(&empty.home)
+        .into_keys()
+        .filter(|p| p != Path::new(CREATED_WITH))
+        .collect();
     assert_eq!(
         empty_files,
         [PathBuf::from("options.txt"), "sunrise-player.txt".into()]
@@ -180,8 +183,12 @@ fn existing_worlds_stay_where_they_are_and_every_folder_becomes_an_instance() {
     }
     assert!(copied.keys().all(|p| {
         let top = p.components().next().unwrap().as_os_str().to_str().unwrap();
-        !NOT_COPIED.contains(&top)
+        top == CREATED_WITH || !NOT_COPIED.contains(&top)
     }));
+    assert_ne!(
+        fs::read(empty.home.join(CREATED_WITH)).unwrap(),
+        copied[Path::new(CREATED_WITH)]
+    );
 
     let all = list_in(&home, &data);
     assert_eq!(all[0].name, "Main");
@@ -643,6 +650,8 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
     let (home, data) = (root.join("home"), root.join("data"));
     player_home(&home);
     let all = list_in(&home, &data);
+    // Admission may register the source's persistent profile lock before a later error.
+    drop(crate::browser::sunrise::txn::Lease::admit(&home).unwrap());
     let before = files(&home);
     // The choices can't be saved: instances.json is a folder.
     fs::create_dir_all(data.join(FILE)).unwrap();
@@ -682,6 +691,44 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
     assert!(!plain.home.join(PICTURE).exists());
     assert!(made.home.join(PICTURE).is_file());
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn a_visible_copy_survives_a_metadata_failure_and_repairs_its_choices_later() {
+    let root = scratch("creation-visible-before-metadata");
+    let (home, data) = (root.join("home"), root.join("data"));
+    player_home(&home);
+    let source = find_in(&list_in(&home, &data), DEFAULT).unwrap();
+    let made = create_whole_in(&home, &data, "My Copy", Some(&source), None, |meta| {
+        meta.group = Some("Mine".into());
+        // Preflight read already succeeded; the later metadata repair will fail.
+        fs::create_dir(data.join(FILE)).unwrap();
+    })
+    .unwrap();
+    assert_eq!(made.name, "My Copy");
+    assert_eq!(made.group.as_deref(), Some("Mine"));
+    assert_eq!(
+        fs::read(made.home.join("saves/World/level.dat")).unwrap(),
+        b"world"
+    );
+    assert!(made.home.join(CREATED_WITH).is_file());
+    assert!(!made.home.join(".install-txn.lock").exists());
+    fs::remove_dir(data.join(FILE)).unwrap();
+    let repaired = find_in(&list_in(&home, &data), &made.id).unwrap();
+    assert_eq!(repaired, made);
+    assert_eq!(
+        Store::load(&data).instances[&made.id].group.as_deref(),
+        Some("Mine")
+    );
+    edit_in(&home, &data, &made.id, |meta| {
+        meta.group = Some("Changed".into())
+    })
+    .unwrap();
+    assert_eq!(
+        Store::load(&data).instances[&made.id].group.as_deref(),
+        Some("Changed")
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
