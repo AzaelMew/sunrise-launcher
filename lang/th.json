@@ -1477,5 +1477,8 @@
   "Couldn't check your native mods for this version": "Couldn't check your native mods for this version",
   "Removes {count} of your mods": "Removes {count} of your mods",
   "{name} needs {native}, which runs native code: allow native mods first.": "{name} needs {native}, which runs native code: allow native mods first.",
-  "A modpack keeps the build it was made for. Make your own profile to change it.": "A modpack keeps the build it was made for. Make your own profile to change it."
+  "A modpack keeps the build it was made for. Make your own profile to change it.": "A modpack keeps the build it was made for. Make your own profile to change it.",
+  "Removes {count} of your mods · still checking": "Removes {count} of your mods · still checking",
+  "Couldn't check your mods for this version": "Couldn't check your mods for this version",
+  "Installing removes {mods}": "Installing removes {mods}"
 }

@@ -733,11 +733,24 @@ impl Launcher {
             .as_ref()
             .map(|ask| ask.question.clone())
             .expect("shown only while a question is pending");
-        let names: Vec<String> = self
-            .mods_named(&question.mods)
-            .into_iter()
-            .map(|(name, _)| name)
-            .collect();
+        let instance = self
+            .mods
+            .world_ask
+            .as_ref()
+            .map(|ask| ask.instance.clone())
+            .unwrap_or_default();
+        let installing = matches!(
+            self.mods.world_ask.as_ref().map(|ask| &ask.then),
+            Some(crate::mods_page::Then::Install(_))
+        );
+        let entries = self
+            .instances
+            .list
+            .iter()
+            .find(|i| i.id == instance)
+            .map(|i| sunrise_launcher::browser::installed::Installed::load(&i.home).entries)
+            .unwrap_or_default();
+        let names = crate::mods_page::titles(&entries, &question.mods);
         let mods = crate::mods::names(&names);
         let text = trf(
             if names.len() == 1 {
@@ -754,9 +767,14 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(title(
-                tr("Some of your worlds use mods this would remove").into(),
-            ))
+            .child(title(trf(
+                if installing {
+                    "Installing removes {mods}"
+                } else {
+                    "Switching removes {mods}"
+                },
+                &[("mods", &mods)],
+            )))
             .child(muted(text))
             .child(
                 div()

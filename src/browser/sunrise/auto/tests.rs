@@ -833,3 +833,22 @@ fn a_switch_asks_before_anything_changes_and_only_for_mods_it_would_remove() {
     assert!(switch_question(&index, &home, &fits).is_none());
     fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn a_profile_read_fresh_counts_its_installed_mods_that_do_not_fit_the_other_build() {
+    let dir = scratch("auto-removals-at");
+    let a = ruby(&dir, "1.0.0", &["a"], &[]);
+    let index = index_of(&[("1.0.0", "26.2", &a)]);
+    let home = dir.join("profile");
+    // Nothing is loaded anywhere: only the folder's own list says ruby is installed.
+    assert!(removals_at(&index, &home, &PLAY, &[]).is_empty());
+    fs::create_dir_all(home.join("sunrise-mods")).unwrap();
+    fs::copy(&a, home.join("sunrise-mods/ruby.smod")).unwrap();
+    let mut list = installed::Installed::load(&home);
+    list.entries.push(entry("1.0.0"));
+    list.save(&home).unwrap();
+    let gone = removals_at(&index, &home, &PLAY, &[]);
+    assert_eq!(gone.len(), 1);
+    assert_eq!(gone[0].title, "Ruby");
+    fs::remove_dir_all(&dir).unwrap();
+}

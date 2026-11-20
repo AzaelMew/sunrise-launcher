@@ -168,3 +168,23 @@ fn only_a_build_that_stopped_for_another_reason_rolls_its_install_back() {
     let tools: Result<(), Failed> = Err(Failed::Other("download failed".into()));
     assert!(matches!(BuildEnd::of(&tools), BuildEnd::Stopped(why) if why == "download failed"));
 }
+
+#[test]
+fn a_mod_is_named_by_its_title_from_the_profiles_list_and_by_its_id_only_when_unlisted() {
+    let entry = installed::Entry {
+        source: SourceId::Sunrise,
+        project: "seabound_boats".into(),
+        slug: "seabound_boats".into(),
+        title: "Seabound Boats".into(),
+        kind: PackKind::Mod,
+        version: "1.0.0".into(),
+        number: "1.0.0".into(),
+        file: "sunrise-mods/seabound_boats.smod".into(),
+        checksum: "SHA-256:a".into(),
+        page: String::new(),
+        dependency: false,
+        verdict: None,
+    };
+    let ids = ["seabound_boats".to_string(), "mystery".to_string()];
+    assert_eq!(titles(&[entry], &ids), ["Seabound Boats", "mystery"]);
+}

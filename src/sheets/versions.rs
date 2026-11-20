@@ -28,6 +28,10 @@ pub(crate) struct State {
     rows: std::collections::HashMap<usize, FocusHandle>,
     /// The native mods' check against the build picked, while it runs (`None`) and once it ended.
     check: Option<PickCheck>,
+    /// How many mods the picked build would remove, read from the profile's own list: what it
+    /// was read for (the build and whether the native check had answered) and the count, `None`
+    /// when no registry index has been read.
+    removed: Option<(String, Option<usize>)>,
 }
 
 /// The SDK check of the native mods against one picked build.
@@ -42,8 +46,8 @@ enum Native {
     Checking,
     /// It could not run: offline, no SDK for that build, or native mods not allowed.
     Unavailable,
-    /// The mods the check says don't work on that build (none when there are no native mods).
-    Off(Vec<(String, String)>),
+    /// It answered, or there are no native mods.
+    Done,
 }
 
 /// The line the Up or Down key lands on from line `from` (None: no row has the keyboard):
@@ -82,14 +86,21 @@ struct Build {
 
 /// "November 2026" for `2026-11`.
 /// The one line the picked row says about the mods: what switching to it would remove.
-fn picker_note(native: &Native, removed: usize) -> String {
+fn picker_note(native: &Native, removed: Option<usize>) -> String {
     match (native, removed) {
-        (Native::Checking, _) => tr("Checking your mods…").to_string(),
-        (Native::Unavailable, _) => {
+        (_, None) => tr("Couldn't check your mods for this version").to_string(),
+        (Native::Unavailable, Some(_)) => {
             tr("Couldn't check your native mods for this version").to_string()
         }
-        (Native::Off(_), 0) => tr("All your mods work with this version").to_string(),
-        (Native::Off(_), n) => trf("Removes {count} of your mods", &[("count", &n.to_string())]),
+        (Native::Checking, Some(0)) => tr("Checking your mods…").to_string(),
+        (Native::Checking, Some(n)) => trf(
+            "Removes {count} of your mods · still checking",
+            &[("count", &n.to_string())],
+        ),
+        (Native::Done, Some(0)) => tr("All your mods work with this version").to_string(),
+        (Native::Done, Some(n)) => {
+            trf("Removes {count} of your mods", &[("count", &n.to_string())])
+        }
     }
 }
 
@@ -263,6 +274,7 @@ impl Launcher {
         v.find.set(String::new());
         v.pick = pinned;
         v.check = None;
+        v.removed = None;
         v.rows.clear();
     }
 
@@ -351,18 +363,32 @@ impl Launcher {
             .as_ref()
             .filter(|tag| Some(tag.as_str()) != current)
             .map(|tag| {
-                let native = match &self.ui.sheets.versions.check {
-                    Some(c) if has_native && c.key == check_key(&home, tag) => match &c.result {
-                        None => Native::Checking,
-                        Some(Err(_)) => Native::Unavailable,
-                        Some(Ok(check)) => Native::Off(check.off.clone()),
-                    },
-                    Some(_) | None if has_native => Native::Checking,
-                    _ => Native::Off(Vec::new()),
+                let check = self
+                    .ui
+                    .sheets
+                    .versions
+                    .check
+                    .as_ref()
+                    .filter(|c| c.key == check_key(&home, tag));
+                let native = match check.map(|c| &c.result) {
+                    _ if !has_native => Native::Done,
+                    Some(Some(Ok(_))) => Native::Done,
+                    Some(Some(Err(_))) => Native::Unavailable,
+                    Some(None) | None => Native::Checking,
                 };
-                let removed = match &native {
-                    Native::Off(off) => self.mods_removed_by(tag, off).len(),
-                    _ => 0,
+                let off = match check.and_then(|c| c.result.as_ref()) {
+                    Some(Ok(check)) => check.off.clone(),
+                    _ => Vec::new(),
+                };
+                let key = format!("{tag}|{}", matches!(native, Native::Done));
+                let cached = self.ui.sheets.versions.removed.clone();
+                let removed = match cached {
+                    Some((read_for, count)) if read_for == key => count,
+                    _ => {
+                        let count = self.mods_removed_by(tag, &off).map(|r| r.len());
+                        self.ui.sheets.versions.removed = Some((key, count));
+                        count
+                    }
                 };
                 picker_note(&native, removed)
             });
@@ -607,17 +633,27 @@ mod tests {
 
     #[test]
     fn the_picker_says_what_the_row_would_remove_or_that_it_could_not_tell() {
-        let off = || Native::Off(Vec::new());
-        assert_eq!(picker_note(&Native::Checking, 0), "Checking your mods…");
+        let done = |n| picker_note(&Native::Done, n);
         assert_eq!(
-            picker_note(&Native::Unavailable, 3),
+            picker_note(&Native::Checking, Some(0)),
+            "Checking your mods…"
+        );
+        assert_eq!(
+            picker_note(&Native::Checking, Some(2)),
+            "Removes 2 of your mods · still checking",
+            "what is known is not hidden while the rest is checked"
+        );
+        assert_eq!(
+            picker_note(&Native::Unavailable, Some(3)),
             "Couldn't check your native mods for this version"
         );
+        assert_eq!(done(Some(0)), "All your mods work with this version");
+        assert_eq!(done(Some(2)), "Removes 2 of your mods");
         assert_eq!(
-            picker_note(&off(), 0),
-            "All your mods work with this version"
+            done(None),
+            "Couldn't check your mods for this version",
+            "no index read is not \"all fit\""
         );
-        assert_eq!(picker_note(&off(), 2), "Removes 2 of your mods");
     }
 
     #[test]
