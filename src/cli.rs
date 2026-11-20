@@ -3018,7 +3018,7 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
         }
         WorldsCmd::Copy { world, instance } => {
             let home = home(instance)?;
-            let copy = worlds::copy(&worlds::find(&home, &world)?)?;
+            let copy = worlds::copy(&home, &world)?;
             match as_json {
                 true => json(value(&copy)),
                 false => println!("Copied to {} ({})", copy.name, copy.folder),

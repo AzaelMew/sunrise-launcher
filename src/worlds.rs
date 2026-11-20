@@ -427,16 +427,43 @@ fn backup_at(
 
 /// Copies the world into a new folder of the same `saves/`, named "<name> (1)", "<name> (2)"...
 /// and gives the copy that name in its level.dat so the game's list tells them apart.
-pub fn copy(world: &World) -> Result<World, String> {
-    let _lock = lock_world(world)?;
-    let saves = world.path.parent().ok_or("A world folder has a parent")?;
-    let folder = free_name(saves, &world.name, "", 1);
-    let to = saves.join(&folder);
-    let made = copy_dir(&world.path, &to).and_then(|()| rename_level(&to, &folder));
-    if let Err(e) = made {
-        let _ = fs::remove_dir_all(&to);
-        return Err(format!("Could not copy {}: {e}", world.name));
+pub fn copy(home: &Path, query: &str) -> Result<World, String> {
+    copy_at(home, query, |_| {})
+}
+
+fn copy_at(home: &Path, query: &str, before_publish: impl FnOnce(&Path)) -> Result<World, String> {
+    use crate::browser::sunrise::txn::{durable, Lease};
+    let _profile = Lease::admit(home)?;
+    let world = find(home, query)?;
+    let saves = home.join("saves");
+    let error = |e: std::io::Error| {
+        crate::i18n::trf(
+            "Could not copy {world}: {error}",
+            &[("world", &world.name), ("error", &e.to_string())],
+        )
+    };
+    for path in [&saves, &world.path] {
+        let meta = fs::symlink_metadata(path).map_err(error)?;
+        if !meta.is_dir() || sunrise_launcher_smod::runtime_leases::linked(&meta) {
+            return Err(error(std::io::ErrorKind::InvalidData.into()));
+        }
     }
+    let _lock = lock_world(&world)?;
+    let folder = free_name(&saves, &world.name, "", 1);
+    let to = saves.join(&folder);
+    // The TempDir owns only the container. Even a failure *after* the no-replace rename
+    // can never make its drop remove the visible world (ours or another writer's).
+    let stage = tempfile::Builder::new()
+        .prefix(".world-copy-")
+        .tempdir_in(&saves)
+        .map_err(error)?;
+    let candidate = stage.path().join("world");
+    copy_dir(&world.path, &candidate)
+        .and_then(|()| rename_level(&candidate, &folder))
+        .and_then(|()| durable::flush_tree(&candidate))
+        .map_err(error)?;
+    before_publish(&to);
+    durable::move_new_directory(&candidate, &to).map_err(error)?;
     read(&to).ok_or_else(|| format!("{} has no level.dat", to.display()))
 }
 
@@ -444,11 +471,21 @@ fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     fs::create_dir_all(to)?;
     for e in fs::read_dir(from)? {
         let e = e?;
+        if e.file_name() == LOCK {
+            continue;
+        }
+        let from = e.path();
         let target = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
-            copy_dir(&e.path(), &target)?;
-        } else if e.file_name() != LOCK {
-            fs::copy(e.path(), target)?;
+        let meta = fs::symlink_metadata(&from)?;
+        if sunrise_launcher_smod::runtime_leases::linked(&meta) {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        if meta.is_dir() {
+            copy_dir(&from, &target)?;
+        } else if meta.is_file() {
+            fs::copy(from, target)?;
+        } else {
+            return Err(std::io::ErrorKind::InvalidData.into());
         }
     }
     Ok(())
