@@ -63,19 +63,13 @@ impl CompilerJob {
     /// snapshot against a listed child starting an unlisted one before it exits.
     fn check_finished(&self, leader: u32) -> io::Result<()> {
         let result = self.finished(leader);
-        if !matches!(result, Ok(true)) {
+        if result.is_err() {
             self.terminate()?;
         }
-        if result? {
-            Ok(())
-        } else {
-            Err(io::Error::other(
-                "the native build tool left a running child",
-            ))
-        }
+        result
     }
 
-    fn finished(&self, leader: u32) -> io::Result<bool> {
+    fn finished(&self, leader: u32) -> io::Result<()> {
         use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
 
         // The documented variable-length JOBOBJECT_BASIC_PROCESS_ID_LIST layout.
@@ -104,8 +98,10 @@ impl CompilerJob {
             Ok(info)
         };
         let before = accounting()?;
-        if before.ActiveProcesses == 0 {
-            return Ok(true);
+        // If the only process ever assigned was the leader, its waited handle is the
+        // entire tree. No PID-list snapshot can add evidence about its exit.
+        if before.ActiveProcesses == 0 || before.TotalProcesses == 1 {
+            return Ok(());
         }
         let mut members = Members {
             assigned: 0,
@@ -129,7 +125,10 @@ impl CompilerJob {
             return Err(io::ErrorKind::InvalidData.into());
         };
         if members.assigned != members.listed {
-            return Ok(false);
+            return Err(io::Error::other(format!(
+                "cannot prove the native build job stopped: {} assigned, {} listed, {} active of {} total",
+                members.assigned, members.listed, before.ActiveProcesses, before.TotalProcesses
+            )));
         }
         for &pid in pids {
             let pid = u32::try_from(pid).map_err(|_| io::ErrorKind::InvalidData)?;
@@ -156,11 +155,22 @@ impl CompilerJob {
             }
             match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
                 WAIT_OBJECT_0 => {}
-                WAIT_TIMEOUT => return Ok(false),
+                WAIT_TIMEOUT => {
+                    return Err(io::Error::other(format!(
+                        "the native build tool left a running child ({pid})",
+                    )))
+                }
                 _ => return Err(io::Error::last_os_error()),
             }
         }
-        Ok(accounting()?.TotalProcesses == before.TotalProcesses)
+        let after = accounting()?;
+        if after.TotalProcesses != before.TotalProcesses {
+            return Err(io::Error::other(format!(
+                "cannot prove the native build job stopped: total members changed from {} to {}",
+                before.TotalProcesses, after.TotalProcesses
+            )));
+        }
+        Ok(())
     }
 }
 impl WindowsChild {

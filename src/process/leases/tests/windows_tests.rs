@@ -178,7 +178,10 @@ fn a_compiler_job_checks_its_tree_and_kills_it_when_the_owner_closes() {
     };
     for role in ["clean", "joined"] {
         let mut clean = spawn_compiler(&command(role), None).unwrap();
-        assert!(clean.wait().unwrap().success(), "{role}");
+        let exit = clean
+            .wait()
+            .unwrap_or_else(|error| panic!("{role}: {error}"));
+        assert!(exit.success(), "{role}: {exit}");
     }
     for close in [false, true] {
         let mut child = spawn_compiler(&command("leader"), None).unwrap();
