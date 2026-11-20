@@ -1197,14 +1197,6 @@ fn install_is_given_only_the_ticked_mods_not_yet_installed_and_stops_at_the_firs
         collection::run_in_order(&ids, |_, id| Ok(vec![id.into()])).unwrap(),
         ["a", "b", "c"]
     );
-
-    let native = |id: &str| id == "b";
-    assert!(collection::needs_consent(&ids, false, native));
-    assert!(
-        !collection::needs_consent(&ids, true, native),
-        "once allowed, never asked"
-    );
-    assert!(!collection::needs_consent(&ids[..1], false, native));
 }
 
 #[test]

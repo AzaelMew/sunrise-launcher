@@ -130,6 +130,27 @@ pub fn check_set(
     Ok(plan)
 }
 
+/// Whether installing `ids` would put native code in, by the plan the install itself follows:
+/// one of them, or one of what they need, that the plan installs or updates is a native mod.
+/// A native mod already installed that the plan keeps puts nothing in. False when the plan
+/// can't be made: the install says why.
+pub fn brings_native(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+) -> bool {
+    check_set(index, ids, held, game).is_ok_and(|plan| {
+        let installs = plan.install.iter().map(|m| &m.id);
+        let updates = plan.update.iter().map(|u| &u.id);
+        installs.chain(updates).any(|id| {
+            index
+                .project(id)
+                .is_some_and(|p| p.kind == index::Kind::NativeMod)
+        })
+    })
+}
+
 /// The index read last in this run, without asking the network: for what must not wait.
 pub fn known_index() -> Option<Arc<Index>> {
     LOADED.lock().unwrap().as_ref().map(|l| l.index.clone())
