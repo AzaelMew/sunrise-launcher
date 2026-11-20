@@ -1811,7 +1811,7 @@ fn check_before_play(
         .collect())
 }
 
-pub mod auto;
+mod content_loss;
 mod dependencies;
 pub mod pack;
 #[cfg(test)]

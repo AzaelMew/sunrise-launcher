@@ -163,8 +163,6 @@ pub(super) enum Event {
     NeedsConsent(Box<PendingConsent>, Box<queue::Request>),
     ReadyRegistry(Box<PreparedRegistry>),
     InstallCancelled,
-    /// What the automatic updates did (`sunrise::auto`).
-    AutoUpdated(AutoOutcome),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -199,7 +197,6 @@ pub(super) struct Mods {
     /// Live batches wait here between publishing and their follow-up build, by profile.
     pub(super) install_owners: HashMap<String, Arc<sunrise::txn::Lease>>,
     /// The start's automatic update runs: Play and installs wait for it.
-    pub(super) updating: bool,
     /// The install that asked the native-code question, whole (its profile, what it replaces,
     /// its collection): the answer starts it again, and nothing behind it starts meanwhile.
     pub(super) consent_request: Option<queue::Request>,
@@ -335,7 +332,6 @@ impl Mods {
             queue: Default::default(),
             install_owners: HashMap::new(),
             running: None,
-            updating: false,
             consent_request: None,
             building: Default::default(),
             world_ask: None,
@@ -448,34 +444,6 @@ impl Launcher {
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(out) => {
-                    m.updating = false;
-                    let AutoOutcome {
-                        lines,
-                        asks,
-                        removals,
-                    } = out;
-                    for (instance, items) in removals {
-                        let entries = self
-                            .instances
-                            .list
-                            .iter()
-                            .find(|i| i.id == instance)
-                            .map(|i| installed::Installed::load(&i.home).entries)
-                            .unwrap_or_default();
-                        m.removal
-                            .add(&instance, &entries, removal::Removal::of_updates(items));
-                    }
-                    // The first question waits for its answer; later ones come with the next run.
-                    if m.world_ask.is_none() {
-                        m.world_ask = asks.into_iter().next();
-                    }
-                    if !lines.is_empty() {
-                        m.message = Some(Ok(lines.join("\n")));
-                        m.reload_installed();
-                        m.installed_list.reset();
-                    }
-                }
             }
         }
         if done {
@@ -492,11 +460,7 @@ impl Launcher {
         // follow-up build takes it all up.
         let locked = matches!(
             self.mods_lock(),
-            Some(
-                crate::mods::Lock::GameRunning
-                    | crate::mods::Lock::Preparing
-                    | crate::mods::Lock::Updating
-            )
+            Some(crate::mods::Lock::GameRunning | crate::mods::Lock::Preparing)
         );
         let selected = self
             .selected_instance()
@@ -685,8 +649,7 @@ impl Launcher {
             || self.native_attempts.is_some()
             || self.pending_consent.is_some()
             || self.mods.world_ask.is_some()
-            || !self.mods.removal.is_empty()
-            || self.mods_lock() == Some(crate::mods::Lock::Updating);
+            || !self.mods.removal.is_empty();
         if let Some(request) = self.mods.queue.submit(request, busy) {
             self.start_install(request);
         }
@@ -944,46 +907,8 @@ impl Launcher {
                 self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
             }
             Then::Install(ask) => self.install_replacing(*ask, &allow),
-            Then::Update => self.migrate_mods(&ask.instance, allow),
             Then::PreparedRegistry(_) => unreachable!("handled above"),
         }
-    }
-
-    /// Brings every mod of profile `instance` to the game it plays now, on a worker: the update
-    /// of a question answered. `allow` are the mods a world may lose.
-    pub(super) fn migrate_mods(
-        &mut self,
-        instance: &str,
-        allow: std::collections::BTreeSet<String>,
-    ) {
-        let Some(instance) = self.instances.list.iter().find(|i| i.id == instance) else {
-            return;
-        };
-        let Some(game) = self.game_of(instance) else {
-            return;
-        };
-        self.update_mods(
-            AutoTarget {
-                instance: instance.clone(),
-                game,
-            },
-            allow,
-        );
-    }
-
-    /// Runs the updates of `target` on a worker, whatever the setting for routine updates says.
-    pub(super) fn update_mods(
-        &mut self,
-        target: AutoTarget,
-        allow: std::collections::BTreeSet<String>,
-    ) {
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
-        let tx = self.mods.tx.clone();
-        self.mods.updating = true;
-        std::thread::spawn(move || {
-            let out = auto_update(&[target], true, native_allowed, &allow);
-            let _ = tx.send(Event::AutoUpdated(out));
-        });
     }
 
     /// A build ended. The mods it left out because they didn't compile or don't fit are
@@ -1265,59 +1190,6 @@ impl Launcher {
     }
 }
 
-/// An instance whose registry projects may update.
-pub(super) struct AutoTarget {
-    pub(super) instance: instances::Instance,
-    /// The Minecraft version its own build plays ([`Launcher::game_of`]).
-    pub(super) game: String,
-}
-
-/// Updates the registry projects of `targets`: Sunrise's own instances only, never a modpack's
-/// profile, whose pack pins its mods. Returns what happened for the page's notice.
-pub(super) fn auto_update(
-    targets: &[AutoTarget],
-    enabled: bool,
-    native_allowed: bool,
-    allow: &std::collections::BTreeSet<String>,
-) -> AutoOutcome {
-    let mut out = AutoOutcome::default();
-    for t in targets {
-        let i = &t.instance;
-        if i.is_pack_profile() {
-            continue;
-        }
-        let ctx = sunrise::auto::Context {
-            in_pack: sunrise::auto::in_pack(&i.home),
-            game: &t.game,
-            native_allowed,
-        };
-        if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, allow, &|_, _| {}) {
-            out.lines.extend(report.lines());
-            if !report.remove.is_empty() {
-                out.removals.push((i.id.clone(), report.remove));
-            }
-            if let Some(question) = report.ask {
-                out.asks.push(WorldAsk {
-                    instance: i.id.clone(),
-                    question,
-                    then: Then::Update,
-                });
-            }
-        }
-    }
-    out
-}
-
-/// What the automatic updates did: the notice's lines, and the questions to put to the player.
-#[derive(Default)]
-pub(crate) struct AutoOutcome {
-    pub(crate) lines: Vec<String>,
-    pub(crate) asks: Vec<WorldAsk>,
-    /// The mods that can't stay on the game a profile plays, by instance: listed for the
-    /// player to continue.
-    pub(crate) removals: Vec<(String, Vec<sunrise::auto::Removal>)>,
-}
-
 /// What went wrong for mod `id` in the last install's build, for its card: the reason in one
 /// plain line and the whole text for Details (a compile failure's log).
 pub(crate) fn build_failure_of(
@@ -1352,8 +1224,6 @@ pub(crate) fn titles(entries: &[installed::Entry], ids: &[String]) -> Vec<String
 
 /// What goes on once the player answers Switch anyway to a world question.
 pub(crate) enum Then {
-    /// The mods are updated again with the ones named allowed to go.
-    Update,
     /// A build that stopped for the question is made again, leaving those mods out: the build
     /// it was on.
     Build(String),

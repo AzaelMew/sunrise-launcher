@@ -220,7 +220,7 @@ fn install_inner(
         };
         if old_path.is_file()
             && !agreed(&entry.project)
-            && !super::auto::dropped(&old_path, file)?.is_empty()
+            && !super::content_loss::dropped(&old_path, file)?.is_empty()
         {
             drops.push(entry.project.clone());
         }

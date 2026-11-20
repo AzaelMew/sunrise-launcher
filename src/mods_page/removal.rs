@@ -1,7 +1,6 @@
 //! The mods that go when the player continues: the ones whose build failed, the ones taken
 //! down and the ones with no version for the game they would play. One list, one sheet.
 use sunrise_launcher::browser::installed;
-use sunrise_launcher::browser::sunrise::auto;
 use sunrise_launcher::i18n::trf;
 
 /// A mod on the list, with why and, for one whose build failed, the compiler's output.
@@ -86,20 +85,6 @@ impl Removal {
                 None => self.items.push(item),
             }
         }
-    }
-
-    /// The list from automatic updates' removals.
-    pub(crate) fn of_updates(removals: Vec<auto::Removal>) -> Vec<Item> {
-        removals
-            .into_iter()
-            .map(|r| Item {
-                id: r.id,
-                title: r.title,
-                reason: r.reason,
-                log: None,
-                checksum: String::new(),
-            })
-            .collect()
     }
 
     /// "2 mods couldn't be built and will be removed" when every one failed to build, else

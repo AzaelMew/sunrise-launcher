@@ -15,7 +15,7 @@
 //! blocks the profile and is never guessed at. [`begin`], [`done`], [`undo`] and the cleanup act
 //! only on the attempt ids they are given, so a late call from an older build can't touch a newer
 //! attempt. The files earlier development builds and the automatic updates left are reconciled
-//! once per profile, under the same lock, before anything else ([`reconcile_legacy`]).
+//! under the same gate, and ambiguous evidence blocks the entire profile.
 use crate::browser::installed::Approval;
 use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 mod artifact;
 mod build;
 pub(crate) mod durable;
+mod legacy;
 mod resources;
 mod staged_install;
 mod switch;
@@ -156,6 +157,7 @@ impl Lease {
     pub fn recover_abandoned(&self) -> Result<(), String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.unwrap_or_default();
+        legacy::recover(&self.home, &mut record)?;
         if record.staged().is_some() {
             let _publication =
                 crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
@@ -166,11 +168,10 @@ impl Lease {
                 crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
             recover_pointer(&self.home, &mut record)?;
         }
-        reconcile_legacy(&self.home)?;
         while !record.attempts.is_empty() {
             undo_last(&self.home, &mut record)?;
         }
-        Ok(())
+        legacy::reconcile(&self.home)
     }
 
     pub fn outstanding(&self) -> bool {
@@ -221,13 +222,6 @@ impl Image {
         };
         inspect().map_err(|e| format!("{}: {e}", path.display()))
     }
-}
-
-#[derive(Deserialize)]
-struct LegacyStep {
-    to: PathBuf,
-    existed: bool,
-    backup: PathBuf,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -286,6 +280,8 @@ struct Record {
     intent: Intent,
     attempts: Vec<Attempt>,
     pointer: Option<Pointer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    legacy: Option<Box<legacy::Retirement>>,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -314,6 +310,7 @@ impl Default for Record {
             },
             attempts: Vec::new(),
             pointer: None,
+            legacy: None,
         }
     }
 }
@@ -776,6 +773,20 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
         ));
     }
     let record: Record = serde_json::from_slice(&bytes).map_err(|e| kept(e.to_string()))?;
+    if let Some(legacy) = &record.legacy {
+        if !matches!(
+            record.intent,
+            Intent::Install {
+                bootstrap: None,
+                staged: None
+            }
+        ) || !record.attempts.is_empty()
+            || record.pointer.is_some()
+        {
+            return Err(kept(unsettled()));
+        }
+        legacy.validate().map_err(kept)?;
+    }
     if let Some(binding) = record.bootstrap() {
         binding.validate().map_err(kept)?;
         if !record.attempts.is_empty() || binding.profile == [0; 16] {
@@ -871,6 +882,7 @@ fn write(home: &Path, record: &Record) -> Result<(), String> {
         && record.attempts.is_empty()
         && record.pointer.is_none()
         && record.bootstrap().is_none()
+        && record.legacy.is_none()
     {
         durable::retire(&file)
     } else {
@@ -1083,83 +1095,6 @@ fn locked(home: &Path) -> Result<crate::browser::HomeLockGuard, String> {
     crate::browser::lock_home(home).map_err(|e| format!("{}: {e}", home.display()))
 }
 
-/// The profiles whose legacy files this process has reconciled.
-static RECONCILED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-/// For tests of a start: the launcher begins again knowing nothing of what it reconciled.
-#[cfg(test)]
-pub(super) fn restart() {
-    RECONCILED.lock().unwrap().clear();
-}
-
-/// Once per profile in this process, under its lock and before the record is used: the files
-/// that earlier launchers left are reconciled, and nothing recovers them on its own afterwards.
-/// The install journal of a development build is undone like an attempt cut off before it was
-/// published; the automatic updates' kept files are put back or dropped (`auto::recover_kept`);
-/// the undo record of a development build is not understood any more and blocks the profile,
-/// kept as it is.
-fn reconcile_legacy(home: &Path) -> Result<(), String> {
-    let key = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
-    if RECONCILED.lock().is_ok_and(|done| done.contains(&key)) {
-        return Ok(());
-    }
-    let kept = |file: &Path, why: String| {
-        trf(
-            "{file} is kept as it is and can't be used: {why}",
-            &[("file", &file.display().to_string()), ("why", &why)],
-        )
-    };
-    let undo_record = home.join("mod-browser/build-undo.json");
-    if undo_record.exists() {
-        return Err(kept(
-            &undo_record,
-            tr("a development build of the launcher made it").to_string(),
-        ));
-    }
-    let journal = home.join("mod-browser/install-journal.json");
-    if journal.exists() {
-        let steps: Vec<LegacyStep> = fs::read_to_string(&journal)
-            .map_err(|e| e.to_string())
-            .and_then(|text| serde_json::from_str(&text).map_err(|e| e.to_string()))
-            .map_err(|e| kept(&journal, e))?;
-        // Its staging folder is the one its backups are in, a folder of the profile's own.
-        let staging = steps
-            .first()
-            .and_then(|step| step.backup.parent())
-            .map(Path::to_path_buf);
-        if let Some(staging) = staging {
-            let ours = staging.components().count() == 1
-                && staging
-                    .to_str()
-                    .is_some_and(|name| name.starts_with(".installed-mods-"));
-            if !ours {
-                return Err(kept(
-                    &journal,
-                    tr("its backups are not where the launcher keeps them").to_string(),
-                ));
-            }
-            // Legacy records predate images and the frontier. Do not use their weaker
-            // inference for a current transaction.
-            for step in steps.iter().rev() {
-                let (to, backup) = (home.join(&step.to), home.join(&step.backup));
-                match (step.existed, backup.is_file()) {
-                    (true, true) => fs::rename(backup, &to),
-                    (false, _) if to.is_file() => fs::remove_file(&to),
-                    _ => Ok(()),
-                }
-                .map_err(|e| kept(&journal, e.to_string()))?;
-            }
-            let _ = fs::remove_dir_all(home.join(staging));
-        }
-        fs::remove_file(&journal).map_err(|e| format!("{}: {e}", journal.display()))?;
-    }
-    super::auto::recover_kept(home);
-    if let Ok(mut done) = RECONCILED.lock() {
-        done.push(key);
-    }
-    Ok(())
-}
-
 /// Puts back the attempts `ids` names, newest first, each leaving the record as it is
 /// restored; the others stay as they are. An attempt that a later one (not named) was made on
 /// top of is not undone, and one that can't be restored keeps the record (and its staging
@@ -1167,7 +1102,8 @@ fn reconcile_legacy(home: &Path) -> Result<(), String> {
 fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
     let _lock = locked(home)?;
     let mut record = read(home)?.unwrap_or_default();
-    reconcile_legacy(home)?;
+    legacy::recover(home, &mut record)?;
+    legacy::reconcile(home)?;
     let named = |a: &Attempt| ids.contains(&a.id);
     if let Some(first) = record.attempts.iter().position(named) {
         if record.attempts[first..].iter().any(|a| !named(a)) {
@@ -1183,6 +1119,7 @@ fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
 /// Undoes only the attempts that were cut off before they were published: what an install
 /// does first, so a half-moved set of files never has another install on top of it. Published
 /// attempts wait for their build and stay.
+#[cfg(test)]
 pub(super) fn settle(home: &Path) -> Result<(), String> {
     let _lease = Lease::acquire(home)?;
     settle_owned(home)
@@ -1192,7 +1129,8 @@ pub(super) fn settle(home: &Path) -> Result<(), String> {
 pub(super) fn settle_owned(home: &Path) -> Result<(), String> {
     let _lock = locked(home)?;
     let mut record = read(home)?.unwrap_or_default();
-    reconcile_legacy(home)?;
+    legacy::recover(home, &mut record)?;
+    legacy::reconcile(home)?;
     while record
         .attempts
         .last()
@@ -2255,7 +2193,7 @@ mod tests {
     }
 
     #[test]
-    fn the_files_earlier_builds_left_are_reconciled_once_under_the_same_gate() {
+    fn unproved_legacy_dev_records_do_not_change_live_or_backup_bytes() {
         let scene = scene();
         // An install journal of a development build, cut off after replacing the dependency.
         let staged = staging(scene.home());
@@ -2268,9 +2206,14 @@ mod tests {
         fs::create_dir_all(journal.parent().unwrap()).unwrap();
         let steps = serde_json::json!([{ "to": "sunrise-mods/flywheel.smod", "existed": true, "backup": backup }]);
         fs::write(&journal, steps.to_string()).unwrap();
-        assert!(recover(scene.home()));
-        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.3");
-        assert!(!journal.exists() && !scene.home().join(&name).exists());
+        assert!(!recover(scene.home()));
+        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
+        assert_eq!(
+            fs::read_to_string(scene.home().join(&backup)).unwrap(),
+            "flywheel 0.3"
+        );
+        assert_eq!(fs::read_to_string(&journal).unwrap(), steps.to_string());
+        assert!(!scene.home().join(FILE).exists());
         // A journal that points outside the launcher's staging folders is kept and blocks.
         let other = tempfile::tempdir().unwrap();
         let blocked = other.path();

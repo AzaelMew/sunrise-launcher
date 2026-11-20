@@ -24,13 +24,13 @@ enum Phase {
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Identity {
-    volume: u64,
+pub(super) struct Identity {
+    pub(super) volume: u64,
     id: u64,
 }
 
 impl Identity {
-    fn of(path: &Path) -> Result<Self, String> {
+    pub(super) fn of(path: &Path) -> Result<Self, String> {
         build::require_dir(path)?;
         let meta = Dir::open_ambient_dir(path, ambient_authority())
             .and_then(|dir| dir.dir_metadata())
@@ -212,7 +212,7 @@ pub(super) fn valid_package_destination(path: &Path) -> bool {
     (path.starts_with(DIR) || path.starts_with(NATIVE_DIR)) && valid_destination(path)
 }
 
-fn destination_key(path: &Path) -> String {
+pub(super) fn destination_key(path: &Path) -> String {
     let path = path.to_string_lossy();
     if cfg!(windows) || cfg!(target_os = "macos") {
         path.to_lowercase()
