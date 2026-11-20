@@ -281,6 +281,17 @@ impl Mods {
                 self.undo.push(t);
             }
         }
+        // In the profile too: a launcher that closes before the build ends puts them back.
+        for home in self
+            .undo
+            .iter()
+            .map(|t| t.home.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+        {
+            if let Err(e) = undo::keep(&home, &self.undo) {
+                eprintln!("Couldn't keep the build's undo list: {e}");
+            }
+        }
     }
 
     /// Whether a build that takes up mod `id` is waiting to start or running.
@@ -514,6 +525,10 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         self.mods.updating = true;
         std::thread::spawn(move || {
+            // A build that never ended (the launcher closed or crashed under it) is undone first.
+            for target in &list {
+                undo::recover(&target.instance.home);
+            }
             let out = auto_update(&list, enabled, native_allowed, &Default::default());
             let _ = tx.send(Event::AutoUpdated(out));
         });
@@ -845,7 +860,12 @@ impl Launcher {
         }
         let brought = std::mem::take(&mut self.mods.building);
         let touched = std::mem::take(&mut self.mods.undo);
+        let kept: std::collections::BTreeSet<PathBuf> =
+            touched.iter().map(|t| t.home.clone()).collect();
         if self.selected_instance().is_none_or(|i| i.is_pack_profile()) {
+            for home in &kept {
+                undo::clear(home);
+            }
             return;
         }
         let stopped = match end {
@@ -898,6 +918,9 @@ impl Launcher {
                 });
                 self.mods.removal.add(&instance, &entries, items);
             }
+        }
+        for home in &kept {
+            undo::clear(home);
         }
     }
 
