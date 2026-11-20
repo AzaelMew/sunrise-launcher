@@ -712,13 +712,13 @@ impl Launcher {
             (true, Some((mods, setups))) => (
                 match (mods, setups) {
                     (0, _) => tr("No mod with native code is turned on. Sunrise will ask again before the next one.").to_string(),
-                    (1, _) => tr("This also turns off your one mod with native code. Turn it back on in Mods; Sunrise asks again then.").to_string(),
+                    (1, _) => tr("Sunrise will ask again before running your one mod with native code. Your mod selection won't change.").to_string(),
                     (_, 1) => trf(
-                        "This also turns off {mods} mods with native code. Turn them back on in Mods; Sunrise asks again then.",
+                        "Sunrise will ask again before running your {mods} mods with native code. Your mod selection won't change.",
                         &[("mods", &mods.to_string())],
                     ),
                     _ => trf(
-                        "This also turns off {mods} mods with native code in {profiles} profiles. Turn them back on in each profile's Mods; Sunrise asks again then.",
+                        "Sunrise will ask again before running {mods} mods with native code in {profiles} profiles. Your mod selection won't change.",
                         &[("mods", &mods.to_string()), ("profiles", &setups.to_string())],
                     ),
                 },
@@ -765,7 +765,11 @@ impl Launcher {
             .storage_report
             .as_ref()
             .map(|report| report.rows.iter().map(|r| r.remaining_bytes).sum::<u64>());
-        let nothing = busy || total.is_none_or(|bytes| bytes == 0);
+        let nothing = busy
+            || self
+                .storage_report
+                .as_ref()
+                .is_none_or(|report| report.rows.iter().all(|row| row.clearable_bytes() == 0));
         // Counting that failed is not still counting.
         let uncounted = if self.storage_error.is_some() && !busy {
             tr("Not counted")
@@ -818,7 +822,7 @@ impl Launcher {
                 .iter()
                 .flat_map(|report| &report.rows)
                 .filter(|r| asked.is_none_or(|category| r.category == category))
-                .map(|r| r.remaining_bytes)
+                .map(storage::Row::clearable_bytes)
                 .sum();
             let size = storage::format_bytes(bytes);
             let question = match asked {
@@ -897,7 +901,7 @@ impl Launcher {
                 || uncounted.to_string(),
                 |r| storage::format_bytes(r.remaining_bytes),
             );
-            let empty = busy || found.is_none_or(|r| r.remaining_bytes == 0);
+            let empty = busy || found.is_none_or(|r| r.clearable_bytes() == 0);
             let clear = button(ElementId::named_usize("alt-storage-clear", n), tr("Clear…"));
             let mut line = row(
                 trf(

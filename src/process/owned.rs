@@ -1,6 +1,7 @@
 //! Children a worker waits on (a version's preparer and porter, a preparation's process group): the launcher stops those still running when it quits, so none outlives it.
+use super::child::Child;
 use std::io;
-use std::process::{Child, Command, ExitStatus};
+use std::process::{Command, ExitStatus};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// A child process, or the process group it leads.
@@ -33,15 +34,19 @@ impl Registry {
 
     /// Spawns `command` as a child of this registry.
     pub fn spawn(&'static self, command: &mut Command) -> io::Result<Owned> {
-        let child = command.spawn()?;
+        let child = command.spawn()?.into();
+        Ok(self.track(child))
+    }
+
+    fn track(&'static self, child: Child) -> Owned {
         self.entries().push(Entry {
             pid: child.id(),
             group: false,
         });
-        Ok(Owned {
+        Owned {
             child,
             registry: self,
-        })
+        }
     }
 
     /// Stops the process group `pid` leads (it was started in its own group) with the others, until [`Registry::release`].
@@ -78,8 +83,21 @@ impl Owned {
         CHILDREN.spawn(command)
     }
 
+    #[cfg(windows)]
+    pub(crate) fn spawn_compiler(command: &Command) -> io::Result<Self> {
+        Ok(CHILDREN.track(super::leases::spawn_compiler(command)?))
+    }
+
     pub fn child(&mut self) -> &mut Child {
         &mut self.child
+    }
+
+    pub fn try_wait(&mut self) -> io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        if status.is_some() {
+            self.registry.release(self.child.id());
+        }
+        Ok(status)
     }
 
     pub fn wait(&mut self) -> io::Result<ExitStatus> {

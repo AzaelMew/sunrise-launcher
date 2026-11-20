@@ -117,7 +117,7 @@ pub(super) fn materialize(bundle: &Bundle, dir: &Path, revision: &str) -> Result
 }
 
 /// A private check folder, so read-only planning never changes the caller's inputs. Copy only
-/// the active mods when retrying without a mod whose omitted pin wasn't resolved.
+/// the active mods on every reduced retry, including those with already resolved pins.
 pub(super) fn check_inputs(mods: &[Bundle], pins: &[String]) -> Result<tempfile::TempDir, String> {
     let root = super::root();
     fs::create_dir_all(&root).map_err(|e| e.to_string())?;

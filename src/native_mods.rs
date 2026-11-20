@@ -38,6 +38,8 @@ pub mod sdk_cache;
 pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
 pub use picker::{Route, Routes};
 pub use tool::{Cancellation, Consent};
+mod workspace;
+pub(crate) use workspace::ATTEMPT_PREFIX;
 mod uses;
 
 // Settings and logs are shared by native-build and diagnostics tests.
@@ -972,7 +974,7 @@ impl From<Failed> for String {
 
 /// Refuse before staging, fetching a prebuilt game or downloading a compiler.
 pub fn require_consent() -> Result<(), Failed> {
-    if backend::Settings::load().native_mods_allowed_at.is_some() {
+    if backend::NativeGrant::read()?.is_some() {
         Ok(())
     } else {
         Err(Failed::NoConsent)
@@ -1017,7 +1019,7 @@ pub struct AtStake {
 struct Checks {
     verdicts: Vec<(String, fit::Verdict)>,
     refusals: Vec<(String, String)>,
-    route: Option<String>,
+    route: Option<tool::CheckRoute>,
 }
 
 /// The mods `ids` of `folder` checked against `sdk`'s build by its tool (`native-check`); the surface and build data are fetched only when a mod made for another build needs them.
@@ -1037,23 +1039,25 @@ fn check_all(
     };
     let program = sdk_cache::tool(sdk, base, &|_| {})?;
     let mut plan = serde_json::json!({"contract": 2, "mods": folder, "build": sdk.commit()});
-    let checked = loop {
+    let mut supplied = Vec::new();
+    loop {
         let checked = tool::check(&program, &plan, cancellation).map_err(refused)?;
-        let needs = |what: &str| {
-            checked
-                .mods
-                .iter()
-                .any(|m| m.needs.as_deref() == Some(what))
-        };
-        if needs("surface") && plan.get("surface").is_none() {
-            plan["surface"] = serde_json::json!(sdk_cache::surface_file(sdk, base)?);
-        } else if needs("build-data") && plan.get("build_data").is_none() {
-            plan["build_data"] = serde_json::json!(sdk_cache::build_data(sdk, base)?);
-        } else {
-            break checked;
+        let (checks, needed) = checks_from(checked, ids, &supplied).map_err(refused)?;
+        if needed.is_empty() {
+            return Ok(checks);
         }
-    };
-    checks_from(checked, ids).map_err(refused)
+        for need in needed {
+            match need {
+                tool::Need::Surface => {
+                    plan["surface"] = serde_json::json!(sdk_cache::surface_file(sdk, base)?);
+                }
+                tool::Need::BuildData => {
+                    plan["build_data"] = serde_json::json!(sdk_cache::build_data(sdk, base)?);
+                }
+            }
+            supplied.push(need);
+        }
+    }
 }
 
 /// What the player reads of a mod the tool refuses (`why`, in the tool's words).
@@ -1064,23 +1068,45 @@ fn refusal_text(id: &str, why: &str) -> String {
     )
 }
 
-/// The checks of `ids` in the tool's reply; a reply without a `route` field comes from a tool older than this launcher.
-fn checks_from(checked: tool::Checked, ids: &[&str]) -> Result<Checks, String> {
+/// Validate the whole reply before accepting a verdict or fetching another SDK file.
+fn checks_from(
+    checked: tool::Checked,
+    ids: &[&str],
+    supplied: &[tool::Need],
+) -> Result<(Checks, Vec<tool::Need>), String> {
+    let invalid = tool::invalid_check_reply;
     let mut checks = Checks {
         route: checked.route.ok_or_else(tool::too_old)?,
         ..Checks::default()
     };
-    for id in ids {
-        let Some(found) = checked.mods.iter().find(|m| m.id == *id) else {
-            continue;
-        };
-        if let Some(refusal) = &found.refusal {
-            checks.refusals.push((id.to_string(), refusal.clone()));
-        } else if let Some(verdict) = &found.verdict {
-            checks.verdicts.push((id.to_string(), verdict.clone()));
+    if checked.contract != Some(tool::CONTRACT) || checked.mods.len() != ids.len() {
+        return Err(invalid());
+    }
+    let mut mods: std::collections::HashMap<_, _> = checked
+        .mods
+        .into_iter()
+        .map(|row| (row.id.clone(), row))
+        .collect();
+    let mut needed = Vec::new();
+    for &id in ids {
+        let found = mods.remove(id).ok_or_else(invalid)?;
+        match (found.refusal, found.verdict, found.needs) {
+            (Some(why), None, None) if !why.trim().is_empty() => {
+                checks.refusals.push((found.id, why));
+            }
+            (None, Some(verdict), None) => checks.verdicts.push((found.id, verdict)),
+            (None, None, Some(need)) if !supplied.contains(&need) => {
+                if !needed.contains(&need) {
+                    needed.push(need);
+                }
+            }
+            _ => return Err(invalid()),
         }
     }
-    Ok(checks)
+    if checks.route.is_some() != checks.verdicts.iter().any(|(_, verdict)| verdict.usable()) {
+        return Err(invalid());
+    }
+    Ok((checks, needed))
 }
 
 /// A build's refusal of the mod tools, as the player reads it. A refused signature is short on
@@ -1165,6 +1191,18 @@ fn guard_worlds(home: &Path, left: &[LeftOut], build: &str, leave_out: bool) -> 
     Ok(())
 }
 
+/// `incoming` also keeps exact omitted sources for the cache key. SDK checks must not
+/// enumerate it on a reduced retry, even when every omitted mod already has a pin.
+fn retry_check_inputs(
+    mods: &[Bundle],
+    pins: &[String],
+    requested: usize,
+) -> Result<Option<tempfile::TempDir>, String> {
+    (mods.len() != requested)
+        .then(|| mixins::check_inputs(mods, pins))
+        .transpose()
+}
+
 /// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
 /// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
 /// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
@@ -1187,7 +1225,8 @@ fn pipeline(
     progress: &impl Fn(Step),
 ) -> Result<Built, Failed> {
     let cancellation = &options.cancellation;
-    cancellation.check()?;
+    // Keep a single consent revision across private staging, compilation and publication.
+    cancellation.admit_native_work()?;
     let started = std::time::Instant::now();
     let built_on = checked_about(base)?;
     backend::need_prepared(base)?;
@@ -1195,8 +1234,8 @@ fn pipeline(
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
     // The mods are copied first: the build and its key use the copy, whatever happens to the
     // folder meanwhile.
-    let incoming = root().join("mods.incoming");
-    let _ = fs::remove_dir_all(&incoming);
+    let mut workspace = workspace::Workspace::new(&root()).map_err(|e| e.to_string())?;
+    let incoming = workspace.path().join("mods.incoming");
     let found = scan_bundles(folder)?;
     if found.is_empty() {
         return Err(Failed::Nothing);
@@ -1320,17 +1359,7 @@ fn pipeline(
     for (bundle, pin) in mods.iter().zip(&mixins_pins) {
         mixins::materialize(bundle, &bundle.dir, pin)?;
     }
-    let check_inputs = requested
-        .iter()
-        .any(|b| {
-            b.manifest
-                .native
-                .as_ref()
-                .is_some_and(|n| n.mixins.is_none())
-                && left_out.iter().any(|left| left.id == b.manifest.id)
-        })
-        .then(|| mixins::check_inputs(&mods, &mixins_pins))
-        .transpose()?;
+    let check_inputs = retry_check_inputs(&mods, &mixins_pins, requested.len())?;
     let check_folder = check_inputs
         .as_ref()
         .map_or(incoming.as_path(), |dir| dir.path());
@@ -1478,6 +1507,7 @@ fn pipeline(
                 (
                     sdk_cache::developer(&program, &revision, target, &local, cancellation)?,
                     program,
+                    None,
                 )
             }
             (None, sdk) => {
@@ -1508,7 +1538,7 @@ fn pipeline(
                 };
                 let program = sdk_cache::tool(sdk, &sdk_base, &fetched).map_err(refused)?;
                 // A developer base using its commit's SDK release asks its route here: no fit was checked.
-                let route = match route.clone() {
+                let route = match route {
                     Some(route) => route,
                     None => {
                         let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
@@ -1525,9 +1555,10 @@ fn pipeline(
                         &[("build", &sdk.shown())],
                     )
                 })?;
-                let slices = sdk_cache::slices(lease, sdk, &sdk_base, &route, target, &fetched)
-                    .map_err(refused)?;
-                (slices, program)
+                let slices =
+                    sdk_cache::slices(lease, sdk, &sdk_base, route.name(), target, &fetched)
+                        .map_err(refused)?;
+                (slices, program, Some(route))
             }
         };
         Some(package)
@@ -1559,7 +1590,7 @@ fn pipeline(
     // the pinned catalog (`internals::Catalog::pinned`).
     let about = |route: &str,
                  internals: &std::collections::BTreeMap<String, serde_json::Value>,
-                 libraries: &serde_json::Value| {
+                 libraries: &[tool::LibraryRecord]| {
         serde_json::json!({
             "libraries": libraries,
             "base": origin,
@@ -1592,7 +1623,7 @@ fn pipeline(
         Target::Client => rust_toolchain::linker(),
         Target::Server => rust_toolchain::linker_server(),
     };
-    if let Some((game, program)) = &prebuilt {
+    if let Some((game, program, expected_route)) = &prebuilt {
         let checking = std::time::Instant::now();
         linker()?;
         let rust = rust_toolchain::install(|f| progress(Step::Rust(f)))?;
@@ -1600,16 +1631,18 @@ fn pipeline(
         progress(Step::PrebuiltMods);
         let compiling = std::time::Instant::now();
         // The tool compiles every mod in the folder it's given: exactly the staged copies of the ones this build keeps.
-        let compiled = root().join("mods.compile");
-        let _ = fs::remove_dir_all(&compiled);
+        let compiled = workspace.path().join("mods.compile");
         for bundle in &mods {
             copy_bundle(bundle, &compiled.join(&bundle.manifest.id))?;
         }
+        let game = workspace.package(game).map_err(|e| e.to_string())?;
+        let work = workspace.path().join("work");
         let built = tool::build(
             &rust,
             program,
-            &tool::Plan {
-                work: &root(),
+            tool::Plan {
+                work: &work,
+                workspace: &mut workspace,
                 package: tool::Package {
                     runtime: &game.runtime,
                     api: &game.api,
@@ -1629,13 +1662,26 @@ fn pipeline(
             },
             cancellation,
         );
-        // Don't turn a stopped tool into a compile failure or retry it as an omitted mod.
+        // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
         let built = built.map_err(|failure| blame(blamed_text(failure)))?;
-        let _ = fs::remove_dir_all(&compiled);
+        let libraries = workspace
+            .verify_outputs(
+                &built,
+                &game,
+                &rust,
+                *expected_route,
+                &revision,
+                mods.iter().map(|bundle| &bundle.manifest),
+            )
+            .map_err(|e| {
+                let _ = append_log(&e.to_string());
+                tr("The native build tool's output couldn't be verified. See the build log.")
+                    .to_owned()
+            })?;
         append_log(&trf(
             "Native mods route: {route}.",
-            &[("route", &built.route)],
+            &[("route", built.route.name())],
         ))
         .map_err(blame)?;
         // The whole step; the tool's own build and the function replacement have their lines.
@@ -1655,8 +1701,8 @@ fn pipeline(
             &version,
             target,
             &built.binary,
-            &built.libraries,
-            &about(&built.route, &built.internals, &built.records),
+            &libraries,
+            &about(built.route.name(), &built.internals, &built.records),
             &ordered,
             cancellation,
         )?;
@@ -1665,7 +1711,6 @@ fn pipeline(
         // Used again: it counts as the newest of the builds kept (`prune`).
         let _ = fs::write(target.directory(&version).join(".installed"), "");
     }
-    let _ = fs::remove_dir_all(&incoming);
     built.secs = started.elapsed().as_secs();
     Ok(built)
 }
@@ -1805,8 +1850,7 @@ pub fn build(
     registry_consent: impl Fn(&Consent) -> bool,
     catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
 ) -> Result<ClientBuild, Failed> {
-    cancellation.check()?;
-    require_consent()?;
+    cancellation.admit_native_work()?;
     if let Some(error) = backend::native_mod_architecture_error() {
         return Err(Failed::Other(error));
     }
@@ -1836,66 +1880,80 @@ pub fn build(
             },
             &progress,
         );
-        // Before using the result (including a cached one), check Stop directly. The UI
-        // may not have received any progress yet.
-        cancellation.check()?;
-        // Every mod with native code was left out: the game is the plain one, as it is. The
-        // instance plays it (following its channel when that is the build the channel gives),
-        // and keeps which mods wait and why.
-        if let Err(Failed::Mods { left, .. }) = &built {
-            let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
-            isolate::keep(&instance.home, &plain, left)?;
-            let installed = backend::installed();
-            let selected = backend::Settings::load()
-                .selected
-                .filter(|s| installed.contains(s));
-            let pin = plain_pin(
-                instance.channel,
-                &plain,
-                selected.as_deref(),
-                &installed,
-                catalogue,
-                || cancellation.check(),
-            )?;
-            instances::edit(&instance.id, |meta| {
-                let unchanged = meta.version == instance.version
-                    && meta.channel.unwrap_or_default() == instance.channel;
-                if unchanged {
-                    meta.version = pin;
-                }
-            })?;
-            return Ok(ClientBuild::Plain(plain));
-        }
-        let built = built.map_err(|failed| match failed {
-            // "Stay" keeps the build the instance plays now.
-            Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
-                stay: playing(instance),
-                base: base.to_owned(),
-                ..*stake
-            })),
-            other => other,
-        })?;
-        cancellation.check()?;
-        isolate::forget(&instance.home);
-        // A version or channel the player saved while this built wins: the build stays
-        // available, the instance keeps their choice.
+        finish_profile_build(base, instance, cancellation, built, &progress, catalogue)
+    })
+}
+
+/// Apply either legacy pin or plain fallback only under this attempt's original grant.
+fn finish_profile_build(
+    base: &str,
+    instance: &Instance,
+    cancellation: &Cancellation,
+    built: Result<Built, Failed>,
+    progress: &impl Fn(Step),
+    catalogue: impl FnOnce() -> Option<Vec<backend::Release>>,
+) -> Result<ClientBuild, Failed> {
+    // Before using the result (including a cached one), check Stop directly. The UI
+    // may not have received any progress yet.
+    cancellation.check()?;
+    // Every mod with native code was left out: the game is the plain one, as it is. The
+    // instance plays it (following its channel when that is the build the channel gives),
+    // and keeps which mods wait and why.
+    if let Err(Failed::Mods { left, .. }) = &built {
+        let plain = checked_about(base)?.map_or_else(|| base.to_owned(), |about| about.base);
+        let installed = backend::installed();
+        let selected = backend::Settings::load()
+            .selected
+            .filter(|s| installed.contains(s));
+        let pin = plain_pin(
+            instance.channel,
+            &plain,
+            selected.as_deref(),
+            &installed,
+            catalogue,
+            || cancellation.check(),
+        )?;
+        let _permission = cancellation.publication_guard()?;
+        isolate::keep(&instance.home, &plain, left)?;
         instances::edit(&instance.id, |meta| {
             let unchanged = meta.version == instance.version
                 && meta.channel.unwrap_or_default() == instance.channel;
             if unchanged {
-                meta.version = Some(built.version.clone());
+                meta.version = pin;
             }
         })?;
-        // logged() runs central eviction under the retained build lease.
-        if built.plan != Plan::UpToDate {
-            progress(Step::Done {
-                secs: built.secs,
-                profile: built.profile,
-                plan: built.plan,
-            });
+        return Ok(ClientBuild::Plain(plain));
+    }
+    let built = built.map_err(|failed| match failed {
+        // "Stay" keeps the build the instance plays now.
+        Failed::Worlds(stake) => Failed::Worlds(Box::new(AtStake {
+            stay: playing(instance),
+            base: base.to_owned(),
+            ..*stake
+        })),
+        other => other,
+    })?;
+    let permission = cancellation.publication_guard()?;
+    isolate::forget(&instance.home);
+    // A version or channel the player saved while this built wins: the build stays
+    // available, the instance keeps their choice.
+    instances::edit(&instance.id, |meta| {
+        let unchanged = meta.version == instance.version
+            && meta.channel.unwrap_or_default() == instance.channel;
+        if unchanged {
+            meta.version = Some(built.version.clone());
         }
-        Ok(ClientBuild::Native(built.version))
-    })
+    })?;
+    drop(permission);
+    // logged() runs central eviction under the retained build lease.
+    if built.plan != Plan::UpToDate {
+        progress(Step::Done {
+            secs: built.secs,
+            profile: built.profile,
+            plan: built.plan,
+        });
+    }
+    Ok(ClientBuild::Native(built.version))
 }
 
 /// Clearing the pin must play the checked base both in the window and on the command line.
@@ -1969,8 +2027,8 @@ pub fn build_server(
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
 ) -> Result<PathBuf, Failed> {
-    require_consent()?;
     let cancellation = Cancellation::default();
+    cancellation.admit_native_work()?;
     logged(|cache| {
         if output.symlink_metadata().is_ok() {
             return Err(trf(
@@ -3301,8 +3359,47 @@ mod tests {
     }
 
     #[test]
+    fn a_revoked_then_regranted_attempt_cannot_apply_a_cached_build_pin() {
+        let _scratch = scratch_state();
+        let mut settings = backend::Settings::default();
+        settings.allow_native_mods().unwrap();
+        let instance = instances::list()
+            .into_iter()
+            .find(|row| row.id == "sunrise")
+            .unwrap();
+        let cancellation = Cancellation::default();
+        cancellation.admit_native_work().unwrap();
+        settings.revoke_native_mods().unwrap();
+        settings.allow_native_mods().unwrap();
+        let cache_hit = Ok(Built {
+            version: "native-retained-fixture".into(),
+            plan: Plan::UpToDate,
+            profile: Profile::Optimized,
+            secs: 0,
+            left_out: Vec::new(),
+        });
+        let error = finish_profile_build(
+            "v0.0.0",
+            &instance,
+            &cancellation,
+            cache_hit,
+            &|_| panic!("stale work can't complete"),
+            || panic!("cache hit needs no catalogue"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("Native mod permission changed"), "{error}");
+        let after = instances::list()
+            .into_iter()
+            .find(|row| row.id == "sunrise")
+            .unwrap();
+        assert_eq!(after.version, instance.version);
+    }
+
+    #[test]
     fn a_native_build_without_a_record_is_refused_before_preparation() {
         let _guard = scratch_state();
+        backend::Settings::default().allow_native_mods().unwrap();
         let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
         let Err(error) = pipeline(
             &lease,
@@ -3726,14 +3823,16 @@ mod tests {
         let refused = r#"{"id":"scripted","refusal":"build scripts aren't allowed"}"#;
         let unfit = r#"{"id":"old","verdict":{"kind":"exact","made_for":"b","why":"internals"}}"#;
         let fine = r#"{"id":"fine","verdict":{"kind":"made-for"}}"#;
-        let older = checks_from(reply("", fine), &["fine"]).err().unwrap();
+        let older = checks_from(reply("", fine), &["fine"], &[]).err().unwrap();
         assert!(older.contains("too old"), "{older}");
         let both = checks_from(
             reply(r#""route":"prebuilt-api","#, &format!("{refused},{fine}")),
             &["scripted", "fine"],
+            &[],
         )
-        .unwrap();
-        assert_eq!(both.route.as_deref(), Some("prebuilt-api"));
+        .unwrap()
+        .0;
+        assert_eq!(both.route, Some(tool::CheckRoute::PrebuiltApi));
         assert!(matches!(&both.verdicts[..], [(id, fit::Verdict::MadeFor)] if id == "fine"));
         assert_eq!(
             both.refusals,
@@ -3743,14 +3842,130 @@ mod tests {
             )]
         );
         // Nothing usable: the tool sends `"route": null`, and every verdict and refusal still counts.
-        let all_refused = checks_from(reply(r#""route":null,"#, refused), &["scripted"]).unwrap();
+        let (all_refused, needs) =
+            checks_from(reply(r#""route":null,"#, refused), &["scripted"], &[]).unwrap();
         assert_eq!((all_refused.route, all_refused.refusals.len()), (None, 1));
-        let all_unfit = checks_from(reply(r#""route":null,"#, unfit), &["old"]).unwrap();
+        assert!(needs.is_empty());
+        let (all_unfit, needs) =
+            checks_from(reply(r#""route":null,"#, unfit), &["old"], &[]).unwrap();
+        assert!(needs.is_empty());
         assert!(all_unfit.route.is_none());
         assert!(
             matches!(&all_unfit.verdicts[..], [(id, fit::Verdict::Exact { .. })] if id == "old")
         );
         assert!(refusal_text("scripted", "no").contains("scripted"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_live_sdk_check_on_reduced_retry_never_sees_an_omitted_pinned_mod() {
+        use std::os::unix::fs::PermissionsExt;
+        let _state = scratch_state();
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("incoming");
+        for id in ["broken", "survivor"] {
+            write_native(&folder.join(id), id, A, B);
+        }
+        let requested = scan_bundles(&folder).unwrap();
+        assert_eq!(requested.len(), 2);
+        assert!(requested
+            .iter()
+            .all(|bundle| bundle.native().mixins.as_deref() == Some(B)));
+        let check = |input: &Path, ids: &[&str]| {
+            let program = temp.path().join("fixture-sdk");
+            // Like the real SDK, derive its rows from the manifests in the input directory.
+            let script = format!(
+                r#"#!/bin/sh
+read -r plan
+printf '%s' "$plan" | grep -F '"mods":"{}"' >/dev/null || exit 2
+printf '{{"contract":2,"route":"prebuilt-api","mods":['
+comma=''
+for dir in '{}'/*; do
+  id=$(grep '^id[[:space:]]*=' "$dir/sunrise-mod.toml" | head -1 | cut -d= -f2- | tr -d "\"' ")
+  [ -n "$id" ] || exit 2
+  printf '%s{{"id":"%s","verdict":{{"kind":"made-for"}}}}' "$comma" "$id"
+  comma=,
+done
+printf ']}}\n'
+"#,
+                input.display(),
+                input.display()
+            );
+            fs::write(&program, script).unwrap();
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+            let plan = serde_json::json!({"mods": input});
+            let checked = tool::check(&program, &plan, &Cancellation::default()).unwrap();
+            checks_from(checked, ids, &[]).unwrap().0
+        };
+        let both = check(&folder, &["broken", "survivor"]);
+        assert_eq!(both.verdicts.len(), 2);
+        let survivors: Vec<_> = requested
+            .iter()
+            .filter(|bundle| bundle.manifest.id == "survivor")
+            .cloned()
+            .collect();
+        let staged = retry_check_inputs(&survivors, &[B.into()], requested.len())
+            .unwrap()
+            .unwrap();
+        let retried = check(staged.path(), &["survivor"]);
+        assert_eq!(retried.verdicts.len(), 1);
+        assert_eq!(retried.verdicts[0].0, "survivor");
+    }
+
+    #[test]
+    fn check_rejects_nonmatching_or_incomplete_sdk_evidence() {
+        let success = serde_json::json!({"id":"a","verdict":{"kind":"made-for"}});
+        let unknown = serde_json::json!({"id":"z","verdict":{"kind":"made-for"}});
+        let waiting = serde_json::json!({"id":"a","needs":"surface"});
+        let reply = |contract, route, mods: &[serde_json::Value]| {
+            serde_json::from_value::<tool::Checked>(serde_json::json!({
+                "contract": contract, "route": route, "mods": mods,
+            }))
+        };
+        for (contract, route, mods) in [
+            (None, Some("prebuilt"), vec![success.clone()]),
+            (Some(3), Some("prebuilt"), vec![success.clone()]),
+            (Some(2), Some("unknown"), vec![success.clone()]),
+            (Some(2), None, vec![success.clone()]),
+            (Some(2), None, vec![]),
+            (Some(2), Some("prebuilt"), vec![unknown.clone()]),
+            (Some(2), Some("prebuilt"), vec![success.clone(), unknown]),
+            (Some(2), Some("prebuilt"), vec![success, waiting.clone()]),
+            (Some(2), None, vec![serde_json::json!({"id":"a"})]),
+            (
+                Some(2),
+                None,
+                vec![serde_json::json!({"id":"a","refusal":" "})],
+            ),
+            (
+                Some(2),
+                None,
+                vec![serde_json::json!({"id":"a","needs":"other-input"})],
+            ),
+            (
+                Some(2),
+                None,
+                vec![serde_json::json!({"id":"a","needs":"surface","refusal":"invalid"})],
+            ),
+            (Some(2), Some("prebuilt"), vec![waiting.clone()]),
+        ] {
+            let checked = reply(contract, route, &mods).map_err(|e| e.to_string());
+            assert!(
+                checked
+                    .and_then(|reply| checks_from(reply, &["a"], &[]))
+                    .is_err(),
+                "{contract:?}, {route:?}, {mods:?}"
+            );
+        }
+        let reply = |mods: &[serde_json::Value]| reply(Some(2), None, mods).unwrap();
+        let other = serde_json::json!({"id":"b","needs":"build-data"});
+        let both = || reply(&[other.clone(), waiting.clone()]);
+        assert_eq!(
+            checks_from(both(), &["a", "b"], &[]).unwrap().1,
+            [tool::Need::Surface, tool::Need::BuildData]
+        );
+        assert!(checks_from(both(), &["a", "b"], &[tool::Need::Surface]).is_err());
+        assert!(checks_from(reply(&[waiting.clone(), waiting]), &["a", "b"], &[]).is_err());
     }
 
     #[test]
@@ -3783,7 +3998,7 @@ mod tests {
                 ("old".into(), exact),
             ],
             refusals: Vec::new(),
-            route: Some("prebuilt-api".into()),
+            route: Some(tool::CheckRoute::PrebuiltApi),
         };
         let left = planning::update_left_out(&found, &checks).unwrap();
         let ids: Vec<&str> = left.iter().map(|l| l.id.as_str()).collect();

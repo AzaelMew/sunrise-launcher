@@ -63,6 +63,31 @@ impl Home {
 }
 
 #[test]
+fn storage_counts_unproved_compiler_work_but_never_offers_to_clear_it() {
+    let home = Home::new();
+    let old = home.file(
+        "launcher/native/.native-attempt-old/compiler/work",
+        &[9; 16384],
+    );
+    let output = home.run(&["storage", "--clear", "build-files"]);
+    assert!(!output.status.success(), "{output:?}");
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let row = report["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["category"] == "build-files")
+        .unwrap();
+    assert!(row["kept"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("prove all workers had stopped"));
+    assert!(row["kept"][0]["bytes"].as_u64().unwrap() >= 16384);
+    assert_eq!(row["kept"][0]["bytes"], row["remaining_bytes"]);
+    assert_eq!(fs::read(old).unwrap(), [9; 16384]);
+}
+
+#[test]
 fn trust_native_code_flag_persists_install_consent() {
     let home = Home::new();
     let output = home.run(&[

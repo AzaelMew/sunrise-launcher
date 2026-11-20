@@ -15,7 +15,10 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
                 "echo '{\"event\":\"consent\",\"added_crates\":2,\"build_scripts\":[\"syn\"],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
+            "EXIT1" => script.push_str("exit 1\n"),
+            "EXIT2" => script.push_str("exit 2\n"),
             "EXIT3" => script.push_str("exit 3\n"),
+            "SIGNAL" => script.push_str("kill -TERM $$\n"),
             event => script.push_str(&format!("echo '{event}'\n")),
         }
     }
@@ -47,17 +50,18 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
                 "not an event",
                 r#"{"event":"mod","id":"greeter","done":1,"total":1}"#,
                 "CONSENT",
-                r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":["/b/lib.so"],"records":[{"name":"lib"}],"mods":["greeter"],"internals":{"greeter":[]},"mixins":"abc","used":[]}"#,
+                r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":["/b/lib.so"],"records":[{"file":"lib.so","sha256":"abc","kind":"mod","mod":"greeter","identity":"fixture"}],"mods":["greeter"],"internals":{"greeter":[]},"mixins":"abc","used":[]}"#,
             ],
         ),
         r#"{"contract":2}"#,
         Some(&consent),
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap();
     assert_eq!(
-        (built.route.as_str(), built.binary.as_path()),
+        (built.route.name(), built.binary.as_path()),
         ("prebuilt", Path::new("/b/game"))
     );
     assert_eq!(*started.borrow(), ["greeter 1/1"]);
@@ -71,15 +75,14 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         r#"{"contract":2}"#
     );
 
+    let blamed = r#"{"event":"failed","error":"Compiling greeter failed (101)","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#;
     let failed = run(
-        fake(
-            &dir,
-            &[r#"{"event":"failed","error":"Compiling greeter failed (101)","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#],
-        ),
+        fake(&dir, &[blamed, "EXIT1"]),
         "{}",
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert_eq!(
@@ -89,12 +92,26 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             kind: BlameKind::Compile
         })
     );
+    for events in [&[blamed][..], &[blamed, "EXIT3"][..]] {
+        assert!(run(
+            fake(&dir, events),
+            "{}",
+            None,
+            &on_mod,
+            &Cancellation::default(),
+            None,
+        )
+        .unwrap_err()
+        .blame
+        .is_none());
+    }
     let silent = run(
         fake(&dir, &[]),
         "{}",
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert!(
@@ -103,6 +120,445 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         silent.error
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[cfg(unix)]
+fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
+    let _scratch = super::super::tests::scratch_state();
+    let mut settings = crate::backend::Settings::default();
+    settings.allow_native_mods().unwrap();
+    let cancellation = Cancellation::default();
+    cancellation.admit_native_work().unwrap();
+    settings.revoke_native_mods().unwrap();
+    settings.allow_native_mods().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let error = ask(
+        fake(dir.path(), &[]),
+        "native-check",
+        &serde_json::json!({}),
+        &cancellation,
+    )
+    .unwrap_err();
+    assert!(error.contains("Native mod permission changed"), "{error}");
+    assert!(!dir.path().join("plan").exists());
+
+    let current = Cancellation::default();
+    current.admit_native_work().unwrap();
+    let settings = RefCell::new(settings);
+    let consent = |_: &Consent| {
+        settings.borrow_mut().revoke_native_mods().unwrap();
+        settings.borrow_mut().allow_native_mods().unwrap();
+        true
+    };
+    let failure = run(
+        fake(dir.path(), &["CONSENT", "EXIT1"]),
+        "{}",
+        Some(&consent),
+        &|_, _, _| unreachable!(),
+        &current,
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        failure.error.contains("Native mod permission changed"),
+        "{}",
+        failure.error
+    );
+    assert_ne!(
+        std::fs::read_to_string(dir.path().join("answer"))
+            .unwrap_or_default()
+            .trim(),
+        "true"
+    );
+    assert!(
+        dir.path().join("plan").is_file(),
+        "the revision was valid at spawn"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "daily"]
+fn not_starting_a_worker_does_not_retain_its_staged_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let _scratch = super::super::tests::scratch_state();
+    let mut settings = crate::backend::Settings::default();
+    settings.allow_native_mods().unwrap();
+    let stale = Cancellation::default();
+    stale.admit_native_work().unwrap();
+    settings.revoke_native_mods().unwrap();
+    let no_consent = Cancellation::default();
+    for (command, cancellation, expected) in [
+        (
+            std::process::Command::new(dir.path().join("missing-program")),
+            &no_consent,
+            "couldn't run",
+        ),
+        (fake(dir.path(), &[]), &stale, "permission changed"),
+    ] {
+        let mut workspace = Workspace::new(dir.path()).unwrap();
+        let path = workspace.path().to_owned();
+        std::fs::write(path.join("staged-sdk"), b"private").unwrap();
+        let failure = run(
+            command,
+            "{}",
+            None,
+            &|_, _, _| unreachable!(),
+            cancellation,
+            Some(&mut workspace),
+        )
+        .unwrap_err();
+        assert!(failure.error.contains(expected), "{}", failure.error);
+        drop(workspace);
+        assert!(!path.exists());
+        assert!(!dir.path().join("plan").exists());
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn an_sdk_exit_or_stop_finishes_even_while_a_descendant_keeps_both_pipes_open() {
+    for case in ["exit", "stop", "check"] {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().to_owned();
+        let cancellation = Cancellation::default();
+        let (done, result) = std::sync::mpsc::channel();
+        let actor = path.clone();
+        let active = cancellation.clone();
+        let run_fixture = std::thread::spawn(move || {
+            let mut command = std::process::Command::new("/bin/sh");
+            command.args(["-ec", r#"
+read -r plan
+setsid /bin/sh -ec 'touch "$1/holding"; while [ ! -e "$1/release" ]; do sleep .02; done; printf done > "$1/finished"' child "$1" &
+while [ ! -e "$1/holding" ]; do sleep .02; done
+case "$2" in
+  stop) while :; do sleep .02; done ;;
+  check) echo '{"contract":2,"route":null,"mods":[]}' ;;
+esac
+exit 125
+"#, "sdk"]).arg(&actor).arg(case);
+            let mut workspace = Workspace::new(&actor).unwrap();
+            let workspace_path = workspace.path().to_owned();
+            let error = if case == "check" {
+                ask(command, "native-check", &serde_json::json!({}), &active).unwrap_err()
+            } else {
+                run(
+                    command,
+                    "{}",
+                    None,
+                    &|_, _, _| unreachable!(),
+                    &active,
+                    Some(&mut workspace),
+                )
+                .unwrap_err()
+                .error
+            };
+            drop(workspace);
+            done.send((error, workspace_path.exists())).unwrap();
+        });
+        let until = Instant::now() + Duration::from_secs(10);
+        while !path.join("holding").exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let inherited = path.join("holding").exists();
+        if case == "stop" {
+            cancellation.stop();
+        }
+        let outcome = result.recv_timeout(Duration::from_secs(8));
+        let writing = !path.join("finished").exists();
+        // Always release the test child, including if the old launcher behavior regresses.
+        std::fs::write(path.join("release"), b"release").unwrap();
+        let until = Instant::now() + Duration::from_secs(10);
+        while !path.join("finished").exists() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(inherited && writing && path.join("finished").exists());
+        let (error, retained) = outcome.expect("the runner must finish without its pipe EOF");
+        run_fixture.join().unwrap();
+        match case {
+            "stop" => {
+                assert_eq!(error, super::super::CANCELLED);
+                assert!(retained);
+            }
+            "exit" => {
+                assert!(error.contains("output was still open"), "{error}");
+                assert!(retained);
+            }
+            _ => assert!(error.contains("output was still open"), "{error}"),
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn the_runner_refuses_duplicate_terminal_events_and_wrong_or_extra_check_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let good = r#"{"contract":2,"route":null,"mods":[]}"#;
+    let refusal = r#"{"contract":2,"error":{"kind":"unread","message":"fixture refused"}}"#;
+    let ask_sdk = |lines: &[&str]| {
+        ask(
+            fake(dir.path(), lines),
+            "native-check",
+            &serde_json::json!({}),
+            &Cancellation::default(),
+        )
+    };
+    assert!(ask_sdk(&[good]).is_ok());
+    assert!(ask_sdk(&[refusal, "EXIT1"])
+        .unwrap_err()
+        .contains("fixture refused"));
+    for lines in [
+        &[good, good][..],
+        &[good, "EXIT1"],
+        &[refusal],
+        &[refusal, "EXIT2"],
+        &[refusal, "EXIT3"],
+        &[refusal, "SIGNAL"],
+    ] {
+        assert!(ask_sdk(lines)
+            .unwrap_err()
+            .contains("incomplete or inconsistent"));
+    }
+    assert!(ask_sdk(&["EXIT2"]).unwrap_err().contains("didn't accept"));
+    assert!(ask_sdk(&["EXIT3"]).unwrap_err().contains("too old"));
+    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
+    let failed = r#"{"event":"failed","error":"another ending","blame":null,"used":[]}"#;
+    let result = run(
+        fake(dir.path(), &[built, failed]),
+        "{}",
+        None,
+        &|_, _, _| unreachable!(),
+        &Cancellation::default(),
+        None,
+    )
+    .unwrap_err();
+    assert!(
+        result.error.contains("incomplete or inconsistent"),
+        "{}",
+        result.error
+    );
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "daily"]
+fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let built = r#"{"event":"built","route":"prebuilt","binary":"/b/game","libraries":[],"records":[],"mods":[],"internals":{},"mixins":"x","used":[]}"#;
+    let failed = r#"{"event":"failed","error":"compile error","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#;
+    for (lines, success) in [(&[built][..], true), (&[failed, "EXIT1"], false)] {
+        let terminal = || {
+            run(
+                fake(dir.path(), lines),
+                "{}",
+                None,
+                &|_, _, _| unreachable!(),
+                &Cancellation::default(),
+                None,
+            )
+        };
+        let unproved = compiler_handoff(terminal(), false).unwrap_err();
+        assert!(unproved
+            .error
+            .contains("couldn't prove all native build workers stopped"));
+        assert!(unproved.blame.is_none());
+        assert_eq!(compiler_handoff(terminal(), true).is_ok(), success);
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "daily; build the launcher binary first"]
+fn actual_sdk_build_runner_keeps_a_surviving_attempt_private_and_retries() {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    let _scratch = super::super::tests::scratch_state();
+    let root = tempfile::tempdir().unwrap();
+    let rust = Toolchain {
+        dir: root.path().join("rust"),
+        host: crate::rust_toolchain::host().unwrap(),
+    };
+    let write_tool = |name, script| {
+        let path = root.path().join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        path
+    };
+    let detached = write_tool(
+        "stop-tool",
+        r#"#!/bin/sh
+set -eu
+[ "$1" = native-build ]
+read -r plan
+setsid /bin/sh -ec '
+  touch "$TMPDIR/holding"
+  for _ in $(seq 400); do
+    if [ -f "$TMPDIR/release" ]; then
+      for dir in "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"; do printf old > "$dir/proof"; done
+      touch "$TMPDIR/finished"
+      exit 0
+    fi
+    sleep .025
+  done
+  exit 1
+' &
+for _ in $(seq 400); do [ ! -f "$TMPDIR/holding" ] || break; sleep .025; done
+[ -f "$TMPDIR/holding" ]
+printf '%s\n' '{"event":"mod","id":"greeter","done":1,"total":1}'
+wait
+"#,
+    );
+    let succeeds = write_tool(
+        "retry-tool",
+        r#"#!/bin/sh
+set -eu
+[ "$1" = native-build ]
+read -r plan
+for dir in "$CARGO_HOME" "$CARGO_TARGET_DIR" "$TMPDIR"; do printf retry > "$dir/proof"; done
+printf '%s\n' '{"event":"built","route":"prebuilt-api","binary":"unused","libraries":[],"records":[],"mods":[],"internals":{}}'
+"#,
+    );
+    let revoke_tool = write_tool(
+        "registry-tool",
+        r#"#!/bin/sh
+set -eu
+read -r plan
+printf '%s\n' '{"event":"consent","added_crates":1,"build_scripts":[],"proc_macros":[]}'
+read -r answer
+printf '%s' "$answer" > "$TMPDIR/answer"
+"#,
+    );
+    let build_fixture = |program: &Path,
+                         workspace: &mut Workspace,
+                         cancellation: &Cancellation,
+                         on_mod: &dyn Fn(&str, usize, usize),
+                         consent: Option<&dyn Fn(&Consent) -> bool>| {
+        let saved = workspace.path().to_owned();
+        build(
+            &rust,
+            program,
+            Plan {
+                workspace,
+                work: &saved.join("work"),
+                package: Package {
+                    runtime: &saved.join("runtime"),
+                    api: &saved.join("api"),
+                    engine: &saved.join("engine"),
+                },
+                mods: &saved.join("mods"),
+                server: false,
+                mixins_from_source: false,
+            },
+            consent,
+            on_mod,
+            cancellation,
+        )
+    };
+    let mut settings = crate::backend::Settings::default();
+    settings.allow_native_mods().unwrap();
+    let stop = Cancellation::default();
+    stop.admit_native_work().unwrap();
+    let mut first = Workspace::new(root.path()).unwrap();
+    let old = first.path().to_owned();
+    let error =
+        build_fixture(&detached, &mut first, &stop, &|_, _, _| stop.stop(), None).unwrap_err();
+    assert_eq!(error.error, super::super::CANCELLED);
+    drop(first);
+    assert!(old.join("tmp/holding").exists() && !old.join("tmp/finished").exists());
+
+    let mut revoke = Workspace::new(root.path()).unwrap();
+    let stale = Cancellation::default();
+    stale.admit_native_work().unwrap();
+    let settings = RefCell::new(settings);
+    let failure = build_fixture(
+        &revoke_tool,
+        &mut revoke,
+        &stale,
+        &|_, _, _| unreachable!(),
+        Some(&|_| {
+            settings.borrow_mut().revoke_native_mods().unwrap();
+            settings.borrow_mut().allow_native_mods().unwrap();
+            true
+        }),
+    )
+    .unwrap_err();
+    assert!(
+        failure.error.contains("permission changed"),
+        "{}",
+        failure.error
+    );
+    assert!(!revoke.path().join("tmp/answer").exists());
+
+    let mut retry = Workspace::new(root.path()).unwrap();
+    let fresh = Cancellation::default();
+    fresh.admit_native_work().unwrap();
+    let result = build_fixture(
+        &succeeds,
+        &mut retry,
+        &fresh,
+        &|_, _, _| unreachable!(),
+        None,
+    );
+    assert_eq!(result.unwrap().route, CheckRoute::PrebuiltApi);
+    assert!(
+        !old.join("tmp/finished").exists(),
+        "retry finished independently"
+    );
+    fs::write(old.join("tmp/release"), b"release").unwrap();
+    let until = Instant::now() + Duration::from_secs(10);
+    while !old.join("tmp/finished").exists() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(old.join("tmp/finished").is_file());
+    for part in ["cargo", "target", "tmp"] {
+        assert_eq!(fs::read(old.join(part).join("proof")).unwrap(), b"old");
+        assert_eq!(
+            fs::read(retry.path().join(part).join("proof")).unwrap(),
+            b"retry"
+        );
+    }
+    let clean = retry.path().to_owned();
+    drop(retry);
+    assert!(!clean.exists());
+}
+
+#[test]
+fn build_plan_and_process_use_the_same_private_cargo_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut workspace = Workspace::new(dir.path()).unwrap();
+    let path = workspace.path().to_owned();
+    let rust = Toolchain {
+        dir: path.join("rust"),
+        host: crate::rust_toolchain::hosts().first().unwrap(),
+    };
+    let plan = Plan {
+        work: &path.join("work"),
+        workspace: &mut workspace,
+        package: Package {
+            runtime: &path,
+            api: &path,
+            engine: &path,
+        },
+        mods: &path.join("mods"),
+        server: false,
+        mixins_from_source: false,
+    };
+    let line: Value = serde_json::from_str(&plan_line(&rust, &plan)).unwrap();
+    let mut command = std::process::Command::new("sdk-tool");
+    workspace.isolate(&mut command).unwrap();
+    let cargo_home = command
+        .get_envs()
+        .find(|(name, _)| *name == "CARGO_HOME")
+        .unwrap()
+        .1
+        .unwrap();
+    assert_eq!(
+        line["toolchain"]["cargo_home"],
+        serde_json::json!(Path::new(cargo_home))
+    );
+    assert_eq!(Path::new(cargo_home), path.join("cargo"));
+    assert_eq!(line["work"], serde_json::json!(path.join("work")));
 }
 
 #[test]
@@ -133,6 +589,7 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
         None,
         &|_, _, _| {},
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert!(
@@ -216,7 +673,7 @@ fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
         {"id":"later","refusal":null,"verdict":null,"needs":"surface"},
         {"id":"refused","refusal":"it has a build script","verdict":null,"needs":null}]}"#
         .replace('\n', "");
-    let checked: Checked = serde_json::from_value(reply(Some(&line)).unwrap()).unwrap();
+    let checked: Checked = serde_json::from_value(reply(Some(&line), true).unwrap()).unwrap();
     assert_eq!(checked.mods[0].verdict, Some(Verdict::MadeFor));
     let Some(Verdict::DoesNotFit { misfits, .. }) = &checked.mods[1].verdict else {
         panic!("{:?}", checked.mods[1]);
@@ -234,10 +691,10 @@ fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
             }
         ]
     );
-    assert_eq!(checked.mods[2].needs.as_deref(), Some("surface"));
-    assert!(reply(None).unwrap_err().contains("too old"));
+    assert_eq!(checked.mods[2].needs, Some(Need::Surface));
+    assert!(reply(None, true).unwrap_err().contains("too old"));
     let error = r#"{"contract":2,"error":{"kind":"unread","message":"mods: not a folder"}}"#;
-    let refused = reply(Some(error)).unwrap_err();
+    let refused = reply(Some(error), false).unwrap_err();
     assert!(refused.ends_with(": mods: not a folder"), "{refused}");
 }
 

@@ -51,6 +51,8 @@ pub struct Release {
 }
 
 mod look_settings;
+mod native_permission;
+pub(crate) use native_permission::{NativeGrant, PermissionFence};
 mod play_log;
 mod release_assets;
 mod release_notes;
@@ -4522,13 +4524,11 @@ impl Settings {
 impl Settings {
     /// Remember an explicit approval; merely finding an installed toolchain never grants it.
     pub fn allow_native_mods(&mut self) -> Result<(), String> {
-        self.native_mods_allowed_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
-                .as_secs(),
-        );
-        self.save()
+        let time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs();
+        self.set_native_permission(&data_dir(), Some(time))
     }
 
     pub fn load() -> Self {
@@ -4653,26 +4653,6 @@ impl Settings {
     /// How many of the newest release versions pruning keeps: at least the newest.
     pub fn keep_newest(&self) -> usize {
         self.keep_versions.unwrap_or(KEEP_NEWEST).max(1)
-    }
-    pub fn save(&self) -> Result<(), String> {
-        // The window and background jobs share the process's temporary file.
-        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // A write that stops halfway leaves settings.json unreadable, and `load` answers
-        // defaults for it: the file is replaced only once it is whole.
-        let dir = data_dir();
-        let path = dir.join("settings.json");
-        let tmp = dir.join(format!("settings.{}.tmp", std::process::id()));
-        let json =
-            serde_json::to_vec_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
-        let written = fs::create_dir_all(&dir)
-            .and_then(|()| write_private(&tmp, &json))
-            .and_then(|()| fs::rename(&tmp, &path));
-        if let Err(e) = written {
-            let _ = fs::remove_file(&tmp);
-            return Err(format!("{}: {e}", path.display()));
-        }
-        Ok(())
     }
 }
 

@@ -25,8 +25,17 @@ pub struct Row {
     pub bytes: u64,
     pub freed_bytes: u64,
     pub remaining_bytes: u64,
+    #[serde(skip)]
+    private_compiler_bytes: u64,
     /// Refused or busy units are retained, with their allocated bytes and a visible reason.
     pub kept: Vec<Kept>,
+}
+
+impl Row {
+    pub fn clearable_bytes(&self) -> u64 {
+        self.remaining_bytes
+            .saturating_sub(self.private_compiler_bytes)
+    }
 }
 
 #[derive(Serialize)]
@@ -39,6 +48,23 @@ pub struct Kept {
 pub struct Report {
     pub rows: Vec<Row>,
     pub total_bytes: u64,
+}
+
+impl Report {
+    fn include_retained_compiler(&mut self, bytes: Option<u64>) {
+        if let Some(bytes) = bytes {
+            let row = self
+                .rows
+                .iter_mut()
+                .find(|r| r.category == Category::BuildFiles)
+                .expect("report contains Build files");
+            row.private_compiler_bytes = bytes;
+            row.bytes = row.bytes.saturating_add(bytes);
+            row.remaining_bytes = row.remaining_bytes.saturating_add(bytes);
+            self.total_bytes = self.total_bytes.saturating_add(bytes);
+            row.kept.push(Kept { bytes, reason: crate::i18n::tr("Private compiler work was kept because the launcher couldn't prove all workers had stopped.").into() });
+        }
+    }
 }
 
 impl Category {
@@ -479,13 +505,41 @@ impl Storage {
         Ok(())
     }
 
-    pub(super) fn evict_inventory(&self, now: std::time::SystemTime) -> Result<Report, Error> {
+    /// Not deletion candidates: an unproved worker can still be writing to them.
+    fn retained_compiler_bytes(
+        &self,
+        counted: &mut HashSet<(u64, u64)>,
+    ) -> Result<Option<u64>, Error> {
+        let native = self.root.join("native");
+        let mut bytes = None;
+        if checked(&native, true)?.is_some() {
+            for entry in fs::read_dir(&native)? {
+                let entry = entry?;
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(native_mods::ATTEMPT_PREFIX))
+                {
+                    // A changing or unreadable tree is still protected; zero means its size is unknown.
+                    let size = Tree::build(&entry.path()).map_or(0, |tree| tree.size(counted));
+                    bytes = Some(bytes.unwrap_or(0u64).saturating_add(size));
+                }
+            }
+        }
+        Ok(bytes)
+    }
+
+    pub(super) fn evict_inventory(
+        &self,
+        now: std::time::SystemTime,
+        max_bytes: Option<u64>,
+        native_allowed: bool,
+    ) -> Result<Report, Error> {
         use super::policy::{self, Tier, Unit};
         let entries = self.entries()?;
         for entry in &entries {
             entry.last_used()?;
         }
-        let settings = backend::Settings::load();
         let mut revisions = HashSet::new();
         let mut unknown_revision = false;
         let mut native_enabled = false;
@@ -515,7 +569,8 @@ impl Storage {
             .map(|entry| Tree::build(&entry.path))
             .collect::<Result<Vec<_>, Error>>()?;
         let mut seen = HashSet::new();
-        let units: Vec<_> = entries
+        let retained = self.retained_compiler_bytes(&mut seen)?;
+        let mut units: Vec<_> = entries
             .iter()
             .zip(&trees)
             .map(|(entry, tree)| {
@@ -525,7 +580,7 @@ impl Storage {
                         name.to_string_lossy()
                             .starts_with(crate::rust_toolchain::VERSION)
                     })
-                    && settings.native_mods_allowed_at.is_some()
+                    && native_allowed
                     && native_enabled
                 {
                     // Conservatively retain the whole toolchain set while consent is enabled.
@@ -581,14 +636,15 @@ impl Storage {
                 })
             })
             .collect::<Result<_, Error>>()?;
-        let limit = settings
-            .cache_limit_gib
-            .unwrap_or(policy::DEFAULT_LIMIT_GIB);
-        let selected = policy::select(
-            &units,
-            (limit != 0).then(|| limit.saturating_mul(1 << 30)),
-            now,
-        );
+        if let Some(bytes) = retained {
+            units.push(Unit {
+                bytes,
+                tier: Tier::Protected,
+                eligible: false,
+                last_used: None,
+            });
+        }
+        let selected = policy::select(&units, max_bytes, now);
         let mut report = self.apply_retaining(Vec::new(), None, false, true)?;
         for row in &mut report.rows {
             row.bytes = allocated(&entries, &trees, row.category);
@@ -641,6 +697,7 @@ impl Storage {
             row.freed_bytes = row.bytes.saturating_sub(row.remaining_bytes);
         }
         report.total_bytes = report.rows.iter().map(|row| row.bytes).sum();
+        report.include_retained_compiler(retained);
         Ok(report)
     }
 
@@ -672,6 +729,7 @@ impl Storage {
         }
         let entries = self.entries()?;
         let mut report = self.apply_retaining(entries, clear, all, true)?;
+        report.include_retained_compiler(self.retained_compiler_bytes(&mut HashSet::new())?);
         if clear.is_none() && !all {
             for entry in self.entries()? {
                 if let Err(error) = entry.access().and_then(|access| access.check()) {
@@ -723,6 +781,7 @@ impl Storage {
                 bytes: 0,
                 freed_bytes: 0,
                 remaining_bytes: 0,
+                private_compiler_bytes: 0,
                 kept: Vec::new(),
             })
             .collect();
@@ -1100,6 +1159,37 @@ mod eviction_tests {
     }
 
     #[test]
+    fn retained_compiler_bytes_use_budget_but_cannot_be_cleared() {
+        let home = crate::storage::tests::Home::new();
+        let cache = home.seed("cargo/registry/download");
+        let storage = Storage::at(&home.0).unwrap();
+        let now = std::time::SystemTime::now();
+        let ordinary = storage.evict_inventory(now, None, false).unwrap();
+        assert!(ordinary.total_bytes > 0 && cache.exists());
+        let old_worker = home.seed("native/.native-attempt-old/compiler/work");
+        let report = storage
+            .evict_inventory(now, Some(ordinary.total_bytes), false)
+            .unwrap();
+        assert!(
+            !cache.exists(),
+            "retained worker must count toward the cache limit"
+        );
+        assert!(
+            old_worker.is_file(),
+            "the old worker is never a deletion candidate"
+        );
+        let protected = &report.rows[0];
+        assert_eq!(protected.category, Category::BuildFiles);
+        assert!(protected.remaining_bytes > 0);
+        assert_eq!(protected.bytes, protected.remaining_bytes);
+        assert_eq!(protected.clearable_bytes(), 0);
+        assert_eq!(protected.kept[0].bytes, protected.remaining_bytes);
+        let manual = storage.report(Some(Category::BuildFiles), false).unwrap();
+        assert_eq!(manual.rows[0].clearable_bytes(), 0);
+        assert!(old_worker.is_file());
+    }
+
+    #[test]
     fn one_walk_per_folder_reports_what_the_repeated_walks_did() {
         let home = crate::storage::tests::Home::new();
         let shared = home.seed("rust/old/payload");
@@ -1126,7 +1216,9 @@ mod eviction_tests {
             .collect();
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(8 * 86400);
         let walks_before = crate::storage::walks();
-        let report = storage.evict_inventory(later).unwrap();
+        let report = storage
+            .evict_inventory(later, Some(25 << 30), false)
+            .unwrap();
         let walked = crate::storage::walks() - walks_before;
         let entries = storage.entries().unwrap();
         let cleared = before_entries
@@ -1244,9 +1336,11 @@ mod eviction_tests {
         assert!(matches!(Cache::acquire(&home.0), Err(Error::Busy)));
         let before = allocated_bytes(&home.0).unwrap();
         let now = std::time::SystemTime::now();
-        let first = storage.evict_inventory(now).unwrap();
+        let first = storage.evict_inventory(now, Some(25 << 30), false).unwrap();
         let later = now + std::time::Duration::from_secs(8 * 86400);
-        let second = storage.evict_inventory(later).unwrap();
+        let second = storage
+            .evict_inventory(later, Some(25 << 30), false)
+            .unwrap();
         let freed: u64 = first
             .rows
             .iter()
