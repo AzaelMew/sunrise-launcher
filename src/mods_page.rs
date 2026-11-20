@@ -60,7 +60,7 @@ pub(super) enum Event {
     Progress(String, f32),
     Done(Result<Finished, String>),
     /// What the automatic updates did (`sunrise::auto`).
-    AutoUpdated(Vec<String>),
+    AutoUpdated(Vec<String>, Vec<WorldAsk>),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -92,6 +92,9 @@ pub(super) struct Mods {
     pub(super) message: Option<Result<String, String>>,
     /// What waits for the install and build slot.
     queue: queue::Queue,
+    /// The question a switch or update asks before it removes mods saved worlds use. Nothing
+    /// is removed until it is answered, and the answer defaults to Stay.
+    pub(crate) world_ask: Option<WorldAsk>,
     /// The native mods the running build was started to take up.
     building: Vec<String>,
     /// How the last build of an install ended, when it cost the install: read by the card and
@@ -205,6 +208,7 @@ impl Mods {
             message: None,
             queue: Default::default(),
             building: Vec::new(),
+            world_ask: None,
             failed: None,
             native_state: Default::default(),
             unbuilt: None,
@@ -254,7 +258,11 @@ impl Launcher {
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(lines) => {
+                Event::AutoUpdated(lines, asks) => {
+                    // The first question waits for its answer; later ones come with the next run.
+                    if m.world_ask.is_none() {
+                        m.world_ask = asks.into_iter().next();
+                    }
                     if !lines.is_empty() {
                         m.message = Some(Ok(lines.join("\n")));
                         m.reload_installed();
@@ -322,9 +330,9 @@ impl Launcher {
             .collect();
         let tx = self.mods.tx.clone();
         std::thread::spawn(move || {
-            let lines = auto_update(&list, enabled, native_allowed);
-            if !lines.is_empty() {
-                let _ = tx.send(Event::AutoUpdated(lines));
+            let out = auto_update(&list, enabled, native_allowed, &Default::default());
+            if !out.lines.is_empty() || !out.asks.is_empty() {
+                let _ = tx.send(Event::AutoUpdated(out.lines, out.asks));
             }
         });
     }
@@ -495,6 +503,31 @@ impl Launcher {
 }
 
 impl Launcher {
+    /// The player's answer to the world question. Stay leaves everything as it is; Switch runs
+    /// the update again with the mods the question named allowed to go.
+    pub(crate) fn answer_world_question(&mut self, answer: sunrise_launcher::worlds::Answer) {
+        let Some(ask) = self.mods.world_ask.take() else {
+            return;
+        };
+        if answer == sunrise_launcher::worlds::Answer::Stay {
+            return;
+        }
+        let Some(instance) = self.instances.list.iter().find(|i| i.id == ask.instance) else {
+            return;
+        };
+        let target = AutoTarget {
+            instance: instance.clone(),
+            game: self.game_of(instance),
+        };
+        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let allow = ask.question.mods.into_iter().collect();
+        let tx = self.mods.tx.clone();
+        std::thread::spawn(move || {
+            let out = auto_update(&[target], true, native_allowed, &allow);
+            let _ = tx.send(Event::AutoUpdated(out.lines, out.asks));
+        });
+    }
+
     /// A build ended. The mods it left out because they didn't compile or don't fit are
     /// removed, and the build already went on without them; if it stopped for another reason (`stopped`),
     /// every mod it was started for is removed. Either way nothing broken stays in the list.
@@ -616,8 +649,9 @@ pub(super) fn auto_update(
     targets: &[AutoTarget],
     enabled: bool,
     native_allowed: bool,
-) -> Vec<String> {
-    let mut lines = Vec::new();
+    allow: &std::collections::BTreeSet<String>,
+) -> AutoOutcome {
+    let mut out = AutoOutcome::default();
     for t in targets {
         let i = &t.instance;
         if i.id.starts_with("pack:") {
@@ -628,11 +662,33 @@ pub(super) fn auto_update(
             game: &t.game,
             native_allowed,
         };
-        if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, &|_, _| {}) {
-            lines.extend(report.lines());
+        if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, allow, &|_, _| {}) {
+            out.lines.extend(report.lines());
+            if let Some(question) = report.ask {
+                out.asks.push(WorldAsk {
+                    instance: i.id.clone(),
+                    question,
+                });
+            }
         }
     }
-    lines
+    out
+}
+
+/// What the automatic updates did: the notice's lines, and the questions to put to the player.
+#[derive(Default)]
+pub(super) struct AutoOutcome {
+    pub(super) lines: Vec<String>,
+    pub(super) asks: Vec<WorldAsk>,
+}
+
+/// A switch or update that waits for the player's answer: it would remove mods that saved
+/// worlds use. Staying is the default; "switch anyway" runs it again with those mods allowed.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WorldAsk {
+    /// The instance whose profile it is.
+    pub(crate) instance: String,
+    pub(crate) question: sunrise_launcher::worlds::Question,
 }
 
 #[cfg(test)]

@@ -56,6 +56,10 @@ pub struct Report {
     pub removed: Vec<String>,
     pub held: Vec<String>,
     pub failed: Vec<String>,
+    /// Mods a saved world uses that the switch would remove or an update would drop content
+    /// from: nothing was done to them. Stay is the default answer
+    /// ([`crate::worlds::Answer`]); a switch anyway runs again with them in `allow`.
+    pub ask: Option<crate::worlds::Question>,
 }
 
 impl Report {
@@ -358,6 +362,7 @@ pub fn run(
     home: &Path,
     ctx: &Context,
     enabled: bool,
+    allow: &BTreeSet<String>,
     progress: &dyn Fn(&str, f32),
 ) -> Option<Report> {
     // The start's run and Play's never touch a folder at once.
@@ -368,7 +373,7 @@ pub fn run(
         return None;
     }
     let index = super::index().ok()?;
-    Some(run_with(&index, super::local(), home, ctx, progress))
+    Some(run_with(&index, super::local(), home, ctx, allow, progress))
 }
 
 pub(super) fn run_with(
@@ -376,6 +381,7 @@ pub(super) fn run_with(
     local: bool,
     home: &Path,
     ctx: &Context,
+    allow: &BTreeSet<String>,
     progress: &dyn Fn(&str, f32),
 ) -> Report {
     let _lock = match crate::browser::lock_home(home) {
@@ -394,6 +400,8 @@ pub(super) fn run_with(
         .map(|kept| kept.entry.project)
         .collect();
     let mut report = Report::default();
+    // The mods whose loss a saved world would feel, and the player has not agreed to.
+    let asked = RefCell::new(Vec::new());
     for entry in installed::Installed::load(home).entries {
         if pending.contains(&entry.project) {
             continue;
@@ -401,6 +409,13 @@ pub(super) fn run_with(
         let v = match decide(index, &entry, ctx) {
             Decision::Update(v) => v,
             Decision::Remove(why) => {
+                let ids = [entry.project.clone()];
+                if !allow.contains(&entry.project)
+                    && crate::worlds::question(home, &ids).map_or(true, |q| q.is_some())
+                {
+                    asked.borrow_mut().push(entry.project.clone());
+                    continue;
+                }
                 match installed::remove(home, &entry.project) {
                     Ok(_) => report.removed.push(format!("{}: {why}", entry.title)),
                     Err(e) => report.failed.push(trf(
@@ -413,7 +428,19 @@ pub(super) fn run_with(
             Decision::Skip => continue,
         };
         let p = index.project(&entry.project).expect("decide found it");
-        match update(index, local, p, v, &entry, home, progress) {
+        match update(
+            index,
+            local,
+            p,
+            v,
+            &entry,
+            home,
+            Worlds {
+                allow,
+                asked: &asked,
+            },
+            progress,
+        ) {
             Ok(None) => {
                 report.updated.push(format!("{} {}", p.name, v.version));
             }
@@ -424,6 +451,9 @@ pub(super) fn run_with(
             )),
         }
     }
+    report.ask = crate::worlds::question(home, &asked.into_inner())
+        .ok()
+        .flatten();
     report
 }
 
@@ -470,10 +500,31 @@ pub fn update_to(
                 &[("project", project), ("version", version)],
             )
         })?;
-    update(index, super::local(), p, v, &entry, home, progress)
+    update(
+        index,
+        super::local(),
+        p,
+        v,
+        &entry,
+        home,
+        Worlds {
+            allow: &BTreeSet::from([project.to_owned()]),
+            asked: &RefCell::new(Vec::new()),
+        },
+        progress,
+    )
+}
+
+/// What an update may do to mods saved worlds use: the mods the player allowed to lose content,
+/// and where the ones it had to ask about are noted.
+#[derive(Clone, Copy)]
+struct Worlds<'a> {
+    allow: &'a BTreeSet<String>,
+    asked: &'a RefCell<Vec<String>>,
 }
 
 /// Updates `entry` to `v`; Some(why) when it waits for the player instead.
+#[allow(clippy::too_many_arguments)]
 fn update(
     index: &Index,
     local: bool,
@@ -481,6 +532,7 @@ fn update(
     v: &index::Version,
     entry: &installed::Entry,
     home: &Path,
+    worlds: Worlds,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Option<String>, String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
@@ -517,9 +569,16 @@ fn update(
             return Ok(());
         };
         let gone = dropped(old, new)?;
-        if gone.is_empty() {
+        // Content a world may use goes missing only when the player agreed, if a saved world
+        // is saved with this mod at all.
+        if gone.is_empty()
+            || worlds.allow.contains(&entry.project)
+            || crate::worlds::question(home, std::slice::from_ref(&entry.project))
+                .is_ok_and(|q| q.is_none())
+        {
             return Ok(());
         }
+        worlds.asked.borrow_mut().push(entry.project.clone());
         let why = trf(
             "{title} {version} waits for you: it no longer has {ids}, which your worlds may use. Update it on the Mods page when you're ready.",
             &[

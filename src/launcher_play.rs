@@ -220,9 +220,14 @@ impl Launcher {
             if let Some(auto) = auto {
                 backend::play_step("updating registry mods");
                 let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
-                let lines = mods_page::auto_update(&[auto], auto_enabled, native_allowed);
-                if !lines.is_empty() {
-                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
+                let out = mods_page::auto_update(
+                    &[auto],
+                    auto_enabled,
+                    native_allowed,
+                    &Default::default(),
+                );
+                if !out.lines.is_empty() || !out.asks.is_empty() {
+                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(out.lines, out.asks));
                 }
             }
             backend::play_step("reading the sign-in");
