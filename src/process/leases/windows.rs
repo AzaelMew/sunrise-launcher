@@ -130,6 +130,8 @@ impl CompilerJob {
                 members.assigned, members.listed, before.ActiveProcesses, before.TotalProcesses
             )));
         }
+        let mut observations = vec![format!("{leader}: leader signalled")];
+        let mut running = None;
         for &pid in pids {
             let pid = u32::try_from(pid).map_err(|_| io::ErrorKind::InvalidData)?;
             if pid == leader {
@@ -141,6 +143,7 @@ impl CompilerJob {
             if raw.is_null() {
                 let error = io::Error::last_os_error();
                 if pid != 0 && error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                    observations.push(format!("{pid}: gone ({error})"));
                     continue; // It exited since the snapshot.
                 }
                 return Err(error);
@@ -151,19 +154,46 @@ impl CompilerJob {
                 return Err(io::Error::last_os_error());
             }
             if in_job == 0 {
+                observations.push(format!("{pid}: no longer in job"));
                 continue; // That snapshot PID has since been reused outside our job.
             }
-            match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
+            let state = unsafe { WaitForSingleObject(process.as_raw_handle(), 0) };
+            match state {
                 WAIT_OBJECT_0 => {}
                 WAIT_TIMEOUT => {
-                    return Err(io::Error::other(format!(
-                        "the native build tool left a running child ({pid})",
-                    )))
+                    running.get_or_insert(pid);
                 }
                 _ => return Err(io::Error::last_os_error()),
             }
+            // Capture the actual process identity and kernel exit evidence when this is red.
+            // SAFETY: the owned process handle permits query; both outputs point to live buffers.
+            let (image, code) = unsafe {
+                let mut path = [0; 1024];
+                let mut len = path.len() as u32;
+                let image = (QueryFullProcessImageNameW(
+                    process.as_raw_handle(),
+                    0,
+                    path.as_mut_ptr(),
+                    &mut len,
+                ) != 0)
+                    .then(|| String::from_utf16_lossy(&path[..len as usize]));
+                let mut code = 0;
+                let code =
+                    (GetExitCodeProcess(process.as_raw_handle(), &mut code) != 0).then_some(code);
+                (image, code)
+            };
+            observations.push(format!(
+                "{pid}: wait={state}, exit={code:?}, image={image:?}"
+            ));
         }
         let after = accounting()?;
+        if let Some(pid) = running {
+            return Err(io::Error::other(format!(
+                "the native build tool left a running child ({pid}); members {pids:?}; active/total {}/{} -> {}/{}; {}",
+                before.ActiveProcesses, before.TotalProcesses, after.ActiveProcesses, after.TotalProcesses,
+                observations.join("; "),
+            )));
+        }
         if after.TotalProcesses != before.TotalProcesses {
             return Err(io::Error::other(format!(
                 "cannot prove the native build job stopped: total members changed from {} to {}",
