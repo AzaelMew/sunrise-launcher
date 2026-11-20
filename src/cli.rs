@@ -1106,6 +1106,15 @@ pub(crate) fn play_image(
     instance: &instances::Instance,
 ) -> Result<(Arc<sunrise::txn::Lease>, String), String> {
     use sunrise::txn::{Lease, Target};
+    // The window asks for sign-in before admitting Play. Preserve the same ordering in both
+    // headless front ends so a signed-out player doesn't start a download or preparation.
+    if Accounts::load().accounts.is_empty() && !sunrise_launcher::developer_offline::selected() {
+        return Err(format!(
+            "{} {}",
+            account::NoOwner::default(),
+            tr(backend::SIGN_IN_HINT)
+        ));
+    }
     let owner = Arc::new(Lease::admit(&instance.home)?);
     let mut releases = None;
     let target = owner.play_target(|| {
