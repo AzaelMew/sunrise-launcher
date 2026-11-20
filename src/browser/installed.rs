@@ -220,7 +220,7 @@ fn add(
 /// An installed registry mod an install removes with it, as the player approved it: this exact
 /// file (its checksum), and whether they also agreed to what saved worlds that use it lose.
 /// Checked again under the install's lock, since the approval may have waited in a queue.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Replace {
     pub id: String,
     pub checksum: String,

@@ -24,11 +24,7 @@ pub(super) fn install(
         .map_err(|e| format!("{}: {e}", home.display()))?;
     // An install an earlier run left half done is undone first; while it can't be, nothing new
     // is begun on top of its list.
-    if !super::journal::recover(home) {
-        return Err(
-            "An earlier install is still being undone. Restart the launcher and try again.".into(),
-        );
-    }
+    super::txn::settle(home)?;
     let mut installed = installed::Installed::load(home);
     // An approval that waited in a queue is read again here, under the lock: each mod it
     // removes must still be the file the player saw, and a world that uses it must have been
@@ -188,12 +184,16 @@ pub(super) fn install(
         }
     }
     // Publishing drops what it replaces, so a file that no longer parses is copied into the
-    // staging folder first, and kept in `mod-browser/unreadable` only once publishing worked.
-    let mut aside = Vec::new();
+    // staging folder first and published into `mod-browser/unreadable` with the rest: a
+    // step of the transaction, put back (removed) if it fails. So is the removal of a stale
+    // file whose replacement goes elsewhere.
     for (n, broken) in plan.unreadable.iter().enumerate() {
         let copy = staged.path().join(format!("aside-{n}"));
         fs::copy(broken, &copy).map_err(|e| format!("{}: {e}", broken.display()))?;
-        aside.push((broken.clone(), copy));
+        changes.push((Some(copy), super::unreadable_slot(home, broken)?));
+    }
+    for path in stale {
+        changes.push((None, path));
     }
     // What it replaces is moved aside with the rest, so a failure brings it back.
     let mut disable = Vec::new();
@@ -225,24 +225,11 @@ pub(super) fn install(
         mod_list::set_all_enabled(staged.path(), &ids, false)?;
         changes.push((Some(next), saved));
     }
-    let staged = publish(staged, changes)?;
-    // The files are in place and the list is still kept: what is left to do is part of the
-    // install, and a failure in it puts the files back.
-    super::journal::commit(home, staged, || {
-        for (broken, copy) in aside {
-            let to = super::unreadable_slot(home, &broken)?;
-            fs::copy(copy, &to).map_err(|e| format!("{}: {e}", to.display()))?;
-        }
-        for path in stale {
-            match fs::remove_file(&path) {
-                Err(e) if e.kind() != io::ErrorKind::NotFound => {
-                    return Err(format!("{}: {e}", path.display()));
-                }
-                _ => {}
-            }
-        }
-        Ok(())
-    })?;
+    let brings_native = done
+        .iter()
+        .any(|e| crate::native_status::is_native_file(&e.file));
+    let (staged, attempt) = publish(staged, changes, install.replacing)?;
+    super::txn::commit(home, &attempt, staged, brings_native)?;
     Ok(done)
 }
 
@@ -388,70 +375,49 @@ impl Plan<'_> {
     }
 }
 
-/// Same-filesystem moves with an undo list; even a failed metadata write restores old files.
-/// The list stays until the caller commits (`journal::commit`): publishing is not the end.
-/// The profile lock keeps another launcher or game start from seeing an intermediate state.
+/// Same-filesystem moves under a record that is written first (`txn::begin`): if it can't be,
+/// nothing moves; if a move fails, the attempt is undone on the spot. The record stays until
+/// the caller commits (`txn::commit`): publishing is not the end. The profile lock keeps
+/// another launcher or game start from seeing an intermediate state.
 fn publish(
     staged: tempfile::TempDir,
     changes: Vec<(Option<PathBuf>, PathBuf)>,
-) -> Result<tempfile::TempDir, String> {
+    approvals: &[installed::Replace],
+) -> Result<(tempfile::TempDir, String), String> {
     let home = staged
         .path()
         .parent()
         .expect("staged in the profile")
         .to_path_buf();
     let targets: Vec<PathBuf> = changes.iter().map(|(_, to)| to.clone()).collect();
-    super::journal::begin(&home, staged.path(), &targets)?;
-    let mut undo = Vec::new();
+    let id = super::txn::begin(&home, staged.path(), &targets, approvals)?;
     for (i, (from, to)) in changes.into_iter().enumerate() {
         let result = (|| -> io::Result<()> {
             if let Some(dir) = to.parent() {
                 fs::create_dir_all(dir)?;
             }
-            let backup = match fs::symlink_metadata(&to) {
-                Ok(m) if m.is_file() => {
-                    let backup = staged.path().join(format!("old-{i}"));
-                    fs::rename(&to, &backup)?;
-                    Some(backup)
-                }
+            match fs::symlink_metadata(&to) {
+                Ok(m) if m.is_file() => fs::rename(&to, staged.path().join(format!("old-{i}")))?,
                 Ok(_) => return Err(io::Error::other("not a regular file")),
-                Err(e) if e.kind() == io::ErrorKind::NotFound => None,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) => return Err(e),
-            };
-            undo.push((to.clone(), backup, false));
+            }
             // No file to put there: the one that was is removed.
             if let Some(from) = from {
                 fs::rename(&from, &to)?;
-                undo.last_mut().expect("just recorded").2 = true;
             }
             Ok(())
         })();
         if let Err(e) = result {
-            let mut rollback_errors = Vec::new();
-            for (file, backup, placed) in undo.into_iter().rev() {
-                let restored = match backup {
-                    Some(backup) => fs::rename(backup, &file),
-                    None if placed => fs::remove_file(&file),
-                    None => Ok(()),
-                };
-                if let Err(e) = restored {
-                    rollback_errors.push(format!("{}: {e}", file.display()));
-                }
-            }
-            let message = format!("Cannot install {}: {e}", to.display());
-            return Err(if rollback_errors.is_empty() {
-                match super::journal::finish(&home) {
-                    Ok(()) => message,
-                    Err(e) => format!("{message}; {e}"),
-                }
-            } else {
-                format!(
-                    "{message}; rollback failed: {}. Backups: {}",
-                    rollback_errors.join("; "),
-                    staged.keep().display()
-                )
-            });
+            let message = trf(
+                "Cannot install {path}: {error}",
+                &[
+                    ("path", &to.display().to_string()),
+                    ("error", &e.to_string()),
+                ],
+            );
+            return Err(super::txn::rollback(&home, &id, staged, message));
         }
     }
-    Ok(staged)
+    Ok((staged, id))
 }
