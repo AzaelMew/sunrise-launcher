@@ -127,9 +127,15 @@ impl Launcher {
         self.open_sheet(Sheet::SwitchBuild);
         let cancelled = token.clone();
         let home = plan.home().to_owned();
-        let work = cx
-            .background_executor()
-            .spawn(async move { plan.commit(|| !cancelled.load(Ordering::Acquire)) });
+        let work = cx.background_executor().spawn(async move {
+            plan.commit(|| {
+                if cancelled.load(Ordering::Acquire) {
+                    Err(tr("Switch cancelled. Nothing was switched.").into())
+                } else {
+                    Ok(())
+                }
+            })
+        });
         cx.spawn(async move |this, cx| {
             let result = work.await;
             let _ = this.update(cx, |this, cx| {

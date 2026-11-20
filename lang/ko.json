@@ -1508,5 +1508,14 @@
   "Removed mods: {mods}": "Removed mods: {mods}",
   "Copy details": "Copy details",
   "Got it": "Got it",
-  "Mod compatibility is checked when you keep this build.": "Mod compatibility is checked when you keep this build."
+  "Mod compatibility is checked when you keep this build.": "Mod compatibility is checked when you keep this build.",
+  "Switch anyway? [y/N]": "Switch anyway? [y/N]",
+  "Profile game build: {build}": "Profile game build: {build}",
+  "Use Switch to change the profile’s build or leave mods out.": "Use Switch to change the profile’s build or leave mods out.",
+  "Play this profile once before building native mods.": "Play this profile once before building native mods.",
+  "Use Switch to choose another game build for this profile.": "Use Switch to choose another game build for this profile.",
+  "Not initialized": "Not initialized",
+  "A modpack profile keeps the game build it was installed on.": "A modpack profile keeps the game build it was installed on.",
+  "{error}\n{stay}: nothing changed.": "{error}\n{stay}: nothing changed.",
+  "Applying the switch.": "Applying the switch."
 }

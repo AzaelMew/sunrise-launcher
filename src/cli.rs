@@ -1,6 +1,7 @@
 //! `sunrise-launcher <subcommand>`: the same steps as the window, from a terminal. Every
 //! command goes through `backend`; this file only parses arguments and prints.
 mod progress;
+mod switch;
 use progress::{native_progress, progress};
 
 use clap::{Parser, Subcommand};
@@ -192,8 +193,6 @@ enum ModpackCmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long)]
-        version: Option<String>,
     },
     /// Remove a Sunrise modpack and the profile's saves
     Remove { pack: String },
@@ -203,6 +202,8 @@ enum ModpackCmd {
 enum InstanceCmd {
     /// The profiles, each with its game folder (* = the one Play starts)
     List,
+    /// Show a profile's committed game build (defaults to the selected profile)
+    Show { profile: Option<String> },
     /// Make a profile: empty but for your options and name, or a copy of another one's
     /// worlds, options and packs
     Create {
@@ -226,8 +227,6 @@ enum InstanceCmd {
     },
     /// Make Play start this profile
     Select { instance: String },
-    /// Keep a profile on one installed Sunrise version, or "latest" to follow updates again
-    Version { instance: String, version: String },
     /// Export a profile to share as a zip: its settings, packs, Sunrise mods and the worlds
     /// named. Never logs, screenshots or account data; worlds go without their per-player files
     Export {
@@ -627,8 +626,6 @@ enum Cmd {
         /// Allow missing original Java asset/data jars to be downloaded from Modrinth
         #[arg(long)]
         allow_jar_downloads: bool,
-        #[arg(long, help = "Installed version to play (default: profile version)")]
-        version: Option<String>,
         /// The profile to play (its name or id; default: the selected one)
         #[arg(long)]
         instance: Option<String>,
@@ -652,6 +649,14 @@ enum Cmd {
         /// the one `account select` picked: several games can play as several accounts at once
         #[arg(long, value_name = "WHO")]
         account: Option<String>,
+    },
+    /// Switch a profile to an exact installed and prepared game build
+    Switch {
+        /// The target build tag
+        tag: String,
+        /// The profile to switch (name or id; defaults to the selected profile)
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Run a dedicated server here; type commands into its console
     Server {
@@ -729,9 +734,8 @@ enum Cmd {
         /// Sunrise)
         #[arg(long)]
         version: Option<String>,
-        /// Move to the newest installed release or Nightly instead of the Sunrise the profile
-        /// plays (rebuilds the mods for that pinned SDK)
-        #[arg(long, conflicts_with = "version")]
+        // Parse the old flag to direct scripts to Switch; never let it rebase a build.
+        #[arg(long, hide = true, conflicts_with = "version")]
         update: bool,
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
@@ -744,11 +748,8 @@ enum Cmd {
         /// prebuilt one: for CI, which keeps that path proven
         #[arg(long, hide = true)]
         mixins_from_source: bool,
-        /// When a mod this build can't use was saved into the profile's worlds, build without
-        /// it anyway: what the mod added to those worlds is lost when they are next opened
-        /// (back them up in the game first). Without this the build stops and names the
-        /// worlds, leaving the profile as it is
-        #[arg(long, conflicts_with = "server_output")]
+        // Recognize the old flag only to reject permission to omit packages.
+        #[arg(long, hide = true, conflicts_with = "server_output")]
         leave_out_mods: bool,
     },
     /// Show a release's patch notes (default: the newest)
@@ -1321,9 +1322,14 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             mixins_from_source,
             leave_out_mods,
         } => {
-            native_permission(trust_native_code)?;
+            if update || leave_out_mods {
+                return Err(
+                    tr("Use Switch to change the profile’s build or leave mods out.").into(),
+                );
+            }
             native_mods::mixins_from_source(mixins_from_source);
             if catalog {
+                native_permission(trust_native_code)?;
                 let destination = catalog_output.ok_or("--catalog requires --catalog-output")?;
                 let destination =
                     native_mods::catalog(&folder.expect("required by clap"), &destination)?;
@@ -1331,6 +1337,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 return Ok(0);
             }
             if sync_internals {
+                native_permission(trust_native_code)?;
                 let entries = native_mods::sync_internals(&folder.expect("required by clap"))?;
                 println!(
                     "{}",
@@ -1345,14 +1352,14 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 }
             };
             if let Some(output) = server_output {
+                native_permission(trust_native_code)?;
                 // Export mode: a standalone server engine in `output`. No instance is read
                 // or changed, and no launcher config is written; `folder` is required (clap).
                 let folder = folder.unwrap();
                 let base = match &version {
                     Some(v) => backend::resolve_version(Some(v))?,
-                    // The instance's version is never looked at here: the newest installed
-                    // release or Nightly, or that one with `--update` (never a native build).
-                    None => native_mods::base_for(None, &backend::installed(), update)
+                    // Server export has no profile; choose the newest installed non-native build.
+                    None => native_mods::base_for(None, &backend::installed(), false)
                         .ok_or_else(backend::no_version_installed)?,
                 };
                 let built = native_mods::build_server(
@@ -1384,20 +1391,21 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 None => instances::selection()?,
             };
             let owner = Arc::new(sunrise::txn::Lease::admit(&target.home)?);
+            let active = owner.active_build()?.ok_or_else(|| {
+                tr("Play this profile once before building native mods.").to_owned()
+            })?;
+            if version.as_deref().is_some_and(|tag| tag != active.base()) {
+                return Err(tr("Use Switch to choose another game build for this profile.").into());
+            }
+            active.verify_artifacts()?;
+            let base = active.base().to_owned();
+            native_permission(trust_native_code)?;
             let cancellation = native_mods::Cancellation::for_profile(owner);
             let target = match profile {
                 Some(profile) => {
                     instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
                 }
                 None => target,
-            };
-            let base = match version {
-                Some(v) => backend::resolve_version(Some(&v))?,
-                None => {
-                    let plays = target.resolve_version(None).ok();
-                    native_mods::base_for(plays.as_deref(), &backend::installed(), update)
-                        .ok_or_else(backend::no_version_installed)?
-                }
             };
             let explicit = folder.is_some() || profile.is_some();
             let folder = match folder {
@@ -1406,7 +1414,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             };
             let profile = explicit.then_some(target.native_profile);
             let built =
-                match native_mods::build(&base, &folder, &target, profile, if leave_out_mods { native_mods::LeaveOut::Everything } else { native_mods::LeaveOut::Nothing }, &cancellation, steps, registry_consent, || backend::releases().ok()) {
+                match native_mods::build(&base, &folder, &target, profile, native_mods::LeaveOut::Nothing, &cancellation, steps, registry_consent, || backend::releases().ok()) {
                     // A content mod needs no build: the instance stays as it is.
                     Err(nothing @ native_mods::Failed::Nothing) => {
                         println!("{nothing}");
@@ -1417,7 +1425,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 .map_err(|error| {
                     if let native_mods::Failed::Worlds(stake) = &error {
                         return trf(
-                            "{error}\n{stay}: nothing changed. Or run again with --leave-out-mods to build without the mods named.",
+                            "{error}\n{stay}: nothing changed.",
                             &[
                                 ("error", &stake.text),
                                 ("stay", &native_mods::fit::stay(&stake.stay)),
@@ -1465,7 +1473,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
         }
         Cmd::Play {
             allow_jar_downloads,
-            version,
             instance,
             world,
             creative,
@@ -1478,9 +1485,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(&name)?,
                 None => instances::selection()?,
             };
-            if version.is_some() {
-                return Err(tr("Choose a game build in the profile before pressing Play.").into());
-            }
             // Who plays this launch only.
             let who = match account {
                 Some(who) => Some(
@@ -1535,6 +1539,12 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
             }
             after_exit(&instance, &vars);
             return played;
+        }
+        Cmd::Switch { tag, profile } => {
+            let instance = profile
+                .as_deref()
+                .map_or_else(instances::selection, instances::find)?;
+            switch::run(&instance, &tag, as_json)?;
         }
         Cmd::Server {
             dir,
@@ -2525,11 +2535,20 @@ fn after_exit(instance: &instances::Instance, vars: &[(&'static str, std::ffi::O
 
 fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
     use instances::Icon;
+    let committed_build = |i: &instances::Instance| -> Option<String> {
+        let owner = sunrise::txn::Lease::admit(&i.home).ok()?;
+        owner
+            .active_build()
+            .ok()
+            .flatten()
+            .map(|active| active.base().to_owned())
+    };
     let value = |i: &instances::Instance, selected: bool| {
+        let build = committed_build(i);
         serde_json::json!({
             "id": i.id, "name": i.name, "kind": format!("{:?}", i.kind).to_lowercase(),
             "home": i.home, "icon": i.icon, "group": i.group, "selected": selected,
-            "version": i.version, "version_label": i.version.as_deref().and_then(sunrise_launcher::developer_install::label), "played_secs": i.played.as_secs(),
+            "version": build, "version_label": build.as_deref().and_then(sunrise_launcher::developer_install::label), "played_secs": i.played.as_secs(),
             "last_played_ms": i.last_played.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64),
         })
     };
@@ -2540,7 +2559,7 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             .as_ref()
             .map(|g| format!("  [{g}]"))
             .unwrap_or_default();
-        let pinned = match &i.version {
+        let pinned = match &committed_build(i) {
             Some(v) => format!(
                 "  {}",
                 sunrise_launcher::developer_install::label(v).unwrap_or_else(|| v.clone())
@@ -2575,6 +2594,26 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
                 all.iter().for_each(|i| line(i, i.id == selected));
             }
         }
+        InstanceCmd::Show { profile } => {
+            let instance = profile
+                .as_deref()
+                .map_or_else(instances::selection, instances::find)?;
+            let owner = sunrise::txn::Lease::admit(&instance.home)?;
+            let active = owner.active_build()?;
+            if as_json {
+                json(
+                    serde_json::json!({"profile":instance.id,"build":active.as_ref().map(|a|a.base()), "generation":active.as_ref().map(|a|a.generation()), "image":active.as_ref().map(|a|a.executable())}),
+                );
+            } else {
+                let build = active
+                    .as_ref()
+                    .map_or_else(|| tr("Not initialized"), |a| a.base());
+                println!(
+                    "{}",
+                    trf("Profile game build: {build}", &[("build", build)])
+                );
+            }
+        }
         InstanceCmd::Create { name, copy } => changed(instances::create(&name, copy.as_deref())?),
         InstanceCmd::Delete { instance } => {
             let gone = instances::delete(&instance)?;
@@ -2594,13 +2633,6 @@ fn instance(action: InstanceCmd, as_json: bool) -> Result<(), String> {
             changed(instances::edit(&instance, |m| m.group = group)?)
         }
         InstanceCmd::Select { instance } => changed(instances::select(&instance)?),
-        InstanceCmd::Version { instance, version } => {
-            let pin = match version.as_str() {
-                "latest" => None,
-                tag => Some(backend::resolve_version(Some(tag))?),
-            };
-            changed(instances::edit(&instance, |m| m.version = pin)?)
-        }
         InstanceCmd::Launch {
             instance,
             pre_launch,
@@ -3125,12 +3157,14 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
         }
         ModpackCmd::Play {
             pack,
-            version,
             allow_jar_downloads,
         } => {
             let work = work(&pack)?;
-            let owner = sunrise::txn::Lease::admit(&sunrise::pack::home(&work))?;
-            let tag = backend::resolve_version(version.as_deref())?;
+            let instance = instances::list()
+                .into_iter()
+                .find(|i| i.is_pack_profile() && i.work == work)
+                .ok_or_else(|| format!("{pack} isn't an installed modpack."))?;
+            let (owner, tag) = play_image(&instance)?;
             let mut cmd = backend::client(&tag)?;
             sunrise::pack::apply(&mut cmd, &work)?;
             let launch = Default::default();
