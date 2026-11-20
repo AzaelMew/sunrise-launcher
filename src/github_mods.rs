@@ -36,7 +36,9 @@ pub enum Target {
     Latest,
     /// The head of the default branch (what a mod installed from a commit is updated to).
     Head,
-    /// `releases/tag/<tag>`: that release, else the tag itself.
+    /// `releases/latest`: the latest release, with no fallback to a branch.
+    LatestRelease,
+    /// `releases/tag/<tag>`: that specific release.
     Tag(String),
     /// `tree/<ref>`: a branch, tag or commit.
     Ref(String),
@@ -113,7 +115,9 @@ pub fn parse(text: &str) -> Result<Link, String> {
                 .filter(|s| (7..=40).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_hexdigit()))
             {
                 Target::Commit(sha.to_ascii_lowercase())
-            } else if matches!(tail, "releases" | "releases/latest") {
+            } else if tail == "releases/latest" {
+                Target::LatestRelease
+            } else if tail == "releases" {
                 Target::Latest
             } else {
                 return Err(bad());
@@ -145,8 +149,8 @@ pub struct Resolved {
     pub tag: Option<String>,
     /// The full commit: what the source link names, and what a commit install fetches.
     pub commit: String,
-    /// The release's `.smod`, installed as it is when there is one.
-    pub asset: Option<Asset>,
+    /// The release's `.smod` assets. When there are none, fetch the commit's source instead.
+    pub assets: Vec<Asset>,
 }
 
 impl Resolved {
@@ -168,7 +172,7 @@ impl Resolved {
 fn label(name: &str, tag: Option<&str>, commit: &str) -> String {
     match tag {
         Some(tag) => format!("{name} @ {tag}"),
-        None => format!("{name} @ {}", &commit[..commit.len().min(7)]),
+        None => format!("{name} @ {}", commit.chars().take(7).collect::<String>()),
     }
 }
 
@@ -234,8 +238,8 @@ fn default_head(api: Api, link: &Link) -> Result<String, String> {
     commit_of(api, link, branch)
 }
 
-/// The release's mod package, validated after download.
-fn assets(release: &serde_json::Value, link: &Link) -> Option<Asset> {
+/// The release's mod packages, validated after download.
+fn assets(release: &serde_json::Value, link: &Link) -> Vec<Asset> {
     let prefix = format!(
         "https://github.com/{}/{}/releases/download/",
         link.owner, link.repo
@@ -246,7 +250,7 @@ fn assets(release: &serde_json::Value, link: &Link) -> Option<Asset> {
         .unwrap_or_default();
     list.iter()
         .filter(|a| a["name"].as_str().is_some_and(|n| n.ends_with(".smod")))
-        .find_map(|a| {
+        .filter_map(|a| {
             let url = a["browser_download_url"].as_str()?.to_owned();
             let name = a["name"].as_str()?.to_owned();
             // Only this repository's own release files.
@@ -258,10 +262,11 @@ fn assets(release: &serde_json::Value, link: &Link) -> Option<Asset> {
                     sha256: a["digest"]
                         .as_str()
                         .and_then(|d| d.strip_prefix("sha256:"))
-                        .filter(|d| d.len() == 64)
+                        .filter(|d| d.len() == 64 && d.bytes().all(|b| b.is_ascii_hexdigit()))
                         .map(str::to_ascii_lowercase),
                 })
         })
+        .collect()
 }
 
 fn from_release(api: Api, link: &Link, release: &serde_json::Value) -> Result<Resolved, String> {
@@ -269,13 +274,12 @@ fn from_release(api: Api, link: &Link, release: &serde_json::Value) -> Result<Re
         .as_str()
         .ok_or("GitHub did not name the release's tag.")?
         .to_owned();
-    let asset = assets(release, link);
     Ok(Resolved {
         owner: link.owner.clone(),
         repo: link.repo.clone(),
         commit: commit_of(api, link, &tag)?,
         tag: Some(tag),
-        asset,
+        assets: assets(release, link),
     })
 }
 
@@ -285,23 +289,49 @@ fn at_commit(commit: String, link: &Link) -> Resolved {
         repo: link.repo.clone(),
         tag: None,
         commit,
-        asset: None,
+        assets: Vec::new(),
     }
 }
 
-/// Resolves `link` to an exact release asset or commit, through `api`.
-pub fn resolve(link: &Link, api: Api) -> Result<Resolved, String> {
+#[derive(Debug, PartialEq, Eq)]
+pub enum ResolveError {
+    NoRelease(String),
+    Failed(String),
+}
+
+impl From<String> for ResolveError {
+    fn from(why: String) -> Self {
+        Self::Failed(why)
+    }
+}
+
+impl From<ResolveError> for String {
+    fn from(error: ResolveError) -> Self {
+        match error {
+            ResolveError::NoRelease(path) => {
+                trf("GitHub returned 404 for {path}.", &[("path", &path)])
+            }
+            ResolveError::Failed(why) => why,
+        }
+    }
+}
+
+/// Resolves `link` to exact release assets or a commit, through `api`.
+pub fn resolve(link: &Link, api: Api) -> Result<Resolved, ResolveError> {
     let base = format!("repos/{}/{}", link.owner, link.repo);
+    let release = |path: String| {
+        api(&path)?
+            .ok_or(ResolveError::NoRelease(path))
+            .and_then(|release| Ok(from_release(api, link, &release)?))
+    };
     match &link.target {
         Target::Latest => match api(&format!("{base}/releases/latest"))? {
-            Some(release) => from_release(api, link, &release),
+            Some(release) => Ok(from_release(api, link, &release)?),
             None => Ok(at_commit(default_head(api, link)?, link)),
         },
+        Target::LatestRelease => release(format!("{base}/releases/latest")),
+        Target::Tag(tag) => release(format!("{base}/releases/tags/{}", encode(tag))),
         Target::Head => Ok(at_commit(default_head(api, link)?, link)),
-        Target::Tag(tag) => match api(&format!("{base}/releases/tags/{}", encode(tag)))? {
-            Some(release) => from_release(api, link, &release),
-            None => Ok(at_commit(commit_of(api, link, tag)?, link)),
-        },
         Target::Ref(r) | Target::Commit(r) => Ok(at_commit(commit_of(api, link, r)?, link)),
     }
 }
@@ -366,9 +396,69 @@ pub fn is_update(origin: &Origin, latest: &Resolved) -> bool {
 #[derive(Clone, Debug)]
 pub struct Packed {
     pub id: String,
+    pub name: String,
     pub version: String,
     pub file: PathBuf,
     pub sha256: String,
+    asset: Option<String>,
+}
+
+impl Packed {
+    pub(crate) fn origin(&self, found: &Resolved) -> Origin {
+        Origin {
+            id: self.id.clone(),
+            version: self.version.clone(),
+            owner: found.owner.clone(),
+            repo: found.repo.clone(),
+            tag: self.asset.as_ref().and(found.tag.clone()),
+            commit: found.commit.clone(),
+            asset: self.asset.clone(),
+            sha256: self.sha256.clone(),
+        }
+    }
+}
+
+/// One fetch's files, kept while it is picked, queued or awaiting an answer. Dropping a
+/// cancelled or obsolete request cannot remove another request's files, even at the same commit.
+pub struct Prepared {
+    found: Resolved,
+    mods: Vec<Packed>,
+    _scratch: tempfile::TempDir,
+}
+
+impl Prepared {
+    pub fn source(&self) -> &Resolved {
+        &self.found
+    }
+
+    pub fn mods(&self) -> &[Packed] {
+        &self.mods
+    }
+
+    /// Keeps the selected IDs in discovery order.
+    pub fn retain(&mut self, selected: &std::collections::BTreeSet<String>) {
+        self.mods.retain(|mod_| selected.contains(&mod_.id));
+    }
+}
+
+#[derive(Debug)]
+pub enum FetchError {
+    NoMods { release: bool, detail: String },
+    Failed(String),
+}
+
+impl From<String> for FetchError {
+    fn from(why: String) -> Self {
+        Self::Failed(why)
+    }
+}
+
+impl From<FetchError> for String {
+    fn from(error: FetchError) -> Self {
+        match error {
+            FetchError::NoMods { detail, .. } | FetchError::Failed(detail) => detail,
+        }
+    }
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -378,28 +468,31 @@ fn sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn scratch(name: &str) -> PathBuf {
-    native_mods::root().join("github").join(name)
-}
-
-/// Reads `bytes` as `.smod`, with the registry's checks, into a file `Packed` names.
-fn checked(bytes: &[u8], dir: &Path) -> Result<Packed, String> {
+/// Reads `bytes` as `.smod`, with the registry's native-bundle checks.
+fn checked(bytes: &[u8], dir: &Path, asset: Option<&Asset>) -> Result<Packed, String> {
     let sum = sha256(bytes);
-    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let file = dir.join(format!("{}.smod", &sum[..16]));
+    if let Some(asset) = asset {
+        if asset
+            .sha256
+            .as_ref()
+            .is_some_and(|expected| *expected != sum)
+        {
+            return Err(trf(
+                "{file} does not match the checksum GitHub lists for it.",
+                &[("file", &asset.name)],
+            ));
+        }
+    }
+    let file = dir.join(format!("{sum}.smod"));
     fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
-    let facts = sunrise_launcher_smod::index::inspect(
-        &sunrise_launcher_smod::index::Kind::NativeMod,
-        &file,
-    )
-    .inspect_err(|_| {
-        let _ = fs::remove_file(&file);
-    })?;
+    let m = sunrise_launcher_smod::index::native::Bundle::read(&file)?.manifest;
     Ok(Packed {
-        id: facts.id.expect("native bundle has an id"),
-        version: facts.version.expect("native bundle has a version"),
+        id: m.id,
+        name: m.name,
+        version: m.version,
         file,
         sha256: sum,
+        asset: asset.map(|a| a.name.clone()),
     })
 }
 
@@ -442,54 +535,81 @@ pub fn pack(bundle: &Bundle) -> Result<Vec<u8>, String> {
     sunrise_launcher_smod::Package::pack_directory(&bundle.dir)
 }
 
-fn download(url: &str) -> Result<Vec<u8>, String> {
+fn download(url: &str, limit: u64) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     backend::get(url)?
         .into_reader()
-        .take(MAX_ASSET + 1)
+        .take(limit + 1)
         .read_to_end(&mut body)
         .map_err(|e| format!("Download interrupted: {e}"))?;
-    if body.len() as u64 > MAX_ASSET {
-        return Err("The file is bigger than 64 MiB: not a native mod bundle.".into());
+    if body.len() as u64 > limit {
+        return Err(tr("The GitHub download is too large.").into());
     }
     Ok(body)
 }
 
-/// Downloads what `found` names and checks it: the release's `.smod` (its SHA-256 compared with
-/// GitHub's when it reports one), else the mods of the commit's archive, each packed. A repository
-/// of several mods gives several `Packed`. Nothing is installed.
-pub fn fetch(found: &Resolved) -> Result<Vec<Packed>, String> {
-    let dir = scratch(&found.commit);
-    if let Some(asset) = &found.asset {
-        let bytes = download(&asset.url)?;
-        if let Some(expected) = &asset.sha256 {
-            if sha256(&bytes) != *expected {
-                return Err(format!(
-                    "{} does not match the checksum GitHub lists for it.",
-                    asset.name
-                ));
-            }
-        }
-        return Ok(vec![checked(&bytes, &dir)?]);
-    }
-    let url = format!(
-        "https://codeload.github.com/{}/{}/tar.gz/{}",
-        found.owner, found.repo, found.commit
-    );
-    let top = unpack_archive(&url, &dir.join("source"), MAX_ARCHIVE)?;
-    let mods = find_mods(&top)?;
+/// Download and check each release `.smod`, or pack the source mods found in the commit.
+/// Nothing in the profile is changed until the player has picked and approved an install.
+pub fn fetch(found: Resolved) -> Result<Prepared, FetchError> {
+    fetch_with(found, download)
+}
+
+fn fetch_with(
+    found: Resolved,
+    download: impl Fn(&str, u64) -> Result<Vec<u8>, String>,
+) -> Result<Prepared, FetchError> {
+    let scratch = tempfile::Builder::new()
+        .prefix("sunrise-github-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    let dir = scratch.path();
+    let mut mods = if found.assets.is_empty() {
+        let url = format!(
+            "https://codeload.github.com/{}/{}/tar.gz/{}",
+            found.owner, found.repo, found.commit
+        );
+        let source = dir.join("source");
+        let top = unpack_archive(&url, &source, MAX_ARCHIVE)?;
+        let mods = find_mods(&top)?
+            .into_iter()
+            .map(|m| checked(&pack(&m)?, dir, None).map_err(|e| format!("{}: {e}", m.manifest.id)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let _ = fs::remove_dir_all(source);
+        mods
+    } else {
+        let mut remaining = MAX_ARCHIVE;
+        found
+            .assets
+            .iter()
+            .map(|asset| {
+                let bytes = download(&asset.url, remaining.min(MAX_ASSET))?;
+                remaining -= bytes.len() as u64;
+                checked(&bytes, dir, Some(asset)).map_err(|e| format!("{}: {e}", asset.name))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
     if mods.is_empty() {
-        return Err(format!(
-            "{} holds no native mod (sunrise-mod.toml and Cargo.toml).",
-            found.label()
-        ));
+        return Err(FetchError::NoMods {
+            release: found.tag.is_some(),
+            detail: trf(
+                "{source} has no Sunrise native bundles or source mods.",
+                &[("source", &found.label())],
+            ),
+        });
     }
-    let packed: Result<Vec<Packed>, String> = mods
-        .iter()
-        .map(|m| checked(&pack(m)?, &dir).map_err(|e| format!("{}: {e}", m.manifest.id)))
-        .collect();
-    let _ = fs::remove_dir_all(dir.join("source"));
-    packed
+    mods.sort_by(|a, b| a.id.cmp(&b.id));
+    if let Some(pair) = mods.windows(2).find(|pair| pair[0].id == pair[1].id) {
+        return Err(trf(
+            "More than one package provides {mod}.",
+            &[("mod", &pair[0].id)],
+        )
+        .into());
+    }
+    Ok(Prepared {
+        found,
+        mods,
+        _scratch: scratch,
+    })
 }
 
 /// GitHub's archive (`.tar.gz`) of a commit, unpacked into the fresh folder `partial` without links or more than `limit` bytes: its one top folder.
@@ -529,11 +649,6 @@ fn unpack_archive(url: &str, partial: &Path, limit: u64) -> Result<PathBuf, Stri
         .ok_or_else(|| tr("The source archive is empty.").into())
 }
 
-/// Deletes what [`fetch`] left for `found` (the files of mods not installed).
-pub fn discard(found: &Resolved) {
-    let _ = fs::remove_dir_all(scratch(&found.commit));
-}
-
 /// Which of `found` to install: the one named, all of them, or the only one. Several with no
 /// choice is an error that lists them.
 pub fn choose<'a>(
@@ -567,7 +682,7 @@ fn ids(found: &[Packed]) -> String {
         .join(", ")
 }
 
-fn origin_path(home: &Path, id: &str) -> PathBuf {
+pub(crate) fn origin_path(home: &Path, id: &str) -> PathBuf {
     home.join(INSTALLED).join(format!("{id}.origin.json"))
 }
 
@@ -604,21 +719,11 @@ pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin,
     }
     fs::create_dir_all(home.join(INSTALLED)).map_err(|e| e.to_string())?;
     fs::copy(&packed.file, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-    let record = Origin {
-        id: packed.id.clone(),
-        version: packed.version.clone(),
-        owner: found.owner.clone(),
-        repo: found.repo.clone(),
-        tag: found.asset.as_ref().and(found.tag.clone()),
-        commit: found.commit.clone(),
-        asset: found.asset.as_ref().map(|a| a.name.clone()),
-        sha256: packed.sha256.clone(),
-    };
+    let record = packed.origin(found);
     let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
     let path = origin_path(home, &packed.id);
     fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     mod_list::set_enabled(home, &packed.id, true)?;
-    let _ = fs::remove_file(&packed.file);
     Ok(record)
 }
 
@@ -643,4 +748,4 @@ pub fn remove(home: &Path, id: &str) -> Result<bool, String> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

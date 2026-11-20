@@ -1530,5 +1530,10 @@
   "Sunrise asks again before building or starting native mods. Installed files and on/off choices stay as they are.": "Sunrise asks again before building or starting native mods. Installed files and on/off choices stay as they are.",
   "Native mod permission could not be saved.": "Native mod permission could not be saved.",
   "Native mod permission changed. Start again.": "Native mod permission changed. Start again.",
-  "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build.": "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build."
+  "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build.": "Native mods need permission before this profile can play. Allow native code in Settings or choose a different game build.",
+  "GitHub returned 404 for {path}.": "GitHub returned 404 for {path}.",
+  "More than one package provides {mod}.": "More than one package provides {mod}.",
+  "The GitHub download is too large.": "The GitHub download is too large.",
+  "{file} does not match the checksum GitHub lists for it.": "{file} does not match the checksum GitHub lists for it.",
+  "{source} has no Sunrise native bundles or source mods.": "{source} has no Sunrise native bundles or source mods."
 }
