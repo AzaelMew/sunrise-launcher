@@ -176,12 +176,16 @@ fn a_compiler_job_checks_its_tree_and_kills_it_when_the_owner_closes() {
             .env("SUNRISE_COMPILER_TEST", role);
         command
     };
-    for role in ["clean", "joined"] {
+    for (role, members) in [("clean", 1), ("joined", 2)] {
         let mut clean = spawn_compiler(&command(role), None).unwrap();
         let exit = clean
             .wait()
             .unwrap_or_else(|error| panic!("{role}: {error}"));
         assert!(exit.success(), "{role}: {exit}");
+        // Wait has observed the leader's handle (and the joined child was waited by it).
+        // TotalProcesses covers even transient members, unlike the active snapshot.
+        let job = clean.compiler_job().unwrap();
+        assert_eq!(job.accounting().unwrap().TotalProcesses, members, "{role}");
     }
     for close in [false, true] {
         let mut child = spawn_compiler(&command("leader"), None).unwrap();
@@ -221,15 +225,22 @@ fn a_compiler_job_checks_its_tree_and_kills_it_when_the_owner_closes() {
 #[test]
 #[allow(clippy::zombie_processes)] // The parent Job must reap the test compiler, not this actor.
 fn compiler_actor() {
+    use std::os::windows::process::CommandExt;
+    use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+    let subprocess = |role: &str| {
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.creation_flags(DETACHED_PROCESS)
+            .args([
+                "--exact",
+                "process::leases::tests::windows_tests::compiler_actor",
+                "--nocapture",
+            ])
+            .env("SUNRISE_COMPILER_TEST", role);
+        cmd
+    };
     match std::env::var("SUNRISE_COMPILER_TEST").as_deref() {
         Ok("leader") => {
-            crate::process::command(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "process::leases::tests::windows_tests::compiler_actor",
-                    "--nocapture",
-                ])
-                .env("SUNRISE_COMPILER_TEST", "descendant")
+            subprocess("descendant")
                 .stdin(std::process::Stdio::null())
                 .spawn()
                 .unwrap();
@@ -237,15 +248,7 @@ fn compiler_actor() {
             std::io::stdin().read_line(&mut line).unwrap();
         }
         Ok("joined") => {
-            let status = crate::process::command(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "process::leases::tests::windows_tests::compiler_actor",
-                    "--nocapture",
-                ])
-                .env("SUNRISE_COMPILER_TEST", "clean")
-                .status()
-                .unwrap();
+            let status = subprocess("clean").status().unwrap();
             assert!(status.success());
         }
         Ok("descendant") => {

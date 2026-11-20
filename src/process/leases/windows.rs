@@ -69,6 +69,24 @@ impl CompilerJob {
         result
     }
 
+    pub(crate) fn accounting(&self) -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        // SAFETY: a live handle and the fixed-size output buffer for this class.
+        if unsafe {
+            QueryInformationJobObject(
+                self.0.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                mem::size_of_val(&info) as u32,
+                ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info)
+    }
+
     fn finished(&self, leader: u32) -> io::Result<()> {
         use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
 
@@ -80,24 +98,7 @@ impl CompilerJob {
             pids: [usize; 128],
         }
         let job = self.0.as_raw_handle();
-        let accounting = || -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
-            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
-            // SAFETY: a live handle and the fixed-size output buffer for this class.
-            if unsafe {
-                QueryInformationJobObject(
-                    job,
-                    JobObjectBasicAccountingInformation,
-                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-                    mem::size_of_val(&info) as u32,
-                    ptr::null_mut(),
-                )
-            } == 0
-            {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(info)
-        };
-        let before = accounting()?;
+        let before = self.accounting()?;
         // If the only process ever assigned was the leader, its waited handle is the
         // entire tree. No PID-list snapshot can add evidence about its exit.
         if before.ActiveProcesses == 0 || before.TotalProcesses == 1 {
@@ -130,8 +131,6 @@ impl CompilerJob {
                 members.assigned, members.listed, before.ActiveProcesses, before.TotalProcesses
             )));
         }
-        let mut observations = vec![format!("{leader}: leader signalled")];
-        let mut running = None;
         for &pid in pids {
             let pid = u32::try_from(pid).map_err(|_| io::ErrorKind::InvalidData)?;
             if pid == leader {
@@ -143,7 +142,6 @@ impl CompilerJob {
             if raw.is_null() {
                 let error = io::Error::last_os_error();
                 if pid != 0 && error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
-                    observations.push(format!("{pid}: gone ({error})"));
                     continue; // It exited since the snapshot.
                 }
                 return Err(error);
@@ -154,46 +152,19 @@ impl CompilerJob {
                 return Err(io::Error::last_os_error());
             }
             if in_job == 0 {
-                observations.push(format!("{pid}: no longer in job"));
                 continue; // That snapshot PID has since been reused outside our job.
             }
-            let state = unsafe { WaitForSingleObject(process.as_raw_handle(), 0) };
-            match state {
+            match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
                 WAIT_OBJECT_0 => {}
                 WAIT_TIMEOUT => {
-                    running.get_or_insert(pid);
+                    return Err(io::Error::other(format!(
+                        "the native build tool left a running child ({pid})",
+                    )))
                 }
                 _ => return Err(io::Error::last_os_error()),
             }
-            // Capture the actual process identity and kernel exit evidence when this is red.
-            // SAFETY: the owned process handle permits query; both outputs point to live buffers.
-            let (image, code) = unsafe {
-                let mut path = [0; 1024];
-                let mut len = path.len() as u32;
-                let image = (QueryFullProcessImageNameW(
-                    process.as_raw_handle(),
-                    0,
-                    path.as_mut_ptr(),
-                    &mut len,
-                ) != 0)
-                    .then(|| String::from_utf16_lossy(&path[..len as usize]));
-                let mut code = 0;
-                let code =
-                    (GetExitCodeProcess(process.as_raw_handle(), &mut code) != 0).then_some(code);
-                (image, code)
-            };
-            observations.push(format!(
-                "{pid}: wait={state}, exit={code:?}, image={image:?}"
-            ));
         }
-        let after = accounting()?;
-        if let Some(pid) = running {
-            return Err(io::Error::other(format!(
-                "the native build tool left a running child ({pid}); members {pids:?}; active/total {}/{} -> {}/{}; {}",
-                before.ActiveProcesses, before.TotalProcesses, after.ActiveProcesses, after.TotalProcesses,
-                observations.join("; "),
-            )));
-        }
+        let after = self.accounting()?;
         if after.TotalProcesses != before.TotalProcesses {
             return Err(io::Error::other(format!(
                 "cannot prove the native build job stopped: total members changed from {} to {}",
@@ -475,7 +446,16 @@ pub(super) fn spawn_exact(
         let mut information = PROCESS_INFORMATION::default();
         let flags = EXTENDED_STARTUPINFO_PRESENT
             | CREATE_UNICODE_ENVIRONMENT
-            | if start.attached { 0 } else { CREATE_NO_WINDOW }
+            | if start.compiler {
+                // CREATE_NO_WINDOW still creates a console host. It joins the compiler's job
+                // and may be shutting down after the SDK exits. The SDK already has real pipe
+                // handles; run without any console rather than exempt an unsignalled job member.
+                DETACHED_PROCESS
+            } else if start.attached {
+                0
+            } else {
+                CREATE_NO_WINDOW
+            }
             | if start.breakaway {
                 CREATE_BREAKAWAY_FROM_JOB
             } else {
