@@ -24,13 +24,13 @@ enum Phase {
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Identity {
+pub(crate) struct Identity {
     pub(super) volume: u64,
     id: u64,
 }
 
 impl Identity {
-    pub(super) fn of(path: &Path) -> Result<Self, String> {
+    pub(crate) fn of(path: &Path) -> Result<Self, String> {
         build::require_dir(path)?;
         let meta = Dir::open_ambient_dir(path, ambient_authority())
             .and_then(|dir| dir.dir_metadata())

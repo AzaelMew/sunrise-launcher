@@ -51,6 +51,7 @@ pub(super) use staged_install::{
 };
 pub use staged_install::{prepare_mod_edit, ModEdit, ModRemoval, PreparedModEdit};
 pub use switch::Switch;
+pub(crate) use switch_record::Identity as DirectoryIdentity;
 
 const FILE: &str = "mod-browser/install-txn.json";
 const VERSION: u64 = 2;
@@ -77,12 +78,23 @@ impl Drop for Lease {
 
 impl Lease {
     pub fn try_acquire(home: &Path) -> Result<Option<Self>, String> {
+        Self::try_acquire_inner(home, false)
+    }
+
+    /// Reserve a managed name before no-replace publication, even before the home exists.
+    pub(crate) fn reserve_name(home: &Path) -> Result<Self, String> {
+        Self::try_acquire_inner(home, true)?.ok_or_else(busy_profile)
+    }
+
+    fn try_acquire_inner(home: &Path, creating: bool) -> Result<Option<Self>, String> {
         let external_owner = match super::pack::owner_file(home)? {
             Some(path) => Some(path),
             None => crate::instances::owner_file(home)?,
         };
         let path = if let Some(path) = &external_owner {
             path.clone()
+        } else if creating {
+            return Err(unsettled());
         } else {
             fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
             build::require_dir(home)?;
@@ -115,7 +127,7 @@ impl Lease {
             Err(fs::TryLockError::WouldBlock) => return Ok(None),
             Err(fs::TryLockError::Error(e)) => return Err(fail(e)),
         }
-        if external_owner.is_some() {
+        if external_owner.is_some() && !creating {
             // A managed profile may have been detached between finding it and opening the
             // owner. Never recreate its home; the guard is outside the movable directory.
             build::require_dir(home)?;
@@ -142,10 +154,7 @@ impl Lease {
     }
 
     pub fn acquire(home: &Path) -> Result<Self, String> {
-        Self::try_acquire(home)?.ok_or_else(|| {
-            tr("Another launcher is working on this profile. Try again when it finishes.")
-                .to_string()
-        })
+        Self::try_acquire(home)?.ok_or_else(busy_profile)
     }
 
     /// Admit a new operation: claim the profile, then settle any transaction whose last owner
@@ -988,6 +997,10 @@ pub(super) fn begin(
     });
     write(home, &record)?;
     Ok(id)
+}
+
+fn busy_profile() -> String {
+    tr("Another launcher is working on this profile. Try again when it finishes.").into()
 }
 
 pub(in crate::browser) fn unsettled() -> String {

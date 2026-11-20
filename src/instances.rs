@@ -725,7 +725,26 @@ fn delete_in(
             instance.name
         ));
     }
-    let owner = crate::browser::sunrise::txn::Lease::admit(&instance.home)?;
+    let incarnation = crate::browser::sunrise::txn::DirectoryIdentity::of(&instance.work)?;
+    delete_selected(game_home, data, instance, incarnation, trash)
+}
+
+fn delete_selected(
+    game_home: &Path,
+    data: &Path,
+    instance: Instance,
+    incarnation: crate::browser::sunrise::txn::DirectoryIdentity,
+    trash: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<Instance, String> {
+    use crate::browser::sunrise::txn::{DirectoryIdentity, Lease};
+    let owner = Lease::acquire(&instance.home)?;
+    if DirectoryIdentity::of(&instance.work)? != incarnation {
+        return Err(tr(
+            "The profile changed since you reviewed this. Nothing was changed; choose again.",
+        )
+        .into());
+    }
+    owner.recover_abandoned()?;
     let problem = |e| format!("{} could not go to the Trash: {e}", instance.name);
     let root = game_home.canonicalize().map_err(problem)?;
     let staging = creation_parent(&root, RETIRED).map_err(problem)?;
@@ -965,6 +984,7 @@ fn create_whole_in(
         _ => {}
     }
     {
+        let _name = Lease::reserve_name(&dir)?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let present = match fs::symlink_metadata(&dir) {

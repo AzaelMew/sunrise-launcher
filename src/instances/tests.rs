@@ -526,6 +526,31 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
 }
 
 #[test]
+fn a_delayed_delete_cannot_detach_the_new_incarnation_of_a_profile() {
+    use crate::browser::sunrise::txn::DirectoryIdentity;
+    let root = scratch("recreated-before-delete");
+    let (home, data, trash) = (root.join("game"), root.join("data"), root.join("trash"));
+    let original = create_in(&home, &data, "Skyblock", None).unwrap();
+    let selected = find_in(&list_in(&home, &data), "Skyblock").unwrap();
+    let identity = DirectoryIdentity::of(&selected.work).unwrap();
+    delete_in(&home, &data, "Skyblock", &|path| {
+        crate::desktop_seams::to_folder(path, &trash)
+    })
+    .unwrap();
+    let replacement = create_in(&home, &data, "Skyblock", None).unwrap();
+    assert_eq!(replacement.home, original.home);
+    let save = replacement.home.join("saves/New/level.dat");
+    put(&save, "new player data");
+    assert!(delete_selected(&home, &data, selected, identity, &|_| {
+        panic!("the replacement must not be sent to the Trash")
+    })
+    .unwrap_err()
+    .contains("profile changed"));
+    assert_eq!(fs::read(save).unwrap(), b"new player data");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn an_unavailable_system_trash_does_not_put_back_or_delete_a_profile() {
     let root = scratch("system-trash-fails");
     let (home, data) = (root.join("home"), root.join("data"));
@@ -692,7 +717,10 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
     let all = list_in(&home, &data);
     // Admission may register the source's persistent profile lock before a later error.
     drop(crate::browser::sunrise::txn::Lease::admit(&home).unwrap());
-    let before = files(&home);
+    let mut before = files(&home);
+    // The destination's gate is permanent, even if publishing a profile fails. It is
+    // not part of the private attempt and must not be unlinked under a waiting opener.
+    before.insert(Path::new(GATES).join("skyblock"), Vec::new());
     // The choices can't be saved: instances.json is a folder.
     fs::create_dir_all(data.join(FILE)).unwrap();
     for from in [None, Some(&all[0])] {

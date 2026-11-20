@@ -537,6 +537,7 @@ pub(in crate::browser::sunrise) fn expose_private_profile(
     destination: &Path,
     sealed: &SealedProfile,
 ) -> Result<(), String> {
+    let _name = Lease::reserve_name(&destination.join("home"))?;
     let _publication = crate::run_leases::installation().map_err(native_mods::cache_error)?;
     let game_root = destination
         .parent()
