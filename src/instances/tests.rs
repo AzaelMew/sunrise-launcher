@@ -560,6 +560,60 @@ fn a_delayed_delete_does_not_admit_a_replacement_at_the_same_slug() {
 }
 
 #[test]
+fn a_replacement_detached_after_admission_is_restored_without_overwriting() {
+    for name_reused in [false, true] {
+        let root = scratch("replacement-at-detach");
+        let (game, cache) = (root.join("game"), root.join("cache"));
+        let selected = create_in(&game, &cache, "Survival!", None).unwrap();
+        let visible = selected.home.clone();
+        let displaced = root.join("displaced");
+        put(&visible.join("original"), "first profile");
+        let before = fs::read(cache.join(FILE)).unwrap();
+        let mut retained = None;
+        let error = delete_selected_at(
+            &game,
+            &cache,
+            selected,
+            |from, to| {
+                fs::rename(from, &displaced)?;
+                put(&from.join("saves/Mine/level.dat"), "late replacement");
+                durable::move_new_directory(from, to)?;
+                if name_reused {
+                    put(&from.join("new-occupant"), "third profile");
+                }
+                retained = Some(to.to_owned());
+                Ok(())
+            },
+            &|_| panic!("late replacement reached Trash"),
+        )
+        .unwrap_err();
+        let retained = retained.unwrap();
+        let replacement = if name_reused {
+            assert!(error.contains(&*retained.to_string_lossy()), "{error}");
+            assert_eq!(
+                fs::read(visible.join("new-occupant")).unwrap(),
+                b"third profile"
+            );
+            retained
+        } else {
+            assert_eq!(error, lifecycle::changed());
+            assert!(!retained.parent().unwrap().exists());
+            visible
+        };
+        assert_eq!(
+            fs::read(replacement.join("saves/Mine/level.dat")).unwrap(),
+            b"late replacement"
+        );
+        assert_eq!(
+            fs::read(displaced.join("original")).unwrap(),
+            b"first profile"
+        );
+        assert_eq!(fs::read(cache.join(FILE)).unwrap(), before);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn a_trash_failure_preserves_the_whole_detached_profile() {
     let root = scratch("failed-trash");
     let (game, cache) = (root.join("game"), root.join("cache"));

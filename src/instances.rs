@@ -674,6 +674,22 @@ fn delete_selected(
     instance: Instance,
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
+    delete_selected_at(
+        game_home,
+        data,
+        instance,
+        durable::move_new_directory,
+        trash,
+    )
+}
+
+fn delete_selected_at(
+    game_home: &Path,
+    data: &Path,
+    instance: Instance,
+    detach: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    trash: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<Instance, String> {
     let work = &instance.work;
     let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
     let profile =
@@ -694,8 +710,18 @@ fn delete_selected(
     let detached = (|| {
         let _references = ReferencePublication::begin_at(data, game_home, profile.home())?;
         Store::mutate(data, |store| {
-            durable::move_new_directory(work, &gone).map_err(|e| problem(&e))?;
-            expected.at_detachment(&instance, &gone)?;
+            detach(work, &gone).map_err(|e| problem(&e))?;
+            if let Err(changed) = expected.at_detachment(&instance, &gone) {
+                // The name still belongs to this operation, but an external writer may
+                // have filled it. Never restore by overwriting that directory.
+                return match durable::move_new_directory(&gone, work) {
+                    Ok(()) => Err(changed),
+                    Err(error) => Err(crate::i18n::trf(
+                        "The profile changed and could not be restored: {error}. Check {folder} for the detached profile.",
+                        &[("error", &error.to_string()), ("folder", &gone.to_string_lossy())],
+                    )),
+                };
+            }
             store.instances.remove(&instance.id);
             Ok(())
         })
