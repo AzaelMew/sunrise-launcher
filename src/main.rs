@@ -248,7 +248,7 @@ struct Launcher {
     storage_revoke_error: Option<String>,
     /// The build asked for (its base and back-up choice) while the permission question is open:
     /// Allow resumes it, not a plain build.
-    native_consent_build: Option<(Option<String>, bool)>,
+    native_consent_build: Option<(Option<String>, native_mods::LeaveOut)>,
     install_error: Option<(String, String)>,
     /// Import a game build (`build_import`, on the Versions page): whether one is being copied in,
     /// and why the last one failed.

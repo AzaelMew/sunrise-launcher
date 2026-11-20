@@ -15,13 +15,17 @@ impl Launcher {
     /// build stays on the Sunrise the instance plays (`native_mods::base_for`), unless the
     /// warning was Update's: then it moves to that newer Sunrise.
     pub(super) fn build_native(&mut self) {
-        self.build_native_on(None, false)
+        self.build_native_on(None, native_mods::LeaveOut::Nothing)
     }
 
     /// [`Self::build_native`] on `base` when given (an update's newer release or Nightly) instead
-    /// of the Sunrise the instance plays; with `leave_out`, the player chose to build without the mods
-    /// that worlds were saved with.
-    pub(super) fn build_native_on(&mut self, base: Option<String>, leave_out: bool) {
+    /// of the Sunrise the instance plays; with `leave_out`, the mods the player agreed to build
+    /// without although worlds were saved with them.
+    pub(super) fn build_native_on(
+        &mut self,
+        base: Option<String>,
+        leave_out: native_mods::LeaveOut,
+    ) {
         // A question about worlds, or mods waiting to be removed, is answered first.
         if self.native_step.is_some()
             || self.mods.world_ask.is_some()

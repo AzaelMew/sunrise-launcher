@@ -1001,8 +1001,29 @@ struct BuildOptions<'a> {
     /// The game folder whose worlds a mod switched off for this build must not be lost from:
     /// the instance's ([`guard_worlds`]).
     worlds: Option<&'a Path>,
-    /// The player chose to build without the mods that worlds were saved with.
-    leave_out: bool,
+    /// The mods the player chose to build without although worlds were saved with them.
+    leave_out: LeaveOut,
+}
+
+/// Which mods the player agreed to lose from worlds ([`guard_worlds`]): only the ones they were
+/// asked about, so a mod found later by a retry asks again; or, for a command line's
+/// `--leave-out-mods`, every one.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LeaveOut {
+    #[default]
+    Nothing,
+    Only(std::collections::BTreeSet<String>),
+    Everything,
+}
+
+impl LeaveOut {
+    fn covers(&self, id: &str) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::Only(ids) => ids.contains(id),
+            Self::Everything => true,
+        }
+    }
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1114,7 +1135,12 @@ fn refused(refusal: sdk_cache::Refusal) -> String {
 /// The scan fails closed: a `saves/` that can't be listed stops the build, and a world whose
 /// `level.dat` and `level.dat_old` can't be read is unknown, so it counts as saved with every
 /// mod of `left` and is never taken for "no mods".
-fn guard_worlds(home: &Path, left: &[LeftOut], build: &str, leave_out: bool) -> Result<(), Failed> {
+fn guard_worlds(
+    home: &Path,
+    left: &[LeftOut],
+    build: &str,
+    leave_out: &LeaveOut,
+) -> Result<(), Failed> {
     let ids: Vec<String> = left.iter().map(|l| l.id.clone()).collect();
     let at_stake = crate::worlds::at_risk(home, &ids).map_err(|error| {
         Failed::Other(trf(
@@ -1122,15 +1148,18 @@ fn guard_worlds(home: &Path, left: &[LeftOut], build: &str, leave_out: bool) -> 
             &[("error", &error)],
         ))
     })?;
-    if at_stake.is_empty() {
-        return Ok(());
-    }
-    if !leave_out {
+    // What the player agreed to lose is not asked about again; any other mod at stake is.
+    let asked = |id: &str| !leave_out.covers(id) && left.iter().any(|l| l.id == id);
+    let at_stake: Vec<_> = at_stake
+        .into_iter()
+        .filter(|(_, mods, _)| mods.iter().any(|m| asked(m)))
+        .collect();
+    if !at_stake.is_empty() {
         // One short summary for every mod at stake, not a paragraph per mod: the build window's
         // rows already name each mod.
         let at: Vec<&LeftOut> = left
             .iter()
-            .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
+            .filter(|l| asked(&l.id) && at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
             .collect();
         let worlds: Vec<String> = at_stake
             .iter()
@@ -1161,13 +1190,17 @@ fn guard_worlds(home: &Path, left: &[LeftOut], build: &str, leave_out: bool) -> 
                 .collect(),
             mods: left
                 .iter()
-                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
+                .filter(|l| {
+                    asked(&l.id) && at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id))
+                })
                 .map(|l| l.id.clone())
                 .collect(),
             unbuilt: left
                 .iter()
                 .filter(|l| matches!(l.why, isolate::Why::DidNotBuild))
-                .filter(|l| at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id)))
+                .filter(|l| {
+                    asked(&l.id) && at_stake.iter().any(|(_, mods, _)| mods.contains(&l.id))
+                })
                 .map(|l| l.id.clone())
                 .collect(),
             stay: String::new(),
@@ -1419,7 +1452,7 @@ fn pipeline(
                 .collect();
             let left = isolate::with_dependents(&unfit, &pairs);
             if let Some(home) = options.worlds {
-                guard_worlds(home, &left, &shown, options.leave_out)?;
+                guard_worlds(home, &left, &shown, &options.leave_out)?;
             }
             return Err(Failed::Mods {
                 left,
@@ -1446,7 +1479,7 @@ fn pipeline(
     // Switching it off follows the world rules like any other switch-off: when worlds were saved
     // with it (or with a mod that needs it), the build stops unless the player chose to back
     // them up.
-    let (worlds, leave_out) = (options.worlds, options.leave_out);
+    let (worlds, leave_out) = (options.worlds, &options.leave_out);
     let shown = sdk
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
@@ -1836,7 +1869,7 @@ pub fn build(
     folder: &Path,
     instance: &Instance,
     profile: Option<Profile>,
-    leave_out: bool,
+    leave_out: LeaveOut,
     cancellation: &Cancellation,
     progress: impl Fn(Step),
     registry_consent: impl Fn(&Consent) -> bool,
@@ -1865,7 +1898,7 @@ pub fn build(
                         skip,
                         registry_consent: Some(&registry_consent),
                         worlds: Some(&instance.home),
-                        leave_out,
+                        leave_out: leave_out.clone(),
                         ..BuildOptions::default()
                     },
                     &progress,
@@ -2270,7 +2303,7 @@ mod tests {
             Path::new(""),
             &instance,
             None,
-            false,
+            LeaveOut::Nothing,
             &worker,
             |_| panic!("a stopped attempt cannot report a step"),
             |_| panic!("a stopped attempt cannot request consent"),
@@ -2514,7 +2547,7 @@ mod tests {
                 vec![],
             ),
         ] {
-            let stopped = guard_worlds(&home, &[left(why)], build, false);
+            let stopped = guard_worlds(&home, &[left(why)], build, &LeaveOut::Nothing);
             let Err(Failed::Worlds(stake)) = stopped else {
                 panic!("a world saved with the mod must stop the build");
             };
@@ -2536,15 +2569,62 @@ mod tests {
                 other
             }],
             build,
-            false,
+            &LeaveOut::Nothing,
         ) else {
             panic!("a world saved with the mod must stop the build");
         };
         assert_eq!(stake.mods, ["greeter"]);
         assert_eq!(stake.unbuilt, ["greeter"]);
         // Chosen: the build goes on without the mod, and nothing is backed up.
-        guard_worlds(&home, &[left(isolate::Why::DidNotBuild)], build, true).unwrap();
+        let chosen = LeaveOut::Only(["greeter".to_string()].into());
+        guard_worlds(&home, &[left(isolate::Why::DidNotBuild)], build, &chosen).unwrap();
+        guard_worlds(
+            &home,
+            &[left(isolate::Why::DidNotBuild)],
+            build,
+            &LeaveOut::Everything,
+        )
+        .unwrap();
         assert!(!home.join("backups").exists());
+        // A mod the retry found later, which another world uses, was not agreed to: it asks
+        // again, naming only itself and its world.
+        let other_world = home.join("saves").join("Other");
+        fs::create_dir_all(&other_world).unwrap();
+        let record = Tag::compound([
+            ("ModId", Tag::String("extra".into())),
+            ("ModVersion", Tag::String("1.0.0".into())),
+        ]);
+        let root = Tag::compound([
+            (
+                "Data",
+                Tag::compound([("LevelName", Tag::String("Other".into()))]),
+            ),
+            (
+                "fml",
+                Tag::compound([("LoadingModList", Tag::List(vec![record]))]),
+            ),
+        ]);
+        let bytes = nbt::write_named(
+            &nbt::NamedTag {
+                name: "".into(),
+                tag: root,
+            },
+            Limits::default(),
+        )
+        .unwrap();
+        fs::write(other_world.join("level.dat"), bytes).unwrap();
+        let mut extra = left(isolate::Why::DidNotBuild);
+        extra.id = "extra".into();
+        let both = [left(isolate::Why::DidNotBuild), extra];
+        let Err(Failed::Worlds(stake)) = guard_worlds(&home, &both, build, &chosen) else {
+            panic!("a mod nobody agreed to lose asks again");
+        };
+        assert_eq!(
+            (stake.mods, stake.worlds),
+            (vec!["extra".to_string()], vec!["Other".to_string()])
+        );
+        let both_chosen = LeaveOut::Only(["greeter".to_string(), "extra".to_string()].into());
+        guard_worlds(&home, &both, build, &both_chosen).unwrap();
         // A mod no world was saved with is switched off with no question.
         let other = LeftOut {
             id: "other".into(),
@@ -2552,7 +2632,7 @@ mod tests {
             why: isolate::Why::DidNotBuild,
             detail: None,
         };
-        assert!(guard_worlds(&home, &[other], build, false).is_ok());
+        assert!(guard_worlds(&home, &[other], build, &LeaveOut::Nothing).is_ok());
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -2570,12 +2650,15 @@ mod tests {
         }];
         let switch = |allow| guard_worlds(&home, &changed, "nightly", allow);
         fs::write(&saves, b"not a directory").unwrap();
-        assert!(matches!(switch(true), Err(Failed::Other(_))));
+        assert!(matches!(
+            switch(&LeaveOut::Everything),
+            Err(Failed::Other(_))
+        ));
         fs::remove_file(&saves).unwrap();
         fs::create_dir_all(&world).unwrap();
         fs::write(world.join("level.dat"), b"truncated").unwrap();
         fs::write(world.join("level.dat_old"), b"also truncated").unwrap();
-        let Err(Failed::Worlds(stake)) = switch(false) else {
+        let Err(Failed::Worlds(stake)) = switch(&LeaveOut::Nothing) else {
             panic!("unknown is not an empty mod list")
         };
         assert_eq!(stake.worlds, ["Uncertain"]);
@@ -2589,8 +2672,8 @@ mod tests {
             b"older backup",
         )
         .unwrap();
-        switch(true).unwrap();
-        let _ = switch(false);
+        switch(&LeaveOut::Everything).unwrap();
+        let _ = switch(&LeaveOut::Nothing);
         let kept: Vec<_> = fs::read_dir(&old)
             .unwrap()
             .map(|e| e.unwrap().file_name())
@@ -3747,7 +3830,7 @@ mod tests {
             &folder,
             &instance,
             None,
-            false,
+            LeaveOut::Nothing,
             &Cancellation::default(),
             |_| {},
             |_| false,
@@ -3906,7 +3989,7 @@ mod tests {
                 &folder,
                 &instances::selected(),
                 choice,
-                false,
+                LeaveOut::Nothing,
                 &Cancellation::default(),
                 |_| {},
                 |_| false,
