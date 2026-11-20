@@ -984,7 +984,7 @@ impl From<Failed> for String {
 
 /// Refuse before staging, fetching a prebuilt game or downloading a compiler.
 pub fn require_consent() -> Result<(), Failed> {
-    if backend::Settings::load().native_mods_allowed_at.is_some() {
+    if backend::Settings::native_allowed().map_err(Failed::Other)? {
         Ok(())
     } else {
         Err(Failed::NoConsent)

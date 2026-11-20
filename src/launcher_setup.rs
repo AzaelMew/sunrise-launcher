@@ -95,9 +95,7 @@ impl Launcher {
             storage_pending: false,
             storage_confirm: None,
             storage_error: None,
-            storage_revoke: None,
-            storage_counting: None,
-            storage_visit: 0,
+            storage_revoke: false,
             storage_revoke_error: None,
             native_consent_build: None,
             install_error: None,
@@ -319,7 +317,7 @@ impl Launcher {
         }
         self.load_profile_heads();
         // A Turn off question left open isn't still asked the next time Settings opens.
-        self.storage_revoke = None;
+        self.storage_revoke = false;
         // A Turn off error is read on the visit it shows in: leaving Settings settles it.
         if self.page == Page::Settings && page != Page::Settings {
             self.storage_revoke_error = None;
@@ -330,8 +328,6 @@ impl Launcher {
             self.settings_pane.scroll_to_item(0);
             self.settings_query.set(String::new());
         }
-        self.storage_counting = None;
-        self.storage_visit += 1;
         // The glass look's Settings is a dialog over the page: opening or closing it keeps the
         // page under it as it was (its scroll, no fade).
         let dialog = self.theme.glass

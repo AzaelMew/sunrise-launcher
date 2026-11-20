@@ -55,8 +55,10 @@ mod look_settings;
 mod play_log;
 mod release_assets;
 mod release_notes;
+mod settings_io;
 pub use release_assets::PLATFORMS;
 pub use release_notes::{markdown_to_text, notes_summary};
+pub use settings_io::SettingsBaseline;
 
 /// `a == b`, in a const context.
 const fn same(a: &str, b: &str) -> bool {
@@ -4512,6 +4514,9 @@ pub struct Settings {
     /// Show names alongside game profiles in the sidebar. Starts collapsed.
     #[serde(default)]
     pub sidebar_expanded: bool,
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub settings_baseline: SettingsBaseline,
 }
 
 impl Settings {
@@ -4550,17 +4555,6 @@ impl Settings {
 }
 
 impl Settings {
-    /// Remember an explicit approval; merely finding an installed toolchain never grants it.
-    pub fn allow_native_mods(&mut self) -> Result<(), String> {
-        self.native_mods_allowed_at = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
-                .as_secs(),
-        );
-        self.save()
-    }
-
     pub fn load() -> Self {
         Self::load_from(&data_dir())
     }
@@ -4633,6 +4627,7 @@ impl Settings {
                 crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
         }
         look_settings::settle(&mut settings);
+        settings.record_baseline();
         settings
     }
     /// Whether the corner cat shows.
@@ -4680,41 +4675,6 @@ impl Settings {
     pub fn keep_newest(&self) -> usize {
         self.keep_versions.unwrap_or(KEEP_NEWEST).max(1)
     }
-    pub fn save(&self) -> Result<(), String> {
-        // The window and background jobs share the process's temporary file.
-        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        // A write that stops halfway leaves settings.json unreadable, and `load` answers
-        // defaults for it: the file is replaced only once it is whole.
-        let dir = data_dir();
-        let path = dir.join("settings.json");
-        let tmp = dir.join(format!("settings.{}.tmp", std::process::id()));
-        let json =
-            serde_json::to_vec_pretty(self).map_err(|e| format!("{}: {e}", path.display()))?;
-        let written = fs::create_dir_all(&dir)
-            .and_then(|()| write_private(&tmp, &json))
-            .and_then(|()| fs::rename(&tmp, &path));
-        if let Err(e) = written {
-            let _ = fs::remove_file(&tmp);
-            return Err(format!("{}: {e}", path.display()));
-        }
-        Ok(())
-    }
-}
-
-/// Writes `bytes` to `path` readable by its owner alone (the file may hold proxy credentials);
-/// the mode applies where the file is created, and a file already there is emptied first.
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(path)?;
-    // A file left by a crashed run keeps its old mode when opened: tighten it too.
-    #[cfg(unix)]
-    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    file.write_all(bytes)
 }
 
 #[cfg(test)]
@@ -4734,46 +4694,6 @@ mod tests {
     use super::*;
     use std::cmp::Ordering::*;
     use std::ffi::OsStr;
-
-    #[cfg(unix)]
-    #[test]
-    fn private_files_are_readable_by_their_owner_alone() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("settings.tmp");
-        write_private(&file, b"{\"proxy\":\"http://u:p@h:1\"}").unwrap();
-        let mode = fs::metadata(&file).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600);
-        assert_eq!(fs::read(&file).unwrap(), b"{\"proxy\":\"http://u:p@h:1\"}");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_leftover_looser_file_is_made_private_too() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("settings.1.tmp");
-        fs::write(&file, b"old old old").unwrap();
-        fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
-        write_private(&file, b"new").unwrap();
-        assert_eq!(
-            fs::metadata(&file).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert_eq!(fs::read(&file).unwrap(), b"new");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn saving_settings_leaves_settings_json_private() {
-        use std::os::unix::fs::PermissionsExt;
-        Settings::default().save().unwrap();
-        let mode = fs::metadata(data_dir().join("settings.json"))
-            .unwrap()
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o600);
-    }
 
     #[test]
     fn with_every_name_taken_the_fallback_is_never_a_claimed_folder() {

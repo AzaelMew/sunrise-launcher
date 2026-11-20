@@ -239,12 +239,8 @@ struct Launcher {
     storage_error: Option<String>,
     /// Turn off for native mods was pressed once: how many switched-on native mods it would
     /// switch off, and in how many instances, counted then (`glass_storage.rs`).
-    storage_revoke: Option<(usize, usize)>,
-    /// Storage is counting native mods for Turn off: the count of this Settings visit.
-    storage_counting: Option<u64>,
-    /// Each page switch: a count from an earlier visit is dropped when it arrives.
-    storage_visit: u64,
-    /// Why Turn off didn't finish, shown at the Native mods row.
+    storage_revoke: bool,
+    /// A permission write that failed; no profile was changed.
     storage_revoke_error: Option<String>,
     /// The build asked for (its base and back-up choice) while the permission question is open:
     /// Allow resumes it, not a plain build.
