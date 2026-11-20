@@ -155,8 +155,8 @@ pub(super) struct Mods {
     pub(super) chosen: std::collections::BTreeMap<String, String>,
     /// The build the page's Minecraft version was last worked out for (the selected instance's).
     game_for: Option<(Option<String>, Option<String>)>,
-    /// Whether the start's auto-update ran: it waits for the release list.
-    pub(super) auto_updated: bool,
+    /// Whether the start's recovery ran: it waits for the release list.
+    pub(super) recovered: bool,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: ModsHome,
     /// Its worlds (folder, name), the last played first, and the one data packs go into.
@@ -301,7 +301,7 @@ impl Mods {
             installed: Vec::new(),
             chosen: Default::default(),
             game_for: None,
-            auto_updated: false,
+            recovered: false,
             home: ModsHome::default(),
             worlds: Vec::new(),
             world: None,
@@ -507,33 +507,15 @@ impl Launcher {
         changed
     }
 
-    /// At start: recover interrupted updates, then update every Sunrise instance's registry
-    /// content when enabled ([`auto_update`]), reading the selected instance's list again after.
-    pub(super) fn mods_auto_update(&mut self) {
-        let enabled = self.settings.auto_updates_mods();
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
-        let list: Vec<AutoTarget> = self
-            .instances
-            .list
-            .iter()
-            .filter_map(|i| {
-                Some(AutoTarget {
-                    instance: i.clone(),
-                    game: self.game_of(i)?,
-                })
-            })
-            .collect();
-        let tx = self.mods.tx.clone();
-        self.mods.updating = true;
+    /// At start: an install or build an earlier run left unfinished is undone, in every
+    /// profile (the one record of each says how: `txn`). Mods never update by themselves.
+    pub(super) fn mods_recover(&mut self) {
+        let homes: Vec<_> = self.instances.list.iter().map(|i| i.home.clone()).collect();
         std::thread::spawn(move || {
-            // An install cut off by the launcher closing is undone first, and so is a build that
-            // never ended: the one record of each profile says how (`txn`).
-            for target in &list {
-                sunrise::auto::recover(&target.instance.home);
-                sunrise::txn::recover(&target.instance.home);
+            for home in &homes {
+                sunrise::auto::recover(home);
+                sunrise::txn::recover(home);
             }
-            let out = auto_update(&list, enabled, native_allowed, &Default::default());
-            let _ = tx.send(Event::AutoUpdated(out));
         });
     }
 

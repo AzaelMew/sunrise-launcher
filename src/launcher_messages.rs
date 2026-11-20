@@ -39,9 +39,9 @@ impl Launcher {
                     }
                     self.releases = r.map_or_else(Load::Failed, Load::Ready);
                     // Once the list is in (or failed), each instance resolves to the build it plays.
-                    if !self.mods.auto_updated {
-                        self.mods.auto_updated = true;
-                        self.mods_auto_update();
+                    if !self.mods.recovered {
+                        self.mods.recovered = true;
+                        self.mods_recover();
                     }
                 }
                 Msg::Links(links) => self.links = links,

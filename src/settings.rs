@@ -745,20 +745,7 @@ impl Launcher {
                 .child(native)
                 .child(hint(error));
         }
-        let updates = row(
-            tr("Update mods automatically"),
-            tr("Each mod moves to its newest version that fits, at launch and before Play. Turn this off to update by hand."),
-            div().child(
-                switch("alt-mods-auto-update", self.settings.auto_updates_mods()).on_click(
-                    cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.settings.mods_auto_update = Some(!this.settings.auto_updates_mods());
-                        this.save_settings();
-                        cx.notify();
-                    }),
-                ),
-            ),
-        );
-        group(vec![native, updates])
+        group(vec![native])
     }
 
     fn settings_storage(&mut self, cx: &mut Context<Self>) -> Div {
