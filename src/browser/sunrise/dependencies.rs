@@ -1,5 +1,6 @@
 //! A manual registry install stages and verifies the whole set before changing the profile.
 use super::{fs, index, installed, mod_list, Install, SourceId};
+use crate::i18n::trf;
 use semver::{Version, VersionReq};
 use std::collections::BTreeMap;
 use std::io;
@@ -23,7 +24,7 @@ pub(super) fn install(
         .tempdir_in(home)
         .map_err(|e| format!("{}: {e}", home.display()))?;
     let installed = installed::Installed::read(home)?;
-    let claims = index::browser_state::Installed::read(home)?;
+    let claims = index::browser_state::Installed::read(home).map_err(|error| error.details(trf))?;
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
     let held = super::held_mods(&installed.entries);
@@ -60,7 +61,7 @@ pub(super) fn install(
     };
     plan.add(project, version, 0)?;
 
-    let claims = index::browser_state::Installed::read(home)?;
+    let claims = index::browser_state::Installed::read(home).map_err(|error| error.details(trf))?;
     let mut changes = Vec::new();
     let mut done = Vec::new();
     // Unreadable files whose new version goes elsewhere: published over nothing, so removed.

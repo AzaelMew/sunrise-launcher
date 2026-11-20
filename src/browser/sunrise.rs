@@ -1134,7 +1134,7 @@ fn install_version_guarded(
     let _lock = super::lock_home(home).map_err(|e| e.to_string())?;
     installed::recover_game_install(home)?;
     let mut list = installed::Installed::read(home)?;
-    let claims = index::browser_state::Installed::read(home)?;
+    let claims = index::browser_state::Installed::read(home).map_err(|error| error.details(trf))?;
     let install = Install {
         index,
         local,
@@ -1153,6 +1153,7 @@ fn install_version_guarded(
         .find(SourceId::Sunrise, &p.id)
         .filter(|old| old.file != entry.file);
     index::browser_state::Installed::read(home)
+        .map_err(|error| error.details(trf))
         .and_then(|claims| {
             check_replacement_claims(
                 &claims,
@@ -1228,7 +1229,7 @@ fn check_replacement_claims(
     file: &str,
     previous: Option<&str>,
 ) -> Result<(), String> {
-    claims.single(id)?;
+    claims.single(id).map_err(|reason| reason.render(trf))?;
     let check = |file| {
         claims
             .check_other_claims(home, id, file)

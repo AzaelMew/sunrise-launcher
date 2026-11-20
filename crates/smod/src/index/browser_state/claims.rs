@@ -1,4 +1,5 @@
 //! Conservative comparison of game and launcher browser claims under the shared home lock.
+use super::{DetailReason, render_english};
 use serde_json::Value;
 use std::ffi::OsStr;
 use std::fmt;
@@ -10,12 +11,12 @@ use std::path::{Component, Path, PathBuf};
 pub enum ClaimProblem {
     Destination {
         file: String,
-        reason: String,
+        reason: DetailReason,
     },
     Lookup {
         row: String,
         file: String,
-        reason: String,
+        reason: DetailReason,
     },
     Conflict {
         file: String,
@@ -25,15 +26,19 @@ pub enum ClaimProblem {
 }
 
 impl ClaimProblem {
-    pub fn render(&self, format: impl FnOnce(&'static str, &[(&str, &str)]) -> String) -> String {
+    pub fn render(&self, format: impl Fn(&'static str, &[(&str, &str)]) -> String) -> String {
         match self {
             Self::Destination { file, reason } => format(
                 "Couldn't use {file} as the mod's destination: {reason}",
-                &[("file", file), ("reason", reason)],
+                &[("file", file), ("reason", &reason.render(&format))],
             ),
             Self::Lookup { row, file, reason } => format(
                 "Couldn't check the file {file} claimed by {row}: {reason}",
-                &[("file", file), ("row", row), ("reason", reason)],
+                &[
+                    ("file", file),
+                    ("row", row),
+                    ("reason", &reason.render(&format)),
+                ],
             ),
             Self::Conflict {
                 file,
@@ -53,24 +58,7 @@ impl ClaimProblem {
 
 impl fmt::Display for ClaimProblem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.render(|message, args| {
-            // Only literal template pieces are expanded; a manifest title isn't a template.
-            let mut out = String::new();
-            let mut tail = message;
-            while let Some((before, rest)) = tail.split_once('{') {
-                let (key, after) = rest.split_once('}').expect("closed literal placeholder");
-                out.push_str(before);
-                out.push_str(
-                    args.iter()
-                        .find(|(name, _)| *name == key)
-                        .expect("literal argument")
-                        .1,
-                );
-                tail = after;
-            }
-            out.push_str(tail);
-            out
-        }))
+        f.write_str(&self.render(render_english))
     }
 }
 
@@ -177,7 +165,7 @@ struct Native {
     crossed_link: bool,
 }
 
-fn walk(root: &Path, relative: &Path, is_destination: bool) -> io::Result<Native> {
+fn walk(root: &Path, relative: &Path, is_destination: bool) -> Result<Native, DetailReason> {
     let mut dir = root.to_path_buf();
     let mut suffix = Vec::new();
     let mut via_link = Vec::new();
@@ -216,18 +204,16 @@ fn walk(root: &Path, relative: &Path, is_destination: bool) -> io::Result<Native
                         ) =>
                     {
                         if is_destination {
-                            return Err(e);
+                            return Err(e.into());
                         }
                         suffix.push(None);
                         continue;
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => return Err(e.into()),
                 };
                 let link = is_link(&meta);
                 if is_destination && last && (link || !meta.is_file()) {
-                    return Err(io::Error::other(
-                        "the destination is not a plain regular file",
-                    ));
+                    return Err(DetailReason::NotPlainDestination);
                 }
                 let (file, meta) = if link {
                     // A dangling link is not an available name. Its location cannot be bounded.
@@ -250,14 +236,12 @@ fn walk(root: &Path, relative: &Path, is_destination: bool) -> io::Result<Native
                     }
                 } else {
                     if is_destination {
-                        return Err(io::Error::other(
-                            "a destination component is not a directory",
-                        ));
+                        return Err(DetailReason::NotDirectory);
                     }
                     suffix.push(None);
                 }
             }
-            _ => return Err(io::Error::other("not a path with a known root")),
+            _ => return Err(DetailReason::UnknownRoot),
         }
     }
     let anchor = identity(&dir, &fs::metadata(&dir)?)?;
@@ -288,7 +272,7 @@ fn locate_claim(
     home: &Path,
     actual_home: &Path,
     claim: &Path,
-) -> io::Result<(Native, Option<Vec<String>>)> {
+) -> Result<(Native, Option<Vec<String>>), DetailReason> {
     let joined;
     let (root, relative) = if matches!(
         claim.components().next(),
@@ -300,8 +284,7 @@ fn locate_claim(
         if let Ok(relative) = joined.strip_prefix(home) {
             (None, relative)
         } else {
-            let (root, tail) = filesystem_root(&joined)
-                .ok_or_else(|| io::Error::other("not a path with a known root"))?;
+            let (root, tail) = filesystem_root(&joined).ok_or(DetailReason::UnknownRoot)?;
             (Some(root), tail)
         }
     } else {
@@ -355,18 +338,16 @@ pub(super) fn check_destination<'a>(
     file: &str,
     rows: impl IntoIterator<Item = &'a Value>,
 ) -> Result<(), ClaimProblem> {
-    let destination = |reason: String| ClaimProblem::Destination {
+    let destination = |reason| ClaimProblem::Destination {
         file: file.to_owned(),
         reason,
     };
     if !destination_spelling(file) {
-        return Err(destination("not a portable home-relative file path".into()));
+        return Err(destination(DetailReason::NonPortableDestination));
     }
-    let home = std::path::absolute(home).map_err(|e| destination(e.to_string()))?;
-    let actual_home = home
-        .canonicalize()
-        .map_err(|e| destination(e.to_string()))?;
-    let left = walk(&actual_home, Path::new(file), true).map_err(|e| destination(e.to_string()))?;
+    let home = std::path::absolute(home).map_err(|e| destination(e.into()))?;
+    let actual_home = home.canonicalize().map_err(|e| destination(e.into()))?;
+    let left = walk(&actual_home, Path::new(file), true).map_err(destination)?;
     let left_key = (!left.crossed_link)
         .then(|| home_key(Path::new(file)))
         .flatten();
@@ -381,13 +362,13 @@ pub(super) fn check_destination<'a>(
                 .unwrap_or(other)
                 .to_owned()
         };
-        let lookup = |reason: String| ClaimProblem::Lookup {
+        let lookup = |reason| ClaimProblem::Lookup {
             row: row(),
             file: other.to_owned(),
             reason,
         };
-        let (right, right_key) = locate_claim(&home, &actual_home, Path::new(other))
-            .map_err(|e| lookup(e.to_string()))?;
+        let (right, right_key) =
+            locate_claim(&home, &actual_home, Path::new(other)).map_err(lookup)?;
         if let Some(conflict) = conflicts(left_key.as_deref(), &left, right_key.as_deref(), &right)
         {
             return Err(ClaimProblem::Conflict {

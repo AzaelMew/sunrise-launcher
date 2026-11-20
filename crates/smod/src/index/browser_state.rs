@@ -26,10 +26,82 @@ struct Pending {
     new: Value,
 }
 
-/// A recovery problem, with claim messages kept typed until the launcher translates them.
+/// Authored reasons are translated by the launcher; system and parser diagnostics stay raw.
+#[derive(Debug)]
+pub enum DetailReason {
+    Diagnostic(String),
+    DuplicateRows(String),
+    NotRegular,
+    PendingTooLarge,
+    MissingSha,
+    InvalidSha,
+    InvalidPending,
+    EntriesNotArray,
+    ChangedRow,
+    NonPortableDestination,
+    NotPlainDestination,
+    NotDirectory,
+    UnknownRoot,
+}
+
+impl From<io::Error> for DetailReason {
+    fn from(error: io::Error) -> Self {
+        Self::Diagnostic(error.to_string())
+    }
+}
+
+impl DetailReason {
+    pub fn render(&self, format: impl Fn(&'static str, &[(&str, &str)]) -> String) -> String {
+        let message = match self {
+            Self::Diagnostic(detail) => return detail.clone(),
+            Self::DuplicateRows(id) => {
+                return format(
+                    "several entries in {manifest} name {id}",
+                    &[("manifest", MANIFEST), ("id", id)],
+                );
+            }
+            Self::NotRegular => "not a regular file",
+            Self::PendingTooLarge => "pending entry too large",
+            Self::MissingSha => "missing SHA-256",
+            Self::InvalidSha => "not a lowercase hex SHA-256",
+            Self::InvalidPending => "invalid pending entry",
+            Self::EntriesNotArray => "entries must be an array",
+            Self::ChangedRow => "the project's entry changed since the install began",
+            Self::NonPortableDestination => "not a portable home-relative file path",
+            Self::NotPlainDestination => "the destination is not a plain regular file",
+            Self::NotDirectory => "a destination component is not a directory",
+            Self::UnknownRoot => "not a path with a known root",
+        };
+        format(message, &[])
+    }
+}
+
+// Only literal template pieces are expanded; a manifest title isn't a template.
+fn render_english(message: &'static str, args: &[(&str, &str)]) -> String {
+    let mut out = String::new();
+    let mut tail = message;
+    while let Some((before, rest)) = tail.split_once('{') {
+        let (key, after) = rest.split_once('}').expect("closed literal placeholder");
+        out.push_str(before);
+        out.push_str(
+            args.iter()
+                .find(|(name, _)| *name == key)
+                .expect("literal argument")
+                .1,
+        );
+        tail = after;
+    }
+    out.push_str(tail);
+    out
+}
+
 #[derive(Debug)]
 pub enum RecoveryProblem {
     Diagnostic(String),
+    Detail {
+        path: PathBuf,
+        reason: DetailReason,
+    },
     Claim {
         journal: PathBuf,
         problem: ClaimProblem,
@@ -43,9 +115,19 @@ impl From<String> for RecoveryProblem {
 }
 
 impl RecoveryProblem {
-    pub fn details(self, format: impl FnOnce(&'static str, &[(&str, &str)]) -> String) -> String {
+    fn at(path: &Path, reason: DetailReason) -> Self {
+        Self::Detail {
+            path: path.to_owned(),
+            reason,
+        }
+    }
+
+    pub fn details(&self, format: impl Fn(&'static str, &[(&str, &str)]) -> String) -> String {
         match self {
-            Self::Diagnostic(detail) => detail,
+            Self::Diagnostic(detail) => detail.clone(),
+            Self::Detail { path, reason } => {
+                format!("{}: {}", path.display(), reason.render(format))
+            }
             Self::Claim { journal, problem } => {
                 format!("{}: {}", journal.display(), problem.render(format))
             }
@@ -55,10 +137,7 @@ impl RecoveryProblem {
 
 impl std::fmt::Display for RecoveryProblem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Diagnostic(detail) => f.write_str(detail),
-            Self::Claim { journal, problem } => write!(f, "{}: {problem}", journal.display()),
-        }
+        f.write_str(&self.details(render_english))
     }
 }
 
@@ -83,27 +162,29 @@ fn reconcile_locked(
     hash: impl FnOnce(&Path) -> Result<String, String>,
     sync: impl Fn(&Path) -> io::Result<()>,
 ) -> Result<(), RecoveryProblem> {
-    let error =
-        |e: &dyn std::fmt::Display| RecoveryProblem::Diagnostic(format!("{}: {e}", path.display()));
+    let pending_problem = |reason| RecoveryProblem::at(path, reason);
     match path.symlink_metadata() {
-        Ok(info) if !info.is_file() => return Err(error(&"not a regular file")),
-        Ok(info) if info.len() > MAX_PENDING => return Err(error(&"pending entry too large")),
+        Ok(info) if !info.is_file() => return Err(pending_problem(DetailReason::NotRegular)),
+        Ok(info) if info.len() > MAX_PENDING => {
+            return Err(pending_problem(DetailReason::PendingTooLarge));
+        }
         Ok(_) => {}
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(error(&e)),
+        Err(e) => return Err(pending_problem(e.into())),
     }
     let mut bytes = Vec::new();
     fs::File::open(path)
         .and_then(|file| file.take(MAX_PENDING + 1).read_to_end(&mut bytes))
-        .map_err(|e| error(&e))?;
+        .map_err(|e| pending_problem(e.into()))?;
     if bytes.len() as u64 > MAX_PENDING {
-        return Err(error(&"pending entry too large"));
+        return Err(pending_problem(DetailReason::PendingTooLarge));
     }
-    let pending: Pending = serde_json::from_slice(&bytes).map_err(|e| error(&e))?;
+    let pending: Pending = serde_json::from_slice(&bytes)
+        .map_err(|e| pending_problem(DetailReason::Diagnostic(e.to_string())))?;
     let sha = pending.new["checksum"]
         .as_str()
         .and_then(|hash| hash.strip_prefix("SHA-256:"))
-        .ok_or_else(|| error(&"missing SHA-256"))?;
+        .ok_or_else(|| pending_problem(DetailReason::MissingSha))?;
     let valid_row = |row: &Value| owned_by(row, &pending.id) && row["file"] == pending.file;
     if !valid_id(&pending.id)
         || pending.file != format!("{}/{}.smod", crate::mod_list::DIR, pending.id)
@@ -111,19 +192,19 @@ fn reconcile_locked(
         || !pending.new["version"].is_string()
         || !pending.old.as_ref().is_none_or(valid_row)
     {
-        return Err(error(&"invalid pending entry"));
+        return Err(pending_problem(DetailReason::InvalidPending));
     }
-    hex64(sha).map_err(|e| error(&e))?;
+    hex64(sha).map_err(|_| pending_problem(DetailReason::InvalidSha))?;
 
     // Read every raw row before reading the archive. Even an unpublished intent or an
     // already-new manifest needs a clean ownership check before retiring the sidecar.
     let manifest = home.join(MANIFEST);
     let mut document = manifest_document(&manifest)?;
-    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", manifest.display());
+    let manifest_problem = |reason| RecoveryProblem::at(&manifest, reason);
     let entries = document
         .get_mut("entries")
         .and_then(Value::as_array_mut)
-        .ok_or_else(|| fail(&"entries must be an array"))?;
+        .ok_or_else(|| manifest_problem(DetailReason::EntriesNotArray))?;
     let mut list = Installed {
         entries: std::mem::take(entries),
     };
@@ -140,27 +221,29 @@ fn reconcile_locked(
         Err(e) => return Err(format!("{}: {e}", target.display()).into()),
     };
     if published {
-        let current = list.single(&pending.id)?.map(|i| &list.entries[i]);
+        let current = list
+            .single(&pending.id)
+            .map_err(manifest_problem)?
+            .map(|i| &list.entries[i]);
         if current == Some(&pending.new) {
             // The row may be visible before its rename is durable.
-            sync(&manifest).map_err(|e| fail(&e))?;
+            sync(&manifest).map_err(|e| manifest_problem(e.into()))?;
         } else if current == pending.old.as_ref() {
             sync(&target).map_err(|e| format!("{}: {e}", target.display()))?;
             list.record(pending.new);
             *entries = list.entries;
-            let bytes = serde_json::to_vec_pretty(&document).map_err(|e| fail(&e))?;
-            save(&manifest, &bytes).map_err(|e| fail(&e))?;
+            let bytes = serde_json::to_vec_pretty(&document)
+                .map_err(|e| manifest_problem(DetailReason::Diagnostic(e.to_string())))?;
+            save(&manifest, &bytes).map_err(|e| manifest_problem(e.into()))?;
         } else {
-            return Err(error(
-                &"the project's entry changed since the install began",
-            ));
+            return Err(pending_problem(DetailReason::ChangedRow));
         }
     }
     // Old or unrelated bytes keep the old row. Don't discard recovery data after an I/O error.
     match fs::remove_file(path) {
-        Ok(()) => sync(path).map_err(|e| error(&e)),
+        Ok(()) => sync(path).map_err(|e| pending_problem(e.into())),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(error(&e)),
+        Err(e) => Err(pending_problem(e.into())),
     }
 }
 
@@ -169,16 +252,17 @@ fn owned_by(entry: &Value, id: &str) -> bool {
     entry["source"] == "sunrise" && entry["project"] == id
 }
 
-fn manifest_document(path: &Path) -> Result<Value, String> {
-    let fail = |e: &dyn std::fmt::Display| format!("{}: {e}", path.display());
+fn manifest_document(path: &Path) -> Result<Value, RecoveryProblem> {
+    let fail = |reason| RecoveryProblem::at(path, reason);
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() => {
-            let bytes = fs::read(path).map_err(|error| fail(&error))?;
-            serde_json::from_slice(&bytes).map_err(|error| fail(&error))
+            let bytes = fs::read(path).map_err(|e| fail(e.into()))?;
+            serde_json::from_slice(&bytes)
+                .map_err(|e| fail(DetailReason::Diagnostic(e.to_string())))
         }
-        Ok(_) => Err(fail(&"not a regular file")),
+        Ok(_) => Err(fail(DetailReason::NotRegular)),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(serde_json::json!({"entries": []})),
-        Err(error) => Err(fail(&error)),
+        Err(error) => Err(fail(error.into())),
     }
 }
 
@@ -192,22 +276,22 @@ pub struct Installed {
 
 impl Installed {
     /// Read raw manifest claims after recovery. The caller holds the shared home lock.
-    pub fn read(home: &Path) -> Result<Self, String> {
+    pub fn read(home: &Path) -> Result<Self, RecoveryProblem> {
         let path = home.join(MANIFEST);
         let value = manifest_document(&path)?;
         let entries = value["entries"]
             .as_array()
-            .ok_or_else(|| format!("{}: entries must be an array", path.display()))?
+            .ok_or_else(|| RecoveryProblem::at(&path, DetailReason::EntriesNotArray))?
             .clone();
         Ok(Self { entries })
     }
 
     /// The registry's one entry for project `id`, if any. Several are refused: which one holds
     /// later edits is unknown, and replacing them would lose the others.
-    pub fn single(&self, id: &str) -> Result<Option<usize>, String> {
+    pub fn single(&self, id: &str) -> Result<Option<usize>, DetailReason> {
         let mut rows = (0..self.entries.len()).filter(|&i| owned_by(&self.entries[i], id));
         match (rows.next(), rows.next()) {
-            (_, Some(_)) => Err(format!("several entries in {MANIFEST} name {id}")),
+            (_, Some(_)) => Err(DetailReason::DuplicateRows(id.to_owned())),
             (first, None) => Ok(first),
         }
     }

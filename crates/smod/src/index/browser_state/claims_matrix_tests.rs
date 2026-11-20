@@ -233,6 +233,64 @@ fn ownership_is_checked_even_without_new_bytes_or_with_an_already_new_row() {
 }
 
 #[test]
+fn authored_recovery_reasons_go_through_the_formatter_but_parser_errors_do_not() {
+    let fixture = Recovery::new();
+    fixture.archive(b"new");
+    let journal = fixture.home.join(PENDING);
+    let translator = |template: &'static str, args: &[(&str, &str)]| {
+        format!("<translated {}>", render_english(template, args))
+    };
+    let failure = || reconcile(&fixture.home).unwrap_err();
+
+    fixture.manifest(&[&fixture.old, &fixture.old]);
+    assert!(
+        failure()
+            .details(translator)
+            .ends_with("<translated several entries in mod-browser.json name ruby>")
+    );
+
+    let mut changed = fixture.old.clone();
+    changed["title"] = json!("A local edit");
+    fixture.manifest(&[&changed]);
+    assert!(
+        failure()
+            .details(translator)
+            .ends_with("<translated the project's entry changed since the install began>")
+    );
+
+    let archive = fixture.home.join(FILE);
+    fs::remove_file(&archive).unwrap();
+    fs::create_dir(archive).unwrap();
+    assert!(
+        failure()
+            .details(translator)
+            .ends_with("<translated the destination is not a plain regular file>>")
+    );
+    let error = Installed::default()
+        .check_other_claims(&fixture.home, "ruby", "../ruby.smod")
+        .unwrap_err();
+    assert!(
+        error
+            .render(translator)
+            .ends_with("<translated not a portable home-relative file path>>")
+    );
+
+    fs::write(&journal, b"{!").unwrap();
+    let parse = failure();
+    assert_eq!(
+        parse.details(|_, _| panic!("parser error was translated")),
+        parse.to_string()
+    );
+    fs::remove_file(&journal).unwrap();
+    fs::create_dir(&journal).unwrap();
+    assert!(
+        failure()
+            .details(translator)
+            .ends_with("<translated not a regular file>")
+    );
+}
+
+#[test]
 fn a_competing_claim_refuses_before_the_archive_reader_is_called() {
     let fixture = Recovery::new();
     fixture.archive(b"new");
