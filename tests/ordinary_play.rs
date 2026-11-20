@@ -281,6 +281,39 @@ fn cli_first_play_uses_the_relay_and_keeps_the_same_build_for_an_already_open_mc
 }
 
 #[test]
+fn attached_prelaunch_hook_keeps_both_streams_and_its_failure_code() {
+    let fixture = Fixture::new();
+    let hook = "printf 'hook stdout\\n'; printf 'hook stderr\\n' >&2";
+    fixture.configure(json!({"pre_launch":hook}));
+    fs::write(fixture.home.join("finish"), []).unwrap();
+    let started = fixture.launcher(&["play"]).output().unwrap();
+    assert_eq!(
+        started.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    assert_eq!(started.stdout, b"hook stdout\n");
+    assert!(String::from_utf8_lossy(&started.stderr).contains("hook stderr\n"));
+    assert_resource_args(&fixture, &fixture.game_arguments());
+
+    fs::remove_file(fixture.home.join("args")).unwrap();
+    fixture.configure(
+        json!({"pre_launch":format!("{hook}; exit 37"), "post_exit":"touch bad-post-exit"}),
+    );
+    let refused = fixture.launcher(&["play"]).output().unwrap();
+    assert_eq!(refused.status.code(), Some(37));
+    assert_eq!(refused.stdout, b"hook stdout\n");
+    let error = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        error.contains("hook stderr\n") && error.contains("pre-launch command failed (exit 37)"),
+        "{error}"
+    );
+    assert!(!fixture.home.join("args").exists());
+    assert!(!fixture.home.join("bad-post-exit").exists());
+}
+
+#[test]
 fn offline_play_keeps_protected_environment_filtered_after_jar_preparation() {
     let fixture = Fixture::new();
     fixture.configure(json!({

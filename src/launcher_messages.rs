@@ -147,6 +147,7 @@ impl Launcher {
                             self.native_for = Some(instance.id);
                             self.native_failed(error.to_string(), &[]);
                         }
+                        Err(StartError::Hook(error)) => self.client_error = Some(error.to_string()),
                         Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
                             self.client_error = Some(error);
                         }

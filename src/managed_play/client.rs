@@ -26,6 +26,7 @@ pub enum StartError {
     Journal(GameInstallProblem),
     Account(NoOwner),
     Native(native_mods::Failed),
+    Hook(crate::launch::PreLaunchError),
     UnknownSpawn(String),
     Other(String),
 }
@@ -45,6 +46,7 @@ impl From<StartError> for String {
                 None => format!("{error} {}", crate::i18n::tr(backend::SIGN_IN_HINT)),
             },
             StartError::Native(error) => error.into(),
+            StartError::Hook(error) => error.to_string(),
             StartError::UnknownSpawn(error) | StartError::Other(error) => error,
         }
     }
@@ -150,7 +152,7 @@ impl Client<'_> {
                 &active,
                 &cancellation,
                 cmd,
-                (launch, self.piped),
+                (launch, self.piped, &|line| progress(Progress::Line(line))),
                 prepare_jars,
                 || {
                     if let Some(uuid) = self.accepted_account.filter(|_| !offline) {

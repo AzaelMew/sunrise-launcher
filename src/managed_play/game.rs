@@ -49,7 +49,7 @@ impl Profile {
             active,
             cancellation,
             command,
-            (launch, piped),
+            (launch, piped, &|_| {}),
             |_| Ok(()),
             || Ok(()),
         )
@@ -60,14 +60,15 @@ impl Profile {
         active: &Active,
         cancellation: &Cancellation,
         mut command: Command,
-        (launch, piped): (&crate::launch::Launch, bool),
+        (launch, piped, hook_log): (&crate::launch::Launch, bool, &dyn Fn(String)),
         prepare_jars: impl FnOnce(&Command) -> Result<(), String>,
         check_account: impl FnOnce() -> Result<(), String>,
     ) -> Result<(Child, RuntimeGuard), StartError> {
         let wrapper = crate::launch::managed_wrapper(&mut command, launch);
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
         prepare_jars(&command)?;
-        crate::launch::managed_pre_launch(&command, launch)?;
+        crate::launch::managed_pre_launch(&command, launch, piped, hook_log)
+            .map_err(StartError::Hook)?;
         self.spawn_selected(
             active,
             cancellation,

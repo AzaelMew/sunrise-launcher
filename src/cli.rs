@@ -1447,7 +1447,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 let command = sunrise_launcher::launch::wrap(cmd, &instance.launch)?;
                 (std::time::Instant::now(), attached(command))
             } else {
-                let mut game = managed_play::Client {
+                let start = managed_play::Client {
                     instance: &instance,
                     accepted_account: selected.map(|a| a.uuid.as_str()),
                     explicit_account: account.is_some(),
@@ -1470,7 +1470,17 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                         managed_play::Progress::Line(line) => eprintln!("{line}"),
                         _ => {}
                     },
-                )?;
+                );
+                let mut game = match start {
+                    Ok(game) => game,
+                    Err(managed_play::StartError::Hook(
+                        error @ sunrise_launcher::launch::PreLaunchError::Exit(status),
+                    )) => {
+                        eprintln!("{error}");
+                        return attached_status(status);
+                    }
+                    Err(error) => return Err(error.into()),
+                };
                 for notice in game.registry_notices.iter().chain(&game.notice) {
                     eprintln!("{notice}");
                 }
