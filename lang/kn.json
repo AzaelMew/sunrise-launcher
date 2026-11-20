@@ -412,7 +412,6 @@
   "Sign in again in your browser.": "ನಿಮ್ಮ ಬ್ರೌಸರ್‌ನಲ್ಲಿ ಮತ್ತೊಮ್ಮೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.",
   "Sign in to Tailscale": "Tailscale ಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ",
   "Sign in to play": "ಆಡಲು ಸೈನ್ ಇನ್ ಮಾಡಿ",
-  "Sign in with Microsoft": "Microsoft ನೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ",
   "Sign in with `sunrise-launcher account sign-in`.": "`sunrise-launcher account sign-in` ನೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "ಪ್ಲೇ ಮಾಡಲು Minecraft: Java ಆವೃತ್ತಿಯನ್ನು ಹೊಂದಿರುವ Microsoft ಖಾತೆಯೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ",
   "Sign out": "ಸೈನ್ ಔಟ್ ಮಾಡಿ",
@@ -1456,5 +1455,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Microsoft ನೊಂದಿಗೆ ಸೈನ್ ಇನ್ ಮಾಡಿ"
 }

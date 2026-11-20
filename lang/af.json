@@ -412,7 +412,6 @@
   "Sign in again in your browser.": "Meld weer in jou blaaier aan.",
   "Sign in to Tailscale": "Meld aan by Tailscale",
   "Sign in to play": "Meld aan om te speel",
-  "Sign in with Microsoft": "Meld aan met Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Meld aan met `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Meld aan met 'n Microsoft-rekening wat Minecraft: Java Edition besit om te speel",
   "Sign out": "Meld af",
@@ -1456,5 +1455,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Meld aan met Microsoft"
 }

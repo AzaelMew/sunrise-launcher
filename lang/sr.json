@@ -412,7 +412,6 @@
   "Sign in again in your browser.": "Пријавите се поново у свом претраживачу.",
   "Sign in to Tailscale": "Пријави се на Tailscale",
   "Sign in to play": "Пријавите се да играте",
-  "Sign in with Microsoft": "Пријави се са Microsoft-ом",
   "Sign in with `sunrise-launcher account sign-in`.": "Пријавите се помоћу `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Пријавите се Microsoft налогом који поседује Minecraft: Java Edition да бисте играли",
   "Sign out": "Одјави се",
@@ -1456,5 +1455,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Пријави се са Microsoft-ом"
 }

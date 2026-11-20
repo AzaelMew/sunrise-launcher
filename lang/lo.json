@@ -412,7 +412,6 @@
   "Sign in again in your browser.": "ເຂົ້າສູ່ລະບົບອີກຄັ້ງໃນໂປຣແກຣມທ່ອງເວັບຂອງທ່ານ.",
   "Sign in to Tailscale": "ເຂົ້າສູ່ລະບົບ Tailscale",
   "Sign in to play": "ເຂົ້າສູ່ລະບົບເພື່ອຫຼິ້ນ",
-  "Sign in with Microsoft": "ເຂົ້າສູ່ລະບົບດ້ວຍ Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "ເຂົ້າສູ່ລະບົບດ້ວຍ `sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "ເຂົ້າສູ່ລະບົບດ້ວຍບັນຊີ Microsoft ທີ່ເປັນເຈົ້າຂອງ Minecraft: Java Edition ເພື່ອຫຼິ້ນ",
   "Sign out": "ອອກຈາກລະບົບ",
@@ -1456,5 +1455,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "ເຂົ້າສູ່ລະບົບດ້ວຍ Microsoft"
 }

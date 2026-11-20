@@ -412,7 +412,6 @@
   "Sign in again in your browser.": "请在浏览器中重新登录。",
   "Sign in to Tailscale": "登录 Tailscale",
   "Sign in to play": "登录以开始游戏",
-  "Sign in with Microsoft": "使用 Microsoft 账户登录",
   "Sign in with `sunrise-launcher account sign-in`.": "使用 `sunrise-launcher account sign-in` 登录。",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "登录拥有 Minecraft: Java Edition 的 Microsoft 账户，即可开始游戏",
   "Sign out": "退出登录",
@@ -1456,5 +1455,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "使用 Microsoft 账户登录"
 }

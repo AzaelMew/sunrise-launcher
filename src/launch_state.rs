@@ -272,7 +272,7 @@ impl Facts {
             (said.is_none() && !self.building && self.mods_off > 0).then_some(self.mods_off);
         View {
             main,
-            enabled: location_allows_action(self.located, busy),
+            enabled: location_allows_action(self.located, busy) && main != Main::SignIn,
             said,
             failed,
             act,
@@ -294,10 +294,17 @@ impl Main {
             Main::Starting => tr("Starting…").into(),
             Main::ChangingMods => tr("Changing mods…").into(),
             Main::Stop => tr("Stop game").into(),
-            Main::SignIn => tr("Sign in with Microsoft").into(),
+            // Signed out, Play stays where it is and can't be pressed; signing in is the account
+            // chip's job.
+            Main::SignIn => tr("Play").into(),
             Main::Install => tr("Install and play").into(),
             Main::Play => tr("Play").into(),
         }
+    }
+
+    /// Why Play can't be pressed, said only as its tooltip: no line is added to the page.
+    pub(crate) fn tooltip(self) -> Option<SharedString> {
+        matches!(self, Main::SignIn).then(|| tr("Sign in to play").into())
     }
 
     /// Something Play waits for, as the strip says it off Home.

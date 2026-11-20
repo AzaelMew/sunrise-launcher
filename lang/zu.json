@@ -412,7 +412,6 @@
   "Sign in again in your browser.": "Ngena ngemvume futhi esipheqululini sakho.",
   "Sign in to Tailscale": "Ngena ngemvume ku-Tailscale",
   "Sign in to play": "Ngena ngemvume ukuze udlale",
-  "Sign in with Microsoft": "Ngena ngemvume nge-Microsoft",
   "Sign in with `sunrise-launcher account sign-in`.": "Ngena ngemvume nge-`sunrise-launcher account sign-in`.",
   "Sign in with a Microsoft account that owns Minecraft: Java Edition to play": "Ngena ngemvume nge-akhawunti Microsoft ephethe Minecraft: Java Edition ukuze uyidlale",
   "Sign out": "Phuma",
@@ -1456,5 +1455,6 @@
   "Couldn't check for updates. Check your connection and try again.": "Couldn't check for updates. Check your connection and try again.",
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
-  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry."
+  "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
+  "Sign in with Microsoft": "Ngena ngemvume nge-Microsoft"
 }

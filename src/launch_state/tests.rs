@@ -44,20 +44,38 @@ fn play_says_each_state_in_the_order_they_win() {
         next(&mut facts);
     }
     assert_eq!(Main::Play.label(), "Play");
+    // Signed out, Play is still "Play": Home has no second "Sign in with Microsoft".
+    assert_eq!(Main::SignIn.label(), "Play");
     assert_eq!(Main::Installing(0.42).label(), "Installing · 42%");
+}
+
+#[test]
+fn signed_out_play_is_disabled_and_only_its_tooltip_says_why() {
+    let out = Facts {
+        signed_in: false,
+        ..idle()
+    }
+    .view();
+    assert_eq!(out.main, Main::SignIn);
+    assert!(!out.enabled, "nothing happens when it is pressed");
+    assert_eq!(out.main.tooltip().as_deref(), Some("Sign in to play"));
+    // Signed in: the normal Play, no tooltip.
+    let signed_in = idle().view();
+    assert_eq!(signed_in.main, Main::Play);
+    assert!(signed_in.enabled);
+    assert_eq!(signed_in.main.tooltip(), None);
+    for main in [Main::Play, Main::Install, Main::Stop, Main::Preparing] {
+        assert_eq!(main.tooltip(), None);
+    }
 }
 
 #[test]
 fn play_can_be_pressed_unless_something_is_under_way_or_the_data_is_lost() {
     assert!(idle().view().enabled);
-    // Stop, sign-in and the first install are presses too.
+    // Stop and the first install are presses too.
     for facts in [
         Facts {
             running: true,
-            ..idle()
-        },
-        Facts {
-            signed_in: false,
             ..idle()
         },
         Facts {
