@@ -73,8 +73,17 @@ enum Confirm {
     Update(model::UpdatePlan),
 }
 
+#[derive(PartialEq, Eq)]
+struct OpenScope {
+    id: String,
+    home: PathBuf,
+    target: Option<String>,
+}
+
 struct Open {
     id: String,
+    request: u64,
+    scope: Option<OpenScope>,
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
@@ -195,8 +204,8 @@ enum Event {
         String,
         Result<(InstalledRows, Option<String>), InstalledReadError>,
     ),
-    Catalog(Result<(Vec<Card>, Vec<String>), String>),
-    Page(String, Result<Box<model::Page>, String>),
+    Catalog(String, Result<(Vec<Card>, Vec<String>), String>),
+    Page(u64, Result<Box<model::Page>, String>),
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
@@ -236,6 +245,7 @@ pub(crate) struct ModsState {
     tx: Sender<Event>,
     rx: Receiver<Event>,
     catalog: Catalog,
+    catalog_game: Option<String>,
     find: LineEdit,
     find_focus: Option<FocusHandle>,
     have: LineEdit,
@@ -257,6 +267,7 @@ pub(crate) struct ModsState {
     reviewed_home: Option<PathBuf>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
+    page_request: u64,
     /// The collection whose page is open and the members ticked on it.
     picks: Option<collection::Picks>,
     /// My own batch (update or remove): its line and fraction.
@@ -309,6 +320,7 @@ impl Default for ModsState {
             tx,
             rx,
             catalog: Catalog::Idle,
+            catalog_game: None,
             find: LineEdit::default(),
             find_focus: None,
             have: LineEdit::default(),
@@ -325,6 +337,7 @@ impl Default for ModsState {
             reviewed_home: None,
             snapshot: None,
             open: None,
+            page_request: 0,
             picks: None,
             busy: None,
             notice: None,
@@ -386,7 +399,24 @@ impl Launcher {
             .get_or_insert_with(|| cx.focus_handle().tab_index(0).tab_stop(true))
             .clone();
         match self.ui.page {
-            Page::Project => self.project(cx),
+            Page::Project => {
+                let scope = self.mods_page_scope();
+                if self
+                    .ui
+                    .mods
+                    .open
+                    .as_ref()
+                    .is_some_and(|open| open.scope != scope)
+                {
+                    let open = self.ui.mods.open.take().expect("different open scope");
+                    self.ui.mods.picks = None;
+                    self.mods_load_page(open.id, open.from);
+                    if let Some(now) = self.ui.mods.open.as_mut() {
+                        now.parent = open.parent;
+                    }
+                }
+                self.project(cx)
+            }
             Page::Installed => self.installed(window, &have_focus, cx),
             Page::PackFind => self.pack_find(window, &find_focus, cx),
             Page::PackProject => self.pack_project(cx),
@@ -576,10 +606,14 @@ impl Launcher {
             changed = true;
             let m = &mut self.ui.mods;
             match event {
-                Event::Catalog(Ok((cards, categories))) => {
-                    m.catalog = Catalog::Ready(cards, categories)
+                Event::Catalog(game, result) => {
+                    if m.catalog_game.as_ref() == Some(&game) {
+                        m.catalog = match result {
+                            Ok((cards, categories)) => Catalog::Ready(cards, categories),
+                            Err(error) => Catalog::Failed(error),
+                        };
+                    }
                 }
-                Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
                 Event::Local(key, result) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
                         let refreshed = result.is_ok();
@@ -591,8 +625,8 @@ impl Launcher {
                         }
                     }
                 }
-                Event::Page(id, page) => {
-                    if let Some(open) = m.open.as_mut().filter(|o| o.id == id) {
+                Event::Page(request, page) => {
+                    if let Some(open) = m.open.as_mut().filter(|o| o.request == request) {
                         open.page = Some(page);
                     }
                 }
@@ -694,49 +728,63 @@ impl Launcher {
     }
 
     pub(crate) fn ensure_mod_catalog(&mut self) {
-        if !matches!(self.ui.mods.catalog, Catalog::Idle) {
+        let game = self.mods_game();
+        if self.ui.mods.catalog_game.as_ref() == Some(&game)
+            && !matches!(self.ui.mods.catalog, Catalog::Idle)
+        {
             return;
         }
+        self.ui.mods.catalog_game = Some(game.clone());
         self.ui.mods.catalog = Catalog::Loading;
         let tx = self.ui.mods.tx.clone();
-        let version = self
-            .selected_instance()
-            .map(|i| self.version_of(i).cloned());
         std::thread::spawn(move || {
-            let game = version.map_or_else(sunrise_launcher::browser::game, |v| {
-                backend::played_version_id_by(v.as_deref())
-            });
             let result = sunrise::index().map(|index| {
                 let cards = model::cards(&index, &game);
                 let categories = model::categories(&cards);
                 (cards, categories)
             });
-            let _ = tx.send(Event::Catalog(result));
+            let _ = tx.send(Event::Catalog(game, result));
         });
     }
 
+    fn mods_page_scope(&self) -> Option<OpenScope> {
+        let instance = self.selected_instance()?;
+        Some(OpenScope {
+            id: instance.id.clone(),
+            home: instance.home.clone(),
+            target: self.profile_target(instance).cloned(),
+        })
+    }
+
     fn mods_load_page(&mut self, id: String, from: Page) {
+        let scope = self.mods_page_scope();
+        self.ui.mods.page_request += 1;
+        let request = self.ui.mods.page_request;
         self.ui.mods.open = Some(Open {
             id: id.clone(),
+            request,
+            scope,
             from,
             page: None,
             parent: None,
         });
         // A collection's page reads the index when it draws.
-        if self.is_collection(&id) {
+        if sunrise::known_index().is_some_and(|index| index.collection(&id).is_some()) {
             return;
         }
         let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
-        let instance = instances::selected();
+        let instance = self.selected_instance().cloned();
         std::thread::spawn(move || {
             let result = sunrise::index().and_then(|index| {
-                let trust = sunrise::trust_and_capabilities(&id, Some(&instance), &game);
-                let another = sunrise::made_for_another_build(&id, &instance, &game);
+                let trust = sunrise::trust_and_capabilities(&id, instance.as_ref(), &game);
+                let another = instance
+                    .as_ref()
+                    .is_some_and(|instance| sunrise::made_for_another_build(&id, instance, &game));
                 model::page(&index, &id, &game, trust, another)
                     .map(Box::new)
                     .ok_or_else(|| trf("{id} isn't a mod in Sunrise's registry.", &[("id", &id)]))
             });
-            let _ = tx.send(Event::Page(id, result));
+            let _ = tx.send(Event::Page(request, result));
         });
     }
 
