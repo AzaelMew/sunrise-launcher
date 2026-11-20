@@ -122,8 +122,8 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
     let home = home("zip");
     let out = home.join("out/Hardcore.zip");
     let done = export(&home, "Hardcore", &["Base".into()], &out).unwrap();
-    assert_eq!(done.copied, 8);
-    // Settings, packs, the mod and the picked world, without its per-player files; no logs,
+    assert_eq!(done.copied, 7);
+    // Settings (not the server list), packs, the mod and the picked world, without its per-player files; no logs,
     // screenshots, backups, caches, account files or the other world.
     assert_eq!(
         names(&out),
@@ -133,7 +133,6 @@ fn a_zip_has_the_instance_and_the_picked_world_and_nothing_private() {
             "resourcepacks/Own.zip",
             "saves/Base/level.dat",
             "saves/Base/region/r.0.0.mca",
-            "servers.dat",
             "sunrise-graphics.txt",
             "sunrise-mods/coords/sunrise-mod.toml",
         ]

@@ -4,7 +4,7 @@
 //! Only what makes the instance goes in, from a fixed list ([`FILES`], [`FOLDERS`]): never logs,
 //! screenshots, backups, caches, or anything tied to the player's account. A world goes without
 //! its per-player files (`playerdata/`, `stats/`, `advancements/`) and its level.dat without the
-//! player's UUID.
+//! player's UUID. The player's server list (`servers.dat`) stays out too.
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -23,6 +23,9 @@ pub const FILES: [&str; 6] = [
 pub const FOLDERS: [&str; 4] = ["resourcepacks", "shaderpacks", "sunrise-mods", "config"];
 /// What a world keeps per player: left out.
 const PER_PLAYER: [&str; 4] = ["playerdata", "stats", "advancements", "session.lock"];
+/// Read when a shared zip is imported, but never written: the servers the player plays on are
+/// theirs, not part of the instance they share.
+const NOT_EXPORTED: [&str; 1] = ["servers.dat"];
 
 /// What an export wrote.
 #[derive(Debug, PartialEq)]
@@ -39,7 +42,7 @@ pub struct Exported {
 pub fn export(home: &Path, name: &str, worlds: &[String], out: &Path) -> Result<Exported, String> {
     let mut files: Vec<(String, PathBuf)> = Vec::new();
     for f in FILES {
-        if home.join(f).is_file() {
+        if !NOT_EXPORTED.contains(&f) && home.join(f).is_file() {
             files.push((f.to_string(), home.join(f)));
         }
     }
