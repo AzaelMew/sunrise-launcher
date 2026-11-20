@@ -167,6 +167,7 @@ impl Session {
                     Permission::headless(allow_jar_downloads),
                 )
                 .map_err(|error| error.to_string())?;
+                backend::verify_server_command(&tag, &dir, &cmd)?;
                 let server = Logged::start(Job::Server, cmd, None)?;
                 std::thread::sleep(Duration::from_secs(3));
                 let tail = server.tail(15).join("\n");

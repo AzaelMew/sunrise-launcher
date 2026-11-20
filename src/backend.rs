@@ -2906,17 +2906,16 @@ pub(crate) fn client_program(tag: &str) -> PathBuf {
     dir.join(CLIENT)
 }
 
-pub fn server_command(tag: &str, folder: &Path) -> Command {
-    let mut cmd = Command::new(version_dir(tag).join(CLIENT));
-    if crate::developer_install::uses_developer(tag) {
-        cmd.env("SUNRISE_TELEMETRY_URL", "off");
-    }
-    crate::run_leases::mark(&mut cmd, &version_dir(tag));
-    cmd.current_dir(folder)
-        .arg("--resources")
-        .arg(resources(tag))
-        .args(["--dedicated", "--nogui"]);
-    cmd
+mod dedicated;
+
+pub(crate) use dedicated::root as server_root;
+
+pub fn server_command(tag: &str, folder: &Path) -> Result<Command, String> {
+    dedicated::command(tag, folder)
+}
+
+pub fn verify_server_command(tag: &str, folder: &Path, command: &Command) -> Result<(), String> {
+    dedicated::verify(tag, folder, command)
 }
 
 /// Whether `eula.txt` says `eula` is true, read as a Java properties file as the server reads it:
@@ -3210,6 +3209,16 @@ pub fn join_friend(cmd: &mut Command, code: &str) -> Result<(), String> {
 
 /// The dedicated server's command in `folder`, once prepared and the EULA is agreed to.
 pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, String> {
+    let command = server_command(tag, folder)?;
+    let folder = command
+        .get_current_dir()
+        .expect("dedicated command owns its directory");
+    if crate::native_mods::is_native(tag) {
+        return Err(crate::i18n::tr(
+            "A dedicated server cannot use a profile’s native client build.",
+        )
+        .into());
+    }
     if let Some(error) = game_architecture_launch_error(tag) {
         return Err(error);
     }
@@ -3221,7 +3230,7 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
         return Err("Running a server needs your agreement to the Minecraft EULA (https://aka.ms/MinecraftEULA). Accept it to continue.".into());
     }
     fs::create_dir_all(folder).map_err(|e| e.to_string())?;
-    Ok(server_command(tag, folder))
+    Ok(command)
 }
 
 mod release_selection;

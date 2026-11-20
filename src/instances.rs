@@ -469,6 +469,32 @@ fn pin_packs_in(data: &Path, all: &mut [Instance], build: Option<&str>) {
     }
 }
 
+/// Read managed profile folders without performing the migrations or housekeeping of `list`.
+pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut homes = Vec::new();
+    for (directory, pack) in [(OWN, false), ("sunrise-packs", true)] {
+        let root = game.join(directory);
+        let bad = |e: std::io::Error| format!("{}: {e}", root.display());
+        let entries = match fs::read_dir(&root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(bad(error)),
+        };
+        for entry in entries {
+            let path = entry.map_err(bad)?.path();
+            let meta = fs::symlink_metadata(&path).map_err(bad)?;
+            if meta.is_dir() || sunrise_launcher_smod::runtime_leases::linked(&meta) {
+                homes.push(if pack {
+                    registry_pack::home(&path)
+                } else {
+                    path
+                });
+            }
+        }
+    }
+    Ok(homes)
+}
+
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
     let mut store = Store::load(data);
     let mut found = vec![(

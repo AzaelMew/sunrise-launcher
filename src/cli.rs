@@ -1562,6 +1562,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 sunrise_launcher::jars::Permission::headless(allow_jar_downloads),
             )
             .map_err(|error| error.to_string())?;
+            backend::verify_server_command(&tag, &dir, &cmd)?;
             return attached(cmd, None);
         }
         Cmd::Notes { tag } => {

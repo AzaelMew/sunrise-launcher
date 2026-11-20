@@ -1517,5 +1517,8 @@
   "Not initialized": "Not initialized",
   "A modpack profile keeps the game build it was installed on.": "A modpack profile keeps the game build it was installed on.",
   "{error}\n{stay}: nothing changed.": "{error}\n{stay}: nothing changed.",
-  "Applying the switch.": "Applying the switch."
+  "Applying the switch.": "Applying the switch.",
+  "A dedicated server needs its own folder and verified launch settings, separate from a game profile.": "A dedicated server needs its own folder and verified launch settings, separate from a game profile.",
+  "A dedicated server cannot use a profile’s native client build.": "A dedicated server cannot use a profile’s native client build.",
+  "The server command cannot change its server folder.": "The server command cannot change its server folder."
 }
