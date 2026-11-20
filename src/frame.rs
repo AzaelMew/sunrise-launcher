@@ -340,7 +340,7 @@ impl Launcher {
                             .into()
                     }
                 })?;
-            Target::legacy(tag)
+            Target::first_play(tag, |base| Ok(self.release_to_install(base)))
         }) {
             Ok(target) => target,
             Err(error) => {
@@ -350,20 +350,21 @@ impl Launcher {
         };
         intent.owner = Some(owner.clone());
         let base = target.base().to_owned();
-        if !self.installed.contains(&base) {
-            if let Some(release) = self.release_to_install(&base) {
+        match owner.needs_bootstrap_download(&target) {
+            Ok(true) => {
                 self.ui.after_install = Some((intent, base));
-                self.install_for_instance(release);
-            } else {
-                self.client_error = Some(
-                    tr("No downloadable build matches this profile. Choose a game build.").into(),
-                );
+                self.install_bootstrap(owner, target);
+                return;
             }
-            return;
+            Err(error) => {
+                self.client_error = Some(error);
+                return;
+            }
+            Ok(false) => {}
         }
         if !backend::check_prepared(&base) {
             self.play_when_prepared = Some((base.clone(), intent));
-            self.prepare_tag(base, backend::MinecraftFrom::Install);
+            self.prepare_tag(base, backend::MinecraftFrom::Install, Some(owner));
             return;
         }
         let cancellation = native_mods::Cancellation::for_profile(owner.clone());

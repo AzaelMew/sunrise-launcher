@@ -70,7 +70,7 @@ impl Launcher {
             return;
         }
         if !backend::check_prepared(&tag) {
-            self.prepare_tag(tag, backend::MinecraftFrom::Install);
+            self.prepare_tag(tag, backend::MinecraftFrom::Install, None);
             return;
         }
         let Some(instance) = self

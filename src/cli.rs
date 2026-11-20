@@ -1115,16 +1115,15 @@ pub(crate) fn play_image(
         ));
     }
     let owner = Arc::new(Lease::admit(&instance.home)?);
-    let mut releases = None;
     let target = owner.play_target(|| {
         let installed = backend::installed();
         let selected = backend::Settings::load()
             .selected
             .filter(|t| installed.contains(t));
         let rows = if instance.version.is_none() {
-            releases.insert(backend::releases())
+            backend::releases()
         } else {
-            releases.insert(Ok(Vec::new()))
+            Ok(Vec::new())
         };
         let tag = instances::profile_target(
             instance.version.as_ref(),
@@ -1133,27 +1132,25 @@ pub(crate) fn play_image(
             &installed,
             selected.as_ref(),
         )
+        .cloned()
         .ok_or_else(|| {
             rows.as_ref()
                 .err()
                 .cloned()
                 .unwrap_or_else(backend::no_version_installed)
         })?;
-        Target::legacy(tag)
+        Target::first_play(&tag, |base| {
+            let rows = if instance.version.is_some() {
+                backend::releases()?
+            } else {
+                rows?
+            };
+            Ok(rows.into_iter().find(|release| release.tag == base))
+        })
     })?;
     let base = target.base();
-    if !backend::installed().iter().any(|tag| tag == base) {
-        let rows = match releases {
-            Some(Ok(rows)) if !rows.is_empty() => rows,
-            _ => backend::releases()?,
-        };
-        let release = rows
-            .iter()
-            .find(|release| release.tag == base && release.asset.is_some())
-            .ok_or_else(|| {
-                tr("No downloadable build matches this profile. Choose a game build.").to_string()
-            })?;
-        backend::install(release, progress(release.tag.clone()))?;
+    if owner.needs_bootstrap_download(&target)? {
+        owner.install_bootstrap(&target, progress(base.to_owned()))?;
     }
     if !backend::check_prepared(base) {
         let _prepare = backend::prepare_lock(base)?;

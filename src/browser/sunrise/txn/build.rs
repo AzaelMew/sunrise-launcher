@@ -14,6 +14,12 @@ pub(super) const FILE: &str = "mod-browser/active-build.json";
 pub struct Target {
     base: String,
     preferred_image: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) download: Option<backend::GameDownload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    installed: Option<Artifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preferred: Option<Artifact>,
 }
 
 impl Target {
@@ -29,7 +35,45 @@ impl Target {
         Ok(Self {
             base,
             preferred_image: tag.into(),
+            download: None,
+            installed: None,
+            preferred: None,
         })
+    }
+
+    /// Bind an installed base's bytes, or the actual archive and architecture this front end
+    /// resolved, while the profile is still uninitialized. Later Settings changes are irrelevant.
+    pub fn first_play(
+        tag: &str,
+        release: impl FnOnce(&str) -> Result<Option<backend::Release>, String>,
+    ) -> Result<Self, String> {
+        let mut target = Self::legacy(tag)?;
+        if backend::installed().contains(&target.base) {
+            target.installed = Some(Artifact::capture(target.base())?);
+            if target.base != target.preferred_image {
+                target.preferred = Some(Artifact::capture(target.preferred_image())?);
+            }
+        } else {
+            let release = release(target.base())?
+                .filter(|release| release.tag == target.base)
+                .ok_or_else(|| {
+                    crate::i18n::tr(
+                        "No downloadable build matches this profile. Choose a game build.",
+                    )
+                    .to_string()
+                })?;
+            target.download = Some(backend::GameDownload::select(&release)?);
+        }
+        Ok(target)
+    }
+
+    pub(super) fn check_installed(&self) -> Result<(), String> {
+        for bound in self.installed.iter().chain(self.preferred.iter()) {
+            if *bound != Artifact::capture(&bound.tag)? {
+                return Err(unsettled());
+            }
+        }
+        Ok(())
     }
 
     pub fn base(&self) -> &str {
@@ -42,7 +86,26 @@ impl Target {
 
     pub(super) fn validate(&self) -> Result<(), String> {
         validate_tag(&self.base)?;
-        validate_tag(&self.preferred_image)
+        validate_tag(&self.preferred_image)?;
+        if let Some(download) = &self.download {
+            if self.installed.is_some() || self.preferred_image != self.base {
+                return Err(unsettled());
+            }
+            download.validate(&self.base)?;
+        }
+        if self
+            .installed
+            .as_ref()
+            .is_some_and(|image| image.tag != self.base)
+        {
+            return Err(unsettled());
+        }
+        if self.preferred.as_ref().is_some_and(|image| {
+            self.installed.is_none() || image.tag != self.preferred_image || image.tag == self.base
+        }) {
+            return Err(unsettled());
+        }
+        Ok(())
     }
 }
 
@@ -52,6 +115,8 @@ pub(super) struct Bootstrap {
     pub(super) target: Target,
     pub(super) profile: [u8; 16],
     inputs: [u8; 32],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) proof: Option<backend::GameProof>,
 }
 
 impl Bootstrap {
@@ -62,12 +127,39 @@ impl Bootstrap {
             target,
             profile,
             inputs: inputs(home)?,
+            proof: None,
         })
     }
 
     pub(super) fn verify(&self, home: &Path) -> Result<(), String> {
         if inputs(home)? != self.inputs {
             return Err(crate::i18n::tr("The profile changed while its first build was being prepared. Nothing was switched.").into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate(&self) -> Result<(), String> {
+        self.target.validate()?;
+        if self
+            .proof
+            .as_ref()
+            .is_some_and(|proof| self.target.download.is_none() || !proof.validate())
+        {
+            return Err(unsettled());
+        }
+        Ok(())
+    }
+
+    pub(super) fn verify_artifact(&self) -> Result<(), String> {
+        self.target.check_installed()?;
+        if let Some(download) = &self.target.download {
+            if !self
+                .proof
+                .as_ref()
+                .is_some_and(|proof| download.is_installed(self.target.base(), proof))
+            {
+                return Err(unsettled());
+            }
         }
         Ok(())
     }
@@ -93,6 +185,7 @@ impl Bootstrap {
 
     pub(super) fn active(&self, image: &str, home: &Path) -> Result<Active, String> {
         self.verify(home)?;
+        self.verify_artifact()?;
         Active::capture(
             self.profile,
             1,

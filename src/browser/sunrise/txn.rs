@@ -268,7 +268,7 @@ struct Attempt {
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 enum Intent {
     Install {
-        bootstrap: Option<build::Bootstrap>,
+        bootstrap: Option<Box<build::Bootstrap>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         staged: Option<Box<switch_record::Journal>>,
     },
@@ -326,7 +326,7 @@ impl Record {
 
     fn bootstrap(&self) -> Option<&build::Bootstrap> {
         match &self.intent {
-            Intent::Install { bootstrap, .. } => bootstrap.as_ref(),
+            Intent::Install { bootstrap, .. } => bootstrap.as_deref(),
             Intent::Switch { .. } => None,
         }
     }
@@ -358,8 +358,12 @@ impl Lease {
         let target = resolve()?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        target.check_installed()?;
         record.intent = Intent::Install {
-            bootstrap: Some(build::Bootstrap::bind(&self.home, target.clone())?),
+            bootstrap: Some(Box::new(build::Bootstrap::bind(
+                &self.home,
+                target.clone(),
+            )?)),
             staged: None,
         };
         write(&self.home, &record)?;
@@ -376,6 +380,62 @@ impl Lease {
             return Target::legacy(active.executable());
         }
         self.bind_bootstrap(legacy)
+    }
+
+    /// A committed or already-installed binding is checked before any preparer runs.
+    /// A deferred archive needs work even if the same tag is now installed by another operation.
+    pub fn needs_bootstrap_download(&self, target: &Target) -> Result<bool, String> {
+        let Some(record) = read(&self.home)? else {
+            return Ok(false);
+        };
+        let binding = record.bootstrap().ok_or_else(unsettled)?;
+        if binding.target != *target {
+            return Err(unsettled());
+        }
+        match &target.download {
+            Some(download) => Ok(!binding
+                .proof
+                .as_ref()
+                .is_some_and(|proof| download.is_installed(target.base(), proof))),
+            None => binding.verify_artifact().map(|()| false),
+        }
+    }
+
+    pub fn install_bootstrap(&self, target: &Target, progress: impl Fn(f32)) -> Result<(), String> {
+        let download = target.download.as_ref().ok_or_else(unsettled)?;
+        let proof = self.bootstrap_proof(target, || download.prove(target.base()))?;
+        download.install(target.base(), &proof, progress)
+    }
+
+    /// Check the accepted intent again and persist proof before any archive bytes are requested.
+    fn bootstrap_proof(
+        &self,
+        target: &Target,
+        prove: impl FnOnce() -> Result<crate::backend::GameProof, String>,
+    ) -> Result<crate::backend::GameProof, String> {
+        let _lock = locked(&self.home)?;
+        let mut record = read(&self.home)?.ok_or_else(unsettled)?;
+        let Intent::Install {
+            bootstrap: Some(binding),
+            staged: None,
+        } = &mut record.intent
+        else {
+            return Err(unsettled());
+        };
+        if binding.target != *target || record.pointer.is_some() {
+            return Err(unsettled());
+        }
+        binding.verify(&self.home)?;
+        if let Some(proof) = &binding.proof {
+            // A moving channel may no longer serve these bytes. The signed digest stored before
+            // the first transfer remains the only acceptable one; do not ask the feed again.
+            return Ok(proof.clone());
+        }
+        let proof = prove()?;
+        binding.proof = Some(proof.clone());
+        binding.validate()?;
+        write(&self.home, &record)?;
+        Ok(proof)
     }
 
     /// Verify the actual set; an old browser checksum is not evidence that the game failed
@@ -407,6 +467,7 @@ impl Lease {
                 return Err(unsettled());
             }
             binding.verify(&self.home)?;
+            binding.verify_artifact()?;
         }
         let image = if build::verify_included(target.base(), target.preferred_image(), &self.home)
             .is_ok()
@@ -644,7 +705,7 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
     }
     let record: Record = serde_json::from_slice(&bytes).map_err(|e| kept(e.to_string()))?;
     if let Some(binding) = record.bootstrap() {
-        binding.target.validate()?;
+        binding.validate().map_err(kept)?;
         if !record.attempts.is_empty() || binding.profile == [0; 16] {
             return Err(kept(unsettled()));
         }
@@ -1748,6 +1809,31 @@ mod tests {
         );
     }
 
+    fn fixture_download() -> Target {
+        let tag = "nightly-2099-01-01-abcdef0";
+        let requested = if cfg!(windows) {
+            Some(if cfg!(target_arch = "aarch64") {
+                "arm64"
+            } else {
+                "x64"
+            })
+        } else {
+            None
+        };
+        serde_json::from_value(serde_json::json!({
+            "base": tag,
+            "preferred_image": tag,
+            "download": {
+                "source": "nightly",
+                "file": crate::backend::ASSET.unwrap(),
+                "size": 123,
+                "requested": requested,
+                "time": "2099-01-01T00:00:00Z"
+            }
+        }))
+        .unwrap()
+    }
+
     #[test]
     fn live_bootstrap_process() {
         let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
@@ -1756,6 +1842,20 @@ mod tests {
         let home = PathBuf::from(home);
         let stop = std::env::var("SUNRISE_TEST_LIVE_PROFILE_WORKER").unwrap();
         let owner = Lease::admit(&home).unwrap();
+        if stop == "archive-transfer" {
+            let target = owner.bind_bootstrap(|| Ok(fixture_download())).unwrap();
+            owner
+                .bootstrap_proof(&target, || {
+                    Ok(serde_json::from_value(serde_json::json!({
+                        "archive": "a".repeat(64), "facts": "b".repeat(64)
+                    }))
+                    .unwrap())
+                })
+                .unwrap();
+            // At this point the transfer could have started. No full archive was installed.
+            wait_to_be_killed();
+            return;
+        }
         owner
             .bind_bootstrap(|| Target::legacy("nightly-original"))
             .unwrap();
@@ -1805,6 +1905,38 @@ mod tests {
     }
 
     #[test]
+    fn a_killed_download_resumes_the_saved_target_and_proof_without_the_feed() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let recorded = crash_process(
+            "browser::sunrise::txn::tests::live_bootstrap_process",
+            home,
+            Some("archive-transfer"),
+            || {
+                assert!(Lease::admit(home).is_err());
+                fs::read(home.join(FILE)).unwrap()
+            },
+        );
+        let owner = Lease::admit(home).unwrap();
+        let target = owner
+            .play_target(|| panic!("a newer catalogue is not an alternate target"))
+            .unwrap();
+        assert_eq!(target, fixture_download());
+        assert!(owner.needs_bootstrap_download(&target).unwrap());
+        let proof = owner
+            .bootstrap_proof(&target, || panic!("the served Nightly may now differ"))
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(proof).unwrap(),
+            serde_json::json!({
+                "archive": "a".repeat(64), "facts": "b".repeat(64)
+            })
+        );
+        assert!(owner.active_build().unwrap().is_none());
+        assert_eq!(recorded, fs::read(home.join(FILE)).unwrap());
+    }
+
+    #[test]
     fn play_uses_the_committed_image_and_keeps_profiles_independent() {
         use std::process::Command;
         const ACTOR: &str = "SUNRISE_TEST_BOOTSTRAP_PLAY";
@@ -1828,15 +1960,24 @@ mod tests {
         let base = crate::backend::version_dir("nightly-original");
         fs::create_dir_all(&base).unwrap();
         fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
+        fs::write(base.join(".installed"), b"").unwrap();
         // Cache eviction can select the installed unit now, before either profile has a reference.
         assert!(!references("nightly-original").unwrap());
         let first = crate::backend::game_home().join("instances/first");
         fs::create_dir_all(&first).unwrap();
         let owner = Lease::admit(&first).unwrap();
         let target = owner
-            .play_target(|| Target::legacy("nightly-original"))
+            .play_target(|| Target::first_play("nightly-original", |_| panic!("already installed")))
             .unwrap();
         assert!(references("nightly-original").unwrap());
+        assert!(!owner.needs_bootstrap_download(&target).unwrap());
+        fs::write(
+            base.join(crate::backend::CLIENT),
+            b"wrong preinstalled image",
+        )
+        .unwrap();
+        assert!(owner.needs_bootstrap_download(&target).is_err());
+        fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
         let prepare = |owner: &Lease, target: &Target| {
             owner.play_image(
                 target,

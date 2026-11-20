@@ -75,8 +75,28 @@ impl Launcher {
         if release.asset.is_none() || self.removing.contains(&release.tag) {
             return;
         }
-        let (release, tx) = (release.clone(), self.tx.clone());
-        let tag = release.tag.clone();
+        let release = release.clone();
+        self.install_worker(release.tag.clone(), move |progress| {
+            backend::install(&release, progress)
+        });
+    }
+
+    pub(super) fn install_bootstrap(
+        &mut self,
+        owner: std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>,
+        target: sunrise_launcher::browser::sunrise::txn::Target,
+    ) {
+        self.install_worker(target.base().into(), move |progress| {
+            owner.install_bootstrap(&target, progress)
+        });
+    }
+
+    fn install_worker(
+        &mut self,
+        tag: String,
+        work: impl FnOnce(&dyn Fn(f32)) -> Result<(), String> + Send + 'static,
+    ) {
+        let tx = self.tx.clone();
         self.installing = Some((tag.clone(), 0.0));
         self.install_started = Some(Instant::now());
         self.bar = (0., 0.);
@@ -85,7 +105,7 @@ impl Launcher {
             let progress = |p| {
                 let _ = tx.send(Msg::Progress(tag.clone(), p));
             };
-            let result = backend::install(&release, progress);
+            let result = work(&progress);
             let _ = tx.send(Msg::Installed(tag, result));
         });
     }
@@ -96,10 +116,15 @@ impl Launcher {
         let Some(tag) = self.selected().cloned() else {
             return;
         };
-        self.prepare_tag(tag, from);
+        self.prepare_tag(tag, from, None);
     }
 
-    pub(super) fn prepare_tag(&mut self, tag: String, from: backend::MinecraftFrom) {
+    pub(super) fn prepare_tag(
+        &mut self,
+        tag: String,
+        from: backend::MinecraftFrom,
+        owner: Option<std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>>,
+    ) {
         sunrise_launcher::mojang::CANCEL.store(false, Ordering::Relaxed);
         let minecraft = self
             .settings
@@ -130,7 +155,13 @@ impl Launcher {
                     p
                 })
                 .and_then(|cmd| {
-                    backend::spawn_holding(Job::Prepare, cmd, tx.clone(), Some(lock), None)
+                    backend::spawn_holding(
+                        Job::Prepare,
+                        cmd,
+                        tx.clone(),
+                        Some(lock),
+                        owner.as_deref(),
+                    )
                 });
             // A running preparer sends its own Exit when it ends.
             if let Err(e) = result {
