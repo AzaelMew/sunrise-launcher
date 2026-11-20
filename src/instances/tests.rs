@@ -781,3 +781,14 @@ fn artwork_reader_does_not_wait_for_a_pipe_writer() {
     assert_eq!(read_artwork(&path), None);
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn a_modpacks_profile_is_told_by_its_id() {
+    let root = scratch("pack-profile");
+    let mut instance = create_in(&root.join("home"), &root.join("data"), "Cozy", None).unwrap();
+    instance.id = "pack:cozy".into();
+    assert!(instance.is_pack_profile());
+    instance.id = "main".into();
+    assert!(!instance.is_pack_profile());
+    fs::remove_dir_all(root).unwrap();
+}

@@ -295,6 +295,7 @@ impl Launcher {
         let (pinned, channel) = (instance.version.clone(), instance.channel);
         let plays = self.version_of(instance).cloned();
         let home = instance.home.clone();
+        let is_pack = instance.is_pack_profile();
         let has_native = !native_status::enabled(&home).is_empty();
         let releases: &[Release] = match &self.releases {
             Load::Ready(rows) => rows,
@@ -489,7 +490,7 @@ impl Launcher {
             .text_color(rgb(palette().background))
             .hover(|s| s.bg(rgb(palette().accent_on)));
         let keep = match pick.filter(|p| Some(p) != pinned.as_ref()) {
-            Some(tag) if !self.launch_busy() && self.client.is_none() => {
+            Some(tag) if !self.launch_busy() && self.client.is_none() && !is_pack => {
                 keep.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.pin_build(Some(tag.clone()), channel);
                     if sheet && this.ui.sheets.error.is_none() {

@@ -798,10 +798,7 @@ impl Launcher {
         }
         let brought = std::mem::take(&mut self.mods.building);
         let touched = std::mem::take(&mut self.mods.undo);
-        if self
-            .selected_instance()
-            .is_none_or(|i| i.id.starts_with("pack:"))
-        {
+        if self.selected_instance().is_none_or(|i| i.is_pack_profile()) {
             return;
         }
         let stopped = match end {
@@ -1093,7 +1090,7 @@ pub(super) fn auto_update(
     let mut out = AutoOutcome::default();
     for t in targets {
         let i = &t.instance;
-        if i.id.starts_with("pack:") {
+        if i.is_pack_profile() {
             continue;
         }
         let ctx = sunrise::auto::Context {
