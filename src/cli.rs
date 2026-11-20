@@ -2138,14 +2138,17 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                            everything: bool| {
         if project.source == SourceId::Sunrise && project.kind == Kind::Mod {
             let owner = Arc::new(sunrise::txn::Lease::admit(&home)?);
-            return sunrise::prepare_registry_install(
+            let proposal = sunrise::prepare_registry_install(
                 owner,
                 &instance,
                 std::slice::from_ref(&project.id),
                 &line,
                 &registry_consent,
-            )?
-            .commit(false);
+            )?;
+            if !switch::approve_world_change(proposal.question(), tr("Update anyway? [y/N]"))? {
+                return Err(tr("Update cancelled. Nothing was changed.").into());
+            }
+            return proposal.commit(true);
         }
         installed::install(source, project, everything, &home, &game, &line).map_err(Into::into)
     };
