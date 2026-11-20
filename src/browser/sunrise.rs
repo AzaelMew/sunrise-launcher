@@ -1762,8 +1762,9 @@ fn check_before_play(
     };
     // Reading revocations must never turn off a package in the committed profile.
     // Identifying a file by its actual bytes also covers a game-owned update of that file.
-    for (manifest, path) in packages {
-        if !mod_list::is_enabled(home, &manifest.id) {
+    for package in packages {
+        let (manifest, path) = (package.manifest, package.path);
+        if package.directory || !mod_list::is_enabled(home, &manifest.id) {
             continue;
         }
         let hash = index::sha256_file(&path)?;

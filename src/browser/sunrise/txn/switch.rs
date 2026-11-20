@@ -24,6 +24,7 @@ const MAX_TRIALS: usize = 20_000;
 #[derive(Clone)]
 pub(super) struct Package {
     pub(super) manifest: Manifest,
+    pub(super) directory: bool,
     pub(super) digest: String,
     pub(super) relative: PathBuf,
     file: PathBuf,
@@ -299,7 +300,7 @@ impl Inventory {
     }
 
     fn read_rows(home: &Path, repair: bool) -> Result<(Self, bool), String> {
-        build::verify_packages(home)?;
+        let discovered = build::scan_packages(home)?;
         let mut browser = match build::optional_bytes(&home.join(installed::MANIFEST))? {
             None => serde_json::json!({ "entries": [] }),
             Some(bytes) => serde_json::from_slice(&bytes)
@@ -329,65 +330,61 @@ impl Inventory {
         }
         let mut packages = BTreeMap::new();
         let mut changed = false;
-        for folder in [mod_list::DIR, mod_list::NATIVE_DIR] {
-            let dir = home.join(folder);
-            let entries = match fs::read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-                Err(e) => return Err(bad(&dir, e)),
+        for build::ScannedPackage {
+            manifest,
+            path: file,
+            directory,
+        } in discovered
+        {
+            let relative = file
+                .strip_prefix(home)
+                .map_err(|e| e.to_string())?
+                .to_owned();
+            let id = manifest.id.clone();
+            let on = browser::mod_list::is_enabled(home, &id);
+            let digest = if directory {
+                build::unpacked_digest(&file)?
+            } else {
+                index::sha256_file(&file)?
             };
-            for entry in entries {
-                let file = entry.map_err(|e| bad(&dir, e))?.path();
-                if file.extension().is_none_or(|ext| ext != "smod") {
-                    continue;
-                }
-                let relative = file
-                    .strip_prefix(home)
-                    .map_err(|e| e.to_string())?
-                    .to_owned();
-                let manifest = manifest::Package::read(&file)
-                    .map_err(|e| bad(&file, e))?
-                    .manifest;
-                let id = manifest.id.clone();
-                let on = browser::mod_list::is_enabled(home, &id);
-                let digest = index::sha256_file(&file)?;
-                let row = if let Some((position, mut row)) = tracked.remove(&relative) {
-                    if row.source != browser::SourceId::Sunrise
-                        || row.project != id
-                        || sunrise::mod_id(&row) != Some(&id)
-                        || (!repair && row.version != manifest.version)
-                    {
-                        return Err(unsettled());
-                    }
-                    let checksum = format!("SHA-256:{digest}");
-                    if repair
-                        && (row.version != manifest.version
-                            || !row.checksum.eq_ignore_ascii_case(&checksum))
-                    {
-                        row.version.clone_from(&manifest.version);
-                        row.number.clone_from(&manifest.version);
-                        row.checksum = checksum;
-                        let raw = &mut rows[position];
-                        raw["version"] = serde_json::Value::from(row.version.clone());
-                        raw["number"] = serde_json::Value::from(row.number.clone());
-                        raw["checksum"] = serde_json::Value::from(row.checksum.clone());
-                        changed = true;
-                    }
-                    Some(row)
-                } else {
-                    None
-                };
-                let pkg = Package {
-                    manifest,
-                    digest,
-                    relative,
-                    file,
-                    row,
-                    on,
-                };
-                if packages.insert(id, pkg).is_some() {
+            let row = if let Some((position, mut row)) = tracked.remove(&relative) {
+                if directory
+                    || row.source != browser::SourceId::Sunrise
+                    || row.project != id
+                    || sunrise::mod_id(&row) != Some(&id)
+                    || (!repair && row.version != manifest.version)
+                {
                     return Err(unsettled());
                 }
+                let checksum = format!("SHA-256:{digest}");
+                if repair
+                    && (row.version != manifest.version
+                        || !row.checksum.eq_ignore_ascii_case(&checksum))
+                {
+                    row.version.clone_from(&manifest.version);
+                    row.number.clone_from(&manifest.version);
+                    row.checksum = checksum;
+                    let raw = &mut rows[position];
+                    raw["version"] = serde_json::Value::from(row.version.clone());
+                    raw["number"] = serde_json::Value::from(row.number.clone());
+                    raw["checksum"] = serde_json::Value::from(row.checksum.clone());
+                    changed = true;
+                }
+                Some(row)
+            } else {
+                None
+            };
+            let pkg = Package {
+                manifest,
+                directory,
+                digest,
+                relative,
+                file,
+                row,
+                on,
+            };
+            if packages.insert(id, pkg).is_some() {
+                return Err(unsettled());
             }
         }
         if !tracked.is_empty() {
@@ -427,6 +424,9 @@ fn outcomes(
     for (id, old) in &source.packages {
         if chosen.contains_key(id.as_str()) {
             continue;
+        }
+        if old.directory {
+            return Err(unpacked_edit(old));
         }
         let origin = old.row.as_ref().map(|row| row.project.as_str());
         if let Some(revoked) = sunrise::package_revocation(catalogue, id, &old.digest, origin) {
@@ -474,21 +474,16 @@ fn candidates(
         let mut choices = Vec::new();
         let old = source.packages.get(&id);
         if let Some(old) = old.filter(|old| old.row.is_none()) {
-            if sunrise::package_revocation(catalogue, &id, &old.digest, None).is_some() {
+            if !old.directory
+                && sunrise::package_revocation(catalogue, &id, &old.digest, None).is_some()
+            {
                 slots.insert(id, choices);
                 continue;
             }
             if old.manifest.api != manifest::API {
                 return Err(unsettled());
             }
-            choices.push(Package {
-                manifest: old.manifest.clone(),
-                digest: old.digest.clone(),
-                relative: old.relative.clone(),
-                file: old.file.clone(),
-                row: None,
-                on: old.on,
-            });
+            choices.push(old.clone());
         } else if let Some(project) = old
             .and_then(|p| p.row.as_ref())
             .map(|p| p.project.as_str())
@@ -565,6 +560,7 @@ fn candidates(
                 };
                 choices.push(Package {
                     manifest,
+                    directory: false,
                     digest: d.sha256.to_ascii_lowercase(),
                     relative,
                     file,
@@ -661,6 +657,9 @@ fn best_survivor_set<'a>(
                     }
                 }
                 chosen.remove(id);
+            }
+            if choices.iter().any(|pkg| pkg.directory) {
+                return Ok(false);
             }
             self.try_rank(at + 1, retained, chosen, trial)
         }
@@ -807,8 +806,13 @@ fn stage_set(
         let target = stage.join(&pkg.relative);
         let parent = target.parent().ok_or_else(unsettled)?;
         fs::create_dir_all(parent).map_err(|e| bad(parent, e))?;
-        fs::copy(&pkg.file, &target).map_err(|e| bad(&target, e))?;
-        if index::sha256_file(&target)? != pkg.digest {
+        let digest = if pkg.directory {
+            build::unpacked_digest(&target)?
+        } else {
+            fs::copy(&pkg.file, &target).map_err(|e| bad(&target, e))?;
+            index::sha256_file(&target)?
+        };
+        if digest != pkg.digest {
             return Err(unsettled());
         }
         if let Some(row) = &pkg.row {
@@ -914,10 +918,21 @@ pub(super) fn changes(
     old: &Inventory,
     chosen: &BTreeMap<&str, &Package>,
 ) -> Result<Vec<(PathBuf, Option<PathBuf>)>, String> {
+    for (id, pkg) in old.packages.iter().filter(|(_, pkg)| pkg.directory) {
+        if chosen.get(id.as_str()).is_none_or(|new| {
+            !new.directory
+                || pkg.on != new.on
+                || pkg.digest != new.digest
+                || pkg.relative != new.relative
+        }) {
+            return Err(unpacked_edit(pkg));
+        }
+    }
     let mut paths: BTreeSet<_> = old
         .packages
         .values()
         .chain(chosen.values().copied())
+        .filter(|pkg| !pkg.directory)
         .map(|pkg| pkg.relative.clone())
         .collect();
     paths.extend([
@@ -936,6 +951,10 @@ pub(super) fn changes(
     Ok(changed)
 }
 
+fn unpacked_edit(pkg: &Package) -> String {
+    crate::i18n::trf("The unpacked mod {mod} would have to change. Move it yourself, then try again. Nothing was changed.", &[("mod", &pkg.manifest.name)])
+}
+
 fn save(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|e| bad(path, e))
 }
@@ -949,6 +968,60 @@ fn too_many() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unpacked_game_candidates_are_counted_but_never_edited_by_a_transaction() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(mod_list::DIR).join("my-copy");
+        fs::create_dir_all(&path).unwrap();
+        let text = format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n", manifest::API);
+        fs::write(path.join(manifest::MANIFEST), &text).unwrap();
+        fs::write(home.path().join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
+        let enabled = BTreeSet::from(["lantern".to_owned()]);
+        assert_eq!(
+            sunrise_launcher_smod::selection::content_packages(home.path(), &enabled, &[])
+                .next()
+                .unwrap()
+                .path,
+            path
+        );
+        let before = Inventory::read(home.path()).unwrap();
+        let pkg = &before.packages["lantern"];
+        assert!(
+            pkg.directory && pkg.on,
+            "the manifest, not `my-copy`, decides selection"
+        );
+        let stage = tempfile::tempdir().unwrap();
+        let chosen = BTreeMap::from([("lantern", pkg)]);
+        stage_set(home.path(), stage.path(), &before, &chosen).unwrap();
+        assert!(changes(home.path(), stage.path(), &before, &chosen)
+            .unwrap()
+            .iter()
+            .all(|(path, _)| path != &pkg.relative));
+        assert!(
+            changes(home.path(), stage.path(), &before, &BTreeMap::new())
+                .unwrap_err()
+                .contains("The unpacked mod Lantern would have to change")
+        );
+        let archive = sunrise_launcher_smod::Package::write_files(&text, &[]).unwrap();
+        fs::write(
+            stage.path().join(mod_list::DIR).join("lantern.smod"),
+            archive,
+        )
+        .unwrap();
+        assert!(
+            matches!(Inventory::read(stage.path()), Err(why) if why.contains("more than one installed package for lantern"))
+        );
+        assert_eq!(
+            fs::read_to_string(path.join(manifest::MANIFEST)).unwrap(),
+            text
+        );
+        assert!(!home
+            .path()
+            .join(mod_list::DIR)
+            .join("lantern.smod")
+            .exists());
+    }
 
     #[test]
     fn no_fit_keeps_the_exact_native_package_off_but_a_takedown_removes_it() {
@@ -1172,7 +1245,7 @@ mod tests {
             let make = |version: &str| {
                 Package {
                 manifest: Manifest::parse(&format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"{version}\"\napi = \"{}\"\ncapabilities = [\"registries\"]\n", manifest::API)).unwrap(),
-                digest: String::new(), file: PathBuf::new(), relative: PathBuf::new(), row: None, on: true,
+                directory: false, digest: String::new(), file: PathBuf::new(), relative: PathBuf::new(), row: None, on: true,
             }
             };
             packages.insert(id.clone(), make("1.0.0"));

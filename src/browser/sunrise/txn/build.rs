@@ -546,9 +546,17 @@ pub(super) fn verify_packages(home: &Path) -> Result<(), String> {
     scan_packages(home).map(drop)
 }
 
+/// The files the game discovers by extension or an unpacked package manifest. Directory
+/// contents have a tree fingerprint, never a registry archive identity.
+pub(in crate::browser::sunrise) struct ScannedPackage {
+    pub manifest: sunrise_launcher_smod::manifest::Manifest,
+    pub path: PathBuf,
+    pub directory: bool,
+}
+
 pub(in crate::browser::sunrise) fn scan_packages(
     home: &Path,
-) -> Result<Vec<(sunrise_launcher_smod::manifest::Manifest, PathBuf)>, String> {
+) -> Result<Vec<ScannedPackage>, String> {
     use sunrise_launcher_smod::{manifest, mod_list};
     let mut packages = Vec::new();
     let mut ids = std::collections::HashSet::new();
@@ -560,20 +568,44 @@ pub(in crate::browser::sunrise) fn scan_packages(
             Err(e) => return Err(format!("{}: {e}", root.display())),
         };
         for entry in entries {
-            let path = entry
-                .map_err(|e| format!("{}: {e}", root.display()))?
-                .path();
+            let entry = entry.map_err(|e| format!("{}: {e}", root.display()))?;
+            let path = entry.path();
+            let at = |e| format!("{}: {e}", path.display());
+            let meta = fs::symlink_metadata(&path).map_err(at)?;
             if path.extension().is_none_or(|ext| ext != "smod") {
-                continue;
+                if !meta.is_dir() {
+                    continue;
+                }
+                let manifest = path.join(manifest::MANIFEST);
+                match fs::symlink_metadata(&manifest) {
+                    Ok(meta) if meta.is_file() && regular(&meta) => (),
+                    Ok(_) => return Err(unsettled()),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(format!("{}: {e}", manifest.display())),
+                }
+            }
+            if !regular(&meta) {
+                return Err(unsettled());
             }
             let package =
                 manifest::Package::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            if (directory == mod_list::NATIVE_DIR) != package.manifest.native.is_some()
-                || !ids.insert(package.manifest.id.clone())
-            {
+            if meta.is_dir() && package.is_native() {
+                return Err(crate::i18n::trf(
+                    "Pack {mod} as an .smod before using it as an installed native mod.",
+                    &[("mod", &package.manifest.name)],
+                ));
+            }
+            if !meta.is_dir() && (directory == mod_list::NATIVE_DIR) != package.is_native() {
                 return Err(unsettled());
             }
-            packages.push((package.manifest, path));
+            if !ids.insert(package.manifest.id.clone()) {
+                return Err(crate::i18n::trf("There is more than one installed package for {mod}. Move the duplicate before trying again.", &[("mod", &package.manifest.id)]));
+            }
+            packages.push(ScannedPackage {
+                manifest: package.manifest,
+                path,
+                directory: meta.is_dir(),
+            });
         }
     }
     Ok(packages)
@@ -822,65 +854,73 @@ pub(super) fn inputs_with_browser(
     home: &Path,
     repaired: Option<&[u8]>,
 ) -> Result<[u8; 32], String> {
-    fn item(
-        hash: &mut Sha256,
-        root: &Path,
-        rel: &str,
-        replacement: Option<&[u8]>,
-    ) -> Result<(), String> {
-        hash.update((rel.len() as u64).to_le_bytes());
-        hash.update(rel.as_bytes());
-        if let Some(bytes) = replacement {
-            hash.update(b"f");
-            hash.update(Sha256::digest(bytes));
-            return Ok(());
-        }
-        let path = root.join(rel);
-        let io_error = |e| format!("{}: {e}", path.display());
-        let meta = match fs::symlink_metadata(&path) {
-            Ok(meta) if regular(&meta) => meta,
-            Ok(_) => return Err(io_error(io::Error::from(io::ErrorKind::InvalidData))),
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                hash.update(b"-");
-                return Ok(());
-            }
-            Err(e) => return Err(io_error(e)),
-        };
-        if meta.is_dir() {
-            hash.update(b"[");
-            let mut names: Vec<_> = fs::read_dir(&path)
-                .map_err(io_error)?
-                .map(|e| e.map(|e| e.file_name()))
-                .collect::<Result<_, _>>()
-                .map_err(io_error)?;
-            names.sort_unstable();
-            for name in names {
-                let name = name.to_str().ok_or_else(unsettled)?;
-                item(hash, root, &format!("{rel}/{name}"), None)?;
-            }
-            hash.update(b"]");
-        } else if meta.is_file() {
-            let Image::Sha256(digest) = Image::at(&path)? else {
-                return Err(unsettled());
-            };
-            hash.update(b"f");
-            hash.update(digest);
-        } else {
-            return Err(io_error(io::Error::from(io::ErrorKind::InvalidData)));
-        }
-        Ok(())
-    }
-
     use sunrise_launcher_smod::mod_list::{DIR, FILE, NATIVE_DIR};
     let mut hash = Sha256::new();
     for rel in [DIR, NATIVE_DIR, FILE] {
-        item(&mut hash, home, rel, None)?;
+        hash_node(&mut hash, home, rel, None)?;
     }
-    item(
+    hash_node(
         &mut hash,
         home,
         crate::browser::installed::MANIFEST,
         repaired,
     )?;
     Ok(hash.finalize().into())
+}
+
+/// A root-independent package tree identity; explicitly distinct from an archive hash.
+pub(super) fn unpacked_digest(path: &Path) -> Result<String, String> {
+    let mut hash = Sha256::new();
+    hash.update(b"unpacked-smod\0");
+    hash_node(&mut hash, path, ".", None)?;
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+fn hash_node(
+    hash: &mut Sha256,
+    root: &Path,
+    rel: &str,
+    replacement: Option<&[u8]>,
+) -> Result<(), String> {
+    hash.update((rel.len() as u64).to_le_bytes());
+    hash.update(rel.as_bytes());
+    if let Some(bytes) = replacement {
+        hash.update(b"f");
+        hash.update(Sha256::digest(bytes));
+        return Ok(());
+    }
+    let path = root.join(rel);
+    let io_error = |e| format!("{}: {e}", path.display());
+    let meta = match fs::symlink_metadata(&path) {
+        Ok(meta) if regular(&meta) => meta,
+        Ok(_) => return Err(io_error(io::Error::from(io::ErrorKind::InvalidData))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            hash.update(b"-");
+            return Ok(());
+        }
+        Err(e) => return Err(io_error(e)),
+    };
+    if meta.is_dir() {
+        hash.update(b"[");
+        let mut names: Vec<_> = fs::read_dir(&path)
+            .map_err(io_error)?
+            .map(|e| e.map(|e| e.file_name()))
+            .collect::<Result<_, _>>()
+            .map_err(io_error)?;
+        names.sort_unstable();
+        for name in names {
+            let name = name.to_str().ok_or_else(unsettled)?;
+            hash_node(hash, root, &format!("{rel}/{name}"), None)?;
+        }
+        hash.update(b"]");
+    } else if meta.is_file() {
+        let Image::Sha256(digest) = Image::at(&path)? else {
+            return Err(unsettled());
+        };
+        hash.update(b"f");
+        hash.update(digest);
+    } else {
+        return Err(io_error(io::Error::from(io::ErrorKind::InvalidData)));
+    }
+    Ok(())
 }

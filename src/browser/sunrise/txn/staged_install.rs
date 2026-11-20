@@ -217,6 +217,9 @@ impl StagedInstall {
     fn proposed_inventory(&self, index: &index::Index) -> Result<switch::Inventory, String> {
         let after = switch::Inventory::read(&self.stage)?;
         for (id, pkg) in &after.packages {
+            if pkg.directory {
+                continue;
+            }
             let origin = pkg.row.as_ref().map(|row| row.project.as_str());
             if let Some(revoked) =
                 crate::browser::sunrise::package_revocation(index, id, &pkg.digest, origin)
