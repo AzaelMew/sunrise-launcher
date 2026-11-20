@@ -21,6 +21,13 @@ pub(super) fn install(
         .prefix(".installed-mods-")
         .tempdir_in(home)
         .map_err(|e| format!("{}: {e}", home.display()))?;
+    // An install an earlier run left half done is undone first; while it can't be, nothing new
+    // is begun on top of its list.
+    if !super::journal::recover(home) {
+        return Err(
+            "An earlier install is still being undone. Restart the launcher and try again.".into(),
+        );
+    }
     let installed = installed::Installed::load(home);
     // The index's claims plan the versions first: an unsatisfiable set is refused with the planner's
     // reason before anything downloads, and each dependency is fetched at the version it chose.
@@ -148,13 +155,23 @@ pub(super) fn install(
         changes.push((next, saved));
     }
     let _staged = publish(staged, changes)?;
-    for (broken, copy) in aside {
-        let to = super::unreadable_slot(home, &broken)?;
-        fs::copy(copy, &to).map_err(|e| format!("{}: {e}", to.display()))?;
-    }
-    for path in stale {
-        let _ = fs::remove_file(path);
-    }
+    // The files are in place and the list is still kept: what is left to do is part of the
+    // install, and a failure in it puts the files back.
+    super::journal::commit(home, || {
+        for (broken, copy) in aside {
+            let to = super::unreadable_slot(home, &broken)?;
+            fs::copy(copy, &to).map_err(|e| format!("{}: {e}", to.display()))?;
+        }
+        for path in stale {
+            match fs::remove_file(&path) {
+                Err(e) if e.kind() != io::ErrorKind::NotFound => {
+                    return Err(format!("{}: {e}", path.display()));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    })?;
     Ok(done)
 }
 
@@ -279,6 +296,7 @@ impl Plan<'_> {
 }
 
 /// Same-filesystem moves with an undo list; even a failed metadata write restores old files.
+/// The list stays until the caller commits (`journal::commit`): publishing is not the end.
 /// The profile lock keeps another launcher or game start from seeing an intermediate state.
 fn publish(
     staged: tempfile::TempDir,
@@ -326,8 +344,10 @@ fn publish(
             }
             let message = format!("Cannot install {}: {e}", to.display());
             return Err(if rollback_errors.is_empty() {
-                super::journal::finish(&home);
-                message
+                match super::journal::finish(&home) {
+                    Ok(()) => message,
+                    Err(e) => format!("{message}; {e}"),
+                }
             } else {
                 format!(
                     "{message}; rollback failed: {}. Backups: {}",
@@ -337,6 +357,5 @@ fn publish(
             });
         }
     }
-    super::journal::finish(&home);
     Ok(staged)
 }
