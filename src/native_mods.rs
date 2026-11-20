@@ -1039,23 +1039,25 @@ fn check_all(
     };
     let program = sdk_cache::tool(sdk, base, &|_| {})?;
     let mut plan = serde_json::json!({"contract": 2, "mods": folder, "build": sdk.commit()});
-    let checked = loop {
+    let mut supplied = Vec::new();
+    loop {
         let checked = tool::check(&program, &plan, cancellation).map_err(refused)?;
-        let needs = |what: &str| {
-            checked
-                .mods
-                .iter()
-                .any(|m| m.needs.as_deref() == Some(what))
-        };
-        if needs("surface") && plan.get("surface").is_none() {
-            plan["surface"] = serde_json::json!(sdk_cache::surface_file(sdk, base)?);
-        } else if needs("build-data") && plan.get("build_data").is_none() {
-            plan["build_data"] = serde_json::json!(sdk_cache::build_data(sdk, base)?);
-        } else {
-            break checked;
+        let (checks, needed) = checks_from(checked, ids, &supplied).map_err(refused)?;
+        if needed.is_empty() {
+            return Ok(checks);
         }
-    };
-    checks_from(checked, ids).map_err(refused)
+        for need in needed {
+            match need {
+                tool::Need::Surface => {
+                    plan["surface"] = serde_json::json!(sdk_cache::surface_file(sdk, base)?);
+                }
+                tool::Need::BuildData => {
+                    plan["build_data"] = serde_json::json!(sdk_cache::build_data(sdk, base)?);
+                }
+            }
+            supplied.push(need);
+        }
+    }
 }
 
 /// What the player reads of a mod the tool refuses (`why`, in the tool's words).
@@ -1066,23 +1068,48 @@ fn refusal_text(id: &str, why: &str) -> String {
     )
 }
 
-/// The checks of `ids` in the tool's reply; a reply without a `route` field comes from a tool older than this launcher.
-fn checks_from(checked: tool::Checked, ids: &[&str]) -> Result<Checks, String> {
+/// Validate the whole reply before accepting a verdict or fetching another SDK file.
+fn checks_from(
+    checked: tool::Checked,
+    ids: &[&str],
+    supplied: &[tool::Need],
+) -> Result<(Checks, Vec<tool::Need>), String> {
+    let invalid = tool::invalid_check_reply;
     let mut checks = Checks {
-        route: checked.route.ok_or_else(tool::too_old)?,
+        route: checked
+            .route
+            .ok_or_else(tool::too_old)?
+            .map(|route| route.name().to_owned()),
         ..Checks::default()
     };
-    for id in ids {
-        let Some(found) = checked.mods.iter().find(|m| m.id == *id) else {
-            continue;
-        };
-        if let Some(refusal) = &found.refusal {
-            checks.refusals.push((id.to_string(), refusal.clone()));
-        } else if let Some(verdict) = &found.verdict {
-            checks.verdicts.push((id.to_string(), verdict.clone()));
+    if checked.contract != Some(tool::CONTRACT) || checked.mods.len() != ids.len() {
+        return Err(invalid());
+    }
+    let mut mods: std::collections::HashMap<_, _> = checked
+        .mods
+        .into_iter()
+        .map(|row| (row.id.clone(), row))
+        .collect();
+    let mut needed = Vec::new();
+    for &id in ids {
+        let found = mods.remove(id).ok_or_else(invalid)?;
+        match (found.refusal, found.verdict, found.needs) {
+            (Some(why), None, None) if !why.trim().is_empty() => {
+                checks.refusals.push((found.id, why));
+            }
+            (None, Some(verdict), None) => checks.verdicts.push((found.id, verdict)),
+            (None, None, Some(need)) if !supplied.contains(&need) => {
+                if !needed.contains(&need) {
+                    needed.push(need);
+                }
+            }
+            _ => return Err(invalid()),
         }
     }
-    Ok(checks)
+    if checks.route.is_some() != checks.verdicts.iter().any(|(_, verdict)| verdict.usable()) {
+        return Err(invalid());
+    }
+    Ok((checks, needed))
 }
 
 /// A build's refusal of the mod tools, as the player reads it. A refused signature is short on
@@ -3747,13 +3774,15 @@ mod tests {
         let refused = r#"{"id":"scripted","refusal":"build scripts aren't allowed"}"#;
         let unfit = r#"{"id":"old","verdict":{"kind":"exact","made_for":"b","why":"internals"}}"#;
         let fine = r#"{"id":"fine","verdict":{"kind":"made-for"}}"#;
-        let older = checks_from(reply("", fine), &["fine"]).err().unwrap();
+        let older = checks_from(reply("", fine), &["fine"], &[]).err().unwrap();
         assert!(older.contains("too old"), "{older}");
         let both = checks_from(
             reply(r#""route":"prebuilt-api","#, &format!("{refused},{fine}")),
             &["scripted", "fine"],
+            &[],
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert_eq!(both.route.as_deref(), Some("prebuilt-api"));
         assert!(matches!(&both.verdicts[..], [(id, fit::Verdict::MadeFor)] if id == "fine"));
         assert_eq!(
@@ -3764,14 +3793,74 @@ mod tests {
             )]
         );
         // Nothing usable: the tool sends `"route": null`, and every verdict and refusal still counts.
-        let all_refused = checks_from(reply(r#""route":null,"#, refused), &["scripted"]).unwrap();
+        let (all_refused, needs) =
+            checks_from(reply(r#""route":null,"#, refused), &["scripted"], &[]).unwrap();
         assert_eq!((all_refused.route, all_refused.refusals.len()), (None, 1));
-        let all_unfit = checks_from(reply(r#""route":null,"#, unfit), &["old"]).unwrap();
+        assert!(needs.is_empty());
+        let (all_unfit, needs) =
+            checks_from(reply(r#""route":null,"#, unfit), &["old"], &[]).unwrap();
+        assert!(needs.is_empty());
         assert!(all_unfit.route.is_none());
         assert!(
             matches!(&all_unfit.verdicts[..], [(id, fit::Verdict::Exact { .. })] if id == "old")
         );
         assert!(refusal_text("scripted", "no").contains("scripted"));
+    }
+
+    #[test]
+    fn check_rejects_nonmatching_or_incomplete_sdk_evidence() {
+        let success = serde_json::json!({"id":"a","verdict":{"kind":"made-for"}});
+        let unknown = serde_json::json!({"id":"z","verdict":{"kind":"made-for"}});
+        let waiting = serde_json::json!({"id":"a","needs":"surface"});
+        let reply = |contract, route, mods: &[serde_json::Value]| {
+            serde_json::from_value::<tool::Checked>(serde_json::json!({
+                "contract": contract, "route": route, "mods": mods,
+            }))
+        };
+        for (contract, route, mods) in [
+            (None, Some("prebuilt"), vec![success.clone()]),
+            (Some(3), Some("prebuilt"), vec![success.clone()]),
+            (Some(2), Some("unknown"), vec![success.clone()]),
+            (Some(2), None, vec![success.clone()]),
+            (Some(2), None, vec![]),
+            (Some(2), Some("prebuilt"), vec![unknown.clone()]),
+            (Some(2), Some("prebuilt"), vec![success.clone(), unknown]),
+            (Some(2), Some("prebuilt"), vec![success, waiting.clone()]),
+            (Some(2), None, vec![serde_json::json!({"id":"a"})]),
+            (
+                Some(2),
+                None,
+                vec![serde_json::json!({"id":"a","refusal":" "})],
+            ),
+            (
+                Some(2),
+                None,
+                vec![serde_json::json!({"id":"a","needs":"other-input"})],
+            ),
+            (
+                Some(2),
+                None,
+                vec![serde_json::json!({"id":"a","needs":"surface","refusal":"invalid"})],
+            ),
+            (Some(2), Some("prebuilt"), vec![waiting.clone()]),
+        ] {
+            let checked = reply(contract, route, &mods).map_err(|e| e.to_string());
+            assert!(
+                checked
+                    .and_then(|reply| checks_from(reply, &["a"], &[]))
+                    .is_err(),
+                "{contract:?}, {route:?}, {mods:?}"
+            );
+        }
+        let reply = |mods: &[serde_json::Value]| reply(Some(2), None, mods).unwrap();
+        let other = serde_json::json!({"id":"b","needs":"build-data"});
+        let both = || reply(&[other.clone(), waiting.clone()]);
+        assert_eq!(
+            checks_from(both(), &["a", "b"], &[]).unwrap().1,
+            [tool::Need::Surface, tool::Need::BuildData]
+        );
+        assert!(checks_from(both(), &["a", "b"], &[tool::Need::Surface]).is_err());
+        assert!(checks_from(reply(&[waiting.clone(), waiting]), &["a", "b"], &[]).is_err());
     }
 
     #[test]

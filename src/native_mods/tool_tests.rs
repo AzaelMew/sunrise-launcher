@@ -288,7 +288,7 @@ fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
             }
         ]
     );
-    assert_eq!(checked.mods[2].needs.as_deref(), Some("surface"));
+    assert_eq!(checked.mods[2].needs, Some(Need::Surface));
     assert!(reply(None).unwrap_err().contains("too old"));
     let error = r#"{"contract":2,"error":{"kind":"unread","message":"mods: not a folder"}}"#;
     let refused = reply(Some(error)).unwrap_err();

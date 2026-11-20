@@ -10,7 +10,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The contract this launcher's plans speak.
-const CONTRACT: u32 = 2;
+pub(super) const CONTRACT: u32 = 2;
 
 /// The tool's program in its unpacked SDK slice.
 pub(super) const PROGRAM: &str = if cfg!(windows) {
@@ -449,15 +449,41 @@ fn finish(cancellation: &Cancellation, errors: Option<std::thread::JoinHandle<St
 /// `native-check`'s reply: each mod's refusal, verdict or the file it needs.
 #[derive(Debug, Deserialize)]
 pub(super) struct Checked {
+    pub contract: Option<u32>,
     /// Absent from a tool older than this launcher; `null` when no mod is usable.
     #[serde(default, deserialize_with = "present")]
-    pub route: Option<Option<String>>,
+    pub route: Option<Option<CheckRoute>>,
     pub mods: Vec<CheckedMod>,
 }
 
 /// A field that is there, `null` or not: [`Checked::route`]'s absence is told apart from its `null`.
-fn present<'de, D: serde::Deserializer<'de>>(field: D) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(field).map(Some)
+fn present<'de, D: serde::Deserializer<'de>>(
+    field: D,
+) -> Result<Option<Option<CheckRoute>>, D::Error> {
+    Option::<CheckRoute>::deserialize(field).map(Some)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum CheckRoute {
+    PrebuiltApi,
+    Prebuilt,
+}
+
+impl CheckRoute {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PrebuiltApi => "prebuilt-api",
+            Self::Prebuilt => "prebuilt",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum Need {
+    Surface,
+    BuildData,
 }
 
 #[derive(Debug, Deserialize)]
@@ -468,7 +494,7 @@ pub(super) struct CheckedMod {
     #[serde(default)]
     pub verdict: Option<super::fit::Verdict>,
     #[serde(default)]
-    pub needs: Option<String>,
+    pub needs: Option<Need>,
 }
 
 /// Asks the tool at `program` how the mods `plan` names stand against its build (`native-check`).
@@ -526,6 +552,11 @@ pub(super) fn ask(
         log_errors(&errors);
     }
     result
+}
+
+pub(super) fn invalid_check_reply() -> String {
+    tr("The native build tool gave an incomplete or inconsistent answer. Update the launcher.")
+        .into()
 }
 
 /// What a tool from before a command or reply field this launcher needs is told.
