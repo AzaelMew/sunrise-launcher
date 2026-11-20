@@ -30,8 +30,11 @@ pub fn run(mut args: impl Iterator<Item = OsString>) -> i32 {
     if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
         return NO_WORKER;
     }
-    let Ok(status) = Command::new(program).args(args).status() else {
+    let Ok(mut child) = Command::new(program).args(args).spawn() else {
         return NO_WORKER;
+    };
+    let Ok(status) = child.wait() else {
+        return UNPROVED;
     };
     // Reap adopted dead children. Only ECHILD proves nothing in the tree can still write.
     loop {

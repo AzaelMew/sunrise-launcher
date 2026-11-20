@@ -5,6 +5,32 @@ use std::{fs, io::Write, process::Command};
 use sunrise_launcher::process::compiler_worker::ARG;
 
 #[test]
+fn a_wait_error_after_a_real_spawn_is_unproved() {
+    use std::os::unix::process::CommandExt;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let reached = scratch.path().join("reached");
+    let mut worker = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
+    worker
+        .arg(ARG)
+        .args(["/bin/sh", "-ec", "printf spawned > \"$1\"", "test"])
+        .arg(&reached);
+    // SAFETY: this child-only disposition survives exec and auto-reaps the compiler,
+    // making its helper's wait return ECHILD after a successful spawn.
+    unsafe {
+        worker.pre_exec(|| {
+            if libc::signal(libc::SIGCHLD, libc::SIG_IGN) == libc::SIG_ERR {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        });
+    }
+    assert_eq!(worker.status().unwrap().code(), Some(125));
+    assert_eq!(fs::read(reached).unwrap(), b"spawned");
+}
+
+#[test]
 fn an_escaped_descendant_is_not_a_proved_compiler_exit() {
     let isolated = tempfile::tempdir().unwrap();
     let root = isolated.path();
