@@ -197,7 +197,9 @@ impl GameDownload {
             && regular(super::ARCHIVE_ID)
             && fs::read_to_string(home.join(super::ARCHIVE_ID))
                 .is_ok_and(|stamp| stamp == proof.archive)
-            && self.requested.is_none_or(|requested| {
+            // A cache-only download may have reached the same signed archive as a native
+            // request falling back to x64. Its preference is not part of binary identity.
+            && architecture_for_asset(&self.file).is_none_or(|binary| {
                 if !regular(GAME_BUILD_ARCHITECTURE) {
                     return false;
                 }
@@ -206,10 +208,7 @@ impl GameDownload {
                     .and_then(|bytes| {
                         serde_json::from_slice::<InstalledGameArchitecture>(&bytes).ok()
                     })
-                    .is_some_and(|actual| {
-                        actual.requested == requested
-                            && architecture_for_asset(&self.file) == Some(actual.binary)
-                    })
+                    .is_some_and(|actual| actual.binary == binary)
             })
     }
 }
@@ -219,7 +218,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_fallback_archive_matches_both_the_saved_request_and_actual_variant() {
+    fn both_requests_reuse_the_same_signed_fallback_but_not_a_different_binary() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
         let download = GameDownload {
@@ -248,11 +247,17 @@ mod tests {
         marker(Arm64, X64);
         assert!(!download.is_installed_at(home, &proof), "wrong archive");
         fs::write(archive, &proof.archive).unwrap();
-        marker(X64, X64);
-        assert!(!download.is_installed_at(home, &proof), "wrong request");
-        marker(Arm64, Arm64);
-        assert!(!download.is_installed_at(home, &proof), "wrong binary");
-        marker(Arm64, X64);
-        assert!(download.is_installed_at(home, &proof));
+        let direct = GameDownload {
+            requested: Some(X64),
+            ..download.clone()
+        };
+        for request in [Arm64, X64] {
+            marker(request, X64);
+            assert!(download.is_installed_at(home, &proof));
+            assert!(direct.is_installed_at(home, &proof));
+            marker(request, Arm64);
+            assert!(!download.is_installed_at(home, &proof), "wrong binary");
+            assert!(!direct.is_installed_at(home, &proof), "wrong binary");
+        }
     }
 }
