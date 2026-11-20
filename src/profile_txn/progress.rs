@@ -157,6 +157,22 @@ impl Slots {
     }
 
     pub(super) fn sync(&self) -> Result<(), String> {
+        self.flush(self.state.phase)
+    }
+
+    fn flush(&self, _phase: Phase) -> Result<(), String> {
+        #[cfg(test)]
+        if _phase == Phase::Committed
+            && take_marker_fault(|fault| match fault {
+                MarkerFault::Flush(remaining) if *remaining != 0 => {
+                    *remaining -= 1;
+                    true
+                }
+                _ => false,
+            })
+        {
+            return Err(at(&self.path, storage_full()));
+        }
         durable::flush(&self.file).map_err(|e| at(&self.path, e))
     }
 
@@ -180,13 +196,66 @@ impl Slots {
         }
         self.file
             .seek(SeekFrom::Start((state.sequence % 2) * BLOCK as u64))
-            .and_then(|_| self.file.write_all(&state.encode(self.plan)))
             .map_err(|e| at(&self.path, e))?;
+        let block = state.encode(self.plan);
+        #[cfg(test)]
+        if phase == Phase::Committed
+            && take_marker_fault(|fault| {
+                if *fault == MarkerFault::TornWrite {
+                    *fault = MarkerFault::None;
+                    true
+                } else {
+                    false
+                }
+            })
+        {
+            self.file
+                .write_all(&block[..57])
+                .map_err(|e| at(&self.path, e))?;
+            return Err(at(&self.path, storage_full()));
+        }
+        self.file.write_all(&block).map_err(|e| at(&self.path, e))?;
         written()?;
-        self.sync()?;
+        self.flush(phase)?;
         self.state = state;
         Ok(())
     }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum MarkerFault {
+    #[default]
+    None,
+    TornWrite,
+    Flush(u8),
+}
+
+#[cfg(test)]
+thread_local! {
+    static MARKER_FAULT: std::cell::Cell<MarkerFault> = const { std::cell::Cell::new(MarkerFault::None) };
+}
+
+#[cfg(test)]
+pub(super) fn fail_marker(fault: MarkerFault) {
+    MARKER_FAULT.set(fault);
+}
+
+#[cfg(test)]
+fn take_marker_fault(test: impl FnOnce(&mut MarkerFault) -> bool) -> bool {
+    let mut fault = MARKER_FAULT.get();
+    let inject = test(&mut fault);
+    MARKER_FAULT.set(fault);
+    inject
+}
+
+#[cfg(test)]
+pub(super) fn storage_full() -> io::Error {
+    #[cfg(unix)]
+    let code = libc::ENOSPC;
+    #[cfg(windows)]
+    let code = windows_sys::Win32::Foundation::ERROR_DISK_FULL as i32;
+    io::Error::from_raw_os_error(code)
 }
 
 #[cfg(test)]

@@ -211,41 +211,92 @@ fn refused_cutoff_keeps_the_original_bytes_and_success_uses_the_sealed_pointer()
 }
 
 #[test]
-fn no_space_at_marker_reverses_pointer_and_files_using_existing_allocations() {
+fn torn_marker_enospc_undo_consumes_the_old_pointer_and_reuses_both_progress_slots() {
+    use progress::{Phase, Slots};
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     initialized(home, true);
     let mut admission = Admission::open(home, None).unwrap();
     let sealed = seal(&mut admission, false);
     let disk = read(home).unwrap().unwrap();
-    let stage = disk.operation().unwrap().stage.path(home);
-    assert_eq!(fs::read(stage.join("pointer-old")).unwrap(), OLD);
+    let op = disk.operation().unwrap();
+    let steps = op.ready.as_ref().unwrap().steps();
+    let stage = op.stage.path(home);
+    let old = stage.join("pointer-old");
+    let pointer_preimage = Identity::file_at(&old).unwrap().unwrap();
+    assert_eq!(fs::read(&old).unwrap(), OLD);
     let progress_file = stage.join("progress");
-    let bytes_reserved = fs::metadata(&progress_file).unwrap().len();
-    let error = disk
-        .publish_at(
-            home,
-            || Ok(()),
-            |_, boundary| {
-                if boundary == Boundary::BeforeMarker {
-                    pair(home, false, true);
-                    assert_eq!(fs::metadata(&progress_file).unwrap().len(), bytes_reserved);
-                    return Err(io::Error::from(io::ErrorKind::StorageFull).to_string());
-                }
-                Ok(())
-            },
-        )
-        .unwrap_err();
+    let slots_preimage = Identity::file_at(&progress_file).unwrap().unwrap();
+    let live_record = home.join(RECORD);
+    let record_preimage = Identity::file_at(&live_record).unwrap().unwrap();
+    progress::fail_marker(progress::MarkerFault::TornWrite);
+    let error = disk.publish_at(home, || Ok(()), |_, _| Ok(())).unwrap_err();
+    assert_eq!(error, at(&progress_file, progress::storage_full()));
+    pair(home, false, true);
+    let slots = || {
+        Slots::open(&stage, disk.digest().unwrap(), steps)
+            .unwrap()
+            .current()
+    };
     assert_eq!(
-        error,
-        io::Error::from(io::ErrorKind::StorageFull).to_string()
+        (slots().phase, slots().frontier),
+        (Phase::Publishing, steps)
     );
     drop(sealed);
     drop(admission);
+    for (index, boundary) in ["undo-pointer", "undo-list"].into_iter().enumerate() {
+        let actor = pause_actor(home, boundary);
+        assert!(Admission::open(home, None).is_err());
+        let progress = slots();
+        assert_eq!(
+            (progress.phase, progress.frontier),
+            (Phase::Undoing, steps - index)
+        );
+        assert!(
+            absent(&old).unwrap(),
+            "restore must consume its staged preimage"
+        );
+        assert!(Identity::file_at(&home.join(POINTER)).unwrap() == Some(pointer_preimage));
+        assert!(Identity::file_at(&progress_file).unwrap() == Some(slots_preimage));
+        assert!(Identity::file_at(&live_record).unwrap() == Some(record_preimage));
+        drop(actor);
+    }
     drop(Admission::open(home, None).unwrap());
     pair(home, false, false);
-    assert!(!home.join(RECORD).exists());
+    assert!(!live_record.exists());
     assert!(!stage.exists());
+}
+
+#[test]
+fn whole_marker_after_failed_flush_is_retried_and_never_undone() {
+    for attempts in [1, 2] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        initialized(home, true);
+        let mut admission = Admission::open(home, None).unwrap();
+        let sealed = seal(&mut admission, false);
+        let stage = sealed.0.path().to_owned();
+        progress::fail_marker(progress::MarkerFault::Flush(attempts));
+        let published = sealed.publish(|| Ok(()));
+        if attempts == 1 {
+            assert!(
+                published.is_ok(),
+                "a successful reflush confirms the commit"
+            );
+        } else {
+            assert_eq!(
+                published.unwrap_err(),
+                at(&stage.join("progress"), progress::storage_full())
+            );
+            assert!(stage.join("pointer-old").is_file());
+            assert!(home.join(RECORD).is_file());
+        }
+        pair(home, false, true);
+        drop(admission);
+        drop(Admission::open(home, None).unwrap());
+        pair(home, false, true);
+        assert!(!home.join(RECORD).exists() && !stage.exists());
+    }
 }
 
 #[test]
