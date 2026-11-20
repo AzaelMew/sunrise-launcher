@@ -1,6 +1,6 @@
 //! Merge a Settings editor's intended changes without replaying its view of native consent.
 use super::{data_dir, Settings};
-use crate::local_json::LockedJson;
+use crate::local_json::{merge_changes, LockedJson};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::{path::Path, sync::Mutex};
@@ -81,9 +81,9 @@ impl Settings {
         let file = LockedJson::open(data, FILE)?;
         let mut live: Map<String, Value> = file.read()?;
         if let Some(before) = baseline.as_ref() {
-            merge(before, &now, &mut live);
+            merge_changes(before, &now, &mut live);
         } else {
-            merge(&setting_fields(&Self::default())?, &now, &mut live);
+            merge_changes(&setting_fields(&Self::default())?, &now, &mut live);
         }
         file.write(&live)?;
         // Record what this editor just saved; other writers' edits won't become ours on the
@@ -139,41 +139,6 @@ fn setting_fields(settings: &Settings) -> Result<Map<String, Value>, String> {
             Ok(fields)
         }
         _ => unreachable!("Settings serialize as an object"),
-    }
-}
-
-/// Apply deletions and changes from the editor, including the entries of maps such as per-theme
-/// accents. A new field this launcher didn't read is never republished or deleted by accident.
-fn merge(before: &Map<String, Value>, now: &Map<String, Value>, live: &mut Map<String, Value>) {
-    for key in before
-        .keys()
-        .chain(now.keys().filter(|key| !before.contains_key(*key)))
-    {
-        let old = before.get(key);
-        let new = now.get(key);
-        if old == new {
-            continue;
-        }
-        match (old, new, live.get_mut(key)) {
-            (Some(Value::Object(old)), Some(Value::Object(new)), Some(Value::Object(live))) => {
-                merge(old, new, live)
-            }
-            (None, Some(Value::Object(new)), Some(Value::Object(live))) => {
-                merge(&Map::new(), new, live)
-            }
-            (Some(Value::Object(old)), None, Some(Value::Object(object))) => {
-                merge(old, &Map::new(), object);
-                if object.is_empty() {
-                    live.remove(key);
-                }
-            }
-            (_, Some(value), _) => {
-                live.insert(key.clone(), value.clone());
-            }
-            (_, None, _) => {
-                live.remove(key);
-            }
-        }
     }
 }
 

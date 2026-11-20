@@ -215,9 +215,11 @@ fn names_stay_unique_and_packs_are_not_copied() {
     let grouped = edit_in(&home, &data, "Survival", |m| m.group = Some(" ".into())).unwrap();
     assert_eq!(grouped.group, None);
     // An import named like an instance: both can still change everything but their names.
-    let mut store = Store::load(&data);
-    store.instances.entry(port.id.clone()).or_default().name = Some("Survival".into());
-    store.save(&data).unwrap();
+    Store::mutate(&data, |store| {
+        store.instances.entry(port.id.clone()).or_default().name = Some("Survival".into());
+        Ok(())
+    })
+    .unwrap();
     let launched = edit_in(&home, &data, "survival", |m| {
         m.launch.wrapper = "nice".into()
     })
@@ -334,6 +336,72 @@ fn play_time_reads_as_minutes_then_hours() {
     assert_eq!(t(12 * 60 + 59), "12 min");
     assert_eq!(t(3 * 3600 + 5 * 60), "3 h 05 min");
     assert_eq!(t(140 * 3600 + 7 * 60), "140 h");
+}
+
+#[test]
+fn record_play_actor() {
+    let Some(data) = std::env::var_os("SUNRISE_TEST_INSTANCE_RECORD") else {
+        return;
+    };
+    for seconds in 1..=12 {
+        record_play_in(
+            Path::new(&data),
+            "shared",
+            Duration::from_secs(1),
+            UNIX_EPOCH + Duration::from_secs(seconds),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn two_processes_accumulate_runs_without_losing_opaque_metadata() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    let initial = serde_json::json!({
+        "something_new": [1, 2], "instances": {
+            "shared": {"played_secs": 2, "last_played":100, "opaque": {"nested":true}}
+        }
+    });
+    fs::write(&path, initial.to_string()).unwrap();
+    let start = || {
+        Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "instances::tests::record_play_actor",
+                "--nocapture",
+            ])
+            .env("SUNRISE_TEST_INSTANCE_RECORD", root.path())
+            .spawn()
+            .unwrap()
+    };
+    let mut a = start();
+    let mut b = start();
+    assert!(a.wait().unwrap().success());
+    assert!(b.wait().unwrap().success());
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved["instances"]["shared"]["played_secs"], 26);
+    assert_eq!(saved["instances"]["shared"]["last_played"], 100);
+    assert_eq!(
+        saved["instances"]["shared"]["opaque"],
+        initial["instances"]["shared"]["opaque"]
+    );
+    assert_eq!(saved["something_new"], initial["something_new"]);
+}
+
+#[test]
+fn a_mutation_refuses_malformed_live_instance_records() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join(FILE);
+    for bad in [
+        "{",
+        "{\"instances\":null}",
+        "{\"instances\":{\"shared\":[]}}",
+    ] {
+        fs::write(&path, bad).unwrap();
+        assert!(record_play_in(root.path(), "shared", Duration::from_secs(1), UNIX_EPOCH).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), bad);
+    }
 }
 
 /// An instance an earlier launcher made for Minecraft: Java Edition is not listed, and it is not
@@ -641,7 +709,12 @@ fn creation_does_not_reuse_or_remove_another_attempts_temporary_paths() {
         "somebody else's choices"
     );
     assert_eq!(fs::read_dir(home.join(STAGING)).unwrap().count(), 1);
-    assert_eq!(fs::read_dir(&data).unwrap().count(), 2);
+    assert!(data.join(format!(".{FILE}.lock")).is_file());
+    assert_eq!(
+        fs::read_dir(&data).unwrap().count(),
+        3,
+        "only the store, its permanent lock, and the earlier attempt"
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -803,17 +876,18 @@ fn a_modpacks_profile_keeps_its_build_whoever_asks() {
         r#"{"id":"cozy","name":"Cozy","version":"1.0.0","sha256":"00","mods":[]}"#,
     )
     .unwrap();
-    let mut store = Store::default();
-    store.instances.insert(
-        "pack:cozy".into(),
-        Meta {
-            name: Some("Cozy".into()),
-            version: Some("1.0".into()),
-            ..Meta::default()
-        },
-    );
-    fs::create_dir_all(&data).unwrap();
-    store.save(&data).unwrap();
+    Store::mutate(&data, |store| {
+        store.instances.insert(
+            "pack:cozy".into(),
+            Meta {
+                name: Some("Cozy".into()),
+                version: Some("1.0".into()),
+                ..Meta::default()
+            },
+        );
+        Ok(())
+    })
+    .unwrap();
     let refused = edit_in(&game, &data, "pack:cozy", |m| m.version = None);
     assert!(refused.unwrap_err().contains("keeps the build"));
     let refused = edit_in(&game, &data, "pack:cozy", |m| {
