@@ -91,19 +91,16 @@ MIRRORED = (
     ("crates/sunrise-port-pack/src/jar.rs", "manifest_value",
      "8eba4a800351645479e1f2fc79c727bf2e3aee7bdcc97b27a3fa249791a2b33e", "src/browser/java.rs jar_title"),
     ("crates/sunrise-native-build/src/lib.rs", "bundles",
-     "ce3f41468a62dd8889427d1a5ad7493a0d6d491bc5a5a1e7d69a52a833b2dd30", "src/native_mods/bundle.rs bundles"),
+     "8929a560dc4a8fb4bf49243cd415b7f6bdad037278d5eaaf4c6e64f366222356", "src/native_mods/bundle.rs bundles"),
     ("crates/sunrise-native-build/src/lib.rs", "scan_bundles",
      "0186b6a99c78d6c3296063bc8d4c31134c035e787d25a146d7dc1839f20ae974",
      "src/native_mods/bundle.rs scan_bundles"),
-    ("crates/sunrise-native-build/src/lib.rs", "log_warning",
-     "6e43ac4162a8696cf5dfb6acdb206f1b3446186c49fa9105c168f4a5418bf7ae",
-     "src/native_mods/build_log.rs log_warning"),
     ("crates/sunrise-native-build/src/lib.rs", "failure",
      "ce65c921695767d21d8c3047d36b48b58d843a78ac4b56d2f77117c68a016430", "src/native_mods/build_log.rs failure"),
     ("crates/sunrise-native-build/src/lib.rs", "unpack_archive",
      "08b67ddd8289e49ed1ce5c81ff77ee25bfca94a9d6cbf0b85df68a28e203eb0c", "src/github_mods.rs unpack_archive"),
     ("crates/sunrise-native-build/src/package.rs", "read",
-     "8c016ff10236333a2e9fd2de5eabda8f26d4353088a290d5e5250d4dbb17148a",
+     "94d760c8ea6f5452f20a6a816d88207675ed454e44cc0973240cff8069aaecf0",
      "src/native_mods/bundle/package.rs read"),
     ("crates/sunrise-native-build/src/package.rs", "copy_files",
      "ea02d6cc0ec18a4fe33804e4ee67bd2fe49e6e6d410b30fd56872f9e0c2e317a",
@@ -151,12 +148,13 @@ SAME_FUNCTIONS = (
         "command", "executable", "real_path", "without_verbatim", "path_homes", "tool_major", "jdk_parents",
         "installed_jdks", "find", "find_runtime", "find_tools", "home",
     )),
+    ("crates/sunrise-mod-package/src/manifest.rs", "crates/sdk/src/lib.rs", ("revision",)),
     ("crates/sunrise-mod-package/src/sdk.rs", "crates/sdk/src/lib.rs", (
-        "route", "to_json", "build_of", "schema", "read", "asset", "route_assets", "verify", "unpack", "lock",
+        "route", "to_json", "build_of", "schema", "asset", "route_assets", "verify", "unpack", "lock",
         "no_locks", "rename_retrying", "busy", "extract", "untar", "entry_target",
     )),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/bundle.rs", (
-        "bundle_in", "is_revision", "bundle_files", "digest", "source_digest", "copy_bundle",
+        "bundle_in", "bundle_files", "digest", "source_digest", "copy_bundle",
     )),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/build_log.rs", (
         "log_path", "clear_log", "append_log", "mod_id_from_file", "diagnostic",
@@ -173,6 +171,10 @@ SAME_FUNCTIONS = (
 SAME_ITEMS = (
     ("crates/sunrise-mod-package/src/sdk.rs", "crates/sdk/src/lib.rs", (
         ('#[cfg(feature = "prebuilt")]', ""),
+        ("crate::manifest::revision", "revision"),
+        # The direct reader is the launcher rather than cargo sunrise-mod.
+        (r""", so it is older than this SDK. Update it (`cargo sunrise-mod`: run the install block of the book's \"Install the mod tool\" page), or use the tool in this SDK's own release""",
+         ". Update it to use this SDK"),
     ), (
         "pub const INDEX", "pub const SCHEMA", "pub struct Index", "pub struct Build", "pub struct Toolchain",
         "pub struct Surface", "pub struct ChangeNote", "pub enum Verdict", "pub struct Mixins", "pub struct Asset",
@@ -180,15 +182,17 @@ SAME_ITEMS = (
         "pub struct Route", "pub enum Refusal", "impl fmt::Display for Refusal", "impl std::error::Error for Refusal",
         "struct Written", "struct WrittenAsset", "pub const DICTIONARY_LIMIT", "pub const EXTENSION_LIMIT",
         "pub const LOCK_SUFFIX", "pub const PARTIAL_SUFFIX", "const PAX_KEYS", "struct Partial", "impl Partial",
-        "impl Drop for Partial",
+        "impl Drop for Partial", "pub fn read",
     )),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/bundle.rs", (
         ("sunrise_mod_package::", "sunrise_launcher_smod::"),
         ("""pub fn needs_mixins(&self) -> bool {
-        !self.native().mixin.is_empty()
-            || !self.native().module.is_empty()
-            || !self.native().bridge.is_empty()
-            || !self.native().state.is_empty()
+        self.manifest.native.as_ref().is_some_and(|native| {
+            !native.mixin.is_empty()
+                || !native.module.is_empty()
+                || !native.bridge.is_empty()
+                || !native.state.is_empty()
+        })
     }""", ""),
     ), ("pub enum Target", "impl Target", "pub const NATIVE_MANIFEST", "pub struct Bundle", "impl Bundle")),
     ("crates/sunrise-native-build/src/lib.rs", "src/native_mods/build_log.rs", (), (
@@ -199,7 +203,7 @@ SAME_ITEMS = (
     )),
     ("crates/sunrise-native-build/src/package.rs", "src/native_mods/bundle/package.rs", (
         ("sunrise_mod_package::", "sunrise_launcher_smod::"), ("crate::host::trf", "trf"),
-    ), ("fn checked_files", "pub fn files", "pub fn copy", "pub fn checked_bundles")),
+    ), ("fn checked_files", "pub fn files", "pub fn copy")),
     ("crates/sunrise-native-build/src/registry_inventory.rs", "src/native_mods/tool.rs", (
         ("crate::host::", ""),
     ), ("pub fn label", "pub fn detail")),

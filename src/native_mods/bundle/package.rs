@@ -76,22 +76,3 @@ fn copy_files(to: &Path, files: impl IntoIterator<Item = (String, Vec<u8>)>) -> 
     }
     Ok(())
 }
-
-/// An unreadable package stops the scan, naming the mod, rather than building a smaller set.
-pub fn checked_bundles(folder: &Path) -> Result<Vec<Bundle>, String> {
-    let paths = sunrise_launcher_smod::find(folder)
-        .into_iter()
-        .chain(sunrise_launcher_smod::find(
-            &folder
-                .parent()
-                .unwrap_or(folder)
-                .join(sunrise_launcher_smod::mod_list::DIR),
-        ));
-    if let Some((id, error)) = sunrise_launcher_smod::selection::package_errors(paths)
-        .into_iter()
-        .next()
-    {
-        return Err(format!("{id}: {error}"));
-    }
-    super::scan_bundles(folder)
-}

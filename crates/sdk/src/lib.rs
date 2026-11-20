@@ -270,6 +270,8 @@ pub enum Refusal {
     Build { expected: String, found: String },
     /// The package layout is one this reader does not know.
     PackageFormat(u64),
+    /// The pinned horizon-mixins revision is not a full commit sha.
+    MixinsRev(String),
     /// An asset names a kind this reader does not know.
     Kind { asset: String, kind: String },
     /// An asset names a codec this reader does not know.
@@ -325,6 +327,10 @@ impl fmt::Display for Refusal {
             Self::PackageFormat(format) => write!(
                 f,
                 "{INDEX} has package format {format}; this program reads format {PACKAGE_FORMAT}. Update it to use this SDK"
+            ),
+            Self::MixinsRev(rev) => write!(
+                f,
+                "{INDEX}'s mixins revision {rev:?} is not a full commit sha (40 lowercase hex digits)"
             ),
             Self::Kind { asset, kind } => write!(f, "{asset}: unknown asset kind {kind:?}"),
             Self::Codec { asset, codec } => write!(f, "{asset}: unknown codec {codec:?}"),
@@ -395,6 +401,14 @@ struct WrittenAsset {
     side: Option<Side>,
 }
 
+// The game's source-pin form (`sunrise-mod-package::manifest::revision`).
+fn revision(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 impl Index {
     /// `sdk.json`'s text: pretty, sorted, ending in a newline.
     pub fn to_json(&self) -> String {
@@ -427,7 +441,7 @@ impl Index {
         Ok(())
     }
 
-    /// Read `sdk.json` for build `commit`, checking its schema, build, format and every asset once.
+    /// Read `sdk.json` for build `commit`, checking its schema, build, format, mixins pin and assets.
     pub fn read(bytes: &[u8], commit: &str) -> Result<Index, Refusal> {
         let malformed = |error: serde_json::Error| Refusal::Malformed(error.to_string());
         Self::schema(bytes)?;
@@ -440,6 +454,9 @@ impl Index {
         }
         if written.package_format != u64::from(PACKAGE_FORMAT) {
             return Err(Refusal::PackageFormat(written.package_format));
+        }
+        if !revision(&written.mixins.rev) {
+            return Err(Refusal::MixinsRev(written.mixins.rev));
         }
         let mut assets = BTreeMap::new();
         for (name, asset) in written.assets {
