@@ -252,7 +252,7 @@ fn read_local(home: &Path) -> Vec<model::Local> {
             id: f.id,
             name: f.name,
             version: f.version,
-            github: f.origin.is_some(),
+            origin: f.origin,
             native,
             unreadable: f.icon.is_err(),
         }
@@ -884,7 +884,7 @@ mod enabled_tests {
             id: id.into(),
             name: id.into(),
             version: String::new(),
-            github: false,
+            origin: None,
             native: false,
             unreadable: false,
         };
