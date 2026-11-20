@@ -49,9 +49,14 @@ impl Launcher {
         self.ui.mods.confirm = Some(confirm);
     }
 
+    /// Whether the selected profile's game runs or is starting.
+    pub(crate) fn game_running(&self) -> bool {
+        self.client.is_some() || self.starting_client.is_some() || self.starting_play.is_some()
+    }
+
     /// Why nothing may change now: the game, a launch step or a build is under way.
     pub(crate) fn mods_lock(&self) -> Option<Lock> {
-        if self.client.is_some() || self.starting_client.is_some() || self.starting_play.is_some() {
+        if self.game_running() {
             Some(Lock::GameRunning)
         } else if self.preparing
             || self.installing.is_some()
@@ -100,6 +105,10 @@ impl Launcher {
         };
         if let Some(why) = fit.reason() {
             return Err(why);
+        }
+        // The card says the same before the click (`InstallState::CloseGame`).
+        if self.game_running() {
+            return Err(tr("Close the game to install").to_string());
         }
         // A build or another install doesn't refuse: this one waits its turn.
         if let Some(lock) = self.mods_lock().filter(|lock| *lock != Lock::Building) {

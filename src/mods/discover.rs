@@ -78,6 +78,7 @@ impl Launcher {
             .map(|s| s.entries.iter().map(|e| e.project.clone()).collect())
             .unwrap_or_default();
         let index = sunrise::known_index();
+        let game_running = self.game_running();
         let adding = self.mods.busy.as_ref().map(|b| b.0.clone());
         let native_allowed = self.settings.native_mods_allowed_at.is_some();
 
@@ -274,7 +275,12 @@ impl Launcher {
                 None => added.contains(&id),
             };
             let working = adding.as_deref() == Some(id.as_str());
-            let state = install_state::of(&id, self.mods.waiting(&id), self.mods.build_failures());
+            let state = install_state::of(
+                &id,
+                self.mods.waiting(&id),
+                self.mods.build_failures(),
+                game_running,
+            );
             let waiting = state == Some(InstallState::Waiting);
             let note = card_data.fit.reason().filter(|_| !is_added);
             let control = if is_added {
@@ -292,33 +298,36 @@ impl Launcher {
                     _ if card_data.members.is_some() => tr("Choose mods"),
                     (true, _) => tr("Installing…"),
                     _ if waiting => tr("Waiting"),
+                    _ if state == Some(InstallState::CloseGame) => tr("Close the game to install"),
                     (_, true) => tr("Install…"),
                     _ => tr("Install"),
                 };
                 let b = crate::frame::button(("alt-add", n), label);
-                Some(match working || waiting {
-                    true => dim(b).into_any_element(),
-                    // A collection's button only opens its page, where the mods are picked.
-                    false if card_data.members.is_some() => {
-                        let id = id.clone();
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.mods_show_project(id.clone());
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                    }
-                    false => {
-                        let id = id.clone();
-                        let name = card_data.name.clone();
-                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            cx.stop_propagation();
-                            this.add(id.clone(), name.clone());
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                    }
-                })
+                Some(
+                    match working || waiting || state == Some(InstallState::CloseGame) {
+                        true => dim(b).into_any_element(),
+                        // A collection's button only opens its page, where the mods are picked.
+                        false if card_data.members.is_some() => {
+                            let id = id.clone();
+                            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.mods_show_project(id.clone());
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                        }
+                        false => {
+                            let id = id.clone();
+                            let name = card_data.name.clone();
+                            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                this.add(id.clone(), name.clone());
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                        }
+                    },
+                )
             };
             let mut facts = match card_data.members {
                 Some(count) => vec![
