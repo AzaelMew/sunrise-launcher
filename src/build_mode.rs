@@ -22,11 +22,11 @@ impl Launcher {
             .map(|instance| (instance, stake.unbuilt.clone()));
     }
 
-    /// The mods the selected instance's native build left out, as the build recorded them.
-    pub(super) fn native_left_out(&self) -> Vec<native_mods::LeftOut> {
-        let Some(instance) = self.selected_instance() else {
-            return Vec::new();
-        };
+    /// The mods `instance`'s native build left out, as the build recorded them.
+    pub(super) fn native_left_out_of(
+        &self,
+        instance: &instances::Instance,
+    ) -> Vec<native_mods::LeftOut> {
         let Some(version) = self.version_of(instance) else {
             return Vec::new();
         };

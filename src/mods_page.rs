@@ -856,14 +856,20 @@ impl Launcher {
         if matches!(end, BuildEnd::Pending) {
             return;
         }
+        // The build was made for one profile: only what went into that one is its to undo or
+        // clear. What other profiles are waiting to build stays as it is.
+        let Some(instance) = self
+            .native_for
+            .as_ref()
+            .and_then(|id| self.instances.list.iter().find(|i| &i.id == id))
+            .cloned()
+        else {
+            return;
+        };
         let brought = std::mem::take(&mut self.mods.building);
-        let touched = std::mem::take(&mut self.mods.undo);
-        let kept: std::collections::BTreeSet<PathBuf> =
-            touched.iter().map(|t| t.home.clone()).collect();
-        if self.selected_instance().is_none_or(|i| i.is_pack_profile()) {
-            for home in &kept {
-                undo::clear(home);
-            }
+        let touched = undo::take_for(&mut self.mods.undo, &instance.home);
+        if instance.is_pack_profile() {
+            undo::clear(&instance.home);
             return;
         }
         let stopped = match end {
@@ -872,12 +878,12 @@ impl Launcher {
         };
         let failures = match &stopped {
             Some(_) => Vec::new(),
-            None => native_mods::build_failures(&self.native_left_out()),
+            None => native_mods::build_failures(&self.native_left_out_of(&instance)),
         };
         match build_cost(&brought, stopped.is_some(), failures) {
             BuildCost::Nothing => {}
             BuildCost::Rollback(ids) => {
-                let home = self.mods.home();
+                let home = instance.home.clone();
                 for t in &touched {
                     let _ = t.undo();
                 }
@@ -895,14 +901,7 @@ impl Launcher {
                 self.mods.reload_installed();
             }
             BuildCost::Failures(failures) => {
-                let instance = self
-                    .selected_instance()
-                    .map(|i| i.id.clone())
-                    .unwrap_or_default();
-                let entries = self
-                    .selected_instance()
-                    .map(|i| installed::Installed::load(&i.home).entries)
-                    .unwrap_or_default();
+                let entries = installed::Installed::load(&instance.home).entries;
                 let titles: std::collections::HashMap<String, String> = entries
                     .iter()
                     .map(|e| (e.project.clone(), e.title.clone()))
@@ -914,12 +913,10 @@ impl Launcher {
                     log: Some(f.log),
                     checksum: String::new(),
                 });
-                self.mods.removal.add(&instance, &entries, items);
+                self.mods.removal.add(&instance.id, &entries, items);
             }
         }
-        for home in &kept {
-            undo::clear(home);
-        }
+        undo::clear(&instance.home);
     }
 
     /// Continue on the removal sheet: the listed mods go. Those whose build failed are
