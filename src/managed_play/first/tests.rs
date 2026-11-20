@@ -210,6 +210,131 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     assert_eq!(fs::read(&path).unwrap(), before);
 }
 
+#[test]
+fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() {
+    use crate::profile_txn::Boundary;
+    use sunrise_launcher_smod::{manifest, mod_list};
+    const CASE: &str = "managed_play::first::tests::receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts";
+    const ID: [u8; 16] = [7; 16];
+    let actor = |role| {
+        let mut actor = Command::new(std::env::current_exe().unwrap());
+        actor
+            .args(["--exact", CASE, "--nocapture"])
+            .env("RECEIPT_FIXTURE_ROLE", role);
+        actor
+    };
+    let Ok(role) = std::env::var("RECEIPT_FIXTURE_ROLE") else {
+        for cut in [
+            "pointer-before",
+            "pointer-after",
+            "marker-before",
+            "marker-after",
+            "marker-torn",
+        ] {
+            let scratch = tempfile::tempdir().unwrap();
+            let root = backend::plain(scratch.path().canonicalize().unwrap());
+            assert!(
+                actor("scenario")
+                    .env("RECEIPT_FIXTURE_CUT", cut)
+                    .env("SUNRISE_HOME", root.join("game"))
+                    .env("SUNRISE_LAUNCHER_HOME", root.join("launcher"))
+                    .env("XDG_CONFIG_HOME", root.join("config"))
+                    .status()
+                    .unwrap()
+                    .success(),
+                "failed receipt cut {cut}"
+            );
+        }
+        return;
+    };
+    let cut = std::env::var("RECEIPT_FIXTURE_CUT").unwrap();
+    let home = backend::game_home();
+    let ready = home.join("receipt-ready");
+    let pointer = home.join("mod-browser/active-build.json");
+    let load = || fs::read(&pointer).unwrap();
+    if role == "publish" {
+        let mut profile = Profile::open(&home, None).unwrap();
+        let shown = profile.active().unwrap().unwrap();
+        profile
+            .acknowledge_receipt_at(&shown, ID, |index, boundary| {
+                let target = match cut.as_str() {
+                    "pointer-before" => (0, Boundary::BeforeRename),
+                    "pointer-after" => (0, Boundary::Renamed),
+                    "marker-before" => (1, Boundary::BeforeMarker),
+                    "marker-after" => (1, Boundary::DurableMarker),
+                    _ => unreachable!(),
+                };
+                if (index, boundary) == target {
+                    fs::write(&ready, []).unwrap();
+                    await_fixture(|| false); // The parent kills the launcher at this actual cut.
+                }
+                Ok(())
+            })
+            .unwrap();
+        panic!("the receipt publisher passed the selected cut without stopping");
+    }
+    assert_eq!(role, "scenario");
+    let resources = backend::resources(BUILD);
+    fs::create_dir_all(&resources).unwrap();
+    fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
+    let build = backend::version_dir(BUILD);
+    fs::write(build.join(".installed"), []).unwrap();
+    fs::write(build.join(backend::CLIENT), b"local executable fixture").unwrap();
+    fs::create_dir_all(home.join(mod_list::DIR)).unwrap();
+    let mod_path = home.join(mod_list::DIR).join("lantern.smod");
+    let package = manifest::Package::write_files(&format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n", manifest::API), &[]).unwrap();
+    fs::write(&mod_path, &package).unwrap();
+    let mut profile = Profile::open(&home, None).unwrap();
+    let mut shown = profile
+        .begin_first(|| FirstBuild::installed(BUILD), |_| {})
+        .unwrap()
+        .commit(BUILD, &native_mods::Cancellation::default())
+        .unwrap();
+    shown.receipts = [[7; 16], [8; 16]]
+        .into_iter()
+        .map(|id| super::super::Receipt {
+            id,
+            waiting_for_update: vec![("lantern".into(), "Lantern".into())],
+            removed: Vec::new(),
+        })
+        .collect();
+    let mut before = serde_json::to_vec_pretty(&shown).unwrap();
+    before.push(b'\n');
+    fs::write(&pointer, &before).unwrap();
+    let mut stale = shown.clone();
+    stale.generation += 1;
+    assert!(profile.acknowledge_receipt(&stale, ID).is_err());
+    assert_eq!(load(), before);
+    drop(profile);
+
+    if cut == "marker-torn" {
+        let mut profile = Profile::open(&home, None).unwrap();
+        profile_txn::tear_next_commit_marker();
+        let error = profile.acknowledge_receipt(&shown, ID).unwrap_err();
+        assert!(error.contains("28") || error.contains("112"), "{error}"); // ENOSPC / ERROR_DISK_FULL
+        assert_eq!(load(), before);
+    } else {
+        let mut writer = Running(actor("publish").spawn().unwrap());
+        await_fixture(|| ready.is_file());
+        assert!(Profile::open(&home, None).is_err());
+        assert_eq!(load() == before, cut == "pointer-before");
+        writer.0.kill().unwrap();
+        assert!(!writer.0.wait().unwrap().success());
+    }
+    let mut profile = Profile::open(&home, None).unwrap();
+    let committed = cut == "marker-after";
+    assert_eq!(load() == before, !committed);
+    assert_eq!(profile.acknowledge_receipt(&shown, ID).unwrap(), !committed);
+    let after = profile.active().unwrap().unwrap();
+    let mut expected = shown.clone();
+    expected.generation += 1;
+    expected.receipts.remove(0);
+    assert_eq!(after, expected);
+    assert!(!profile.acknowledge_receipt(&shown, ID).unwrap());
+    assert_eq!(fs::read(mod_path).unwrap(), package);
+    assert_eq!(profile.active().unwrap(), Some(after));
+}
+
 #[cfg(unix)]
 #[test]
 fn first_play_preparer_subcommands_keep_admission_and_never_trust_an_unrecorded_cache() {

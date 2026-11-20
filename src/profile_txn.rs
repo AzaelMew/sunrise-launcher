@@ -647,6 +647,17 @@ impl<'a> Staging<'a> {
         self.lease.handoff()
     }
 
+    pub(crate) fn seal_pointer_replacing(
+        self,
+        previous: &[u8],
+        next: Vec<u8>,
+    ) -> Result<Sealed<'a>, String> {
+        if self.record.operation()?.previous_pointer.as_deref() != Some(previous) {
+            return Err(unsettled());
+        }
+        self.seal(next, &[])
+    }
+
     /// Bind exact preimages and candidates under the caller's reference guard, while only
     /// private files exist. A `None` source removes a file. Accept only launcher-managed names.
     pub fn seal(
@@ -745,18 +756,31 @@ impl Sealed<'_> {
     /// frontier is recorded. A caller's cache/reference guard must span this whole call.
     /// No network calls or approvals occur after cutoff.
     pub fn publish<G>(self, cutoff: impl FnOnce() -> Result<G, String>) -> Result<(), String> {
+        self.publish_observed(cutoff, |_, _| Ok(()))
+    }
+
+    pub(crate) fn publish_observed<G>(
+        self,
+        cutoff: impl FnOnce() -> Result<G, String>,
+        boundary: impl FnMut(usize, Boundary) -> Result<(), String>,
+    ) -> Result<(), String> {
         let home = self.0.lease.home();
         let record = read(home)?.ok_or_else(unsettled)?;
         if record.digest()? != self.0.record.digest()? {
             return Err(unsettled());
         }
-        let result = record.publish_at(home, cutoff, |_, _| Ok(()));
+        let result = record.publish_at(home, cutoff, boundary);
         if record.complete(home, |_| {}, || {})? {
             Ok(())
         } else {
             result
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn tear_next_commit_marker() {
+    progress::fail_marker(progress::MarkerFault::TornWrite);
 }
 
 fn mod_root(path: &Path) -> bool {
@@ -821,7 +845,7 @@ fn target(home: &Path, file: &Step) -> Result<PathBuf, String> {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum Boundary {
+pub(crate) enum Boundary {
     BeforeRename,
     Renamed,
     Durable,

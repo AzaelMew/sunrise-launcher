@@ -180,6 +180,44 @@ impl Profile {
         self.0.handoff()
     }
 
+    /// Acknowledge one receipt from the generation shown to the player. A retry after
+    /// successful publication is a no-op; a stale view cannot dismiss a different generation.
+    pub fn acknowledge_receipt(&mut self, shown: &Active, id: [u8; 16]) -> Result<bool, String> {
+        self.acknowledge_receipt_at(shown, id, |_, _| Ok(()))
+    }
+
+    fn acknowledge_receipt_at(
+        &mut self,
+        shown: &Active,
+        id: [u8; 16],
+        observe: impl FnMut(usize, profile_txn::Boundary) -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let home = self.home().to_owned();
+        let _manifest = game_lock(&home)?;
+        let _references = ReferencePublication::begin(&home)?;
+        let before = profile_txn::references(&home)?
+            .pointer
+            .ok_or_else(unsettled)?;
+        let mut current = Active::parse(&before)?;
+        let Some(position) = current.receipts.iter().position(|receipt| receipt.id == id) else {
+            return Ok(false);
+        };
+        if current != *shown {
+            return Err(unsettled());
+        }
+        current.receipts.remove(position);
+        current.generation = current.generation.checked_add(1).ok_or_else(unsettled)?;
+        let next = serde_json::to_vec(&current).map_err(|error| error.to_string())?;
+        let targets = [current.base().to_owned(), current.executable().to_owned()]
+            .into_iter()
+            .collect();
+        self.0
+            .reserve(Intent::Install, targets)?
+            .seal_pointer_replacing(&before, next)?
+            .publish_observed(|| Ok(()), observe)?;
+        Ok(true)
+    }
+
     /// Bring an already committed profile forward on the same base. The game may have
     /// changed packages and the enable list; failed fits never change the launcher pointer.
     pub fn refresh(
