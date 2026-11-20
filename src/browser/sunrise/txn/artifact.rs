@@ -41,7 +41,7 @@ impl Artifact {
             "native-content",
             sunrise_launcher_smod::mod_list::NATIVE_DIR,
         ] {
-            item(&mut hash, name.as_bytes(), tree(&dir.join(name))?);
+            item(&mut hash, name.as_bytes(), tree(&dir.join(name), false)?);
         }
         for entry in entries(dir)? {
             let name = entry.file_name();
@@ -83,7 +83,7 @@ impl Artifact {
     }
 }
 
-fn tree(path: &Path) -> Result<Image, String> {
+pub(super) fn tree(path: &Path, resources: bool) -> Result<Image, String> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() && build::regular(&meta) => {
             let device = {
@@ -97,7 +97,7 @@ fn tree(path: &Path) -> Result<Image, String> {
                     0
                 }
             };
-            directory(path, 0, device).map(Image::Sha256)
+            directory(path, 0, device, resources).map(Image::Sha256)
         }
         Ok(_) => Err(at(path, io::ErrorKind::InvalidData.into())),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Image::Missing),
@@ -105,12 +105,16 @@ fn tree(path: &Path) -> Result<Image, String> {
     }
 }
 
-fn directory(path: &Path, depth: usize, _device: u64) -> Result<[u8; 32], String> {
+fn directory(path: &Path, depth: usize, _device: u64, resources: bool) -> Result<[u8; 32], String> {
     if depth > 64 {
         return Err(at(path, io::ErrorKind::InvalidData.into()));
     }
     let mut hash = Sha256::new();
     for entry in entries(path)? {
+        let name = entry.file_name();
+        if depth == 0 && resources && super::resources::generated_cache(&name) {
+            continue;
+        }
         let entry_path = entry.path();
         let meta = fs::symlink_metadata(&entry_path).map_err(|e| at(&entry_path, e))?;
         if !build::regular(&meta) {
@@ -125,7 +129,7 @@ fn directory(path: &Path, depth: usize, _device: u64) -> Result<[u8; 32], String
         }
         let image = if meta.is_dir() {
             hash.update(b"d");
-            Image::Sha256(directory(&entry_path, depth + 1, _device)?)
+            Image::Sha256(directory(&entry_path, depth + 1, _device, resources)?)
         } else if meta.is_file() {
             hash.update(b"f");
             let image = Image::at(&entry_path)?;
@@ -136,7 +140,7 @@ fn directory(path: &Path, depth: usize, _device: u64) -> Result<[u8; 32], String
         } else {
             return Err(at(&entry_path, io::ErrorKind::InvalidData.into()));
         };
-        item(&mut hash, entry.file_name().as_encoded_bytes(), image);
+        item(&mut hash, name.as_encoded_bytes(), image);
     }
     Ok(hash.finalize().into())
 }

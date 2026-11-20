@@ -93,7 +93,7 @@ impl Session {
                     );
                 }
                 let (owner, tag) = crate::cli::play_image(&instance)?;
-                let mut cmd = backend::client(&tag)?;
+                let mut cmd = backend::managed_client_as(&tag, None, &owner)?;
                 instances::apply(&mut cmd, &instance)?;
                 cmd.args(game_tools::control_args());
                 if let Some(world) = arg_str(args, "world") {

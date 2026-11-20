@@ -534,6 +534,9 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(backend::CLIENT), b"test game, not executed").unwrap();
         fs::write(dir.join(".installed"), b"").unwrap();
+        let resources = backend::resources(&tag);
+        fs::create_dir_all(&resources).unwrap();
+        fs::write(resources.join("sunrise-resources.json"), b"{}").unwrap();
         fs::write(
             dir.join("sunrise-release.json"),
             br#"{"version_id":"26.3"}"#,

@@ -1287,7 +1287,7 @@ fn asset_installed<'a>(
 }
 
 mod developer_play;
-pub use developer_play::client_as;
+pub use developer_play::{client_as, managed_client_as};
 
 /// Downloads `release`'s archive for this platform, checks it against `sha256` (its signed
 /// checksum), and unpacks it as the installed version `tag`.
@@ -1434,8 +1434,8 @@ fn resources_at(dir: &Path) -> PathBuf {
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
 
 /// The target preparation records the world format of the verified client JAR it used.
-pub(crate) fn prepared_world_version(tag: &str) -> Option<i32> {
-    let manifest = read_json(&resources(tag).join(RESOURCES_MANIFEST))?;
+pub(crate) fn prepared_world_version(resources: &Path) -> Option<i32> {
+    let manifest = read_json(&resources.join(RESOURCES_MANIFEST))?;
     i32::try_from(manifest.get("data_version")?.as_i64()?).ok()
 }
 
@@ -2834,6 +2834,26 @@ fn strip_launcher_render_env(cmd: &mut Command) {
 }
 
 pub fn client_command(tag: &str) -> Command {
+    client_command_at(tag, &resources(tag))
+}
+
+pub fn managed_client_command(
+    tag: &str,
+    owner: &crate::browser::sunrise::txn::Lease,
+) -> Result<Command, String> {
+    let active = owner.active_build()?.ok_or_else(|| {
+        crate::i18n::tr("This profile has no committed build to start.").to_string()
+    })?;
+    if active.executable() != tag {
+        return Err(crate::i18n::tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
+    }
+    Ok(client_command_at(tag, &active.resources()))
+}
+
+fn client_command_at(tag: &str, resources: &Path) -> Command {
     let home = game_home();
     let _ = fs::create_dir_all(&home);
     let mut cmd = Command::new(client_program(tag));
@@ -2846,7 +2866,7 @@ pub fn client_command(tag: &str) -> Command {
     cmd.current_dir(&home)
         .env("SUNRISE_HOME", &home)
         .arg("--resources")
-        .arg(resources(tag));
+        .arg(resources);
     // How the game asks for a renewed session (`account session`) while it runs.
     if let Ok(exe) = std::env::current_exe() {
         cmd.env("SUNRISE_LAUNCHER_EXE", exe);
@@ -4145,11 +4165,13 @@ pub fn spawn_attached(
     profile: Option<&crate::browser::sunrise::txn::Lease>,
     runtime: &RuntimeGuard,
 ) -> std::io::Result<Child> {
-    let _permission = native_client_handoff(profile, runtime).map_err(std::io::Error::other)?;
+    let _permission =
+        native_client_handoff(cmd, profile, runtime).map_err(std::io::Error::other)?;
     crate::run_leases::spawn(cmd, false, profile)
 }
 
 fn native_client_handoff(
+    cmd: &mut Command,
     profile: Option<&crate::browser::sunrise::txn::Lease>,
     _runtime: &RuntimeGuard,
 ) -> Result<Option<crate::local_json::LockedJson>, String> {
@@ -4164,6 +4186,11 @@ fn native_client_handoff(
             .as_ref()
             .ok_or_else(|| "The profile's runtime copy was not prepared.".to_string())?;
         active.verify_runtime_copy(copy.game())?;
+    }
+    if !active.allow_accelerator() {
+        // The game can generate a cache on a later run, but an unbound or changed cache
+        // must never supply bytes in place of the primary prepared files.
+        cmd.env("SUNRISE_NO_DATA_FILE", "1");
     }
     crate::native_status::publication_guard(active.executable(), None)
 }
@@ -4226,7 +4253,7 @@ pub fn spawn_holding(
         .stderr(Stdio::piped());
     let mut child = {
         let _permission = if job == Job::Client {
-            native_client_handoff(profile, &runtime)?
+            native_client_handoff(&mut cmd, profile, &runtime)?
         } else {
             None
         };

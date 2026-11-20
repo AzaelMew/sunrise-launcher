@@ -18,7 +18,6 @@ impl Launcher {
                 );
                 return;
             };
-            let mut cmd = backend::client_command(&tag);
             let pass = match session {
                 Ok(pass) => pass,
                 Err(refused) => {
@@ -35,6 +34,14 @@ impl Launcher {
                 }
             };
             let session_file = pass.as_ref().and_then(|session| session.file.clone());
+            let mut cmd = match backend::managed_client_command(&tag, &owner) {
+                Ok(command) => command,
+                Err(error) => {
+                    self.client_error = Some(error);
+                    account::discard_launch_session(session_file);
+                    return;
+                }
+            };
             if let Some(session) = pass {
                 self.owner = Some(true);
                 // Still play, offline, and say why.

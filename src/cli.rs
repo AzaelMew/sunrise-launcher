@@ -1152,7 +1152,7 @@ pub(crate) fn play_image(
     if owner.needs_bootstrap_download(&target)? {
         owner.install_bootstrap(&target, progress(base.to_owned()))?;
     }
-    if !backend::check_prepared(base) {
+    if owner.active_build()?.is_none() && !backend::check_prepared(base) {
         let _prepare = backend::prepare_lock(base)?;
         let minecraft = backend::Settings::load()
             .minecraft_dir
@@ -1494,7 +1494,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 None => None,
             };
             let (owner, tag) = play_image(&instance)?;
-            let mut cmd = backend::client_as(&tag, who.as_deref())?;
+            let mut cmd = backend::managed_client_as(&tag, who.as_deref(), &owner)?;
             instances::apply(&mut cmd, &instance)?;
             if let Some(code) = join {
                 backend::join_friend(&mut cmd, &code)?;
@@ -3164,7 +3164,7 @@ fn modpack(action: ModpackCmd, as_json: bool) -> Result<i32, String> {
                 .find(|i| i.is_pack_profile() && i.work == work)
                 .ok_or_else(|| format!("{pack} isn't an installed modpack."))?;
             let (owner, tag) = play_image(&instance)?;
-            let mut cmd = backend::client(&tag)?;
+            let mut cmd = backend::managed_client_as(&tag, None, &owner)?;
             sunrise::pack::apply(&mut cmd, &work)?;
             let launch = Default::default();
             for notice in sunrise::before_play(&mut cmd, &tag, &launch, &owner)? {

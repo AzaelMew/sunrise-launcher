@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 mod artifact;
 mod build;
 pub(crate) mod durable;
+mod resources;
 mod staged_install;
 mod switch;
 mod switch_record;
@@ -446,6 +447,7 @@ impl Lease {
         }
         let active = self.active_build()?.ok_or_else(unsettled)?;
         active.verify_artifacts()?;
+        active.verify_resources()?;
         if active.inputs != build::inputs(&self.home)? {
             return Err(unsettled());
         }
@@ -1976,6 +1978,14 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
         fs::write(base.join(".installed"), b"").unwrap();
+        let preparation = crate::backend::resources("nightly-original");
+        fs::create_dir_all(&preparation).unwrap();
+        fs::write(
+            preparation.join("sunrise-resources.json"),
+            br#"{"data_version":42}"#,
+        )
+        .unwrap();
+        fs::write(preparation.join("blocks.json"), b"{}").unwrap();
         // Cache eviction can select the installed unit now, before either profile has a reference.
         assert!(!references("nightly-original").unwrap());
         let first = crate::backend::game_home().join("instances/first");
@@ -2002,7 +2012,20 @@ mod tests {
             )
         };
         assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
-        assert_eq!(owner.active_build().unwrap().unwrap().generation, 1);
+        let initial = owner.active_build().unwrap().unwrap();
+        assert_eq!(initial.generation, 1);
+        // Later preparation writes cannot silently change the bound runtime data.
+        fs::write(preparation.join("blocks.json"), b"{\"new\":true}").unwrap();
+        assert_eq!(
+            fs::read(initial.resources().join("blocks.json")).unwrap(),
+            b"{}"
+        );
+        assert!(owner.verify_launch().is_ok());
+        let command = crate::backend::managed_client_command("nightly-original", &owner).unwrap();
+        let exact_resources = initial.resources();
+        assert!(command
+            .get_args()
+            .any(|arg| Path::new(arg) == exact_resources));
         drop(owner);
         assert!(matches!(
             crate::cache_cleanup::delete_version(&base, true),
@@ -2042,6 +2065,7 @@ mod tests {
         assert_eq!(copy.generation, 1);
         assert!(copy.same_base_artifact(&original));
         assert_eq!(copy.executable(), original.executable());
+        assert_eq!(copy.resources(), initial.resources());
         assert_eq!(copy.inputs, original.inputs);
         assert!(copy.receipts().is_empty());
         assert_eq!(build::read(&first).unwrap().unwrap().receipts().len(), 1);

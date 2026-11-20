@@ -116,6 +116,7 @@ impl StagedInstall {
             }
             self.prior.verify_artifacts()?;
             next.verify_artifacts()?;
+            next.verify_resources()?;
             cancellation.publication_guard(next.executable())
         })?;
         self.published = true;
@@ -176,6 +177,7 @@ pub(in crate::browser::sunrise) fn expose_private_profile(
 ) -> Result<(), String> {
     let _publication = crate::run_leases::installation().map_err(native_mods::cache_error)?;
     sealed.active.verify_artifacts()?;
+    sealed.active.verify_resources()?;
     durable::flush_tree(stage).map_err(|e| at(stage, e))?;
     let _permission =
         crate::native_status::publication_guard(sealed.active.executable(), sealed.native_grant)?;

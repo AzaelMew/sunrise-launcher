@@ -174,7 +174,13 @@ impl Launcher {
     }
 
     pub(super) fn play(&mut self, intent: PlayIntent, tag: String) {
-        if let Some(why) = self.why_not_now(&tag) {
+        let bound = intent
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.active_build().is_ok_and(|active| active.is_some()));
+        let check =
+            !bound || self.client.is_some() || self.starting_client.is_some() || self.preparing;
+        if let Some(why) = check.then(|| self.why_not_now(&tag)).flatten() {
             self.client_error = Some(why);
             return;
         }
@@ -234,9 +240,6 @@ impl Launcher {
         self.starting_play = Some(intent);
         std::thread::spawn(move || {
             // One line per step: a terminal run shows where Play stops (#12179).
-            backend::play_step("checking the game's assets");
-            let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
-            backend::complete_assets(&tag);
             backend::play_step("reading the sign-in");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::SignIn));
             let session = if sunrise_launcher::developer_offline::enabled(&tag) {

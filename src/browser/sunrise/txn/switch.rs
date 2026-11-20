@@ -170,16 +170,16 @@ impl Switch {
                 namespaces: &old.manifest.namespaces,
             })
             .collect();
+        let next = prior.switched(tag, &image, prepared.path(), effects.clone(), waiting)?;
         let mut order = backend::WorldBuildOrder::for_target(tag);
         let (fence, question) = worlds::switch::Fence::hold(
             home,
             &changed,
             Some(worlds::switch::TargetAge {
-                data_version: backend::prepared_world_version(tag),
+                data_version: backend::prepared_world_version(&next.resources()),
                 compare_saved: &mut |commit| order.compare_saved(commit),
             }),
         )?;
-        let next = prior.switched(tag, &image, prepared.path(), effects.clone(), waiting)?;
         if build::inputs(home)? != initial_inputs {
             return Err(unsettled());
         }
@@ -232,6 +232,8 @@ impl Switch {
         self.prior.verify_artifacts()?;
         self.next.verify_artifacts()?;
         self.owner.publish_staged_set(|| {
+            self.prior.verify_resources()?;
+            self.next.verify_resources()?;
             cutoff()?;
             self.cancellation.publication_guard(self.next.executable())
         })?;

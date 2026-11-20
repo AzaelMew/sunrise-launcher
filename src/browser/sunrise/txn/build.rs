@@ -1,5 +1,5 @@
 //! The published Play generation and the binding retained while admitting an old profile.
-use super::{artifact::Artifact, durable, unsettled, Image, Lease};
+use super::{artifact::Artifact, durable, resources::Resources, unsettled, Image, Lease};
 use crate::{backend, native_mods, native_status};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -173,6 +173,7 @@ impl Bootstrap {
             generation: 1,
             executable: base.clone(),
             base,
+            resources: Resources::test(),
             inputs: self.inputs,
             receipts: Vec::new(),
             waiting: Default::default(),
@@ -185,11 +186,11 @@ impl Bootstrap {
         Active::capture(
             self.profile,
             1,
-            &self.target.base,
-            image,
+            (&self.target.base, image),
             self.inputs,
             Vec::new(),
             home,
+            None,
         )
     }
 }
@@ -202,6 +203,7 @@ pub struct Active {
     pub(super) generation: u64,
     base: Artifact,
     executable: Artifact,
+    resources: Resources,
     pub(super) inputs: [u8; 32],
     receipts: Vec<Receipt>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
@@ -253,16 +255,23 @@ impl Active {
     fn capture(
         profile: [u8; 16],
         generation: u64,
-        base: &str,
-        image: &str,
+        (base, image): (&str, &str),
         inputs: [u8; 32],
         receipts: Vec<Receipt>,
         home: &Path,
+        existing: Option<&Resources>,
     ) -> Result<Self, String> {
         verify_included(base, image, home)?;
         if self::inputs(home)? != inputs {
             return Err(unsettled());
         }
+        let resources = match existing {
+            Some(resources) => {
+                resources.verify(base)?;
+                resources.clone()
+            }
+            None => Resources::capture(base)?,
+        };
         let base = Artifact::capture(base)?;
         let executable = if image == base.tag {
             base.clone()
@@ -275,6 +284,7 @@ impl Active {
             generation,
             base,
             executable,
+            resources,
             inputs,
             receipts,
             waiting: Default::default(),
@@ -286,11 +296,11 @@ impl Active {
         let mut next = Self::capture(
             self.profile,
             generation,
-            self.base(),
-            image,
+            (self.base(), image),
             inputs,
             self.receipts.clone(),
             home,
+            Some(&self.resources),
         )?;
         if next.base != self.base {
             return Err(unsettled());
@@ -321,11 +331,11 @@ impl Active {
         let mut next = Self::capture(
             self.profile,
             self.generation.checked_add(1).ok_or_else(unsettled)?,
-            base,
-            executable,
+            (base, executable),
             inputs(staged)?,
             receipts,
             staged,
+            None,
         )?;
         next.waiting = waiting;
         next.require_waiting_off(staged)?;
@@ -389,6 +399,18 @@ impl Active {
 
     pub fn executable(&self) -> &str {
         &self.executable.tag
+    }
+
+    pub(crate) fn resources(&self) -> PathBuf {
+        self.resources.path(self.base())
+    }
+
+    pub(super) fn verify_resources(&self) -> Result<(), String> {
+        self.resources.verify(self.base())
+    }
+
+    pub(crate) fn allow_accelerator(&self) -> bool {
+        self.resources.allow_accelerator(self.base())
     }
 
     pub(in crate::browser::sunrise) fn verify_program(&self, path: &Path) -> Result<(), String> {
@@ -647,6 +669,7 @@ impl Lease {
             return Ok(None);
         };
         active.verify_artifacts()?;
+        active.verify_resources()?;
         if active.inputs != inputs(self.home())? || active.inputs != inputs(destination)? {
             return Err(unsettled());
         }

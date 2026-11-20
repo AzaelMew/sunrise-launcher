@@ -362,7 +362,14 @@ impl Launcher {
             }
             Ok(false) => {}
         }
-        if !backend::check_prepared(&base) {
+        let fresh = match owner.active_build() {
+            Ok(active) => active.is_none(),
+            Err(error) => {
+                self.client_error = Some(error);
+                return;
+            }
+        };
+        if fresh && !backend::check_prepared(&base) {
             self.play_when_prepared = Some((base.clone(), intent));
             self.prepare_tag(base, backend::MinecraftFrom::Install, Some(owner));
             return;

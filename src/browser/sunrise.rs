@@ -1676,7 +1676,7 @@ pub fn before_play(
         )
         .into());
     }
-    verify_launch_arguments(cmd, owner.home(), &crate::backend::resources(tag))?;
+    verify_launch_arguments(cmd, owner.home(), &active.resources())?;
     let source = cmd
         .get_envs()
         .find(|(key, _)| *key == crate::run_leases::SOURCE)
