@@ -176,8 +176,10 @@ fn a_compiler_job_checks_its_tree_and_kills_it_when_the_owner_closes() {
             .env("SUNRISE_COMPILER_TEST", role);
         command
     };
-    let mut clean = spawn_compiler(&command("clean"), None).unwrap();
-    assert!(clean.wait().unwrap().success());
+    for role in ["clean", "joined"] {
+        let mut clean = spawn_compiler(&command(role), None).unwrap();
+        assert!(clean.wait().unwrap().success(), "{role}");
+    }
     for close in [false, true] {
         let mut child = spawn_compiler(&command("leader"), None).unwrap();
         let mut line = String::new();
@@ -230,6 +232,18 @@ fn compiler_actor() {
                 .unwrap();
             let mut line = String::new();
             std::io::stdin().read_line(&mut line).unwrap();
+        }
+        Ok("joined") => {
+            let status = crate::process::command(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "process::leases::tests::windows_tests::compiler_actor",
+                    "--nocapture",
+                ])
+                .env("SUNRISE_COMPILER_TEST", "clean")
+                .status()
+                .unwrap();
+            assert!(status.success());
         }
         Ok("descendant") => {
             println!("COMPILER-READY:{}", std::process::id());

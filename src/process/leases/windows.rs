@@ -57,30 +57,110 @@ impl CompilerJob {
         Ok(())
     }
 
-    fn check_empty(&self) -> io::Result<()> {
-        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
-        // SAFETY: a live handle and the fixed-size output buffer for this information class.
+    /// The leader's owned handle has already signalled. The job accounting can still count
+    /// it (or another exited child) while the kernel finishes bookkeeping. Observe exit on
+    /// process handles, not on that counter. The total number ever assigned fences the PID
+    /// snapshot against a listed child starting an unlisted one before it exits.
+    fn check_finished(&self, leader: u32) -> io::Result<()> {
+        let result = self.finished(leader);
+        if !matches!(result, Ok(true)) {
+            self.terminate()?;
+        }
+        if result? {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "the native build tool left a running child",
+            ))
+        }
+    }
+
+    fn finished(&self, leader: u32) -> io::Result<bool> {
+        use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
+
+        // The documented variable-length JOBOBJECT_BASIC_PROCESS_ID_LIST layout.
+        #[repr(C)]
+        struct Members {
+            assigned: u32,
+            listed: u32,
+            pids: [usize; 128],
+        }
+        let job = self.0.as_raw_handle();
+        let accounting = || -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
+            let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            // SAFETY: a live handle and the fixed-size output buffer for this class.
+            if unsafe {
+                QueryInformationJobObject(
+                    job,
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    mem::size_of_val(&info) as u32,
+                    ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(info)
+        };
+        let before = accounting()?;
+        if before.ActiveProcesses == 0 {
+            return Ok(true);
+        }
+        let mut members = Members {
+            assigned: 0,
+            listed: 0,
+            pids: [0; 128],
+        };
+        // SAFETY: Members is the documented C header followed by pointer-sized IDs.
         if unsafe {
             QueryInformationJobObject(
-                self.0.as_raw_handle(),
-                JobObjectBasicAccountingInformation,
-                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-                mem::size_of_val(&info) as u32,
+                job,
+                JobObjectBasicProcessIdList,
+                (&mut members as *mut Members).cast(),
+                mem::size_of_val(&members) as u32,
                 ptr::null_mut(),
             )
         } == 0
         {
-            let error = io::Error::last_os_error();
-            self.terminate()?;
-            return Err(error);
+            return Err(io::Error::last_os_error());
         }
-        if info.ActiveProcesses != 0 {
-            self.terminate()?;
-            return Err(io::Error::other(
-                "the native build tool left a running child",
-            ));
+        let Some(pids) = members.pids.get(..members.listed as usize) else {
+            return Err(io::ErrorKind::InvalidData.into());
+        };
+        if members.assigned != members.listed {
+            return Ok(false);
         }
-        Ok(())
+        for &pid in pids {
+            let pid = u32::try_from(pid).map_err(|_| io::ErrorKind::InvalidData)?;
+            if pid == leader {
+                continue; // The already-signalled SDK handle is still held, so its PID is exact.
+            }
+            // SAFETY: own the opened process handle, then prove it is in this job before waiting.
+            let raw =
+                unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+            if raw.is_null() {
+                let error = io::Error::last_os_error();
+                if pid != 0 && error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) {
+                    continue; // It exited since the snapshot.
+                }
+                return Err(error);
+            }
+            let process = unsafe { OwnedHandle::from_raw_handle(raw) };
+            let mut in_job = 0;
+            if unsafe { IsProcessInJob(process.as_raw_handle(), job, &mut in_job) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if in_job == 0 {
+                continue; // That snapshot PID has since been reused outside our job.
+            }
+            match unsafe { WaitForSingleObject(process.as_raw_handle(), 0) } {
+                WAIT_OBJECT_0 => {}
+                WAIT_TIMEOUT => return Ok(false),
+                _ => return Err(io::Error::last_os_error()),
+            }
+        }
+        Ok(accounting()?.TotalProcesses == before.TotalProcesses)
     }
 }
 impl WindowsChild {
@@ -111,7 +191,7 @@ impl WindowsChild {
     pub fn wait(&self) -> io::Result<std::process::ExitStatus> {
         let status = self.status(INFINITE)?.ok_or(io::ErrorKind::TimedOut)?;
         if let Some(job) = &self.2 {
-            job.check_empty()?;
+            job.check_finished(self.1)?;
         }
         Ok(status)
     }
