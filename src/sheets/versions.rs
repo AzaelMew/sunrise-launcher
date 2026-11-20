@@ -209,6 +209,17 @@ impl Launcher {
             .track_scroll(&crate::frame::scrolls("versions-page"))
     }
 
+    fn architecture_repair(&self, tag: &str) -> Option<&Release> {
+        let Load::Ready(releases) = &self.releases else {
+            return None;
+        };
+        backend::architecture_reinstall(releases, tag, self.settings.game_architecture)
+    }
+
+    fn can_repair_now(&self, tag: &str) -> bool {
+        !self.launch_busy() && self.client.is_none() && !self.removing.iter().any(|t| t == tag)
+    }
+
     fn versions_content(&mut self, sheet: bool, cx: &mut Context<Self>) -> Div {
         let Some(instance) = self.selected_instance() else {
             return div().child(tr("No profile selected."));
@@ -382,6 +393,32 @@ impl Launcher {
                 cx.notify();
             },
         ));
+        let reinstall = pick.as_ref().and_then(|tag| {
+            self.architecture_repair(tag)?;
+            let tag = tag.clone();
+            let label = match &self.installing {
+                Some((started, progress)) if started == &tag => trf(
+                    "Installing · {percent}%",
+                    &[("percent", &format!("{:.0}", progress * 100.))],
+                ),
+                _ => tr("Reinstall for this architecture").to_owned(),
+            };
+            let button = button("alt-versions-reinstall", label);
+            Some(if self.can_repair_now(&tag) {
+                button.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    // Recheck the exact offer and the active jobs at click.
+                    if this.can_repair_now(&tag) {
+                        if let Some(release) = this.architecture_repair(&tag).cloned() {
+                            this.architecture_reinstall = Some(tag.clone());
+                            this.install(&release);
+                        }
+                    }
+                    cx.notify();
+                }))
+            } else {
+                button.opacity(0.45).cursor_default().tab_stop(false)
+            })
+        });
         let keep = crate::frame::button_base("alt-versions-keep", tr("Keep this build"))
             .bg(rgb(palette().text))
             .border_color(rgb(palette().text))
@@ -458,17 +495,29 @@ impl Launcher {
                     .child(rows)
                     .children(nothing),
             )
-            .children(self.ui.sheets.error.clone().map(|e| {
-                div()
-                    .text_color(rgb(palette().danger))
-                    .text_size(px(tokens::SMALL))
-                    .child(e)
-            }))
+            .children(
+                self.ui
+                    .sheets
+                    .error
+                    .clone()
+                    .or_else(|| {
+                        let (tag, error) = self.install_error.as_ref()?;
+                        (self.ui.sheets.versions.pick.as_ref() == Some(tag)).then(|| error.clone())
+                    })
+                    .map(|e| {
+                        div()
+                            .text_color(rgb(palette().danger))
+                            .text_size(px(tokens::SMALL))
+                            .child(e)
+                    }),
+            )
             .child(
                 div()
                     .flex()
                     .justify_end()
                     .gap(px(8.))
+                    .flex_wrap()
+                    .children(reinstall)
                     .when(sheet, |d| d.child(cancel))
                     .child(keep),
             );

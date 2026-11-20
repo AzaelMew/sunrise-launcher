@@ -215,6 +215,8 @@ struct Launcher {
     /// The Sunrise version being installed as an update: whether it becomes the selected one is
     /// judged when it finishes.
     update_install: Option<String>,
+    /// An explicit same-build repair in Versions must not select or prune a build.
+    architecture_reinstall: Option<String>,
     /// The Sunrise version being installed because an instance was made or saved to play it: it
     /// becomes the launcher's version only when the launcher has none.
     instance_install: Option<String>,

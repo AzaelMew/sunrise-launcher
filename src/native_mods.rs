@@ -2390,8 +2390,11 @@ mod tests {
                 prerelease: false,
                 nightly: None,
             };
-            backend::install_as(&release, tag, &sha256, None, |_| {}).unwrap();
+            let result = backend::install_as(&release, tag, &sha256, None, |_| {});
             server.join().unwrap();
+            result
+        };
+        let prepare = |tag| {
             // `sunrise-launcher prepare` writes the resources from the player's own Minecraft.
             let resources = backend::resources(tag);
             fs::create_dir_all(&resources).unwrap();
@@ -2399,7 +2402,31 @@ mod tests {
         };
         let (old, new) = ("26.3-0.1.0", "26.3-0.1.1");
         // (a) A fresh install: the release is the build's base, chosen as the launcher chooses.
-        install_release(old);
+        install_release(old).unwrap();
+        prepare(old);
+        // The same-version install used to repair an architecture must not touch a running build.
+        let tree = cap_std::fs::Dir::open_ambient_dir(
+            backend::version_dir(old),
+            cap_std::ambient_authority(),
+        )
+        .unwrap();
+        let claim = crate::run_leases::Registry::open()
+            .unwrap()
+            .lock(&tree, crate::native_cache::LockMode::Shared)
+            .unwrap();
+        drop(tree);
+        assert_eq!(
+            install_release(old).unwrap_err(),
+            cache_error(crate::storage::Error::Busy)
+        );
+        assert!(backend::installed().iter().any(|tag| tag == old));
+        assert!(backend::resources(old)
+            .join("sunrise-resources.json")
+            .is_file());
+        drop(claim);
+        install_release(old).unwrap();
+        assert!(backend::installed().iter().any(|tag| tag == old));
+        prepare(old);
         let base = base_for(None, &backend::installed(), false).unwrap();
         assert_eq!(base, old);
         let binary = dir("player-flow").join("built");
@@ -2420,7 +2447,8 @@ mod tests {
         assert_eq!(backend::resources(native), backend::resources(old));
         // (b) An update: a newer release arrives, and a rebuild with `update` moves to it. The
         // build made before it still plays, on the base it was made from, which stays installed.
-        install_release(new);
+        install_release(new).unwrap();
+        prepare(new);
         assert_eq!(
             base_for(Some(native), &backend::installed(), true).as_deref(),
             Some(new)

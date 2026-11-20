@@ -182,6 +182,7 @@ impl Launcher {
                     self.bar = (0., 0.);
                     self.refresh_installed();
                     let as_update = self.update_install.take().filter(|t| *t == tag);
+                    let repair = self.architecture_reinstall.take().is_some_and(|t| t == tag);
                     let for_instance = self.instance_install.take_if(|t| *t == tag).is_some();
                     if let (Ok(()), Some(started)) = (&result, self.install_started.take()) {
                         let name = if as_update.is_some() {
@@ -197,6 +198,7 @@ impl Launcher {
                         .take()
                         .filter(|(_, wanted)| result.is_ok() && *wanted == tag);
                     match result {
+                        Ok(()) if repair => {}
                         Ok(()) => {
                             if as_update.is_some()
                                 && sunrise_launcher::nightly::date_of(&tag).is_some()

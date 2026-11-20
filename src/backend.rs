@@ -295,8 +295,9 @@ pub fn can_choose_game_architecture() -> bool {
 /// have no marker; their PE machine type is used for both.
 fn installed_game_architecture(tag: &str) -> Option<InstalledGameArchitecture> {
     let dir = version_dir(tag);
-    serde_json::from_slice(&fs::read(dir.join(GAME_BUILD_ARCHITECTURE)).ok()?)
+    fs::read(dir.join(GAME_BUILD_ARCHITECTURE))
         .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .or_else(|| {
             let binary = pe_architecture_file(&dir.join(CLIENT))?;
             Some(InstalledGameArchitecture {
@@ -348,6 +349,46 @@ fn installed_architecture_matches(
     installed: InstalledGameArchitecture,
 ) -> bool {
     installed.requested == target || installed.binary == target
+}
+
+/// The exact installed build can be repaired only while it is still offered for this setting.
+/// This is a same-build operation, not an update candidate.
+pub fn architecture_reinstall<'a>(
+    releases: &'a [Release],
+    tag: &str,
+    choice: GameArchitecture,
+) -> Option<&'a Release> {
+    if !can_choose_game_architecture() || !version_dir(tag).join(COMPLETE).is_file() {
+        return None;
+    }
+    architecture_reinstall_for(
+        releases,
+        tag,
+        choice,
+        std::env::consts::ARCH,
+        installed_game_architecture(tag),
+    )
+}
+
+fn architecture_reinstall_for<'a>(
+    releases: &'a [Release],
+    tag: &str,
+    choice: GameArchitecture,
+    process: &str,
+    installed: Option<InstalledGameArchitecture>,
+) -> Option<&'a Release> {
+    let channel = crate::instances::Channel::of_build(tag)?;
+    let release = channel.builds(releases).find(|r| r.tag == tag)?;
+    let (asset, fallback) = game_assets_for("windows", Some("aarch64"), process, choice)?;
+    let expected = architecture_for_asset(asset_installed(release, Some(asset), fallback)?)?;
+    let target = match choice {
+        GameArchitecture::Auto => architecture_for_platform(process)?,
+        explicit => explicit,
+    };
+    // A recorded x64 fallback for ARM64 is valid until an ARM64 archive is offered.
+    installed
+        .is_none_or(|have| !installed_architecture_matches(target, have) || have.binary != expected)
+        .then_some(release)
 }
 
 fn native_mod_architecture_message(
@@ -5562,6 +5603,60 @@ pub fn {f}("
         assert_eq!(
             native_mod_architecture_message(GameArchitecture::Arm64, GameArchitecture::Arm64),
             None
+        );
+    }
+
+    #[test]
+    fn architecture_reinstall_repairs_only_a_still_offered_exact_game() {
+        use GameArchitecture::{Arm64, X64};
+        let arm = "sunrise-windows-arm64.zip";
+        let x64 = "sunrise-windows-x64.zip";
+        let current = "26.3-0.1.0";
+        let next = "26.3-0.1.1";
+        let release = |tag: &str, file: &str| Release {
+            tag: tag.into(),
+            name: String::new(),
+            body: String::new(),
+            date: String::new(),
+            time: String::new(),
+            asset: Some((format!("https://example.invalid/{file}"), 1)),
+            prerelease: false,
+            nightly: None,
+        };
+        let have = |requested, binary| Some(InstalledGameArchitecture { requested, binary });
+        let exact = [
+            release(next, arm),
+            release(current, arm),
+            release("v2026.10.13", arm),
+        ];
+        let repair =
+            |tag, installed| architecture_reinstall_for(&exact, tag, Arm64, "x86_64", installed);
+        assert_eq!(
+            repair(current, have(X64, X64)).map(|r| r.tag.as_str()),
+            Some(current)
+        );
+        assert!(repair(current, have(Arm64, Arm64)).is_none());
+        assert!(repair("26.3-0.0.9", have(X64, X64)).is_none());
+        assert!(repair("v2026.10.13", have(X64, X64)).is_none());
+        assert!(
+            repair(current, have(Arm64, X64)).is_some(),
+            "promote when the real ARM64 build exists"
+        );
+        let fallback = [release(current, x64)];
+        let repair_fallback =
+            |installed| architecture_reinstall_for(&fallback, current, Arm64, "x86_64", installed);
+        assert!(
+            repair_fallback(have(X64, X64)).is_some(),
+            "record the requested fallback"
+        );
+        assert!(
+            repair_fallback(have(Arm64, X64)).is_none(),
+            "do not re-offer an accepted fallback"
+        );
+        assert!(
+            architecture_reinstall_for(&exact, current, X64, "x86_64", have(Arm64, Arm64))
+                .is_none(),
+            "a stale ARM64 catalogue cannot repair to x64"
         );
     }
 

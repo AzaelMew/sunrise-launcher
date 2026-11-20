@@ -88,6 +88,7 @@ impl Launcher {
             self_update: sunrise_launcher::update_handoff::take_failure()
                 .map_or(SelfUpdate::Idle, |e| SelfUpdate::Stuck(Some(e))),
             update_install: None,
+            architecture_reinstall: None,
             instance_install: None,
             install_next: None,
             bar: (0., 0.),
