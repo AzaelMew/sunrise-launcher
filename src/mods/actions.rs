@@ -21,11 +21,28 @@ pub(crate) enum Lock {
     GameRunning,
     /// Sunrise is getting ready to play.
     Preparing,
+    /// The mods are being brought up to date (at start, or for the Play that waits for it).
+    Updating,
     /// A native build is running.
     Building,
 }
 
 impl Lock {
+    /// The first reason that applies, the most pressing first.
+    fn of(game_running: bool, preparing: bool, updating: bool, building: bool) -> Option<Lock> {
+        if game_running {
+            Some(Lock::GameRunning)
+        } else if preparing {
+            Some(Lock::Preparing)
+        } else if updating {
+            Some(Lock::Updating)
+        } else if building {
+            Some(Lock::Building)
+        } else {
+            None
+        }
+    }
+
     fn why(self) -> &'static str {
         match self {
             Lock::GameRunning => {
@@ -33,6 +50,9 @@ impl Lock {
             }
             Lock::Preparing => {
                 tr("Sunrise is getting ready to play. Wait for it to finish before changing mods.")
+            }
+            Lock::Updating => {
+                tr("Your mods are being updated. Wait for it to finish before changing mods.")
             }
             Lock::Building => {
                 tr("A native build is running. Wait for it to finish before changing mods.")
@@ -56,19 +76,16 @@ impl Launcher {
 
     /// Why nothing may change now: the game, a launch step or a build is under way.
     pub(crate) fn mods_lock(&self) -> Option<Lock> {
-        if self.game_running() {
-            Some(Lock::GameRunning)
-        } else if self.preparing
-            || self.installing.is_some()
-            || self.play_when_prepared.is_some()
-            || self.play_after_build.is_some()
-        {
-            Some(Lock::Preparing)
-        } else if self.native_step.is_some() {
-            Some(Lock::Building)
-        } else {
-            None
-        }
+        Lock::of(
+            self.game_running(),
+            self.preparing
+                || self.installing.is_some()
+                || self.play_when_prepared.is_some()
+                || self.play_after_build.is_some(),
+            // The updater of Play, or of the start: an install now would race it.
+            self.mods.updating || self.play_when_updated.is_some(),
+            self.native_step.is_some(),
+        )
     }
 
     /// [`Self::mods_lock`] in words.
@@ -574,5 +591,24 @@ mod tests {
         assert!(reviewed_here(true, &Some(a.clone()), &a));
         assert!(!reviewed_here(true, &Some(a.clone()), &b));
         assert!(!reviewed_here(true, &None, &a));
+    }
+}
+
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    #[test]
+    fn the_updater_of_play_and_of_the_start_holds_installs_like_a_build_does() {
+        assert_eq!(Lock::of(false, false, false, false), None);
+        assert_eq!(Lock::of(false, false, true, false), Some(Lock::Updating));
+        assert_eq!(
+            Lock::of(false, false, true, true),
+            Some(Lock::Updating),
+            "an install doesn't start under the updater even while a build runs"
+        );
+        assert_eq!(Lock::of(false, true, true, false), Some(Lock::Preparing));
+        assert_eq!(Lock::of(true, true, true, true), Some(Lock::GameRunning));
+        assert_eq!(Lock::of(false, false, false, true), Some(Lock::Building));
     }
 }
