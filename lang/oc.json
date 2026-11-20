@@ -1474,9 +1474,10 @@
   "Works only with {needs}. It would be removed.": "Works only with {needs}. It would be removed.",
   "Don't install": "Don't install",
   "All your mods work with this version": "All your mods work with this version",
-  "1 of your mods isn't ready for this version and will be removed": "1 of your mods isn't ready for this version and will be removed",
-  "{count} of your mods aren't ready for this version and will be removed": "{count} of your mods aren't ready for this version and will be removed",
   "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like.": "Your native mods are rebuilt for the build you switch to. Check them against a newer build first if you like.",
   "{mod} couldn't be installed": "{mod} couldn't be installed",
-  "Also updated: {names}": "Also updated: {names}"
+  "Also updated: {names}": "Also updated: {names}",
+  "Checking your mods…": "Checking your mods…",
+  "Couldn't check your native mods for this version": "Couldn't check your native mods for this version",
+  "Removes {count} of your mods": "Removes {count} of your mods"
 }
