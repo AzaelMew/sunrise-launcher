@@ -16,6 +16,38 @@ impl PlayIntent {
     }
 }
 
+/// Registry update reports are notices, not an authorization step in Play.
+fn continue_after_assets(
+    tag: &str,
+    accepted: Option<&str>,
+    auto: Option<mods_page::AutoTarget>,
+    auto_enabled: bool,
+    tx: &std::sync::mpsc::Sender<Msg>,
+    mods_tx: &std::sync::mpsc::Sender<mods_page::Event>,
+) {
+    if let Some(auto) = auto {
+        backend::play_step("updating registry mods");
+        let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
+        let lines = mods_page::auto_update(&[auto], auto_enabled);
+        if !lines.is_empty() {
+            let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
+        }
+    }
+    backend::play_step("reading the sign-in");
+    let _ = tx.send(Msg::PlayStep(backend::PlayStep::SignIn));
+    let session = if sunrise_launcher::developer_offline::enabled(tag) {
+        Ok(None)
+    } else {
+        match accepted {
+            Some(uuid) => account::session_for_game_accepted(&backend::game_home(), uuid),
+            None => Err(account::NoOwner::default()),
+        }
+        .map(Some)
+    };
+    backend::play_step("starting the game");
+    let _ = tx.send(Msg::Session(session));
+}
+
 impl Launcher {
     /// After a crash with no report: when the game's output ends while its Vulkan renderer
     /// started, a native crash in the graphics driver (#746), switches the game to
@@ -216,27 +248,7 @@ impl Launcher {
             backend::play_step("checking the game's assets");
             let _ = tx.send(Msg::PlayStep(backend::PlayStep::Assets));
             backend::complete_assets(&tag);
-            if let Some(auto) = auto {
-                backend::play_step("updating registry mods");
-                let _ = tx.send(Msg::PlayStep(backend::PlayStep::Mods));
-                let lines = mods_page::auto_update(&[auto], auto_enabled);
-                if !lines.is_empty() {
-                    let _ = mods_tx.send(mods_page::Event::AutoUpdated(lines));
-                }
-            }
-            backend::play_step("reading the sign-in");
-            let _ = tx.send(Msg::PlayStep(backend::PlayStep::SignIn));
-            let session = if sunrise_launcher::developer_offline::enabled(&tag) {
-                Ok(None)
-            } else {
-                match &accepted {
-                    Some(uuid) => account::session_for_game_accepted(&backend::game_home(), uuid),
-                    None => Err(account::NoOwner::default()),
-                }
-                .map(Some)
-            };
-            backend::play_step("starting the game");
-            let _ = tx.send(Msg::Session(session));
+            continue_after_assets(&tag, accepted.as_deref(), auto, auto_enabled, &tx, &mods_tx);
         });
     }
 
@@ -381,6 +393,89 @@ impl Launcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_retained_legacy_copy_does_not_stop_play_at_the_mod_check() {
+        let scratch = tempfile::tempdir().unwrap();
+        let home = scratch.path();
+        let mods = home.join("sunrise-mods");
+        std::fs::create_dir(&mods).unwrap();
+        let active = mods.join("ruby-1.0.0.smod");
+        let bytes = sunrise_launcher_smod::Package::write_files(
+            &format!(
+                "id='ruby'\nname='Ruby'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n",
+                sunrise_launcher_smod::manifest::API
+            ),
+            &[],
+        )
+        .unwrap();
+        std::fs::write(&active, &bytes).unwrap();
+        let ledger = home.join("mod-browser/replaced.json");
+        let unverified = home.join("mod-browser/replaced/ruby");
+        std::fs::create_dir_all(&unverified).unwrap();
+        let old = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/replaced-v1.1.2.json"
+        ))
+        .replace(
+            "PACKAGE_DIGEST",
+            &sunrise_launcher_smod::index::sha256_file(&active).unwrap(),
+        )
+        .replace("\"pid\": 0", &format!("\"pid\": {}", std::process::id()));
+        std::fs::write(&ledger, &old).unwrap();
+        let entry: serde_json::Value = serde_json::from_str(&old).unwrap();
+        std::fs::write(
+            home.join("mod-browser.json"),
+            serde_json::json!({"entries": [entry[0]["entry"]]}).to_string(),
+        )
+        .unwrap();
+        let game_journal = home.join("mod-browser/install-journal.json");
+        std::fs::write(&game_journal, b"separate journal").unwrap();
+        let instance = instances::Instance {
+            id: "sunrise".into(),
+            name: "Sunrise".into(),
+            kind: instances::Kind::Default,
+            work: home.into(),
+            home: home.into(),
+            icon: None,
+            group: None,
+            version: None,
+            channel: Default::default(),
+            native_profile: Default::default(),
+            played: Default::default(),
+            last_played: None,
+            launch: Default::default(),
+        };
+        let (tx, events) = std::sync::mpsc::channel();
+        let (mods_tx, notices) = std::sync::mpsc::channel();
+        continue_after_assets(
+            "v0.0.0-legacy-fixture",
+            None,
+            Some(mods_page::AutoTarget {
+                instance,
+                game: "1.21.11".into(),
+            }),
+            false,
+            &tx,
+            &mods_tx,
+        );
+        assert!(
+            matches!(notices.try_recv().unwrap(), mods_page::Event::AutoUpdated(lines) if lines[0].contains("You can still play"))
+        );
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            Msg::PlayStep(backend::PlayStep::Mods)
+        ));
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            Msg::PlayStep(backend::PlayStep::SignIn)
+        ));
+        assert!(matches!(events.try_recv().unwrap(), Msg::Session(Err(_)))); // Only sign-in stops this fixture.
+        assert_eq!(std::fs::read_to_string(ledger).unwrap(), old);
+        assert_eq!(std::fs::read(active).unwrap(), bytes);
+        assert_eq!(std::fs::read(game_journal).unwrap(), b"separate journal");
+        assert!(unverified.is_dir());
+    }
 
     #[test]
     fn a_deferred_play_keeps_the_uuid_captured_before_preparation() {

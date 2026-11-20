@@ -206,26 +206,27 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
         installed_ruby(&home),
         ("1.1.0".into(), fs::read(&v2).unwrap())
     );
-    let kept = kept_list(&home);
+    let kept = kept_list(&home).unwrap();
     assert_eq!(kept.len(), 1);
     assert_eq!(
         fs::read(home.join(&kept[0].copy)).unwrap(),
         fs::read(&v1).unwrap()
     );
-    // A second run in the same launcher keeps it; the next start drops it, the update done.
+    // A second run in the same launcher keeps it. The next start can prove the installed
+    // package is intact and retire the advisory record without deleting the old copy.
     run_with(&index, true, &home, &PLAY, &|_, _| {});
     assert!(home.join(&kept[0].copy).is_file());
     save_kept(
         &home,
         &[Kept {
-            pid: 0,
+            session: None,
             ..kept[0].clone()
         }],
     )
     .unwrap();
-    recover(&home);
-    assert!(!home.join(&kept[0].copy).exists());
-    assert!(kept_list(&home).is_empty());
+    recover(&home).unwrap();
+    assert!(home.join(&kept[0].copy).is_file());
+    assert!(kept_list(&home).unwrap().is_empty());
 
     // 1.2.0 drops two blocks: it waits, and 1.1.0 stays as it was.
     let index = index_of(&[
@@ -245,7 +246,7 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
         installed_ruby(&home),
         ("1.1.0".into(), fs::read(&v2).unwrap())
     );
-    assert!(kept_list(&home).is_empty());
+    assert!(kept_list(&home).unwrap().is_empty());
     assert!(!home.join("mod-browser/downloads/ruby-1.2.0.smod").exists());
     fs::remove_dir_all(&dir).unwrap();
 }
@@ -270,7 +271,7 @@ fn backup_paths_stay_in_the_backup_folder() {
     let mut entry = installed::Installed::load(&home).entries.remove(0);
     entry.version = "../../outside".into();
     let kept = keep(&home, &entry).unwrap();
-    assert_eq!(kept.copy, "mod-browser/replaced/ruby");
+    assert!(kept.copy.starts_with("mod-browser/replaced/ruby."));
     assert!(home.join(&kept.copy).is_file());
 
     let outside = home.join("outside");
@@ -284,13 +285,102 @@ fn backup_paths_stay_in_the_backup_folder() {
         }],
     )
     .unwrap();
-    recover(&home);
+    assert!(recover(&home).is_err());
     assert_eq!(fs::read(outside).unwrap(), b"untouched");
     fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn failed_restore_keeps_its_record_for_retry() {
+fn a_failed_restore_and_ledger_save_cannot_lose_the_backup_on_same_process_retry() {
+    let dir = scratch("failed-restore-save");
+    let home = dir.join("home");
+    let old = ruby(&dir, "1.0.0", &["lamp"], &[]);
+    let new = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
+    let first = index_of(&[("1.0.0", GAME, &old)]);
+    let ruby = first.project("ruby").unwrap();
+    let _lock = crate::browser::lock_home(&home).unwrap();
+    install_version_guarded(
+        &first,
+        true,
+        ruby,
+        &ruby.versions[0],
+        &home,
+        &|_| Ok(()),
+        &|_, _| {},
+    )
+    .unwrap();
+    let entry = installed::Installed::load(&home).entries.remove(0);
+    let kept = keep(&home, &entry).unwrap();
+    let ledger = fs::read(home.join(KEPT)).unwrap();
+    let target = entry.path(&home).unwrap();
+    fs::remove_file(&target).unwrap();
+    fs::create_dir(&target).unwrap(); // A directory occupying the live file makes the real restore fail.
+    let error = finish_failed_update(&home, &kept, |_, rows| {
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].session.is_none());
+        Err("injected save refusal".into())
+    })
+    .unwrap_err();
+    assert!(error.contains("restore failed") && error.contains("injected save refusal"));
+    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
+    // A file reappears, but not its exact bytes. The old updater used to copy that over its backup.
+    fs::remove_dir(&target).unwrap();
+    fs::write(&target, b"incomplete live bytes").unwrap();
+    let next = index_of(&[("1.1.0", GAME, &new), ("1.0.0", GAME, &old)]);
+    let report = run_with(&next, true, &home, &PLAY, &|_, _| {});
+    assert_eq!(report.held.len(), 1);
+    assert!(report.updated.is_empty());
+    assert_eq!(
+        fs::read(home.join(&kept.copy)).unwrap(),
+        fs::read(old).unwrap()
+    );
+    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
+    assert_eq!(fs::read(target).unwrap(), b"incomplete live bytes");
+}
+
+#[test]
+fn an_omitted_installed_claim_cannot_authorize_retiring_the_backup() {
+    let dir = scratch("ambiguous-installed-claim");
+    let home = dir.join("home");
+    let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
+    let index = index_of(&[("1.0.0", GAME, &v1)]);
+    let project = index.project("ruby").unwrap();
+    install_version_guarded(
+        &index,
+        true,
+        project,
+        &project.versions[0],
+        &home,
+        &|_| Ok(()),
+        &|_, _| {},
+    )
+    .unwrap();
+    let entry = installed::Installed::load(&home).entries.remove(0);
+    let mut kept = keep(&home, &entry).unwrap();
+    kept.session = None;
+    let backup = home.join(&kept.copy);
+    save_kept(&home, &[kept]).unwrap();
+    let ledger = fs::read(home.join(KEPT)).unwrap();
+    let path = home.join(installed::MANIFEST);
+    let exact = fs::read(&path).unwrap();
+    let mut list: serde_json::Value = serde_json::from_slice(&exact).unwrap();
+    let omitted = serde_json::json!({"source":"sunrise", "project":"ruby", "file":"../external"});
+    list["entries"].as_array_mut().unwrap().push(omitted);
+    let disputed = serde_json::to_vec(&list).unwrap();
+    fs::write(&path, &disputed).unwrap();
+    assert_eq!(installed::Installed::load(&home).entries.len(), 1);
+    assert!(recover(&home).is_err());
+    assert_eq!(fs::read(&path).unwrap(), disputed);
+    assert_eq!(fs::read(home.join(KEPT)).unwrap(), ledger);
+    assert_eq!(fs::read(&backup).unwrap(), fs::read(&v1).unwrap());
+    fs::write(&path, exact).unwrap();
+    recover(&home).unwrap();
+    assert!(!home.join(KEPT).exists());
+    assert!(backup.is_file());
+}
+
+#[test]
+fn unproved_backup_stops_the_old_updater_but_not_play() {
     let dir = scratch("auto-restore-retry");
     let home = dir.join("home");
     let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
@@ -306,34 +396,51 @@ fn failed_restore_keeps_its_record_for_retry() {
         &|_, _| {},
     )
     .unwrap();
-    let entry = installed::Installed::load(&home).entries.remove(0);
-    let mut kept = keep(&home, &entry).unwrap();
-    kept.pid = 0;
-    save_kept(&home, &[kept.clone()]).unwrap();
-    let target = entry.path(&home).unwrap();
-    fs::remove_file(&target).unwrap();
-    fs::create_dir(&target).unwrap();
-    recover(&home);
-    assert_eq!(kept_list(&home).len(), 1);
-    assert!(home.join(&kept.copy).is_file());
+    let ledger = home.join(KEPT);
+    let backup = home.join("mod-browser/replaced/ruby");
+    fs::create_dir_all(backup.parent().unwrap()).unwrap();
+    fs::copy(&v1, &backup).unwrap();
+    let valid = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/replaced-v1.1.2.json"
+    ))
+    .replace("PACKAGE_DIGEST", &index::sha256_file(&v1).unwrap())
+    .replace("\"pid\": 0", &format!("\"pid\": {}", std::process::id()));
+    // A reused legacy PID does not grant ownership to this launcher.
+    fs::write(&ledger, &valid).unwrap();
+    assert!(run(&home, &PLAY, false, &|_, _| {}).is_none());
+    assert!(!ledger.exists());
+    assert!(backup.is_file());
+    let active = installed_ruby(&home);
     let v2 = ruby(&dir, "1.1.0", &["lamp", "brick"], &[]);
     let newer = index_of(&[("1.1.0", GAME, &v2), ("1.0.0", GAME, &v1)]);
-    let report = run_with(&newer, true, &home, &PLAY, &|_, _| {});
-    assert!(report.updated.is_empty());
-    assert_eq!(kept_list(&home).len(), 1);
-    assert!(home.join(&kept.copy).is_file());
-    fs::remove_dir(target).unwrap();
-    recover(&home);
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.0.0".into(), fs::read(v1).unwrap())
-    );
-    assert!(kept_list(&home).is_empty());
+    for (bytes, copy) in [
+        (b"invalid JSON".as_slice(), "present"),
+        (valid.as_bytes(), "missing"),
+        (valid.as_bytes(), "directory"),
+    ] {
+        fs::write(&ledger, bytes).unwrap();
+        match copy {
+            "missing" => fs::remove_file(&backup).unwrap(),
+            "directory" => fs::create_dir(&backup).unwrap(),
+            _ => (),
+        }
+        let report = run(&home, &PLAY, false, &|_, _| {}).unwrap();
+        assert!(report.lines()[0].contains("You can still play."));
+        assert!(report.failed.is_empty());
+        let report = run_with(&newer, true, &home, &PLAY, &|_, _| {});
+        assert!(report.updated.is_empty());
+        assert!(update_to(&newer, "ruby", "1.1.0", &home, &|_, _| {}).is_err());
+        assert_eq!(fs::read(&ledger).unwrap(), bytes);
+        assert_eq!(backup.is_file(), copy == "present");
+        assert_eq!(backup.is_dir(), copy == "directory");
+        assert_eq!(installed_ruby(&home), active);
+    }
     fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
-fn an_update_cut_short_is_rolled_back_at_the_next_start() {
+fn an_unproved_live_package_is_not_overwritten_from_the_old_ledger() {
     let dir = scratch("auto-rollback");
     let home = dir.join("home");
     let v1 = ruby(&dir, "1.0.0", &["lamp"], &[]);
@@ -354,16 +461,28 @@ fn an_update_cut_short_is_rolled_back_at_the_next_start() {
     // An earlier launcher kept 1.0.0, then stopped with a half-written file and the list still
     // naming 1.0.0.
     let mut k = keep(&home, &old).unwrap();
-    k.pid = 0;
+    k.session = None;
+    let backup = home.join(&k.copy);
     save_kept(&home, &[k]).unwrap();
     fs::write(home.join(&old.file), b"half").unwrap();
-    assert!(run(&home, &PLAY, false, &|_, _| {}).is_none());
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.0.0".into(), fs::read(&v1).unwrap())
-    );
-    assert!(kept_list(&home).is_empty());
+    assert_eq!(run(&home, &PLAY, false, &|_, _| {}).unwrap().held.len(), 1);
+    assert_eq!(installed_ruby(&home), ("1.0.0".into(), b"half".to_vec()));
+    assert_eq!(fs::read(backup).unwrap(), fs::read(v1).unwrap());
+    assert_eq!(kept_list(&home).unwrap().len(), 1);
     fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn lock_failure_reports_an_unchecked_update_not_a_retained_backup() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("not-a-directory");
+    fs::write(&home, b"keep").unwrap();
+    let lines = run(&home, &PLAY, false, &|_, _| {}).unwrap().lines();
+    assert_eq!(
+        lines,
+        ["The launcher couldn't check for unfinished mod updates. You can still play."]
+    );
+    assert_eq!(fs::read(home).unwrap(), b"keep");
 }
 
 #[test]
