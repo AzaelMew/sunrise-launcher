@@ -16,7 +16,7 @@
 //! restore over, or delete, live packages based on that ledger.
 use super::{install_version_guarded, Index};
 use crate::browser::{installed, Kind, SourceId};
-use crate::i18n::trf;
+use crate::i18n::{tr, trf};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -296,10 +296,7 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
 pub fn recover(home: &Path) -> Result<(), String> {
     let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
     let notice = || {
-        trf(
-        "An older mod-update backup ({file}) was kept because it couldn't be verified. You can still play.",
-        &[("file", KEPT)],
-    )
+        tr("A backup from an older mod update was kept because it couldn't be checked. You can still play.").to_owned()
     };
     let (mine, earlier): (Vec<Kept>, Vec<Kept>) = kept_list(home)
         .map_err(|_| notice())?
