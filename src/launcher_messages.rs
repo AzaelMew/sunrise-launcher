@@ -147,7 +147,9 @@ impl Launcher {
                             self.native_for = Some(instance.id);
                             self.native_failed(error.to_string(), &[]);
                         }
-                        Err(StartError::Other(error)) => self.client_error = Some(error),
+                        Err(StartError::UnknownSpawn(error) | StartError::Other(error)) => {
+                            self.client_error = Some(error);
+                        }
                     }
                 }
                 Msg::PlayAdmission(home, result) => {

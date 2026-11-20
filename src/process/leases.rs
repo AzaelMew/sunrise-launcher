@@ -213,7 +213,7 @@ fn profile_streams(mut command: std::process::Command, piped: bool) -> std::proc
 /// Only the chosen fork clears CLOEXEC. Consume the command, so stale pre_exec fds cannot
 /// be reused after these owners drop. No allocation or lock is taken in the child callback.
 #[cfg(unix)]
-fn spawn_unix(
+pub(super) fn spawn_unix(
     mut command: std::process::Command,
     roots: &[&File],
     runtime_root: Option<&Path>,

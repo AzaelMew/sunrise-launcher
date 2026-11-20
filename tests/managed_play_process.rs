@@ -8,7 +8,7 @@ use std::{
 use sunrise_launcher::{
     backend,
     launch::Launch,
-    managed_play::{FirstBuild, Profile},
+    managed_play::{FirstBuild, Profile, StartError},
     native_mods::{Cancellation, Profile as BuildMode},
 };
 
@@ -22,6 +22,9 @@ fn main() {
         match mode.to_str() {
             Some("--fixture-wrapper") => return wrapper(args),
             Some("--fixture-late") => return late(args),
+            Some("--internal-game-relay") if std::env::var_os("FIXTURE_RELAY_CUT").is_some() => {
+                return post_commit_fixture(args);
+            }
             _ => {
                 if let Some(status) = sunrise_launcher::process::relay::private(&mode, args) {
                     std::process::exit(status);
@@ -164,6 +167,7 @@ fn owner() {
                 Err(error) => error,
                 Ok(_) => panic!("wrapper {case} started a game without the relay"),
             };
+            let error = String::from(error);
             assert!(
                 error.contains("Could not start Sunrise through"),
                 "wrapper {case}: {error}"
@@ -176,6 +180,29 @@ fn owner() {
             assert!(!home.join("game-ready").exists());
         }
         assert!(home.join("late-waiting").is_file());
+        for case in ["post-commit-death", "post-commit-refusal"] {
+            let result =
+                profile.spawn_configured(&active, &cancellation, command(), &wrap(case), false);
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("wrapper {case} did not send a successful spawn proof"),
+            };
+            assert!(home.join(case).is_file(), "fixture did not pass Commit");
+            assert_eq!(
+                matches!(error, StartError::UnknownSpawn(_)),
+                case == "post-commit-death"
+            );
+            let message = String::from(error);
+            assert!(
+                message.contains(if case == "post-commit-death" {
+                    "may have started"
+                } else {
+                    "fixture refused child creation"
+                }),
+                "{message}"
+            );
+            assert!(!home.join("game-ready").exists());
+        }
         drop(profile);
         // The independently started late relay is still alive. Revocation must release
         // both claims before it is allowed to try its formerly valid invocation.
@@ -263,6 +290,18 @@ fn wrapper(mut args: impl Iterator<Item = std::ffi::OsString>) {
         await_event(|| home.join("late-waiting").is_file());
         return;
     }
+    if mode
+        .to_str()
+        .is_some_and(|mode| mode.starts_with("post-commit-"))
+    {
+        assert!(Command::new(args.next().unwrap())
+            .args(args)
+            .env("FIXTURE_RELAY_CUT", mode)
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
     assert_eq!(mode, "close");
     use std::io::Write as _;
     std::io::stdout().write_all(&vec![b'o'; 256 << 10]).unwrap();
@@ -275,6 +314,49 @@ fn wrapper(mut args: impl Iterator<Item = std::ffi::OsString>) {
         .status()
         .unwrap();
     std::process::exit(status.code().unwrap_or(1));
+}
+
+/// A peer of the same installed test image and Job, acquiring the real claims before
+/// exiting without an ack or explicitly refusing to create its child.
+fn post_commit_fixture(mut args: impl Iterator<Item = std::ffi::OsString>) {
+    use serde_json::{json, Value};
+    use sunrise_launcher_smod::local_control::{self, Channel, Marker};
+    let command = args.next().unwrap();
+    let invocation: Value = serde_json::from_str(command.to_str().unwrap()).unwrap();
+    let marker: Marker = serde_json::from_value(invocation["marker"].clone()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    #[cfg(unix)]
+    let stream = local_control::connect(&marker, deadline).unwrap();
+    #[cfg(windows)]
+    let stream = local_control::connect_relay(
+        &marker,
+        invocation["issuer"].as_u64().unwrap() as u32,
+        deadline,
+    )
+    .unwrap();
+    let channel = Channel::authenticate_relay(stream, &marker, false, deadline, None).unwrap();
+    let (channel, offer) = channel.receive::<Value>().unwrap();
+    let count = offer["count"].as_u64().unwrap() as usize;
+    #[cfg(unix)]
+    let (channel, claims) = channel.receive_relay_claims(count).unwrap();
+    #[cfg(windows)]
+    let (channel, claims) = channel.receive::<Vec<usize>>().unwrap();
+    assert_eq!(claims.len(), count);
+    let (channel, permit) = channel
+        .send(&"Acquired")
+        .unwrap()
+        .receive::<String>()
+        .unwrap();
+    assert_eq!(permit, "Commit");
+    let case = std::env::var("FIXTURE_RELAY_CUT").unwrap();
+    fs::write(backend::game_home().join(&case), []).unwrap();
+    if case == "post-commit-refusal" {
+        channel
+            .relay_committed(deadline)
+            .send(&json!({"Refused":"fixture refused child creation"}))
+            .unwrap();
+    }
+    // On Windows the process exit closes the duplicated handles, just as a dying relay does.
 }
 
 fn late(mut args: impl Iterator<Item = std::ffi::OsString>) {

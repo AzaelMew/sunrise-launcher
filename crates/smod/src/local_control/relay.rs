@@ -76,27 +76,16 @@ impl Channel {
         self.stream.client_process_id()
     }
 
-    /// The private Unix relay retains this channel until exec. EOF is the same kernel
-    /// process-creation boundary as the standard library's close-on-exec error pipe.
-    #[cfg(unix)]
-    pub fn expect_relay_exec(mut self) -> io::Result<()> {
-        let mut byte = [0];
-        match self.retry_io(|stream| stream.read(&mut byte))? {
-            0 => Ok(()),
-            _ => Err(io::ErrorKind::InvalidData.into()),
-        }
-    }
-
-    #[cfg(unix)]
-    pub fn ensure_relay_exec_closes(&self) -> io::Result<()> {
-        use rustix::io::{FdFlags, fcntl_setfd};
-        fcntl_setfd(&self.stream, FdFlags::CLOEXEC)?;
-        Ok(())
+    /// Commit is irreversible. A missing reply after this cut isn't revocation.
+    pub fn relay_committed(mut self, deadline: Instant) -> Self {
+        self.deadline = deadline;
+        self.revoked = None;
+        self
     }
 
     #[cfg(unix)]
     pub fn send_relay_claims(mut self, files: &[&std::fs::File]) -> io::Result<Self> {
-        use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
+        use rustix::net::{sendmsg, SendAncillaryBuffer, SendAncillaryMessage, SendFlags};
         use std::{io::IoSlice, mem::MaybeUninit, os::fd::AsFd};
         if files.is_empty() || files.len() > MAX_RELAY_CLAIMS {
             return Err(io::ErrorKind::InvalidInput.into());
@@ -123,8 +112,8 @@ impl Channel {
     #[cfg(unix)]
     pub fn receive_relay_claims(mut self, count: usize) -> io::Result<(Self, Vec<std::fs::File>)> {
         use rustix::{
-            io::{FdFlags, fcntl_setfd},
-            net::{RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, recvmsg},
+            io::{fcntl_setfd, FdFlags},
+            net::{recvmsg, RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags},
         };
         use std::{io::IoSliceMut, mem::MaybeUninit};
         if count == 0 || count > MAX_RELAY_CLAIMS {

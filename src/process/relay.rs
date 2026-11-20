@@ -4,6 +4,7 @@ use super::{
     leases::{ChildLeases, ProfileHandoff},
     relay_wrapper::Wrapper,
 };
+use crate::managed_play::StartError;
 use serde::{Deserialize, Serialize};
 use std::{
     ffi::{OsStr, OsString},
@@ -63,10 +64,29 @@ struct Offer {
 enum Signal {
     Acquired,
     Commit,
-    #[cfg(windows)]
     Started,
-    #[cfg(unix)]
-    ExecFailed,
+    Refused(String),
+}
+
+enum Confirmation {
+    Spawned,
+    Refused(io::Error),
+    Unknown(io::Error),
+}
+
+fn commit(channel: Channel) -> Confirmation {
+    // The acquiring relay can still fail before its signed-off spawn, or start the
+    // game and die before its reply reaches us. Neither EOF nor a timeout tells us which.
+    let reply = channel
+        .relay_committed(Instant::now() + TIMEOUT)
+        .send(&Signal::Commit)
+        .and_then(Channel::receive::<Signal>);
+    match reply {
+        Ok((_, Signal::Started)) => Confirmation::Spawned,
+        Ok((_, Signal::Refused(error))) => Confirmation::Refused(io::Error::other(error)),
+        Ok(_) => Confirmation::Unknown(io::ErrorKind::InvalidData.into()),
+        Err(error) => Confirmation::Unknown(error),
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -124,7 +144,7 @@ pub(crate) fn start(
     leases: &ChildLeases,
     profile: ProfileHandoff<'_>,
     piped: bool,
-) -> Result<Child, String> {
+) -> Result<Child, StartError> {
     let invocation = Invocation {
         marker: Marker::runtime().map_err(|e| e.to_string())?,
         #[cfg(windows)]
@@ -150,7 +170,7 @@ pub(crate) fn start(
     };
     let files: Vec<_> = leases.files().into_iter().chain([profile.file]).collect();
     if files.len() > MAX_RELAY_CLAIMS {
-        return Err(failure(io::ErrorKind::InvalidInput.into()));
+        return Err(failure(io::ErrorKind::InvalidInput.into()).into());
     }
     let offer = Offer {
         count: files.len(),
@@ -190,7 +210,7 @@ pub(crate) fn start(
     let token = Token::new();
     let done = AtomicBool::new(false);
     let deadline = Instant::now() + TIMEOUT;
-    let outcome = std::thread::scope(|scope| -> io::Result<()> {
+    let outcome = std::thread::scope(|scope| -> io::Result<Confirmation> {
         std::thread::Builder::new()
             .name("wrapper-leader".into())
             .spawn_scoped(scope, || {
@@ -234,17 +254,7 @@ pub(crate) fn start(
             if ack != Signal::Acquired {
                 return Err(io::ErrorKind::InvalidData.into());
             }
-            let channel = channel.send(&Signal::Commit)?;
-            #[cfg(unix)]
-            return channel.expect_relay_exec();
-            #[cfg(windows)]
-            {
-                let (_, ack) = channel.receive::<Signal>()?;
-                if ack != Signal::Started {
-                    return Err(io::ErrorKind::InvalidData.into());
-                }
-                Ok(())
-            }
+            Ok(commit(channel))
         })();
         done.store(true, Ordering::Release);
         handshake
@@ -254,10 +264,17 @@ pub(crate) fn start(
     drop(endpoint);
     let wrapper = wrapper.into_inner().unwrap();
     match outcome {
-        Ok(()) => Ok(wrapper.child),
-        Err(error) => {
+        Ok(Confirmation::Spawned) => Ok(wrapper.child),
+        Err(error) | Ok(Confirmation::Refused(error)) => {
             wrapper.retire();
-            Err(failure(error))
+            Err(failure(error).into())
+        }
+        Ok(Confirmation::Unknown(error)) => {
+            wrapper.retire();
+            Err(StartError::UnknownSpawn(crate::i18n::trf(
+                "Sunrise may have started. Close the game if it opened before trying again.\nWrapper: {wrapper}\n{reason}",
+                &[("wrapper", &label), ("reason", &error.to_string())],
+            )))
         }
     }
 }
@@ -330,33 +347,28 @@ fn run(mut args: impl Iterator<Item = OsString>) -> io::Result<i32> {
     if permit != Signal::Commit {
         return Err(io::ErrorKind::PermissionDenied.into());
     }
+    let channel = channel.relay_committed(Instant::now() + TIMEOUT);
     #[cfg(unix)]
-    return exec(channel, game, claims);
+    let child = super::leases::spawn_unix(game, &claims.iter().collect::<Vec<_>>(), None, None)
+        .map(Child::from);
     #[cfg(windows)]
-    {
-        let mut child = windows::spawn(game, &claims)?;
-        // The game now owns its own copies. After Commit, loss of the reply never kills it.
-        drop(claims);
-        let _ = channel.send(&Signal::Started);
-        Ok(child.wait()?.code().unwrap_or(1))
-    }
-}
-
-#[cfg(unix)]
-fn exec(channel: Channel, mut game: Command, claims: Vec<std::fs::File>) -> io::Result<i32> {
-    use std::os::{fd::AsRawFd, unix::process::CommandExt};
-    let started = (|| {
-        channel.ensure_relay_exec_closes()?;
-        for file in &claims {
-            // SAFETY: private relay has no other threads; each descriptor is exclusively owned.
-            if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFD, 0) } < 0 {
-                return Err(io::Error::last_os_error());
-            }
+    let child = windows::spawn(game, &claims);
+    drop(claims);
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            let _ = channel.send(&Signal::Refused(error.to_string()));
+            return Err(error);
         }
-        Err(game.exec())
-    })();
-    let _ = channel.send(&Signal::ExecFailed);
-    started
+    };
+    // The child already owns its claims. Even if the launcher never receives this
+    // acknowledgment (or dies), the relay must not terminate the game.
+    let _ = channel.send(&Signal::Started);
+    let status = child.wait()?;
+    #[cfg(unix)]
+    return super::supervisor::exit_code(status);
+    #[cfg(windows)]
+    Ok(status.code().unwrap_or(1))
 }
 
 #[cfg(windows)]

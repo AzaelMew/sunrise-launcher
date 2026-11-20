@@ -26,6 +26,7 @@ pub enum StartError {
     Journal(GameInstallProblem),
     Account(NoOwner),
     Native(native_mods::Failed),
+    UnknownSpawn(String),
     Other(String),
 }
 
@@ -44,7 +45,7 @@ impl From<StartError> for String {
                 None => format!("{error} {}", crate::i18n::tr(backend::SIGN_IN_HINT)),
             },
             StartError::Native(error) => error.into(),
-            StartError::Other(error) => error,
+            StartError::UnknownSpawn(error) | StartError::Other(error) => error,
         }
     }
 }
@@ -141,6 +142,7 @@ impl Client<'_> {
             };
             session_file
         };
+        account::retain_launch_session(session_file.as_deref());
         let launch = &self.instance.launch;
         let started = (|| {
             arguments(&mut cmd)?;
@@ -169,8 +171,10 @@ impl Client<'_> {
                 owner: !offline,
             }),
             Err(error) => {
-                account::discard_launch_session(session_file);
-                Err(error.into())
+                if !matches!(error, StartError::UnknownSpawn(_)) {
+                    account::discard_launch_session(session_file);
+                }
+                Err(error)
             }
         }
     }

@@ -276,17 +276,17 @@ impl Profile {
 
     /// Recheck the actual committed generation immediately before creating its child.
     /// The same profile admission, game-manifest lock and native grant span the cutover.
-    pub fn verified_handoff<T>(
+    pub fn verified_handoff<T, E: From<String>>(
         &self,
         active: &Active,
         cancellation: &native_mods::Cancellation,
-        spawn: impl FnOnce(ProfileHandoff<'_>) -> Result<T, String>,
-    ) -> Result<T, String> {
+        spawn: impl FnOnce(ProfileHandoff<'_>) -> Result<T, E>,
+    ) -> Result<T, E> {
         let home = self.home();
         let _manifest = game_lock(home)?;
-        crate::browser::installed::recover_game_install(home)?;
+        crate::browser::installed::recover_game_install(home).map_err(String::from)?;
         if self.active()?.as_ref() != Some(active) || inputs(home, None)? != active.inputs {
-            return Err(unsettled());
+            return Err(unsettled().into());
         }
         active.verify_artifacts()?;
         super::verify_included(active.base(), active.executable(), home)?;

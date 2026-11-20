@@ -186,7 +186,9 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
     for version in ["1.1.0", "1.2.0"] {
         write_package(version);
         assert!(profile
-            .verified_handoff::<()>(&previous, &cancellation, |_| panic!("stale game launched"))
+            .verified_handoff::<(), String>(&previous, &cancellation, |_| panic!(
+                "stale game launched"
+            ))
             .is_err());
         let current = profile
             .refresh(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
@@ -199,7 +201,7 @@ fn game_replacements_repair_only_owned_row_fields_and_advance_the_same_base() {
         assert_eq!(profile.active().unwrap(), Some(current.clone()));
         assert_eq!(inputs(&home, None).unwrap(), current.inputs);
         profile
-            .verified_handoff(&current, &cancellation, |_| Ok(()))
+            .verified_handoff(&current, &cancellation, |_| Ok::<_, String>(()))
             .unwrap();
         expected["entries"][1]["version"] = version.into();
         expected["entries"][1]["number"] = version.into();

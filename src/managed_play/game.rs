@@ -1,5 +1,5 @@
 //! Build the actual admitted client command, then transfer its profile and cache claims.
-use super::{unsettled, Active, Profile};
+use super::{unsettled, Active, Profile, StartError};
 use crate::{
     backend::{self, RuntimeGuard},
     native_mods::Cancellation,
@@ -32,6 +32,7 @@ impl Profile {
             piped,
             || Ok(()),
         )
+        .map_err(String::from)
     }
 
     /// Apply instance switches and hooks, then start either the exact image or the
@@ -43,7 +44,7 @@ impl Profile {
         command: Command,
         launch: &crate::launch::Launch,
         piped: bool,
-    ) -> Result<(Child, RuntimeGuard), String> {
+    ) -> Result<(Child, RuntimeGuard), StartError> {
         self.spawn_checked_account(
             active,
             cancellation,
@@ -62,7 +63,7 @@ impl Profile {
         (launch, piped): (&crate::launch::Launch, bool),
         prepare_jars: impl FnOnce(&mut Command) -> Result<(), String>,
         check_account: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(Child, RuntimeGuard), String> {
+    ) -> Result<(Child, RuntimeGuard), StartError> {
         let wrapper = crate::launch::managed_wrapper(&mut command, launch);
         let selection = validate_selection(self.home(), &active.resource_path(), &command)?;
         prepare_jars(&mut command)?;
@@ -85,7 +86,7 @@ impl Profile {
         wrapper: &[std::ffi::OsString],
         piped: bool,
         check_account: impl FnOnce() -> Result<(), String>,
-    ) -> Result<(Child, RuntimeGuard), String> {
+    ) -> Result<(Child, RuntimeGuard), StartError> {
         self.verified_handoff(active, cancellation, |profile| {
             let (command, selection) = selected;
             let (mut command, runtime) = prepare(self.home(), active, command)?;
