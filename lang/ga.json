@@ -1468,5 +1468,7 @@
   "Sign in with Microsoft": "Sínigh isteach le Microsoft",
   "{mod} didn't compile. The problem is in the mod, not in your game.": "{mod} didn't compile. The problem is in the mod, not in your game.",
   "Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.": "Native code: it is built into the game on this computer and runs with full access to your computer. Listed after a person reviewed its entry and file.",
-  "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file": "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file"
+  "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file": "Native code: it is built into the game and runs with full access to your computer. Listed after a person reviewed its entry and file",
+  "Close the game to install": "Close the game to install",
+  "Couldn't build on your computer": "Couldn't build on your computer"
 }
