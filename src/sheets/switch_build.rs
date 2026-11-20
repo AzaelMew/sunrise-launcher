@@ -268,15 +268,9 @@ impl Launcher {
                         })
                         .collect::<Vec<_>>()
                         .join("\n\n");
-                    panel = panel.child(div().child(details.clone()));
-                    actions =
-                        actions.child(button("switch-copy-why", tr("Copy details")).on_click(
-                            cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                    details.clone(),
-                                ));
-                            }),
-                        ));
+                    // These are the frozen diagnostics in the proposal or receipt, not
+                    // the shared log that another build may have since overwritten.
+                    panel = panel.child(Self::why_panel(Vec::new(), details, cx));
                 }
             }
             if plan.is_some() {
