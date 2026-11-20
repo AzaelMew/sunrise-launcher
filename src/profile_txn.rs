@@ -154,6 +154,16 @@ impl Admission {
         })
     }
 
+    /// Give a game child the gate of this already-admitted profile. The game spawn
+    /// must carry its cache claims and this profile gate in the same handoff.
+    pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
+        crate::process::leases::ProfileHandoff {
+            file: &self.file,
+            #[cfg(unix)]
+            handed_off: &self.handed_off,
+        }
+    }
+
     pub fn home(&self) -> &Path {
         &self.home
     }
@@ -624,11 +634,7 @@ impl<'a> Staging<'a> {
     /// Borrow this stage's existing admission for a preparation or native worker. The
     /// worker may outlive the launcher, but only the launcher may seal proved output.
     pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
-        crate::process::leases::ProfileHandoff {
-            file: &self.lease.file,
-            #[cfg(unix)]
-            handed_off: &self.lease.handed_off,
-        }
+        self.lease.handoff()
     }
 
     /// Bind exact preimages and candidates under the caller's reference guard, while only

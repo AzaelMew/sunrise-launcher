@@ -51,6 +51,38 @@ impl ChildLeases {
         child
     }
 
+    /// Start the selected game with the committed profile and cache claims in one
+    /// child creation. A configured terminal stays attached; a UI launch gets streams.
+    pub fn spawn_game(
+        self,
+        command: std::process::Command,
+        profile: ProfileHandoff<'_>,
+        piped: bool,
+    ) -> io::Result<super::child::Child> {
+        #[cfg(unix)]
+        {
+            spawn_unix(
+                profile_streams(command, piped),
+                &self.files(),
+                Some(&self.data),
+                Some(profile.share()),
+            )
+            .map(Into::into)
+        }
+        #[cfg(windows)]
+        spawn_windows_command(
+            &command,
+            &self.files(),
+            windows::Start {
+                runtime_root: Some(&self.data),
+                profile: Some(profile.file),
+                attached: !piped,
+                ..windows::Start::default()
+            },
+            piped,
+        )
+    }
+
     fn files(&self) -> Vec<&File> {
         self.claims.iter().flat_map(Claim::files).collect()
     }
@@ -76,7 +108,14 @@ pub enum StagedChild {
     Compiler,
 }
 
-impl ProfileHandoff<'_> {
+impl<'a> ProfileHandoff<'a> {
+    #[cfg(unix)]
+    fn share(self) -> &'a File {
+        self.handed_off
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        self.file
+    }
+
     pub(super) fn spawn(
         self,
         command: std::process::Command,
@@ -85,22 +124,37 @@ impl ProfileHandoff<'_> {
         #[cfg(unix)]
         {
             let _ = role;
-            let mut command = command;
-            command
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped());
-            self.handed_off
-                .store(true, std::sync::atomic::Ordering::Relaxed);
-            spawn_unix(command, &[], None, Some(self.file)).map(Into::into)
+            spawn_unix(
+                profile_streams(command, true),
+                &[],
+                None,
+                Some(self.share()),
+            )
+            .map(Into::into)
         }
         #[cfg(windows)]
-        spawn_piped(
+        spawn_windows_command(
             &command,
-            Some(self.file),
-            matches!(role, StagedChild::Compiler),
+            &[],
+            windows::Start {
+                profile: Some(self.file),
+                compiler: matches!(role, StagedChild::Compiler),
+                ..windows::Start::default()
+            },
+            true,
         )
     }
+}
+
+#[cfg(unix)]
+fn profile_streams(mut command: std::process::Command, piped: bool) -> std::process::Command {
+    if piped {
+        command
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+    }
+    command
 }
 
 /// Only the chosen fork clears CLOEXEC. Consume the command, so stale pre_exec fds cannot
@@ -184,14 +238,23 @@ pub use windows::WindowsChild;
 /// Start a piped compiler with a Job-list attribute so it belongs to the Job at creation.
 #[cfg(windows)]
 pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<super::child::Child> {
-    spawn_piped(command, None, true)
+    spawn_windows_command(
+        command,
+        &[],
+        windows::Start {
+            compiler: true,
+            ..windows::Start::default()
+        },
+        true,
+    )
 }
 
 #[cfg(windows)]
-fn spawn_piped(
-    command: &std::process::Command,
-    profile: Option<&File>,
-    compiler: bool,
+fn spawn_windows_command<'a>(
+    command: &'a std::process::Command,
+    files: &[&File],
+    mut start: windows::Start<'a>,
+    piped: bool,
 ) -> io::Result<super::child::Child> {
     use std::os::windows::io::AsRawHandle;
     let mut environment: Vec<_> = std::env::vars_os().collect();
@@ -206,34 +269,25 @@ fn spawn_piped(
         }
     }
     let arguments: Vec<_> = command.get_args().map(std::ffi::OsStr::to_owned).collect();
-    let pipes = {
-        let (input, parent_input) = io::pipe()?;
-        let (parent_output, output) = io::pipe()?;
-        let (parent_error, error) = io::pipe()?;
-        (
-            (input, output, error),
-            (parent_input, parent_output, parent_error),
-        )
-    };
-    let ((input, output, error), parent) = pipes;
-    let child = windows::spawn_exact(
-        &[],
-        Path::new(command.get_program()),
-        &arguments,
-        &environment,
-        windows::Start {
-            directory: command.get_current_dir(),
-            streams: Some([
-                input.as_raw_handle(),
-                output.as_raw_handle(),
-                error.as_raw_handle(),
-            ]),
-            profile,
-            compiler,
-            ..windows::Start::default()
-        },
-    )?;
-    Ok(super::child::Child::windows(child, Some(parent)))
+    start.directory = command.get_current_dir();
+    let program = Path::new(command.get_program());
+    if !piped {
+        return windows::spawn_exact(files, program, &arguments, &environment, start)
+            .map(|child| super::child::Child::windows(child, None));
+    }
+    let (input, parent_input) = io::pipe()?;
+    let (parent_output, output) = io::pipe()?;
+    let (parent_error, error) = io::pipe()?;
+    start.streams = Some([
+        input.as_raw_handle(),
+        output.as_raw_handle(),
+        error.as_raw_handle(),
+    ]);
+    let child = windows::spawn_exact(files, program, &arguments, &environment, start)?;
+    Ok(super::child::Child::windows(
+        child,
+        Some((parent_input, parent_output, parent_error)),
+    ))
 }
 
 #[cfg(test)]
