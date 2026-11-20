@@ -2262,6 +2262,12 @@ pub fn preparer(
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
     let owner = resources_owner(tag);
+    if owner != tag && !version_dir(&owner).join(COMPLETE).is_file() {
+        return Err(crate::i18n::trf(
+            "This native build needs its base version {base}; reinstall it.",
+            &[("base", &owner)],
+        ));
+    }
     let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
@@ -4896,6 +4902,20 @@ pub fn {f}("
             assert!(prepare_lock(&sibling).is_err());
         }
         assert!(prepare_lock(&base).is_ok());
+        // Preparing a native build runs the base's preparer, and says so when it can't.
+        let try_prepare = || {
+            preparer(&native, Path::new("."), MinecraftFrom::Install, &|_| {})
+                .map(|_| ())
+                .unwrap_err()
+        };
+        assert_eq!(try_prepare(), crate::preparer::too_old(&base));
+        fs::remove_file(base_dir.join(COMPLETE)).unwrap();
+        let error = try_prepare();
+        assert!(
+            error.contains(&base) && !error.contains("too old"),
+            "{error}"
+        );
+        fs::write(base_dir.join(COMPLETE), "").unwrap();
         fs::remove_dir_all(version_dir(&sibling)).unwrap();
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
