@@ -324,6 +324,15 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
         },
     )
     .unwrap();
+    assert!(Held::new(
+        hold.id().into(),
+        *hold.digest(),
+        "sunrise-native-mods/CON.smod".into(),
+        hold.source().clone(),
+        hold.enabled_before(),
+        hold.reason().clone(),
+    )
+    .is_err());
     shown.receipts = vec![
         Receipt {
             id: ID,
@@ -347,6 +356,11 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
             "path",
             serde_json::json!("sunrise-native-mods/../lantern.smod"),
         ),
+        ("path", serde_json::json!("sunrise-native-mods/CON.smod")),
+        (
+            "path",
+            serde_json::json!("sunrise-native-mods/LANTER~1.smod"),
+        ),
         (
             "source",
             serde_json::json!({"kind":"other", "version":"1.0.0"}),
@@ -367,6 +381,12 @@ fn receipt_acknowledgement_recovers_the_exact_pointer_across_all_durable_cuts() 
     }
     let mut ambiguous = seed;
     ambiguous["receipts"][1]["waiting_for_update"] = serde_json::json!([hold.clone()]);
+    assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
+    let second = &mut ambiguous["receipts"][1]["waiting_for_update"][0];
+    second["id"] = serde_json::json!("different");
+    assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
+    ambiguous["receipts"][1]["waiting_for_update"][0]["path"] =
+        serde_json::json!("sunrise-native-mods/Lantern.smod");
     assert!(Active::parse(&serde_json::to_vec(&ambiguous).unwrap()).is_err());
     before.push(b'\n');
     fs::write(&pointer, &before).unwrap();

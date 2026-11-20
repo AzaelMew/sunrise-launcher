@@ -797,25 +797,38 @@ fn valid_destination(path: &Path) -> bool {
     use sunrise_launcher_smod::mod_list::{DIR, FILE, NATIVE_DIR};
     match second {
         None => first == FILE || first == crate::browser::installed::MANIFEST,
-        Some(Component::Normal(file)) => {
-            (first == "mod-browser" && matches!(file.to_str(), Some("pack.json" | "pack.spack")))
-                || ((first == DIR || first == NATIVE_DIR)
-                    && file.to_str().is_some_and(|name| {
-                        // Before either leaf exists, neither native identity nor a
-                        // Unicode fold can rule out filesystem-specific aliases.
-                        sunrise_launcher_smod::index::browser_state::portable_ascii_component(name)
-                            && ((name.ends_with(".smod")
-                                && !name.starts_with('.')
-                                && name.len() <= 200
-                                && !name.contains('\x7f'))
-                                || (first == NATIVE_DIR
-                                    && name
-                                        .strip_suffix(".origin.json")
-                                        .is_some_and(sunrise_launcher_smod::index::valid_id)))
-                    }))
+        Some(Component::Normal(file)) if first == "mod-browser" => {
+            matches!(file.to_str(), Some("pack.json" | "pack.spack"))
+        }
+        Some(Component::Normal(file)) if first == DIR || first == NATIVE_DIR => {
+            use sunrise_launcher_smod::index::{browser_state::portable_ascii_component, valid_id};
+            let Some(name) = file.to_str() else {
+                return false;
+            };
+            valid_smod_leaf(name)
+                || (first == NATIVE_DIR
+                    && portable_ascii_component(name)
+                    && name.strip_suffix(".origin.json").is_some_and(valid_id))
         }
         _ => false,
     }
+}
+
+fn valid_smod_leaf(name: &str) -> bool {
+    // Before either leaf exists, neither native identity nor a Unicode fold
+    // can rule out filesystem-specific aliases.
+    sunrise_launcher_smod::index::browser_state::portable_ascii_component(name)
+        && name.ends_with(".smod")
+        && !name.starts_with('.')
+        && name.len() <= 200
+        && !name.contains('\x7f')
+}
+
+/// A receipt claims the same portable file a later transaction could replace.
+pub(crate) fn native_package_key(path: &str) -> Option<String> {
+    let (root, name) = path.split_once('/')?;
+    (root == sunrise_launcher_smod::mod_list::NATIVE_DIR && valid_smod_leaf(name))
+        .then(|| destination_key(Path::new(path)))
 }
 
 fn destination_key(path: &Path) -> String {

@@ -203,21 +203,10 @@ impl Held {
         Ok(held)
     }
 
-    fn validate(&self) -> Result<(), String> {
-        use sunrise_launcher_smod::{index::valid_id, manifest::revision, mod_list::NATIVE_DIR};
-        let leaf = self
-            .path
-            .split_once('/')
-            .filter(|(dir, _)| *dir == NATIVE_DIR)
-            .and_then(|(_, leaf)| leaf.strip_suffix(".smod"))
-            .ok_or_else(unsettled)?;
-        if !valid_id(&self.id)
-            || leaf.is_empty()
-            || leaf.ends_with(['.', ' '])
-            || leaf
-                .chars()
-                .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
-        {
+    fn validate(&self) -> Result<String, String> {
+        use sunrise_launcher_smod::{index::valid_id, manifest::revision};
+        let key = crate::profile_txn::native_package_key(&self.path).ok_or_else(unsettled)?;
+        if !valid_id(&self.id) {
             return Err(unsettled());
         }
         let version = match &self.source {
@@ -240,7 +229,8 @@ impl Held {
             return Err(unsettled());
         }
         let HeldReason::NoFit { build } = &self.reason;
-        validate_tag(build)
+        validate_tag(build)?;
+        Ok(key)
     }
 
     pub fn id(&self) -> &str {
@@ -285,6 +275,7 @@ impl Active {
         }
         let mut receipts = std::collections::HashSet::new();
         let mut holds = std::collections::HashSet::new();
+        let mut paths = std::collections::HashSet::new();
         for receipt in &value.receipts {
             if receipt.id == [0; 16]
                 || !receipts.insert(receipt.id)
@@ -294,8 +285,7 @@ impl Active {
                 return Err(unsettled());
             }
             for held in &receipt.waiting_for_update {
-                held.validate()?;
-                if !holds.insert(held.id()) {
+                if !paths.insert(held.validate()?) || !holds.insert(held.id()) {
                     return Err(unsettled());
                 }
             }
