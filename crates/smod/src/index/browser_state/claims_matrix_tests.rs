@@ -104,19 +104,46 @@ impl Recovery {
                 }
             }
             _ => {
-                let error = result.expect_err(case).to_string();
-                assert!(error.contains(OWNER), "{case}: {file}: {error}");
-                let possible = error.contains("may conflict with");
-                match outcome {
-                    Outcome::Conflict => assert!(!possible, "{case}: {error}"),
-                    Outcome::Possible => assert!(possible, "{case}: {error}"),
-                    Outcome::TrailingAlias => {
-                        // Win32 may resolve the padded name to the regular leaf.
-                        assert!(cfg!(windows) || possible, "{case}: {error}");
+                let error = result.expect_err(case);
+                let RecoveryProblem::Claim { problem, .. } = &error else {
+                    panic!("{case}: {error}");
+                };
+                let wording = match (&outcome, problem) {
+                    (
+                        Outcome::Conflict | Outcome::Possible | Outcome::TrailingAlias,
+                        ClaimProblem::Conflict {
+                            file,
+                            row,
+                            possible,
+                        },
+                    ) => {
+                        assert_eq!(row, OWNER, "{case}");
+                        assert_eq!(file, FILE, "{case}");
+                        match outcome {
+                            Outcome::Conflict => assert!(!possible, "{case}"),
+                            // Win32 may resolve a padded name to the regular leaf.
+                            Outcome::TrailingAlias if cfg!(windows) => (),
+                            _ => assert!(*possible, "{case}"),
+                        }
+                        if *possible {
+                            format!("{FILE} may conflict with {OWNER}.")
+                        } else {
+                            format!("{FILE} belongs to {OWNER}: remove it first.")
+                        }
                     }
-                    Outcome::Unknown => assert!(error.contains(file), "{case}: {error}"),
-                    Outcome::Separate => unreachable!(),
-                }
+                    (
+                        Outcome::Unknown,
+                        ClaimProblem::Lookup {
+                            row, file: claimed, ..
+                        },
+                    ) => {
+                        assert_eq!(row, OWNER, "{case}");
+                        assert_eq!(claimed, file, "{case}");
+                        format!("Couldn't check the file {file} claimed by {OWNER}:")
+                    }
+                    _ => panic!("{case}: {error}"),
+                };
+                assert!(error.to_string().contains(&wording), "{case}: {error}");
                 self.assert_pending(case);
                 assert_eq!(manifest, before, "{case}");
             }
