@@ -473,6 +473,19 @@ fn an_unproved_live_package_is_not_overwritten_from_the_old_ledger() {
 }
 
 #[test]
+fn lock_failure_reports_an_unchecked_update_not_a_retained_backup() {
+    let scratch = tempfile::tempdir().unwrap();
+    let home = scratch.path().join("not-a-directory");
+    fs::write(&home, b"keep").unwrap();
+    let lines = run(&home, &PLAY, false, &|_, _| {}).unwrap().lines();
+    assert_eq!(
+        lines,
+        ["The launcher couldn't check for unfinished mod updates. You can still play."]
+    );
+    assert_eq!(fs::read(home).unwrap(), b"keep");
+}
+
+#[test]
 fn the_report_says_what_changed_and_nothing_otherwise() {
     assert!(Report::default().lines().is_empty());
     let r = Report {

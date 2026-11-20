@@ -301,11 +301,21 @@ fn restore(home: &Path, kept: &Kept) -> Result<(), String> {
     list.save(home)
 }
 
+fn lock_for_updates(home: &Path) -> Result<crate::browser::HomeLockGuard, String> {
+    crate::browser::lock_home(home).map_err(|error| {
+        eprintln!(
+            "Sunrise launcher: could not lock registry updates for {}: {error}",
+            home.display()
+        );
+        tr("The launcher couldn't check for unfinished mod updates. You can still play.").into()
+    })
+}
+
 /// Retire only advisory entries proved redundant. The legacy updater still owns the live
 /// ledger name here, so unreadable or ambiguous evidence stays in place and refuses *updates*,
 /// not Play. Can't move just the ledger away: the updater could overwrite a retained copy.
 pub fn recover(home: &Path) -> Result<(), String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    let _lock = lock_for_updates(home)?;
     let notice = || {
         tr("A backup from an older mod update was kept because it couldn't be checked. You can still play.").to_owned()
     };
@@ -446,11 +456,11 @@ pub(super) fn run_with(
     ctx: &Context,
     progress: &dyn Fn(&str, f32),
 ) -> Report {
-    let _lock = match crate::browser::lock_home(home) {
+    let _lock = match lock_for_updates(home) {
         Ok(guard) => guard,
-        Err(e) => {
+        Err(notice) => {
             return Report {
-                failed: vec![e.to_string()],
+                held: vec![notice],
                 ..Report::default()
             };
         }
@@ -536,7 +546,7 @@ fn update(
     home: &Path,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Option<String>, String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+    let _lock = lock_for_updates(home)?;
     recover(home)?;
     let list = installed::Installed::load(home);
     let Some(current) = list.find(entry.source, &entry.project) else {
