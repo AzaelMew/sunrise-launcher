@@ -765,7 +765,11 @@ impl Launcher {
             .storage_report
             .as_ref()
             .map(|report| report.rows.iter().map(|r| r.remaining_bytes).sum::<u64>());
-        let nothing = busy || total.is_none_or(|bytes| bytes == 0);
+        let nothing = busy
+            || self
+                .storage_report
+                .as_ref()
+                .is_none_or(|report| report.rows.iter().all(|row| row.clearable_bytes() == 0));
         // Counting that failed is not still counting.
         let uncounted = if self.storage_error.is_some() && !busy {
             tr("Not counted")
@@ -818,7 +822,7 @@ impl Launcher {
                 .iter()
                 .flat_map(|report| &report.rows)
                 .filter(|r| asked.is_none_or(|category| r.category == category))
-                .map(|r| r.remaining_bytes)
+                .map(storage::Row::clearable_bytes)
                 .sum();
             let size = storage::format_bytes(bytes);
             let question = match asked {
@@ -897,7 +901,7 @@ impl Launcher {
                 || uncounted.to_string(),
                 |r| storage::format_bytes(r.remaining_bytes),
             );
-            let empty = busy || found.is_none_or(|r| r.remaining_bytes == 0);
+            let empty = busy || found.is_none_or(|r| r.clearable_bytes() == 0);
             let clear = button(ElementId::named_usize("alt-storage-clear", n), tr("Clear…"));
             let mut line = row(
                 trf(

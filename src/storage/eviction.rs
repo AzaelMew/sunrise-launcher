@@ -27,7 +27,15 @@ impl Storage {
     }
 
     pub fn evict(&self) -> Result<Report, Error> {
-        let report = self.evict_inventory(SystemTime::now())?;
+        let settings = backend::Settings::load();
+        let limit = settings
+            .cache_limit_gib
+            .unwrap_or(policy::DEFAULT_LIMIT_GIB);
+        let report = self.evict_inventory(
+            SystemTime::now(),
+            (limit != 0).then(|| limit.saturating_mul(1 << 30)),
+            settings.native_mods_allowed_at.is_some(),
+        )?;
         announce(&report);
         Ok(report)
     }
