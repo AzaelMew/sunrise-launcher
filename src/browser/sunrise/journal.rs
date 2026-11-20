@@ -63,9 +63,12 @@ pub(super) fn finish(home: &Path) -> Result<(), String> {
 
 /// The install's last steps, with its files in place and the list still kept: if `after` fails,
 /// or the list can't be cleared, the files are put back and the error is returned. Only a list
-/// that is gone means the install is done.
+/// that is gone means the install is done. The staging folder `staged` holds the backups the
+/// list points at: it goes with a finished install or a completed undo, and stays (for the
+/// next start's [`recover`]) when putting the files back failed.
 pub(super) fn commit(
     home: &Path,
+    staged: tempfile::TempDir,
     after: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let result = after().and_then(|()| finish(home));
@@ -75,6 +78,7 @@ pub(super) fn commit(
     if recover(home) {
         Err(e)
     } else {
+        let _ = staged.keep();
         Err(format!(
             "{e}. Putting the files back failed too: restart the launcher to try again."
         ))
@@ -202,16 +206,18 @@ mod tests {
     fn a_failure_after_the_files_are_in_place_puts_them_back_and_clears_the_list() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
-        let staged = home.join(".installed-mods-x");
-        fs::create_dir_all(&staged).unwrap();
+        let staged = tempfile::Builder::new()
+            .prefix(".installed-mods-")
+            .tempdir_in(home)
+            .unwrap();
         let (old, new) = (home.join("dep.smod"), home.join("new.smod"));
         fs::write(&old, "old dep").unwrap();
-        begin(home, &staged, &[old.clone(), new.clone()]).unwrap();
-        fs::rename(&old, staged.join("old-0")).unwrap();
+        begin(home, staged.path(), &[old.clone(), new.clone()]).unwrap();
+        fs::rename(&old, staged.path().join("old-0")).unwrap();
         fs::write(&old, "new dep").unwrap();
         fs::write(&new, "new").unwrap();
 
-        let error = commit(home, || Err("copy failed".into())).unwrap_err();
+        let error = commit(home, staged, || Err("copy failed".into())).unwrap_err();
 
         assert_eq!(error, "copy failed");
         assert_eq!(fs::read_to_string(&old).unwrap(), "old dep");
@@ -222,12 +228,14 @@ mod tests {
     fn a_commit_that_went_through_keeps_the_files_and_clears_the_list() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
-        let staged = home.join(".installed-mods-x");
-        fs::create_dir_all(&staged).unwrap();
+        let staged = tempfile::Builder::new()
+            .prefix(".installed-mods-")
+            .tempdir_in(home)
+            .unwrap();
         let new = home.join("new.smod");
-        begin(home, &staged, std::slice::from_ref(&new)).unwrap();
+        begin(home, staged.path(), std::slice::from_ref(&new)).unwrap();
         fs::write(&new, "new").unwrap();
-        commit(home, || Ok(())).unwrap();
+        commit(home, staged, || Ok(())).unwrap();
         assert!(new.is_file() && !home.join(FILE).exists());
     }
 
@@ -235,14 +243,64 @@ mod tests {
     fn a_list_that_cannot_be_cleared_undoes_the_install_instead_of_leaving_it_behind() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
-        let staged = home.join(".installed-mods-x");
-        fs::create_dir_all(&staged).unwrap();
+        let staged = tempfile::Builder::new()
+            .prefix(".installed-mods-")
+            .tempdir_in(home)
+            .unwrap();
         let new = home.join("new.smod");
-        begin(home, &staged, std::slice::from_ref(&new)).unwrap();
+        begin(home, staged.path(), std::slice::from_ref(&new)).unwrap();
         fs::write(&new, "new").unwrap();
         // The list is a folder now, which remove_file can't take away: not clearable.
         fs::remove_file(home.join(FILE)).unwrap();
         fs::create_dir_all(home.join(FILE).join("x")).unwrap();
-        assert!(commit(home, || Ok(())).is_err());
+        assert!(commit(home, staged, || Ok(())).is_err());
+    }
+
+    #[test]
+    fn backups_the_list_points_at_stay_when_the_files_could_not_be_put_back() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let staged = tempfile::Builder::new()
+            .prefix(".installed-mods-")
+            .tempdir_in(home)
+            .unwrap();
+        let backups = staged.path().to_path_buf();
+        let old = home.join("dep.smod");
+        fs::write(&old, "old dep").unwrap();
+        begin(home, staged.path(), std::slice::from_ref(&old)).unwrap();
+        fs::rename(&old, backups.join("old-0")).unwrap();
+        // Something else took the place: the old file can't go back there.
+        fs::create_dir_all(old.join("x")).unwrap();
+        let error = commit(home, staged, || Err("copy failed".into())).unwrap_err();
+        assert!(error.contains("Putting the files back failed"), "{error}");
+        assert!(
+            backups.join("old-0").is_file(),
+            "the next start still has them"
+        );
+        assert!(home.join(FILE).is_file());
+    }
+
+    #[test]
+    fn a_finished_install_and_a_completed_undo_leave_no_staging_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let home = home.path();
+        let new = home.join("new.smod");
+        let staged = tempfile::Builder::new()
+            .prefix(".installed-mods-")
+            .tempdir_in(home)
+            .unwrap();
+        let backups = staged.path().to_path_buf();
+        begin(home, staged.path(), std::slice::from_ref(&new)).unwrap();
+        fs::write(&new, "new").unwrap();
+        commit(home, staged, || Ok(())).unwrap();
+        assert!(!backups.exists());
+        let staged = tempfile::Builder::new()
+            .prefix(".installed-mods-")
+            .tempdir_in(home)
+            .unwrap();
+        let backups = staged.path().to_path_buf();
+        begin(home, staged.path(), std::slice::from_ref(&new)).unwrap();
+        assert!(commit(home, staged, || Err("no".into())).is_err());
+        assert!(!backups.exists());
     }
 }
