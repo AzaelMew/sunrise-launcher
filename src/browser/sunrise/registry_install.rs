@@ -56,6 +56,12 @@ impl From<String> for InstallError {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct NativeQuestion {
+    pub names: Vec<String>,
+    pub reviewed: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InstalledBatch {
     pub added: Vec<installed::Entry>,
@@ -64,6 +70,7 @@ pub struct InstalledBatch {
 
 pub struct InstallHooks<'a> {
     pub progress: &'a dyn Fn(InstallProgress),
+    pub native: &'a dyn Fn(&NativeQuestion) -> Result<bool, String>,
     pub registry_crates: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
 }
 
@@ -237,6 +244,14 @@ pub fn install_registry(
         validate_enabled(next.path(), &catalogue)?;
         (hooks.progress)(InstallProgress::Preparing);
         if !need_native.is_empty() {
+            if backend::NativeGrant::read()?.is_none()
+                && !(hooks.native)(&NativeQuestion {
+                    names: need_native,
+                    reviewed: source == super::INDEX_URL,
+                })?
+            {
+                return Err(InstallError::Cancelled);
+            }
             // This comes from the strict saved grant, never from the dialog reply alone.
             cancelled
                 .admit_native_work()

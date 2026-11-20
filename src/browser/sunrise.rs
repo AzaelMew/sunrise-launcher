@@ -475,7 +475,7 @@ pub fn trust_and_capabilities(
     });
     if p.kind == index::Kind::NativeMod {
         lines.push(
-            tr("Native code: it is built into the game and runs with full access to your computer. Its source was reviewed before it was listed").to_string(),
+            tr("Native code: it is built into the game and runs with full access to your computer.").to_string(),
         );
         if let Some(v) = p.versions.iter().find(|v| v.game == game) {
             let pin = v.api.split('/').nth(1).unwrap_or_default();
@@ -1486,7 +1486,7 @@ mod dependencies;
 pub mod pack;
 mod registry_install;
 pub use registry_install::{
-    install_registry, InstallError, InstallHooks, InstallProgress, InstalledBatch,
+    install_registry, InstallError, InstallHooks, InstallProgress, InstalledBatch, NativeQuestion,
 };
 #[cfg(test)]
 mod tests;
