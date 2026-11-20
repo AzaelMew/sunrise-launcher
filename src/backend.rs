@@ -1494,6 +1494,12 @@ fn resources_at(dir: &Path) -> PathBuf {
 
 const RESOURCES_MANIFEST: &str = "sunrise-resources.json";
 
+/// The target preparation records the world format of the verified client JAR it used.
+pub(crate) fn prepared_world_version(tag: &str) -> Option<i32> {
+    let manifest = read_json(&resources(tag).join(RESOURCES_MANIFEST))?;
+    i32::try_from(manifest.get("data_version")?.as_i64()?).ok()
+}
+
 /// How long a drawn page believes an answer of [`is_prepared`] without looking at the disk again.
 /// What the launcher itself changes (a preparation, an install, a removal) drops it at once
 /// ([`forget_prepared`]); this only bounds how late a change made by another process shows.
@@ -3258,6 +3264,7 @@ pub fn server(tag: &str, folder: &Path, accept_eula: bool) -> Result<Command, St
 }
 
 mod release_selection;
+pub(crate) use release_selection::WorldBuildOrder;
 
 /// One release's notes: the tag given, or the newest.
 pub fn release_notes(tag: Option<&str>) -> Result<Release, String> {

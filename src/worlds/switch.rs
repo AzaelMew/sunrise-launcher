@@ -5,6 +5,7 @@ use cap_fs_ext::MetadataExt;
 use cap_std::{ambient_authority, fs::Dir};
 use sha2::{Digest, Sha256};
 use std::{
+    cmp::Ordering,
     collections::BTreeSet,
     fs, io,
     path::{Path, PathBuf},
@@ -83,34 +84,22 @@ enum Age {
     Unknown,
 }
 
-/// Compare world format first. A matching (or missing) format is not permission to order
-/// arbitrary labels or commit hashes. With equal formats both release identities must match
-/// one unambiguous entry in the trusted release order.
-fn age(
-    saved: Option<i32>,
-    target: Option<i32>,
-    saved_order: Option<usize>,
-    target_order: Option<usize>,
-) -> Age {
-    match (saved, target) {
-        (Some(a), Some(b)) if a != b => {
-            if a > b {
-                Age::Newer
-            } else {
-                Age::NotNewer
-            }
-        }
-        (Some(_), Some(_)) => match (saved_order, target_order) {
-            (Some(a), Some(b)) => {
-                if a < b {
-                    Age::Newer
-                } else {
-                    Age::NotNewer
-                }
-            }
-            _ => Age::Unknown,
-        },
-        _ => Age::Unknown,
+pub(crate) struct TargetAge<'a> {
+    pub data_version: Option<i32>,
+    pub compare_saved: &'a mut dyn FnMut(&str) -> Option<Ordering>,
+}
+
+/// Compare world format first. Only equal known formats ask for full signed build evidence.
+fn age(saved: Option<i32>, target: Option<i32>, compare: impl FnOnce() -> Option<Ordering>) -> Age {
+    let order = match (saved, target) {
+        (Some(a), Some(b)) if a == b => compare(),
+        (Some(a), Some(b)) => Some(a.cmp(&b)),
+        _ => None,
+    };
+    match order {
+        Some(Ordering::Greater) => Age::Newer,
+        Some(_) => Age::NotNewer,
+        None => Age::Unknown,
     }
 }
 
@@ -118,9 +107,7 @@ impl Fence {
     pub(crate) fn hold(
         home: &Path,
         changed: &[Changed<'_>],
-        target_data: Option<i32>,
-        target_order: Option<usize>,
-        saved_order: impl Fn(&str) -> Option<usize>,
+        mut target: Option<TargetAge<'_>>,
     ) -> Result<(Self, Question), String> {
         // Take the whole roster first, then re-read it after taking all locks. Metadata from a
         // path reused between the two snapshots cannot authorize the replacement directory.
@@ -204,15 +191,14 @@ impl Fence {
                     mods,
                 });
             }
-            match age(
-                version,
-                target_data,
-                commit.as_deref().and_then(&saved_order),
-                target_order,
-            ) {
-                Age::Newer => question.newer.push(world.name),
-                Age::Unknown => question.unknown_order.push(world.name),
-                Age::NotNewer => {}
+            if let Some(target) = &mut target {
+                match age(version, target.data_version, || {
+                    commit.as_deref().and_then(&mut target.compare_saved)
+                }) {
+                    Age::Newer => question.newer.push(world.name),
+                    Age::Unknown => question.unknown_order.push(world.name),
+                    Age::NotNewer => {}
+                }
             }
         }
         let fence = Self {
@@ -323,11 +309,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn one_question_lists_removed_content_newer_worlds_and_unknown_order() {
+        use std::io::Write;
+        use sunrise_launcher_nbt::{write_named, Limits, NamedTag};
+        let home = tempfile::tempdir().unwrap();
+        let commit = "1234567890123456789012345678901234567890";
+        for (name, version, saved) in [
+            ("Format ahead", 9, None),
+            ("Build ahead", 8, Some(commit)),
+            ("Unknown", 8, None),
+        ] {
+            let dir = home.path().join("saves").join(name);
+            fs::create_dir_all(&dir).unwrap();
+            let data = Tag::compound([
+                ("LevelName", Tag::String(name.into())),
+                ("DataVersion", Tag::Int(version)),
+            ]);
+            let sunrise = Tag::compound(
+                saved
+                    .into_iter()
+                    .map(|id| ("LastSavedCommit", Tag::String(id.into()))),
+            );
+            let tag = Tag::compound([("Data", data), ("sunrise", sunrise)]);
+            let bytes = write_named(
+                &NamedTag {
+                    name: "".into(),
+                    tag,
+                },
+                Limits::default(),
+            )
+            .unwrap();
+            let mut file = flate2::write::GzEncoder::new(
+                fs::File::create(dir.join("level.dat")).unwrap(),
+                flate2::Compression::fast(),
+            );
+            file.write_all(&bytes).unwrap();
+            file.finish().unwrap();
+        }
+        let (_, result) = Fence::hold(
+            home.path(),
+            &[Changed {
+                id: "removed",
+                title: "Lost Content",
+                namespaces: &[],
+            }],
+            Some(TargetAge {
+                data_version: Some(8),
+                compare_saved: &mut |saved| {
+                    assert_eq!(saved, commit);
+                    Some(Ordering::Greater)
+                },
+            }),
+        )
+        .unwrap();
+        assert_eq!(result.newer, ["Build ahead", "Format ahead"]);
+        assert_eq!(result.unknown_order, ["Unknown"]);
+        assert_eq!(result.affected.len(), 3);
+        assert!(result.lines().iter().any(|line| line
+            == "These worlds were last played on a newer game: Build ahead, Format ahead"));
+    }
+
+    #[test]
     fn world_format_wins_then_equal_formats_need_comparable_build_order() {
-        assert_eq!(age(Some(8), Some(7), Some(8), Some(1)), Age::Newer);
-        assert_eq!(age(Some(6), Some(7), Some(1), Some(8)), Age::NotNewer);
-        assert_eq!(age(Some(8), Some(8), Some(1), Some(3)), Age::Newer);
-        assert_eq!(age(Some(8), Some(8), None, Some(3)), Age::Unknown);
-        assert_eq!(age(None, Some(8), Some(1), Some(3)), Age::Unknown);
+        assert_eq!(age(Some(8), Some(7), || unreachable!()), Age::Newer);
+        assert_eq!(age(Some(6), Some(7), || unreachable!()), Age::NotNewer);
+        assert_eq!(
+            age(Some(8), Some(8), || Some(Ordering::Greater)),
+            Age::Newer
+        );
+        assert_eq!(
+            age(Some(8), Some(8), || Some(Ordering::Equal)),
+            Age::NotNewer
+        );
+        assert_eq!(age(Some(8), Some(8), || None), Age::Unknown);
+        assert_eq!(age(None, Some(8), || unreachable!()), Age::Unknown);
     }
 }

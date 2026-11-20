@@ -170,30 +170,15 @@ impl Switch {
                 namespaces: &old.manifest.namespaces,
             })
             .collect();
-        let release_data = fs::read(backend::version_dir(tag).join("sunrise-release.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
-        let format = release_data
-            .as_ref()
-            .and_then(|data| data.get("data_version"))
-            .and_then(serde_json::Value::as_i64)
-            .and_then(|n| i32::try_from(n).ok());
-        let releases = backend::releases().unwrap_or_default();
-        let target_order = releases.iter().position(|release| release.tag == tag);
-        let (fence, question) =
-            worlds::switch::Fence::hold(home, &changed, format, target_order, |commit| {
-                if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
-                    return None;
-                }
-                let mut order = releases.iter().enumerate().filter(|(_, r)| {
-                    r.nightly.is_some()
-                        && r.tag
-                            .rsplit_once('-')
-                            .is_some_and(|(_, short)| short.len() >= 7 && commit.starts_with(short))
-                });
-                let first = order.next()?.0;
-                order.next().is_none().then_some(first)
-            })?;
+        let mut order = backend::WorldBuildOrder::for_target(tag);
+        let (fence, question) = worlds::switch::Fence::hold(
+            home,
+            &changed,
+            Some(worlds::switch::TargetAge {
+                data_version: backend::prepared_world_version(tag),
+                compare_saved: &mut |commit| order.compare_saved(commit),
+            }),
+        )?;
         let next = prior.switched(tag, &image, prepared.path(), effects.clone(), waiting)?;
         if build::inputs(home)? != initial_inputs {
             return Err(unsettled());

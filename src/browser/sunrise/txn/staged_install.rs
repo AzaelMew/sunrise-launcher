@@ -93,8 +93,7 @@ impl StagedInstall {
         let fence = if changed.is_empty() {
             None
         } else {
-            let (fence, question) =
-                worlds::switch::Fence::hold(home, &changed, None, None, |_| None)?;
+            let (fence, question) = worlds::switch::Fence::hold(home, &changed, None)?;
             if !question.affected.is_empty() {
                 return Err(question.lines().join("\n"));
             }
