@@ -14,7 +14,6 @@ semver = { version = "1", features = ["serde"] }
 toml = "1.1.6"
 log = "0.4"
 png = "0.18"
-wasmparser = "0.261"
 sha2 = "0.10"
 minisign-verify = "0.3"
 cap-std = "3.4.6"
@@ -33,7 +32,6 @@ rustix = { version = "1.1", features = ["fs", "net"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_Storage_FileSystem", "Win32_Security_Authorization", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_Threading"] }
 
 [dev-dependencies]
-wat = "1"
 tempfile = "3.27.0"
 
 # The game workspace's lints, which the copied code was written to.

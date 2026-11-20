@@ -423,20 +423,6 @@ fn update(
         if !content {
             return Ok(());
         }
-        let new_package = sunrise_launcher_smod::Package::read(new)?;
-        let old_wasm = old
-            .as_deref()
-            .map(sunrise_launcher_smod::Package::read)
-            .transpose()?
-            .is_some_and(|package| package.manifest.wasm.is_some());
-        if old_wasm || new_package.manifest.wasm.is_some() {
-            let why = trf(
-                "{title} {version} waits for you: code mods update only when you choose to update them.",
-                &[("title", &p.name), ("version", &v.version)],
-            );
-            *held.borrow_mut() = Some(why.clone());
-            return Err(why);
-        }
         let Some(old) = &old else {
             return Ok(());
         };

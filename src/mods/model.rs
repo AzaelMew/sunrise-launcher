@@ -10,8 +10,7 @@ use sunrise_launcher_smod::manifest::Side;
 
 pub(super) mod collection;
 
-/// What a mod is made of, as the registry knows it: a native source bundle, or content only (the
-/// registry's `mod` kind is "a `.smod` of content only"; it has no wasm kind to show).
+/// What a mod is made of: a native source bundle or a content-only `.smod`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) enum Make {
     Native,
@@ -741,8 +740,7 @@ pub(super) struct Local {
     pub(super) name: String,
     pub(super) version: String,
     pub(super) github: bool,
-    /// Native code, which needs permission and a build; else a package of `sunrise-mods/`,
-    /// which runs as wasm or carries content only.
+    /// Native code, which needs permission and a build, rather than content only.
     pub(super) native: bool,
     /// The file can't be read: it has no id of its own (the id is only its file name), so it is
     /// never on, needs nothing and has no switch that could act on a working mod's id.

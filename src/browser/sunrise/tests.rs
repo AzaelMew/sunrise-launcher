@@ -1050,9 +1050,9 @@ fn executable_content_is_refused_without_installing_or_skipping_code() {
         .open(&path)
         .unwrap();
     let mut zip = zip::ZipWriter::new_append(file).unwrap();
-    zip.start_file("mod.wasm", zip::write::SimpleFileOptions::default())
+    zip.start_file("payload.exe", zip::write::SimpleFileOptions::default())
         .unwrap();
-    zip.write_all(b"\0asm").unwrap();
+    zip.write_all(b"MZ").unwrap();
     zip.finish().unwrap();
     let mut index = sample();
     let p = &mut index.projects[0];
@@ -1063,7 +1063,10 @@ fn executable_content_is_refused_without_installing_or_skipping_code() {
     v.file.sha256 = index::sha256_file(&path).unwrap();
     v.file.signature = None;
     let e = put(&index, true, &home).unwrap_err();
-    assert_eq!(e, "mod.wasm needs a [wasm] section");
+    assert!(
+        e.contains("payload.exe: unsupported executable file"),
+        "{e}"
+    );
     assert!(!home.join("sunrise-mods/coords_hud.smod").exists());
     assert!(installed::Installed::load(&home).entries.is_empty());
     fs::remove_dir_all(home).unwrap();

@@ -49,7 +49,7 @@ impl Bundle {
 
 /// The flat native project in `folder`, or the native projects directly inside it.
 pub fn bundles(folder: &Path) -> Result<Vec<Bundle>, String> {
-    let found = package::checked_bundles(folder)?;
+    let found = scan_bundles(folder)?;
     if found.is_empty() {
         return Err(trf(
             "{folder} holds no native mod ({manifest} and Cargo.toml).",

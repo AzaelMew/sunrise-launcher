@@ -338,12 +338,13 @@ pub const INSTALLED: &str = sunrise_launcher_smod::mod_list::NATIVE_DIR;
 /// The native mods turned on in the game folder `home`, unpacked into a folder [`build`] takes.
 /// Each flat `.smod` passes the registry's shared package boundary; no code is run.
 pub fn installed_mods(home: &Path) -> Result<PathBuf, String> {
-    stage_installed(home, root().join("installed.incoming"))?.ok_or_else(no_mods_to_build)
+    stage_installed(home, root().join("installed.incoming"))?
+        .ok_or_else(|| no_mods_to_build().into())
 }
 
 /// What a build says when the profile's mods folder holds nothing to build.
-fn no_mods_to_build() -> String {
-    tr("There are no mods to build. Add a mod to this profile's mods folder first.").into()
+fn no_mods_to_build() -> &'static str {
+    tr("There are no mods to build. Add a mod to this profile's mods folder first.")
 }
 
 /// [`installed_mods`] into `out`, which it empties first.
@@ -372,17 +373,8 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
         }
         count += 1;
     }
-    for bundle in crate::native_status::wasm_points(home) {
-        let dir = out.join(&bundle.manifest.id);
-        for (name, bytes) in &bundle.files {
-            let to = dir.join(name);
-            fs::create_dir_all(to.parent().unwrap_or(&dir)).map_err(|e| e.to_string())?;
-            fs::write(&to, bytes).map_err(|e| e.to_string())?;
-        }
-        count += 1;
-    }
     if count == 0 {
-        return Err(no_mods_to_build());
+        return Err(no_mods_to_build().into());
     }
     fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     Ok(Some(out))
@@ -947,8 +939,7 @@ pub enum Failed {
         error: String,
         compiling: bool,
     },
-    /// The folder holds no mod to build: none has a `[native]` table (content and wasm mods
-    /// need no native build).
+    /// The folder holds no native mod to build.
     Nothing,
     /// Mods this build can't use were saved into worlds: the player chooses (stay, or back the
     /// worlds up and build without them).
@@ -967,7 +958,7 @@ impl std::fmt::Display for Failed {
         match self {
             Self::Mods { error, .. } | Self::Other(error) => f.write_str(error),
             Self::Worlds(stake) => f.write_str(&stake.text),
-            Self::Nothing => f.write_str(tr("Nothing to build: none of these mods has native code (a [native] table in sunrise-mod.toml). Content and wasm mods need no native build.")),
+            Self::Nothing => f.write_str(no_mods_to_build()),
             Self::NoConsent => f.write_str(tr("Native mods run inside your game with your rights; mixins compile code into the game. Allow native mods in Settings, Storage, or pass --trust-native-code.")),
         }
     }
@@ -1232,31 +1223,27 @@ fn pipeline(
             ..b
         })
         .collect();
-    let mods: Vec<Bundle> = requested
-        .iter()
-        .filter(|b| b.manifest.native.is_some())
-        .cloned()
-        .collect();
     let side = match target {
         Target::Client => sunrise_launcher_smod::manifest::Side::Client,
         Target::Server => sunrise_launcher_smod::manifest::Side::Server,
     };
-    let declared: Vec<Vec<dependencies::Dependency>> = mods
+    let declared: Vec<Vec<dependencies::Dependency>> = requested
         .iter()
         .map(|bundle| dependencies::from_manifest(&bundle.manifest.dependencies, side))
         .collect();
-    let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = mods
+    let pairs: Vec<(&Bundle, &[dependencies::Dependency])> = requested
         .iter()
         .zip(&declared)
         .map(|(b, d)| (b, d.as_slice()))
         .collect();
     let left_out = isolate::with_dependents(options.skip, &pairs);
-    let (mods, declared): (Vec<Bundle>, Vec<Vec<dependencies::Dependency>>) = mods
-        .into_iter()
+    let (mods, declared): (Vec<Bundle>, Vec<Vec<dependencies::Dependency>>) = requested
+        .iter()
         .zip(declared)
         .filter(|(b, _)| !left_out.iter().any(|l| l.id == b.manifest.id))
+        .map(|(bundle, deps)| (bundle.clone(), deps))
         .unzip();
-    if mods.is_empty() && requested.iter().all(|b| b.manifest.wasm.is_none()) {
+    if mods.is_empty() {
         return Err(Failed::Nothing);
     }
     let inputs: Vec<_> = mods
@@ -1280,24 +1267,10 @@ fn pipeline(
     let content: Vec<_> =
         sunrise_launcher_smod::selection::content_packages(instance, &settings.enabled, &[])
             .collect();
-    let requested_ids: std::collections::HashSet<_> = requested
+    let applicable: Vec<_> = mods
         .iter()
-        .map(|bundle| bundle.manifest.id.as_str())
-        .collect();
-    let applicable: Vec<_> = requested
-        .iter()
-        .filter(|bundle| !left_out.iter().any(|left| left.id == bundle.manifest.id))
         .map(|bundle| &bundle.manifest)
-        .chain(
-            content
-                .iter()
-                .filter(|source| {
-                    let manifest = &source.package.manifest;
-                    let code = manifest.native.is_some() || manifest.wasm.is_some();
-                    !code || !requested_ids.contains(manifest.id.as_str())
-                })
-                .map(|source| &source.package.manifest),
-        )
+        .chain(content.iter().map(|source| &source.package.manifest))
         .collect();
     dependencies::resolve_manifests(&applicable, side, &overrides)
         .map_err(|error| error.to_string())?;

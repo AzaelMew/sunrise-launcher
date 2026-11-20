@@ -251,59 +251,6 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
 }
 
 #[test]
-fn wasm_update_waits_for_the_player() {
-    let dir = scratch("auto-wasm");
-    let home = dir.join("home");
-    let old = ruby(&dir, "1.0.0", &["lamp"], &[]);
-    // The smallest shared group member the package check accepts, as bytes: header, `dylink.0` with
-    // memory info, one `() -> ()` type, three functions exported as `sunrise_layout`, `sunrise_in`
-    // and `sunrise_hook`, and their empty bodies.
-    let module: &[u8] = &[
-        b'\0', b'a', b's', b'm', 1, 0, 0, 0, //
-        0, 15, 8, b'd', b'y', b'l', b'i', b'n', b'k', b'.', b'0', 1, 4, 0, 0, 0, 0, //
-        1, 4, 1, 0x60, 0, 0, //
-        3, 4, 3, 0, 0, 0, //
-        7, 46, 3, //
-        14, b's', b'u', b'n', b'r', b'i', b's', b'e', b'_', b'l', b'a', b'y', b'o', b'u', b't', 0,
-        0, //
-        10, b's', b'u', b'n', b'r', b'i', b's', b'e', b'_', b'i', b'n', 0, 1, //
-        12, b's', b'u', b'n', b'r', b'i', b's', b'e', b'_', b'h', b'o', b'o', b'k', 0, 2, //
-        10, 10, 3, 2, 0, 0x0b, 2, 0, 0x0b, 2, 0, 0x0b,
-    ];
-    let manifest = format!(
-        "{MANIFEST}version = \"1.1.0\"\n[wasm]\nsha512 = \"{}\"\ntoolchain = \"1.99.1\"\nbuilt_with = \"test\"\n",
-        sunrise_launcher_smod::manifest::sha512_of(module)
-    );
-    let new = dir.join("ruby-1.1.0.smod");
-    fs::write(
-        &new,
-        sunrise_launcher_smod::Package::write_files(&manifest, &[("mod.wasm", module)]).unwrap(),
-    )
-    .unwrap();
-    let first = index_of(&[("1.0.0", GAME, &old)]);
-    let p = first.project("ruby").unwrap();
-    install_version_guarded(
-        &first,
-        true,
-        p,
-        &p.versions[0],
-        &home,
-        &|_| Ok(()),
-        &|_, _| {},
-    )
-    .unwrap();
-    let index = index_of(&[("1.1.0", GAME, &new), ("1.0.0", GAME, &old)]);
-    let report = run_with(&index, true, &home, &PLAY, &|_, _| {});
-    assert!(report.updated.is_empty(), "{report:?}");
-    assert_eq!(report.held.len(), 1, "{report:?}");
-    assert_eq!(
-        installed_ruby(&home),
-        ("1.0.0".into(), fs::read(&old).unwrap())
-    );
-    fs::remove_dir_all(dir).unwrap();
-}
-
-#[test]
 fn backup_paths_stay_in_the_backup_folder() {
     let dir = scratch("auto-backup-path");
     let home = dir.join("home");

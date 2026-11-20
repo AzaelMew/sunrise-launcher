@@ -77,6 +77,14 @@ fn written_index_reads_back_and_unknown_fields_are_ignored() {
 }
 
 #[test]
+fn a_mixins_revision_that_is_not_a_full_sha_is_refused() {
+    let mut value = json(&index(&[]));
+    let rev = "e59da90";
+    value["mixins"]["rev"] = rev.into();
+    assert_eq!(read(&value), Err(Refusal::MixinsRev(rev.into())));
+}
+
+#[test]
 fn a_game_releases_copy_names_its_build_before_the_build_is_known() {
     let mut value = json(&index(&[(ENGINE, b"engine")]));
     value["build"]["nightly"] = serde_json::json!("nightly-2026-11-13");
