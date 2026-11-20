@@ -614,6 +614,23 @@ pub fn displayed_image(home: &Path) -> Option<String> {
 }
 
 impl WaitingMod {
+    #[cfg(test)]
+    pub(in crate::browser::sunrise) fn test_package(
+        home: &Path,
+        file: PathBuf,
+        was_on: bool,
+    ) -> Self {
+        let Image::Sha256(digest) = Image::at(&home.join(&file)).unwrap() else {
+            panic!("expected a waiting package file");
+        };
+        Self {
+            file,
+            digest,
+            reason: "no fit".into(),
+            was_on,
+        }
+    }
+
     pub(super) fn matches(&self, home: &Path) -> Result<bool, String> {
         Ok(Image::at(&home.join(&self.file))? == Image::Sha256(self.digest))
     }

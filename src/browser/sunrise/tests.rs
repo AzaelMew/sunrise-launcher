@@ -2097,6 +2097,72 @@ fn conflict_index(dir: &Path) -> Index {
 }
 
 #[test]
+fn a_waiting_package_restores_its_choice_only_on_different_fitting_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = "creatures";
+    let mut index = conflict_index(dir.path());
+    let project = index.projects.iter_mut().find(|p| p.id == id).unwrap();
+    let replacement = project.versions.pop().unwrap();
+    let old = project.versions[0].clone();
+    for was_on in [false, true] {
+        let home = dir.path().join(was_on.to_string());
+        let previous_only = index.project(id).unwrap();
+        let shown = project_of(&index, previous_only, GAME).unwrap();
+        let installed = install_from(
+            &index,
+            true,
+            &shown,
+            &home,
+            GAME,
+            false,
+            true,
+            &[],
+            &|_, _| {},
+        )
+        .unwrap();
+        let file = PathBuf::from(&installed[0].file);
+        mod_list::set_enabled(&home, id, false).unwrap();
+        let waiting = [(
+            id.into(),
+            txn::WaitingMod::test_package(&home, file.clone(), was_on),
+        )]
+        .into();
+        assert!(registry_candidates(&index, [id], GAME, &waiting).is_err());
+        assert!(!mod_list::is_enabled(&home, id));
+        assert_eq!(
+            index::sha256(&fs::read(home.join(file)).unwrap()),
+            old.file.sha256
+        );
+
+        let mut current = index.clone();
+        current
+            .projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .unwrap()
+            .versions
+            .push(replacement.clone());
+        let chosen = registry_candidates(&current, [id], GAME, &waiting).unwrap();
+        let done = dependencies::stage(
+            &Install {
+                index: &current,
+                local: true,
+                home: &home,
+                approvals: &[],
+                progress: &|_, _| {},
+            },
+            &chosen,
+            false,
+            &waiting,
+        )
+        .unwrap();
+        let bytes = fs::read(home.join(&done[0].file)).unwrap();
+        assert_eq!(index::sha256(&bytes), replacement.file.sha256);
+        assert_eq!(mod_list::is_enabled(&home, id), was_on);
+    }
+}
+
+#[test]
 fn several_mods_install_as_one_attempt_and_one_failure_publishes_none_of_them() {
     let dir = tempfile::tempdir().unwrap();
     let index = conflict_index(dir.path());
