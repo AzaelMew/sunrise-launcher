@@ -370,7 +370,17 @@ fn untracked_in(
             if !path.is_file() || tracked.entries.iter().any(|e| e.file == file) {
                 return None;
             }
-            let package = sunrise_launcher_smod::manifest::Package::read(&path);
+            let mut package = sunrise_launcher_smod::manifest::Package::read(&path);
+            // The build and the enabled list read a native file as a bundle; a file that is not
+            // one is no mod there, so the page must not show it as one either.
+            if native {
+                if let (Ok(_), Err(e)) = (
+                    &package,
+                    sunrise_launcher_smod::index::native::Bundle::read(&path),
+                ) {
+                    package = Err(e);
+                }
+            }
             let (id, version) = package
                 .as_ref()
                 .map(|p| (p.manifest.id.clone(), p.manifest.version.clone()))
@@ -591,6 +601,28 @@ mod tests {
         mod_list::set_enabled(home.path(), "ruby", true).unwrap();
         assert!(enabled(home.path()).is_empty());
         assert!(build_inputs(home.path(), None).is_empty());
+    }
+
+    #[test]
+    fn a_native_file_the_build_cannot_read_is_listed_unreadable() {
+        use std::io::Write;
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(native_mods::INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        // A well-formed package with no `[native]` table: the build reads it as no native mod.
+        let mut zip = zip::ZipWriter::new(fs::File::create(native.join("plain.smod")).unwrap());
+        zip.start_file("sunrise-mod.toml", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            b"id='plain'\nname='Plain'\nversion='1.0.0'\napi='0.2'\ncapabilities=['registries']\n",
+        )
+        .unwrap();
+        zip.finish().unwrap();
+        mod_list::set_enabled(home.path(), "plain", true).unwrap();
+        let found = untracked(home.path());
+        assert_eq!(found.len(), 1);
+        assert!(found[0].icon.is_err());
+        assert!(enabled(home.path()).is_empty());
     }
 
     #[test]
