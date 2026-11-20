@@ -3,7 +3,7 @@ use std::{
     io::{BufRead, BufReader, Write},
     process::{Child, Command, Stdio},
     sync::mpsc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use sunrise_launcher_smod::{manifest, Package};
 
@@ -115,7 +115,7 @@ fn first_binding_and_signed_proof_survive_an_abandoned_prepare_and_pointer_undo(
     drop(owner);
 
     for boundary in ["bootstrap:prepare", "bootstrap:pointer-renamed"] {
-        let actor = pause_actor(home, boundary, |_| {});
+        let actor = pause_actor(home, boundary);
         assert!(
             Admission::open(home, None).is_err(),
             "ongoing first Play holds admission"
@@ -354,7 +354,7 @@ impl Drop for Actor {
     }
 }
 
-fn pause_actor(home: &Path, action: &str, prepare: impl FnOnce(&mut Command)) -> Actor {
+fn actor_command(home: &Path, action: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -366,8 +366,11 @@ fn pause_actor(home: &Path, action: &str, prepare: impl FnOnce(&mut Command)) ->
         .env(ACTION, action)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
-    prepare(&mut command);
-    let mut child = Actor(command.spawn().unwrap());
+    command
+}
+
+fn pause_actor(home: &Path, action: &str) -> Actor {
+    let mut child = Actor(actor_command(home, action).spawn().unwrap());
     let stdout = child.0.stdout.take().unwrap();
     let (send, recv) = mpsc::channel();
     std::thread::spawn(move || {
@@ -399,11 +402,44 @@ fn journal_actor() {
         return;
     };
     let action = std::env::var(ACTION).unwrap();
-    if action == "hold" {
-        return pause_here();
+    match action.as_str() {
+        "check-exclusion" => {
+            pause_here();
+            assert!(Admission::open(&home, None)
+                .err()
+                .unwrap()
+                .contains("profile is in use"));
+            return;
+        }
+        "staged-worker" => {
+            let stage = read(&home)
+                .unwrap()
+                .unwrap()
+                .operation()
+                .unwrap()
+                .stage
+                .path(&home);
+            fs::write(stage.join("worker.smod"), package("2.0.0")).unwrap();
+            fs::create_dir(stage.join("worker-ready")).unwrap();
+            await_fixture(|| stage.join("finish-worker").is_file());
+            return;
+        }
+        _ => {}
     }
     let mut owner = Admission::claim(&home, None).unwrap();
     match action.as_str() {
+        "launcher-with-staged-worker" => {
+            use crate::process::{leases::StagedChild, owned::Owned};
+            let stage = owner.reserve(Intent::Install, BTreeSet::new()).unwrap();
+            let _worker = Owned::spawn_staged(
+                actor_command(&home, "staged-worker"),
+                stage.handoff(),
+                StagedChild::Prepare,
+            )
+            .unwrap();
+            await_fixture(|| stage.path().join("worker-ready").is_dir());
+            pause_here();
+        }
         "bootstrap:prepare" | "bootstrap:pointer-renamed" => {
             let staging = owner.resume_bootstrap().unwrap();
             if action.ends_with("prepare") {
@@ -509,7 +545,7 @@ fn another_process_sees_only_the_exact_old_or_committed_generation_after_kills()
         let home = tmp.path();
         let switching = intent == "switch";
         initialized(home, !switching);
-        let actor = pause_actor(home, &format!("{intent}:{boundary}"), |_| {});
+        let actor = pause_actor(home, &format!("{intent}:{boundary}"));
         // The observer is already running and tries admission on both sides of the kill.
         assert!(Admission::open(home, None).is_err(), "{intent}:{boundary}");
         let pointer_replaced = matches!(
@@ -544,7 +580,7 @@ fn another_process_sees_only_the_exact_old_or_committed_generation_after_kills()
         drop(actor);
         if switching && boundary == "pointer-renamed" {
             for undo in ["undo-pointer", "undo-list"] {
-                let actor = pause_actor(home, undo, |_| {});
+                let actor = pause_actor(home, undo);
                 assert!(Admission::open(home, None).is_err());
                 assert_eq!(fs::read(home.join(POINTER)).unwrap(), OLD);
                 assert_eq!(fs::read(home.join(PACK)).unwrap(), package("2.0.0"));
@@ -571,7 +607,7 @@ fn a_killed_retirement_reclaims_its_exact_tree_but_never_a_loose_one() {
     let unrelated = home.join("mod-browser/.install-txn-unowned");
     fs::create_dir(&unrelated).unwrap();
     fs::write(unrelated.join("keep"), b"not part of the journal").unwrap();
-    drop(pause_actor(home, "install:marker-durable", |_| {}));
+    drop(pause_actor(home, "install:marker-durable"));
     let stage = read(home)
         .unwrap()
         .unwrap()
@@ -579,7 +615,7 @@ fn a_killed_retirement_reclaims_its_exact_tree_but_never_a_loose_one() {
         .unwrap()
         .stage
         .path(home);
-    let cleanup = pause_actor(home, "retired", |_| {});
+    let cleanup = pause_actor(home, "retired");
     assert!(stage.is_dir());
     assert!(home.join(RETIRED).exists());
     assert!(Admission::open(home, None).is_err());
@@ -630,22 +666,87 @@ fn retirement_retries_a_failed_post_rename_barrier_before_erasing_preimages() {
     pair(home, false, true);
 }
 
+fn await_fixture(mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !ready() {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the staged actor"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
-#[cfg(unix)]
-fn a_child_inherits_the_profile_gate_and_blocks_an_already_open_launcher() {
+fn staged_child_survives_launcher_death_and_blocks_an_already_open_launcher() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    let owner = Admission::open(home, None).unwrap();
-    let mut child = pause_actor(home, "hold", |cmd| owner.inherit(cmd).unwrap());
-    drop(owner);
-    assert!(Admission::open(home, None).is_err());
-    child
+    initialized(home, true);
+    let mut contender = pause_actor(home, "check-exclusion");
+    let launcher = pause_actor(home, "launcher-with-staged-worker");
+    let stage = read(home)
+        .unwrap()
+        .unwrap()
+        .operation()
+        .unwrap()
+        .stage
+        .path(home);
+    drop(launcher); // Kill the real owner process, not merely its Rust lock object.
+    contender
         .0
         .stdin
         .take()
         .unwrap()
         .write_all(b"release\n")
         .unwrap();
-    assert!(child.0.wait().unwrap().success());
+    assert!(contender.0.wait().unwrap().success());
+    assert_eq!(
+        fs::read(stage.join("worker.smod")).unwrap(),
+        package("2.0.0")
+    );
+    fs::write(stage.join("finish-worker"), []).unwrap();
+    await_fixture(|| Admission::open(home, None).is_ok());
+    assert!(!stage.exists() && !home.join(RECORD).exists());
+    pair(home, false, false);
+}
+
+#[test]
+fn the_same_admission_seals_after_a_staged_worker_exits() {
+    use crate::process::{leases::StagedChild, owned::Owned};
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let mut owner = Admission::open(home, None).unwrap();
+    let stage = owner.reserve(Intent::Install, BTreeSet::new()).unwrap();
+    let mut worker = Owned::spawn_staged(
+        actor_command(home, "staged-worker"),
+        stage.handoff(),
+        StagedChild::Compiler,
+    )
+    .unwrap();
+    await_fixture(|| stage.path().join("worker-ready").is_dir());
+    assert!(Admission::open(home, None).is_err());
+    fs::write(stage.path().join("finish-worker"), []).unwrap();
+    assert!(worker.wait().unwrap().success());
+    assert!(
+        Admission::open(home, None).is_err(),
+        "worker exit must not unlock the parent"
+    );
+    let output = stage.path().join("worker.smod");
+    stage
+        .seal(
+            INSTALLED.to_vec(),
+            &[(PACK.into(), Some(output)), (LIST.into(), None)],
+        )
+        .unwrap()
+        .publish(|| Ok(()))
+        .unwrap();
+    assert_eq!(fs::read(home.join(POINTER)).unwrap(), INSTALLED);
+    assert_eq!(fs::read(home.join(PACK)).unwrap(), package("2.0.0"));
+    assert!(
+        Admission::open(home, None).is_err(),
+        "publication keeps the owning profile"
+    );
+    drop(owner);
     assert!(Admission::open(home, None).is_ok());
 }

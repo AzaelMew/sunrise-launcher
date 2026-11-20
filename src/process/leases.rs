@@ -54,90 +54,94 @@ impl ChildLeases {
     fn files(&self) -> Vec<&File> {
         self.claims.iter().flat_map(Claim::files).collect()
     }
-    /// Only the chosen fork clears CLOEXEC. Consume the command, so stale pre_exec fds cannot
-    /// be reused after these owners drop. No allocation or lock is taken in the child callback.
     #[cfg(unix)]
-    pub fn spawn(self, mut command: std::process::Command) -> io::Result<std::process::Child> {
-        use std::os::{
-            fd::{AsRawFd, FromRawFd},
-            unix::process::CommandExt,
-        };
-        let transfer = self
-            .files()
-            .iter()
-            .map(|file| {
-                // SAFETY: file is owned; duplicate above stdio so Command cannot replace it.
-                let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
-                if fd < 0 {
-                    Err(io::Error::last_os_error())
-                } else {
-                    // SAFETY: fcntl returned a new owned descriptor; File closes without unlock.
-                    Ok(unsafe { File::from_raw_fd(fd) })
-                }
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-        let fds: Vec<_> = transfer.iter().map(AsRawFd::as_raw_fd).collect();
-        command.env("SUNRISE_RUNTIME_DATA_ROOT", &self.data).env(
-            "SUNRISE_RUNTIME_LEASE_FDS",
-            fds.iter().map(i32::to_string).collect::<Vec<_>>().join(","),
-        );
-        // SAFETY: only async-signal-safe fcntl calls run after fork. transfer owns every fd until
-        // spawn returns, and the creator's copies keep their original CLOEXEC flags.
-        unsafe {
-            command.pre_exec(move || {
-                // Command's fork path can allocate a pipe at a closed stdio slot. Its
-                // dup2(fd, fd) leaves CLOEXEC set, so exec would discard that pipe.
-                // Stdio setup is complete here; preserve every configured stdio handle.
-                for fd in 0..3 {
-                    let flags = libc::fcntl(fd, libc::F_GETFD);
-                    if flags < 0 {
-                        let error = io::Error::last_os_error();
-                        if error.raw_os_error() == Some(libc::EBADF) {
-                            continue;
-                        }
-                        return Err(error);
-                    }
-                    if flags & libc::FD_CLOEXEC != 0
-                        && libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0
-                    {
-                        return Err(io::Error::last_os_error());
-                    }
-                }
-                for &fd in &fds {
-                    let flags = libc::fcntl(fd, libc::F_GETFD);
-                    if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
-                        return Err(io::Error::last_os_error());
-                    }
-                }
-                Ok(())
-            });
-        }
-        let child = command.spawn();
-        drop(transfer); // File closes only: inherited descriptions are never explicitly unlocked.
-        drop(self); // Close-only, including the gate: never unlock the transferred set.
-        child
+    pub fn spawn(self, command: std::process::Command) -> io::Result<std::process::Child> {
+        spawn_unix(command, &self.files(), Some(&self.data), None)
     }
 }
-/// Give exactly this Unix child a reference to the profile lock's open description.
-/// The command owns the CLOEXEC duplicate in the parent until its pre-exec hook is dropped.
+
+/// Borrow the owning profile gate through exactly one spawn. Parent and child close their
+/// references independently; neither releases the other's exclusion.
+pub struct ProfileHandoff<'a>(pub(crate) &'a File);
+
+/// Preparation only needs the profile gate. The compiler also needs the existing Windows
+/// Job cutover (the Unix compiler uses its worker executable for process-tree proof).
+#[derive(Clone, Copy)]
+pub enum StagedChild {
+    Prepare,
+    Compiler,
+}
+
+impl ProfileHandoff<'_> {
+    pub(super) fn spawn(
+        self,
+        command: std::process::Command,
+        role: StagedChild,
+    ) -> io::Result<super::child::Child> {
+        #[cfg(unix)]
+        {
+            let _ = role;
+            let mut command = command;
+            command
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            spawn_unix(command, &[], None, Some(self.0)).map(Into::into)
+        }
+        #[cfg(windows)]
+        spawn_piped(
+            &command,
+            Some(self.0),
+            matches!(role, StagedChild::Compiler),
+        )
+    }
+}
+
+/// Only the chosen fork clears CLOEXEC. Consume the command, so stale pre_exec fds cannot
+/// be reused after these owners drop. No allocation or lock is taken in the child callback.
 #[cfg(unix)]
-pub(crate) fn inherit_profile(command: &mut std::process::Command, file: &File) -> io::Result<()> {
+fn spawn_unix(
+    mut command: std::process::Command,
+    roots: &[&File],
+    runtime_root: Option<&Path>,
+    profile: Option<&File>,
+) -> io::Result<std::process::Child> {
     use std::os::{
         fd::{AsRawFd, FromRawFd},
         unix::process::CommandExt,
     };
-    // SAFETY: file is a live owned descriptor; duplicate it above the stdio slots.
-    let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
+    let transfer = roots
+        .iter()
+        .copied()
+        .chain(profile)
+        .map(|file| {
+            // SAFETY: file is owned; duplicate above stdio so Command cannot replace it.
+            let fd = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+            if fd < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                // SAFETY: fcntl returned a new owned descriptor; File closes without unlock.
+                Ok(unsafe { File::from_raw_fd(fd) })
+            }
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    let fds: Vec<_> = transfer.iter().map(AsRawFd::as_raw_fd).collect();
+    if let Some(data) = runtime_root {
+        command.env("SUNRISE_RUNTIME_DATA_ROOT", data).env(
+            "SUNRISE_RUNTIME_LEASE_FDS",
+            fds[..roots.len()]
+                .iter()
+                .map(i32::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
+        );
     }
-    // SAFETY: fcntl returned a new owned descriptor.
-    let file = unsafe { File::from_raw_fd(fd) };
-    // SAFETY: only an async-signal-safe fcntl runs after fork; the closure owns the fd.
+    // SAFETY: only async-signal-safe fcntl calls run after fork. transfer owns every fd until
+    // spawn returns, and the creator's copies keep their original CLOEXEC flags.
     unsafe {
         command.pre_exec(move || {
-            // A pipe can occupy an otherwise closed stdio slot; preserve the configured
-            // streams if Command's dup2 had no need to clear CLOEXEC.
+            // Command's fork path can allocate a pipe at a closed stdio slot. Its
+            // dup2(fd, fd) leaves CLOEXEC set, so exec would discard that pipe.
             for fd in 0..3 {
                 let flags = libc::fcntl(fd, libc::F_GETFD);
                 if flags < 0 {
@@ -153,14 +157,15 @@ pub(crate) fn inherit_profile(command: &mut std::process::Command, file: &File) 
                     return Err(io::Error::last_os_error());
                 }
             }
-            let fd = file.as_raw_fd();
-            if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
-                return Err(io::Error::last_os_error());
+            for &fd in &fds {
+                if libc::fcntl(fd, libc::F_SETFD, 0) < 0 {
+                    return Err(io::Error::last_os_error());
+                }
             }
             Ok(())
         });
     }
-    Ok(())
+    command.spawn()
 }
 
 #[cfg(windows)]
@@ -173,6 +178,15 @@ pub use windows::WindowsChild;
 /// Start a piped compiler with a Job-list attribute so it belongs to the Job at creation.
 #[cfg(windows)]
 pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<super::child::Child> {
+    spawn_piped(command, None, true)
+}
+
+#[cfg(windows)]
+fn spawn_piped(
+    command: &std::process::Command,
+    profile: Option<&File>,
+    compiler: bool,
+) -> io::Result<super::child::Child> {
     use std::os::windows::io::AsRawHandle;
     let mut environment: Vec<_> = std::env::vars_os().collect();
     for (key, value) in command.get_envs() {
@@ -208,7 +222,8 @@ pub(crate) fn spawn_compiler(command: &std::process::Command) -> io::Result<supe
                 output.as_raw_handle(),
                 error.as_raw_handle(),
             ]),
-            compiler: true,
+            profile,
+            compiler,
             ..windows::Start::default()
         },
     )?;

@@ -84,19 +84,9 @@ pub struct Admission {
     home: PathBuf,
     identity: Identity,
     file: fs::File,
-    #[cfg(unix)]
-    transferred: std::sync::atomic::AtomicBool,
 }
 
-#[cfg(unix)]
-impl Drop for Admission {
-    fn drop(&mut self) {
-        if !*self.transferred.get_mut() {
-            let _ = self.file.unlock();
-        }
-    }
-}
-
+// Close the Unix description / Windows handle without explicitly unlocking the child's copy.
 impl Admission {
     /// Recovery can retire or restore references. Managed callers fence cache deletion
     /// around admission; no cache guard is held by this lease while a worker runs.
@@ -148,22 +138,7 @@ impl Admission {
             home: home.into(),
             identity,
             file,
-            #[cfg(unix)]
-            transferred: std::sync::atomic::AtomicBool::new(false),
         })
-    }
-
-    #[cfg(unix)]
-    pub fn inherit(&self, command: &mut std::process::Command) -> io::Result<()> {
-        crate::process::leases::inherit_profile(command, &self.file)?;
-        self.transferred
-            .store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok(())
-    }
-
-    #[cfg(windows)]
-    pub fn inherited_handle(&self) -> &fs::File {
-        &self.file
     }
 
     pub fn home(&self) -> &Path {
@@ -242,10 +217,6 @@ impl Admission {
     }
 
     fn stage(&mut self, mut record: Record) -> Result<Staging<'_>, String> {
-        #[cfg(unix)]
-        if *self.transferred.get_mut() {
-            return Err(unsettled());
-        }
         clean_retired(&self.home)?;
         let root = record_dir(&self.home)?;
         fs::create_dir_all(&root).map_err(|e| at(&root, e))?;
@@ -615,6 +586,12 @@ pub struct Staging<'a> {
 impl<'a> Staging<'a> {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Borrow this stage's existing admission for a preparation or native worker. The
+    /// worker may outlive the launcher, but only the launcher may seal proved output.
+    pub fn handoff(&self) -> crate::process::leases::ProfileHandoff<'_> {
+        crate::process::leases::ProfileHandoff(&self.lease.file)
     }
 
     /// Bind exact preimages and candidates under the caller's reference guard, while only
