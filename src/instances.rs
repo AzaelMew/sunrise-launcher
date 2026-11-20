@@ -403,18 +403,39 @@ pub(crate) fn profile_homes_strict(game: &Path) -> Result<Vec<PathBuf>, String> 
         let error = |e: std::io::Error| format!("{}: {e}", root.display());
         let entries = match fs::read_dir(&root) {
             Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => match fs::symlink_metadata(&root)
+            {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                _ => return Err(error(e)),
+            },
             Err(e) => return Err(error(e)),
+        };
+        let directory = |path: &Path, meta: fs::Metadata| -> Result<bool, String> {
+            if sunrise_launcher_smod::runtime_leases::linked(&meta) {
+                // Skip links only when their target is known not to be a directory.
+                return Ok(fs::metadata(path).map_err(error)?.is_dir());
+            }
+            Ok(meta.is_dir())
         };
         for entry in entries {
             let path = entry.map_err(error)?.path();
-            let meta = fs::symlink_metadata(&path).map_err(error)?;
-            if meta.is_dir() || sunrise_launcher_smod::runtime_leases::linked(&meta) {
-                if pack {
-                    homes.push(registry_pack::home(&path));
-                }
-                homes.push(path);
+            if !directory(&path, fs::symlink_metadata(&path).map_err(error)?)? {
+                continue;
             }
+            if pack {
+                let home = registry_pack::home(&path);
+                match fs::symlink_metadata(&home) {
+                    Ok(meta) => {
+                        if directory(&home, meta)? {
+                            homes.push(home);
+                        }
+                    }
+                    // The work folder below already covers a not-yet-created home.
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(error(e)),
+                }
+            }
+            homes.push(path);
         }
     }
     Ok(homes)

@@ -131,6 +131,29 @@ fn main() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("separate from a game profile"));
         assert!(!game.join("eula.txt").exists());
     }
+    #[cfg(unix)]
+    {
+        let file = root.join("not-a-profile.txt");
+        fs::write(&file, "not a profile").unwrap();
+        std::os::unix::fs::symlink(&file, game.join("instances/file-alias")).unwrap();
+        std::os::unix::fs::symlink(&file, game.join("sunrise-packs/file-alias")).unwrap();
+        let other_pack = game.join("sunrise-packs/another-pack");
+        fs::create_dir_all(&other_pack).unwrap();
+        std::os::unix::fs::symlink(&file, other_pack.join("home")).unwrap();
+        let dangling = game.join("instances/dangling");
+        std::os::unix::fs::symlink(root.join("missing-profile"), &dangling).unwrap();
+        let unreconciled = root.join("dedicated/unresolved-profile-check");
+        let output = cli(&unreconciled);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!unreconciled.join("eula.txt").exists());
+        assert!(!unreconciled.join("server-ran").exists());
+        fs::remove_file(dangling).unwrap();
+    }
     let output = cli(&accepted);
     assert!(
         output.status.success(),
