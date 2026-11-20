@@ -188,7 +188,7 @@ pub fn run_worker() -> Option<i32> {
         let source = Roots {
             launcher: backend::data_dir(),
             game: backend::game_home(),
-            build: backend::build_dir(),
+            build: backend::relocation_build_dir(),
         };
         ensure_idle(&source)?;
         let backup = format!(

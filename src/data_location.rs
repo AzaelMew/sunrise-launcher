@@ -14,6 +14,8 @@ use std::{
 
 type Result<T> = std::result::Result<T, String>;
 
+mod root_leases;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Roots {
@@ -72,7 +74,7 @@ static LOCATION: Mutex<Option<Result<Option<Roots>>>> = Mutex::new(None);
 /// A startup failure falls back to the default folders, so a window can still open.
 static FORCE_DEFAULT: AtomicBool = AtomicBool::new(false);
 static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
-static STARTUP_LEASES: Mutex<Option<(MigrationLease, RootLeases)>> = Mutex::new(None);
+static STARTUP_LEASES: Mutex<Option<[MigrationLease; 3]>> = Mutex::new(None);
 static ADMITTED_BUILD: OnceLock<PathBuf> = OnceLock::new();
 
 pub(crate) fn admitted_build_root() -> Option<&'static Path> {
@@ -139,17 +141,18 @@ pub fn startup() -> Result<()> {
         FORCE_DEFAULT.store(true, Ordering::Release);
         open_error(&error)
     });
-    let mut roots = RootLeases::default();
-    roots.acquire(&crate::backend::data_dir(), false)?;
-    roots.acquire(&crate::backend::game_home(), false)?;
-    // Windows may choose a separate tool-safe build folder. Resolve it only after the
-    // launcher data is admitted, since this lookup can initialize its directory.
-    let build = crate::backend::build_dir();
-    roots.acquire(&build, false)?;
+    let registry = root_leases::Registry::open()?;
+    let data = registry.acquire(
+        &[&crate::backend::data_dir(), &crate::backend::game_home()],
+        false,
+    )?;
+    // A Windows cache fallback can create its directory; admit the candidate first.
+    let (build, build_lease) =
+        crate::backend::admit_build_dir(|path| registry.acquire(&[path], false))?;
     let _ = ADMITTED_BUILD.set(build);
     *STARTUP_LEASES
         .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((pointer, roots));
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some([pointer, data, build_lease]);
     remember_startup_error(problem);
     Ok(())
 }
@@ -252,33 +255,7 @@ fn lock_at(bootstrap: &Path, exclusive: bool) -> Result<MigrationLease> {
     lock_file(&parent.join("migration.lock"), exclusive)
 }
 
-/// Hold the actual data roots even when another process uses a different bootstrap. Put the
-/// stable files beside the roots: locking must not create a virgin data folder and suppress
-/// first-start carry-over, or add a locked file to a world or cache tree during Move.
-#[derive(Default)]
-struct RootLeases(Vec<(PathBuf, MigrationLease)>);
-
-impl RootLeases {
-    fn acquire(&mut self, root: &Path, exclusive: bool) -> Result<()> {
-        let root = canonical_data_path(root)?;
-        let name = root
-            .file_name()
-            .ok_or_else(|| problem(&root, crate::i18n::tr("Data root needs a parent folder")))?;
-        let mut control = std::ffi::OsString::from(".");
-        control.push(name);
-        control.push(".sunrise-migration.lock");
-        let lock = root.with_file_name(control);
-        if !self.0.iter().any(|(held, _)| same_path(held, &lock)) {
-            let parent = lock.parent().expect("root has a file name");
-            fs::create_dir_all(parent).map_err(|e| problem(parent, e))?;
-            let lease = lock_file(&lock, exclusive)?;
-            self.0.push((lock, lease));
-        }
-        Ok(())
-    }
-}
-
-fn lock_file(path: &Path, exclusive: bool) -> Result<MigrationLease> {
+fn open_lock_file(path: &Path) -> Result<File> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -298,7 +275,11 @@ fn lock_file(path: &Path, exclusive: bool) -> Result<MigrationLease> {
         use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
         open.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
     }
-    let file = open.open(path).map_err(|e| problem(path, e))?;
+    open.open(path).map_err(|e| problem(path, e))
+}
+
+fn lock_file(path: &Path, exclusive: bool) -> Result<MigrationLease> {
+    let file = open_lock_file(path)?;
     let result = if exclusive {
         file.try_lock()
     } else {
@@ -408,10 +389,8 @@ fn migrate_locked(
     }
     let destination = layout(&source, &target);
     tool_safe(&destination.build)?;
-    let mut leases = RootLeases::default();
-    for root in [&source.launcher, &source.game, &source.build] {
-        leases.acquire(root, true)?;
-    }
+    let registry = root_leases::Registry::open()?;
+    let _roots = registry.acquire(&[&source.launcher, &source.game, &source.build], true)?;
     // Canonical spellings are only for excluding controls from the copied tree. Commit
     // to the caller's bootstrap, and report that same path if replacement is refused.
     let mut controls = [
@@ -422,7 +401,7 @@ fn migrate_locked(
     .iter()
     .map(|path| pointer_path(path))
     .collect::<Result<Vec<_>>>()?;
-    controls.extend(leases.0.iter().map(|(path, _)| path.clone()));
+    controls.push(registry.path().to_owned());
     // Both pointer and source leases cover recovery and the entire snapshot/commit.
     crate::relocation::admit_idle_profiles(&source)?;
     fs::create_dir_all(&target).map_err(|e| problem(&target, e))?;

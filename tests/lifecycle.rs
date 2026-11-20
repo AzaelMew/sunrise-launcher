@@ -44,7 +44,7 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
             _ => roots.build = source.build.clone(),
         }
         point(&path, &roots);
-        (path, format!(".{shared}.sunrise-migration.lock"))
+        path
     });
     let create = |location: &std::path::Path, overrides: bool| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
@@ -76,10 +76,11 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
             assert!(!spare.game.join("instances/late-writer").exists());
         };
         assert_blocked(&bootstrap, false, "migration.lock");
-        assert_blocked(&alternate, false, ".launcher.sunrise-migration.lock");
-        assert_blocked(&alternate, true, ".launcher.sunrise-migration.lock");
-        for (path, lock) in &single_root {
-            assert_blocked(path, false, lock);
+        let root_claim = "another launcher is using or moving this data";
+        assert_blocked(&alternate, false, root_claim);
+        assert_blocked(&alternate, true, root_claim);
+        for path in &single_root {
+            assert_blocked(path, false, root_claim);
         }
     })
     .unwrap();
@@ -89,6 +90,59 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
     assert!(accepted.status.success(), "{accepted:?}");
     assert!(moved.game.join("instances/late-writer").is_dir());
     assert!(!source.game.join("instances/late-writer").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_writable_custom_root_does_not_require_a_writable_parent() {
+    use std::{os::unix::fs::PermissionsExt as _, path::PathBuf};
+    let root = tempfile::tempdir().unwrap();
+    let base = root.path().canonicalize().unwrap();
+    let parent = base.join("protected");
+    let source = Roots {
+        launcher: parent.join("launcher"),
+        game: parent.join("game"),
+        build: parent.join("build"),
+    };
+    for dir in [&source.launcher, &source.game, &source.build] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    let location = base.join("location.json");
+    fs::write(
+        &location,
+        serde_json::json!({"version":1,"roots":source}).to_string(),
+    )
+    .unwrap();
+    struct RestoreMode(PathBuf);
+    impl Drop for RestoreMode {
+        fn drop(&mut self) {
+            let _ = fs::set_permissions(&self.0, fs::Permissions::from_mode(0o700));
+        }
+    }
+    let _restore = RestoreMode(parent.clone());
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
+    let probe = parent.join("parent-write-probe");
+    match fs::write(&probe, b"must be denied") {
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied),
+        Ok(()) => {
+            fs::remove_file(probe).unwrap();
+            eprintln!("protected-parent fixture needs an unprivileged account");
+            return;
+        }
+    }
+    let made = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"))
+        .args(["instance", "create", "Writable Home"])
+        .env("SUNRISE_LAUNCHER_LOCATION_FILE", &location)
+        .env_remove("SUNRISE_HOME")
+        .env_remove("SUNRISE_LAUNCHER_HOME")
+        .output()
+        .unwrap();
+    assert!(made.status.success(), "{made:?}");
+    assert!(source.game.join("instances/writable-home").is_dir());
+    let moved =
+        data_location::migrate(&source, &base.join("destination"), &location, |_| {}).unwrap();
+    assert!(moved.game.join("instances/writable-home").is_dir());
+    assert_eq!(fs::read_dir(parent).unwrap().count(), 3);
 }
 
 #[test]

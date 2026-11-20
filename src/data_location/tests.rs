@@ -33,18 +33,6 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     fn visit(root: &Path, path: &Path, files: &mut BTreeMap<PathBuf, Vec<u8>>) {
         for entry in fs::read_dir(path).unwrap() {
             let path = entry.unwrap().path();
-            if [
-                ".launcher.sunrise-migration.lock",
-                ".game.sunrise-migration.lock",
-                ".build.sunrise-migration.lock",
-                ".native-build.sunrise-migration.lock",
-            ]
-            .iter()
-            .any(|name| path.file_name().unwrap() == *name)
-            {
-                assert_eq!(fs::metadata(&path).unwrap().len(), 0);
-                continue; // Source-only coordination, not relocated data.
-            }
             let meta = fs::symlink_metadata(&path).unwrap();
             reject_link(&path, &meta).unwrap(); // Never follow links while checking fixtures.
             if meta.is_dir() {
@@ -200,11 +188,6 @@ fn full_move_preserves_aliased_and_nested_build_layouts() {
         let roots = migrate(&f.source, &f.target(), &f.bootstrap, |_| {}).unwrap();
         assert_eq!(roots.build, f.target().join(build));
         assert!(!f.target().join("build").exists());
-        if build == "launcher/native-build" {
-            let control = ".native-build.sunrise-migration.lock";
-            assert!(f.source.launcher.join(control).is_file());
-            assert!(!roots.launcher.join(control).exists());
-        }
         f.migrated(&roots);
     }
 }
