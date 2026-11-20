@@ -14,8 +14,6 @@ use sunrise_launcher::native_status;
 pub(super) enum Event {
     Progress(String, f32),
     Done(Result<String, String>),
-    /// What the automatic updates did (`sunrise::auto`).
-    AutoUpdated(Vec<String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -35,8 +33,6 @@ pub(super) struct Mods {
     pub(super) chosen: std::collections::BTreeMap<String, String>,
     /// The build the page's Minecraft version was last worked out for (the selected instance's).
     game_for: Option<(Option<String>, Option<String>)>,
-    /// Whether the start's auto-update ran: it waits for the release list.
-    pub(super) auto_updated: bool,
     /// The game folder the browser installs into and lists: the selected instance's.
     home: ModsHome,
     /// Its worlds (folder, name), the last played first, and the one data packs go into.
@@ -131,7 +127,6 @@ impl Mods {
             installed: Vec::new(),
             chosen: Default::default(),
             game_for: None,
-            auto_updated: false,
             home: ModsHome::default(),
             worlds: Vec::new(),
             world: None,
@@ -178,13 +173,6 @@ impl Launcher {
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(lines) => {
-                    if !lines.is_empty() {
-                        m.message = Some(Ok(lines.join("\n")));
-                        m.reload_installed();
-                        m.installed_list.reset();
-                    }
-                }
             }
         }
         if done {
@@ -195,28 +183,6 @@ impl Launcher {
             self.mods_loaded(l);
         }
         changed
-    }
-
-    /// At start: recover interrupted updates, then update every Sunrise instance's registry
-    /// content when enabled ([`auto_update`]), reading the selected instance's list again after.
-    pub(super) fn mods_auto_update(&mut self) {
-        let enabled = self.settings.auto_updates_mods();
-        let list: Vec<AutoTarget> = self
-            .instances
-            .list
-            .iter()
-            .map(|i| AutoTarget {
-                instance: i.clone(),
-                game: self.game_of(i),
-            })
-            .collect();
-        let tx = self.mods.tx.clone();
-        std::thread::spawn(move || {
-            let lines = auto_update(&list, enabled);
-            if !lines.is_empty() {
-                let _ = tx.send(Event::AutoUpdated(lines));
-            }
-        });
     }
 
     /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
