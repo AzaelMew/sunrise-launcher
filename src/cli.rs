@@ -2953,12 +2953,11 @@ fn multiplayer(action: MultiplayerCmd, as_json: bool) -> Result<(), String> {
 fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
     use sunrise_launcher::datapacks;
     use sunrise_launcher::worlds::{self, World};
-    let home = |instance: Option<String>| -> Result<PathBuf, String> {
-        Ok(match instance {
-            Some(name) => instances::find(&name)?.home,
-            None => instances::selection()?.home,
-        })
+    let profile = |instance: Option<String>| match instance {
+        Some(name) => instances::find(&name),
+        None => instances::selection(),
     };
+    let home = |instance| profile(instance).map(|profile| profile.home);
     let value = |w: &World| {
         let millis = w
             .last_played
@@ -2996,8 +2995,7 @@ fn worlds(action: WorldsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         WorldsCmd::Copy { world, instance } => {
-            let home = home(instance)?;
-            let copy = worlds::copy(&worlds::find(&home, &world)?)?;
+            let copy = worlds::copy(&profile(instance)?, &world)?;
             match as_json {
                 true => json(value(&copy)),
                 false => println!("Copied to {} ({})", copy.name, copy.folder),

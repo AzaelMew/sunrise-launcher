@@ -380,28 +380,79 @@ fn backup_at(
 
 /// Copies the world into a new folder of the same `saves/`, named "<name> (1)", "<name> (2)"...
 /// and gives the copy that name in its level.dat so the game's list tells them apart.
-pub fn copy(world: &World) -> Result<World, String> {
-    let _lock = lock_world(world)?;
-    let saves = world.path.parent().ok_or("A world folder has a parent")?;
-    let folder = free_name(saves, &world.name, "", 1);
-    let to = saves.join(&folder);
-    let made = copy_dir(&world.path, &to).and_then(|()| rename_level(&to, &folder));
-    if let Err(e) = made {
-        let _ = fs::remove_dir_all(&to);
-        return Err(format!("Could not copy {}: {e}", world.name));
+pub fn copy(instance: &crate::instances::Instance, query: &str) -> Result<World, String> {
+    let profile = crate::managed_play::Profile::open_instance(
+        &crate::backend::game_home(),
+        &crate::backend::data_dir(),
+        instance,
+    )
+    .map_err(String::from)?;
+    copy_admitted(profile, query, |_| {})
+}
+
+fn copy_admitted(
+    profile: crate::managed_play::Profile,
+    query: &str,
+    before_publish: impl FnOnce(&Path),
+) -> Result<World, String> {
+    use crate::profile_txn::durable;
+    let home = profile.home();
+    let world = find(home, query)?;
+    let saves = home.join("saves");
+    let error = |e: std::io::Error| {
+        crate::i18n::trf(
+            "Could not copy {world}: {error}",
+            &[("world", &world.name), ("error", &e.to_string())],
+        )
+    };
+    for path in [&saves, &world.path] {
+        let meta = fs::symlink_metadata(path).map_err(error)?;
+        if !meta.is_dir() || crate::native_cache::linked(&meta) {
+            return Err(error(std::io::ErrorKind::InvalidData.into()));
+        }
     }
-    read(&to).ok_or_else(|| format!("{} has no level.dat", to.display()))
+    let _lock = lock_world(&world)?;
+    let folder = free_name(&saves, &world.name, "", 1);
+    let to = saves.join(&folder);
+    let stage = tempfile::Builder::new()
+        .prefix(".world-copy-")
+        .tempdir_in(&saves)
+        .map_err(error)?;
+    let candidate = stage.path().join("world");
+    copy_dir(&world.path, &candidate)
+        .and_then(|()| rename_level(&candidate, &folder))
+        .and_then(|()| durable::flush_tree(&candidate))
+        .map_err(error)?;
+    before_publish(&to);
+    durable::move_new_directory(&candidate, &to).map_err(error)?;
+    read(&to).ok_or_else(|| {
+        crate::i18n::trf(
+            "{folder} has no level.dat",
+            &[("folder", &to.to_string_lossy())],
+        )
+    })
 }
 
 fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
-    fs::create_dir_all(to)?;
-    for e in fs::read_dir(from)? {
-        let e = e?;
-        let target = to.join(e.file_name());
-        if e.file_type()?.is_dir() {
-            copy_dir(&e.path(), &target)?;
-        } else if e.file_name() != LOCK {
-            fs::copy(e.path(), target)?;
+    fs::create_dir(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name == LOCK {
+            continue;
+        }
+        let path = entry.path();
+        let meta = fs::symlink_metadata(&path)?;
+        if crate::native_cache::linked(&meta) {
+            return Err(std::io::ErrorKind::InvalidData.into());
+        }
+        let target = to.join(name);
+        if meta.is_dir() {
+            copy_dir(&path, &target)?;
+        } else if meta.is_file() {
+            fs::copy(&path, target)?;
+        } else {
+            return Err(std::io::ErrorKind::InvalidData.into());
         }
     }
     Ok(())
