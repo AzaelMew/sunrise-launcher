@@ -286,6 +286,14 @@ fn reviewed_here(confirming: bool, reviewed: &Option<PathBuf>, current: &std::pa
     !confirming || reviewed.as_deref() == Some(current)
 }
 
+/// `one` for a count of 1, else `many` with its `{count}` filled in.
+fn counted(count: usize, one: &'static str, many: &'static str) -> String {
+    match count {
+        1 => tr(one).to_string(),
+        n => trf(many, &[("count", &n.to_string())]),
+    }
+}
+
 fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
     let refuse = |why: String| {
         let _ = tx.send(Event::Refused(why));
@@ -302,9 +310,10 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
             let ids: Vec<&str> = items.iter().map(|(id, _)| id.as_str()).collect();
             match mod_list::set_all_enabled(home, &ids, false) {
                 Ok(()) => done(
-                    trf(
+                    counted(
+                        ids.len(),
+                        "Turned off 1 mod. The game reads this when it starts.",
                         "Turned off {count} mods. The game reads this when it starts.",
-                        &[("count", &ids.len().to_string())],
                     ),
                     Vec::new(),
                 ),
@@ -324,7 +333,7 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
                 }
             }
             done(
-                trf("Removed {count} mods.", &[("count", &removed.to_string())]),
+                counted(removed, "Removed 1 mod.", "Removed {count} mods."),
                 failed,
             );
         }
@@ -365,9 +374,10 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
                 }
             }
             done(
-                trf(
+                counted(
+                    updated,
+                    "Updated 1 mod, checked against the registry.",
                     "Updated {count} mods, each checked against the registry.",
-                    &[("count", &updated.to_string())],
                 ),
                 failed,
             );
@@ -464,6 +474,22 @@ mod tests {
         assert_eq!(kept, ["2026-01-01_00-00-00_Home.zip"]);
         assert_eq!(std::fs::read(old.join(&kept[0])).unwrap(), b"older backup");
         std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn counts_of_mods_say_mod_once_and_mods_otherwise() {
+        assert_eq!(
+            counted(1, "Removed 1 mod.", "Removed {count} mods."),
+            "Removed 1 mod."
+        );
+        assert_eq!(
+            counted(3, "Removed 1 mod.", "Removed {count} mods."),
+            "Removed 3 mods."
+        );
+        assert_eq!(
+            counted(0, "Removed 1 mod.", "Removed {count} mods."),
+            "Removed 0 mods."
+        );
     }
 
     #[test]
