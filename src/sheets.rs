@@ -744,7 +744,71 @@ impl Launcher {
         });
     }
 
+    /// The one warning, the first time any install would bring native code in: the plain facts
+    /// and the build tools' size, with Cancel and Install. Install records the choice and goes on
+    /// with the install that asked.
+    fn first_native_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let host = sunrise_launcher::rust_toolchain::host();
+        let tools = match (host, sunrise_launcher::rust_toolchain::installed()) {
+            (Some(host), None) => trf(
+                " The first one also downloads Sunrise's build tools (at least {size}).",
+                &[("size", &storage::format_bytes(host.download_bytes()))],
+            ),
+            _ => String::new(),
+        };
+        let install = button("alt-consent-allow", tr("Install"));
+        let install = match host {
+            Some(_) => install.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.allow_native_consent();
+                cx.notify();
+            })),
+            None => disabled(install),
+        };
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(title(tr("Native mods run as part of the game").into()))
+            .child(muted(format!(
+                "{}{tools}",
+                tr("They can do anything a program on your computer can.")
+            )))
+            .children(self.consent_error.clone().map(|e| {
+                div()
+                    .text_color(rgb(palette().danger))
+                    .text_size(px(tokens::LABEL))
+                    .child(e)
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(10.))
+                    .child(
+                        button("alt-consent-cancel", tr("Cancel")).on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                this.close_sheet();
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(install),
+            );
+        frame("alt-consent", 540., body, cx)
+    }
+
     fn consent_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        if matches!(
+            self.pending_consent,
+            Some(
+                PendingConsent::Install(..)
+                    | PendingConsent::Collection(..)
+                    | PendingConsent::Github(..)
+            )
+        ) {
+            return self.first_native_sheet(cx);
+        }
         let pending = self.pending_consent.as_ref();
         if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
             let body = div()
