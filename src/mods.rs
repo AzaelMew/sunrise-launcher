@@ -73,14 +73,31 @@ enum Confirm {
     Remove(Vec<(String, Entry, String)>),
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct DetailContext {
+    home: PathBuf,
+    build: Option<String>,
+    #[allow(clippy::type_complexity)]
+    active: Option<(u64, Option<std::time::SystemTime>)>,
+}
+
 struct Open {
     id: String,
+    request: u64,
     /// The screen Back returns to.
     from: Page,
     page: Option<Result<Box<model::Page>, String>>,
     collection: bool,
     /// The collection's page this mod's was opened from: Back returns to it.
     parent: Option<String>,
+}
+
+impl Open {
+    fn finish(&mut self, request: u64, page: Result<Box<model::Page>, String>) {
+        if self.request == request && self.page.is_none() {
+            self.page = Some(page);
+        }
+    }
 }
 
 /// The ids switched on among the registry entries and the hand-placed packages.
@@ -124,7 +141,7 @@ enum Event {
         std::collections::BTreeMap<String, sunrise::txn::WaitingMod>,
     ),
     Catalog(Result<(Vec<Card>, Vec<String>), String>),
-    Page(String, Result<Box<model::Page>, String>),
+    Page(u64, DetailContext, Result<Box<model::Page>, String>),
     Progress(String, f32),
     /// A pack search's answer, by the number of the search that asked.
     Packs(u64, Result<Vec<sunrise_launcher::browser::Project>, String>),
@@ -179,6 +196,7 @@ pub(crate) struct ModsState {
     reviewed_home: Option<PathBuf>,
     snapshot: Option<Snapshot>,
     open: Option<Open>,
+    next_detail: u64,
     /// The collection whose page is open and the members ticked on it.
     picks: Option<collection::Picks>,
     /// My own batch (update or remove): its line and fraction.
@@ -229,6 +247,7 @@ impl Default for ModsState {
             reviewed_home: None,
             snapshot: None,
             open: None,
+            next_detail: 0,
             picks: None,
             busy: None,
             notice: None,
@@ -494,9 +513,11 @@ impl Launcher {
                     let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
                     self.ui.mods.selection.retain(|id| rows.contains(id));
                 }
-                Event::Page(id, page) => {
-                    if let Some(open) = m.open.as_mut().filter(|o| o.id == id && o.page.is_none()) {
-                        open.page = Some(page);
+                Event::Page(request, context, page) => {
+                    if self.detail_context() == context {
+                        if let Some(open) = &mut self.ui.mods.open {
+                            open.finish(request, page);
+                        }
                     }
                 }
                 Event::Progress(line, f) => m.busy = Some((line, f)),
@@ -606,6 +627,15 @@ impl Launcher {
         });
     }
 
+    fn detail_context(&self) -> DetailContext {
+        let home = self.mods_home();
+        DetailContext {
+            build: self.selected().cloned(),
+            active: sunrise::txn::active_stamp(&home),
+            home,
+        }
+    }
+
     fn mods_load_page(&mut self, id: String, from: Page, installed: Option<Row>) {
         self.ui.mods.facts_open = false;
         let collection = installed.is_none() && self.is_collection(&id);
@@ -615,8 +645,11 @@ impl Launcher {
         };
         // Collections read the index when drawn; local files already have all their details.
         let load = !collection && page.is_none();
+        self.ui.mods.next_detail += 1;
+        let request = self.ui.mods.next_detail;
         self.ui.mods.open = Some(Open {
             id: id.clone(),
+            request,
             from,
             page,
             collection,
@@ -626,7 +659,11 @@ impl Launcher {
             return;
         }
         let (tx, game) = (self.ui.mods.tx.clone(), self.mods_game());
-        let instance = instances::selected();
+        let instance = self
+            .selected_instance()
+            .cloned()
+            .unwrap_or_else(instances::selected);
+        let context = self.detail_context();
         std::thread::spawn(move || {
             let result = sunrise::index().and_then(|index| {
                 let trust = sunrise::trust_and_capabilities(&id, Some(&instance), &game);
@@ -639,7 +676,7 @@ impl Launcher {
                 (Err(_), Some(row)) => Ok(Box::new(row.installed_details())),
                 (result, _) => result,
             };
-            let _ = tx.send(Event::Page(id, result));
+            let _ = tx.send(Event::Page(request, context, result));
         });
     }
 
@@ -898,6 +935,44 @@ impl Launcher {
 #[cfg(test)]
 mod enabled_tests {
     use super::*;
+
+    #[test]
+    fn reopening_the_same_mod_discards_the_old_build_fit() {
+        let page = |fit| {
+            Ok(Box::new(model::Page {
+                id: "ruby".into(),
+                name: "Ruby".into(),
+                authors: vec![],
+                description: String::new(),
+                source: None,
+                about: None,
+                categories: vec![],
+                screenshots: vec![],
+                icon: None,
+                make: None,
+                installed: None,
+                versions: vec![],
+                fit,
+                will_install: None,
+                trust: vec![],
+                another_build: false,
+                requires: vec![],
+            }))
+        };
+        let mut open = Open {
+            id: "ruby".into(),
+            request: 2,
+            from: Page::Installed,
+            page: None,
+            collection: false,
+            parent: None,
+        };
+        open.finish(1, page(model::Fit::OtherBuild("26.2".into())));
+        assert!(open.page.is_none());
+        open.finish(2, page(model::Fit::Fits));
+        open.finish(1, page(model::Fit::OtherBuild("26.2".into())));
+        assert_eq!(open.page.unwrap().unwrap().fit, model::Fit::Fits);
+    }
 
     #[test]
     fn enabled_ids_come_from_the_current_packages_only() {
