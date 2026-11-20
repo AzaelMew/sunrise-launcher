@@ -769,12 +769,12 @@ pub(super) struct UpdatePlan {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct Included {
-    pub(super) id: String,
-    pub(super) title: String,
-    pub(super) from: String,
-    pub(super) to: String,
-    pub(super) native: bool,
+pub(crate) struct Included {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) native: bool,
 }
 
 /// Why a batch leaves out `r`'s update, if it does.

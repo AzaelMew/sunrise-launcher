@@ -492,12 +492,14 @@ pub(super) fn run_with(
 /// One update the player chose, by the path the automatic update takes: the replaced file is
 /// kept until the update is done (an interrupted one is rolled back), the mod's on/off state is
 /// never touched, and a content mod whose new version drops something a saved world may use
-/// waits for the player's answer: `Ok(Some(why))`, nothing changed.
+/// waits for the player's answer: `Ok(Some(why))`, nothing changed. `allow` are the mods the
+/// player has answered for: they go ahead and lose that content.
 pub fn update_to(
     index: &Index,
     project: &str,
     version: &str,
     home: &Path,
+    allow: &BTreeSet<String>,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Option<String>, String> {
     recover(home);
@@ -540,7 +542,7 @@ pub fn update_to(
         &entry,
         home,
         Worlds {
-            allow: &BTreeSet::from([project.to_owned()]),
+            allow,
             asked: &RefCell::new(Vec::new()),
         },
         progress,

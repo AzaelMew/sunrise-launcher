@@ -878,6 +878,7 @@ impl Launcher {
                 self.commit_switch(&ask.instance, version, channel, allow)
             }
             Then::Install(ask) => self.install_replacing(*ask),
+            Then::UpdateChosen(items) => self.update_allowing(items, allow),
             Then::Update => self.migrate_mods(&ask.instance, allow),
         }
     }
@@ -1356,6 +1357,8 @@ pub(crate) enum Then {
     Switch(Option<String>, instances::Channel),
     /// An install that removes mods a world uses.
     Install(Box<BreakAsk>),
+    /// The updates the player chose on the Installed list that would drop what a world may use.
+    UpdateChosen(Vec<crate::mods::Included>),
 }
 
 /// A switch, update or install that waits for the player's answer: it would remove mods that

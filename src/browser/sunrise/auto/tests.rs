@@ -368,6 +368,32 @@ fn updates_holds_and_keeps_the_replaced_file_until_the_next_start() {
     );
     assert!(kept_list(&home).is_empty());
     assert!(!home.join("mod-browser/downloads/ruby-1.2.0.smod").exists());
+
+    // The player's own Update of the same mod asks too: it isn't pre-authorised by choosing it.
+    let p = index.project("ruby").unwrap();
+    let v = p.versions.iter().find(|v| v.version == "1.2.0").unwrap();
+    let entry = installed::Installed::load(&home).entries[0].clone();
+    let go = |allow: &BTreeSet<String>| {
+        update(
+            &index,
+            true,
+            p,
+            v,
+            &entry,
+            &home,
+            Worlds {
+                allow,
+                asked: &RefCell::new(Vec::new()),
+            },
+            &|_, _| {},
+        )
+        .unwrap()
+    };
+    assert!(go(&BTreeSet::new()).is_some(), "waits for the answer");
+    assert_eq!(installed_ruby(&home).0, "1.1.0");
+    // Answered for ruby: it goes ahead.
+    assert!(go(&BTreeSet::from(["ruby".to_string()])).is_none());
+    assert_eq!(installed_ruby(&home).0, "1.2.0");
     fs::remove_dir_all(&dir).unwrap();
 }
 

@@ -11,7 +11,8 @@ pub(super) enum Action {
     TurnOff(Vec<(String, String)>),
     /// (mod id, project id, title)
     Remove(Vec<(String, String, String)>),
-    Update(Vec<Included>),
+    /// The updates, and the mods the player answered the world question for.
+    Update(Vec<Included>, std::collections::BTreeSet<String>),
 }
 
 /// Why mods can't change now.
@@ -311,13 +312,47 @@ impl Launcher {
             self.ui.mods.notice = Some(Err(why.to_string()));
             return;
         }
-        self.run(Action::Update(vec![Included {
-            id: row.id.clone(),
-            title: row.title.clone(),
-            from: row.version.clone(),
-            to,
-            native: row.native(),
-        }]));
+        self.run(Action::Update(
+            vec![Included {
+                id: row.id.clone(),
+                title: row.title.clone(),
+                from: row.version.clone(),
+                to,
+                native: row.native(),
+            }],
+            Default::default(),
+        ));
+    }
+
+    /// The world question for updates that were held back, by what each would drop; Stay leaves
+    /// them as they are, Switch anyway runs them again with those mods allowed.
+    pub(super) fn ask_worlds_before_update(&mut self, items: Vec<Included>) {
+        let Some(instance) = self.selected_instance() else {
+            return;
+        };
+        let (id, home) = (instance.id.clone(), self.mods_home());
+        let ids: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
+        match sunrise_launcher::worlds::question(&home, &ids) {
+            Ok(Some(question)) => {
+                self.mods.world_ask = Some(crate::mods_page::WorldAsk {
+                    instance: id,
+                    question,
+                    then: crate::mods_page::Then::UpdateChosen(items),
+                });
+            }
+            // No world uses them after all: nothing stops the update.
+            Ok(None) => self.update_allowing(items, ids.into_iter().collect()),
+            Err(e) => self.ui.mods.notice = Some(Err(e)),
+        }
+    }
+
+    /// The updates again, now that the world question was answered for `allow`.
+    pub(crate) fn update_allowing(
+        &mut self,
+        items: Vec<Included>,
+        allow: std::collections::BTreeSet<String>,
+    ) {
+        self.run(Action::Update(items, allow));
     }
 
     /// Starts `action` on a worker.
@@ -415,12 +450,12 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
                 failed,
             );
         }
-        Action::Update(items) => {
+        Action::Update(items, allow) => {
             let index = match sunrise::index() {
                 Ok(index) => index,
                 Err(e) => return refuse(e),
             };
-            let (mut updated, mut failed) = (0, Vec::new());
+            let (mut updated, mut failed, mut asked) = (0, Vec::new(), Vec::new());
             let count = items.len();
             for (i, item) in items.iter().enumerate() {
                 let step = |line: &str, f: f32| {
@@ -443,13 +478,17 @@ fn run(action: Action, home: &std::path::Path, game: &str, tx: &Sender<Event>) {
                         .project(&item.id)
                         .and_then(|p| sunrise::update_native(&p, home, game, was_on, &step))
                         .map(|_| None),
-                    false => auto::update_to(&index, &item.id, &item.to, home, &step),
+                    false => auto::update_to(&index, &item.id, &item.to, home, &allow, &step),
                 };
                 match result {
                     Ok(None) => updated += 1,
-                    Ok(Some(why)) => failed.push((item.id.clone(), why)),
+                    // A world may use what this version drops: the question comes, not a failure.
+                    Ok(Some(_)) => asked.push(item.clone()),
                     Err(e) => failed.push((item.id.clone(), e)),
                 }
+            }
+            if !asked.is_empty() {
+                let _ = tx.send(Event::Asked(asked));
             }
             done(
                 counted(

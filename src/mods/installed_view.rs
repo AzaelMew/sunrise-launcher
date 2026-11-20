@@ -342,7 +342,7 @@ impl Launcher {
                                         dim(b)
                                     } else {
                                         b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Update(included.clone()));
+                                            this.run(actions::Action::Update(included.clone(), Default::default()));
                                             cx.notify();
                                         }))
                                     }
