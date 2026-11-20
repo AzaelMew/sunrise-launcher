@@ -1576,5 +1576,6 @@
   "Could not remove {build}: {error}": "Could not remove {build}: {error}",
   "Remove old game builds automatically": "Remove old game builds automatically",
   "After a download, remove only old automatic downloads that are not in use.": "After a download, remove only old automatic downloads that are not in use.",
-  "This version has a {installed} game build, but Settings selects {selected}. Install the selected build with the version picker beside Play on Home before launching.": "This version has a {installed} game build, but Settings selects {selected}. Install the selected build with the version picker beside Play on Home before launching."
+  "This version has a {installed} game build, but Settings selects {selected}. Install the selected build with the version picker beside Play on Home before launching.": "This version has a {installed} game build, but Settings selects {selected}. Install the selected build with the version picker beside Play on Home before launching.",
+  "Could not remove {build}: {error}. Try again in Settings → Storage.": "Could not remove {build}: {error}. Try again in Settings → Storage."
 }

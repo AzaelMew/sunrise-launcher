@@ -77,13 +77,18 @@ impl Launcher {
 
     pub(super) fn storage_builds_removed(&mut self, errors: Vec<(String, String)>) {
         self.removing.clear();
+        self.storage_builds_pruned(errors);
+        self.refresh_storage(None, false);
+    }
+
+    pub(super) fn storage_builds_pruned(&mut self, errors: Vec<(String, String)>) {
         self.installed = backend::installed();
         self.storage_builds.remove_error = (!errors.is_empty()).then(|| {
             errors
                 .iter()
                 .map(|(tag, error)| {
                     trf(
-                        "Could not remove {build}: {error}",
+                        "Could not remove {build}: {error}. Try again in Settings → Storage.",
                         &[("build", &self.version_label(tag)), ("error", error)],
                     )
                 })
@@ -91,7 +96,6 @@ impl Launcher {
                 .join("\n")
         });
         self.refresh_open_storage_builds();
-        self.refresh_storage(None, false);
     }
 
     pub(super) fn storage_build_imported(&mut self, result: Result<String, String>) {

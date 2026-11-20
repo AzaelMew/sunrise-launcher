@@ -3310,7 +3310,15 @@ pub fn install_tag(tag: &str, as_update: bool, progress: impl Fn(f32)) -> Result
         settings.selected = Some(release.tag.clone());
         settings.save()?;
     }
-    version_storage::prune_old_versions(&releases, &release.tag);
+    for (tag, error) in version_storage::prune_old_versions(&releases, &release.tag, false) {
+        eprintln!(
+            "{}",
+            crate::i18n::trf(
+                "Could not remove {build}: {error}. Try again in Settings → Storage.",
+                &[("build", &tag), ("error", &error)],
+            )
+        );
+    }
     Ok(release.tag.clone())
 }
 

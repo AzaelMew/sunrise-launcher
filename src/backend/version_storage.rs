@@ -174,16 +174,28 @@ pub fn remove_builds(
         .collect()
 }
 
-pub fn prune_old_versions(releases: &[Release], just_installed: &str) {
+/// The picker can fetch a candidate without selecting it or deleting anything.
+pub fn prune_old_versions(
+    releases: &[Release],
+    just_installed: &str,
+    cache_only: bool,
+) -> Vec<(String, String)> {
+    if cache_only {
+        return Vec::new();
+    }
     let settings = Settings::load();
+    let mut errors = Vec::new();
     if settings.auto_prune() {
         for tag in old_downloads(&installed(), settings.keep_newest(), downloaded) {
-            // The player can download an older build in the picker, before it is in use.
-            if tag != just_installed && auto_downloaded(&version_dir(&tag)) {
-                let _ = delete(&tag, Some(releases), true, true);
+            if tag == just_installed || !auto_downloaded(&version_dir(&tag)) {
+                continue;
+            }
+            if let Err(error) = delete(&tag, Some(releases), true, true) {
+                errors.push((tag, error));
             }
         }
     }
+    errors
 }
 
 /// The CLI's explicit Remove may change the launcher selection, but not a profile pointer.
@@ -208,7 +220,7 @@ fn delete(
         return Err(trf("{tag} is not installed.", &[("tag", tag)]));
     }
     let mut dependent = None;
-    cache_cleanup::delete_version(&version_dir(tag), || {
+    let deletion = cache_cleanup::delete_version(&version_dir(tag), || {
         let installed = installed();
         let settings = Settings::load();
         if automatic && !auto_downloaded(&version_dir(tag)) {
@@ -240,8 +252,12 @@ fn delete(
         }
         // The fence also checks durable profile pointers and runtime leases before detaching.
         Ok(())
-    })
-    .map_err(|error| match (error, dependent) {
+    });
+    if automatic && matches!(deletion, Err(Error::IncompleteUnit | Error::Busy)) {
+        // A profile or runtime can claim a build between inventory and deletion.
+        return Ok(());
+    }
+    deletion.map_err(|error| match (error, dependent) {
         (Error::IncompleteUnit, Some(build)) => trf(
             "This version supplies resources to native build {build}. Remove that build first.",
             &[("build", &build)],
@@ -347,6 +363,22 @@ mod tests {
         }
         .save()
         .unwrap();
+        Download::Automatic.mark(&version_dir(spare)).unwrap();
+        assert!(prune_old_versions(&[], recent, true).is_empty());
+        assert_eq!(
+            installed(),
+            [recent, newly_pinned, spare],
+            "picker Download cannot prune"
+        );
+        assert!(prune_old_versions(&[], recent, false).is_empty());
+        assert_eq!(
+            installed(),
+            [recent, newly_pinned],
+            "only the automatic download may be pruned"
+        );
+        fs::create_dir_all(version_dir(spare)).unwrap();
+        fs::write(version_dir(spare).join(super::super::COMPLETE), "").unwrap();
+        fs::write(version_dir(spare).join(super::super::CLIENT), "fixture").unwrap();
         let profile = instances::create("Survival", None).unwrap();
         let worlds = profile.home.join("saves");
         fs::create_dir_all(&worlds).unwrap();

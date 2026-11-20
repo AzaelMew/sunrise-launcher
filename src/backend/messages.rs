@@ -10,7 +10,7 @@ pub enum Msg {
     /// Manual build cleanup ended, with any rows it could not delete.
     Removed(Vec<(String, String)>),
     /// Automatic build cleanup ended; refresh the installed list.
-    Pruned,
+    Pruned(Vec<(String, String)>),
     BuildInventory(u64, Vec<version_storage::Build>),
     Line(Job, String),
     Exit(Job, Result<(), String>),

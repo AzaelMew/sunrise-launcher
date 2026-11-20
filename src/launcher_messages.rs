@@ -171,9 +171,7 @@ impl Launcher {
                         .filter(|_| result.is_ok());
                     match result {
                         Ok(()) => {
-                            if self.updates.sunrise.as_ref().is_some_and(|r| r.tag == tag) {
-                                self.updates.sunrise = None;
-                            }
+                            settle_download_offer(&mut self.updates, &tag, cache_only);
                             // An instance's install does not change other profiles. A picker
                             // download is only a staged candidate, not a profile switch.
                             if resume.is_none() {
@@ -190,10 +188,10 @@ impl Launcher {
                                     let tx = self.tx.clone();
                                     let releases = self.game_releases().to_vec();
                                     std::thread::spawn(move || {
-                                        backend::version_storage::prune_old_versions(
-                                            &releases, &tag,
+                                        let errors = backend::version_storage::prune_old_versions(
+                                            &releases, &tag, cache_only,
                                         );
-                                        let _ = tx.send(Msg::Pruned);
+                                        let _ = tx.send(Msg::Pruned(errors));
                                     });
                                 }
                             }
@@ -214,10 +212,7 @@ impl Launcher {
                 }
                 Msg::Storage(result) => self.storage_arrived(result),
                 Msg::Imported(result) => self.storage_build_imported(result),
-                Msg::Pruned => {
-                    self.installed = backend::installed();
-                    self.refresh_open_storage_builds();
-                }
+                Msg::Pruned(errors) => self.storage_builds_pruned(errors),
                 Msg::Updates(updates) => {
                     self.checking_updates = false;
                     self.launcher_checked_now = None;
@@ -506,5 +501,45 @@ impl Launcher {
         if changed {
             cx.notify();
         }
+    }
+}
+
+// Downloading a candidate is not the update. An abandoned picker must leave its offer intact.
+fn settle_download_offer(updates: &mut backend::Updates, tag: &str, cache_only: bool) {
+    if !cache_only
+        && updates
+            .sunrise
+            .as_ref()
+            .is_some_and(|release| release.tag == tag)
+    {
+        updates.sunrise = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_cached_candidate_does_not_consume_the_offer_if_the_picker_is_cancelled() {
+        let tag = "nightly-2026-11-20-aaaaaaa";
+        let mut updates = backend::Updates {
+            sunrise: Some(backend::Release {
+                tag: tag.into(),
+                name: String::new(),
+                body: String::new(),
+                date: String::new(),
+                time: String::new(),
+                asset: None,
+                prerelease: false,
+                nightly: None,
+            }),
+            ..Default::default()
+        };
+        settle_download_offer(&mut updates, tag, true);
+        // Cancel leaves the candidate cached but does not commit a Switch.
+        assert_eq!(updates.sunrise.as_ref().map(|r| r.tag.as_str()), Some(tag));
+        settle_download_offer(&mut updates, tag, false);
+        assert!(updates.sunrise.is_none());
     }
 }
