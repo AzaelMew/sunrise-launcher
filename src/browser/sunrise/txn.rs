@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+mod durable;
+
 const FILE: &str = "mod-browser/install-txn.json";
 const VERSION: u64 = 1;
 
@@ -189,33 +191,17 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
         .map_err(|e| kept(e.to_string()))
 }
 
-/// Writes `record` whole beside the old one, flushed, and renames it over: the old record stays
-/// whole until the new one is complete. An empty one takes the file away.
+/// Writes the full record before replacing the old one. An empty one retires the live file.
+/// A failed persistence barrier is reported, even if the namespace change already happened.
 fn write(home: &Path, record: &Record) -> Result<(), String> {
     let file = home.join(FILE);
-    if record.attempts.is_empty() {
-        return match fs::remove_file(&file) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-                Err(format!("{}: {e}", file.display()))
-            }
-            _ => Ok(()),
-        };
-    }
-    let dir = file.parent().expect("inside the profile");
-    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let next = file.with_extension("json.new");
-    let text = serde_json::to_string(record).map_err(|e| e.to_string())?;
-    let flushed = fs::File::create(&next).and_then(|mut out| {
-        std::io::Write::write_all(&mut out, text.as_bytes())?;
-        out.sync_all()
-    });
-    flushed.map_err(|e| format!("{}: {e}", next.display()))?;
-    fs::rename(&next, &file).map_err(|e| format!("{}: {e}", file.display()))?;
-    // The rename itself is flushed too, where the system lets a folder be opened.
-    if let Ok(folder) = fs::File::open(dir) {
-        let _ = folder.sync_all();
-    }
-    Ok(())
+    let persisted = if record.attempts.is_empty() {
+        durable::retire(&file)
+    } else {
+        let text = serde_json::to_vec(record).map_err(|e| e.to_string())?;
+        durable::replace(home, &file, &text)
+    };
+    persisted.map_err(|e| format!("{}: {e}", file.display()))
 }
 
 /// Before anything is published: writes the attempt that moves `changes` (where each file goes)
