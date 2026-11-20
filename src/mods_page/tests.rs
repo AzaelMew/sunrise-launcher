@@ -187,34 +187,3 @@ fn a_card_gets_its_own_failure_for_a_compile_error_and_for_an_interrupted_build(
     assert_eq!(build_failure_of(Some(&stopped), "other"), None);
     assert_eq!(build_failure_of(None, "ruby"), None);
 }
-
-#[test]
-fn a_switch_saves_its_pin_only_once_the_mods_moved_without_a_world_question() {
-    let switching = || {
-        (
-            "main".to_string(),
-            Some("v1".to_string()),
-            instances::Channel::Stable,
-        )
-    };
-    let mut quiet = AutoOutcome::default();
-    assert_eq!(settle_switch(&mut quiet, switching()), Some(switching()));
-    // The update found a world that would lose a mod: nothing is saved, and answering the
-    // question runs the switch again (Switch anyway) instead of an update on the old pin.
-    let mut asked = AutoOutcome {
-        asks: vec![WorldAsk {
-            instance: "main".into(),
-            question: sunrise_launcher::worlds::Question {
-                mods: vec!["ruby".into()],
-                worlds: vec!["Home".into()],
-            },
-            then: Then::Update,
-        }],
-        ..AutoOutcome::default()
-    };
-    assert_eq!(settle_switch(&mut asked, switching()), None);
-    assert!(matches!(
-        &asked.asks[0].then,
-        Then::Switch(Some(v), instances::Channel::Stable) if v == "v1"
-    ));
-}

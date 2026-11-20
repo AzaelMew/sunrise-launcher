@@ -4,9 +4,6 @@
 //! and the actions.
 use super::*;
 
-use native_mods::Profile;
-use native_status::State;
-
 impl Launcher {
     /// A build stopped for worlds at stake: the world question is put to the player (Stay is
     /// the default; Switch anyway builds again, leaving the mods out), and the mods that
@@ -34,49 +31,6 @@ impl Launcher {
             Some(build) => build.left_out,
             // A game that needed no build because every mod with native code was left out.
             None => native_mods::kept_left_out(&instance.home, version),
-        }
-    }
-
-    /// Where the instance's native mods stand, read again only when what it depends on changes.
-    pub(super) fn native_state_of(&self, instance: &instances::Instance) -> State {
-        let version = self.version_of(instance).cloned();
-        let home = instance.home.clone();
-        let profile = Profile::Optimized;
-        let key = format!(
-            "{}{profile:?}",
-            native_status::fingerprint(&home, version.as_deref()) + &native_mods::kept_stamp(&home)
-        );
-        let mut memo = self.mods.native_state.borrow_mut();
-        match memo.as_ref() {
-            Some((k, state, _)) if *k == key => *state,
-            _ => {
-                let built = version.as_deref().and_then(native_status::built);
-                let enabled = native_status::enabled(&home);
-                // No build, because every mod with native code was left out of the game as it
-                // is: for these mods that plain game is what a build gives, so nothing waits.
-                let plain = built.is_none()
-                    && !enabled.is_empty()
-                    && version
-                        .as_deref()
-                        .is_some_and(|v| native_mods::kept_current(&home, v));
-                let state = if plain {
-                    native_status::State::UpToDate
-                } else {
-                    native_status::in_mode(
-                        native_status::state(&enabled, built.as_deref()),
-                        version.as_deref().and_then(native_status::built_profile),
-                        profile,
-                    )
-                };
-                // A build in another mode rebuilds every mod; otherwise only the changed ones.
-                let unbuilt = match state {
-                    _ if plain => Vec::new(),
-                    native_status::State::NotBuilt => enabled.into_iter().map(|m| m.0).collect(),
-                    _ => native_status::unbuilt(&enabled, built.as_deref()),
-                };
-                *memo = Some((key, state, unbuilt));
-                state
-            }
         }
     }
 }

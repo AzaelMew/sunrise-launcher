@@ -173,7 +173,6 @@ pub(super) struct Mods {
     /// its collection): the answer starts it again, and nothing behind it starts meanwhile.
     pub(super) consent_request: Option<queue::Request>,
     /// A build switch whose mods are being moved first: the profile, and the pin it will get.
-    pub(super) switching: Option<(String, Option<String>, instances::Channel)>,
     /// The profile the install that runs was asked for.
     running: Option<queue::Target>,
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
@@ -196,11 +195,6 @@ pub(super) struct Mods {
     pub(crate) failed: Option<InstallFailure>,
     pub(super) updates: HashMap<(SourceId, String), String>,
     /// An install awaiting explicit native-code consent, before any download.
-    /// The selected instance's native build state, the mods it would build again
-    /// (`native_status::unbuilt`), and the `native_status::fingerprint` they were read for: read
-    /// again only when that changes.
-    pub(super) native_state:
-        std::cell::RefCell<Option<(String, native_status::State, Vec<String>)>>,
     /// The instance and the mods whose compile failed in the last stop: their chips say so until
     /// the next build attempt, whatever the player chose.
     pub(super) unbuilt: Option<(String, Vec<String>)>,
@@ -311,7 +305,6 @@ impl Mods {
             install_owners: HashMap::new(),
             running: None,
             updating: false,
-            switching: None,
             consent_request: None,
             building: Default::default(),
             world_ask: None,
@@ -321,7 +314,6 @@ impl Mods {
             updated: HashMap::new(),
             card_error: None,
             failed: None,
-            native_state: Default::default(),
             unbuilt: None,
             updates: HashMap::new(),
             browse: Default::default(),
@@ -343,7 +335,6 @@ impl Launcher {
         let mut done = false;
         let mut native = Vec::new();
         let mut native_in = None;
-        let mut switched = None;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
@@ -424,13 +415,8 @@ impl Launcher {
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(mut out) => {
+                Event::AutoUpdated(out) => {
                     m.updating = false;
-                    // A switch's pin is saved once the mods have moved to the new build,
-                    // unless a world question came up: that goes back through the switch.
-                    if let Some(switching) = m.switching.take() {
-                        switched = settle_switch(&mut out, switching);
-                    }
                     let AutoOutcome {
                         lines,
                         asks,
@@ -462,9 +448,6 @@ impl Launcher {
         if done {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
-        }
-        if let Some((instance, version, channel)) = switched {
-            self.save_switch(&instance, version, channel);
         }
         if let Some(instance) = native_in.filter(|_| !native.is_empty()) {
             self.mods.queue.build_after_install(&instance, native);
@@ -901,9 +884,6 @@ impl Launcher {
             Then::Build(base) => {
                 self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
             }
-            Then::Switch(version, channel) => {
-                self.commit_switch(&ask.instance, version, channel, allow)
-            }
             Then::Install(ask) => self.install_replacing(*ask, &allow),
             Then::Retry(request) => {
                 let mods: Vec<String> = allow.into_iter().collect();
@@ -1080,30 +1060,6 @@ impl Launcher {
                 (b.id, title, b.needs)
             })
             .collect()
-    }
-
-    /// The mods switching the selected profile to the game build `tag` would remove, by the
-    /// index already read, the profile's own list and the SDK check of the native mods
-    /// (`native_off`), for the game that build itself plays. None when that can't be told: no
-    /// index has been read, or the build isn't installed. That is not "none".
-    pub(crate) fn mods_removed_by(
-        &self,
-        tag: &str,
-        native_off: &[(String, String)],
-    ) -> Option<Vec<sunrise::auto::Removal>> {
-        let (index, instance) = (sunrise::known_index()?, self.selected_instance()?);
-        let game = backend::game_of_build(tag)?;
-        let ctx = sunrise::auto::Context {
-            in_pack: sunrise::auto::in_pack(&instance.home),
-            game: &game,
-            native_allowed: self.settings.native_mods_allowed_at.is_some(),
-        };
-        Some(sunrise::auto::removals_at(
-            &index,
-            &instance.home,
-            &ctx,
-            native_off,
-        ))
     }
 
     /// The answer to the break sheet: Install goes ahead and removes the mods it would break as
@@ -1313,21 +1269,6 @@ pub(super) fn auto_update(
     out
 }
 
-/// A switch whose mods have moved: its pin to save, unless the update asked the world question,
-/// which then goes back through the switch (answering it runs the switch again).
-fn settle_switch(
-    out: &mut AutoOutcome,
-    (instance, version, channel): (String, Option<String>, instances::Channel),
-) -> Option<(String, Option<String>, instances::Channel)> {
-    match out.asks.first_mut() {
-        Some(ask) => {
-            ask.then = Then::Switch(version, channel);
-            None
-        }
-        None => Some((instance, version, channel)),
-    }
-}
-
 /// What the automatic updates did: the notice's lines, and the questions to put to the player.
 #[derive(Default)]
 pub(crate) struct AutoOutcome {
@@ -1377,8 +1318,6 @@ pub(crate) enum Then {
     /// A build that stopped for the question is made again, leaving those mods out: the build
     /// it was on.
     Build(String),
-    /// A switch of build: the pin and channel it would save, saved only now.
-    Switch(Option<String>, instances::Channel),
     /// An install that removes mods a world uses.
     Install(Box<BreakAsk>),
     /// An install that would drop what a world uses: it goes ahead as it was, with that agreed.
