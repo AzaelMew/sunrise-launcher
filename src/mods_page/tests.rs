@@ -188,3 +188,30 @@ fn a_mod_is_named_by_its_title_from_the_profiles_list_and_by_its_id_only_when_un
     let ids = ["seabound_boats".to_string(), "mystery".to_string()];
     assert_eq!(titles(&[entry], &ids), ["Seabound Boats", "mystery"]);
 }
+
+#[test]
+fn a_card_gets_its_own_failure_for_a_compile_error_and_for_an_interrupted_build() {
+    let compile = InstallFailure::ModsDidNotBuild(vec![native_mods::BuildFailure {
+        id: "ruby".into(),
+        reason: "it doesn't compile".into(),
+        log: "error[E0425]".into(),
+    }]);
+    assert_eq!(
+        build_failure_of(Some(&compile), "ruby"),
+        Some(("it doesn't compile".into(), "error[E0425]".into()))
+    );
+    assert_eq!(build_failure_of(Some(&compile), "other"), None);
+    let stopped = InstallFailure::Interrupted {
+        ids: vec!["ruby".into()],
+        reason: "Couldn't connect to the download".into(),
+    };
+    assert_eq!(
+        build_failure_of(Some(&stopped), "ruby"),
+        Some((
+            "You're offline".into(),
+            "Couldn't connect to the download".into()
+        ))
+    );
+    assert_eq!(build_failure_of(Some(&stopped), "other"), None);
+    assert_eq!(build_failure_of(None, "ruby"), None);
+}
