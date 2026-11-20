@@ -745,6 +745,10 @@ fn an_install_the_plan_refuses_for_what_an_installed_mod_needs_names_that_mod() 
             vec![make("lamps", "1.0.0", Some(("creatures", "^1")))],
         ),
         (
+            "owls",
+            vec![make("owls", "1.0.0", Some(("creatures", "^1")))],
+        ),
+        (
             "fireflies",
             vec![make("fireflies", "1.0.0", Some(("creatures", "^2")))],
         ),
@@ -762,14 +766,34 @@ fn an_install_the_plan_refuses_for_what_an_installed_mod_needs_names_that_mod() 
         version: version.into(),
         sha256: Some(index::sha256(format!("{id}{version}").as_bytes())),
     };
-    let held = [held("creatures", "1.0.0"), held("lamps", "1.0.0")];
-    let broken = would_break(&index, &["fireflies".to_string()], &held, GAME);
+    let one = [held("creatures", "1.0.0"), held("lamps", "1.0.0")];
+    let broken = would_break(&index, &["fireflies".to_string()], &one, GAME);
     assert_eq!(
         broken,
         [Broken {
             id: "lamps".into(),
             needs: "creatures ^1".into()
         }]
+    );
+    // Two installed mods pin it: removing either alone doesn't help, so both are named.
+    let held = [
+        held("creatures", "1.0.0"),
+        held("lamps", "1.0.0"),
+        held("owls", "1.0.0"),
+    ];
+    let broken = would_break(&index, &["fireflies".to_string()], &held, GAME);
+    assert_eq!(
+        broken,
+        [
+            Broken {
+                id: "lamps".into(),
+                needs: "creatures ^1".into()
+            },
+            Broken {
+                id: "owls".into(),
+                needs: "creatures ^1".into()
+            }
+        ]
     );
     // Installed alone, it breaks nothing.
     assert!(would_break(&index, &["lamps".to_string()], &held, GAME).is_empty());
