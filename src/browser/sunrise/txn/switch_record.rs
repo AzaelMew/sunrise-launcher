@@ -483,6 +483,14 @@ fn publish<G>(
 }
 
 pub(super) fn recover(home: &Path, record: &mut Record) -> Result<(), String> {
+    recover_at(home, record, |_| {})
+}
+
+fn recover_at(
+    home: &Path,
+    record: &mut Record,
+    mut before_advance: impl FnMut(usize),
+) -> Result<(), String> {
     let journal = operation(record)?;
     let staging = journal.staging(home);
     journal.verify_roots(home)?;
@@ -570,6 +578,7 @@ pub(super) fn recover(home: &Path, record: &mut Record) -> Result<(), String> {
                     durable::sync_restored(&target, &backup, step.before == Image::Missing)
                         .map_err(|e| fail_at(&target, e))?;
                 }
+                before_advance(step);
                 operation(record)?.frontier = step;
                 write(home, record)?;
             }
@@ -740,6 +749,29 @@ mod tests {
     }
 
     #[test]
+    fn live_switch_recovery_process() {
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = PathBuf::from(home);
+        let goal = std::env::var("SUNRISE_TEST_LIVE_PROFILE_WORKER").unwrap();
+        let _owner = Lease::acquire(&home).unwrap();
+        let mut record = read(&home).unwrap().unwrap();
+        let journal = operation(&mut record).unwrap();
+        let step = match goal.as_str() {
+            "pointer" => journal.steps(),
+            "package" => journal.steps() - 1,
+            _ => unreachable!(),
+        };
+        recover_at(&home, &mut record, |at| {
+            if at == step {
+                wait_to_be_killed();
+            }
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn admission_after_staged_kills_restores_the_old_or_committed_exact_set() {
         for (kind, boundary) in ["switch", "install"]
             .into_iter()
@@ -771,6 +803,26 @@ mod tests {
                     assert!(home.join("sunrise-mods").is_dir());
                 },
             );
+            if boundary == "pointer" {
+                // Interrupt undo twice, after the disk move and before the frontier write.
+                // A second launcher must accept the restored preimage of the frontier, not
+                // require the unpublished generation or the already consumed restore file.
+                let actor =
+                    "browser::sunrise::txn::switch_record::tests::live_switch_recovery_process";
+                crash_process(actor, home, Some("pointer"), || {
+                    assert!(Lease::admit(home).is_err());
+                    assert_eq!(build::read(home).unwrap().unwrap().generation(), 1);
+                    assert!(home.join("sunrise-mods/new.smod").is_file());
+                });
+                crash_process(actor, home, Some("package"), || {
+                    assert!(Lease::admit(home).is_err());
+                    assert!(!home.join("sunrise-mods/new.smod").exists());
+                    assert_eq!(
+                        fs::read(home.join("sunrise-mods.txt")).unwrap(),
+                        b"mod.waiting:false\n"
+                    );
+                });
+            }
             let admission = Lease::admit(home).unwrap();
             let committed = admission.active_build().unwrap().unwrap();
             assert_eq!(

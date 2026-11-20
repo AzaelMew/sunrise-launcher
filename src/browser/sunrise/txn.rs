@@ -1612,7 +1612,13 @@ mod tests {
     #[test]
     #[ignore = "daily"]
     fn a_dead_launcher_is_not_abandoned_while_its_profile_child_lives() {
-        for worker in ["sdk", "game"] {
+        // Windows owns SDK trees with a kill-on-close Job. Killing the launcher closes it;
+        // the surviving-child case on that platform is the detached game, not the SDK.
+        #[cfg(windows)]
+        let workers = ["game"];
+        #[cfg(not(windows))]
+        let workers = ["sdk", "game"];
+        for worker in workers {
             let scene = scene();
             let home = scene.home();
             let file = home.join("sunrise-mods/added.smod");
@@ -1663,7 +1669,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "daily"]
     fn interrupted_stacked_undo_resumes_at_the_exact_restored_image() {
         let scene = scene();
         let home = scene.home();
