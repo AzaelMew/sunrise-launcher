@@ -6,10 +6,20 @@ pub fn routes(home: &Path, base: Option<&str>) -> Result<Routes, Failed> {
     let cancellation = Cancellation::default();
     cancellation.admit_native_work()?;
     let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let Some(folder) = stage_installed(home, root().join("installed.routes"))? else {
+    let scratch = route_scratch()?;
+    let Some(folder) = stage_installed(home, scratch.path().join("mods"))? else {
         return Ok(Routes::default());
     };
     classify(&folder, base, &lease, &cancellation)
+}
+
+fn route_scratch() -> Result<tempfile::TempDir, String> {
+    let root = root();
+    fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    tempfile::Builder::new()
+        .prefix(".native-routes-")
+        .tempdir_in(root)
+        .map_err(|e| e.to_string())
 }
 
 /// Share classification with an actual build under its existing cache lease.
@@ -188,7 +198,8 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
     let cancellation = Cancellation::default();
     cancellation.admit_native_work()?;
     let _lease = crate::native_cache::Cache::acquire(&backend::build_dir()).map_err(cache_error)?;
-    let folder = stage_installed(home, root().join("installed.routes"))?;
+    let scratch = route_scratch()?;
+    let folder = stage_installed(home, scratch.path().join("mods"))?;
     let found = match &folder {
         Some(folder) => scan_bundles(folder)?,
         None => Vec::new(),

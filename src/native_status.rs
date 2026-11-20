@@ -1,6 +1,6 @@
 //! Whether an instance plays its native mods (docs/modding/src/how-to/native-mods.md): the mods turned on in its
 //! folder against the ones its version was built with (`native-mods.json`, written by
-//! `native_mods::build`). The Mods page shows the answer beside its Build button.
+//! `native_mods::build_exact_client`). The Mods page shows the answer beside its Build button.
 use crate::{backend, browser::mod_list, native_mods};
 use std::fs;
 use std::path::Path;
@@ -419,14 +419,28 @@ fn parse_included(record: serde_json::Value) -> Option<Vec<Included>> {
     Some(mods)
 }
 
-/// Only linked mods need to match; skipped entries do not run. Compare the exact enabled
-/// version and source digest, not just the package id. A plain build has nothing to check.
+/// Verify the actual enabled native archives, including the bytes omitted by a damaged source.
+pub(crate) fn exact_enabled(home: &Path) -> Result<Vec<Mod>, String> {
+    let mut mods = Vec::new();
+    native_mods::native_inputs(home, |bundle| {
+        let digest = archive_digest(
+            bundle
+                .files
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice())),
+        );
+        mods.push((bundle.manifest.id, bundle.manifest.version, Some(digest)));
+        Ok(())
+    })?;
+    Ok(mods)
+}
+
 pub(crate) fn check_compiled_profile(included: &[Included], home: &Path) -> Result<(), String> {
-    if !included.is_empty() && !compiled_match(included, &enabled(home)) {
+    let enabled = exact_enabled(home)?;
+    if included.len() != enabled.len() || !compiled_match(included, &enabled) {
         return Err(crate::i18n::tr(
             "This build includes native mods that don't match this profile. Rebuild the mods or choose another game build.",
-        )
-        .into());
+        ).into());
     }
     Ok(())
 }

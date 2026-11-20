@@ -51,7 +51,7 @@ impl ManualBuild {
         if build::inputs(self.home())? != self.inputs {
             return Err(unsettled().into());
         }
-        if crate::native_status::enabled(self.home()).is_empty() {
+        if crate::native_status::exact_enabled(self.home())?.is_empty() {
             build::verify_packages(self.home())?;
             return Err(native_mods::Failed::Nothing);
         }

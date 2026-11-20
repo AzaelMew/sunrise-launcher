@@ -530,11 +530,7 @@ pub(super) fn verify_included(base: &str, image: &str, home: &Path) -> Result<()
         return Err(unsettled());
     }
     let included = native_status::included(image)?;
-    native_status::check_compiled_profile(&included, home)?;
-    if native_status::enabled(home).len() != included.len() {
-        return Err(crate::i18n::tr("This native build doesn't say exactly which mods it includes. Rebuild the mods or choose another game build.").into());
-    }
-    Ok(())
+    native_status::check_compiled_profile(&included, home)
 }
 
 pub(super) fn verify_packages(home: &Path) -> Result<(), String> {

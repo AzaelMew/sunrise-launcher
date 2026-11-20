@@ -100,7 +100,8 @@ fn inputs(home: &std::path::Path) -> serde_json::Value {
 
 /// Records that `base`, played as it is from `home`, leaves out `left`, for the native mods
 /// turned on now (their ids, versions and file digests). The file is written whole: a temporary
-/// file in the same folder, then a rename.
+/// file in the same folder, then a rename. Used to construct released-format fixtures.
+#[cfg(test)]
 pub(super) fn keep(home: &std::path::Path, base: &str, left: &[LeftOut]) -> Result<(), String> {
     let record = serde_json::json!({
         "base": base,
@@ -118,7 +119,7 @@ pub(super) fn keep(home: &std::path::Path, base: &str, left: &[LeftOut]) -> Resu
     Ok(())
 }
 
-/// Whether [`keep`]'s record is for `base` and for the native mods turned on now: the plain game
+/// Whether the released record is for `base` and for the native mods turned on now: the plain game
 /// is then what a build of them gives, and Play has nothing to build.
 pub fn kept_current(home: &std::path::Path, base: &str) -> bool {
     let record: serde_json::Value = std::fs::read(home.join(KEPT))
@@ -133,7 +134,7 @@ fn made_for(record: &serde_json::Value, base: &str, inputs: &serde_json::Value) 
     record["base"].as_str() == Some(base) && record["inputs"] == *inputs
 }
 
-/// What changes when [`keep`]'s record does, cheap to read on every frame.
+/// What changes when the released record does, cheap to read on every frame.
 pub fn kept_stamp(home: &std::path::Path) -> String {
     let meta = std::fs::metadata(home.join(KEPT)).ok();
     format!(
@@ -143,12 +144,7 @@ pub fn kept_stamp(home: &std::path::Path) -> String {
     )
 }
 
-/// Forgets [`keep`]'s record: a build was made, and it has its own.
-pub(super) fn forget(home: &std::path::Path) {
-    let _ = std::fs::remove_file(home.join(KEPT));
-}
-
-/// The mods [`keep`] recorded as left out of `base` for the instance playing from `home`.
+/// The mods an older launcher recorded as left out of `base` for the instance playing from `home`.
 pub fn kept(home: &std::path::Path, base: &str) -> Vec<LeftOut> {
     let record: serde_json::Value = std::fs::read(home.join(KEPT))
         .ok()
@@ -205,7 +201,8 @@ impl LeftOut {
         }
     }
 
-    /// How a build's `native-mods.json` keeps it (`left_out`).
+    /// Historical `left_out` representation for fixtures.
+    #[cfg(test)]
     pub(super) fn to_json(&self) -> serde_json::Value {
         let (why, with) = match &self.why {
             Why::OtherVersion => ("other-version", None),

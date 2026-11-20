@@ -804,7 +804,7 @@ pub(super) fn build_candidate(
     progress: &impl Fn(native_mods::Step),
     chosen: &BTreeMap<&str, &Package>,
 ) -> Result<String, native_mods::Failed> {
-    let image = if crate::native_status::enabled(stage).is_empty() {
+    let image = if crate::native_status::exact_enabled(stage)?.is_empty() {
         tag.to_owned()
     } else {
         native_mods::build_exact_client(

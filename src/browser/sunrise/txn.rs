@@ -541,7 +541,7 @@ impl Lease {
             .is_ok()
         {
             target.preferred_image().to_owned()
-        } else if crate::native_status::enabled(&self.home).is_empty() {
+        } else if crate::native_status::exact_enabled(&self.home)?.is_empty() {
             target.base().to_owned()
         } else {
             crate::native_mods::build_exact_client(
