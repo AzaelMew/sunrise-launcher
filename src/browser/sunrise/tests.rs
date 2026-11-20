@@ -2112,6 +2112,69 @@ fn a_queued_approval_is_read_again_under_the_lock_before_it_removes_anything() {
 }
 
 #[test]
+fn a_removal_is_one_transaction_that_takes_only_the_files_it_was_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = conflict_index(dir.path());
+    let home = dir.path().join("profile");
+    let lamps = project_of(&index, index.project("lamps").unwrap(), GAME).unwrap();
+    install_from(
+        &index,
+        true,
+        &lamps,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    let checksum = installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "lamps")
+        .unwrap()
+        .checksum
+        .clone();
+    // A file that isn't the one that was shown stays.
+    let stale = [("lamps".to_string(), "SHA-256:other".to_string())];
+    assert!(remove_checked(&home, &stale).unwrap().is_empty());
+    assert!(home.join("sunrise-mods/lamps.smod").is_file());
+    let shown = [("lamps".to_string(), checksum)];
+    assert_eq!(remove_checked(&home, &shown).unwrap(), ["lamps"]);
+    assert!(!home.join("sunrise-mods/lamps.smod").exists());
+    assert!(installed::Installed::load(&home)
+        .find(SourceId::Sunrise, "lamps")
+        .is_none());
+    assert!(!mod_list::is_enabled(&home, "lamps"));
+    assert!(!home.join("mod-browser/install-txn.json").exists());
+    // A cut-off removal is undone by the record: begin it, remove the file, never commit.
+    install_from(
+        &index,
+        true,
+        &lamps,
+        &home,
+        GAME,
+        false,
+        true,
+        &[],
+        &|_, _| {},
+    )
+    .unwrap();
+    let staged = tempfile::Builder::new()
+        .prefix(".installed-mods-")
+        .tempdir_in(&home)
+        .unwrap();
+    let file = home.join("sunrise-mods/lamps.smod");
+    txn::begin_for_test(&home, staged.path(), std::slice::from_ref(&file));
+    fs::rename(&file, staged.path().join("old-0")).unwrap();
+    let _ = staged.keep();
+    assert!(txn::recover(&home));
+    assert!(
+        file.is_file(),
+        "the removal that never finished is put back"
+    );
+}
+
+#[test]
 fn an_install_that_replaces_a_mod_and_then_fails_leaves_that_mod_installed() {
     let dir = tempfile::tempdir().unwrap();
     let mut index = conflict_index(dir.path());

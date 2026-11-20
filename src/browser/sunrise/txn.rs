@@ -164,6 +164,12 @@ pub(super) fn begin(
     Ok(id)
 }
 
+/// For tests of callers: an attempt begun and left cut off.
+#[cfg(test)]
+pub(super) fn begin_for_test(home: &Path, staged: &Path, changes: &[PathBuf]) {
+    begin(home, staged, changes, &[]).unwrap();
+}
+
 fn unsettled() -> String {
     tr("An earlier install is still being undone. Restart the launcher and try again.").to_string()
 }
