@@ -132,8 +132,6 @@ pub(super) enum Event {
     /// The install would drop what a saved world uses from these mods: the question to ask, and
     /// the request that goes ahead if the player agrees.
     NeedsWorlds(Vec<String>, Box<queue::Request>),
-    /// The native mods an install put in before it failed: a build takes them up.
-    Brought(Vec<String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(AutoOutcome),
     /// A project page's part, an image or a filter's values (`mods_project`).
@@ -167,6 +165,8 @@ pub(super) struct Mods {
     pub(super) message: Option<Result<String, String>>,
     /// What waits for the install and build slot.
     queue: queue::Queue,
+    /// Live batches wait here between publishing and their follow-up build, by profile.
+    pub(super) install_owners: HashMap<String, Arc<sunrise::txn::Lease>>,
     /// The start's automatic update runs: Play and installs wait for it.
     pub(super) updating: bool,
     /// The install that asked the native-code question, whole (its profile, what it replaces,
@@ -308,6 +308,7 @@ impl Mods {
             busy: None,
             message: None,
             queue: Default::default(),
+            install_owners: HashMap::new(),
             running: None,
             updating: false,
             switching: None,
@@ -384,6 +385,14 @@ impl Launcher {
                     done = true;
                     let id = m.busy.take().map(|(id, ..)| id);
                     native_in = m.running.take().map(|t| t.instance);
+                    if let Some(instance) = &native_in {
+                        if m.install_owners
+                            .get(instance)
+                            .is_some_and(|lease| !lease.outstanding())
+                        {
+                            m.install_owners.remove(instance);
+                        }
+                    }
                     m.card_error = match (&result, &id) {
                         (Err(why), Some(id)) => Some(CardError {
                             title: sunrise::known_index()
@@ -413,10 +422,6 @@ impl Launcher {
                     };
                     m.reload_installed();
                     m.installed_list.reset();
-                }
-                Event::Brought(ids) => {
-                    native.extend(ids);
-                    native_in = m.running.as_ref().map(|t| t.instance.clone());
                 }
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(mut out) => {
@@ -489,8 +494,11 @@ impl Launcher {
         let step = self.mods.queue.next(
             &selected,
             self.mods.busy.is_some(),
-            self.native_step.is_some(),
-            locked || self.mods.consent_request.is_some(),
+            self.native_step.is_some() || self.native_attempts.is_some(),
+            locked
+                || self.pending_consent.is_some()
+                || self.mods.world_ask.is_some()
+                || !self.mods.removal.is_empty(),
         );
         changed |= step.is_some();
         match step {
@@ -640,6 +648,10 @@ impl Launcher {
     fn submit_install(&mut self, request: queue::Request) {
         let busy = self.mods.busy.is_some()
             || self.native_step.is_some()
+            || self.native_attempts.is_some()
+            || self.pending_consent.is_some()
+            || self.mods.world_ask.is_some()
+            || !self.mods.removal.is_empty()
             || self.mods_lock() == Some(crate::mods::Lock::Updating);
         if let Some(request) = self.mods.queue.submit(request, busy) {
             self.start_install(request);
@@ -647,6 +659,23 @@ impl Launcher {
     }
 
     fn start_install(&mut self, request: queue::Request) {
+        let target = request.target();
+        let (lease, fresh) = match self.mods.install_owners.get(&target.instance) {
+            Some(lease) => (lease.clone(), false),
+            None => match sunrise::txn::Lease::acquire(&target.home) {
+                Ok(lease) => {
+                    let lease = Arc::new(lease);
+                    self.mods
+                        .install_owners
+                        .insert(target.instance.clone(), lease.clone());
+                    (lease, true)
+                }
+                Err(error) => {
+                    self.mods.message = Some(Err(error));
+                    return;
+                }
+            },
+        };
         match request {
             queue::Request::One {
                 target,
@@ -654,9 +683,16 @@ impl Launcher {
                 id,
                 known,
                 replacing,
-            } => self.start_install_one(target, source, id, known.map(|p| *p), replacing),
+            } => self.start_install_one(
+                target,
+                (lease, fresh),
+                source,
+                id,
+                known.map(|p| *p),
+                replacing,
+            ),
             queue::Request::Many(target, ids, shown, approvals) => {
-                self.start_install_many(target, ids, shown, approvals)
+                self.start_install_many(target, (lease, fresh), ids, shown, approvals)
             }
         }
     }
@@ -664,6 +700,7 @@ impl Launcher {
     fn start_install_one(
         &mut self,
         target: queue::Target,
+        (lease, fresh): (Arc<sunrise::txn::Lease>, bool),
         source: SourceId,
         id: String,
         known: Option<Project>,
@@ -696,6 +733,9 @@ impl Launcher {
                 }
             };
             let result = (|| -> Result<Finished, Stop> {
+                if fresh {
+                    lease.recover_abandoned()?;
+                }
                 let source = browser::source(source);
                 let p = match known {
                     Some(p) => p,
@@ -743,9 +783,7 @@ impl Launcher {
                     )));
                 }
                 let before = installed::Installed::load(&home).entries;
-                let done = installed::install(
-                    &*source, &p, everything, &home, &game, &replacing, &progress,
-                )?;
+                let done = lease.install(&*source, &p, everything, &game, &replacing, &progress)?;
                 if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
                     return Ok(Finished {
                         said: None,
@@ -781,6 +819,7 @@ impl Launcher {
                     &[("mods", &names.join(", "))],
                 )))
             })();
+            drop(lease);
             let _ = tx.send(match result {
                 Err(Stop::Consent) => Event::NeedsConsent(
                     Box::new(PendingConsent::Install(
@@ -845,6 +884,9 @@ impl Launcher {
             return;
         };
         if answer == sunrise_launcher::worlds::Answer::Stay {
+            if matches!(ask.then, Then::Build(_)) && self.native_attempts.is_some() {
+                self.install_build_ended(BuildEnd::Stopped(native_mods::CANCELLED.into()));
+            }
             return;
         }
         let allow = ask.question.mods.into_iter().collect();
@@ -909,17 +951,21 @@ impl Launcher {
         if matches!(end, BuildEnd::Pending) {
             return;
         }
-        // The build was made for one profile: only what went into that one is its to undo or
-        // clear. What other profiles are waiting to build stays as it is.
+        let Some((lease, attempts)) = self.native_attempts.take() else {
+            return;
+        };
+        let (_, brought) = std::mem::take(&mut self.mods.building);
         let Some(instance) = self
             .native_for
             .as_ref()
             .and_then(|id| self.instances.list.iter().find(|i| &i.id == id))
             .cloned()
         else {
+            if let Err(error) = lease.undo(&attempts) {
+                self.mods.message = Some(Err(error));
+            }
             return;
         };
-        let (_, brought) = std::mem::take(&mut self.mods.building);
         if instance.is_pack_profile() {
             return;
         }
@@ -932,13 +978,12 @@ impl Launcher {
             None => native_mods::build_failures(&self.native_left_out_of(&instance)),
         };
         match build_cost(&brought, stopped.is_some(), failures) {
-            BuildCost::Nothing => sunrise::txn::done(&instance.home, &self.native_attempts),
+            BuildCost::Nothing => lease.done(&attempts),
             BuildCost::Rollback(ids) => {
                 // Every install since the build began goes back as the record says. If that
                 // can't be done the record stays, the profile takes no install until it can,
                 // and the player is told.
-                self.mods.message = match sunrise::txn::undo(&instance.home, &self.native_attempts)
-                {
+                self.mods.message = match lease.undo(&attempts) {
                     Ok(()) => stopped.clone().map(Err),
                     Err(e) => Some(Err(e)),
                 };
@@ -962,8 +1007,11 @@ impl Launcher {
                     checksum: String::new(),
                 });
                 self.mods.removal.add(&instance.id, &entries, items);
-                sunrise::txn::done(&instance.home, &self.native_attempts);
+                lease.done(&attempts);
             }
+        }
+        if !lease.outstanding() {
+            self.mods.install_owners.remove(&instance.id);
         }
     }
 
@@ -1137,6 +1185,7 @@ impl Launcher {
     fn start_install_many(
         &mut self,
         target: queue::Target,
+        (lease, fresh): (Arc<sunrise::txn::Lease>, bool),
         ids: Vec<String>,
         shown: String,
         approvals: Vec<installed::Approval>,
@@ -1151,12 +1200,14 @@ impl Launcher {
         let queue::Target { home, game, .. } = target.clone();
         self.mods.running = Some(target.clone());
         std::thread::spawn(move || {
-            let native = std::cell::RefCell::new(Vec::new());
             let consent = std::cell::Cell::new(false);
             let worlds = std::cell::RefCell::new(None);
             let result = (|| -> Result<Finished, String> {
-                // The whole set is planned once first: a conflict between picks refuses all of
-                // them before anything downloads. Each is then installed with what it needs.
+                if fresh {
+                    lease.recover_abandoned()?;
+                }
+                // The whole set is planned first: a conflict between picks refuses all of them
+                // before anything downloads.
                 let index = sunrise::fetched_index().ok_or_else(|| {
                     tr("Connect to the Sunrise registry before installing a mod and its dependencies.")
                         .to_string()
@@ -1171,38 +1222,34 @@ impl Launcher {
                 let progress = |line: &str, f: f32| {
                     let _ = tx.send(Event::Progress(line.to_string(), f));
                 };
-                let done = installed::install_set(&projects, &home, &game, &approvals, &progress)
+                let done = lease
+                    .install_set(&projects, &game, &approvals, &progress)
                     .map_err(|why| {
-                    if let installed::InstallError::NeedsWorlds { mods } = &why {
-                        *worlds.borrow_mut() = Some(mods.clone());
-                    }
-                    consent.set(matches!(
-                        why,
-                        installed::InstallError::NeedsNativeConsent { .. }
-                    ));
-                    trf(
-                        "{mod} didn't install: {why}",
-                        &[("mod", &shown), ("why", &why.to_string())],
-                    )
-                })?;
-                native.borrow_mut().extend(
-                    done.iter()
-                        .filter(|e| native_status::is_native_file(&e.file))
-                        .map(|e| e.project.clone()),
-                );
+                        if let installed::InstallError::NeedsWorlds { mods } = &why {
+                            *worlds.borrow_mut() = Some(mods.clone());
+                        }
+                        consent.set(matches!(
+                            why,
+                            installed::InstallError::NeedsNativeConsent { .. }
+                        ));
+                        trf(
+                            "{mod} didn't install: {why}",
+                            &[("mod", &shown), ("why", &why.to_string())],
+                        )
+                    })?;
                 Ok(Finished {
                     said: None,
-                    native: native.take(),
+                    native: done
+                        .iter()
+                        .filter(|e| native_status::is_native_file(&e.file))
+                        .map(|e| e.project.clone())
+                        .collect(),
                     also: Vec::new(),
                     updated: Vec::new(),
                 })
             })();
-            // The members that went in before one failed stay installed: the native ones among
-            // them are still built.
-            if result.is_err() {
-                let _ = tx.send(Event::Brought(native.take()));
-            }
             let worlds = worlds.take();
+            drop(lease);
             let _ = tx.send(if let Some(mods) = worlds {
                 Event::NeedsWorlds(
                     mods,

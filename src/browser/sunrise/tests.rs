@@ -645,19 +645,21 @@ fn an_install_with_native_code_keeps_its_record_until_the_build_ends() {
         install_from(&index, true, &hud, &home, GAME, true, true, &[], &|_, _| {}).unwrap();
     };
     let record = home.join("mod-browser/install-txn.json");
+    let lease = txn::Lease::acquire(&home).unwrap();
     install();
     assert!(record.is_file(), "native code waits for its build");
     assert!(home.join("sunrise-mods").is_dir() || home.join("sunrise-native-mods").is_dir());
     // The build stopped for a reason outside the mods: the install is undone whole.
-    let waiting = txn::mark_build(&home, "tag");
+    let waiting = lease.mark_build("tag").unwrap();
     assert_eq!(waiting.len(), 1);
-    txn::undo(&home, &waiting).unwrap();
+    lease.undo(&waiting).unwrap();
     assert!(installed::Installed::load(&home).entries.is_empty());
     assert!(!record.exists());
     // The build worked: the install is done, and a restart changes nothing.
     install();
-    txn::done(&home, &txn::mark_build(&home, "tag"));
+    lease.done(&lease.mark_build("tag").unwrap());
     assert!(!record.exists());
+    drop(lease);
     assert!(txn::recover(&home));
     assert!(installed::Installed::load(&home)
         .find(SourceId::Sunrise, "coords_hud")

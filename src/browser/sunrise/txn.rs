@@ -25,6 +25,84 @@ use std::path::{Path, PathBuf};
 const FILE: &str = "mod-browser/install-txn.json";
 const VERSION: u64 = 1;
 
+/// The live owner of one profile's install batch. The file is never removed: all launchers
+/// must contend on the same inode, even when the record itself is replaced or absent.
+pub struct Lease {
+    home: PathBuf,
+    file: fs::File,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        // A concurrent fork can briefly inherit the handle before exec closes it. On normal
+        // release unlock explicitly, rather than leaving it to the last inherited handle.
+        let _ = self.file.unlock();
+    }
+}
+
+impl Lease {
+    pub fn try_acquire(home: &Path) -> Result<Option<Self>, String> {
+        fs::create_dir_all(home).map_err(|e| format!("{}: {e}", home.display()))?;
+        let path = home.join(".install-txn.lock");
+        let fail = |e| format!("{}: {e}", path.display());
+        let file = fs::File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(fail)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(Self {
+                home: home.to_path_buf(),
+                file,
+            })),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(e)) => Err(fail(e)),
+        }
+    }
+
+    pub fn acquire(home: &Path) -> Result<Self, String> {
+        Self::try_acquire(home)?.ok_or_else(|| {
+            tr("Another launcher is working on this profile. Try again when it finishes.")
+                .to_string()
+        })
+    }
+
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    /// A freshly acquired lease can clean up an abandoned batch before doing new work.
+    pub fn recover_abandoned(&self) -> Result<(), String> {
+        let _lock = locked(&self.home)?;
+        reconcile_legacy(&self.home)?;
+        let ids: Vec<String> = read(&self.home)?
+            .unwrap_or_default()
+            .attempts
+            .into_iter()
+            .map(|a| a.id)
+            .collect();
+        undo(&self.home, &ids)
+    }
+
+    pub fn outstanding(&self) -> bool {
+        outstanding(&self.home)
+    }
+
+    pub fn mark_build(&self, tag: &str) -> Result<Vec<String>, String> {
+        mark_build(&self.home, tag)
+    }
+
+    pub fn undo(&self, ids: &[String]) -> Result<(), String> {
+        undo(&self.home, ids)
+    }
+
+    pub fn done(&self, ids: &[String]) {
+        done(&self.home, ids);
+    }
+}
+
 /// One file the install puts in place, relative to the profile.
 #[derive(Clone, Serialize, Deserialize)]
 struct Step {
@@ -78,6 +156,11 @@ impl Default for Record {
             attempts: Vec::new(),
         }
     }
+}
+
+/// Whether a build has sealed this batch; later installs and removals must wait.
+pub(in crate::browser) fn has_build(home: &Path) -> Result<bool, String> {
+    Ok(read(home)?.is_some_and(|r| r.attempts.iter().any(|a| a.build.is_some())))
 }
 
 /// The record, or none. One that can't be read, or that another version made, is never deleted
@@ -145,7 +228,11 @@ pub(super) fn begin(
     approvals: &[Approval],
 ) -> Result<String, String> {
     let mut record = read(home)?.unwrap_or_default();
-    if record.attempts.iter().any(|a| a.state == State::Pending) {
+    if record
+        .attempts
+        .iter()
+        .any(|a| a.state == State::Pending || a.build.is_some())
+    {
         return Err(unsettled());
     }
     let relative = |path: &Path| {
@@ -190,7 +277,7 @@ pub(super) fn begin_for_test(home: &Path, staged: &Path, changes: &[PathBuf]) {
     begin(home, staged, changes, &[]).unwrap();
 }
 
-fn unsettled() -> String {
+pub(in crate::browser) fn unsettled() -> String {
     tr("An earlier install is still being undone. Restart the launcher and try again.").to_string()
 }
 
@@ -373,7 +460,7 @@ fn reconcile_legacy(home: &Path) -> Result<(), String> {
 /// restored; the others stay as they are. An attempt that a later one (not named) was made on
 /// top of is not undone, and one that can't be restored keeps the record (and its staging
 /// folder) and returns the error: the profile takes no new install until it is.
-pub fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
+fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
     let _lock = locked(home)?;
     reconcile_legacy(home)?;
     let mut record = read(home)?.unwrap_or_default();
@@ -396,7 +483,13 @@ pub fn undo(home: &Path, ids: &[String]) -> Result<(), String> {
 /// Undoes only the attempts that were cut off before they were published: what an install
 /// does first, so a half-moved set of files never has another install on top of it. Published
 /// attempts wait for their build and stay.
-pub fn settle(home: &Path) -> Result<(), String> {
+pub(super) fn settle(home: &Path) -> Result<(), String> {
+    let _lease = Lease::acquire(home)?;
+    settle_owned(home)
+}
+
+/// Repairs a partial publish; the install entry point already holds the owner lease.
+pub(super) fn settle_owned(home: &Path) -> Result<(), String> {
     let _lock = locked(home)?;
     reconcile_legacy(home)?;
     let mut record = read(home)?.unwrap_or_default();
@@ -413,18 +506,12 @@ pub fn settle(home: &Path) -> Result<(), String> {
 /// At start: undoes whatever an earlier launcher left, published installs whose build never
 /// ended included. True when nothing is left to undo.
 pub fn recover(home: &Path) -> bool {
-    let result = locked(home).and_then(|_lock| {
-        reconcile_legacy(home)?;
-        let ids: Vec<String> = read(home)?
-            .unwrap_or_default()
-            .attempts
-            .into_iter()
-            .map(|a| a.id)
-            .collect();
-        undo(home, &ids)
+    let result = Lease::try_acquire(home).and_then(|lease| match lease {
+        Some(lease) => lease.recover_abandoned().map(|()| true),
+        None => Ok(false),
     });
     match result {
-        Ok(()) => true,
+        Ok(recovered) => recovered,
         Err(e) => {
             eprintln!("{e}");
             false
@@ -434,31 +521,32 @@ pub fn recover(home: &Path) -> bool {
 
 /// A build for the installs that wait began: its tag is kept with each, and their ids are
 /// returned for the build's end to act on ([`done`], [`undo`]) and nothing else.
-pub fn mark_build(home: &Path, tag: &str) -> Vec<String> {
-    let Ok(_lock) = locked(home) else {
-        return Vec::new();
-    };
-    let Ok(Some(mut record)) = read(home) else {
-        return Vec::new();
+fn mark_build(home: &Path, tag: &str) -> Result<Vec<String>, String> {
+    let _lock = locked(home)?;
+    let Some(mut record) = read(home)? else {
+        return Ok(Vec::new());
     };
     let mut ids = Vec::new();
-    for attempt in record
-        .attempts
-        .iter_mut()
-        .filter(|a| a.state == State::Published)
-    {
-        attempt.build = Some(tag.to_owned());
+    let mut changed = false;
+    for attempt in &mut record.attempts {
+        if attempt.state != State::Published
+            || attempt.build.as_deref().is_some_and(|base| base != tag)
+        {
+            return Err(unsettled());
+        }
+        changed |= attempt.build.is_none();
+        attempt.build.get_or_insert_with(|| tag.to_owned());
         ids.push(attempt.id.clone());
     }
-    match write(home, &record) {
-        Ok(()) => ids,
-        Err(_) => Vec::new(),
+    if changed {
+        write(home, &record)?;
     }
+    Ok(ids)
 }
 
 /// The build worked: the installs `ids` names are done, and their backups go. A later attempt
 /// stays.
-pub fn done(home: &Path, ids: &[String]) {
+fn done(home: &Path, ids: &[String]) {
     let Ok(_lock) = locked(home) else {
         return;
     };
@@ -475,7 +563,7 @@ pub fn done(home: &Path, ids: &[String]) {
 }
 
 /// Whether installs of this profile wait for a build, or a restore is still owed.
-pub fn outstanding(home: &Path) -> bool {
+fn outstanding(home: &Path) -> bool {
     read(home).map_or(true, |r| r.is_some_and(|r| !r.attempts.is_empty()))
 }
 
@@ -760,35 +848,109 @@ mod tests {
     }
 
     #[test]
-    fn a_late_done_or_undo_only_touches_the_attempts_it_names() {
+    fn a_build_seals_the_ordered_attempts_until_it_is_reaped() {
         let scene = scene();
+        let lease = Lease::acquire(scene.home()).unwrap();
         let first = waiting(&scene);
-        let build = mark_build(scene.home(), "tag");
+        let build = lease.mark_build("tag").unwrap();
         assert_eq!(build, std::slice::from_ref(&first));
-        // A newer install published after the build began.
         let second = staging(scene.home());
         let newer = scene.home().join("sunrise-mods/newer.smod");
-        let newer_id = begin(
-            scene.home(),
-            second.path(),
-            std::slice::from_ref(&newer),
-            &[],
-        )
-        .unwrap();
+        let begin_second = || {
+            begin(
+                scene.home(),
+                second.path(),
+                std::slice::from_ref(&newer),
+                &[],
+            )
+        };
+        assert!(begin_second().is_err());
+        assert_eq!(
+            lease.mark_build("tag").unwrap(),
+            build,
+            "retry uses the same batch"
+        );
+        assert!(lease.mark_build("other").is_err());
+        lease.done(&build);
+        let newer_id = begin_second().unwrap();
         fs::write(&newer, "newer").unwrap();
         commit(scene.home(), &newer_id, second, true).unwrap();
-        // The older build's end can't undo the older attempt from under the newer one, and
-        // a done for an id nobody has changes nothing.
-        assert!(undo(scene.home(), &build).is_err());
-        done(scene.home(), &["nothing".to_string()]);
-        assert!(outstanding(scene.home()));
-        // Its end can clear its own attempt and leave the newer one.
-        done(scene.home(), &build);
-        assert!(outstanding(scene.home()));
-        assert_eq!(fs::read_to_string(&scene.dep).unwrap(), "flywheel 0.4");
-        assert!(newer.is_file());
-        undo(scene.home(), &[newer_id]).unwrap();
-        assert!(!newer.exists() && !outstanding(scene.home()));
+        // A late callback for the first batch cannot touch the next batch.
+        lease.done(&build);
+        lease.undo(&build).unwrap();
+        assert!(lease.outstanding() && newer.is_file());
+        lease.undo(&[newer_id]).unwrap();
+        assert!(!newer.exists() && !lease.outstanding());
+    }
+
+    // Invoked by the cross-process test. Wait on stdin as a build would wait on an answer.
+    #[test]
+    fn live_owner_process() {
+        let Some(home) = std::env::var_os("SUNRISE_TEST_INSTALL_OWNER") else {
+            return;
+        };
+        let home = Path::new(&home);
+        let lease = Lease::acquire(home).unwrap();
+        let staged = staging(home);
+        let file = home.join("sunrise-mods/added.smod");
+        let id = begin(home, staged.path(), std::slice::from_ref(&file), &[]).unwrap();
+        fs::write(file, b"new mod").unwrap();
+        commit(home, &id, staged, true).unwrap();
+        lease.mark_build("tag").unwrap();
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        writeln!(out, "owner ready").unwrap();
+        out.flush().unwrap();
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer).unwrap();
+        assert!(answer.is_empty());
+    }
+
+    #[test]
+    #[ignore = "daily"]
+    fn startup_skips_another_live_owner_and_recovers_after_it_is_killed() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        let scene = scene();
+        let home = scene.home();
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "browser::sunrise::txn::tests::live_owner_process",
+                "--nocapture",
+            ])
+            .env("SUNRISE_TEST_INSTALL_OWNER", home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let ready = BufReader::new(output)
+                .lines()
+                .any(|line| line.is_ok_and(|l| l == "owner ready"));
+            let _ = tx.send(ready);
+        });
+        let ready = rx.recv_timeout(std::time::Duration::from_secs(10)) == Ok(true);
+        let file = home.join("sunrise-mods/added.smod");
+        let skipped = ready && !recover(home) && file.is_file() && home.join(FILE).is_file();
+        let refused = ready && matches!(Lease::try_acquire(home), Ok(None));
+        let killed = child.kill();
+        let status = child.wait().unwrap();
+        reader.join().unwrap();
+        assert!(
+            ready,
+            "the first launcher published its install and waited for an answer"
+        );
+        assert!(
+            skipped && refused,
+            "startup did not touch the live batch or acquire its lease"
+        );
+        killed.unwrap();
+        assert!(!status.success());
+        assert!(recover(home));
+        assert!(!file.exists() && !home.join(FILE).exists());
     }
 
     #[test]
@@ -823,7 +985,7 @@ mod tests {
             .is_err());
             assert!(!recover(scene.home()));
             assert!(outstanding(scene.home()));
-            assert!(mark_build(scene.home(), "tag").is_empty());
+            assert!(mark_build(scene.home(), "tag").is_err());
             assert_eq!(fs::read_to_string(&file).unwrap(), text);
         }
     }
