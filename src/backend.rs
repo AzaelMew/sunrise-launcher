@@ -4319,6 +4319,9 @@ fn monitor(
     let stdin = child.stdin.take();
     let relayed = child.is_relayed();
     let forwarding = Arc::new(Mutex::new(true));
+    // This channel closes once both pumps have reached EOF. The monitor may instead stop
+    // forwarding at a bounded deadline if wrapper diagnostics still own the same pipes.
+    let (reader_live, readers_done) = std::sync::mpsc::channel::<()>();
     let mut readers = Vec::new();
     for stream in [child.stdout.take(), child.stderr.take()]
         .into_iter()
@@ -4326,6 +4329,7 @@ fn monitor(
     {
         let tx = tx.clone();
         let forwarding = Arc::clone(&forwarding);
+        let reader_live = reader_live.clone();
         readers.push(std::thread::spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
                 let live = forwarding.lock().unwrap();
@@ -4333,8 +4337,10 @@ fn monitor(
                     break;
                 }
             }
+            drop(reader_live);
         }));
     }
+    drop(reader_live);
     let child = Arc::new(Mutex::new(child));
     let waited = child.clone();
     std::thread::spawn(move || {
@@ -4350,6 +4356,11 @@ fn monitor(
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         };
+        if relayed {
+            // Exit can overtake the pumps. Give buffered final diagnostics time to reach
+            // the log, but don't wait for the wrapper or its descendants to close a pipe.
+            let _ = readers_done.recv_timeout(std::time::Duration::from_millis(200));
+        }
         *forwarding.lock().unwrap() = false;
         if relayed {
             if let Err(error) = status {

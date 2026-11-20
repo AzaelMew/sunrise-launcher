@@ -15,6 +15,8 @@ use sunrise_launcher::{
 const ROLE: &str = "SUNRISE_MANAGED_PLAY_PROCESS_TEST";
 const MODE: &str = "SUNRISE_MANAGED_PLAY_PROCESS_MODE";
 const BUILD: &str = "v0.7.1";
+const FINAL_STDOUT: &str = "game stdout just before exit 23";
+const FINAL_STDERR: &str = "game stderr just before exit 23";
 
 fn main() {
     let mut args = std::env::args_os().skip(1);
@@ -306,6 +308,9 @@ fn owner() {
         }
         let status = result.unwrap().unwrap_err();
         assert!(status.contains("23") && !status.contains("43"), "{status}");
+        let tail = log.tail(20);
+        assert!(tail.iter().any(|line| line == FINAL_STDOUT), "{tail:?}");
+        assert!(tail.iter().any(|line| line == FINAL_STDERR), "{tail:?}");
         assert!(!home.join("linger-stopped").exists());
         fs::write(home.join("linger-stop"), []).unwrap();
         return;
@@ -586,6 +591,10 @@ fn game() {
         std::env::var(MODE).as_deref(),
         Ok("different-status" | "early-wrapper" | "ordinary-cli")
     ) {
+        use std::io::Write as _;
+        println!("{FINAL_STDOUT}");
+        eprintln!("{FINAL_STDERR}");
+        std::io::stdout().flush().unwrap();
         std::process::exit(23);
     }
 }
