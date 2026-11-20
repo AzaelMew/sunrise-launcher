@@ -3217,10 +3217,10 @@ mod tests {
     }
 
     #[test]
-    fn retired_native_fields_are_refused_before_bundle_projection() {
+    fn unknown_native_fields_are_refused_before_bundle_projection() {
         let root = dir("retired-native-fields");
         write_bundle(&root, "alpha", "");
-        for field in ["injection", "internals"] {
+        for field in ["unexpected", "internals"] {
             fs::write(
                 root.join(NATIVE_MANIFEST),
                 project_manifest("alpha", "1", A, B) + &format!("[[native.{field}]]\n"),
