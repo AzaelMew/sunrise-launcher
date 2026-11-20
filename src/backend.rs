@@ -1321,9 +1321,14 @@ fn played_in(versions: &Path, selected: Option<&str>, field: &str) -> String {
         .unwrap_or_else(|| PINNED_GAME.into())
 }
 
+/// The version whose folder holds `tag`'s prepared resources: a native build shares its base's
+/// (`copy_base` leaves `.local` out), any other version keeps its own.
+pub fn resources_owner(tag: &str) -> String {
+    crate::native_mods::about(tag).map_or_else(|| tag.to_owned(), |about| about.base)
+}
+
 pub fn resources(tag: &str) -> PathBuf {
-    let base = crate::native_mods::about(tag).map(|about| about.base);
-    resources_at(&version_dir(base.as_deref().unwrap_or(tag)))
+    resources_at(&version_dir(&resources_owner(tag)))
 }
 
 fn resources_at(dir: &Path) -> PathBuf {
@@ -2255,6 +2260,9 @@ pub fn preparer(
     log: &dyn Fn(String),
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
+    // A native build reads the resources of its base, so it is the base that gets prepared.
+    let tag = resources_owner(tag);
+    let tag = tag.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
@@ -2360,6 +2368,8 @@ pub fn preparer(
 /// Copies the pinned version's sounds from the player's own launcher install into the version's resources with its own `sunrise-prepare sounds`; sound is optional, so a failure is a line in `log`.
 pub fn sounds(tag: &str, minecraft: &Path, log: &dyn Fn(String)) {
     use crate::i18n::{tr, trf};
+    let tag = resources_owner(tag);
+    let tag = tag.as_str();
     let dir = version_dir(tag);
     set_prepare_step(PrepareStep::Sounds);
     log(tr("Copying the sounds from your Minecraft install").into());
@@ -4866,6 +4876,9 @@ pub fn {f}("
             "base": base, "sunrise": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "client"
         }).to_string()).unwrap();
         assert_eq!(resources(&native), resources(&base));
+        // Preparing a native build prepares the base whose resources it reads.
+        assert_eq!(resources_owner(&native), base);
+        assert_eq!(resources_owner(&base), base);
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());

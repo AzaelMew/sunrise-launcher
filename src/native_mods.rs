@@ -356,8 +356,11 @@ pub(crate) fn stage_installed(home: &Path, out: PathBuf) -> Result<Option<PathBu
     paths.sort();
     let mut count = 0;
     for path in paths {
-        let bundle = sunrise_launcher_smod::index::native::Bundle::read(&path)
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        // A file that can't be read is no mod: it has no id to be on or off under, and the game
+        // doesn't load it, so it must not stop a build of the others.
+        let Ok(bundle) = sunrise_launcher_smod::index::native::Bundle::read(&path) else {
+            continue;
+        };
         if !crate::browser::mod_list::is_enabled(home, &bundle.manifest.id) {
             continue;
         }
@@ -2208,6 +2211,16 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn an_unreadable_mod_file_does_not_fail_the_build_of_the_others() {
+        let home = tempfile::tempdir().unwrap();
+        let native = home.path().join(INSTALLED);
+        fs::create_dir_all(&native).unwrap();
+        fs::write(native.join("broken.smod"), b"old format").unwrap();
+        let error = stage_installed(home.path(), home.path().join("out")).unwrap_err();
+        assert_eq!(error, no_mods_to_build());
+    }
 
     #[test]
     fn stop_before_worker_start_aborts_before_any_step() {
