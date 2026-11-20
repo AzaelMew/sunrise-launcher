@@ -127,7 +127,11 @@ impl Lease {
     pub fn recover_abandoned(&self) -> Result<(), String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.unwrap_or_default();
-        recover_pointer(&self.home, &mut record)?;
+        if record.pointer.is_some() {
+            let _publication =
+                crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+            recover_pointer(&self.home, &mut record)?;
+        }
         reconcile_legacy(&self.home)?;
         while !record.attempts.is_empty() {
             undo_last(&self.home, &mut record)?;
@@ -304,6 +308,8 @@ impl Lease {
             return Err(unsettled());
         }
         let target = resolve()?;
+        let _publication =
+            crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         record.intent = Intent::Install {
             bootstrap: Some(build::Bootstrap::bind(&self.home, target.clone())?),
         };
@@ -376,6 +382,8 @@ impl Lease {
             if build::parse(&before)? != prior || read(&self.home)?.is_some() {
                 return Err(unsettled());
             }
+            let _publication =
+                crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
             let next = prior.adopt(&image, inputs, &self.home)?;
             publish_pointer(
                 &self.home,
@@ -394,6 +402,8 @@ impl Lease {
     pub fn commit_bootstrap(&self, image: &str) -> Result<Active, String> {
         let _lock = locked(&self.home)?;
         let mut record = read(&self.home)?.ok_or_else(unsettled)?;
+        let _publication =
+            crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let active = record
             .bootstrap()
             .ok_or_else(unsettled)?
@@ -465,6 +475,77 @@ fn recover_pointer(home: &Path, record: &mut Record) -> Result<(), String> {
     }
     record.pointer = None;
     write(home, record)
+}
+
+/// Called with the cache publication lock held. Read profile records atomically and do not
+/// wait for a profile gate: an install or switch holds its profile before reaching publication.
+pub(crate) fn references(tag: &str) -> Result<bool, String> {
+    fn scan(root: &Path, child: Option<&str>, tag: &str) -> Result<bool, String> {
+        let entries = match fs::symlink_metadata(root) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Ok(meta) if meta.is_dir() && build::regular(&meta) => fs::read_dir(root),
+            Err(e) => Err(e),
+            Ok(_) => Err(io::Error::from(io::ErrorKind::InvalidData)),
+        }
+        .map_err(|e| format!("{}: {e}", root.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| format!("{}: {e}", root.display()))?;
+            let path = entry.path();
+            let meta =
+                fs::symlink_metadata(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            if !build::regular(&meta) {
+                return Err(unsettled());
+            }
+            if meta.is_dir() {
+                let home = child.map_or(path.clone(), |name| path.join(name));
+                if in_home(&home, tag)? {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+    fn in_home(home: &Path, tag: &str) -> Result<bool, String> {
+        match fs::symlink_metadata(home) {
+            Ok(meta) if meta.is_dir() && build::regular(&meta) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+            _ => return Err(unsettled()),
+        }
+        let same = |name: &str| {
+            if cfg!(windows) {
+                name.eq_ignore_ascii_case(tag)
+            } else {
+                name == tag
+            }
+        };
+        let refers = |active: &Active| same(active.base()) || same(active.executable());
+        let record = read(home)?;
+        if let Some(record) = &record {
+            if record.bootstrap().is_some_and(|pending| {
+                same(pending.target.base()) || same(pending.target.preferred_image())
+            }) {
+                return Ok(true);
+            }
+            if let Some(pointer) = &record.pointer {
+                if refers(&build::parse(&pointer.after)?)
+                    || pointer
+                        .before
+                        .as_ref()
+                        .map(|before| build::parse(before))
+                        .transpose()?
+                        .as_ref()
+                        .is_some_and(refers)
+                {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(build::read(home)?.as_ref().is_some_and(refers))
+    }
+    let home = crate::backend::game_home();
+    Ok(in_home(&home, tag)?
+        || scan(&home.join("instances"), None, tag)?
+        || scan(&home.join("sunrise-packs"), Some("home"), tag)?)
 }
 
 /// Whether a build has sealed this batch; later installs and removals must wait.
@@ -1647,6 +1728,7 @@ mod tests {
                 .args(["--exact", "browser::sunrise::txn::tests::play_uses_the_committed_image_and_keeps_profiles_independent", "--nocapture"])
                 .env(ACTOR, root.path())
                 .env("SUNRISE_LAUNCHER_HOME", root.path())
+                .env("SUNRISE_HOME", root.path().join("game"))
                 .output().unwrap();
             assert!(
                 output.status.success(),
@@ -1660,11 +1742,14 @@ mod tests {
         let base = crate::backend::version_dir("nightly-original");
         fs::create_dir_all(&base).unwrap();
         fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
-        let first = data.join("first");
+        // Cache eviction can select the installed unit now, before either profile has a reference.
+        assert!(!references("nightly-original").unwrap());
+        let first = crate::backend::game_home().join("instances/first");
         let owner = Lease::admit(&first).unwrap();
         let target = owner
             .play_target(|| Target::legacy("nightly-original"))
             .unwrap();
+        assert!(references("nightly-original").unwrap());
         let prepare = |owner: &Lease, target: &Target| {
             owner.play_image(
                 target,
@@ -1676,6 +1761,11 @@ mod tests {
         assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
         assert_eq!(owner.active_build().unwrap().unwrap().generation, 1);
         drop(owner);
+        assert!(matches!(
+            crate::cache_cleanup::delete_version(&base, true),
+            Err(crate::storage::Error::IncompleteUnit)
+        ));
+        assert!(base.join(crate::backend::CLIENT).is_file());
         let second = Lease::admit(&data.join("second")).unwrap();
         assert_eq!(
             second
