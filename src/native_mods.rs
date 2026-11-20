@@ -35,7 +35,10 @@ mod mixins;
 mod picker;
 pub mod sdk_cache;
 
-pub use isolate::{kept as kept_left_out, kept_current, kept_stamp, Detail, LeftOut, Why};
+pub use isolate::{
+    build_failures, kept as kept_left_out, kept_current, kept_stamp, BuildFailure, Detail, LeftOut,
+    Why,
+};
 pub use picker::{Route, Routes};
 pub use tool::{Cancellation, Consent};
 mod uses;
@@ -1448,7 +1451,14 @@ fn pipeline(
         .as_ref()
         .map_or_else(|| sdk_cache::shown(&revision, None), |sdk| sdk.shown());
     let blame = |e: String| -> Failed {
-        let going = compile_omissions(&e, &fitted, &mods, &declared);
+        let mut going = compile_omissions(&e, &fitted, &mods, &declared);
+        // The mod whose compile failed (the first) keeps the compiler's output.
+        if let Some(first) = going.first_mut() {
+            first.detail = Some(isolate::Detail {
+                log: Some(e.clone()),
+                ..Default::default()
+            });
+        }
         let Some(failed) = going.first() else {
             return Failed::Other(e);
         };

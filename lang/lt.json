@@ -1467,5 +1467,6 @@
   "Removed 1 mod.": "Removed 1 mod.",
   "Turned off 1 mod. The game reads this when it starts.": "Turned off 1 mod. The game reads this when it starts.",
   "Updated 1 mod, checked against the registry.": "Updated 1 mod, checked against the registry.",
-  "Sign in with Microsoft": "Prisijunkite naudodami „Microsoft“."
+  "Sign in with Microsoft": "Prisijunkite naudodami „Microsoft“.",
+  "{mod} didn't compile. The problem is in the mod, not in your game.": "{mod} didn't compile. The problem is in the mod, not in your game."
 }

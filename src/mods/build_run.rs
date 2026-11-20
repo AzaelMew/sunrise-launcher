@@ -428,6 +428,7 @@ mod tests {
             version: "1.0.0".into(),
             why: Why::Unfit("the type Block changed".into()),
             detail: Some(Detail {
+                log: None,
                 made_for: Some("nightly-2026-11-16-abc1234".into()),
                 changes: vec!["src/sources/client.rs:219 builds it".into()],
             }),

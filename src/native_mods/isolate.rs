@@ -26,6 +26,8 @@ pub enum Why {
 /// window that says it in its own words ([`Why::Unfit`] holds the same as one sentence).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Detail {
+    /// The compiler's output for a mod that failed to compile ([`Why::DidNotBuild`]).
+    pub log: Option<String>,
     /// The Nightly or release it was made for, by its version name, when that is known here.
     pub made_for: Option<String>,
     /// Each thing the game changed that it uses, or the one reason it is tied to its build.
@@ -40,6 +42,36 @@ pub struct LeftOut {
     pub why: Why,
     /// The parts of an [`Why::Unfit`] reason, when the check that found it gave them.
     pub detail: Option<Detail>,
+}
+
+/// A mod of the build that failed to compile, with what the player is told and the compiler's
+/// own output, for the one list of failures a build ends with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BuildFailure {
+    pub id: String,
+    pub reason: String,
+    pub log: String,
+}
+
+/// The mods of `left` whose own compile failed. A mod left out because another failed, or
+/// because it doesn't fit, is not one: only the build output naming it as the one that failed
+/// puts it here.
+pub fn build_failures(left: &[LeftOut]) -> Vec<BuildFailure> {
+    left.iter()
+        .filter(|l| l.why == Why::DidNotBuild)
+        .map(|l| BuildFailure {
+            id: l.id.clone(),
+            reason: trf(
+                "{mod} didn't compile. The problem is in the mod, not in your game.",
+                &[("mod", &l.id)],
+            ),
+            log: l
+                .detail
+                .as_ref()
+                .and_then(|d| d.log.clone())
+                .unwrap_or_default(),
+        })
+        .collect()
 }
 
 /// Where an instance keeps the mods left out of a game that needed no build: every mod with
@@ -174,6 +206,7 @@ impl LeftOut {
         if let Some(detail) = &self.detail {
             json["made_for"] = serde_json::json!(detail.made_for);
             json["changes"] = serde_json::json!(detail.changes);
+            json["log"] = serde_json::json!(detail.log);
         }
         json
     }
@@ -191,6 +224,7 @@ impl LeftOut {
                 _ => Why::OtherVersion,
             },
             detail: value["changes"].as_array().map(|changes| Detail {
+                log: value["log"].as_str().map(str::to_owned),
                 made_for: value["made_for"].as_str().map(str::to_owned),
                 changes: changes
                     .iter()
@@ -281,6 +315,7 @@ mod tests {
         // What a build's record keeps reads back the same.
         let did_not_build = LeftOut::new(&other, Why::DidNotBuild);
         let detailed = LeftOut::new(&lib, Why::Unfit("why".into())).with_detail(Detail {
+            log: None,
             made_for: Some("nightly-2026-11-16".into()),
             changes: vec!["the type Block changed".into()],
         });
@@ -321,5 +356,41 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, [KEPT]);
+    }
+
+    #[test]
+    fn a_build_lists_each_mod_that_failed_to_compile_with_its_own_log() {
+        let home = super::super::tests::dir("isolate-failures");
+        let left = |id: &str, why, log: Option<&str>| LeftOut {
+            id: id.into(),
+            version: "1.0.0".into(),
+            why,
+            detail: log.map(|log| Detail {
+                log: Some(log.into()),
+                ..Detail::default()
+            }),
+        };
+        let all = [
+            left("broken", Why::DidNotBuild, Some("error[E0425] in broken")),
+            left("also", Why::DidNotBuild, Some("error[E0308] in also")),
+            left("needy", Why::Needs("broken".into()), None),
+            left("old", Why::Unfit("made for another build".into()), None),
+        ];
+        let failures = build_failures(&all);
+        assert_eq!(
+            failures
+                .iter()
+                .map(|f| (f.id.as_str(), f.log.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("broken", "error[E0425] in broken"),
+                ("also", "error[E0308] in also"),
+            ],
+            "only a mod whose own compile failed, each with its own output"
+        );
+        assert!(failures.iter().all(|f| f.reason.contains(&f.id)));
+        // The record a build keeps carries the log, so the list survives a restart.
+        keep(&home, "base-1", &all).unwrap();
+        assert_eq!(build_failures(&kept(&home, "base-1")), failures);
     }
 }
