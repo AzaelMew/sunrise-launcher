@@ -1,6 +1,9 @@
 //! The programs the launcher runs in the background: on Windows they open no console window
 //! (the launcher has none to share), and keep the streams their caller gives them.
 pub mod child;
+#[cfg(target_os = "linux")]
+#[doc(hidden)]
+pub mod compiler_worker;
 pub mod leases;
 #[cfg(test)]
 mod output_tests;

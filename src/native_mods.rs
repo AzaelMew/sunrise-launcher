@@ -31,6 +31,7 @@ mod internals_sync;
 mod tool;
 mod workspace;
 pub use internals_sync::catalog;
+pub(crate) use workspace::ATTEMPT_PREFIX;
 pub mod fit;
 mod isolate;
 mod mixins;
@@ -1477,6 +1478,7 @@ fn pipeline(
         let game = workspace.package(game).map_err(|e| e.to_string())?;
         let work = workspace.path().join("work");
         workspace.allow_worker();
+        let mut quiescent = false;
         let built = tool::build(
             &rust,
             program,
@@ -1501,7 +1503,11 @@ fn pipeline(
                 })
             },
             cancellation,
+            &mut quiescent,
         );
+        if quiescent {
+            workspace.worker_finished();
+        }
         // Don't turn a stopped tool into a compile failure or retry it as an omitted mod.
         cancellation.check()?;
         let log = workspace.import_log().map_err(|e| e.to_string())?;
@@ -1509,8 +1515,6 @@ fn pipeline(
             append_log(&log)?;
         }
         let built = built.map_err(blame)?;
-        #[cfg(windows)]
-        workspace.worker_finished();
         workspace
             .verify_outputs(&built, &game, &rust, ids.iter().copied())
             .map_err(|e| e.to_string())?;

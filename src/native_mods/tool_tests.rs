@@ -55,6 +55,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         Some(&consent),
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap();
     assert_eq!(
@@ -79,6 +80,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert_eq!(
@@ -94,7 +96,8 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             "{}",
             None,
             &on_mod,
-            &Cancellation::default()
+            &Cancellation::default(),
+            None,
         )
         .unwrap_err()
         .blame
@@ -106,6 +109,7 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         None,
         &on_mod,
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert!(
@@ -182,6 +186,7 @@ fn a_tool_on_another_contract_says_to_update_the_launcher_and_logs_its_errors() 
         None,
         &|_, _, _| {},
         &Cancellation::default(),
+        None,
     )
     .unwrap_err();
     assert!(

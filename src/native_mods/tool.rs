@@ -256,8 +256,18 @@ pub(super) fn build(
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
+    quiescent: &mut bool,
 ) -> Result<Built, Failure> {
+    #[cfg(not(target_os = "linux"))]
     let mut command = command(rust, program);
+    #[cfg(target_os = "linux")]
+    let mut command = {
+        let mut command = command(rust, &std::env::current_exe().map_err(unrun)?);
+        command
+            .arg(crate::process::compiler_worker::ARG)
+            .arg(program);
+        command
+    };
     plan.workspace.isolate(&mut command).map_err(unrun)?;
     run(
         command,
@@ -265,6 +275,7 @@ pub(super) fn build(
         consent,
         on_mod,
         cancellation,
+        Some(quiescent),
     )
 }
 
@@ -275,6 +286,7 @@ fn run(
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
+    quiescent: Option<&mut bool>,
 ) -> Result<Built, Failure> {
     command
         .arg("native-build")
@@ -283,7 +295,33 @@ fn run(
     let (mut child, errors) = start(command, cancellation, true)?;
     let result = talk(&mut child, plan, consent, on_mod);
     let status = child.wait();
-    let errors = finish(cancellation, errors);
+    let join_stderr = if let Some(proved) = quiescent {
+        #[cfg(target_os = "linux")]
+        {
+            *proved = status
+                .as_ref()
+                .is_ok_and(crate::process::compiler_worker::proved);
+        }
+        #[cfg(windows)]
+        {
+            *proved = status.is_ok();
+        } // WindowsChild::wait checked the compiler Job.
+        #[cfg(not(any(target_os = "linux", windows)))]
+        {
+            *proved = false;
+        }
+        *proved
+    } else {
+        true
+    };
+    if status.is_err() {
+        let _ = child.child().kill();
+    }
+    // An escaped process can keep the error pipe open. Don't wait on it without proof.
+    let errors = finish(
+        cancellation,
+        (join_stderr || errors.is_finished()).then_some(errors),
+    );
     cancellation.check()?;
     let outcome = match (result, status) {
         (Ok(Some(Ok(built))), Ok(status)) if status.success() => Ok(built),
@@ -437,7 +475,7 @@ fn start(
 }
 
 /// Forgets a tool that ended and returns the tail of its stderr.
-fn finish(cancellation: &Cancellation, errors: std::thread::JoinHandle<String>) -> String {
+fn finish(cancellation: &Cancellation, errors: Option<std::thread::JoinHandle<String>>) -> String {
     {
         let mut state = cancellation.state();
         state.tool = None;
@@ -446,7 +484,9 @@ fn finish(cancellation: &Cancellation, errors: std::thread::JoinHandle<String>) 
             state.job = None;
         }
     }
-    errors.join().unwrap_or_default()
+    errors
+        .and_then(|errors| errors.join().ok())
+        .unwrap_or_default()
 }
 
 /// `native-check`'s reply: each mod's refusal, verdict or the file it needs.
@@ -552,7 +592,7 @@ pub(super) fn ask(
         }
     }
     let status = child.wait().map_err(unrun);
-    let errors = finish(cancellation, errors);
+    let errors = finish(cancellation, Some(errors));
     cancellation.check()?;
     sent?;
     let status = status?;

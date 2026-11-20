@@ -2,13 +2,15 @@
 use super::{sdk_cache::Package, tool, Path};
 use std::{collections::BTreeSet, fs, io};
 
+pub(crate) const ATTEMPT_PREFIX: &str = ".native-attempt-";
+
 pub(super) struct Workspace(tempfile::TempDir);
 
 impl Workspace {
     pub(super) fn new(parent: &Path) -> io::Result<Self> {
         let parent = crate::backend::plain(parent.canonicalize()?);
         tempfile::Builder::new()
-            .prefix(".native-attempt-")
+            .prefix(ATTEMPT_PREFIX)
             .rand_bytes(24)
             .tempdir_in(parent)
             .map(Self)
@@ -39,8 +41,7 @@ impl Workspace {
         self.0.disable_cleanup(true);
     }
 
-    /// Windows compiler success proves the kernel job was empty at SDK exit.
-    #[cfg(windows)]
+    /// A terminal OS proof, not successful compilation by itself, permits cleanup.
     pub(super) fn worker_finished(&mut self) {
         self.0.disable_cleanup(false);
     }
