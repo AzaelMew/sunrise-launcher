@@ -795,7 +795,6 @@
   "Installed {mods}, checksums checked. Turn it on under Installed.": "Installed {mods}, checksums checked. Turn it on under Installed.",
   "Installing · {percent}%": "Installing · {percent}%",
   "Installs after you sign in": "Installs after you sign in",
-  "It runs native code. Allow native mods first (Allow… on its row), then update it.": "It runs native code. Allow native mods first (Allow… on its row), then update it.",
   "Its first errors and the end of its output": "Its first errors and the end of its output",
   "Its resources are prepared.": "Its resources are prepared.",
   "January": "January",
@@ -1497,5 +1496,7 @@
   "Can't be installed with the mods you have": "Can't be installed with the mods you have",
   "Your worlds couldn't be checked, so mods they may use were left as they are: {error}": "Your worlds couldn't be checked, so mods they may use were left as they are: {error}",
   "{mod} changed since you approved removing it. Install again to review it.": "{mod} changed since you approved removing it. Install again to review it.",
-  "A saved world uses {mods}: install again to be asked about it.": "A saved world uses {mods}: install again to be asked about it."
+  "A saved world uses {mods}: install again to be asked about it.": "A saved world uses {mods}: install again to be asked about it.",
+  "Asking {source}…": "Asking {source}…",
+  "It runs native code. Turn on a native mod to be asked about native code first, then update it.": "It runs native code. Turn on a native mod to be asked about native code first, then update it."
 }

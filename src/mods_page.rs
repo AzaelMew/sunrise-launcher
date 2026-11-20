@@ -707,7 +707,11 @@ impl Launcher {
     ) {
         self.mods.message = None;
         self.mods.card_error = None;
-        self.mods.busy = Some((id.clone(), format!("Asking {}…", source.label()), 0.));
+        self.mods.busy = Some((
+            id.clone(),
+            trf("Asking {source}…", &[("source", source.label())]),
+            0.,
+        ));
         self.mods.updates.remove(&(source, id.clone()));
         let everything =
             self.mods.everything || self.mods.browse.filters.other_version(&self.mods.game);

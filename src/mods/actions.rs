@@ -144,6 +144,10 @@ impl Launcher {
     /// Turn on the registry mod `id` the card says is installed but off: the same switch the
     /// Installed list's, which asks the one native question first when it must.
     pub(crate) fn turn_on_registry_mod(&mut self, id: &str) {
+        // The same gate as every change: not while the game runs, or another change is under way.
+        if !self.guard() {
+            return;
+        }
         let entry = self
             .ui
             .mods
@@ -152,7 +156,11 @@ impl Launcher {
             .and_then(|s| s.entries.iter().find(|e| e.project == id))
             .cloned();
         if let Some(entry) = entry {
+            self.mods.message = None;
             self.mods_switch(&entry);
+            if let Some(Err(e)) = self.mods.message.take() {
+                self.ui.mods.notice = Some(Err(e));
+            }
         }
     }
 
@@ -303,7 +311,7 @@ impl Launcher {
         };
         let refusal = if row.native() && self.settings.native_mods_allowed_at.is_none() {
             Some(tr(
-                "It runs native code. Allow native mods first (Allow… on its row), then update it.",
+                "It runs native code. Turn on a native mod to be asked about native code first, then update it.",
             ))
         } else {
             None
