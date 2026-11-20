@@ -23,6 +23,18 @@ pub(super) enum Page {
     Settings,
 }
 
+impl Page {
+    /// The tab that stays selected on a subpage.
+    fn active_tab(self) -> Self {
+        match self {
+            Self::Installed | Self::Project => Self::Discover,
+            Self::PackFind | Self::PackProject => Self::Packs,
+            Self::Hosting => Self::Join,
+            other => other,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct State {
     pub page: Page,
@@ -363,28 +375,23 @@ impl Launcher {
 
     fn header(&mut self, cx: &mut Context<Self>) -> Div {
         let p = palette();
-        let page = self.ui.page;
-        let active = match page {
-            Page::Installed | Page::Packs | Page::PackFind | Page::PackProject | Page::Project => {
-                Page::Discover
-            }
-            Page::Hosting => Page::Join,
-            other => other,
-        };
+        let active = self.ui.page.active_tab();
+        let compact = self.window_width < 900. && self.settings.sidebar_expanded;
+        // Keep every destination readable; the account chip can shorten its label.
         let mut tabs = div()
             .flex()
+            .flex_none()
             .items_center()
-            .min_w_0()
             .gap(px(if self.window_width < 1000. { 2. } else { 10. }));
         for (dest, id, icon, label) in [
             (Page::Home, "nav-home", "home", tr("Home")),
-            (Page::Discover, "nav-mods", "package", tr("Mods")),
+            (Page::Discover, "nav-mods", "puzzle", tr("Mods")),
+            (Page::Packs, "nav-packs", "package", tr("Packs")),
             (Page::Join, "nav-servers", "server", tr("Servers")),
             (Page::Versions, "nav-versions", "archive", tr("Versions")),
         ] {
             let on = active == dest;
             let colour = if on { p.chrome_text } else { p.chrome_muted };
-            let compact = self.window_width < 900. && self.settings.sidebar_expanded;
             tabs = tabs.child(
                 div()
                     .id(id)
@@ -395,8 +402,15 @@ impl Launcher {
                     .items_center()
                     .justify_center()
                     .gap(px(7.))
-                    .px(px(if self.window_width < 1000. { 8. } else { 14. }))
+                    .px(px(if compact {
+                        7.
+                    } else if self.window_width < 1000. {
+                        8.
+                    } else {
+                        14.
+                    }))
                     .h(px(42.))
+                    .whitespace_nowrap()
                     .text_color(rgb(colour))
                     .cursor_pointer()
                     .hover(|s| s.bg(rgb(p.chrome_raised)))
@@ -442,6 +456,7 @@ impl Launcher {
             .child(
                 div()
                     .flex()
+                    .min_w_0()
                     .items_center()
                     .gap(px(10.))
                     .child(self.search_button(cx))
@@ -665,5 +680,20 @@ impl Launcher {
             )
             .child(frame)
             .children(titlebar::resize_handles(window))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Page;
+
+    #[test]
+    fn pack_views_keep_the_packs_tab_selected() {
+        for page in [Page::Packs, Page::PackFind, Page::PackProject] {
+            assert!(page.active_tab() == Page::Packs);
+        }
+        for page in [Page::Discover, Page::Installed, Page::Project] {
+            assert!(page.active_tab() == Page::Discover);
+        }
     }
 }
