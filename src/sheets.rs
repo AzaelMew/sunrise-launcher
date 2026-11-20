@@ -636,16 +636,24 @@ impl Launcher {
             .card_error
             .as_ref()
             .expect("shown only while Details is open");
-        let (name, line, log) = (
+        let (name, line, log, built) = (
             error.title.clone(),
             error.line.clone(),
             error.details.clone(),
+            error.built,
         );
         let body = div()
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(title(trf("{mod} couldn't be installed", &[("mod", &name)])))
+            .child(title(trf(
+                if built {
+                    "{mod} couldn't be built"
+                } else {
+                    "{mod} couldn't be installed"
+                },
+                &[("mod", &name)],
+            )))
             .child(Self::why_panel(vec![(name, line)], log, cx))
             .child(div().flex().justify_end().child(
                 crate::frame::primary("alt-card-why-close", tr("Close")).on_click(cx.listener(

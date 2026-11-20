@@ -1497,5 +1497,6 @@
   "Getting build tools · at least {size} · {percent}%": "Getting build tools · at least {size} · {percent}%",
   "Needed": "Needed",
   "{mods} is needed and isn't available for your version": "{mods} is needed and isn't available for your version",
-  "{mods} are needed and aren't available for your version": "{mods} are needed and aren't available for your version"
+  "{mods} are needed and aren't available for your version": "{mods} are needed and aren't available for your version",
+  "{mod} couldn't be built": "{mod} couldn't be built"
 }

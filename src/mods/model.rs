@@ -38,11 +38,18 @@ pub(super) enum Fit {
     NeedsNewerSunrise,
     /// Taken down, or made for an earlier mod system.
     Refused(String),
+    /// Not known yet (no game to judge by): never a reason to hide it.
+    Unknown,
 }
 
 impl Fit {
     pub(super) fn fits(&self) -> bool {
         matches!(self, Fit::Fits)
+    }
+
+    /// Whether "Fits my game" puts it away: it is known not to run on the build played.
+    pub(super) fn hides(&self) -> bool {
+        !matches!(self, Fit::Fits | Fit::Unknown)
     }
 
     pub(super) fn reason(&self) -> Option<String> {
@@ -61,6 +68,7 @@ impl Fit {
             }),
             Fit::NeedsNewerSunrise => Some(tr("Needs a newer Sunrise").to_string()),
             Fit::Refused(why) => Some(why.clone()),
+            Fit::Unknown => Some(tr("Checking…").to_string()),
         }
     }
 }
@@ -102,6 +110,10 @@ pub(super) fn make_of(p: &index::Project) -> Option<Make> {
 }
 
 pub(super) fn fit_of(index: &Index, p: &index::Project, game: &str) -> Fit {
+    // No game to judge by yet: unknown, not "doesn't fit".
+    if game.is_empty() {
+        return Fit::Unknown;
+    }
     if index.installable(p, game).is_some() {
         return Fit::Fits;
     }
@@ -232,7 +244,7 @@ pub(super) fn discover(cards: &[Card], f: &Filters) -> Vec<usize> {
             words.iter().all(|w| hay.contains(w.as_str()))
                 && f.category.as_ref().is_none_or(|k| c.categories.contains(k))
                 && f.make.is_none_or(|m| c.make == m)
-                && (!f.fits_only || c.fit.fits())
+                && (!f.fits_only || !c.fit.hides())
                 // Browsing shows a collection's card for its mods and no libraries; a search
                 // finds each of them.
                 && (!f.text.is_empty() || (c.part_of.is_none() && !c.library))
