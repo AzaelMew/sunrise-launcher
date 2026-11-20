@@ -439,6 +439,51 @@ fn deleted_instances_go_to_the_trash_and_are_forgotten() {
 }
 
 #[test]
+fn a_profile_lookup_pairs_its_old_row_with_its_old_directory() {
+    let root = scratch("lookup-snapshot");
+    let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));
+    let old = create_in(&game, &cache, "Castle!", None).unwrap();
+    let snapshot = list_with_snapshot(&game, &cache, || {
+        // Pause after reading the old row, before opening any profile directory. This is
+        // the exact lock held across the competing Delete and Create directory renames.
+        let competitor = fs::File::options()
+            .read(true)
+            .write(true)
+            .open(cache.join(".instances.lock"))
+            .unwrap();
+        assert!(matches!(
+            competitor.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+    });
+    let selected = find_in(&snapshot, "Castle!").unwrap();
+    assert_eq!(selected.incarnation, old.incarnation);
+    delete_in(&game, &cache, "Castle!", &|path| {
+        fs::rename(path, &trash).map_err(|e| e.to_string())
+    })
+    .unwrap();
+    let replacement = create_in(&game, &cache, "Castle?", None).unwrap();
+    assert_eq!(selected.id, replacement.id);
+    assert_ne!(selected.incarnation, replacement.incarnation);
+    put(
+        &replacement.home.join("saves/keep/level.dat"),
+        "replacement",
+    );
+    assert_eq!(
+        delete_selected(&game, &cache, selected, &|_| panic!(
+            "replacement reached Trash"
+        ))
+        .unwrap_err(),
+        lifecycle::changed()
+    );
+    assert_eq!(
+        fs::read_to_string(replacement.home.join("saves/keep/level.dat")).unwrap(),
+        "replacement"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn a_delayed_delete_does_not_admit_a_replacement_at_the_same_slug() {
     let root = scratch("delete-old-incarnation");
     let (game, cache, trash) = (root.join("game"), root.join("cache"), root.join("trash"));

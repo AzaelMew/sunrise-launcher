@@ -358,6 +358,12 @@ impl Store {
         data: &Path,
         run: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
+        Self::under_lock(data, || {
+            Self::read(data).and_then(|mut store| run(&mut store))
+        })?
+    }
+
+    fn under_lock<T>(data: &Path, run: impl FnOnce() -> T) -> Result<T, String> {
         let lock_error = |e: std::io::Error| format!("{FILE}: {e}");
         fs::create_dir_all(data).map_err(lock_error)?;
         let gate = data.join(".instances.lock");
@@ -375,9 +381,9 @@ impl Store {
             .open(gate)
             .map_err(lock_error)?;
         lock.lock().map_err(lock_error)?;
-        let result = Self::read(data).and_then(|mut store| run(&mut store));
+        let result = run();
         let _ = lock.unlock();
-        result
+        Ok(result)
     }
 }
 
@@ -399,6 +405,22 @@ impl Incarnation {
                 Identity::of(home)?
             },
         })
+    }
+
+    fn at_detachment(self, instance: &Instance, detached: &Path) -> Result<(), String> {
+        let inner = instance
+            .home
+            .strip_prefix(&instance.work)
+            .map_err(|_| lifecycle::changed())?;
+        let home = if inner.as_os_str().is_empty() {
+            detached.to_owned()
+        } else {
+            detached.join(inner)
+        };
+        if Self::of(detached, &home).ok() != Some(self) {
+            return Err(lifecycle::changed());
+        }
+        Ok(())
     }
 
     pub(crate) fn check(self, instance: &Instance, actual: Identity) -> Result<(), String> {
@@ -473,7 +495,25 @@ pub fn list() -> Vec<Instance> {
 }
 
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
-    let mut store = Store::load(data);
+    list_with_snapshot(game_home, data, || {})
+}
+
+fn list_with_snapshot(game_home: &Path, data: &Path, after_read: impl FnOnce()) -> Vec<Instance> {
+    match Store::under_lock(data, || {
+        let stored = Store::read(data);
+        after_read();
+        match stored {
+            Ok(store) => list_snapshot(game_home, data, store, true),
+            Err(_) => list_snapshot(game_home, data, Store::default(), false),
+        }
+    }) {
+        Ok(instances) => instances,
+        // Keep the listing usable, but don't authorize mutation with unpaired choices.
+        Err(_) => list_snapshot(game_home, data, Store::load(data), false),
+    }
+}
+
+fn list_snapshot(game_home: &Path, data: &Path, mut store: Store, admitted: bool) -> Vec<Instance> {
     let mut found = vec![(
         DEFAULT.to_string(),
         "Sunrise".to_string(),
@@ -489,38 +529,30 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     own.sort();
-    // Publish initial choices from a live sidecar if the creator exited just after rename.
-    // Recheck missing names and reread the sidecars under the store lock, never save the snapshot.
-    let parent = game_home.join(OWN);
-    let missing = |id: &str| {
-        id != DEFAULT
-            && crate::browser::safe_name(id) == Some(id)
-            && fs::symlink_metadata(parent.join(id))
-                .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
-    };
-    let initial: Vec<_> = own
-        .iter()
-        .filter(|id| !store.instances.contains_key(*id))
-        .filter_map(|id| initial_choices(&parent.join(id)).map(|meta| (id, meta)))
-        .collect();
-    if !initial.is_empty() || (parent.is_dir() && store.instances.keys().any(|id| missing(id))) {
-        match Store::mutate(data, |live| {
-            if parent.is_dir() {
-                live.instances.retain(|id, _| !missing(id));
-            }
-            for (id, _) in &initial {
+    // Creation and detachment also hold the store lock through their directory rename.
+    // Recover initial choices left by a creator that exited between rename and store save.
+    if admitted {
+        let parent = game_home.join(OWN);
+        let before = store.instances.len();
+        if parent.is_dir() {
+            store.instances.retain(|id, _| {
+                id == DEFAULT
+                    || crate::browser::safe_name(id) != Some(id)
+                    || !fs::symlink_metadata(parent.join(id))
+                        .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            });
+        }
+        let retained = store.instances.len();
+        for id in &own {
+            if !store.instances.contains_key(id) {
                 if let Some(meta) = initial_choices(&parent.join(id)) {
-                    live.instances.entry((*id).clone()).or_insert(meta);
+                    store.instances.insert(id.clone(), meta);
                 }
             }
-            Ok(live.clone())
-        }) {
-            Ok(live) => store = live,
-            Err(error) => {
+        }
+        if retained != before || store.instances.len() != retained {
+            if let Err(error) = store.save(data) {
                 eprintln!("Sunrise: instances.json is not saved: {error}");
-                store
-                    .instances
-                    .extend(initial.into_iter().map(|(id, meta)| (id.clone(), meta)));
             }
         }
     }
@@ -555,7 +587,9 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
                 launch: meta.launch,
                 id,
                 kind,
-                incarnation: Incarnation::of(&work, &home).ok(),
+                incarnation: admitted
+                    .then(|| Incarnation::of(&work, &home).ok())
+                    .flatten(),
                 work,
                 home,
             }
@@ -632,6 +666,7 @@ fn delete_selected(
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
     let work = &instance.work;
+    let expected = instance.incarnation.ok_or_else(lifecycle::changed)?;
     let profile =
         ManagedProfile::open_instance(game_home, data, &instance).map_err(String::from)?;
     let problem = |error: &dyn std::fmt::Display| {
@@ -651,6 +686,7 @@ fn delete_selected(
         let _references = ReferencePublication::begin_at(data, game_home, profile.home())?;
         Store::mutate(data, |store| {
             durable::move_new_directory(work, &gone).map_err(|e| problem(&e))?;
+            expected.at_detachment(&instance, &gone)?;
             store.instances.remove(&instance.id);
             Ok(())
         })
