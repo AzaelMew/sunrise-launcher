@@ -43,7 +43,11 @@ impl Artifact {
     /// Accept a deferred archive only when its digest and the current executable/runtime
     /// match the image recorded after verifying and extracting that archive.
     pub(crate) fn matches_archive(dir: &Path, tag: &str, archive: &str) -> bool {
-        Self::installed(dir, tag, Some(archive)).is_ok()
+        Self::from_archive(dir, tag, archive).is_ok()
+    }
+
+    pub(crate) fn from_archive(dir: &Path, tag: &str, archive: &str) -> Result<Self, String> {
+        Self::installed(dir, tag, Some(archive))
     }
 
     fn installed(dir: &Path, tag: &str, expected: Option<&str>) -> Result<Self, String> {

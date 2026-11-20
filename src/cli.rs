@@ -1448,7 +1448,6 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 }
                 .start(
                     || managed_play::headless_first(&instance, version.as_deref()),
-                    backend::game_architecture_launch_error,
                     |cmd| {
                         backend::append_game_args(cmd);
                         add_arguments(cmd)

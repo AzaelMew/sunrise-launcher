@@ -143,7 +143,7 @@ impl GameArchitecture {
 pub(crate) const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct InstalledGameArchitecture {
+pub(crate) struct InstalledGameArchitecture {
     /// The architecture requested when this version was installed.
     requested: GameArchitecture,
     /// The archive's actual architecture (x64 may be the safe ARM64 fallback).
@@ -333,17 +333,6 @@ fn architecture_for_pe_machine(machine: u16) -> Option<GameArchitecture> {
     }
 }
 
-fn installation_matches_game_architecture(tag: &str, settings: &Settings) -> bool {
-    if !can_choose_game_architecture() {
-        return true;
-    }
-    let Some(target) = selected_game_architecture(settings) else {
-        return true;
-    };
-    installed_game_architecture(tag)
-        .is_some_and(|installed| installed_architecture_matches(target, installed))
-}
-
 fn installed_architecture_matches(
     target: GameArchitecture,
     installed: InstalledGameArchitecture,
@@ -405,17 +394,36 @@ pub(crate) fn native_mod_architecture_error() -> Option<String> {
 
 /// Refuse to launch an explicit game architecture until this version has been installed for it.
 pub fn game_architecture_launch_error(tag: &str) -> Option<String> {
+    managed_game_architecture_launch_error(tag, None)
+}
+
+pub(crate) fn managed_game_architecture_launch_error(
+    tag: &str,
+    variant: Option<&installation::BoundVariant>,
+) -> Option<String> {
     if !can_choose_game_architecture() {
         return None;
     }
     let settings = Settings::load();
-    if settings.game_architecture == GameArchitecture::Auto
-        || installation_matches_game_architecture(tag, &settings)
-    {
+    if settings.game_architecture == GameArchitecture::Auto {
         return None;
     }
-    let target = selected_game_architecture(&settings)?;
-    let installed = installed_game_architecture(tag).map(|a| a.binary);
+    check_game_architecture(tag, variant, selected_game_architecture(&settings)?)
+}
+
+pub(crate) fn check_game_architecture(
+    tag: &str,
+    variant: Option<&installation::BoundVariant>,
+    target: GameArchitecture,
+) -> Option<String> {
+    let installed = match variant {
+        Some(variant) => variant.architecture(),
+        None => installed_game_architecture(tag),
+    };
+    if installed.is_some_and(|installed| installed_architecture_matches(target, installed)) {
+        return None;
+    }
+    let installed = installed.map(|a| a.binary);
     let label = |arch| match arch {
         GameArchitecture::X64 => "x64".to_owned(),
         GameArchitecture::Arm64 => "ARM64".to_owned(),

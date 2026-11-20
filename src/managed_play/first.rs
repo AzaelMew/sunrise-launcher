@@ -6,7 +6,7 @@ use super::{
 use crate::{
     backend::{
         self,
-        installation::{GameDownload, GameProof},
+        installation::{BoundVariant, GameDownload, GameProof},
     },
     native_mods,
     process::leases::ProfileHandoff,
@@ -410,6 +410,13 @@ impl FirstAttempt<'_> {
         self.stage.handoff()
     }
 
+    pub(super) fn variant(&self) -> Option<BoundVariant> {
+        match &self.bound.selection {
+            Selection::Cached { .. } => None,
+            Selection::Download { archive } => archive.variant(self.bound.proof.as_ref()?),
+        }
+    }
+
     /// Verify under the game-manifest lock before checking or compiling this first set.
     pub(super) fn verify_inputs(&self) -> Result<(), String> {
         if inputs(&self.home, None)? != self.bound.inputs {
@@ -493,6 +500,7 @@ impl FirstAttempt<'_> {
             Generation::First {
                 profile: self.bound.profile,
                 resources,
+                variant: self.variant().map(Box::new),
             },
         )?;
         let repair = super::inputs::browser_repair(&self.home, &scan_packages(&self.home)?)?;

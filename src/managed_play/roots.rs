@@ -265,6 +265,7 @@ mod tests {
                 super::super::Generation::First {
                     profile: [1; 16],
                     resources,
+                    variant: None,
                 },
             )
             .unwrap();

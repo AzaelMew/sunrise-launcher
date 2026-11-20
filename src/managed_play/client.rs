@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     account::{self, Accounts, NoOwner},
-    backend::{self, RuntimeGuard},
+    backend::{self, installation::BoundVariant, RuntimeGuard},
     browser::installed::GameInstallProblem,
     developer_offline, instances, native_mods,
     process::child::Child,
@@ -73,7 +73,6 @@ impl Client<'_> {
     pub fn start(
         self,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
-        architecture: impl Fn(&str) -> Option<String>,
         arguments: impl FnOnce(&mut Command) -> Result<(), String>,
         prepare_jars: impl FnOnce(&mut Command, &crate::launch::Launch) -> Result<(), String>,
         native_consent: NativeConsent<'_>,
@@ -93,11 +92,12 @@ impl Client<'_> {
         }
         let mut profile = Profile::open_checked(&self.instance.home, None)?;
         let cancellation = native_mods::Cancellation::default();
-        let check_build = |tag: &str| {
+        let check_build = |tag: &str, variant: Option<&BoundVariant>| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
                 return Err(StartError::Account(NoOwner::default()));
             }
-            architecture(tag).map_or(Ok(()), |error| Err(StartError::Other(error)))
+            backend::managed_game_architecture_launch_error(tag, variant)
+                .map_or(Ok(()), |error| Err(StartError::Other(error)))
         };
         let (active, registry_notices) = self.ready(
             &mut profile,
@@ -179,7 +179,7 @@ impl Client<'_> {
         &self,
         profile: &mut Profile,
         choose: impl FnOnce() -> Result<FirstBuild, String>,
-        check_build: impl FnOnce(&str) -> Result<(), StartError>,
+        check_build: impl FnOnce(&str, Option<&BoundVariant>) -> Result<(), StartError>,
         (cancellation, native_consent): (&native_mods::Cancellation, NativeConsent<'_>),
         progress: impl Fn(Progress),
         load_catalogue: impl FnOnce() -> Option<std::sync::Arc<sunrise_launcher_smod::index::Index>>,
@@ -189,7 +189,7 @@ impl Client<'_> {
         let native = |step| progress(Progress::Native(step));
         if let Some(old) = profile.active()? {
             assert_requested(self.requested_build, old.base(), old.executable())?;
-            check_build(old.base())?;
+            check_build(old.base(), old.variant.as_deref())?;
             // Legacy writers still use the game lock, not profile admission. Keep
             // them out until refresh has staged the exact set we checked.
             let _manifest = game_lock(&home)?;
@@ -205,7 +205,7 @@ impl Client<'_> {
         let first = profile.begin_requested(self.requested_build, choose, |fraction| {
             progress(Progress::Download(fraction));
         })?;
-        check_build(first.base())?;
+        check_build(first.base(), first.variant().as_ref())?;
         progress(Progress::Prepare);
         first.prepare(&|line| progress(Progress::Line(line)))?;
         let (image, notices) = {

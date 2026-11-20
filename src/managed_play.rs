@@ -46,7 +46,7 @@ impl ReferencePublication {
     }
 }
 
-use crate::{native_mods, native_status};
+use crate::{backend::installation::BoundVariant, native_mods, native_status};
 pub(crate) use artifact::Artifact;
 use resources::Resources;
 use serde::{Deserialize, Serialize};
@@ -126,6 +126,8 @@ pub struct Active {
     profile: [u8; 16],
     generation: u64,
     base: Artifact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    variant: Option<Box<BoundVariant>>,
     executable: Artifact,
     resources: Resources,
     inputs: [u8; 32],
@@ -144,6 +146,7 @@ enum Generation<'a> {
     First {
         profile: [u8; 16],
         resources: Resources,
+        variant: Option<Box<BoundVariant>>,
     },
     Advance(&'a Active),
 }
@@ -199,7 +202,11 @@ impl Active {
 
     /// Hash the actual image, including runtime dependencies and the signed archive marker.
     pub fn verify_artifacts(&self) -> Result<(), String> {
-        if Artifact::capture(self.base())? != self.base
+        let base = match &self.variant {
+            Some(variant) => variant.verify(self.base())?,
+            None => Artifact::capture(self.base())?,
+        };
+        if base != self.base
             || (self.executable != self.base
                 && Artifact::capture(self.executable())? != self.executable)
         {
@@ -228,8 +235,12 @@ impl Active {
         } else {
             Artifact::capture(executable)?
         };
-        let (profile, generation, resources, receipts) = match previous {
-            Generation::First { profile, resources } => (profile, 1, resources, Vec::new()),
+        let (profile, generation, resources, receipts, variant) = match previous {
+            Generation::First {
+                profile,
+                resources,
+                variant,
+            } => (profile, 1, resources, Vec::new(), variant),
             Generation::Advance(old) => {
                 if base != old.base {
                     return Err(unsettled());
@@ -240,6 +251,7 @@ impl Active {
                     old.generation.checked_add(1).ok_or_else(unsettled)?,
                     old.resources.clone(),
                     old.receipts.clone(),
+                    old.variant.clone(),
                 )
             }
         };
@@ -248,6 +260,7 @@ impl Active {
             profile,
             generation,
             base,
+            variant,
             executable,
             resources,
             inputs: epoch,

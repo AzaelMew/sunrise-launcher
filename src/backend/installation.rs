@@ -2,7 +2,7 @@
 use super::*;
 
 mod bound;
-pub(crate) use bound::{GameDownload, GameProof};
+pub(crate) use bound::{BoundVariant, GameDownload, GameProof};
 
 use crate::managed_play::Artifact;
 

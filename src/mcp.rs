@@ -139,7 +139,6 @@ impl Session {
                     }
                     .start(
                         || managed_play::headless_first(&instance, requested),
-                        backend::game_architecture_launch_error,
                         |cmd| {
                             backend::append_game_args(cmd);
                             add_arguments(cmd)

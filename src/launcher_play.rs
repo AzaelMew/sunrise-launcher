@@ -256,7 +256,6 @@ impl Launcher {
                         Err(absent)
                     }
                 },
-                backend::game_architecture_launch_error,
                 |cmd| {
                     if let Some(code) = invite {
                         backend::join_friend(cmd, &code)?;

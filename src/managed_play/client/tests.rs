@@ -78,7 +78,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         .ready(
             &mut profile,
             || FirstBuild::installed(BUILD),
-            |_| Ok(()),
+            |_, _| Ok(()),
             (&cancellation, None),
             |_| {},
             || {
@@ -97,7 +97,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         .ready(
             &mut profile,
             || panic!("already bound"),
-            |_| Ok(()),
+            |_, _| Ok(()),
             (&cancellation, None),
             |_| {},
             || revoked("lantern", replaced),
@@ -137,7 +137,7 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
         .ready(
             &mut profile,
             || panic!("already bound"),
-            |_| Ok(()),
+            |_, _| Ok(()),
             (&cancellation, None),
             |step| assert!(!matches!(step, Progress::Native(_)), "started native work"),
             || revoked("native_lantern", index::sha256_file(&native).unwrap()),
@@ -146,4 +146,121 @@ fn play_checks_hash_only_takedowns_after_proving_the_actual_package() {
     let error = String::from(error);
     assert!(error.contains("Native lantern was taken down"), "{error}");
     assert_eq!(profile.active().unwrap(), Some(active));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_bound_x64_fallback_survives_pending_retry_and_committed_replay() {
+    use crate::{
+        backend::GameArchitecture::Arm64,
+        profile_txn::{Admission, Bootstrap},
+    };
+    const TEST: &str = "managed_play::client::tests::windows_bound_x64_fallback_survives_pending_retry_and_committed_replay";
+    const BUILD: &str = "v0.1.7";
+    if std::env::var_os("PLAY_VARIANT_FIXTURE").is_none() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST, "--nocapture"])
+            .env("PLAY_VARIANT_FIXTURE", "1")
+            .env("SUNRISE_HOME", root.path().join("game"))
+            .env("SUNRISE_LAUNCHER_HOME", root.path().join("launcher"))
+            .status()
+            .unwrap()
+            .success());
+        return;
+    }
+    let home = backend::game_home();
+    fs::create_dir_all(&home).unwrap();
+    let directory = backend::version_dir(BUILD);
+    let prepared = backend::resources(BUILD);
+    fs::create_dir_all(&prepared).unwrap();
+    fs::write(prepared.join("sunrise-resources.json"), b"{}").unwrap();
+    fs::write(directory.join(".installed"), []).unwrap();
+    let receipt = directory.join(super::super::Artifact::ARCHIVE_RECEIPT);
+    let archive = "a".repeat(64);
+    let install_candidate = |archive: &str, binary| {
+        if receipt.is_file() {
+            fs::remove_file(&receipt).unwrap();
+        }
+        fs::write(
+            directory.join(backend::CLIENT),
+            format!("{binary} fixture image"),
+        )
+        .unwrap();
+        fs::write(
+            directory.join(backend::GAME_BUILD_ARCHITECTURE),
+            json!({"requested":"x64", "binary":binary}).to_string(),
+        )
+        .unwrap();
+        super::super::Artifact::record_archive(&directory, BUILD, archive).unwrap();
+    };
+    install_candidate(&archive, "x64");
+    assert!(backend::check_game_architecture(BUILD, None, Arm64).is_some());
+    {
+        let mut admission = Admission::open(&home, None).unwrap();
+        admission
+            .bind_bootstrap(
+                || {
+                    Ok(Bootstrap::new(
+                        BUILD.into(),
+                        BUILD.into(),
+                        [1; 16],
+                        super::super::inputs(&home, None).unwrap(),
+                        json!({"kind":"download", "archive":{
+                            "source":BUILD, "file":"sunrise-windows-x64.zip", "size":0,
+                            "requested":"arm64", "time":"",
+                        }}),
+                    ))
+                },
+                |_| Ok(()),
+            )
+            .unwrap();
+        admission
+            .prove_bootstrap(|_| Ok(json!({"archive":archive, "facts":null})))
+            .unwrap();
+    }
+    let instance = instances::selection().unwrap();
+    let client = Client {
+        instance: &instance,
+        accepted_account: None,
+        explicit_account: false,
+        requested_build: None,
+        piped: false,
+    };
+    let cancellation = native_mods::Cancellation::default();
+    let retry = |profile: &mut Profile| {
+        client.ready(
+            profile,
+            || panic!("re-resolved the platform archive"),
+            |tag, variant| {
+                assert!(
+                    variant.is_some(),
+                    "fell back to an unbound cache preference"
+                );
+                backend::check_game_architecture(tag, variant, Arm64)
+                    .map_or(Ok(()), |e| Err(e.into()))
+            },
+            (&cancellation, None),
+            |_| {},
+            || None,
+        )
+    };
+    let mut profile = Profile::open(&home, None).unwrap();
+    install_candidate(&"b".repeat(64), "x64");
+    assert!(
+        retry(&mut profile).is_err(),
+        "accepted an unrelated cached x64 archive"
+    );
+    assert!(profile.active().unwrap().is_none());
+    install_candidate(&archive, "x64");
+    let (active, _) = retry(&mut profile).unwrap();
+    drop(profile);
+    let mut reopened = Profile::open(&home, None).unwrap();
+    assert_eq!(retry(&mut reopened).unwrap().0, active);
+    install_candidate(&archive, "arm64");
+    assert!(
+        retry(&mut reopened).is_err(),
+        "accepted a different runtime binary"
+    );
+    assert_eq!(reopened.active().unwrap(), Some(active));
 }

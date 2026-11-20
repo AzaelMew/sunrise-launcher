@@ -33,7 +33,39 @@ impl GameProof {
     }
 }
 
+/// The selected Windows archive and its saved proof, distinct from the cache marker's
+/// requested preference. An ARM64 selection can bind the same x64 archive as x64 directly.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct BoundVariant {
+    download: GameDownload,
+    proof: GameProof,
+}
+
+impl BoundVariant {
+    pub(crate) fn architecture(&self) -> Option<InstalledGameArchitecture> {
+        Some(InstalledGameArchitecture {
+            requested: self.download.requested?,
+            binary: architecture_for_asset(&self.download.file)?,
+        })
+    }
+
+    pub(crate) fn verify(&self, tag: &str) -> Result<Artifact, String> {
+        self.download.validate(tag)?;
+        self.download
+            .installed_at(&version_dir(tag), tag, &self.proof)
+    }
+}
+
 impl GameDownload {
+    pub(crate) fn variant(&self, proof: &GameProof) -> Option<BoundVariant> {
+        architecture_for_asset(&self.file)?;
+        Some(BoundVariant {
+            download: self.clone(),
+            proof: proof.clone(),
+        })
+    }
+
     pub(crate) fn select(release: &Release) -> Result<Self, String> {
         let settings = Settings::load();
         let assets = game_assets_for(
@@ -188,33 +220,35 @@ impl GameDownload {
     }
 
     pub(crate) fn is_installed(&self, tag: &str, proof: &GameProof) -> bool {
-        self.is_installed_at(&version_dir(tag), tag, proof)
+        self.installed_at(&version_dir(tag), tag, proof).is_ok()
     }
 
-    fn is_installed_at(&self, home: &Path, tag: &str, proof: &GameProof) -> bool {
+    fn installed_at(&self, home: &Path, tag: &str, proof: &GameProof) -> Result<Artifact, String> {
         let regular = |name: &str| {
             fs::symlink_metadata(home.join(name))
                 .is_ok_and(|meta| meta.is_file() && !crate::native_cache::linked(&meta))
         };
-        Artifact::matches_archive(home, tag, &proof.archive)
-            && proof.facts.as_deref().is_none_or(|sha| {
-                regular(RELEASE_FILE) && fs::read(home.join(RELEASE_FILE)).is_ok_and(|bytes| {
-                    sunrise_launcher_release_verify::sha256_hex(&bytes) == sha
-                })
-            })
-            // A cache-only download may have reached the same signed archive as a native
-            // request falling back to x64. Its preference is not part of binary identity.
-            && architecture_for_asset(&self.file).is_none_or(|binary| {
-                if !regular(GAME_BUILD_ARCHITECTURE) {
-                    return false;
-                }
-                fs::read(home.join(GAME_BUILD_ARCHITECTURE))
-                    .ok()
-                    .and_then(|bytes| {
-                        serde_json::from_slice::<InstalledGameArchitecture>(&bytes).ok()
-                    })
-                    .is_some_and(|actual| actual.binary == binary)
-            })
+        let image = Artifact::from_archive(home, tag, &proof.archive)?;
+        let facts_match = proof.facts.as_deref().is_none_or(|sha| {
+            regular(RELEASE_FILE)
+                && fs::read(home.join(RELEASE_FILE))
+                    .is_ok_and(|bytes| sunrise_launcher_release_verify::sha256_hex(&bytes) == sha)
+        });
+        // A cache-only download may have reached the same signed archive as a native
+        // request falling back to x64. Its preference is not part of binary identity.
+        let binary_matches = architecture_for_asset(&self.file).is_none_or(|binary| {
+            if !regular(GAME_BUILD_ARCHITECTURE) {
+                return false;
+            }
+            fs::read(home.join(GAME_BUILD_ARCHITECTURE))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<InstalledGameArchitecture>(&bytes).ok())
+                .is_some_and(|actual| actual.binary == binary)
+        });
+        if !facts_match || !binary_matches {
+            return Err(super::existing_build(tag));
+        }
+        Ok(image)
     }
 }
 
@@ -237,6 +271,11 @@ mod tests {
             archive: "a".repeat(64),
             facts: None,
         };
+        let variant = download.variant(&proof).unwrap();
+        assert!(installed_architecture_matches(
+            GameArchitecture::Arm64,
+            variant.architecture().unwrap()
+        ));
         let archive = home.join(Artifact::ARCHIVE_RECEIPT);
         let tag = "nightly-2026-11-20-aabbccd";
         fs::write(home.join(COMPLETE), b"").unwrap();
@@ -252,7 +291,7 @@ mod tests {
         marker(Arm64, X64);
         Artifact::record_archive(home, tag, &"b".repeat(64)).unwrap();
         assert!(
-            !download.is_installed_at(home, tag, &proof),
+            download.installed_at(home, tag, &proof).is_err(),
             "wrong archive"
         );
         fs::remove_file(&archive).unwrap();
@@ -263,13 +302,19 @@ mod tests {
         for request in [Arm64, X64] {
             marker(request, X64);
             Artifact::record_archive(home, tag, &proof.archive).unwrap();
-            assert!(download.is_installed_at(home, tag, &proof));
-            assert!(direct.is_installed_at(home, tag, &proof));
+            assert!(download.installed_at(home, tag, &proof).is_ok());
+            assert!(direct.installed_at(home, tag, &proof).is_ok());
             fs::remove_file(&archive).unwrap();
             marker(request, Arm64);
             Artifact::record_archive(home, tag, &proof.archive).unwrap();
-            assert!(!download.is_installed_at(home, tag, &proof), "wrong binary");
-            assert!(!direct.is_installed_at(home, tag, &proof), "wrong binary");
+            assert!(
+                download.installed_at(home, tag, &proof).is_err(),
+                "wrong binary"
+            );
+            assert!(
+                direct.installed_at(home, tag, &proof).is_err(),
+                "wrong binary"
+            );
             fs::remove_file(&archive).unwrap();
         }
     }
