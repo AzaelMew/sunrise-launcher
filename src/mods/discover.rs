@@ -297,7 +297,8 @@ impl Launcher {
             let stage = install_state::stage(
                 &id,
                 busy.as_ref().map(|(for_id, f)| (for_id.as_str(), *f)),
-                self.mods.builds(&id),
+                self.mods
+                    .builds(self.selected_instance().map_or("", |i| i.id.as_str()), &id),
                 tools,
                 build_fraction,
             );
