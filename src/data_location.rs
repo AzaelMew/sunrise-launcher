@@ -7,7 +7,7 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -67,12 +67,17 @@ fn has_override() -> bool {
     overridden("SUNRISE_LAUNCHER_HOME") || overridden("SUNRISE_HOME")
 }
 
-/// Roots resolved once per process. `retry` clears it so a repaired location is read again.
+/// Roots resolved once per process. A repaired pointer takes effect after restart.
 static LOCATION: Mutex<Option<Result<Option<Roots>>>> = Mutex::new(None);
 /// A startup failure falls back to the default folders, so a window can still open.
 static FORCE_DEFAULT: AtomicBool = AtomicBool::new(false);
 static STARTUP_ERROR: Mutex<Option<String>> = Mutex::new(None);
-static STARTUP_LEASE: Mutex<Option<MigrationLease>> = Mutex::new(None);
+static STARTUP_LEASES: Mutex<Option<(MigrationLease, RootLeases)>> = Mutex::new(None);
+static ADMITTED_BUILD: OnceLock<PathBuf> = OnceLock::new();
+
+pub(crate) fn admitted_build_root() -> Option<&'static Path> {
+    ADMITTED_BUILD.get().map(PathBuf::as_path)
+}
 
 fn location() -> std::sync::MutexGuard<'static, Option<Result<Option<Roots>>>> {
     LOCATION
@@ -129,14 +134,22 @@ pub fn validate() -> Result<()> {
 /// Acquire the shared location lease before reading the pointer or dispatching anything that
 /// can write. A broken pointer can still open Settings on default roots while holding that lease.
 pub fn startup() -> Result<()> {
-    let lease = acquire_lock_at(&bootstrap_path()?)?;
-    *STARTUP_LEASE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lease);
+    let pointer = acquire_lock_at(&bootstrap_path()?)?;
     let problem = configured_roots().err().map(|error| {
         FORCE_DEFAULT.store(true, Ordering::Release);
         open_error(&error)
     });
+    let mut roots = RootLeases::default();
+    roots.acquire(&crate::backend::data_dir(), false)?;
+    roots.acquire(&crate::backend::game_home(), false)?;
+    // Windows may choose a separate tool-safe build folder. Resolve it only after the
+    // launcher data is admitted, since this lookup can initialize its directory.
+    let build = crate::backend::build_dir();
+    roots.acquire(&build, false)?;
+    let _ = ADMITTED_BUILD.set(build);
+    *STARTUP_LEASES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((pointer, roots));
     remember_startup_error(problem);
     Ok(())
 }
@@ -151,15 +164,7 @@ pub fn startup_error() -> Option<String> {
 /// Try the configured location again. Success requires a restart: paths already resolved to
 /// the default folders are not switched under a running window.
 pub fn retry() -> Result<()> {
-    FORCE_DEFAULT.store(false, Ordering::Release);
-    *location() = None;
-    if let Err(error) = configured_roots() {
-        FORCE_DEFAULT.store(true, Ordering::Release);
-        remember_startup_error(Some(error.clone()));
-        return Err(error);
-    }
-    remember_startup_error(None);
-    Ok(())
+    resolve_at(&bootstrap_path()?).map(|_| ())
 }
 
 /// The error `startup` would report for one bootstrap; the UI opens with it instead of
@@ -182,9 +187,6 @@ fn use_default_at(bootstrap: &Path) -> Result<()> {
         }
         fs::rename(bootstrap, &backup).map_err(|e| problem(bootstrap, e))?;
     }
-    FORCE_DEFAULT.store(true, Ordering::Release);
-    *location() = Some(Ok(None));
-    remember_startup_error(None);
     Ok(())
 }
 
@@ -247,23 +249,65 @@ fn lock_at(bootstrap: &Path, exclusive: bool) -> Result<MigrationLease> {
         .parent()
         .ok_or("Bootstrap needs a parent folder")?;
     fs::create_dir_all(parent).map_err(|e| problem(parent, e))?;
-    let path = parent.join("migration.lock");
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .map_err(|e| problem(&path, e))?;
+    lock_file(&parent.join("migration.lock"), exclusive)
+}
+
+/// Hold the actual data roots even when another process uses a different bootstrap. Put the
+/// stable files beside the roots: locking must not create a virgin data folder and suppress
+/// first-start carry-over, or add a locked file to a world or cache tree during Move.
+#[derive(Default)]
+struct RootLeases(Vec<(PathBuf, MigrationLease)>);
+
+impl RootLeases {
+    fn acquire(&mut self, root: &Path, exclusive: bool) -> Result<()> {
+        let root = canonical_data_path(root)?;
+        let name = root
+            .file_name()
+            .ok_or_else(|| problem(&root, crate::i18n::tr("Data root needs a parent folder")))?;
+        let mut control = std::ffi::OsString::from(".");
+        control.push(name);
+        control.push(".sunrise-migration.lock");
+        let lock = root.with_file_name(control);
+        if !self.0.iter().any(|(held, _)| same_path(held, &lock)) {
+            let parent = lock.parent().expect("root has a file name");
+            fs::create_dir_all(parent).map_err(|e| problem(parent, e))?;
+            let lease = lock_file(&lock, exclusive)?;
+            self.0.push((lock, lease));
+        }
+        Ok(())
+    }
+}
+
+fn lock_file(path: &Path, exclusive: bool) -> Result<MigrationLease> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !crate::native_cache::linked(&meta) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(problem(path, e)),
+        _ => return Err(problem(path, crate::i18n::tr("Not a regular lock file"))),
+    }
+    let mut open = OpenOptions::new();
+    open.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        open.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{FILE_SHARE_READ, FILE_SHARE_WRITE};
+        open.share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE);
+    }
+    let file = open.open(path).map_err(|e| problem(path, e))?;
     let result = if exclusive {
         file.try_lock()
     } else {
         file.try_lock_shared()
     };
-    result.map_err(|e| {
-        format!(
-            "Cannot lock {}: {e}; close other launchers and stop games/builds before retrying",
-            path.display()
+    result.map_err(|error| {
+        crate::i18n::trf(
+            "Cannot lock {path}: {error}; close other launchers and stop games/builds before retrying",
+            &[("path", &path.to_string_lossy()), ("error", &error.to_string())],
         )
     })?;
     Ok(MigrationLease(file))
@@ -364,7 +408,18 @@ fn migrate_locked(
     }
     let destination = layout(&source, &target);
     tool_safe(&destination.build)?;
-    // The exclusive migration lease covers both recovery and the snapshot that follows.
+    let mut leases = RootLeases::default();
+    for root in [&source.launcher, &source.game, &source.build] {
+        leases.acquire(root, true)?;
+    }
+    let bootstrap = pointer_path(bootstrap)?;
+    let mut controls = vec![
+        bootstrap.clone(),
+        bootstrap.with_file_name("migration.lock"),
+        bootstrap.with_file_name("location.json.new"),
+    ];
+    controls.extend(leases.0.iter().map(|(path, _)| path.clone()));
+    // Both pointer and source leases cover recovery and the entire snapshot/commit.
     crate::relocation::admit_idle_profiles(&source)?;
     fs::create_dir_all(&target).map_err(|e| problem(&target, e))?;
     let stage = target.join(".relocation-staging");
@@ -372,12 +427,12 @@ fn migrate_locked(
     let result = (|| {
         private_dir(&stage)?;
         progress("Copying and verifying launcher data");
-        copy_tree(&source.launcher, &staged.launcher, bootstrap, &mut progress)?;
+        copy_tree(&source.launcher, &staged.launcher, &controls, &mut progress)?;
         progress("Copying and verifying game data");
-        copy_tree(&source.game, &staged.game, bootstrap, &mut progress)?;
+        copy_tree(&source.game, &staged.game, &controls, &mut progress)?;
         if !within(&source.build, &source.launcher) {
             progress("Copying and verifying build data");
-            copy_tree(&source.build, &staged.build, bootstrap, &mut progress)?;
+            copy_tree(&source.build, &staged.build, &controls, &mut progress)?;
         } else if !staged.build.exists() {
             fs::create_dir_all(&staged.build).map_err(|e| problem(&staged.build, e))?;
         }
@@ -397,7 +452,7 @@ fn migrate_locked(
         fs::remove_dir(&stage).map_err(|e| problem(&stage, e))?;
         sync_dir(&target)?;
         progress("Committing data location");
-        commit(bootstrap, &destination)?;
+        commit(&bootstrap, &destination)?;
         Ok(destination)
     })();
     result.map_err(|e: String| format!("{e}. Original data was kept. Partial copies may remain in {}; choose an empty folder to retry", target.display()))
@@ -466,6 +521,10 @@ fn overlaps(a: &Path, b: &Path) -> bool {
     within(a, b) || within(b, a)
 }
 
+fn same_path(a: &Path, b: &Path) -> bool {
+    within(a, b) && within(b, a)
+}
+
 /// Canonicalize existing ancestors, reject links/junctions and ambiguous relative components.
 fn checked_path(path: &Path) -> Result<PathBuf> {
     if !path.is_absolute() || path.components().any(|c| matches!(c, Component::ParentDir)) {
@@ -508,6 +567,14 @@ fn plain_drive(path: PathBuf) -> PathBuf {
         }
     }
     path
+}
+
+/// Resolve a real data path without making a virgin folder. Legacy environment overrides
+/// also accept relative paths and existing links; their claim must follow the resolved root.
+pub(crate) fn canonical_data_path(path: &Path) -> Result<PathBuf> {
+    fs::canonicalize(path).map(plain_drive).or_else(|_| {
+        pointer_path(&std::path::absolute(path).map_err(|error| problem(path, error))?)
+    })
 }
 
 /// The pointer and its lock sit in the platform config folder, which may be a link (a
@@ -599,7 +666,7 @@ fn new_file(path: &Path) -> Result<File> {
 pub(crate) fn copy_tree(
     source: &Path,
     dest: &Path,
-    bootstrap: &Path,
+    controls: &[PathBuf],
     progress: &mut impl FnMut(&str),
 ) -> Result<()> {
     let meta = match fs::symlink_metadata(source) {
@@ -614,18 +681,10 @@ pub(crate) fn copy_tree(
         for entry in fs::read_dir(source).map_err(|e| problem(source, e))? {
             let entry = entry.map_err(|e| problem(source, e))?;
             let path = entry.path();
-            let controls = [
-                bootstrap.to_path_buf(),
-                bootstrap.with_file_name("migration.lock"),
-                bootstrap.with_file_name("location.json.new"),
-            ];
-            if controls
-                .iter()
-                .any(|p| pointer_path(p).is_ok_and(|p| within(&path, &p) && within(&p, &path)))
-            {
+            if controls.iter().any(|p| same_path(p, &path)) {
                 continue;
             }
-            copy_tree(&path, &dest.join(entry.file_name()), bootstrap, progress)?;
+            copy_tree(&path, &dest.join(entry.file_name()), controls, progress)?;
         }
         fs::set_permissions(dest, meta.permissions()).map_err(|e| problem(dest, e))?;
         sync_dir(dest)?;

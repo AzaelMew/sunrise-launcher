@@ -928,6 +928,9 @@ fn tool_safe(path: &Path) -> bool {
 /// link (horizon-mixins refuses one, and macOS's /tmp is one). On Windows, when the resolved
 /// path isn't [`tool_safe`], [`windows_build_dir`] names the same folder a way MinGW-w64 can open.
 pub fn build_dir() -> PathBuf {
+    if let Some(root) = crate::data_location::admitted_build_root() {
+        return root.to_owned();
+    }
     // Tests keep it inside their scratch launcher folder (`data_dir`).
     if !cfg!(test) && std::env::var_os("SUNRISE_LAUNCHER_HOME").is_none_or(|p| p.is_empty()) {
         // A location that does not open stands in as the default folders, as
@@ -937,8 +940,8 @@ pub fn build_dir() -> PathBuf {
         }
     }
     let data = data_dir();
-    let _ = fs::create_dir_all(&data);
-    let real = data.canonicalize().map(plain).unwrap_or(data);
+    // Resolve the existing ancestors without creating a data root before first-start carry-over.
+    let real = crate::data_location::canonical_data_path(&data).unwrap_or(data);
     if tool_safe(&real) {
         return real;
     }

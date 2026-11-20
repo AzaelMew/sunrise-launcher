@@ -15,15 +15,41 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
         fs::create_dir(dir).unwrap();
     }
     let bootstrap = base.join("location.json");
-    fs::write(
-        &bootstrap,
-        serde_json::json!({"version":1,"roots":source}).to_string(),
-    )
-    .unwrap();
-    let create = |overrides: bool| {
+    let point = |path: &std::path::Path, roots: &Roots| {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            path,
+            serde_json::json!({"version":1,"roots":roots}).to_string(),
+        )
+        .unwrap();
+    };
+    point(&bootstrap, &source);
+    let alternate = base.join("alternate/location.json");
+    point(&alternate, &source);
+    // Sharing any one of the physical roots is enough to make this a contender.
+    let spare = Roots {
+        launcher: base.join("spare/launcher"),
+        game: base.join("spare/game"),
+        build: base.join("spare/build"),
+    };
+    for path in [&spare.launcher, &spare.game, &spare.build] {
+        fs::create_dir_all(path).unwrap();
+    }
+    let single_root = ["launcher", "game", "build"].map(|shared| {
+        let path = base.join("alternate").join(format!("{shared}.json"));
+        let mut roots = spare.clone();
+        match shared {
+            "launcher" => roots.launcher = source.launcher.clone(),
+            "game" => roots.game = source.game.clone(),
+            _ => roots.build = source.build.clone(),
+        }
+        point(&path, &roots);
+        (path, format!(".{shared}.sunrise-migration.lock"))
+    });
+    let create = |location: &std::path::Path, overrides: bool| {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"));
         cmd.args(["instance", "create", "Late Writer"])
-            .env("SUNRISE_LAUNCHER_LOCATION_FILE", &bootstrap)
+            .env("SUNRISE_LAUNCHER_LOCATION_FILE", location)
             .env_remove("SUNRISE_HOME")
             .env_remove("SUNRISE_LAUNCHER_HOME");
         if overrides {
@@ -38,21 +64,28 @@ fn move_excludes_cli_writers_between_settlement_and_copying() {
             return;
         }
         reached_copy = true;
-        for overrides in [false, true] {
-            let blocked = create(overrides);
+        let assert_blocked = |path: &std::path::Path, overrides, lock: &str| {
+            let blocked = create(path, overrides);
             let error = String::from_utf8_lossy(&blocked.stderr);
             assert_eq!(blocked.status.code(), Some(1), "{blocked:?}");
             assert!(
-                error.contains("Cannot lock") && error.contains("migration.lock"),
+                error.contains("Cannot lock") && error.contains(lock),
                 "{error}"
             );
             assert!(!source.game.join("instances/late-writer").exists());
+            assert!(!spare.game.join("instances/late-writer").exists());
+        };
+        assert_blocked(&bootstrap, false, "migration.lock");
+        assert_blocked(&alternate, false, ".launcher.sunrise-migration.lock");
+        assert_blocked(&alternate, true, ".launcher.sunrise-migration.lock");
+        for (path, lock) in &single_root {
+            assert_blocked(path, false, lock);
         }
     })
     .unwrap();
     assert!(reached_copy);
     assert!(!moved.game.join("instances/late-writer").exists());
-    let accepted = create(false);
+    let accepted = create(&bootstrap, false);
     assert!(accepted.status.success(), "{accepted:?}");
     assert!(moved.game.join("instances/late-writer").is_dir());
     assert!(!source.game.join("instances/late-writer").exists());
