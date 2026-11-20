@@ -112,6 +112,7 @@ struct Snapshot {
     /// The hand-placed packages are being read off the window thread (`Event::Local`): `local`
     /// holds what was known before.
     reading: bool,
+    backup_notice: Option<String>,
 }
 
 enum Event {
@@ -209,6 +210,19 @@ pub(crate) struct ModsState {
     revealed: Rc<std::cell::Cell<bool>>,
     /// A gallery picture enlarged over the window.
     viewer: Option<viewer::Viewer>,
+}
+
+impl ModsState {
+    fn visible_notice(
+        &self,
+        shared: Option<&Result<String, String>>,
+    ) -> Option<Result<String, String>> {
+        self.notice
+            .as_ref()
+            .or(shared)
+            .cloned()
+            .or_else(|| self.snapshot.as_ref()?.backup_notice.clone().map(Ok))
+    }
 }
 
 impl Default for ModsState {
@@ -491,9 +505,7 @@ impl Launcher {
                 Event::Catalog(Err(e)) => m.catalog = Catalog::Failed(e),
                 Event::Local(key, local, backup_notice) => {
                     if let Some(snap) = m.snapshot.as_mut().filter(|s| s.key == key) {
-                        if m.notice.is_none() {
-                            m.notice = backup_notice.map(Ok);
-                        }
+                        snap.backup_notice = backup_notice;
                         snap.enabled = enabled_ids(&snap.home, &snap.entries, &local);
                         snap.local = local;
                         snap.reading = false;
@@ -599,6 +611,7 @@ impl Launcher {
                 chosen,
                 local,
                 reading: true,
+                backup_notice: None,
             });
             let rows: HashSet<String> = self.rows().into_iter().map(|r| r.id).collect();
             self.ui.mods.selection.retain(|id| rows.contains(id));
@@ -742,16 +755,17 @@ impl Launcher {
         }
     }
 
-    /// What the notice strip says: the batch's own, else what the shared install path said.
+    /// A backup advisory should never eclipse either operation's own result.
     fn notice(&self) -> Option<Result<String, String>> {
-        self.ui
-            .mods
-            .notice
-            .clone()
-            .or_else(|| self.mods.message.clone())
+        self.ui.mods.visible_notice(self.mods.message.as_ref())
     }
 
     fn dismiss_notice(&mut self) {
+        if self.ui.mods.notice.is_none() && self.mods.message.is_none() {
+            if let Some(snapshot) = &mut self.ui.mods.snapshot {
+                snapshot.backup_notice = None;
+            }
+        }
         self.ui.mods.notice = None;
         self.mods.message = None;
     }
@@ -974,5 +988,35 @@ mod enabled_tests {
         // "gone" was a package of the list known before and is no longer there.
         let got = enabled_ids(home.path(), &[], &[local("kept"), local("off")]);
         assert_eq!(got, HashSet::from(["kept".to_string()]));
+    }
+}
+
+#[cfg(test)]
+mod upgrade_notice_tests {
+    use super::*;
+
+    #[test]
+    fn the_backup_advisory_is_the_last_fallback() {
+        let backup = "backup kept".to_owned();
+        let mut mods = ModsState {
+            snapshot: Some(Snapshot {
+                key: String::new(),
+                home: PathBuf::new(),
+                entries: Vec::new(),
+                enabled: HashSet::new(),
+                chosen: Default::default(),
+                local: Vec::new(),
+                reading: false,
+                backup_notice: Some(backup.clone()),
+            }),
+            ..ModsState::default()
+        };
+        let install = Err("shared install error".to_owned());
+        assert_eq!(mods.visible_notice(Some(&install)), Some(install.clone()));
+        let batch = Err("batch error".to_owned());
+        mods.notice = Some(batch.clone());
+        assert_eq!(mods.visible_notice(Some(&install)), Some(batch));
+        mods.notice = None;
+        assert_eq!(mods.visible_notice(None), Some(Ok(backup)));
     }
 }
