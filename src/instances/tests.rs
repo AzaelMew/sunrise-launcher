@@ -828,3 +828,26 @@ fn a_modpacks_profile_keeps_its_build_whoever_asks() {
     edit_in(&game, &data, "pack:cozy", |m| m.name = Some("Warm".into())).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_modpacks_profile_without_a_pin_takes_the_build_in_use_once_and_keeps_it() {
+    let root = scratch("pack-pins-build");
+    let (home, data) = (root.join("sunrise"), root.join("launcher"));
+    player_home(&home);
+    let mut all = list_in(&home, &data);
+    let cozy = |all: &[Instance]| find_in(all, "pack:cozy").unwrap().version.clone();
+    assert_eq!(cozy(&all), None, "a fresh pack has no pin");
+    // Nothing installed to pin to: left as it is.
+    pin_packs_in(&data, &mut all, None);
+    assert_eq!(cozy(&all), None);
+    pin_packs_in(&data, &mut all, Some("v1.0.0"));
+    assert_eq!(cozy(&all), Some("v1.0.0".into()));
+    // Saved: the next listing has it, and a later build in use doesn't move it.
+    let mut again = list_in(&home, &data);
+    assert_eq!(cozy(&again), Some("v1.0.0".into()));
+    pin_packs_in(&data, &mut again, Some("v2.0.0"));
+    assert_eq!(cozy(&again), Some("v1.0.0".into()));
+    // The Sunrise profile and own ones are the player's to move.
+    assert_eq!(find_in(&again, DEFAULT).unwrap().version, None);
+    fs::remove_dir_all(root).unwrap();
+}

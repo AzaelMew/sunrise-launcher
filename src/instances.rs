@@ -398,7 +398,43 @@ pub fn calendar_time(since_epoch: Duration) -> Option<SystemTime> {
 /// The instances, by the default game home and the launcher's data folder: Sunrise first, then
 /// by group and name.
 pub fn list() -> Vec<Instance> {
-    list_in(&backend::game_home(), &backend::data_dir())
+    let (game_home, data) = (backend::game_home(), backend::data_dir());
+    let mut all = list_in(&game_home, &data);
+    pin_packs_in(
+        &data,
+        &mut all,
+        backend::resolve_version(None).ok().as_deref(),
+    );
+    all
+}
+
+/// A modpack's profile keeps the build it was made for, so it is not moved by channel updates:
+/// one that has no pin yet (made before the pin was recorded, or just installed) takes `build`,
+/// the build in use, the first time it is listed. Nothing to pin to (no build installed) leaves
+/// it as it is.
+fn pin_packs_in(data: &Path, all: &mut [Instance], build: Option<&str>) {
+    let Some(build) = build else {
+        return;
+    };
+    let mut store = Store::load(data);
+    let mut changed = false;
+    for instance in all
+        .iter_mut()
+        .filter(|i| i.is_pack_profile() && i.version.is_none())
+    {
+        store
+            .instances
+            .entry(instance.id.clone())
+            .or_default()
+            .version = Some(build.to_owned());
+        instance.version = Some(build.to_owned());
+        changed = true;
+    }
+    if changed {
+        if let Err(e) = store.save(data) {
+            eprintln!("Sunrise: instances.json is not saved: {e}");
+        }
+    }
 }
 
 fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
