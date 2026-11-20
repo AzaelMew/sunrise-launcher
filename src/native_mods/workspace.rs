@@ -3,12 +3,34 @@ use super::{sdk_cache::Package, tool, Path};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
+    path::Component,
 };
 use sunrise_launcher_smod::{index::sha256_file, manifest::Manifest};
 
 pub(crate) const ATTEMPT_PREFIX: &str = ".native-attempt-";
 
 pub(super) struct Workspace(tempfile::TempDir);
+
+/// One SDK library, with the exact basename it is installed under and the verified
+/// bytes. A registry symlink alias is copied as a regular file under its original name.
+#[derive(Debug)]
+pub(super) struct Library {
+    name: String,
+    source: std::path::PathBuf,
+    sha256: String,
+}
+
+impl Library {
+    pub(super) fn copy_into(&self, destination: &Path) -> io::Result<()> {
+        let output = destination.join(&self.name);
+        fs::copy(&self.source, &output)?;
+        if sha256_file(&output).is_ok_and(|digest| digest == self.sha256) {
+            Ok(())
+        } else {
+            Err(invalid())
+        }
+    }
+}
 
 impl Workspace {
     pub(super) fn new(parent: &Path) -> io::Result<Self> {
@@ -82,9 +104,8 @@ impl Workspace {
         }
     }
 
-    /// The API route reuses the game's executable and may return runtime libraries from the SDK
-    /// slice. Managed Rust and MinGW can also supply their own libraries. No other source path in
-    /// a reply authorizes the launcher to publish that file.
+    /// Bind the exact SDK path and bytes of every published library, including ordinary unstamped
+    /// dependencies. Only the registry route can add Cargo output or Cargo-home libraries.
     pub(super) fn verify_outputs<'a>(
         &self,
         built: &tool::Built,
@@ -93,19 +114,21 @@ impl Workspace {
         expected_route: Option<tool::CheckRoute>,
         revision: &str,
         mods: impl Iterator<Item = &'a Manifest>,
-    ) -> io::Result<()> {
+    ) -> io::Result<Vec<Library>> {
         let work = self.path().join("work");
         if expected_route.is_some_and(|route| route != built.route) {
             return Err(invalid());
         }
         // Both SDK runtime slices use this filename; installation renames the server image.
-        let runtime_binary = built.binary
-            == package.runtime.join("bin").join(crate::backend::CLIENT)
-            && regular_under(&package.runtime, &built.binary).is_ok();
+        let binary = crate::backend::plain(built.binary.clone());
+        let runtime_binary = binary == package.runtime.join("bin").join(crate::backend::CLIENT)
+            && regular_under(self.path(), &binary).is_ok();
         match built.route {
             tool::CheckRoute::PrebuiltApi if !runtime_binary => return Err(invalid()),
             tool::CheckRoute::Prebuilt
-                if !runtime_binary && regular_under(&work, &built.binary).is_err() =>
+                if !runtime_binary
+                    && (!binary.starts_with(&work)
+                        || regular_under(self.path(), &binary).is_err()) =>
             {
                 return Err(invalid())
             }
@@ -121,32 +144,108 @@ impl Workspace {
         }
         let std_lib = rust.target_libdir();
         let mingw = rust.mingw_bin();
+        // Registry compilation returns the merged package's executable and places the
+        // stamped patch in <target>/<triple>/release. The latter binds the one allowed
+        // Cargo target root without recalculating the SDK's private build key.
+        let whole = work.join("prebuilt-package");
+        let registry_target = if built.route == tool::CheckRoute::Prebuilt
+            && binary == whole.join("bin").join(crate::backend::CLIENT)
+        {
+            let patch = built
+                .records
+                .iter()
+                .find(|row| matches!(row.kind, tool::LibraryKind::Patch))
+                .ok_or_else(invalid)?;
+            let patch = built
+                .libraries
+                .iter()
+                .find(|file| {
+                    file.file_name()
+                        .is_some_and(|name| name == patch.file.as_str())
+                })
+                .ok_or_else(invalid)?;
+            let patch = crate::backend::plain(patch.clone());
+            let builds = work.join("prebuilt-build");
+            let release = patch
+                .strip_prefix(&builds)
+                .ok()
+                .and_then(Path::parent)
+                .ok_or_else(invalid)?;
+            let folders: Vec<_> = release.components().collect();
+            match folders.as_slice() {
+                [Component::Normal(key), Component::Normal(target), Component::Normal(triple), Component::Normal(release)]
+                    if *target == "target"
+                        && *triple == rust.host.target
+                        && *release == "release" =>
+                {
+                    Some(builds.join(key).join("target"))
+                }
+                _ => return Err(invalid()),
+            }
+        } else {
+            None
+        };
+        let cargo_home = self.path().join("cargo");
+        let joined_runtime = whole.join("deps");
+        let stamped_names: BTreeSet<_> =
+            built.records.iter().map(|row| row.file.as_str()).collect();
         let mut files = BTreeMap::new();
-        for file in &built.libraries {
+        for supplied in &built.libraries {
+            // SDK directory scans can return canonical-prefixed Windows paths. The plan
+            // otherwise uses the launcher's plain form; this does not resolve any links.
+            let file = crate::backend::plain(supplied.clone());
             let name = file
                 .file_name()
                 .and_then(|s| s.to_str())
+                .and_then(crate::browser::safe_name)
                 .ok_or_else(invalid)?;
-            if ![".so", ".dll", ".dylib"]
+            let dynamic = [".so", ".dll", ".dylib"]
                 .iter()
-                .any(|suffix| name.ends_with(suffix))
-                || files.insert(name.to_ascii_lowercase(), file).is_some()
-            {
+                .any(|suffix| name.ends_with(suffix));
+            let versioned_so = name
+                .rsplit_once(".so.")
+                .is_some_and(|(base, version)| !base.is_empty() && !version.is_empty());
+            let stamped = stamped_names.contains(name);
+            let dependency = !stamped && registry_target.is_some();
+            if !dynamic && !(dependency && versioned_so) {
                 return Err(invalid());
             }
-            let runtime = || regular_under(&package.runtime, file).is_ok();
+            let runtime =
+                || file.starts_with(&package.runtime) && regular_under(self.path(), &file).is_ok();
             let standard = || {
                 (name.starts_with("libstd-") || name.starts_with("std-"))
                     && std_lib.as_ref().is_some_and(|dir| {
-                        file == &dir.join(name) && regular_under(dir, file).is_ok()
+                        file == dir.join(name) && regular_under(dir, &file).is_ok()
                     })
             };
             let gnu = || {
                 matches!(name, "libgcc_s_seh-1.dll" | "libwinpthread-1.dll")
-                    && file == &mingw.join(name)
-                    && regular_under(&mingw, file).is_ok()
+                    && file == mingw.join(name)
+                    && regular_under(&mingw, &file).is_ok()
             };
-            if regular_under(&work, file).is_err() && !runtime() && !standard() && !gnu() {
+            let produced = (stamped && file.starts_with(&work))
+                || (!stamped
+                    && built.route == tool::CheckRoute::Prebuilt
+                    && file.starts_with(&joined_runtime));
+            let source = if dynamic
+                && ((produced && regular_under(self.path(), &file).is_ok())
+                    || runtime()
+                    || standard()
+                    || gnu())
+            {
+                file.clone()
+            } else if let Some(target) = registry_target.as_ref().filter(|_| dependency) {
+                registry_library(self.path(), [target, &cargo_home], &file)?
+            } else {
+                return Err(invalid());
+            };
+            let sha256 = sha256_file(&source).map_err(io::Error::other)?;
+            let library = Library {
+                name: name.to_owned(),
+                source,
+                sha256,
+            };
+            if files.insert(name.to_ascii_lowercase(), library).is_some() {
                 return Err(invalid());
             }
         }
@@ -156,11 +255,7 @@ impl Workspace {
         for row in &built.records {
             let Some(file) = files
                 .get(&row.file.to_ascii_lowercase())
-                .copied()
-                .filter(|file| {
-                    file.file_name()
-                        .is_some_and(|name| name == row.file.as_str())
-                })
+                .filter(|file| file.name == row.file)
             else {
                 return Err(invalid());
             };
@@ -182,7 +277,7 @@ impl Workspace {
             let rust = crate::rust_toolchain::VERSION;
             if !stamped.insert(&row.file)
                 || row.identity != format!("{revision} {id} {version} {rust} unwind")
-                || !sha256_file(file).is_ok_and(|digest| digest == row.sha256)
+                || file.sha256 != row.sha256
             {
                 return Err(invalid());
             }
@@ -190,7 +285,7 @@ impl Workspace {
         if recorded != used {
             return Err(invalid());
         }
-        Ok(())
+        Ok(files.into_values().collect())
     }
 }
 
@@ -218,9 +313,38 @@ fn invalid() -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, "invalid native SDK output")
 }
 
+// The SDK preserves linked library basenames (e.g. libx.so -> libx.so.1). Only a
+// final file symlink within the registry's exact roots is allowed. Keep the resolved
+// checked source, not the symlink, and verify the published copy's digest again.
+fn registry_library(
+    workspace: &Path,
+    roots: [&Path; 2],
+    path: &Path,
+) -> io::Result<std::path::PathBuf> {
+    let allowed = |file: &Path| roots.iter().any(|root| file.starts_with(root));
+    if !allowed(path) {
+        return Err(invalid());
+    }
+    checked_under(workspace, path.parent().ok_or_else(invalid)?, true)?;
+    let source = if fs::symlink_metadata(path)?.file_type().is_symlink() {
+        crate::backend::plain(path.canonicalize()?)
+    } else {
+        path.to_owned()
+    };
+    if !allowed(&source) {
+        return Err(invalid());
+    }
+    regular_under(workspace, &source)?;
+    Ok(source)
+}
+
 // Refuse reparse points and links at every component, including the root. The compiler never
 // receives the installation destination; the launcher copies these bytes out of the work tree.
 fn regular_under(root: &Path, file: &Path) -> io::Result<()> {
+    checked_under(root, file, false)
+}
+
+fn checked_under(root: &Path, file: &Path, directory: bool) -> io::Result<()> {
     let tail = file.strip_prefix(root).map_err(|_| invalid())?;
     let mut path = root.to_path_buf();
     let mut parts = tail.components().peekable();
@@ -238,7 +362,7 @@ fn regular_under(root: &Path, file: &Path) -> io::Result<()> {
             return Err(invalid());
         }
         if parts.peek().is_none() {
-            return if meta.is_file() {
+            return if (directory && meta.is_dir()) || (!directory && meta.is_file()) {
                 Ok(())
             } else {
                 Err(invalid())

@@ -63,6 +63,114 @@ fn writable_sdk_slices_do_not_share_the_cached_bytes() {
 }
 
 #[test]
+fn registry_library_aliases_keep_their_exact_names_and_bytes_inside_private_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let stage = Workspace::new(dir.path()).unwrap();
+    let root = stage.path();
+    let package = Package::at(&root.join("package"));
+    let rust = crate::rust_toolchain::Toolchain {
+        dir: dir.path().join("rust"),
+        host: crate::rust_toolchain::hosts().first().unwrap(),
+    };
+    let work = root.join("work");
+    let target = work.join("prebuilt-build/registry-fixture/target");
+    let release = target.join(rust.host.target).join("release");
+    let binary = work
+        .join("prebuilt-package/bin")
+        .join(crate::backend::CLIENT);
+    let patch = release.join("libsunrise_patch.so");
+    let mod_output = release.join("libgreeter.so");
+    let output = target.join("deps/libfrom_target.so.2");
+    let dependency = root.join("cargo/registry/src/thing/libfrom_cargo.so.1");
+    let outside = root.join("tmp/libfrom_cargo.so.1");
+    for file in [&binary, &patch, &mod_output, &output, &dependency, &outside] {
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, b"compiled bytes").unwrap();
+    }
+    let rust_version = crate::rust_toolchain::VERSION;
+    let make_record = |file: &Path, kind, id: &str, version: &str| tool::LibraryRecord {
+        file: file.file_name().unwrap().to_str().unwrap().into(),
+        sha256: sha256_file(file).unwrap(),
+        kind,
+        mod_id: id.into(),
+        identity: format!("fixture-build {id} {version} {rust_version} unwind"),
+    };
+    let mut built = tool::Built {
+        route: tool::CheckRoute::Prebuilt,
+        binary,
+        libraries: vec![
+            mod_output.clone(),
+            patch.clone(),
+            output,
+            dependency.clone(),
+        ],
+        records: vec![
+            make_record(&mod_output, tool::LibraryKind::Mod, "greeter", "1.0.0"),
+            make_record(&patch, tool::LibraryKind::Patch, "sunrise_patch", "0"),
+        ],
+        mods: vec!["greeter".into()],
+        internals: Default::default(),
+    };
+    let manifest = Manifest::parse("id = 'greeter'\nname = 'Greeter'\nversion = '1.0.0'\napi = '0.2'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nsunrise = 'a123456789012345678901234567890123456789'\n").unwrap();
+    let verify = |built: &tool::Built| {
+        stage.verify_outputs(
+            built,
+            &package,
+            &rust,
+            Some(tool::CheckRoute::Prebuilt),
+            "fixture-build",
+            [&manifest].into_iter(),
+        )
+    };
+    #[cfg(unix)]
+    {
+        let alias = dependency.with_extension("");
+        std::os::unix::fs::symlink(dependency.file_name().unwrap(), &alias).unwrap();
+        built.libraries.push(alias);
+    }
+    let accepted = verify(&built).unwrap();
+    let installed = dir.path().join("private-install");
+    fs::create_dir(&installed).unwrap();
+    for library in &accepted {
+        library.copy_into(&installed).unwrap();
+    }
+    assert_eq!(
+        fs::read(installed.join("libfrom_cargo.so.1")).unwrap(),
+        b"compiled bytes"
+    );
+    assert_eq!(
+        fs::read(installed.join("libfrom_target.so.2")).unwrap(),
+        b"compiled bytes"
+    );
+    #[cfg(unix)]
+    assert!(!fs::symlink_metadata(installed.join("libfrom_cargo.so"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    fs::write(&dependency, b"substituted after verification").unwrap();
+    let library = accepted
+        .iter()
+        .find(|row| row.name == "libfrom_cargo.so.1")
+        .unwrap();
+    assert!(library.copy_into(&installed).is_err());
+    built.libraries[3] = outside.clone();
+    assert!(
+        verify(&built).is_err(),
+        "neither the rest of the private stage nor outside is a Cargo root"
+    );
+    #[cfg(unix)]
+    {
+        let escaping = dependency.with_file_name("escaping.so.1");
+        std::os::unix::fs::symlink(&outside, &escaping).unwrap();
+        built.libraries[3] = escaping;
+        assert!(
+            verify(&built).is_err(),
+            "a Cargo-home alias cannot escape its private roots"
+        );
+    }
+}
+
+#[test]
 fn an_sdk_can_only_supply_its_own_files_and_the_exact_requested_mods() {
     let dir = tempfile::tempdir().unwrap();
     let stage = Workspace::new(dir.path()).unwrap();

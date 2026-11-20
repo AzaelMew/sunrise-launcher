@@ -1665,7 +1665,7 @@ fn pipeline(
         // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
         let built = built.map_err(|failure| blame(blamed_text(failure)))?;
-        workspace
+        let libraries = workspace
             .verify_outputs(
                 &built,
                 &game,
@@ -1701,7 +1701,7 @@ fn pipeline(
             &version,
             target,
             &built.binary,
-            &built.libraries,
+            &libraries,
             &about(built.route.name(), &built.internals, &built.records),
             &ordered,
             cancellation,

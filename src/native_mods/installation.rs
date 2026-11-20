@@ -7,7 +7,7 @@ pub(super) fn install(
     version: &str,
     target: Target,
     binary: &Path,
-    libraries: &[PathBuf],
+    libraries: &[workspace::Library],
     about: &serde_json::Value,
     mods: &[Bundle],
     cancellation: &Cancellation,
@@ -22,8 +22,11 @@ pub(super) fn install(
     fs::copy(binary, &installed).map_err(|e| format!("The built game: {e}"))?;
     // The prebuilt game's libraries load from beside the executable.
     for library in libraries {
-        let name = library.file_name().ok_or("invalid library path")?;
-        fs::copy(library, partial.join(name)).map_err(|e| format!("{}: {e}", library.display()))?;
+        library.copy_into(&partial).map_err(|error| {
+            let _ = append_log(&error.to_string());
+            tr("A verified native library couldn't be copied. The build wasn't installed.")
+                .to_owned()
+        })?;
     }
     fs::write(partial.join("native-mods.json"), about.to_string()).map_err(|e| e.to_string())?;
     for bundle in mods {
