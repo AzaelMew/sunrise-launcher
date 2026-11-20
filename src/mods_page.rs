@@ -127,7 +127,7 @@ impl Finished {
 
 pub(super) enum Event {
     Progress(String, f32),
-    Done(Result<Finished, String>),
+    Done(Result<Finished, installed::InstallError>),
     /// The install found native code the plan didn't know of before the player had allowed
     /// it: the question to ask, whose answer starts the same install again.
     NeedsConsent(Box<PendingConsent>),
@@ -377,14 +377,12 @@ impl Launcher {
                     native_in = m.running.take().map(|t| t.instance);
                     m.card_error = match (&result, &id) {
                         (Err(why), Some(id)) => Some(CardError {
-                            title: registry_title(id),
+                            title: sunrise::known_index()
+                                .and_then(|index| index.project(id).map(|p| p.name.clone()))
+                                .unwrap_or_else(|| id.clone()),
                             id: id.clone(),
-                            line: crate::mods::install_state::plain_failure(
-                                why,
-                                id,
-                                registry_title,
-                            ),
-                            details: why.clone(),
+                            line: crate::mods::install_state::failure_line(why),
+                            details: why.to_string(),
                             built: false,
                             open: false,
                         }),
@@ -405,7 +403,7 @@ impl Launcher {
                                 Ok(said)
                             })
                         }
-                        Err(why) => Some(Err(why)),
+                        Err(why) => Some(Err(why.to_string())),
                     };
                     m.reload_installed();
                     m.installed_list.reset();
@@ -791,13 +789,13 @@ impl Launcher {
 
 /// Why an install's thread stopped: it failed, or it needs the native-code question first.
 enum Stop {
-    Failed(String),
+    Failed(installed::InstallError),
     Consent,
 }
 
 impl From<String> for Stop {
     fn from(why: String) -> Self {
-        Self::Failed(why)
+        Self::Failed(why.into())
     }
 }
 
@@ -805,7 +803,7 @@ impl From<installed::InstallError> for Stop {
     fn from(error: installed::InstallError) -> Self {
         match error {
             installed::InstallError::NeedsNativeConsent { .. } => Self::Consent,
-            installed::InstallError::Message(why) => Self::Failed(why),
+            other => Self::Failed(other),
         }
     }
 }
@@ -1160,7 +1158,7 @@ impl Launcher {
             let _ = tx.send(if consent.get() {
                 Event::NeedsConsent(Box::new(PendingConsent::Collection(ids, shown)))
             } else {
-                Event::Done(result)
+                Event::Done(result.map_err(Into::into))
             });
         });
     }
@@ -1226,13 +1224,6 @@ impl AutoOutcome {
     }
 }
 
-/// A registry mod's name as the cards show it, its id when the index isn't read.
-fn registry_title(id: &str) -> String {
-    sunrise::known_index()
-        .and_then(|index| index.project(id).map(|p| p.name.clone()))
-        .unwrap_or_else(|| id.to_owned())
-}
-
 /// What went wrong for mod `id` in the last install's build, for its card: the reason in one
 /// plain line and the whole text for Details (a compile failure's log).
 pub(crate) fn build_failure_of(
@@ -1245,7 +1236,7 @@ pub(crate) fn build_failure_of(
             .find(|f| f.id == id)
             .map(|f| (f.reason.clone(), f.log.clone())),
         InstallFailure::Interrupted { ids, reason } if ids.iter().any(|i| i == id) => Some((
-            crate::mods::install_state::plain_failure(reason, id, registry_title),
+            crate::mods::install_state::plain_failure(reason),
             reason.clone(),
         )),
         InstallFailure::Interrupted { .. } => None,

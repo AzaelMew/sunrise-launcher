@@ -226,6 +226,19 @@ pub enum InstallError {
     NeedsNativeConsent {
         native: String,
     },
+    /// A mod the install needs has no version for the game played (or none in the range
+    /// asked): `dependency` by its name, with the planner's `reason` for the details.
+    Unavailable {
+        dependency: String,
+        reason: String,
+    },
+    /// Installed mods pin what the install needs: they are named, with the planner's `reason`.
+    Conflict {
+        mods: Vec<String>,
+        reason: String,
+    },
+    /// The planner refused for another reason, in its words.
+    Refused(String),
     Message(String),
 }
 
@@ -256,6 +269,9 @@ impl std::fmt::Display for InstallError {
                 "{native} runs native code: allow native mods first.",
                 &[("native", native)],
             )),
+            Self::Unavailable { reason, .. }
+            | Self::Conflict { reason, .. }
+            | Self::Refused(reason) => f.write_str(reason),
             Self::Message(message) => f.write_str(message),
         }
     }

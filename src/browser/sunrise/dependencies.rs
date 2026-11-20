@@ -50,7 +50,13 @@ pub(super) fn install(
         |_, v| super::fits_game(v, &version.game),
     );
     if let Some(RequestResult::Refused { reason }) = planned.requested.get(&project.id) {
-        return Err(format!("{} can't be installed: {reason}", project.name).into());
+        return Err(super::explain(
+            install.index,
+            std::slice::from_ref(&project.id),
+            &held,
+            &version.game,
+            format!("{} can't be installed: {reason}", project.name),
+        ));
     }
     // Native code the plan names is refused before anything downloads; the files are checked
     // again below, for what the index doesn't declare.

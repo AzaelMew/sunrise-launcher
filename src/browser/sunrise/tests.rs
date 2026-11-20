@@ -800,6 +800,91 @@ fn an_install_the_plan_refuses_for_what_an_installed_mod_needs_names_that_mod() 
 }
 
 #[test]
+fn a_planning_refusal_is_typed_by_what_the_index_says() {
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, number: &str, game: &str, needs: Option<(&str, &str)>| {
+        let mut version = base.versions[0].clone();
+        version.version = number.into();
+        version.game = game.into();
+        version.file.sha256 = index::sha256(format!("{id}{number}{game}").as_bytes());
+        version.requires.clear();
+        version.dependencies = needs.map(|(dep, range)| {
+            vec![index::Dependency {
+                id: dep.into(),
+                version: range.into(),
+                optional: false,
+                side: None,
+            }]
+        });
+        version
+    };
+    for (id, name, versions) in [
+        // Flywheel 0.4 exists, but only for another game; 0.3 runs on this one.
+        (
+            "flywheel",
+            "Flywheel",
+            vec![
+                make("flywheel", "0.4.0", "25.1", None),
+                make("flywheel", "0.3.0", GAME, None),
+            ],
+        ),
+        (
+            "lumen",
+            "Lumen",
+            vec![make("lumen", "1.0.0", GAME, Some(("flywheel", "^0.4")))],
+        ),
+        (
+            "lamps",
+            "Lamps",
+            vec![make("lamps", "1.0.0", GAME, Some(("flywheel", "^0.3")))],
+        ),
+        (
+            "dyno",
+            "Dyno",
+            vec![make("dyno", "1.0.0", GAME, Some(("flywheel", "^0.3")))],
+        ),
+    ] {
+        index.projects.push(index::Project {
+            id: id.into(),
+            name: name.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        });
+    }
+    let held = |id: &str, version: &str, game: &str| index::resolve::InstalledMod {
+        id: id.into(),
+        version: version.into(),
+        sha256: Some(index::sha256(format!("{id}{version}{game}").as_bytes())),
+    };
+    // Needs a version of Flywheel that isn't made for this game: said by type.
+    let none: [index::resolve::InstalledMod; 0] = [];
+    let refused = check_set(&index, &["lumen".to_string()], &none, GAME).unwrap_err();
+    assert!(
+        matches!(&refused, installed::InstallError::Unavailable { dependency, .. } if dependency == "Flywheel"),
+        "{refused:?}"
+    );
+    // The same install with two installed mods pinning the dependency it needs.
+    let mut newer = index.clone();
+    for p in &mut newer.projects {
+        if p.id == "flywheel" {
+            p.versions[0].game = GAME.into();
+        }
+    }
+    let held = [
+        held("flywheel", "0.3.0", GAME),
+        held("lamps", "1.0.0", GAME),
+        held("dyno", "1.0.0", GAME),
+    ];
+    let refused = check_set(&newer, &["lumen".to_string()], &held, GAME).unwrap_err();
+    assert!(
+        matches!(&refused, installed::InstallError::Conflict { mods, .. } if mods == &["Lamps", "Dyno"]),
+        "{refused:?}"
+    );
+}
+
+#[test]
 fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file() {
     for gone in [false, true] {
         let home = scratch(if gone { "flip-gone" } else { "flip-unreadable" });

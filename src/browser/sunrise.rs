@@ -96,6 +96,98 @@ pub fn fits_game(version: &index::Version, game: &str) -> bool {
     version.game == game && version.capabilities.unknown().is_empty()
 }
 
+/// The dependencies `ids` need, by the version the index would choose of each for `game`,
+/// all the way down.
+fn needed<'a>(index: &'a Index, ids: &[String], game: &str) -> Vec<&'a index::Dependency> {
+    let mut found: Vec<&index::Dependency> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
+    let mut todo: Vec<&str> = ids.iter().map(String::as_str).collect();
+    while let Some(id) = todo.pop() {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let Some(version) = index
+            .project(id)
+            .and_then(|project| index.installable(project, game))
+        else {
+            continue;
+        };
+        for dep in version
+            .dependencies
+            .iter()
+            .flatten()
+            .filter(|d| !d.optional)
+        {
+            found.push(dep);
+            todo.push(&dep.id);
+        }
+    }
+    found
+}
+
+/// Whether the index has a version of what `dep` asks for that runs on `game`.
+fn available(index: &Index, dep: &index::Dependency, game: &str) -> bool {
+    let Ok(range) = semver::VersionReq::parse(&dep.version) else {
+        return true;
+    };
+    index.project(&dep.id).is_some_and(|project| {
+        project.versions.iter().any(|v| {
+            fits_game(v, game)
+                && index.revoked(&project.id, &v.file.sha256).is_none()
+                && semver::Version::parse(&v.version).is_ok_and(|n| range.matches(&n))
+        })
+    })
+}
+
+/// The installed mod `m`'s own requirement among `deps`, when it pins one of them.
+fn pins<'a>(
+    index: &'a Index,
+    m: &index::resolve::InstalledMod,
+    deps: &[&index::Dependency],
+) -> Option<&'a index::Dependency> {
+    index
+        .project(&m.id)?
+        .versions
+        .iter()
+        .find(|v| v.version == m.version)?
+        .dependencies
+        .iter()
+        .flatten()
+        .find(|d| !d.optional && deps.iter().any(|needed| needed.id == d.id))
+}
+
+/// Why the planner refused `ids` (its words are `reason`), by what the index says: a mod they
+/// need that has no version for `game`, or installed mods that pin what they need. Anything
+/// else keeps the planner's words.
+pub fn explain(
+    index: &Index,
+    ids: &[String],
+    held: &[index::resolve::InstalledMod],
+    game: &str,
+    reason: String,
+) -> installed::InstallError {
+    let deps = needed(index, ids, game);
+    let name = |id: &str| index.project(id).map_or(id, |p| p.name.as_str()).to_owned();
+    if let Some(dep) = deps.iter().find(|d| !available(index, d, game)) {
+        return installed::InstallError::Unavailable {
+            dependency: name(&dep.id),
+            reason,
+        };
+    }
+    let mods: Vec<String> = held
+        .iter()
+        .filter(|m| !ids.contains(&m.id))
+        .filter(|m| pins(index, m, &deps).is_some())
+        .map(|m| name(&m.id))
+        .collect();
+    if mods.is_empty() {
+        installed::InstallError::Refused(reason)
+    } else {
+        installed::InstallError::Conflict { mods, reason }
+    }
+}
+
 /// Plans every one of `ids` together, once, and refuses the whole set with the planner's reason
 /// if any of them can't be installed with the others: nothing is downloaded before that.
 pub fn check_set(
@@ -103,7 +195,7 @@ pub fn check_set(
     ids: &[String],
     held: &[index::resolve::InstalledMod],
     game: &str,
-) -> Result<index::resolve::InstallPlan, String> {
+) -> Result<index::resolve::InstallPlan, installed::InstallError> {
     let requests: Vec<_> = ids
         .iter()
         .map(|id| index::resolve::Request {
@@ -122,8 +214,12 @@ pub fn check_set(
     for id in ids {
         if let Some(index::resolve::RequestResult::Refused { reason }) = plan.requested.get(id) {
             let name = index.project(id).map_or(id.as_str(), |p| p.name.as_str());
-            return Err(format!(
-                "{name} can't be installed with the others: {reason}"
+            return Err(explain(
+                index,
+                ids,
+                held,
+                game,
+                format!("{name} can't be installed with the others: {reason}"),
             ));
         }
     }
@@ -169,9 +265,10 @@ pub fn would_break(
     held: &[index::resolve::InstalledMod],
     game: &str,
 ) -> Vec<Broken> {
-    let Err(refusal) = check_set(index, ids, held, game) else {
+    if check_set(index, ids, held, game).is_ok() {
         return Vec::new();
-    };
+    }
+    let deps = needed(index, ids, game);
     let works_without = |gone: &[&index::resolve::InstalledMod]| {
         let rest: Vec<_> = held
             .iter()
@@ -180,12 +277,12 @@ pub fn would_break(
             .collect();
         check_set(index, ids, &rest, game).is_ok()
     };
-    // Every installed mod that needs something the plan refuses is a suspect; two may pin the
+    // Every installed mod that needs what the install needs is a suspect; two may pin the
     // same dependency, so removing one alone doesn't make the plan work.
     let mut gone: Vec<&index::resolve::InstalledMod> = held
         .iter()
         .filter(|m| !ids.contains(&m.id))
-        .filter(|m| needs_refused(index, m, &refusal).is_some())
+        .filter(|m| pins(index, m, &deps).is_some())
         .collect();
     if !works_without(&gone) {
         return Vec::new();
@@ -203,27 +300,13 @@ pub fn would_break(
     }
     gone.into_iter()
         .filter_map(|m| {
+            let dep = pins(index, m, &deps)?;
             Some(Broken {
                 id: m.id.clone(),
-                needs: needs_refused(index, m, &refusal)?,
+                needs: format!("{} {}", dep.id, dep.version),
             })
         })
         .collect()
-}
-
-/// What installed mod `m` needs that the plan's `refusal` names, as "id version".
-fn needs_refused(index: &Index, m: &index::resolve::InstalledMod, refusal: &str) -> Option<String> {
-    let version = index
-        .project(&m.id)?
-        .versions
-        .iter()
-        .find(|v| v.version == m.version)?;
-    let dep = version
-        .dependencies
-        .iter()
-        .flatten()
-        .find(|d| !d.optional && refusal.contains(&d.id))?;
-    Some(format!("{} {}", dep.id, dep.version))
 }
 
 /// The index read last in this run, without asking the network: for what must not wait.
