@@ -75,6 +75,63 @@ pub(super) fn retire(record: &Path) -> io::Result<()> {
     }
 }
 
+/// Retire a live record without dropping its only recovery evidence until the rename is durable.
+pub(super) fn mark_retired(home: &Path, from: &Path, to: &Path) -> io::Result<()> {
+    #[cfg(not(windows))]
+    {
+        fs::rename(from, to)?;
+        establish_retirement(home, to)
+    }
+    #[cfg(windows)]
+    {
+        let _ = home;
+        move_through(from, to)?;
+        #[cfg(test)]
+        fail_barrier_if_injected(to)?;
+        Ok(())
+    }
+}
+
+/// Re-establish the barrier on the *visible retired record*. In particular, absence of
+/// the live name does not prove a rename whose flush failed.
+pub(super) fn establish_retirement(home: &Path, retired: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    fail_barrier_if_injected(retired)?;
+    #[cfg(not(windows))]
+    {
+        let _ = home;
+        sync_directory(retired.parent().expect("inside the profile"))?;
+        flush(&File::open(retired)?)
+    }
+    #[cfg(windows)]
+    {
+        // Re-issue an atomic write-through replacement of the same evidence. File
+        // FlushFileBuffers alone is not an unprivileged directory rename barrier.
+        replace(home, retired, &fs::read(retired)?)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_RETIREMENT: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn fail_next_retirement_barrier(record: &Path) {
+    FAIL_RETIREMENT.with(|fault| *fault.borrow_mut() = Some(record.to_owned()));
+}
+
+#[cfg(test)]
+fn fail_barrier_if_injected(record: &Path) -> io::Result<()> {
+    FAIL_RETIREMENT.with(|fault| {
+        if fault.borrow().as_deref() == Some(record) {
+            fault.take();
+            return Err(io::Error::other("injected retirement barrier failure"));
+        }
+        Ok(())
+    })
+}
+
 /// Repeat the restoration barrier when the target already matches the recorded preimage.
 /// A pending addition may never have created its target directory at all.
 pub(super) fn sync_restored(to: &Path, backup: &Path, missing: bool) -> io::Result<()> {

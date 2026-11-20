@@ -501,11 +501,16 @@ fn read(home: &Path) -> Result<Option<Record>, String> {
 
 fn clean_retired(home: &Path) -> Result<(), String> {
     if let Some(record) = read_at(home, RETIRED)? {
-        record.operation()?.stage.clean(home)?;
         let marker = home.join(RETIRED);
-        durable::retire(&marker).map_err(|e| at(&marker, e))?;
+        durable::establish_retirement(home, &marker).map_err(|e| at(&marker, e))?;
+        remove_retired(home, &marker, &record.operation()?.stage)?;
     }
     Ok(())
+}
+
+fn remove_retired(home: &Path, marker: &Path, stage: &Stage) -> Result<(), String> {
+    stage.clean(home)?;
+    durable::retire(marker).map_err(|e| at(marker, e))
 }
 
 /// Read reference evidence under the caller's cache-reference guard, without acquiring
@@ -817,7 +822,7 @@ impl Record {
     fn clean_binding_stage(&self, home: &Path) -> Result<(), String> {
         if let Some(stage) = &self.retirement {
             let record = home.join(RECORD);
-            durable::sync_restored(&record, &record, false).map_err(|e| at(&record, e))?;
+            durable::establish_retirement(home, &record).map_err(|e| at(&record, e))?;
             stage.clean(home)?;
         }
         Ok(())
@@ -1095,10 +1100,11 @@ impl Record {
         if !absent(&retired_file)? {
             return Err(at(&retired_file, unsettled()));
         }
-        durable::restore_move(&file, &retired_file).map_err(|e| at(&file, e))?;
+        durable::mark_retired(home, &file, &retired_file).map_err(|e| at(&file, e))?;
         retired();
-        // The exact generation is already settled. If cleanup fails, leave proof for retry.
-        let _ = clean_retired(home);
+        // This writer already established the retirement barrier. If cleanup fails, leave
+        // proof for the next admission (which checks the barrier again before removing it).
+        let _ = remove_retired(home, &retired_file, &op.stage);
         Ok(committed)
     }
 }

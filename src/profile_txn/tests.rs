@@ -527,6 +527,42 @@ fn a_killed_retirement_reclaims_its_exact_tree_but_never_a_loose_one() {
 }
 
 #[test]
+fn retirement_retries_a_failed_post_rename_barrier_before_erasing_preimages() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    initialized(home, true);
+    let mut owner = Admission::open(home, None).unwrap();
+    let sealed = seal(&mut owner, false);
+    let record = &sealed.0.record;
+    let stage = record.operation().unwrap().stage.path(home);
+    let retired = home.join(RETIRED);
+    record.publish_at(home, || Ok(()), |_, _| Ok(())).unwrap();
+    durable::fail_next_retirement_barrier(&retired);
+    assert!(record
+        .complete(home, |_| {}, || {})
+        .unwrap_err()
+        .contains("retirement barrier failure"));
+    assert!(retired.is_file() && !home.join(RECORD).exists());
+    assert_eq!(fs::read(stage.join("pointer-old")).unwrap(), OLD);
+    let refs = references(home).unwrap();
+    assert_eq!(refs.before.as_deref(), Some(OLD));
+    assert_eq!(refs.after.as_deref(), Some(INSTALLED));
+    drop(sealed);
+    drop(owner);
+
+    durable::fail_next_retirement_barrier(&retired);
+    drop(Admission::open(home, None).unwrap());
+    assert!(
+        retired.is_file() && stage.is_dir(),
+        "a retry failure must keep both sources of proof"
+    );
+    assert_eq!(fs::read(stage.join("pointer-old")).unwrap(), OLD);
+    drop(Admission::open(home, None).unwrap());
+    assert!(!retired.exists() && !stage.exists());
+    pair(home, false, true);
+}
+
+#[test]
 #[cfg(unix)]
 fn a_child_inherits_the_profile_gate_and_blocks_an_already_open_launcher() {
     let tmp = tempfile::tempdir().unwrap();
