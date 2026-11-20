@@ -361,3 +361,36 @@ fn data_directory_leaf_never_leases_ancestors_outside_data() {
         .unwrap()
         .success());
 }
+
+#[cfg(unix)]
+#[test]
+fn wrapped_game_leases_its_resources_without_parsing_the_wrapper() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let resources = root.path().join("shared/res");
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&resources).unwrap();
+    let words: Vec<std::ffi::OsString> = [
+        "game",
+        "--resources",
+        "../shared/res",
+        "--session-file",
+        "session.json",
+    ]
+    .map(Into::into)
+    .into();
+    let game = root.path().join("run");
+    fs::create_dir_all(&game).unwrap();
+    let mut command = Command::new("gamemoderun");
+    command
+        .args(&words)
+        .current_dir(&game)
+        .env("SUNRISE_HOME", &home)
+        .env(GAME, serde_json::to_string(&words).unwrap());
+    let _claims = shared(&command).unwrap();
+    let registry = Registry::open().unwrap();
+    assert!(matches!(
+        registry.lock(&directory(&resources), LockMode::Exclusive),
+        Err(Error::Busy)
+    ));
+}
