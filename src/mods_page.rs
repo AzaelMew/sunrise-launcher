@@ -11,9 +11,27 @@ use sunrise_launcher::browser::{
 };
 use sunrise_launcher::native_status;
 
+mod queue;
+
+/// How an install ended well: what to tell the player, if anything (a registry mod says
+/// nothing: its card shows it installed), and whether native code went in, which a build takes up.
+pub(super) struct Finished {
+    said: Option<String>,
+    native: bool,
+}
+
+impl Finished {
+    fn said(said: String) -> Self {
+        Self {
+            said: Some(said),
+            native: false,
+        }
+    }
+}
+
 pub(super) enum Event {
     Progress(String, f32),
-    Done(Result<String, String>),
+    Done(Result<Finished, String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(Vec<String>),
     /// A project page's part, an image or a filter's values (`mods_project`).
@@ -45,6 +63,8 @@ pub(super) struct Mods {
     /// The project being installed, and the line and fraction of its download.
     pub(super) busy: Option<(String, String, f32)>,
     pub(super) message: Option<Result<String, String>>,
+    /// What waits for the install and build slot.
+    queue: queue::Queue,
     pub(super) updates: HashMap<(SourceId, String), String>,
     /// An install awaiting explicit native-code consent, before any download.
     /// The selected instance's native build state, the mods it would build again
@@ -137,6 +157,7 @@ impl Mods {
             world: None,
             busy: None,
             message: None,
+            queue: Default::default(),
             native_state: Default::default(),
             unbuilt: None,
             updates: HashMap::new(),
@@ -157,6 +178,7 @@ impl Launcher {
         let mut changed = false;
         let mut loaded = Vec::new();
         let mut done = false;
+        let mut native = false;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
@@ -170,10 +192,16 @@ impl Launcher {
                 Event::Done(result) => {
                     done = true;
                     m.busy = None;
-                    if let Ok(said) = &result {
-                        crate::glass_toast::say(said.clone());
-                    }
-                    m.message = Some(result);
+                    m.message = match result {
+                        Ok(finished) => {
+                            native |= finished.native;
+                            finished.said.map(|said| {
+                                crate::glass_toast::say(said.clone());
+                                Ok(said)
+                            })
+                        }
+                        Err(why) => Some(Err(why)),
+                    };
                     m.reload_installed();
                     m.installed_list.reset();
                 }
@@ -190,6 +218,21 @@ impl Launcher {
         if done {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
+        }
+        if native {
+            self.mods.queue.build_after_install();
+        }
+        // The build that finishes an install goes through the Build button's entry, so its own
+        // planner decides what to build: native mods share a patch library, so one mod is
+        // never built alone. A build already running can't take the new mod in, so the one
+        // follow-up waits until it ends.
+        if self
+            .mods
+            .queue
+            .build_due(self.mods.busy.is_some(), self.native_step.is_some())
+        {
+            self.build_native();
+            changed = true;
         }
         for l in loaded {
             self.mods_loaded(l);
@@ -291,9 +334,6 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         let home = self.mods.home();
         let game = self.mods_game();
-        let instance = self
-            .selected_instance()
-            .map_or_else(|| "Sunrise".to_string(), |i| i.name.clone());
         let world = self.mods.world.clone().and_then(|path| {
             let (_, name) = self.mods.worlds.iter().find(|(p, _)| *p == path)?;
             Some((path, name.clone()))
@@ -306,7 +346,7 @@ impl Launcher {
                     let _ = tx.send(Event::Progress(line.to_string(), f));
                 }
             };
-            let result = (|| -> Result<String, String> {
+            let result = (|| -> Result<Finished, String> {
                 let source = browser::source(source);
                 let p = match known {
                     Some(p) => p,
@@ -324,7 +364,7 @@ impl Launcher {
                         &game,
                         &|f| progress(&p.title, f),
                     )?;
-                    return Ok(trf(
+                    return Ok(Finished::said(trf(
                         "Put {pack} {version} in {world}'s data packs, checksum checked: the \
                              game turns it on when the world opens. {coverage}",
                         &[
@@ -333,7 +373,7 @@ impl Launcher {
                             ("world", &name),
                             ("coverage", &done.coverage.summary()),
                         ],
-                    ));
+                    )));
                 }
                 if p.kind == PackKind::Modpack && p.source == SourceId::Sunrise {
                     let pack = sunrise::pack::install(&p.id, &progress)?;
@@ -343,7 +383,7 @@ impl Launcher {
                             url,
                         );
                     }
-                    return Ok(trf(
+                    return Ok(Finished::said(trf(
                         "Installed {pack} {version} as its own profile with {mods}, each \
                              checked. Play it from the list above.",
                         &[
@@ -351,32 +391,24 @@ impl Launcher {
                             ("version", &pack.version),
                             ("mods", &pack.mods.join(", ")),
                         ],
-                    ));
+                    )));
                 }
                 let done = installed::install(&*source, &p, everything, &home, &game, &progress)?;
                 if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
-                    let names = done.into_iter().map(|e| e.title).collect::<Vec<_>>();
-                    return Ok(trf(
-                        "Installed {mods}.",
-                        &[("mods", &crate::mods::names(&names))],
-                    ));
+                    return Ok(Finished {
+                        said: None,
+                        native: done.iter().any(|e| native_status::is_native_file(&e.file)),
+                    });
                 }
                 let names: Vec<String> = done
                     .iter()
                     .map(|e| format!("{} {}", e.title, e.number))
                     .collect();
-                let mods = names.join(", ");
-                if done.iter().any(|e| native_status::is_native_file(&e.file)) {
-                    return Ok(trf(
-                        "Installed {mods} into {instance}. Build to play with it.",
-                        &[("mods", &mods), ("instance", &instance)],
-                    ));
-                }
-                Ok(trf(
+                Ok(Finished::said(trf(
                     "Installed {mods}, checksums checked. Turn it on in the game: Options \
                          > Resource Packs.",
-                    &[("mods", &mods)],
-                ))
+                    &[("mods", &names.join(", "))],
+                )))
             })();
             let _ = tx.send(Event::Done(result));
         });
@@ -411,7 +443,7 @@ impl Launcher {
         ));
         let (tx, home, game) = (self.mods.tx.clone(), self.mods.home(), self.mods_game());
         std::thread::spawn(move || {
-            let result = (|| -> Result<String, String> {
+            let result = (|| -> Result<Finished, String> {
                 // The whole set is planned once first: a conflict between picks refuses all of
                 // them before anything downloads. Each is then installed with what it needs.
                 let index = sunrise::fetched_index().ok_or_else(|| {
@@ -422,13 +454,20 @@ impl Launcher {
                 sunrise::check_set(&index, &ids, &held, &game)?;
                 let source = browser::source(SourceId::Sunrise);
                 let total = ids.len() as f32;
-                let mut names = crate::mods::run_in_order(&ids, |i, id| {
+                let native = std::cell::Cell::new(false);
+                crate::mods::run_in_order(&ids, |i, id| {
                     let p = source.project(id)?;
                     let progress = |line: &str, f: f32| {
                         let _ = tx.send(Event::Progress(line.to_string(), (i as f32 + f) / total));
                     };
                     installed::install(&*source, &p, false, &home, &game, &progress)
-                        .map(|done| done.into_iter().map(|e| e.title).collect())
+                        .map(|done| {
+                            native.set(
+                                native.get()
+                                    || done.iter().any(|e| native_status::is_native_file(&e.file)),
+                            );
+                            done.into_iter().map(|e| e.title).collect()
+                        })
                         .map_err(|why| {
                             trf(
                                 "{mod} didn't install: {why}",
@@ -436,11 +475,10 @@ impl Launcher {
                             )
                         })
                 })?;
-                names.dedup();
-                Ok(trf(
-                    "Installed {mods}.",
-                    &[("mods", &crate::mods::names(&names))],
-                ))
+                Ok(Finished {
+                    said: None,
+                    native: native.get(),
+                })
             })();
             let _ = tx.send(Event::Done(result));
         });

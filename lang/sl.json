@@ -204,7 +204,6 @@
   "Installed": "Nameščeno",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Nameščen {mods} iz GitHub ({source}). Zgradite ga na strani Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} nameščene v sunrise-mods in vklopljene, kontrolna vsota preverjena (Možnosti > Modifikacije v igri).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} nameščene v {instance}. Za igranje z njimi zgradite.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Nameščeno {mods}, kontrolne vsote preverjene. Vklopite v igri: Možnosti > Paketi virov.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} nameščen kot lasten profil z {mods}, vsak preverjen. Igrajte ga s seznama zgoraj.",
   "Installing the build": "Namestitev zgradbe",

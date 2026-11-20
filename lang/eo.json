@@ -204,7 +204,6 @@
   "Installed": "Instalita",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Instalita {mods} de GitHub ({source}). Konstruu ĝin sur la paĝo Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Instalis {mods} en sunrise-mods kaj ŝaltis ĝin, kontrolsumo kontrolita (Opcioj > Modoj en la ludo).",
-  "Installed {mods} into {instance}. Build to play with it.": "Instalis {mods} en {instance}. Konstruu por ludi kun ĝi.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Instalis {mods}, kontrolsumoj kontrolitaj. Ŝaltu ĝin en la ludo: Opcioj > Rimedpakoj.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Instalis {pack} {version} kiel propran profilon kun {mods}, ĉiu kontrolita. Ludu ĝin el la supra listo.",
   "Installing the build": "Instalante la konstruon",

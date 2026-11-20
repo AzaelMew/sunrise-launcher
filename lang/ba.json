@@ -204,7 +204,6 @@
   "Installed": "Ҡуйылған",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub-нан {mods} ҡуйылған ({source}). Уны Модтар битендә төҙөгөҙ.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods папкаһына ҡуйылды һәм ҡабыҙылды, тикшереү суммаһы тикшерелде (уйында «Опциялар» > «Модтар»).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} инстанцияһына ҡуйылды. Улар менән уйнау өсөн төҙөгөҙ.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} ҡуйылды, тикшереү суммалары тикшерелде. Уны уйында ҡабыҙығыҙ: «Опциялар» > «Ресурс пакеттары».",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} үҙ профиле булараҡ {mods} менән ҡуйылды, һәр береһе тикшерелде. Уны өҫтәге исемлектән уйнағыҙ.",
   "Installing the build": "Төҙөүҙе ҡуйыу",

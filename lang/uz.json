@@ -204,7 +204,6 @@
   "Installed": "Oʻrnatilgan",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub'dan {mods} o'rnatildi ({source}). Uni Mods sahifasida yarating.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods ga o'rnatildi va yoqildi, nazorat summasi tekshirildi (o'yinda Variantlar > Modlar).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} ga o'rnatildi. U bilan o'ynash uchun quring.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} o'rnatildi, nazorat summalari tekshirildi. Uni o'yinda yoqing: Variantlar > Resurs paketlari.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} alohida profil sifatida {mods} bilan o'rnatildi, har biri tekshirildi. Uni yuqoridagi ro'yxatdan o'ynang.",
   "Installing the build": "Qurilishni o'rnatish",

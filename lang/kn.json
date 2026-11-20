@@ -204,7 +204,6 @@
   "Installed": "ಸ್ಥಾಪಿಸಲಾಗಿದೆ",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub ({source}) ರಿಂದ {mods} ಅನ್ನು ಸ್ಥಾಪಿಸಲಾಗಿದೆ. ಮೋಡ್ಸ್ ಪುಟದಲ್ಲಿ ಅದನ್ನು ನಿರ್ಮಿಸಿ.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} ಅನ್ನು sunrise-mods ಗೆ ಸ್ಥಾಪಿಸಿ ಆನ್ ಮಾಡಲಾಗಿದೆ, ಚೆಕ್‌ಸಮ್ ಪರಿಶೀಲಿಸಲಾಗಿದೆ (ಆಟದಲ್ಲಿ ಆಯ್ಕೆಗಳು > ಮೋಡ್‌ಗಳು).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} ಅನ್ನು {instance} ಗೆ ಸ್ಥಾಪಿಸಲಾಗಿದೆ. ಅದರೊಂದಿಗೆ ಆಡಲು ನಿರ್ಮಿಸಿ.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} ಸ್ಥಾಪಿಸಲಾಗಿದೆ, ಚೆಕ್‌ಸಮ್‌ಗಳನ್ನು ಪರಿಶೀಲಿಸಲಾಗಿದೆ. ಆಟದಲ್ಲಿ ಅದನ್ನು ಆನ್ ಮಾಡಿ: ಆಯ್ಕೆಗಳು > ಸಂಪನ್ಮೂಲ ಪ್ಯಾಕ್‌ಗಳು.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} ಅನ್ನು {mods} ನೊಂದಿಗೆ ತನ್ನದೇ ಪ್ರೊಫೈಲ್ ಆಗಿ ಸ್ಥಾಪಿಸಲಾಗಿದೆ, ಪ್ರತಿಯೊಂದೂ ಪರಿಶೀಲಿಸಲಾಗಿದೆ. ಮೇಲಿನ ಪಟ್ಟಿಯಿಂದ ಅದನ್ನು ಪ್ಲೇ ಮಾಡಿ.",
   "Installing the build": "ನಿರ್ಮಾಣವನ್ನು ಸ್ಥಾಪಿಸುವುದು",

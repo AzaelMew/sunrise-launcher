@@ -204,7 +204,6 @@
   "Installed": "Đã cài đặt",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Đã cài đặt {mods} từ GitHub ({source}). Xây dựng nó trên trang Mod.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Đã cài {mods} vào sunrise-mods và bật nó, đã kiểm tra tổng kiểm tra (Tùy chọn > Mod trong trò chơi).",
-  "Installed {mods} into {instance}. Build to play with it.": "Đã cài {mods} vào {instance}. Hãy xây dựng để chơi cùng nó.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Đã cài {mods}, đã kiểm tra tổng kiểm tra. Hãy bật nó trong trò chơi: Tùy chọn > Gói tài nguyên.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Đã cài {pack} {version} thành hồ sơ riêng với {mods}, mỗi thứ đều được kiểm tra. Hãy chơi nó từ danh sách ở trên.",
   "Installing the build": "Cài đặt bản dựng",

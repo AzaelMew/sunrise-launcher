@@ -204,7 +204,6 @@
   "Installed": "Wedi'i osod",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Wedi'i osod {mods} o GitHub ({source}). Adeiladwch ef ar y dudalen Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Gosodwyd {mods} yn sunrise-mods a'i droi ymlaen, gwirwyd y siec (Options > Mods yn y gêm).",
-  "Installed {mods} into {instance}. Build to play with it.": "Gosodwyd {mods} yn {instance}. Adeiladwch i chwarae gyda nhw.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Gosodwyd {mods}, gwirwyd y sieciau. Trowch ef ymlaen yn y gêm: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Gosodwyd {pack} {version} fel ei broffil ei hun gyda {mods}, pob un wedi'i wirio. Chwaraewch ef o'r rhestr uchod.",
   "Installing the build": "Gosod yr adeilad",

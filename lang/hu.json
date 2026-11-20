@@ -204,7 +204,6 @@
   "Installed": "Telepítve",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "{mods} telepítve a GitHubról ({source}). Építsd meg a Mods oldalon.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Telepítve: {mods} a sunrise-mods mappába, és bekapcsolva, az ellenőrző összeg ellenőrizve (Beállítások > Modok a játékban).",
-  "Installed {mods} into {instance}. Build to play with it.": "Telepítve: {mods} ide: {instance}. A játékhoz építse meg.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Telepítve: {mods}, az ellenőrző összegek ellenőrizve. Kapcsolja be a játékban: Beállítások > Erőforráscsomagok.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "A(z) {pack} {version} saját profilként telepítve {mods} moddal, mindegyik ellenőrizve. Játsszon vele a fenti listából.",
   "Installing the build": "A build telepítése",

@@ -204,7 +204,6 @@
   "Installed": "Nainštalované",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Nainštalované {mods} z GitHub ({source}). Zostavte si ho na stránke Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Nainštalované {mods} do sunrise-mods a zapnuté, kontrolný súčet overený (Options > Mods v hre).",
-  "Installed {mods} into {instance}. Build to play with it.": "Nainštalované {mods} do {instance}. Zostavte hru, aby ste si s nimi mohli zahrať.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Nainštalované {mods}, kontrolné súčty overené. Zapnite ho v hre: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Nainštalované {pack} {version} ako samostatný profil s {mods}, každý overený. Hrajte ho zo zoznamu vyššie.",
   "Installing the build": "Inštalácia zostavy",

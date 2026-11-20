@@ -204,7 +204,6 @@
   "Installed": "вырнаҫтарнӑ",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Установлен {mods} от GitHub ({source}). Ӑна Модсен страницинче тӑвӑр.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} sunrise-mods патне вырнаҫтарнӑ тата ҫутнӑ, тӗрӗслев суммине тӗрӗсленӗ (вӑйӑра Options > Mods).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} {instance} инстанцине вырнаҫтарнӑ. Унпа выляма пухӑр.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} вырнаҫтарнӑ, тӗрӗслев суммисене тӗрӗсленӗ. Ӑна вӑйӑра ҫутӑр: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} хӑйӗн профилӗ пек {mods} пӗрле вырнаҫтарнӑ, кашнине тӗрӗсленӗ. Ӑна ҫӳлти списокран выляса пӑхӑр.",
   "Installing the build": "Сборкӑна вырнаҫтарасси",

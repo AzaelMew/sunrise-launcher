@@ -204,7 +204,6 @@
   "Installed": "Instal·lat",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "S'ha instal·lat {mods} des de GitHub ({source}). Creeu-lo a la pàgina de modificacions.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Instal·lats {mods} a sunrise-mods i activats, amb la suma de comprovació verificada (Opcions > Mods al joc).",
-  "Installed {mods} into {instance}. Build to play with it.": "Instal·lats {mods} a {instance}. Compila per jugar-hi.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Instal·lats {mods}, sumes de comprovació verificades. Activa'l al joc: Opcions > Paquets de recursos.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Instal·lat {pack} {version} com a perfil propi amb {mods}, cadascun verificat. Juga-hi des de la llista de dalt.",
   "Installing the build": "Instal·lació de la construcció",

@@ -204,7 +204,6 @@
   "Installed": "Asennettu",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Asennettu {mods} GitHubista ({source}). Rakenna se Modit-sivulla.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Asennettu {mods} sunrise-mods-kansioon ja otettu käyttöön, tarkistussumma tarkistettu (Asetukset > Modit pelissä).",
-  "Installed {mods} into {instance}. Build to play with it.": "Asennettu {mods} instanssiin {instance}. Kokoa pelataksesi sen kanssa.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Asennettu {mods}, tarkistussummat tarkistettu. Ota se käyttöön pelissä: Asetukset > Resurssipaketit.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Asennettu {pack} {version} omaksi profiilikseen modien {mods} kanssa, jokainen tarkistettu. Pelaa sitä yllä olevasta luettelosta.",
   "Installing the build": "Rakenteen asentaminen",

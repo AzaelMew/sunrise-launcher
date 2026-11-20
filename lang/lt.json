@@ -204,7 +204,6 @@
   "Installed": "Įdiegta",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Įdiegta {mods} iš GitHub ({source}). Sukurkite jį Modifikacijų puslapyje.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Įdiegta {mods} į sunrise-mods ir įjungta, kontrolinė suma patikrinta (žaidime Parinktys > Modifikacijos).",
-  "Installed {mods} into {instance}. Build to play with it.": "Įdiegta {mods} į {instance}. Sukurkite žaidimą, kad galėtumėte žaisti.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Įdiegta {mods}, kontrolinės sumos patikrintos. Įjunkite tai žaidime: Parinktys > Išteklių paketai.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Įdiegta {pack} {version} kaip atskiras profilis su {mods}, kiekvienas patikrintas. Žaiskite jį iš aukščiau esančio sąrašo.",
   "Installing the build": "Konstrukcijos montavimas",

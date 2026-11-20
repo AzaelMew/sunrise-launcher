@@ -204,7 +204,6 @@
   "Installed": "ติดตั้งแล้ว",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "ติดตั้ง {mods} จาก GitHub ({source}) แล้ว บิลด์ได้ในหน้าม็อด",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "ติดตั้ง {mods} ลงใน sunrise-mods และเปิดใช้แล้ว ตรวจสอบ checksum แล้ว (ตัวเลือก > ม็อด ในเกม)",
-  "Installed {mods} into {instance}. Build to play with it.": "ติดตั้ง {mods} ลงใน {instance} แล้ว บิลด์เพื่อเล่นกับมัน",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "ติดตั้ง {mods} แล้ว ตรวจสอบ checksum แล้ว เปิดใช้ในเกมที่: ตัวเลือก > รีซอร์สแพ็ก",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "ติดตั้ง {pack} {version} เป็นโปรไฟล์แยกพร้อม {mods} โดยตรวจสอบแต่ละรายการแล้ว เล่นได้จากรายการด้านบน",
   "Installing the build": "กำลังติดตั้งบิลด์",

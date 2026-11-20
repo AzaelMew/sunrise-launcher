@@ -204,7 +204,6 @@
   "Installed": "Instalat",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Instalat {mods} din GitHub ({source}). Construiește-l pe pagina Moduri.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Instalat {mods} în sunrise-mods și activat, cu suma de control verificată (Opțiuni > Moduri în joc).",
-  "Installed {mods} into {instance}. Build to play with it.": "Instalat {mods} în {instance}. Compilați pentru a juca cu el.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Instalat {mods}, sume de control verificate. Activați-l în joc: Opțiuni > Pachete de resurse.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} a fost instalat ca profil propriu cu {mods}, fiecare verificat. Jucați-l din lista de mai sus.",
   "Installing the build": "Instalarea build-ului",

@@ -204,7 +204,6 @@
   "Installed": "Инсталиран",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Инсталирано {mods} от GitHub ({source}). Изградете го на страницата Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Инсталирани {mods} в sunrise-mods и включени, контролната сума е проверена (Опции > Модификации в играта).",
-  "Installed {mods} into {instance}. Build to play with it.": "Инсталирани {mods} в {instance}. Компилирайте, за да играете с тях.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Инсталирани {mods}, контролните суми са проверени. Включете го в играта: Опции > Пакети с ресурси.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Инсталиран {pack} {version} като отделен профил с {mods}, всеки проверен. Играйте го от списъка по-горе.",
   "Installing the build": "Инсталиране на компилацията",

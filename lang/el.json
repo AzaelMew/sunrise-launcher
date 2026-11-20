@@ -204,7 +204,6 @@
   "Installed": "Εγκατεστημένο",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Εγκαταστάθηκε {mods} από το GitHub ({source}). Δημιουργήστε το στη σελίδα Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Εγκαταστάθηκαν {mods} στο sunrise-mods και ενεργοποιήθηκαν, με έλεγχο αθροίσματος (Options > Mods στο παιχνίδι).",
-  "Installed {mods} into {instance}. Build to play with it.": "Εγκαταστάθηκαν {mods} στο {instance}. Κατασκευάστε για να παίξετε μαζί του.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Εγκαταστάθηκαν {mods}, με έλεγχο αθροισμάτων. Ενεργοποιήστε το στο παιχνίδι: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Εγκαταστάθηκε το {pack} {version} ως δικό του προφίλ με {mods}, καθένα ελεγμένο. Παίξτε το από τη λίστα παραπάνω.",
   "Installing the build": "Εγκατάσταση της κατασκευής",

@@ -204,7 +204,6 @@
   "Installed": "インストール済み",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "{mods} をGitHub ({source}) からインストールしました。「Mods」ページからビルドしてください。",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods}をsunrise-modsにインストールして有効にしました。チェックサム確認済み（ゲーム内のオプション > Mod）。",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods}を{instance}にインストールしました。プレイするにはビルドしてください。",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods}をインストールしました。チェックサム確認済み。ゲーム内のオプション > リソースパックで有効にしてください。",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version}を{mods}とともに独自のプロファイルとしてインストールしました（各項目確認済み）。上の一覧からプレイしてください。",
   "Installing the build": "ビルドをインストール中",

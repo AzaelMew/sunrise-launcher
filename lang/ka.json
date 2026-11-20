@@ -204,7 +204,6 @@
   "Installed": "დაყენებულია",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "დაინსტალირებულია {mods} GitHub-დან ({source}). შექმენით იგი Mods გვერდზე.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} დაინსტალირდა sunrise-mods-ში და ჩაირთო, საკონტროლო ჯამი შემოწმებულია (თამაშში: პარამეტრები > მოდები).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} დაინსტალირდა {instance}-ში. ააწყვეთ, რომ ითამაშოთ მასთან ერთად.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "დაინსტალირდა {mods}, საკონტროლო ჯამები შემოწმებულია. ჩართეთ ის თამაშში: პარამეტრები > რესურსების პაკეტები.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} დაინსტალირდა როგორც საკუთარი პროფილი {mods}-ით, თითოეული შემოწმებული. ითამაშეთ ის ზემოთ მოცემული სიიდან.",
   "Installing the build": "კონსტრუქციის ინსტალაცია",

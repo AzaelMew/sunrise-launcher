@@ -204,7 +204,6 @@
   "Installed": "Kufakiwe",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Kufakiwe {mods} kusuka ku-GitHub ({source}). Yakhele ekhasini le-Mods.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Kufakwe u-{mods} ku-sunrise-mods futhi kwavulwa, i-checksum ihloliwe (Options > Mods kugeyimu).",
-  "Installed {mods} into {instance}. Build to play with it.": "Kufakwe u-{mods} ku-{instance}. Yakha ukuze udlale nawo.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Kufakwe u-{mods}, ama-checksum ahloliwe. Yivule kugeyimu: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Kufakwe u-{pack} {version} njengephrofayela yayo siqu no-{mods}, ngamunye ehloliwe. Yidlale ohlwini olungenhla.",
   "Installing the build": "Ukufaka isakhiwo",

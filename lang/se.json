@@ -204,7 +204,6 @@
   "Installed": "Installerejuvvon",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Installerejuvvon {mods} GitHub rájes ({source}). Hukset dan Mods-siidui.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "Installerejuvvon {mods} sunrise-mods:ii ja biddjon johtui, dárkkistansumma dárkkistuvvon (Opšuvnnat > Moddat spealus).",
-  "Installed {mods} into {instance}. Build to play with it.": "Installerejuvvon {mods} {instance}:ii. Hukset vai beasat speallat dainna.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "Installerejuvvon {mods}, dárkkistansummat dárkkistuvvon. Bidjat dan johtui spealus: Opšuvnnat > Resursapakeahtat.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "Installerejuvvon {pack} {version} iežas profiillan {mods}:ain, juohkehaš dárkkistuvvon. Speallat dan bajábealde listtus.",
   "Installing the build": "Installeren huksema",

@@ -204,7 +204,6 @@
   "Installed": "Суулгасан",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "GitHub-аас {mods} суулгасан ({source}). Үүнийг Mods хуудас дээр бүтээгээрэй.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods}-г sunrise-mods руу суулгаж, асаасан, хяналтын нийлбэрийг шалгасан (тоглоомын Options > Mods).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods}-г {instance} руу суулгасан. Үүнтэй тоглохын тулд бүтээнэ үү.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} суулгасан, хяналтын нийлбэрийг шалгасан. Тоглоомд үүнийг асаана уу: Options > Resource Packs.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version}-г {mods}-тайгаар өөрийн профайл болгон суулгаж, тус бүрийг шалгасан. Дээрх жагсаалтаас тоглоно уу.",
   "Installing the build": "Барилга угсралтын ажил",

@@ -204,7 +204,6 @@
   "Installed": "Uzstādīts",
   "Installed {mods} from GitHub ({source}). Build it on the Mods page.": "Instalēts {mods} no GitHub ({source}). Veidojiet to Mods lapā.",
   "Installed {mods} into sunrise-mods and turned it on, checksum checked (Options > Mods in the game).": "{mods} instalēti sunrise-mods un ieslēgti, kontrolsumma pārbaudīta (spēlē Opcijas > Modi).",
-  "Installed {mods} into {instance}. Build to play with it.": "{mods} instalēti {instance}. Būvējiet, lai ar tiem spēlētu.",
   "Installed {mods}, checksums checked. Turn it on in the game: Options > Resource Packs.": "{mods} instalēti, kontrolsummas pārbaudītas. Ieslēdziet to spēlē: Opcijas > Resursu pakotnes.",
   "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.": "{pack} {version} instalēta kā atsevišķs profils ar {mods}, katrs pārbaudīts. Spēlējiet to no saraksta augšā.",
   "Installing the build": "Konstrukcijas uzstādīšana",
