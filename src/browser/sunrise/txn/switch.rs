@@ -499,7 +499,11 @@ fn candidates(
                 return Err(unsettled());
             }
             for version in &project.versions {
-                if !sunrise::fits_game(version, game)
+                // The catalogue's Minecraft string constrains content-only packages.
+                // For native code the candidate's actual used surface and internals are
+                // checked against the target SDK before the set can be sealed.
+                if (project.kind != index::Kind::NativeMod && !sunrise::fits_game(version, game))
+                    || !version.capabilities.unknown().is_empty()
                     || catalogue
                         .revoked(&project.id, &version.file.sha256)
                         .is_some()
@@ -1094,6 +1098,69 @@ mod tests {
             [("My lantern".into(), "exact bytes".into())]
         );
         assert_eq!(fs::read(file).unwrap(), bytes, "planning is private");
+    }
+
+    #[test]
+    fn native_candidates_with_an_older_catalogue_game_reach_the_target_proof() {
+        let profile = tempfile::tempdir().unwrap();
+        let root = profile.path();
+        let dir = root.join(mod_list::NATIVE_DIR);
+        fs::create_dir(&dir).unwrap();
+        let bytes = sunrise_launcher_smod::Package::write_files(
+            &format!("id='lantern'\nname='Lantern'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{}'\nmixins='{}'\n", manifest::API, "a".repeat(40), "b".repeat(40)),
+            &[("src/lib.rs", b""), ("Cargo.toml", b"[package]\nname='lantern'\nversion='1.0.0'\n")],
+        ).unwrap();
+        let relative = format!("{}/lantern.smod", mod_list::NATIVE_DIR);
+        let path = root.join(&relative);
+        fs::write(&path, &bytes).unwrap();
+        let facts = index::inspect(&index::Kind::NativeMod, &path).unwrap();
+        let digest = index::sha256(&bytes);
+        fs::write(root.join(mod_list::FILE), b"mod.lantern:true\n").unwrap();
+        fs::write(root.join(installed::MANIFEST), serde_json::to_vec(&serde_json::json!({"entries":[{
+            "source":"sunrise", "project":"lantern", "slug":"lantern", "title":"Lantern", "kind":"mod",
+            "version":"1.0.0", "number":"1.0.0", "file":relative, "checksum":format!("SHA-256:{digest}"), "page":"",
+        }]})).unwrap()).unwrap();
+        let source = Inventory::read(root).unwrap();
+        let mut index: index::Index = serde_json::from_value(serde_json::json!({
+            "schema":1, "projects":[{
+                "id":"lantern", "kind":"native-mod", "name":"Lantern", "summary":"Fixture", "authors":["Someone"], "license":"MIT", "source":"https://github.com/example/lantern", "versions":[{
+                    "version":"1.0.0", "published":"2026-11-20", "api":facts.api, "game":"26.3", "side":facts.side, "capabilities":facts.capabilities,
+                    "file":{"name":"lantern.smod", "url":"https://example.test/lantern.smod", "size":bytes.len(), "sha256":digest}
+                }]
+            }], "revoked":[],
+        })).unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let slots = candidates(&source, &index, "26.4", work.path()).unwrap();
+        let mut proved = false;
+        best_survivor_set(&slots, &source, |set| {
+            let candidate = set["lantern"];
+            assert_eq!(candidate.digest, digest);
+            assert_eq!(candidate.manifest.native.as_ref().unwrap().game, "26.3");
+            let answer = native_mods::fit::Verdict::Fits {
+                made_for: "the 26.3 build".into(),
+            };
+            proved = answer.usable();
+            Ok(proved)
+        })
+        .unwrap();
+        assert!(
+            proved,
+            "the native candidate reached target proof despite the catalogue game"
+        );
+
+        // A content-only entry for an older game cannot reach proof; a native takedown
+        // is also excluded even when the SDK could otherwise build the package.
+        let project = &mut index.projects[0];
+        project.kind = index::Kind::Mod;
+        assert!(candidates(&source, &index, "26.4", work.path()).unwrap()["lantern"].is_empty());
+        index.projects[0].kind = index::Kind::NativeMod;
+        index.revoked.push(index::Revoked {
+            id: "lantern".into(),
+            sha256: Some(digest),
+            reason: "taken down".into(),
+            date: String::new(),
+        });
+        assert!(candidates(&source, &index, "26.4", work.path()).unwrap()["lantern"].is_empty());
     }
 
     #[test]
