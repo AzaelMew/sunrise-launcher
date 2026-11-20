@@ -749,7 +749,7 @@ impl Launcher {
             .expect("shown only while a question is pending");
         let question = &ask.question;
         let prepared = match &ask.then {
-            crate::mods_page::Then::PreparedRegistry(prepared) => Some(prepared.plan.question()),
+            crate::mods_page::Then::PreparedInstall(prepared) => prepared.question(),
             crate::mods_page::Then::PreparedEdit(prepared) => Some(prepared.plan.question()),
             _ => None,
         };

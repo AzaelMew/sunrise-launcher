@@ -1548,5 +1548,7 @@
   "Their files are deleted.": "Their files are deleted.",
   "This removal may affect saved worlds": "This removal may affect saved worlds",
   "Remove anyway": "Remove anyway",
-  "Cancel removal": "Cancel removal"
+  "Cancel removal": "Cancel removal",
+  "Update anyway? [y/N]": "Update anyway? [y/N]",
+  "Update cancelled. Nothing was changed.": "Update cancelled. Nothing was changed."
 }

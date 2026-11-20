@@ -103,6 +103,13 @@ impl StagedInstall {
         &self.stage
     }
 
+    pub fn package(&self, id: &str) -> Option<(Option<&installed::Entry>, &str)> {
+        self.before
+            .packages
+            .get(id)
+            .map(|pkg| (pkg.row.as_ref(), pkg.digest.as_str()))
+    }
+
     pub fn base(&self) -> &str {
         match &self.basis {
             Basis::Committed(prior) => prior.base(),

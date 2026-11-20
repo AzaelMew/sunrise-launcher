@@ -5,7 +5,7 @@ use crate::{backend, i18n::tr, worlds};
 use std::sync::Arc;
 
 pub struct RegistryInstall {
-    ready: txn::ReadyInstall,
+    ready: Box<txn::ReadyInstall>,
     evidence: String,
     entries: Vec<installed::Entry>,
 }
@@ -61,7 +61,7 @@ pub fn prepare_registry_install(
         progress(&step.label(), 0.99)
     })?;
     Ok(RegistryInstall {
-        ready,
+        ready: Box::new(ready),
         evidence,
         entries,
     })

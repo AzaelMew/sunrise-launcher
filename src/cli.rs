@@ -2330,7 +2330,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 ));
             }
             if p.kind == Kind::Modpack && p.source == SourceId::Sunrise {
-                let pack = sunrise::pack::install(&p.id, &line)?;
+                let proposal = sunrise::pack::prepare(&p.id, &line)?;
+                if let Some(question) = proposal.question() {
+                    if !switch::approve_world_change(question, tr("Update anyway? [y/N]"))? {
+                        return Err(tr("Update cancelled. Nothing was changed.").into());
+                    }
+                }
+                let pack = proposal.commit(true)?;
                 if as_json {
                     json(
                         serde_json::json!({"pack": pack.id, "version": pack.version, "mods": pack.mods, "home": sunrise::pack::home(&pack.work)}),

@@ -1177,7 +1177,7 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
         Kind::Mod => Ok(format!("{}/{id}.smod", mod_list::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
-        Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
+        Kind::Modpack => Err("A modpack installs as its own profile.".into()),
         Kind::DataPack => Err("A data pack goes into a world (fetch_datapack).".into()),
     }
 }

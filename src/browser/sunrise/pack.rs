@@ -4,7 +4,7 @@
 //! mods in `home/sunrise-mods/`, each downloaded and checked against the index like any
 //! registry mod, turned on or off as the pack says. The pack's overrides (settings, resource
 //! packs, a mod's saved settings) are copied in once, when it is installed.
-use super::{fetch, index, install_version, local, newest, txn, Index};
+use super::{authoritative_index, fetch, index, install_version, newest, txn, Index};
 use crate::{
     backend,
     browser::{installed, mod_list, FileRef, SourceId},
@@ -95,27 +95,98 @@ pub fn home(work: &Path) -> PathBuf {
     work.join("home")
 }
 
-/// Install the pack as one complete set. Once a pack exists, only its admitted base can
-/// choose a candidate version; the launcher's changing selection is not a migration.
-pub fn install(id: &str, progress: &dyn Fn(&str, f32)) -> Result<Installed, String> {
-    install_in(
-        &*index()?,
-        local(),
+/// A complete private pack (first install) or a sealed same-base Update. No live files
+/// change until commit, and the lifecycle gate stays held through the world decision.
+pub struct PackInstall {
+    staged: StagedPack,
+    index: String,
+}
+
+impl PackInstall {
+    pub fn question(&self) -> Option<&crate::worlds::SwitchQuestion> {
+        self.staged.question()
+    }
+
+    pub fn commit(self, approved: bool) -> Result<Installed, String> {
+        self.staged.commit(approved, || {
+            let (_, current) = authoritative_index()?;
+            if current != self.index {
+                return Err(tr("The mod registry changed while the install was being prepared. Nothing was installed.").into());
+            }
+            Ok(())
+        })
+    }
+}
+
+struct StagedPack {
+    state: PackState,
+    installed: Installed,
+    _identity: locks::Locked,
+}
+
+enum PackState {
+    New {
+        stage: tempfile::TempDir,
+        sealed: Box<txn::SealedProfile>,
+    },
+    Update {
+        ready: Box<txn::ReadyInstall>,
+        prior: PriorPack,
+    },
+}
+
+impl StagedPack {
+    fn question(&self) -> Option<&crate::worlds::SwitchQuestion> {
+        match &self.state {
+            PackState::New { .. } => None,
+            PackState::Update { ready, .. } => Some(ready.question()),
+        }
+    }
+
+    fn commit(
+        self,
+        approved: bool,
+        revalidate: impl FnOnce() -> Result<(), String>,
+    ) -> Result<Installed, String> {
+        match self.state {
+            PackState::New { stage, sealed } => {
+                revalidate()?;
+                txn::expose_private_profile(stage.path(), &self.installed.work, &sealed)?;
+                let _ = stage.keep();
+            }
+            PackState::Update { ready, prior } => ready.commit(approved, || {
+                revalidate()?;
+                prior.revalidate()
+            })?,
+        }
+        Ok(self.installed)
+    }
+}
+
+pub fn prepare(id: &str, progress: &dyn Fn(&str, f32)) -> Result<PackInstall, String> {
+    let (index, evidence) = authoritative_index()?;
+    let staged = stage_in(
+        &index,
+        false,
         id,
         &packs_dir(),
         || backend::resolve_version(None),
         progress,
-    )
+    )?;
+    Ok(PackInstall {
+        staged,
+        index: evidence,
+    })
 }
 
-fn install_in(
+fn stage_in(
     index: &Index,
     local: bool,
     id: &str,
     dir: &Path,
     initial_base: impl FnOnce() -> Result<String, String>,
     progress: &dyn Fn(&str, f32),
-) -> Result<Installed, String> {
+) -> Result<StagedPack, String> {
     let p = index
         .project(id)
         .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
@@ -123,43 +194,45 @@ fn install_in(
         return Err(format!("{} is a {}, not a modpack.", p.name, p.kind.name()));
     }
     let work = dir.join(&p.id);
-    let _identity = pack_gate(dir, &p.id)?;
+    let identity = pack_gate(dir, &p.id)?;
     clean_private_trash(dir, &p.id)?;
     let steps = |step: native_mods::Step| progress(&step.label(), 0.99);
-    match fs::symlink_metadata(&work) {
+    let (mut installed, state) = match fs::symlink_metadata(&work) {
         Ok(meta) if meta.is_dir() && !sunrise_launcher_smod::runtime_leases::linked(&meta) => {
             let owner = Arc::new(txn::Lease::admit(&home(&work))?);
-            let prior = read_checked(&work)?.ok_or_else(pack_unavailable)?;
             let active = owner
                 .active_build()?
                 .ok_or_else(|| tr("Play this modpack once before updating it.").to_string())?;
             let game = backend::game_of_build(active.base()).ok_or_else(pack_unavailable)?;
             // No candidate for this build: refuse before creating a staged Install.
             let version = newest(index, p, &game)?;
+            let prior = PriorPack::read(&work)?;
             let plan = txn::StagedInstall::begin(owner, active)?;
-            let mut installed = stage_pack(
+            let installed = stage_pack(
                 index,
                 local,
                 p,
                 version,
                 plan.stage(),
-                Some(&prior),
+                Some((&prior, &plan)),
                 progress,
             )?;
-            let proposal = plan.prepare(
+            prior.revalidate()?;
+            let ready = plan.prepare(
                 index,
                 &[RECORD, ARCHIVE],
                 native_mods::Profile::Optimized,
                 steps,
             )?;
-            if proposal.question().needed() {
-                return Err(proposal.question().lines().join("\n"));
-            }
-            proposal.commit(false, || Ok(()))?;
-            installed.work = work;
-            Ok(installed)
+            (
+                installed,
+                PackState::Update {
+                    ready: Box::new(ready),
+                    prior,
+                },
+            )
         }
-        Ok(_) => Err(pack_unavailable()),
+        Ok(_) => return Err(pack_unavailable()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let target = txn::Target::legacy(&initial_base()?)?;
             let game = backend::game_of_build(target.base()).ok_or_else(pack_unavailable)?;
@@ -170,20 +243,129 @@ fn install_in(
                 .map_err(|e| at(dir, e))?;
             let staged_home = home(stage.path());
             fs::create_dir(&staged_home).map_err(|e| at(&staged_home, e))?;
-            let mut installed = stage_pack(index, local, p, version, &staged_home, None, progress)?;
+            let installed = stage_pack(index, local, p, version, &staged_home, None, progress)?;
             let owner = Arc::new(txn::Lease::admit(&staged_home)?);
-            let active = txn::seal_private_profile(
+            let sealed = txn::seal_private_profile(
                 owner,
                 target.base(),
                 native_mods::Profile::Optimized,
                 steps,
             )?;
-            txn::expose_private_profile(stage.path(), &work, &active)?;
-            let _ = stage.keep();
-            installed.work = work;
-            Ok(installed)
+            (
+                installed,
+                PackState::New {
+                    stage,
+                    sealed: Box::new(sealed),
+                },
+            )
         }
-        Err(e) => Err(at(&work, e)),
+        Err(e) => return Err(at(&work, e)),
+    };
+    installed.work = work;
+    Ok(StagedPack {
+        state,
+        installed,
+        _identity: identity,
+    })
+}
+
+struct PriorPack {
+    members: std::collections::BTreeMap<String, (String, String)>,
+    files: Vec<(PathBuf, Option<String>)>,
+}
+
+impl PriorPack {
+    fn read(work: &Path) -> Result<Self, String> {
+        let home = home(work);
+        let managed = home.join(RECORD);
+        let archive = home.join(ARCHIVE);
+        let mut files = vec![
+            (managed.clone(), pack_file(&managed)?),
+            (archive.clone(), pack_file(&archive)?),
+        ];
+        let legacy = files[0].1.is_none();
+        let record = if legacy {
+            let old = work.join(LEGACY_RECORD);
+            files.push((old.clone(), pack_file(&old)?));
+            old
+        } else {
+            managed
+        };
+        let text = fs::read(&record).map_err(|e| at(&record, e))?;
+        let prior: Installed =
+            serde_json::from_slice(&text).map_err(|e| format!("{}: {e}", record.display()))?;
+        let record_sha = idx::sha256(&text);
+        if work.file_name().and_then(std::ffi::OsStr::to_str) != Some(prior.id.as_str())
+            || !files
+                .iter()
+                .any(|(file, sha)| *file == record && sha.as_ref() == Some(&record_sha))
+        {
+            return Err(pack_unavailable());
+        }
+        let path = if legacy {
+            // Released packs kept the original archive under its real filename. It is
+            // evidence only when exactly one file matches the saved digest.
+            let mut found = None;
+            for entry in fs::read_dir(work).map_err(|e| at(work, e))? {
+                let path = entry.map_err(|e| at(work, e))?.path();
+                if path.extension().is_none_or(|ext| ext != "spack")
+                    || pack_file(&path)?.as_ref() != Some(&prior.sha256)
+                {
+                    continue;
+                }
+                if found.replace(path).is_some() {
+                    return Err(pack_unavailable());
+                }
+            }
+            let path = found.ok_or_else(pack_unavailable)?;
+            files.push((path.clone(), Some(prior.sha256)));
+            path
+        } else {
+            if files[1].1.as_ref() != Some(&prior.sha256) {
+                return Err(pack_unavailable());
+            }
+            archive
+        };
+        let pack = Modpack::read(&path)?;
+        let manifest = pack.manifest;
+        let names: Vec<_> = manifest
+            .mods
+            .iter()
+            .map(|m| format!("{} {}", m.id, m.version))
+            .collect();
+        if manifest.id != prior.id || manifest.version != prior.version || names != prior.mods {
+            return Err(pack_unavailable());
+        }
+        let this = Self {
+            members: manifest
+                .mods
+                .into_iter()
+                .map(|m| (m.id, (m.version, m.sha256)))
+                .collect(),
+            files,
+        };
+        this.revalidate()?;
+        Ok(this)
+    }
+
+    fn revalidate(&self) -> Result<(), String> {
+        for (path, sha) in &self.files {
+            if pack_file(path)? != *sha {
+                return Err(pack_unavailable());
+            }
+        }
+        Ok(())
+    }
+}
+
+fn pack_file(path: &Path) -> Result<Option<String>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() && !sunrise_launcher_smod::runtime_leases::linked(&meta) => {
+            idx::sha256_file(path).map(Some)
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(at(path, e)),
+        Ok(_) => Err(pack_unavailable()),
     }
 }
 
@@ -193,7 +375,7 @@ fn stage_pack(
     project: &idx::Project,
     version: &idx::Version,
     home: &Path,
-    before: Option<&Installed>,
+    before: Option<(&PriorPack, &txn::StagedInstall)>,
     progress: &dyn Fn(&str, f32),
 ) -> Result<Installed, String> {
     let line = format!("{} {}", project.name, version.version);
@@ -211,6 +393,26 @@ fn stage_pack(
     index::check_file(index, project, version, &path)?;
     let pack = Modpack::read(&path)?;
     let mut mods = Vec::new();
+    if let Some((before, plan)) = before {
+        for (id, (version, digest)) in &before.members {
+            if !plan.package(id).is_some_and(|(row, actual)| {
+                actual == digest
+                    && row.is_some_and(|row| {
+                        row.source == SourceId::Sunrise
+                            && &row.project == id
+                            && &row.version == version
+                    })
+            }) {
+                return Err(pack_unavailable());
+            }
+        }
+        for m in &pack.manifest.mods {
+            if !before.members.contains_key(&m.id) && plan.package(&m.id).is_some() {
+                return Err(pack_unavailable());
+            }
+        }
+    }
+    let before = before.map(|(prior, _)| prior);
     for m in &pack.manifest.mods {
         let found = index
             .project(&m.id)
@@ -224,12 +426,7 @@ fn stage_pack(
             ));
         };
         let on = before
-            .filter(|before| {
-                before
-                    .mods
-                    .iter()
-                    .any(|s| s.split(' ').next() == Some(m.id.as_str()))
-            })
+            .filter(|before| before.members.contains_key(&m.id))
             .map_or(m.on, |_| mod_list::is_enabled(home, &m.id));
         let entry = install_version(index, local, p, v, home, progress)?;
         let placed = entry.path(home).ok_or_else(pack_unavailable)?;
@@ -241,26 +438,21 @@ fn stage_pack(
     }
     if let Some(before) = before {
         let mut installed = installed::Installed::load(home);
-        for old in &before.mods {
-            let (id, version) = old.split_once(' ').ok_or_else(pack_unavailable)?;
-            if pack.manifest.mods.iter().any(|m| m.id == id) {
+        for (id, (version, _)) in &before.members {
+            if pack.manifest.mods.iter().any(|m| &m.id == id) {
                 continue;
             }
-            if let Some(position) = installed.entries.iter().position(|row| {
-                row.source == SourceId::Sunrise && row.project == id && row.version == version
-            }) {
-                let entry = installed.entries.remove(position);
-                let file = entry.path(home).ok_or_else(pack_unavailable)?;
-                let hash = entry
-                    .checksum
-                    .strip_prefix("SHA-256:")
-                    .ok_or_else(pack_unavailable)?;
-                if idx::sha256_file(&file)? != hash {
-                    return Err(pack_unavailable());
-                }
-                fs::remove_file(&file).map_err(|e| at(&file, e))?;
-                mod_list::set_enabled(home, id, false)?;
-            }
+            let position = installed
+                .entries
+                .iter()
+                .position(|row| {
+                    row.source == SourceId::Sunrise && &row.project == id && &row.version == version
+                })
+                .ok_or_else(pack_unavailable)?;
+            let entry = installed.entries.remove(position);
+            let file = entry.path(home).ok_or_else(pack_unavailable)?;
+            fs::remove_file(&file).map_err(|e| at(&file, e))?;
+            mod_list::set_enabled(home, id, false)?;
         }
         installed.save(home)?;
     } else {
@@ -470,6 +662,16 @@ mod tests {
 
     /// [`registry`] with the pack at `pack_version`.
     fn registry_at(dir: &Path, pack_version: &str, on: bool, extra: &str) -> Index {
+        registry_members(dir, pack_version, on, extra, true)
+    }
+
+    fn registry_members(
+        dir: &Path,
+        pack_version: &str,
+        on: bool,
+        extra: &str,
+        members: bool,
+    ) -> Index {
         let smod_src = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("crates/smod/tests/index/coords_hud-0.1.0.smod");
         let smod = dir.join("coords_hud-0.1.0.smod");
@@ -479,12 +681,10 @@ mod tests {
         let mut zip = zip::ZipWriter::new(fs::File::create(&spack).unwrap());
         let o = zip::write::SimpleFileOptions::default();
         zip.start_file("sunrise-modpack.toml", o).unwrap();
-        write!(
-            zip,
-            "format = 1\nid = \"cozy\"\nname = \"Cozy\"\nversion = \"{pack_version}\"\ngame = \"26.3\"\n\
-             [[mods]]\nid = \"coords_hud\"\nversion = \"0.1.0\"\nsha256 = \"{smod_sha}\"\non = {on}\n"
-        )
-        .unwrap();
+        writeln!(zip, "format = 1\nid = \"cozy\"\nname = \"Cozy\"\nversion = \"{pack_version}\"\ngame = \"26.3\"").unwrap();
+        if members {
+            writeln!(zip, "[[mods]]\nid = \"coords_hud\"\nversion = \"0.1.0\"\nsha256 = \"{smod_sha}\"\non = {on}").unwrap();
+        }
         zip.start_file("overrides/options.txt", o).unwrap();
         zip.write_all(b"renderDistance:8\n").unwrap();
         zip.finish().unwrap();
@@ -499,6 +699,11 @@ mod tests {
                 format!("/{path}")
             }
         };
+        let requires = if members {
+            format!(r#"{{"id":"coords_hud","version":"0.1.0","sha256":"{smod_sha}"}}"#)
+        } else {
+            String::new()
+        };
         let text = format!(
             r#"{{"schema": 1, "projects": [
               {{"id": "coords_hud", "kind": "mod", "name": "Coordinates HUD", "summary": "", "license": "MIT",
@@ -507,7 +712,7 @@ mod tests {
                 "url": "file://{}", "size": {}, "sha256": "{smod_sha}"}}}}]}},
               {{"id": "cozy", "kind": "modpack", "name": "Cozy", "summary": "", "license": "MIT",
                 "source": "https://x.test", "versions": [{{"version": "{pack_version}", "api": "1", "game": "26.3",
-                "requires": [{{"id": "coords_hud", "version": "0.1.0", "sha256": "{smod_sha}"}}],
+                "requires": [{requires}],
                 "file": {{"name": "cozy-{pack_version}.spack", "url": "file://{}", "size": {}, "sha256": "{}"}}}}]}}
             ]{extra}}}"#,
             url(&smod),
@@ -551,7 +756,7 @@ mod tests {
             br#"{"version_id":"26.3"}"#,
         )
         .unwrap();
-        install_in(index, true, id, packs, || Ok(tag), &|_, _| {})
+        stage_in(index, true, id, packs, || Ok(tag), &|_, _| {})?.commit(false, || Ok(()))
     }
 
     #[test]
@@ -726,34 +931,92 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    fn save_world(home: &Path, name: &str) {
+        use sunrise_launcher_nbt::{write_named, Limits, NamedTag, Tag};
+        let saved = home.join("saves/example/level.dat");
+        fs::create_dir_all(saved.parent().unwrap()).unwrap();
+        let data = Tag::compound([("LevelName", Tag::String(name.into()))]);
+        let bytes = write_named(
+            &NamedTag {
+                name: "".into(),
+                tag: Tag::compound([("Data", data)]),
+            },
+            Limits::default(),
+        )
+        .unwrap();
+        let mut gzip = flate2::write::GzEncoder::new(
+            fs::File::create(saved).unwrap(),
+            flate2::Compression::fast(),
+        );
+        gzip.write_all(&bytes).unwrap();
+        gzip.finish().unwrap();
+    }
+
+    #[test]
+    fn a_pack_update_asks_once_and_publishes_the_members_and_sidecars_together() {
+        let dir = scratch("whole-pack-approval");
+        let packs = dir.join("sunrise-packs");
+        let first = registry_at(&dir, "1.0.0", true, "");
+        let pack = install_fixture(&first, "cozy", &packs).unwrap();
+        let home = home(&pack.work);
+        save_world(&home, "Example");
+        fs::write(home.join("options.txt"), "player settings").unwrap();
+        let next = registry_members(&dir, "1.1.0", false, "", false);
+        let pointer = home.join("mod-browser/active-build.json");
+        let member = home.join("sunrise-mods/coords_hud.smod");
+        let record = home.join(RECORD);
+        let archive = home.join(ARCHIVE);
+        let files = [&pointer, &member, &record, &archive];
+        let before = files.map(|path| fs::read(path).unwrap());
+        let prepare = || {
+            let ready = stage_in(
+                &next,
+                true,
+                "cozy",
+                &packs,
+                || panic!("keep bound build"),
+                &|_, _| {},
+            )
+            .unwrap();
+            let question = ready.question().unwrap();
+            assert_eq!(question.affected.len(), 1);
+            assert_eq!(question.affected[0].world, "Example");
+            assert!(txn::Lease::admit(&home).is_err());
+            assert_eq!(files.map(|path| fs::read(path).unwrap()), before);
+            ready
+        };
+        assert!(prepare()
+            .commit(false, || panic!("cancelled before revalidation"))
+            .is_err());
+        assert!(prepare()
+            .commit(true, || Err("registry offline".into()))
+            .is_err());
+        let stale = prepare();
+        fs::write(&archive, b"changed after answer").unwrap();
+        assert!(stale.commit(true, || Ok(())).is_err());
+        fs::write(&archive, &before[3]).unwrap();
+        let committed = prepare().commit(true, || Ok(())).unwrap();
+        assert_eq!(committed.version, "1.1.0");
+        assert_eq!(read(&pack.work).unwrap(), committed);
+        assert!(committed.mods.is_empty() && !member.exists());
+        assert_ne!(fs::read(&archive).unwrap(), before[3]);
+        assert_ne!(fs::read(&pointer).unwrap(), before[0]);
+        assert_eq!(
+            fs::read(home.join("options.txt")).unwrap(),
+            b"player settings"
+        );
+        assert!(txn::Lease::admit(&home).unwrap().verify_launch().is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn same_base_approval_commits_only_the_frozen_set_and_world_evidence() {
-        use sunrise_launcher_nbt::{write_named, Limits, NamedTag, Tag};
         let dir = scratch("same-base-approval");
         let packs = dir.join("sunrise-packs");
         let index = registry(&dir, true, "");
         let pack = install_fixture(&index, "cozy", &packs).unwrap();
         let home = home(&pack.work);
-        let saved = home.join("saves/example/level.dat");
-        fs::create_dir_all(saved.parent().unwrap()).unwrap();
-        let write_world = |name: &str| {
-            let data = Tag::compound([("LevelName", Tag::String(name.into()))]);
-            let tag = Tag::compound([("Data", data)]);
-            let bytes = write_named(
-                &NamedTag {
-                    name: "".into(),
-                    tag,
-                },
-                Limits::default(),
-            )
-            .unwrap();
-            let mut gzip = flate2::write::GzEncoder::new(
-                fs::File::create(&saved).unwrap(),
-                flate2::Compression::fast(),
-            );
-            gzip.write_all(&bytes).unwrap();
-            gzip.finish().unwrap();
-        };
+        let write_world = |name| save_world(&home, name);
         write_world("Before");
         let package = Path::new("sunrise-mods/coords_hud.smod");
         let pointer = home.join("mod-browser/active-build.json");

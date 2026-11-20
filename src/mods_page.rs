@@ -145,11 +145,55 @@ impl Finished {
     }
 }
 
-pub(crate) struct PreparedRegistry {
+pub(crate) struct PreparedInstall {
     target: queue::Target,
     label: String,
-    pub(crate) plan: sunrise::RegistryInstall,
-    finished: Finished,
+    proposal: InstallProposal,
+}
+
+enum InstallProposal {
+    Registry(sunrise::RegistryInstall, Finished),
+    Pack(sunrise::pack::PackInstall, Option<String>),
+}
+
+impl PreparedInstall {
+    pub(crate) fn question(&self) -> Option<&sunrise_launcher::worlds::SwitchQuestion> {
+        match &self.proposal {
+            InstallProposal::Registry(plan, _) => Some(plan.question()),
+            InstallProposal::Pack(plan, _) => plan.question(),
+        }
+    }
+
+    fn finish_or_ask(self) -> Result<Finished, Stop> {
+        if self
+            .question()
+            .is_some_and(sunrise_launcher::worlds::SwitchQuestion::needed)
+        {
+            return Err(Stop::ReadyInstall(Box::new(self)));
+        }
+        self.proposal.commit(false).map_err(Into::into)
+    }
+}
+
+impl InstallProposal {
+    fn commit(self, approved: bool) -> Result<Finished, installed::InstallError> {
+        match self {
+            Self::Registry(plan, finished) => {
+                plan.commit(approved)?;
+                Ok(finished)
+            }
+            Self::Pack(plan, icon) => {
+                let pack = plan.commit(approved)?;
+                if let Some(url) = icon {
+                    sunrise_launcher::instances::adopt_icon(&sunrise::pack::home(&pack.work), &url);
+                }
+                Ok(Finished::said(trf(
+                    "Installed {pack} {version} as its own profile with {mods}, each checked. Play it from the list above.",
+                    &[("pack", &pack.name), ("version", &pack.version), ("mods", &pack.mods.join(", "))],
+                )))
+            }
+        }
+    }
 }
 
 pub(super) struct ModEditRequest {
@@ -174,7 +218,7 @@ pub(super) enum Event {
     /// The install found native code the plan didn't know of before the player had allowed
     /// it: the question to ask, whose answer starts the same install again.
     NeedsConsent(Box<PendingConsent>, Box<queue::Request>),
-    ReadyRegistry(Box<PreparedRegistry>),
+    ReadyInstall(Box<PreparedInstall>),
     InstallCancelled,
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
@@ -396,7 +440,7 @@ impl Launcher {
                         .handle
                         .set_offset(gpui::point(px(0.), px(0.)));
                 }
-                Event::ReadyRegistry(prepared) => {
+                Event::ReadyInstall(prepared) => {
                     m.busy = None;
                     m.running = None;
                     m.world_ask = Some(WorldAsk {
@@ -405,7 +449,7 @@ impl Launcher {
                             mods: Vec::new(),
                             worlds: Vec::new(),
                         },
-                        then: Then::PreparedRegistry(prepared),
+                        then: Then::PreparedInstall(prepared),
                     });
                 }
                 Event::ReadyEdit(prepared) => {
@@ -783,22 +827,13 @@ impl Launcher {
                     )));
                 }
                 if p.kind == PackKind::Modpack && p.source == SourceId::Sunrise {
-                    let pack = sunrise::pack::install(&p.id, &progress)?;
-                    if let Some(url) = &p.icon {
-                        sunrise_launcher::instances::adopt_icon(
-                            &sunrise::pack::home(&pack.work),
-                            url,
-                        );
+                    let plan = sunrise::pack::prepare(&p.id, &progress)?;
+                    return PreparedInstall {
+                        target: target.clone(),
+                        label: id.clone(),
+                        proposal: InstallProposal::Pack(plan, p.icon),
                     }
-                    return Ok(Finished::said(trf(
-                        "Installed {pack} {version} as its own profile with {mods}, each \
-                             checked. Play it from the list above.",
-                        &[
-                            ("pack", &pack.name),
-                            ("version", &pack.version),
-                            ("mods", &pack.mods.join(", ")),
-                        ],
-                    )));
+                    .finish_or_ask();
                 }
                 if p.source == SourceId::Sunrise && p.kind == PackKind::Mod {
                     let instance = instance
@@ -813,16 +848,12 @@ impl Launcher {
                         &progress,
                     )?;
                     let finished = Finished::registry_install(plan.entries(), &before, &p.id);
-                    if plan.question().needed() {
-                        return Err(Stop::ReadyRegistry(Box::new(PreparedRegistry {
-                            target: target.clone(),
-                            label: id.clone(),
-                            plan,
-                            finished,
-                        })));
+                    return PreparedInstall {
+                        target: target.clone(),
+                        label: id.clone(),
+                        proposal: InstallProposal::Registry(plan, finished),
                     }
-                    plan.commit(false)?;
-                    return Ok(finished);
+                    .finish_or_ask();
                 }
                 let done = lease.install(&*source, &p, everything, &game, &progress)?;
                 let names: Vec<String> = done
@@ -852,7 +883,7 @@ impl Launcher {
                         replacing,
                     }),
                 ),
-                Err(Stop::ReadyRegistry(prepared)) => Event::ReadyRegistry(prepared),
+                Err(Stop::ReadyInstall(prepared)) => Event::ReadyInstall(prepared),
                 Err(Stop::Failed(why)) => Event::Done(Err(why)),
                 Ok(finished) => Event::Done(Ok(finished)),
             });
@@ -863,7 +894,7 @@ impl Launcher {
 /// Why an install's thread stopped: it failed, or it needs the native-code question first.
 enum Stop {
     Failed(installed::InstallError),
-    ReadyRegistry(Box<PreparedRegistry>),
+    ReadyInstall(Box<PreparedInstall>),
     Consent,
 }
 
@@ -889,22 +920,21 @@ impl Launcher {
         let Some(ask) = self.mods.world_ask.take() else {
             return;
         };
-        if let Then::PreparedRegistry(prepared) = ask.then {
-            let PreparedRegistry {
+        if let Then::PreparedInstall(prepared) = ask.then {
+            let PreparedInstall {
                 target,
                 label,
-                plan,
-                finished,
+                proposal,
             } = *prepared;
             self.mods.busy = Some((label, tr("Installing…").to_string(), 0.99));
             self.mods.running = Some(target);
             let tx = self.mods.tx.clone();
             std::thread::spawn(move || {
                 let event = if answer == sunrise_launcher::worlds::Answer::Stay {
-                    drop(plan);
+                    drop(proposal);
                     Event::InstallCancelled
                 } else {
-                    Event::Done(plan.commit(true).map(|_| finished).map_err(Into::into))
+                    Event::Done(proposal.commit(true))
                 };
                 let _ = tx.send(event);
             });
@@ -942,7 +972,7 @@ impl Launcher {
                 self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
             }
             Then::Install(ask) => self.install_replacing(*ask, &allow),
-            Then::PreparedRegistry(_) | Then::PreparedEdit(_) => unreachable!("handled above"),
+            Then::PreparedInstall(_) | Then::PreparedEdit(_) => unreachable!("handled above"),
         }
     }
 
@@ -1200,20 +1230,16 @@ impl Launcher {
                     &progress,
                 )?;
                 let finished = Finished::registry_install(plan.entries(), &before, "");
-                if plan.question().needed() {
-                    return Err(Stop::ReadyRegistry(Box::new(PreparedRegistry {
-                        target: target.clone(),
-                        label: shown.clone(),
-                        plan,
-                        finished,
-                    })));
+                PreparedInstall {
+                    target: target.clone(),
+                    label: shown.clone(),
+                    proposal: InstallProposal::Registry(plan, finished),
                 }
-                plan.commit(false)?;
-                Ok(finished)
+                .finish_or_ask()
             })();
             drop(lease);
             let _ = tx.send(match result {
-                Err(Stop::ReadyRegistry(prepared)) => Event::ReadyRegistry(prepared),
+                Err(Stop::ReadyInstall(prepared)) => Event::ReadyInstall(prepared),
                 Err(Stop::Consent) => Event::NeedsConsent(
                     Box::new(PendingConsent::Collection(ids.clone(), shown.clone())),
                     Box::new(queue::Request::Many(target, ids, shown, approvals)),
@@ -1265,7 +1291,7 @@ pub(crate) enum Then {
     /// An install that removes mods a world uses.
     Install(Box<BreakAsk>),
     /// The exact prepared set, image and locked world evidence to approve once.
-    PreparedRegistry(Box<PreparedRegistry>),
+    PreparedInstall(Box<PreparedInstall>),
     PreparedEdit(Box<PreparedEdit>),
 }
 
