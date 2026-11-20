@@ -3177,7 +3177,6 @@ pub fn need_prepared(tag: &str) -> Result<(), String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayStep {
     Assets,
-    Mods,
     SignIn,
 }
 

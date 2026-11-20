@@ -1401,7 +1401,6 @@
   "The version file has no server download": "The version file has no server download",
   "{name} is recorded outside the mod folders: remove it before installing this version.": "{name} is recorded outside the mod folders: remove it before installing this version.",
   "Checking game files…": "Checking game files…",
-  "Updating mods…": "Updating mods…",
   "Signing in…": "Signing in…",
   "Reading the mods you added by hand…": "Reading the mods you added by hand…",
   "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads {version} from Mojang itself.": "Sign in with the Microsoft account that owns Minecraft: Sunrise then downloads {version} from Mojang itself.",

@@ -83,8 +83,8 @@ impl Launcher {
                 || self.installing.is_some()
                 || self.play_when_prepared.is_some()
                 || self.play_after_build.is_some(),
-            // The updater of Play, or of the start: an install now would race it.
-            self.mods.updating || self.play_when_updated.is_some(),
+            // A version switch's update: an install now would race it.
+            self.mods.updating,
             self.native_step.is_some(),
         )
     }
