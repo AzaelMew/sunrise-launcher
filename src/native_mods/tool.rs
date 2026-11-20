@@ -12,7 +12,7 @@ use std::process::Stdio;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// The contract this launcher's plans speak.
-const CONTRACT: u32 = 2;
+pub(super) const CONTRACT: u32 = 2;
 
 /// The tool's program in its unpacked SDK slice.
 pub(super) const PROGRAM: &str = if cfg!(windows) {
@@ -275,9 +275,10 @@ fn run(
     let errors = finish(cancellation, errors);
     cancellation.check()?;
     let outcome = match (result, status) {
-        (Ok(Some(done)), _) => done,
-        (Ok(None), Ok(status)) => Err(ended(status.code()).into()),
-        (Err(error), _) | (Ok(None), Err(error)) => Err(unrun(error).into()),
+        (Ok(Some(Ok(built))), Ok(status)) if status.success() => Ok(built),
+        (Ok(Some(Err(failure))), Ok(status)) if status.code() == Some(1) => Err(failure),
+        (Ok(_), Ok(status)) => Err(ended(status.code()).into()),
+        (Err(error), _) | (Ok(_), Err(error)) => Err(unrun(error).into()),
     };
     if outcome.is_err() {
         log_errors(&errors);
@@ -432,15 +433,41 @@ fn finish(cancellation: &Cancellation, errors: std::thread::JoinHandle<String>) 
 /// `native-check`'s reply: each mod's refusal, verdict or the file it needs.
 #[derive(Debug, Deserialize)]
 pub(super) struct Checked {
+    pub contract: Option<u32>,
     /// Absent from a tool older than this launcher; `null` when no mod is usable.
     #[serde(default, deserialize_with = "present")]
-    pub route: Option<Option<String>>,
+    pub route: Option<Option<CheckRoute>>,
     pub mods: Vec<CheckedMod>,
 }
 
 /// A field that is there, `null` or not: [`Checked::route`]'s absence is told apart from its `null`.
-fn present<'de, D: serde::Deserializer<'de>>(field: D) -> Result<Option<Option<String>>, D::Error> {
-    Option::<String>::deserialize(field).map(Some)
+fn present<'de, D: serde::Deserializer<'de>>(
+    field: D,
+) -> Result<Option<Option<CheckRoute>>, D::Error> {
+    Option::<CheckRoute>::deserialize(field).map(Some)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum CheckRoute {
+    PrebuiltApi,
+    Prebuilt,
+}
+
+impl CheckRoute {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::PrebuiltApi => "prebuilt-api",
+            Self::Prebuilt => "prebuilt",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum Need {
+    Surface,
+    BuildData,
 }
 
 #[derive(Debug, Deserialize)]
@@ -451,7 +478,7 @@ pub(super) struct CheckedMod {
     #[serde(default)]
     pub verdict: Option<super::fit::Verdict>,
     #[serde(default)]
-    pub needs: Option<String>,
+    pub needs: Option<Need>,
 }
 
 /// Asks the tool at `program` how the mods `plan` names stand against its build (`native-check`).
@@ -492,23 +519,43 @@ pub(super) fn ask(
     let sent = writeln!(input, "{plan}").map_err(unrun);
     drop(input);
     let output = child.child().stdout.take().expect("piped");
-    let last = BufReader::new(output)
-        .lines()
-        .map_while(Result::ok)
-        .filter(|line| !line.trim().is_empty())
-        .last();
+    let mut answer = Ok(None);
+    for line in BufReader::new(output).lines() {
+        match line {
+            Ok(line) if line.trim().is_empty() => {}
+            Ok(line) if matches!(answer, Ok(None)) => answer = Ok(Some(line)),
+            Ok(_) if answer.is_ok() => answer = Err(invalid_check_reply()),
+            Ok(_) => {}
+            Err(error) => {
+                answer = Err(unrun(error));
+                break;
+            }
+        }
+    }
     let status = child.wait().map_err(unrun);
     let errors = finish(cancellation, errors);
     cancellation.check()?;
     sent?;
-    let result = match (last, status?.code()) {
-        (None, code @ Some(2 | 3)) => Err(ended(code)),
-        (last, _) => reply(last.as_deref()),
-    };
+    let status = status?;
+    let result = answer.and_then(|line| match status.code() {
+        code @ Some(2 | 3) => Err(ended(code)),
+        _ => reply(line.as_deref()).and_then(|value| {
+            if status.success() {
+                Ok(value)
+            } else {
+                Err(ended(status.code()))
+            }
+        }),
+    });
     if result.is_err() {
         log_errors(&errors);
     }
     result
+}
+
+pub(super) fn invalid_check_reply() -> String {
+    tr("The native build tool gave an incomplete or inconsistent answer. Update the launcher.")
+        .into()
 }
 
 /// What a tool from before a command or reply field this launcher needs is told.

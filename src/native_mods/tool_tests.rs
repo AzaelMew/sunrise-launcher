@@ -15,6 +15,7 @@ fn fake(dir: &Path, events: &[&str]) -> std::process::Command {
                 "echo '{\"event\":\"consent\",\"added_crates\":2,\"build_scripts\":[\"syn\"],\"proc_macros\":[]}'\nread answer\necho \"$answer\" > \"$(dirname \"$0\")/answer\"\n",
             ),
             "ERRORS" => script.push_str("printf 'warming up\\n\\377 unknown contract\\n' >&2\n"),
+            "EXIT1" => script.push_str("exit 1\n"),
             "EXIT3" => script.push_str("exit 3\n"),
             event => script.push_str(&format!("echo '{event}'\n")),
         }
@@ -71,11 +72,9 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
         r#"{"contract":2}"#
     );
 
+    let blamed = r#"{"event":"failed","error":"Compiling greeter failed (101)","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#;
     let failed = run(
-        fake(
-            &dir,
-            &[r#"{"event":"failed","error":"Compiling greeter failed (101)","blame":{"mod":"greeter","kind":"compile"},"used":[]}"#],
-        ),
+        fake(&dir, &[blamed, "EXIT1"]),
         "{}",
         None,
         &on_mod,
@@ -89,6 +88,18 @@ fn a_tool_run_reports_its_mods_asks_consent_and_ends_built_or_blamed() {
             kind: BlameKind::Compile
         })
     );
+    for events in [&[blamed][..], &[blamed, "EXIT3"][..]] {
+        assert!(run(
+            fake(&dir, events),
+            "{}",
+            None,
+            &on_mod,
+            &Cancellation::default()
+        )
+        .unwrap_err()
+        .blame
+        .is_none());
+    }
     let silent = run(
         fake(&dir, &[]),
         "{}",
@@ -234,7 +245,7 @@ fn a_check_reply_reads_its_verdicts_and_an_old_tool_or_an_error_says_so() {
             }
         ]
     );
-    assert_eq!(checked.mods[2].needs.as_deref(), Some("surface"));
+    assert_eq!(checked.mods[2].needs, Some(Need::Surface));
     assert!(reply(None).unwrap_err().contains("too old"));
     let error = r#"{"contract":2,"error":{"kind":"unread","message":"mods: not a folder"}}"#;
     let refused = reply(Some(error)).unwrap_err();
@@ -282,6 +293,15 @@ fn a_one_line_command_gets_its_name_and_a_contract_and_answers_one_line() {
     )
     .unwrap();
     assert_eq!(reply["lock"], "/m/Cargo.lock");
+    let pretend = r#"{"contract":2,"route":null,"mods":[]}"#;
+    for events in [&[pretend, "EXIT1"][..], &[pretend, pretend][..]] {
+        assert!(check(
+            fake(&dir, events).get_program().as_ref(),
+            &serde_json::json!({}),
+            &Cancellation::default()
+        )
+        .is_err());
+    }
     let asked = std::fs::read_to_string(dir.join("asked")).unwrap();
     let (command, plan) = asked.split_once('\n').unwrap();
     assert_eq!(command, "native-lock");
