@@ -16,7 +16,6 @@ pub(crate) use widgets::*;
 mod backdrop;
 mod blocks;
 mod build;
-mod build_mode;
 mod cat;
 mod cli;
 mod cli_tools;
@@ -242,9 +241,11 @@ struct Launcher {
     storage_revoke: bool,
     /// A permission write that failed; no profile was changed.
     storage_revoke_error: Option<String>,
-    /// The build asked for (its base and back-up choice) while the permission question is open:
-    /// Allow resumes it, not a plain build.
-    native_consent_build: Option<(Option<String>, native_mods::LeaveOut)>,
+    /// The admitted build and exact inputs held while the native permission question is open.
+    native_consent_build: Option<(
+        instances::Instance,
+        sunrise_launcher::browser::sunrise::txn::ManualBuild,
+    )>,
     install_error: Option<(String, String)>,
     /// Import a game build (`build_import`, on the Versions page): whether one is being copied in,
     /// and why the last one failed.
@@ -269,18 +270,8 @@ struct Launcher {
     consent_error: Option<String>,
     /// The instance (id) the build under way, or the last one's error, is for.
     native_for: Option<String>,
-    /// The installs (ids in the profile's transaction record) the build under way was begun for:
-    /// its end clears or undoes these and no later ones.
-    native_attempts: Option<(
-        std::sync::Arc<sunrise_launcher::browser::sunrise::txn::Lease>,
-        Vec<String>,
-    )>,
     /// The native mods the build under way (or the last one) was given (`native_build.rs`).
     native_built_mods: Vec<String>,
-    /// What each installed native build was made from, by version. A build's version names its
-    /// contents, so an entry never goes stale.
-    native_builds:
-        std::cell::RefCell<std::collections::HashMap<String, Option<native_status::Build>>>,
     /// This attempt's build log (`native_log_page.rs`).
     native_log: native_log_page::NativeLog,
     /// What the Settings › Storage row says about the last move or choice.

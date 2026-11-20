@@ -2004,6 +2004,7 @@ pub fn build_exact_client(
     profile: Profile,
     cancellation: &Cancellation,
     progress: impl Fn(Step),
+    registry_consent: Option<&dyn Fn(&Consent) -> bool>,
 ) -> Result<String, Failed> {
     cancellation.admit_native_work()?;
     if let Some(error) = backend::native_mod_architecture_error() {
@@ -2027,6 +2028,7 @@ pub fn build_exact_client(
                 Target::Client,
                 BuildOptions {
                     cancellation: cancellation.clone(),
+                    registry_consent,
                     ..BuildOptions::default()
                 },
                 &progress,

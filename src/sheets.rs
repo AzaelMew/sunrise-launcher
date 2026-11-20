@@ -466,9 +466,6 @@ impl Launcher {
         if self.mods.card_error.as_ref().is_some_and(|e| e.open) {
             return Some(self.card_why_sheet(cx));
         }
-        if !self.mods.removal.is_empty() {
-            return Some(self.removal_sheet(cx));
-        }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
@@ -594,68 +591,6 @@ impl Launcher {
         frame("alt-card-why", 560., body, cx)
     }
 
-    /// Mods that can't stay: which, and why behind "Show why", with the compiler's log to copy
-    /// or save. Continue is the default; it removes them and the rest goes on.
-    fn removal_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
-        let removal = self
-            .mods
-            .removal
-            .first()
-            .cloned()
-            .expect("shown only while mods are listed");
-        let names: Vec<String> = removal.items.iter().map(|i| i.title.clone()).collect();
-        let log = removal.log();
-        let why = removal.why.then(|| {
-            let items = removal
-                .items
-                .iter()
-                .map(|i| (i.title.clone(), i.reason.clone()))
-                .collect();
-            Self::why_panel(items, log.clone(), cx)
-        });
-        let body = div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(title(removal.heading()))
-            .child(muted(names.join(" · ")))
-            .children(why)
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_end()
-                    .gap(px(10.))
-                    .child(
-                        button(
-                            "alt-removal-why",
-                            if removal.why {
-                                tr("Hide why")
-                            } else {
-                                tr("Show why")
-                            },
-                        )
-                        .on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| {
-                                if let Some(removal) = this.mods.removal.first_mut() {
-                                    removal.why = !removal.why;
-                                }
-                                cx.notify();
-                            },
-                        )),
-                    )
-                    .child(
-                        crate::frame::primary("alt-removal-continue", tr("Continue")).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.continue_removal();
-                                cx.notify();
-                            }),
-                        ),
-                    ),
-            );
-        frame("alt-removal", 580., body, cx)
-    }
-
     // ---- The world question ----
 
     /// A switch or update would remove mods that saved worlds use: the one question. Staying is
@@ -666,50 +601,22 @@ impl Launcher {
             .world_ask
             .as_ref()
             .expect("shown only while a question is pending");
-        let question = &ask.question;
-        let prepared = match &ask.then {
-            crate::mods_page::Then::PreparedInstall(prepared) => prepared.question(),
-            crate::mods_page::Then::PreparedEdit(prepared) => Some(prepared.plan.question()),
-            _ => None,
+        let (question, removing) = match &ask.then {
+            crate::mods_page::Then::PreparedInstall(prepared) => {
+                (prepared.question().expect("prepared question"), false)
+            }
+            crate::mods_page::Then::PreparedEdit(prepared) => (prepared.plan.question(), true),
         };
-        let removing = matches!(ask.then, crate::mods_page::Then::PreparedEdit(_));
-        let entries = self
-            .instances
-            .list
-            .iter()
-            .find(|i| i.id == ask.instance)
-            .map(|i| sunrise_launcher::browser::installed::Installed::load(&i.home).entries)
-            .unwrap_or_default();
-        let names = crate::mods_page::titles(&entries, &question.mods);
-        let mods = crate::mods::names(&names);
-        let text = trf(
-            if names.len() == 1 {
-                "{worlds} use {mods}. Its blocks and items in those worlds will be lost."
-            } else {
-                "{worlds} use {mods}. Their blocks and items in those worlds will be lost."
-            },
-            &[
-                ("worlds", &crate::mods::names(&question.worlds)),
-                ("mods", &mods),
-            ],
-        );
         let body = div()
             .flex()
             .flex_col()
             .gap(px(12.))
             .child(title(if removing {
                 tr("This removal may affect saved worlds").into()
-            } else if prepared.is_some() {
-                tr("This install may affect saved worlds").into()
             } else {
-                trf("Switching removes {mods}", &[("mods", &mods)])
+                tr("This install may affect saved worlds").into()
             }))
-            .children(
-                prepared
-                    .map_or_else(|| vec![text], |question| question.lines())
-                    .into_iter()
-                    .map(muted),
-            )
+            .children(question.lines().into_iter().map(muted))
             .child(
                 div()
                     .flex()
@@ -721,10 +628,8 @@ impl Launcher {
                             "alt-world-switch",
                             tr(if removing {
                                 "Remove anyway"
-                            } else if prepared.is_some() {
-                                "Install anyway"
                             } else {
-                                "Switch anyway"
+                                "Install anyway"
                             }),
                         )
                         .on_click(cx.listener(
@@ -741,10 +646,8 @@ impl Launcher {
                             "alt-world-stay",
                             tr(if removing {
                                 "Cancel removal"
-                            } else if prepared.is_some() {
-                                "Cancel install"
                             } else {
-                                "Stay on this version"
+                                "Cancel install"
                             }),
                         )
                         .on_click(cx.listener(
@@ -817,16 +720,9 @@ impl Launcher {
 
     // ---- Consent ----
 
-    pub(crate) fn request_native_build_consent(&mut self) {
-        self.native_consent_build = None;
+    pub(crate) fn request_native_build_consent(&mut self, home: std::path::PathBuf) {
         self.ui.sheets.ticked.0 = false;
         self.consent_error = None;
-        // Play can ask before Mods has ever opened. Bind the same folder for the names in
-        // the question, Decline's toggle and the build that Allow dispatches.
-        let Some(home) = self.selected_instance().map(|i| i.home.clone()) else {
-            self.pending_consent = None;
-            return;
-        };
         let read = self.mods.begin_build_consent(home);
         self.pending_consent = Some(PendingConsent::ReadingBuild(read.clone()));
         // Snapshot the registry's own answer before hashing. An answer arriving later must
@@ -1031,13 +927,7 @@ impl Launcher {
 
     /// Allow: persist the permission, then run the one pending action. The old overlay's match.
     fn allow_native_consent(&mut self) {
-        let result = native_consent::resolve(
-            &mut self.pending_consent,
-            true,
-            true,
-            &mut self.settings,
-            &self.mods.home(),
-        );
+        let result = native_consent::allow(&mut self.pending_consent, true, &mut self.settings);
         match result {
             Err(error) => self.consent_error = Some(error),
             Ok(None) => {}
@@ -1048,9 +938,9 @@ impl Launcher {
                 match action {
                     PendingConsent::ReadingBuild(_) => {}
                     PendingConsent::Build(_) => {
-                        let (base, leave_out) =
-                            self.native_consent_build.take().unwrap_or_default();
-                        self.build_native_on(base, leave_out)
+                        if let Some((instance, build)) = self.native_consent_build.take() {
+                            self.run_native_build(instance, build);
+                        }
                     }
                     PendingConsent::Edit(request) => self.start_mod_edit(*request),
                     PendingConsent::Install(_) => {

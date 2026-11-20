@@ -115,6 +115,11 @@ impl Switch {
         let (catalogue, index) = sunrise::authoritative_index()?;
         let slots = candidates(&source, &catalogue, &game, root)?;
         let cancellation = native_mods::Cancellation::for_profile(owner.clone());
+        let compiler = CandidateBuild {
+            profile,
+            cancellation: cancellation.clone(),
+            registry_consent: None,
+        };
         let mut native_refusals = BTreeMap::new();
         let mut solved = None;
         best_survivor_set(&slots, &source, |chosen| {
@@ -123,14 +128,7 @@ impl Switch {
                 .tempdir_in(root)
                 .map_err(|e| bad(root, e))?;
             stage_set(home, prepared.path(), &source, &chosen)?;
-            match build_candidate(
-                tag,
-                prepared.path(),
-                profile,
-                &cancellation,
-                &progress,
-                &chosen,
-            ) {
+            match build_candidate(tag, prepared.path(), &compiler, &progress, &chosen) {
                 Ok(image) => {
                     solved = Some((chosen, prepared, image));
                     return Ok(true);
@@ -793,18 +791,30 @@ fn stage_set(
     Ok(())
 }
 
+pub(super) struct CandidateBuild<'a> {
+    pub(super) profile: native_mods::Profile,
+    pub(super) cancellation: native_mods::Cancellation,
+    pub(super) registry_consent: Option<&'a dyn Fn(&native_mods::Consent) -> bool>,
+}
+
 pub(super) fn build_candidate(
     tag: &str,
     stage: &Path,
-    profile: native_mods::Profile,
-    cancellation: &native_mods::Cancellation,
+    compiler: &CandidateBuild<'_>,
     progress: &impl Fn(native_mods::Step),
     chosen: &BTreeMap<&str, &Package>,
 ) -> Result<String, native_mods::Failed> {
     let image = if crate::native_status::enabled(stage).is_empty() {
         tag.to_owned()
     } else {
-        native_mods::build_exact_client(tag, stage, profile, cancellation, progress)?
+        native_mods::build_exact_client(
+            tag,
+            stage,
+            compiler.profile,
+            &compiler.cancellation,
+            progress,
+            compiler.registry_consent,
+        )?
     };
     build::verify_included(tag, &image, stage)?;
     let list = stage.join(mod_list::FILE);
@@ -840,8 +850,14 @@ pub(super) fn build_candidate(
             .map(|id| format!("mod.{id}:{}\n", active.contains(id)))
             .collect();
         save(&list, trial.as_bytes())?;
-        let candidate =
-            native_mods::build_exact_client(tag, stage, profile, cancellation, progress);
+        let candidate = native_mods::build_exact_client(
+            tag,
+            stage,
+            compiler.profile,
+            &compiler.cancellation,
+            progress,
+            compiler.registry_consent,
+        );
         let verified = candidate.and_then(|candidate| {
             build::verify_included(tag, &candidate, stage).map_err(Into::into)
         });

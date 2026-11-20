@@ -1550,5 +1550,6 @@
   "Remove anyway": "Remove anyway",
   "Cancel removal": "Cancel removal",
   "Update anyway? [y/N]": "Update anyway? [y/N]",
-  "Update cancelled. Nothing was changed.": "Update cancelled. Nothing was changed."
+  "Update cancelled. Nothing was changed.": "Update cancelled. Nothing was changed.",
+  "Build uses the mods in the selected profile. Use --server-output to build from another folder.": "Build uses the mods in the selected profile. Use --server-output to build from another folder."
 }

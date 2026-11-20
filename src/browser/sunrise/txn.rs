@@ -28,7 +28,9 @@ mod artifact;
 mod build;
 pub(crate) mod durable;
 mod legacy;
+mod manual_build;
 mod resources;
+pub use manual_build::ManualBuild;
 mod staged_install;
 mod switch;
 mod switch_record;
@@ -548,31 +550,44 @@ impl Lease {
                 profile,
                 cancellation,
                 progress,
+                None,
             )
             .map_err(|e| e.to_string())?
         };
         if let Some(prior) = prior {
-            let _lock = locked(&self.home)?;
-            let path = self.home.join(build::FILE);
-            let before = build::optional_bytes(&path)?.ok_or_else(unsettled)?;
-            if build::parse(&before)? != prior || read(&self.home)?.is_some() {
-                return Err(unsettled());
-            }
-            let _publication =
-                crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
-            let next = prior.adopt(&image, inputs, &self.home)?;
-            let _permission = cancellation.publication_guard(&image)?;
-            publish_pointer(
-                &self.home,
-                &mut Record::default(),
-                Some(before),
-                &next,
-                |_| {},
-            )?;
+            self.adopt_image(&prior, &image, inputs, cancellation)?;
         } else {
             self.commit_bootstrap(&image, cancellation)?;
         }
         Ok(image)
+    }
+
+    /// Adopt an exact same-base image without rewriting the package files or their lists.
+    fn adopt_image(
+        &self,
+        prior: &Active,
+        image: &str,
+        inputs: [u8; 32],
+        cancellation: &crate::native_mods::Cancellation,
+    ) -> Result<(), String> {
+        let _lock = locked(&self.home)?;
+        let path = self.home.join(build::FILE);
+        let before = build::optional_bytes(&path)?.ok_or_else(unsettled)?;
+        if build::parse(&before)? != *prior || read(&self.home)?.is_some() {
+            return Err(unsettled());
+        }
+        let _publication =
+            crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        prior.verify_artifacts()?;
+        let next = prior.adopt(image, inputs, &self.home)?;
+        let _permission = cancellation.publication_guard(image)?;
+        publish_pointer(
+            &self.home,
+            &mut Record::default(),
+            Some(before),
+            &next,
+            |_| {},
+        )
     }
 
     /// Commit the matched image, or keep the bootstrap binding if publication is interrupted.

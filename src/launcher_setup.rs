@@ -111,9 +111,7 @@ impl Launcher {
             pending_consent: None,
             consent_error: None,
             native_for: None,
-            native_attempts: None,
             native_built_mods: Vec::new(),
-            native_builds: Default::default(),
             native_log: Default::default(),
             // The first draw takes the launcher theme from Settings.
             location_error,
@@ -449,18 +447,6 @@ impl Launcher {
         }
         self.update_install = Some(release.tag.clone());
         self.install(&release);
-    }
-
-    /// What installed native build `version` was made from (`native_status::Build`), read once.
-    pub(crate) fn native_build_of(&self, version: &str) -> Option<native_status::Build> {
-        if !native_mods::is_native(version) {
-            return None;
-        }
-        self.native_builds
-            .borrow_mut()
-            .entry(version.to_owned())
-            .or_insert_with(|| native_status::Build::read(version))
-            .clone()
     }
 
     pub(crate) fn fetch_links(&self) {

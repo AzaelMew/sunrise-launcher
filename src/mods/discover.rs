@@ -288,17 +288,14 @@ impl Launcher {
                     .is_some_and(|c| model::collection::installed(c, &cards, &added)),
                 None => added.contains(&id),
             };
-            let state = install_state::of(
-                &id,
-                self.mods.waiting(&id),
-                self.mods.build_failures(),
-                game_running,
-            );
+            let state = install_state::of(&id, self.mods.waiting(&id), &[], game_running);
             let stage = install_state::stage(
                 &id,
                 busy.as_ref().map(|(for_id, f)| (for_id.as_str(), *f)),
-                self.mods
-                    .builds(self.selected_instance().map_or("", |i| i.id.as_str()), &id),
+                self.native_step.is_some()
+                    && self.native_for.as_deref()
+                        == self.selected_instance().map(|i| i.id.as_str())
+                    && self.native_built_mods.contains(&id),
                 tools,
                 build_fraction,
             );
@@ -400,14 +397,21 @@ impl Launcher {
                 .filter(|e| e.id == id && stage.is_none());
             // What a build that stopped or a mod that didn't compile says, when no install error
             // is already on the card: its Details opens the same panel.
-            let build_failure = failed_here
-                .is_none()
-                .then(|| crate::mods_page::build_failure_of(self.mods.failed.as_ref(), &id))
-                .flatten();
+            let build_failure = self
+                .native_error
+                .as_ref()
+                .filter(|_| {
+                    failed_here.is_none()
+                        && self.native_for.as_deref()
+                            == self.selected_instance().map(|i| i.id.as_str())
+                        && self.native_failed_mods.contains(&id)
+                })
+                .cloned();
             // A failed install keeps Install to try again, and a Details beside it.
             let control = match (failed_here, &build_failure) {
-                (None, Some((line, details))) => {
-                    let (open_id, line, details) = (id.clone(), line.clone(), details.clone());
+                (None, Some(line)) => {
+                    let open_id = id.clone();
+                    let line = line.clone();
                     let title = card_data.name.clone();
                     Some(
                         div()
@@ -422,7 +426,10 @@ impl Launcher {
                                             id: open_id.clone(),
                                             title: title.clone(),
                                             line: line.clone(),
-                                            details: details.clone(),
+                                            details: std::fs::read_to_string(
+                                                sunrise_launcher::native_mods::log_path(),
+                                            )
+                                            .unwrap_or_else(|_| line.clone()),
                                             built: true,
                                             open: true,
                                         });

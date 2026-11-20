@@ -6,24 +6,7 @@ impl Launcher {
     pub(crate) fn cancel_native_consent(&mut self) {
         self.play_after_build = None;
         self.native_consent_build = None;
-        let cancel_build = matches!(
-            self.pending_consent,
-            Some(PendingConsent::Build(_) | PendingConsent::ReadingBuild(_))
-        );
-        if let Err(error) = native_consent::resolve(
-            &mut self.pending_consent,
-            false,
-            true,
-            &mut self.settings,
-            &self.mods.home(),
-        ) {
-            self.mods.message = Some(Err(error));
-        }
-        if cancel_build && self.native_attempts.is_some() {
-            self.install_build_ended(crate::mods_page::BuildEnd::Stopped(
-                native_mods::CANCELLED.into(),
-            ));
-        }
+        self.pending_consent = None;
         self.consent_error = None;
         self.instance_mods_changed();
     }

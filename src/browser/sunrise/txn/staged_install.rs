@@ -1,5 +1,9 @@
 //! Exact same-base installs use the same private preparation and durable publication as Switch.
-use super::{build, durable, switch, unsettled, Active, Lease, Target};
+use super::{
+    build, durable,
+    switch::{self, CandidateBuild},
+    unsettled, Active, Lease, Target,
+};
 use crate::{
     browser::{installed, sunrise, Kind, SourceId},
     github_mods,
@@ -123,13 +127,32 @@ impl StagedInstall {
         sidecars: &[&str],
         profile: native_mods::Profile,
         progress: impl Fn(native_mods::Step),
-    ) -> Result<ReadyInstall, String> {
+    ) -> Result<ReadyInstall, native_mods::Failed> {
+        let compiler = CandidateBuild {
+            profile,
+            cancellation: native_mods::Cancellation::for_profile(self.owner.clone()),
+            registry_consent: None,
+        };
+        self.prepare_with(index, sidecars, compiler, progress)
+    }
+
+    pub(super) fn prepare_with(
+        self,
+        index: &index::Index,
+        sidecars: &[&str],
+        compiler: CandidateBuild<'_>,
+        progress: impl Fn(native_mods::Step),
+    ) -> Result<ReadyInstall, native_mods::Failed> {
         let sidecars = sidecars
             .iter()
             .map(|name| (PathBuf::from(name), Some(self.stage.join(name))))
             .collect();
         let after = self.proposed_inventory(index)?;
-        self.seal(after, sidecars, &[], profile, progress)
+        self.seal(after, sidecars, &[], compiler, progress)
+    }
+
+    pub(super) fn inputs(&self) -> [u8; 32] {
+        self.input
     }
 
     fn proposed_inventory(&self, index: &index::Index) -> Result<switch::Inventory, String> {
@@ -151,30 +174,22 @@ impl StagedInstall {
         after: switch::Inventory,
         sidecars: Vec<(PathBuf, Option<PathBuf>)>,
         requested_off: &[String],
-        profile: native_mods::Profile,
+        compiler: CandidateBuild<'_>,
         progress: impl Fn(native_mods::Step),
-    ) -> Result<ReadyInstall, String> {
+    ) -> Result<ReadyInstall, native_mods::Failed> {
         let waiting = build::waiting_packages(self.owner.home())?;
         let mut verified = chosen(&after);
         for (id, item) in waiting {
             if item.matches(&self.stage)? {
                 if after.packages.get(&id).is_some_and(|pkg| pkg.on) {
-                    return Err(unsettled());
+                    return Err(unsettled().into());
                 }
                 // An unrelated Install neither removes nor tries to build the exact bytes
                 // already disabled by Switch. A different replacement must be proved as usual.
                 verified.remove(id.as_str());
             }
         }
-        let cancellation = native_mods::Cancellation::for_profile(self.owner.clone());
-        let image = verify_candidate(
-            self.base(),
-            &self.stage,
-            profile,
-            &cancellation,
-            &progress,
-            &verified,
-        )?;
+        let image = verify_candidate(self.base(), &self.stage, &compiler, &progress, &verified)?;
         let home = self.owner.home();
         let changed: Vec<_> = self
             .before
@@ -231,7 +246,7 @@ impl StagedInstall {
             }
         };
         if build::inputs(home)? != self.input {
-            return Err(unsettled());
+            return Err(unsettled().into());
         }
         let mut steps = switch::changes(home, &self.stage, &self.before, &chosen(&after))?;
         steps.extend(sidecars);
@@ -239,7 +254,7 @@ impl StagedInstall {
         Ok(ReadyInstall {
             install: self,
             next,
-            cancellation,
+            cancellation: compiler.cancellation,
             fence,
             question,
         })
@@ -407,7 +422,13 @@ impl StagedInstall {
             }
         }
         let after = self.proposed_inventory(index)?;
-        self.seal(after, sidecars, &requested_off, profile, progress)
+        let compiler = CandidateBuild {
+            profile,
+            cancellation: native_mods::Cancellation::for_profile(self.owner.clone()),
+            registry_consent: None,
+        };
+        self.seal(after, sidecars, &requested_off, compiler, progress)
+            .map_err(Into::into)
     }
 }
 
@@ -424,6 +445,10 @@ pub(in crate::browser::sunrise) struct ReadyInstall {
 impl ReadyInstall {
     pub fn question(&self) -> &worlds::SwitchQuestion {
         &self.question
+    }
+
+    pub(super) fn executable(&self) -> &str {
+        self.next.executable()
     }
 
     pub fn commit(
@@ -479,26 +504,23 @@ pub(in crate::browser::sunrise) fn seal_private_profile(
     base: &str,
     profile: native_mods::Profile,
     progress: impl Fn(native_mods::Step),
-) -> Result<SealedProfile, String> {
+) -> Result<SealedProfile, native_mods::Failed> {
     let home = owner.home();
     let inventory = switch::Inventory::read(home)?;
     let chosen = chosen(&inventory);
     let target = Target::legacy(base)?;
-    let cancellation = native_mods::Cancellation::for_profile(owner.clone());
-    let image = verify_candidate(
-        target.base(),
-        home,
+    let compiler = CandidateBuild {
         profile,
-        &cancellation,
-        &progress,
-        &chosen,
-    )?;
+        cancellation: native_mods::Cancellation::for_profile(owner.clone()),
+        registry_consent: None,
+    };
+    let image = verify_candidate(target.base(), home, &compiler, &progress, &chosen)?;
     let binding = build::Bootstrap::bind(home, target)?;
     let active = binding.active(&image, home)?;
     build::publish(home, &active)?;
     Ok(SealedProfile {
         active,
-        native_grant: cancellation.grant()?,
+        native_grant: compiler.cancellation.grant()?,
     })
 }
 
@@ -535,16 +557,14 @@ fn chosen(inventory: &switch::Inventory) -> BTreeMap<&str, &switch::Package> {
 fn verify_candidate(
     base: &str,
     home: &Path,
-    profile: native_mods::Profile,
-    cancellation: &native_mods::Cancellation,
+    compiler: &CandidateBuild<'_>,
     progress: &impl Fn(native_mods::Step),
     chosen: &BTreeMap<&str, &switch::Package>,
-) -> Result<String, String> {
+) -> Result<String, native_mods::Failed> {
     if !switch::fits(chosen) {
-        return Err(tr("The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.").into());
+        return Err(tr("The proposed mod set has incompatible packages or missing dependencies. Nothing was installed.").to_owned().into());
     }
-    switch::build_candidate(base, home, profile, cancellation, progress, chosen)
-        .map_err(String::from)
+    switch::build_candidate(base, home, compiler, progress, chosen)
 }
 
 fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {

@@ -56,9 +56,11 @@ pub fn prepare_registry_install(
         backend::Settings::native_grant()?.is_some(),
         &waiting,
     )?;
-    let ready = plan.prepare(&index, &[], instance.native_profile, |step| {
-        progress(&step.label(), 0.99)
-    })?;
+    let ready = plan
+        .prepare(&index, &[], instance.native_profile, |step| {
+            progress(&step.label(), 0.99)
+        })
+        .map_err(|e| installed::InstallError::for_build(e, &ids.join(", ")))?;
     Ok(RegistryInstall {
         ready: Box::new(ready),
         evidence,

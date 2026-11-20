@@ -57,7 +57,7 @@ impl Cancellation {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    pub(super) fn admit_native_work(&self) -> Result<(), super::Failed> {
+    pub(crate) fn admit_native_work(&self) -> Result<(), super::Failed> {
         let mut state = self.state();
         state.check()?;
         if let Some(grant) = state.grant {

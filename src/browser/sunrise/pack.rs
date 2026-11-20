@@ -163,7 +163,10 @@ impl StagedPack {
     }
 }
 
-pub fn prepare(id: &str, progress: &dyn Fn(&str, f32)) -> Result<PackInstall, String> {
+pub fn prepare(
+    id: &str,
+    progress: &dyn Fn(&str, f32),
+) -> Result<PackInstall, installed::InstallError> {
     let (index, evidence) = authoritative_index()?;
     let staged = stage_in(
         &index,
@@ -186,12 +189,12 @@ fn stage_in(
     dir: &Path,
     initial_base: impl FnOnce() -> Result<String, String>,
     progress: &dyn Fn(&str, f32),
-) -> Result<StagedPack, String> {
+) -> Result<StagedPack, installed::InstallError> {
     let p = index
         .project(id)
         .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
     if p.kind != idx::Kind::Modpack {
-        return Err(format!("{} is a {}, not a modpack.", p.name, p.kind.name()));
+        return Err(format!("{} is a {}, not a modpack.", p.name, p.kind.name()).into());
     }
     let work = dir.join(&p.id);
     let identity = pack_gate(dir, &p.id)?;
@@ -218,12 +221,14 @@ fn stage_in(
                 progress,
             )?;
             prior.revalidate()?;
-            let ready = plan.prepare(
-                index,
-                &[RECORD, ARCHIVE],
-                native_mods::Profile::Optimized,
-                steps,
-            )?;
+            let ready = plan
+                .prepare(
+                    index,
+                    &[RECORD, ARCHIVE],
+                    native_mods::Profile::Optimized,
+                    steps,
+                )
+                .map_err(|e| installed::InstallError::for_build(e, &p.name))?;
             (
                 installed,
                 PackState::Update {
@@ -232,7 +237,7 @@ fn stage_in(
                 },
             )
         }
-        Ok(_) => return Err(pack_unavailable()),
+        Ok(_) => return Err(pack_unavailable().into()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             let target = txn::Target::legacy(&initial_base()?)?;
             let game = backend::game_of_build(target.base()).ok_or_else(pack_unavailable)?;
@@ -250,7 +255,8 @@ fn stage_in(
                 target.base(),
                 native_mods::Profile::Optimized,
                 steps,
-            )?;
+            )
+            .map_err(|e| installed::InstallError::for_build(e, &p.name))?;
             (
                 installed,
                 PackState::New {
@@ -259,7 +265,7 @@ fn stage_in(
                 },
             )
         }
-        Err(e) => return Err(at(&work, e)),
+        Err(e) => return Err(at(&work, e).into()),
     };
     installed.work = work;
     Ok(StagedPack {
@@ -734,7 +740,11 @@ mod tests {
         dir
     }
 
-    fn install_fixture(index: &Index, id: &str, packs: &Path) -> Result<Installed, String> {
+    fn install_fixture(
+        index: &Index,
+        id: &str,
+        packs: &Path,
+    ) -> Result<Installed, installed::InstallError> {
         let tag = format!(
             "fixture-{}",
             packs
@@ -756,7 +766,9 @@ mod tests {
             br#"{"version_id":"26.3"}"#,
         )
         .unwrap();
-        stage_in(index, true, id, packs, || Ok(tag), &|_, _| {})?.commit(false, || Ok(()))
+        stage_in(index, true, id, packs, || Ok(tag), &|_, _| {})?
+            .commit(false, || Ok(()))
+            .map_err(Into::into)
     }
 
     #[test]
@@ -800,6 +812,63 @@ mod tests {
 
     /// A pack update keeps the mods the player turned on or off in the Mods page, as a Java
     /// mod update does; a mod the new pack version adds takes the pack's own `on`.
+    #[test]
+    fn a_native_pack_requests_consent_without_exposing_a_profile() {
+        const ACTOR: &str = "SUNRISE_PACK_CONSENT_TEST";
+        let Some(dir) = std::env::var_os(ACTOR) else {
+            let root = tempfile::tempdir().unwrap();
+            let out = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "browser::sunrise::pack::tests::a_native_pack_requests_consent_without_exposing_a_profile", "--nocapture"])
+                .env(ACTOR, root.path())
+                .env("SUNRISE_LAUNCHER_HOME", root.path().join("data"))
+                .env("SUNRISE_HOME", root.path().join("game"))
+                .output().unwrap();
+            assert!(
+                out.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return;
+        };
+        let dir = PathBuf::from(dir);
+        let mut index = super::super::tests::native_sample(&dir);
+        let mut pack = registry(&dir, true, "")
+            .projects
+            .into_iter()
+            .find(|p| p.id == "cozy")
+            .unwrap();
+        let version = &mut pack.versions[0];
+        let sha256 = index.projects[0].versions[0].file.sha256.clone();
+        version.requires[0].sha256.clone_from(&sha256);
+        let archive = dir.join(&version.file.name);
+        let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+        zip.start_file(
+            "sunrise-modpack.toml",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        writeln!(zip, "format=1\nid='cozy'\nname='Cozy'\nversion='1.0.0'\ngame='26.3'\n[[mods]]\nid='coords_hud'\nversion='0.1.0'\nsha256='{sha256}'\non=true").unwrap();
+        zip.finish().unwrap();
+        version.file.sha256 = idx::sha256_file(&archive).unwrap();
+        version.file.size = fs::metadata(&archive).unwrap().len();
+        *index.projects.iter_mut().find(|p| p.id == "cozy").unwrap() = pack;
+        let packs = dir.join("sunrise-packs");
+        let error = install_fixture(&index, "cozy", &packs).unwrap_err();
+        assert_eq!(
+            error,
+            installed::InstallError::NeedsNativeConsent {
+                native: "Cozy".into()
+            }
+        );
+        assert!(!packs.join("cozy").exists());
+        assert!(!fs::read_dir(packs).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".pack-stage-")));
+    }
+
     #[test]
     fn a_pack_update_keeps_the_players_mod_choices() {
         let dir = scratch("keep-choice");

@@ -160,13 +160,13 @@ Native mods (docs/modding/src/how-to/native-mods.md): compile flat Rust mod proj
 - `--sync-internals`: Discover internal uses through compiler diagnostics. Prints resolved declarations as JSON for cargo sunrise-mod internals sync; never installs or selects a game
 - `--catalog`
 - `--catalog-output`: Copy discovery catalogs into this caller-owned empty directory
-- `FOLDER`: A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them (default: the native mods installed and turned on in the profile)
+- `FOLDER`: A source mod folder or a folder of them, for server export or SDK discovery only
 - `--server-output`: Export mode: build a standalone dedicated-server engine into this folder instead of a profile's build. Needs a mod FOLDER; no profile is read or changed, and no launcher config is written
 - `--allow-jar-downloads`: Allow exact-hash jar downloads into the local cache for the server export; jar bytes are never included in the exported folder
 - `--instance`: The profile whose installed native mods to build, and which then plays the build (default: the selected one)
-- `--version`: The installed version whose game files the build reuses, and whose commit it builds on when no mod pins one (default: the one the profile plays, so a rebuild stays on its Sunrise)
+- `--version`: Exact installed base to use for server export or assert for a managed profile. Use Switch to change a profile's base
 - `--trust-native-code`: Allow native code for this install (remembered; revoke in Settings, Storage)
-- `--profile` (optimized): Native mods use the pinned SDK's optimized compilation settings. The game is never rebuilt by a mod build
+- `--profile` (optimized): Override the native build profile for this run. The game is not rebuilt
 
 MCP: none: the player's switch.
 

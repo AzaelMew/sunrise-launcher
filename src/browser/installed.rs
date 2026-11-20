@@ -268,6 +268,17 @@ pub enum InstallError {
     Message(String),
 }
 
+impl InstallError {
+    pub(super) fn for_build(error: crate::native_mods::Failed, native: &str) -> Self {
+        match error {
+            crate::native_mods::Failed::NoConsent => Self::NeedsNativeConsent {
+                native: native.into(),
+            },
+            other => Self::Message(other.to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 impl InstallError {
     /// For tests that read the words of a refusal.

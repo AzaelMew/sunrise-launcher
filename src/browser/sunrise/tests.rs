@@ -549,7 +549,7 @@ fn update_replaces_an_entry_whose_file_is_gone() {
 }
 
 /// The sample's `coords_hud` as a native mod, its file written under `home`.
-fn native_sample(home: &Path) -> Index {
+pub(super) fn native_sample(home: &Path) -> Index {
     use std::io::Write;
     let archive = home.join("source.smod");
     let (a, b) = ("a".repeat(40), "b".repeat(40));

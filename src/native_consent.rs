@@ -1,9 +1,8 @@
 //! One deferred native-code action. Declining never invokes its installer or builder.
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
-    browser::mod_list,
     github_mods::Resolved,
     native_status::{BuildInput, Registry},
 };
@@ -89,47 +88,26 @@ fn build_row(input: &BuildInput) -> BuildRow {
     }
 }
 
-/// Consume exactly one request. Permission is persisted before returning an action to execute.
-/// Cancel and Escape both use `allow = false`, and cannot return an executable action.
-pub(super) fn resolve(
+/// Persist permission before consuming the one admitted action. A refusal keeps it pending.
+pub(super) fn allow(
     pending: &mut Option<PendingConsent>,
-    allow: bool,
     supported: bool,
     settings: &mut Settings,
-    home: &Path,
 ) -> Result<Option<PendingConsent>, String> {
-    if pending.is_none() {
-        return Ok(None);
-    }
-    if allow {
-        if matches!(pending, Some(PendingConsent::ReadingBuild(_))) {
-            return Ok(None);
-        }
-        if !supported {
-            return Err(crate::i18n::tr("Unavailable on this platform").into());
-        }
-        settings.allow_native_mods()?;
-        return Ok(pending.take());
-    }
-    if let Some(action) = pending.take() {
-        match action {
-            PendingConsent::Build(inputs) => {
-                // One rewrite: a failure can never leave some declined mods on.
-                let ids: Vec<&str> = inputs.iter().map(|i| i.id.as_str()).collect();
-                mod_list::set_all_enabled(home, &ids, false)?;
-            }
-            PendingConsent::ReadingBuild(_)
-            | PendingConsent::Edit(_)
-            | PendingConsent::Install(..)
-            | PendingConsent::Github(..) => {}
+    match pending {
+        None | Some(PendingConsent::ReadingBuild(_)) => Ok(None),
+        Some(_) if !supported => Err(crate::i18n::tr("Unavailable on this platform").into()),
+        Some(_) => {
+            settings.allow_native_mods()?;
+            Ok(pending.take())
         }
     }
-    Ok(None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sunrise_launcher::browser::mod_list;
 
     #[test]
     fn a_build_names_a_package_as_the_registry_mod_only_when_its_file_is_the_registrys() {
@@ -245,42 +223,26 @@ mod tests {
         }
         let home = tempfile::tempdir().unwrap();
         let mut settings = Settings::default();
-        // Decline returns no dispatchable action: no installer or builder can run.
-        // The build layer separately tests its HTTP backstop with a mock proxy.
+        mod_list::set_enabled(home.path(), "sample", true).unwrap();
+        let before =
+            std::fs::read(home.path().join(sunrise_launcher_smod::mod_list::FILE)).unwrap();
         for _ in ["Cancel", "Escape"] {
             let mut pending = Some(PendingConsent::Build(vec![input("sample")]));
-            assert!(
-                resolve(&mut pending, false, true, &mut settings, home.path())
-                    .unwrap()
-                    .is_none()
-            );
+            drop(pending.take());
             assert!(pending.is_none());
-            assert!(!mod_list::is_enabled(home.path(), "sample"));
+            assert_eq!(
+                std::fs::read(home.path().join(sunrise_launcher_smod::mod_list::FILE)).unwrap(),
+                before
+            );
             assert!(settings.native_mods_allowed_at.is_none());
         }
-        mod_list::set_enabled(home.path(), "sample", true).unwrap();
-        mod_list::set_enabled(home.path(), "second", true).unwrap();
-        mod_list::set_enabled(home.path(), "unrelated", true).unwrap();
-        let mut pending = Some(PendingConsent::Build(vec![
-            input("sample"),
-            input("second"),
-        ]));
-        resolve(&mut pending, false, true, &mut settings, home.path()).unwrap();
-        assert!(
-            !mod_list::is_enabled(home.path(), "sample")
-                && !mod_list::is_enabled(home.path(), "second"),
-            "NoConsent cancellation turns every one of the build's mods off"
-        );
-        assert!(mod_list::is_enabled(home.path(), "unrelated"));
         let mut unsupported = Some(PendingConsent::Build(vec![input("sample")]));
-        assert!(resolve(&mut unsupported, true, false, &mut settings, home.path()).is_err());
+        assert!(allow(&mut unsupported, false, &mut settings).is_err());
         assert!(unsupported.is_some());
         assert!(Settings::load().native_mods_allowed_at.is_none());
         if sunrise_launcher::rust_toolchain::host().is_some() {
             let mut pending = Some(PendingConsent::Build(vec![input("sample")]));
-            let action = resolve(&mut pending, true, true, &mut settings, home.path())
-                .unwrap()
-                .unwrap();
+            let action = allow(&mut pending, true, &mut settings).unwrap().unwrap();
             assert!(Settings::load().native_mods_allowed_at.is_some());
             match action {
                 PendingConsent::Build(inputs) => {
@@ -290,9 +252,7 @@ mod tests {
             }
             assert!(mod_list::is_enabled(home.path(), "sample"));
             assert!(
-                resolve(&mut pending, true, true, &mut settings, home.path())
-                    .unwrap()
-                    .is_none(),
+                allow(&mut pending, true, &mut settings).unwrap().is_none(),
                 "the action cannot execute twice"
             );
         }
@@ -301,7 +261,6 @@ mod tests {
     #[test]
     fn declining_the_question_for_a_hand_copied_mod_turns_nothing_on() {
         let home = tempfile::tempdir().unwrap();
-        let mut settings = sunrise_launcher::backend::Settings::default();
         use sunrise_launcher::{
             browser::sunrise::txn::ModEdit,
             instances::{Instance, Kind},
@@ -332,15 +291,10 @@ mod tests {
             },
         )));
         assert_eq!(pending.as_ref().unwrap().name(), "Mine");
-        assert!(
-            resolve(&mut pending, false, true, &mut settings, home.path())
-                .unwrap()
-                .is_none()
-        );
+        drop(pending.take());
         assert!(!sunrise_launcher::browser::mod_list::is_enabled(
             home.path(),
             "mine"
         ));
-        assert!(settings.native_mods_allowed_at.is_none());
     }
 }

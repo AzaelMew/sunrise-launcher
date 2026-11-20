@@ -9,54 +9,6 @@ use std::sync::Arc;
 use sunrise_launcher::browser::{self, installed, sunrise, Kind as PackKind, Project, SourceId};
 
 mod queue;
-pub(crate) mod removal;
-
-/// How a build ended, for the install behind it.
-pub(super) enum BuildEnd {
-    /// It built (the mods it left out are read from its record).
-    Finished,
-    /// It waits for the player: a question about worlds, or the permission for native code.
-    Pending,
-    /// It stopped for a reason outside the mods.
-    Stopped(String),
-}
-
-impl BuildEnd {
-    pub(super) fn of<T>(result: &Result<T, native_mods::Failed>) -> Self {
-        use native_mods::Failed;
-        match result {
-            Ok(_) | Err(Failed::Mods { .. } | Failed::Nothing) => Self::Finished,
-            Err(Failed::Worlds(_) | Failed::NoConsent) => Self::Pending,
-            Err(e @ Failed::Other(_)) => Self::Stopped(e.to_string()),
-        }
-    }
-}
-
-/// What a build that has ended costs the mods an install brought in.
-#[derive(Debug, PartialEq)]
-enum BuildCost {
-    /// Nothing: every mod built.
-    Nothing,
-    /// The build stopped for a reason outside the mods: every mod it was started for goes at
-    /// once, and Install can be tried again.
-    Rollback(Vec<String>),
-    /// The build went on without these mods, which don't compile or don't fit: they are listed
-    /// for the player, and go when they continue.
-    Failures(Vec<native_mods::BuildFailure>),
-}
-
-fn build_cost(
-    brought: &[String],
-    stopped: bool,
-    failures: Vec<native_mods::BuildFailure>,
-) -> BuildCost {
-    match (stopped, failures.is_empty()) {
-        (true, _) => BuildCost::Rollback(brought.to_vec()),
-        (false, true) => BuildCost::Nothing,
-        (false, false) => BuildCost::Failures(failures),
-    }
-}
-
 /// An install that failed, as its card says it.
 pub(crate) struct CardError {
     pub(crate) id: String,
@@ -69,28 +21,9 @@ pub(crate) struct CardError {
     pub(crate) open: bool,
 }
 
-/// What a build that an install started cost it. Nothing stays installed from either.
-pub(crate) enum InstallFailure {
-    /// Mods that failed to compile: each with its reason and log. They were removed and the
-    /// rest of the build went on.
-    ModsDidNotBuild(Vec<native_mods::BuildFailure>),
-    /// The build stopped for a reason outside the mods (no network, the build tools didn't
-    /// download, no room): the mods that went in were removed, the notice says why, and
-    /// Install can be tried again.
-    Interrupted {
-        /// The mods it put back or removed.
-        ids: Vec<String>,
-        /// Why it stopped, as the build said.
-        reason: String,
-    },
-}
-
-/// How an install ended well: what to tell the player, if anything (a registry mod says
-/// nothing: its card shows it installed), and whether native code went in, which a build takes up.
+/// What an install completed, including dependencies it installed or updated.
 pub(super) struct Finished {
     said: Option<String>,
-    /// The native mods that went in, by id: a build takes them up, and they go again if it fails.
-    native: Vec<String>,
     /// What came in with the mod (its dependencies), by title, for "Also installed".
     also: Vec<String>,
     /// The dependencies it moved to another version: title, before, after.
@@ -101,7 +34,6 @@ impl Finished {
     fn said(said: String) -> Self {
         Self {
             said: Some(said),
-            native: Vec::new(),
             also: Vec::new(),
             updated: Vec::new(),
         }
@@ -114,7 +46,6 @@ impl Finished {
     ) -> Self {
         Self {
             said: None,
-            native: Vec::new(),
             also: done
                 .iter()
                 .filter(|e| e.project != asked)
@@ -192,7 +123,6 @@ pub(super) struct ModEditRequest {
 }
 
 pub(crate) struct PreparedEdit {
-    instance: String,
     name: String,
     success: String,
     pub(crate) plan: sunrise::txn::PreparedModEdit,
@@ -257,18 +187,7 @@ pub(super) struct Mods {
     pub(crate) updated: HashMap<String, Vec<(String, String, String)>>,
     /// Why the last install failed, on its card: one plain line, the whole text behind Details.
     pub(crate) card_error: Option<CardError>,
-    /// The mods that go once the player continues (`removal`).
-    pub(crate) removal: removal::Pending,
-    /// The native mods the running build was started to take up.
-    building: (String, Vec<String>),
-    /// How the last build of an install ended, when it cost the install: read by the card and
-    /// by the failure sheet, until the next build starts.
-    pub(crate) failed: Option<InstallFailure>,
     pub(super) updates: HashMap<(SourceId, String), String>,
-    /// An install awaiting explicit native-code consent, before any download.
-    /// The instance and the mods whose compile failed in the last stop: their chips say so until
-    /// the next build attempt, whatever the player chose.
-    pub(super) unbuilt: Option<(String, Vec<String>)>,
     /// The project page, filters and images.
     pub(super) browse: super::mods_project::Browse,
     pub(super) tx: Sender<Event>,
@@ -328,22 +247,6 @@ impl Mods {
         self.home.current()
     }
 
-    /// The mods the last install's build removed for not compiling, each with its reason and
-    /// log: what the failure sheet lists.
-    pub(crate) fn build_failures(&self) -> &[native_mods::BuildFailure] {
-        match &self.failed {
-            Some(InstallFailure::ModsDidNotBuild(failures)) => failures,
-            _ => &[],
-        }
-    }
-
-    /// Whether a build that takes up mod `id` in profile `instance` is waiting to start or
-    /// running. The same mod in another profile has its own.
-    pub(crate) fn builds(&self, instance: &str, id: &str) -> bool {
-        (self.building.0 == instance && self.building.1.iter().any(|b| b == id))
-            || self.queue.will_build(instance, id)
-    }
-
     /// Whether the install of mod `id` waits for its turn.
     pub(crate) fn waiting(&self, id: &str) -> bool {
         self.queue.waits(id)
@@ -376,14 +279,10 @@ impl Mods {
             install_owners: HashMap::new(),
             running: None,
             consent_request: None,
-            building: Default::default(),
             world_ask: None,
-            removal: Default::default(),
             also: HashMap::new(),
             updated: HashMap::new(),
             card_error: None,
-            failed: None,
-            unbuilt: None,
             updates: HashMap::new(),
             browse: Default::default(),
             tx,
@@ -402,8 +301,6 @@ impl Launcher {
         let mut changed = false;
         let mut loaded = Vec::new();
         let mut done = false;
-        let mut native = Vec::new();
-        let mut native_in = None;
         while let Ok(event) = self.mods.rx.try_recv() {
             changed = true;
             let m = &mut self.mods;
@@ -429,22 +326,12 @@ impl Launcher {
                     m.busy = None;
                     m.running = None;
                     m.world_ask = Some(WorldAsk {
-                        instance: prepared.target.instance.clone(),
-                        question: sunrise_launcher::worlds::Question {
-                            mods: Vec::new(),
-                            worlds: Vec::new(),
-                        },
                         then: Then::PreparedInstall(prepared),
                     });
                 }
                 Event::ReadyEdit(prepared) => {
                     m.busy = None;
                     m.world_ask = Some(WorldAsk {
-                        instance: prepared.instance.clone(),
-                        question: sunrise_launcher::worlds::Question {
-                            mods: Vec::new(),
-                            worlds: Vec::new(),
-                        },
                         then: Then::PreparedEdit(prepared),
                     });
                 }
@@ -463,13 +350,12 @@ impl Launcher {
                 Event::Done(result) => {
                     done = true;
                     let id = m.busy.take().map(|(id, ..)| id);
-                    native_in = m.running.take().map(|t| t.instance);
-                    if let Some(instance) = &native_in {
+                    if let Some(instance) = m.running.take().map(|t| t.instance) {
                         if m.install_owners
-                            .get(instance)
+                            .get(&instance)
                             .is_some_and(|lease| !lease.outstanding())
                         {
-                            m.install_owners.remove(instance);
+                            m.install_owners.remove(&instance);
                         }
                     }
                     m.card_error = match (&result, &id) {
@@ -491,7 +377,6 @@ impl Launcher {
                                 m.also.insert(id.clone(), finished.also);
                                 m.updated.insert(id, finished.updated);
                             }
-                            native.extend(finished.native);
                             finished.said.map(|said| {
                                 crate::glass_toast::say(said.clone());
                                 Ok(said)
@@ -509,22 +394,10 @@ impl Launcher {
             // A data pack put into a world shows in its list on Home.
             self.world_packs.reread();
         }
-        if let Some(instance) = native_in.filter(|_| !native.is_empty()) {
-            self.mods.queue.build_after_install(&instance, native);
-        }
-        // Installs that waited start in order. The build that finishes them goes through the
-        // Build button's entry, so its own planner decides what to build: native mods share a
-        // patch library, so one mod is never built alone. A build already running can't take
-        // a new mod in, so what was asked for meanwhile waits until it ends, and one
-        // follow-up build takes it all up.
         let locked = matches!(
             self.mods_lock(),
             Some(crate::mods::Lock::GameRunning | crate::mods::Lock::Preparing)
         );
-        let selected = self
-            .selected_instance()
-            .map(|i| i.id.clone())
-            .unwrap_or_default();
         // A question that is about to start an install again holds the queue; one that was
         // closed or left (another profile picked) lets go of its request.
         if self.pending_consent.is_none() {
@@ -540,23 +413,15 @@ impl Launcher {
                 }
             }
         }
-        let step = self.mods.queue.next(
-            &selected,
-            self.mods.busy.is_some(),
-            self.native_step.is_some() || self.native_attempts.is_some(),
-            locked
+        if let Some(request) = self.mods.queue.next(
+            self.mods.busy.is_some()
+                || self.native_step.is_some()
+                || locked
                 || self.pending_consent.is_some()
-                || self.mods.world_ask.is_some()
-                || !self.mods.removal.is_empty(),
-        );
-        changed |= step.is_some();
-        match step {
-            Some(queue::Step::Install(request)) => self.start_install(request),
-            Some(queue::Step::Build(ids)) => {
-                self.mods.building = (selected.clone(), ids);
-                self.build_native()
-            }
-            None => {}
+                || self.mods.world_ask.is_some(),
+        ) {
+            self.start_install(request);
+            changed = true;
         }
         for l in loaded {
             self.mods_loaded(l);
@@ -594,7 +459,6 @@ impl Launcher {
             });
             let event = match prepared {
                 Ok(plan) if plan.question().needed() => Event::ReadyEdit(Box::new(PreparedEdit {
-                    instance: instance.id,
                     name,
                     success,
                     plan,
@@ -652,10 +516,8 @@ impl Launcher {
     fn submit_install(&mut self, request: queue::Request) {
         let busy = self.mods.busy.is_some()
             || self.native_step.is_some()
-            || self.native_attempts.is_some()
             || self.pending_consent.is_some()
-            || self.mods.world_ask.is_some()
-            || !self.mods.removal.is_empty();
+            || self.mods.world_ask.is_some();
         if let Some(request) = self.mods.queue.submit(request, busy) {
             self.start_install(request);
         }
@@ -855,177 +717,50 @@ impl From<installed::InstallError> for Stop {
 }
 
 impl Launcher {
-    /// The player's answer to the world question. Stay leaves everything as it is; Switch runs
-    /// the update again with the mods the question named allowed to go.
+    /// Accept or drop the exact prepared candidate without rerunning the operation.
     pub(crate) fn answer_world_question(&mut self, answer: sunrise_launcher::worlds::Answer) {
         let Some(ask) = self.mods.world_ask.take() else {
             return;
         };
-        if let Then::PreparedInstall(prepared) = ask.then {
-            let PreparedInstall {
-                target,
-                label,
-                proposal,
-            } = *prepared;
-            self.mods.busy = Some((label, tr("Installing…").to_string(), 0.99));
-            self.mods.running = Some(target);
-            let tx = self.mods.tx.clone();
-            std::thread::spawn(move || {
-                let event = if answer == sunrise_launcher::worlds::Answer::Stay {
-                    drop(proposal);
-                    Event::InstallCancelled
-                } else {
-                    Event::Done(proposal.commit(true))
-                };
-                let _ = tx.send(event);
-            });
-            return;
-        }
-        if let Then::PreparedEdit(prepared) = ask.then {
-            let PreparedEdit {
-                name,
-                success,
-                plan,
-                ..
-            } = *prepared;
-            self.mods.busy = Some((name, tr("Working…").into(), 0.99));
-            let tx = self.mods.tx.clone();
-            std::thread::spawn(move || {
-                let result = if answer == sunrise_launcher::worlds::Answer::Stay {
-                    drop(plan);
-                    Ok(None)
-                } else {
-                    plan.commit(true).map(|()| Some(success))
-                };
-                let _ = tx.send(Event::EditFinished(result));
-            });
-            return;
-        }
-        if answer == sunrise_launcher::worlds::Answer::Stay {
-            if matches!(ask.then, Then::Build(_)) && self.native_attempts.is_some() {
-                self.install_build_ended(BuildEnd::Stopped(native_mods::CANCELLED.into()));
-            }
-            return;
-        }
-        let allow = ask.question.mods.into_iter().collect();
+        let tx = self.mods.tx.clone();
+        let stay = answer == sunrise_launcher::worlds::Answer::Stay;
         match ask.then {
-            Then::Build(base) => {
-                self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
+            Then::PreparedInstall(prepared) => {
+                let PreparedInstall {
+                    target,
+                    label,
+                    proposal,
+                } = *prepared;
+                self.mods.busy = Some((label, tr("Installing…").into(), 0.99));
+                self.mods.running = Some(target);
+                std::thread::spawn(move || {
+                    let event = if stay {
+                        drop(proposal);
+                        Event::InstallCancelled
+                    } else {
+                        Event::Done(proposal.commit(true))
+                    };
+                    let _ = tx.send(event);
+                });
             }
-            Then::PreparedInstall(_) | Then::PreparedEdit(_) => unreachable!("handled above"),
-        }
-    }
-
-    /// A build ended. The mods it left out because they didn't compile or don't fit are
-    /// listed to go (`continue_removal`); the build already went on without them. If it stopped
-    /// for another reason, every mod it touched is put back as it was, and the ones it added go
-    /// at once. A build waiting for the player ends nothing yet. False means reaping failed:
-    /// report the error rather than reporting a completed install or proceeding to Play.
-    pub(super) fn install_build_ended(&mut self, end: BuildEnd) -> bool {
-        if matches!(end, BuildEnd::Pending) {
-            return true;
-        }
-        let Some((lease, attempts)) = self.native_attempts.take() else {
-            return true;
-        };
-        let (id, brought) = std::mem::take(&mut self.mods.building);
-        let instance_id = self.native_for.clone().unwrap_or(id);
-        let instance = self.instances.list.iter().find(|i| i.id == instance_id);
-        let reaped = match instance {
-            None => lease.undo(&attempts),
-            Some(instance) if instance.is_pack_profile() => Ok(()),
-            Some(instance) => {
-                let stopped = match end {
-                    BuildEnd::Stopped(why) => Some(why),
-                    _ => None,
-                };
-                let failures = match &stopped {
-                    Some(_) => Vec::new(),
-                    None => native_mods::build_failures(&self.native_left_out_of(instance)),
-                };
-                match build_cost(&brought, stopped.is_some(), failures) {
-                    BuildCost::Nothing => lease.done(&attempts),
-                    BuildCost::Rollback(ids) => {
-                        let result = lease.undo(&attempts);
-                        self.mods.message = stopped.clone().map(Err);
-                        self.mods.failed = Some(InstallFailure::Interrupted {
-                            ids,
-                            reason: stopped.unwrap_or_default(),
-                        });
-                        self.mods.reload_installed();
-                        result
-                    }
-                    BuildCost::Failures(failures) => lease.done(&attempts).map(|()| {
-                        let entries = installed::Installed::load(&instance.home).entries;
-                        let titles: HashMap<String, String> = entries
-                            .iter()
-                            .map(|e| (e.project.clone(), e.title.clone()))
-                            .collect();
-                        let items = failures.into_iter().map(|f| removal::Item {
-                            title: titles.get(&f.id).cloned().unwrap_or_else(|| f.id.clone()),
-                            id: f.id,
-                            reason: f.reason,
-                            log: Some(f.log),
-                            checksum: String::new(),
-                        });
-                        self.mods.removal.add(&instance_id, &entries, items);
-                    }),
-                }
+            Then::PreparedEdit(prepared) => {
+                let PreparedEdit {
+                    name,
+                    success,
+                    plan,
+                } = *prepared;
+                self.mods.busy = Some((name, tr("Working…").into(), 0.99));
+                std::thread::spawn(move || {
+                    let result = if stay {
+                        drop(plan);
+                        Ok(None)
+                    } else {
+                        plan.commit(true).map(|()| Some(success))
+                    };
+                    let _ = tx.send(Event::EditFinished(result));
+                });
             }
-        };
-        if let Err(error) = reaped {
-            self.mods.message = Some(Err(error.clone()));
-            self.native_error = Some(error);
-            return false;
         }
-        if !lease.outstanding() {
-            self.mods.install_owners.remove(&instance_id);
-        }
-        true
-    }
-
-    /// Continue on the removal sheet: the listed mods go. Those whose build failed are
-    /// remembered for the cards.
-    pub(crate) fn continue_removal(&mut self) {
-        let Some(removal) = self.mods.removal.take_first() else {
-            return;
-        };
-        let Some(home) = self
-            .instances
-            .list
-            .iter()
-            .find(|i| i.id == removal.instance)
-            .map(|i| i.home.clone())
-        else {
-            return;
-        };
-        // One transaction under the profile's lock, and only the files that are still the ones
-        // listed: a crash in it is undone at the next start like an install's.
-        let wanted: Vec<(String, String)> = removal
-            .items
-            .iter()
-            .map(|item| (item.id.clone(), item.checksum.clone()))
-            .collect();
-        let mut failed = Vec::new();
-        match sunrise::remove_checked(&home, &wanted) {
-            Ok(gone) => {
-                for item in removal.items.iter().filter(|i| gone.contains(&i.id)) {
-                    if let Some(log) = &item.log {
-                        failed.push(native_mods::BuildFailure {
-                            id: item.id.clone(),
-                            reason: item.reason.clone(),
-                            log: log.clone(),
-                        });
-                    }
-                }
-            }
-            Err(e) => self.mods.message = Some(Err(e)),
-        }
-        if !failed.is_empty() {
-            self.mods.failed = Some(InstallFailure::ModsDidNotBuild(failed));
-        }
-        self.mods.reload_installed();
-        self.mods.installed_list.reset();
     }
 
     pub(super) fn mods_install_many(&mut self, ids: Vec<String>, shown: String) {
@@ -1094,43 +829,8 @@ impl Launcher {
     }
 }
 
-/// What went wrong for mod `id` in the last install's build, for its card: the reason in one
-/// plain line and the whole text for Details (a compile failure's log).
-pub(crate) fn build_failure_of(
-    failed: Option<&InstallFailure>,
-    id: &str,
-) -> Option<(String, String)> {
-    match failed? {
-        InstallFailure::ModsDidNotBuild(failures) => failures
-            .iter()
-            .find(|f| f.id == id)
-            .map(|f| (f.reason.clone(), f.log.clone())),
-        InstallFailure::Interrupted { ids, reason } if ids.iter().any(|i| i == id) => Some((
-            crate::mods::install_state::plain_failure(reason),
-            reason.clone(),
-        )),
-        InstallFailure::Interrupted { .. } => None,
-    }
-}
-
-/// The display names of the mods `ids`, from the installed `entries`; the id when the list
-/// doesn't have it.
-pub(crate) fn titles(entries: &[installed::Entry], ids: &[String]) -> Vec<String> {
-    ids.iter()
-        .map(|id| {
-            entries
-                .iter()
-                .find(|e| &e.project == id)
-                .map_or_else(|| id.clone(), |e| e.title.clone())
-        })
-        .collect()
-}
-
 /// What goes on once the player answers Switch anyway to a world question.
 pub(crate) enum Then {
-    /// A build that stopped for the question is made again, leaving those mods out: the build
-    /// it was on.
-    Build(String),
     /// The exact prepared set, image and locked world evidence to approve once.
     PreparedInstall(Box<PreparedInstall>),
     PreparedEdit(Box<PreparedEdit>),
@@ -1139,25 +839,7 @@ pub(crate) enum Then {
 /// A switch, update or install that waits for the player's answer: it would remove mods that
 /// saved worlds use. Staying is the default; Switch anyway goes on with those mods allowed.
 pub(crate) struct WorldAsk {
-    /// The instance whose profile it is.
-    pub(crate) instance: String,
-    pub(crate) question: sunrise_launcher::worlds::Question,
     pub(crate) then: Then,
-}
-
-impl WorldAsk {
-    /// The question a build's stop for worlds puts: the mods it would have left out and the
-    /// worlds saved with them.
-    pub(crate) fn from_stop(instance: String, stake: &native_mods::AtStake) -> Self {
-        Self {
-            instance,
-            question: sunrise_launcher::worlds::Question {
-                mods: stake.mods.clone(),
-                worlds: stake.worlds.clone(),
-            },
-            then: Then::Build(stake.base.clone()),
-        }
-    }
 }
 
 #[cfg(test)]

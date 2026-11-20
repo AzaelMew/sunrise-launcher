@@ -706,8 +706,7 @@ enum Cmd {
         /// Copy discovery catalogs into this caller-owned empty directory
         #[arg(long, requires = "catalog")]
         catalog_output: Option<PathBuf>,
-        /// A mod folder (sunrise-mod.toml with [native], Cargo.toml and src/), or a folder of them
-        /// (default: the native mods installed and turned on in the profile)
+        /// A source mod folder or a folder of them, for server export or SDK discovery only
         folder: Option<PathBuf>,
         /// Export mode: build a standalone dedicated-server engine into this folder instead of
         /// a profile's build. Needs a mod FOLDER; no profile is read or changed, and no
@@ -727,9 +726,8 @@ enum Cmd {
         /// (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
-        /// The installed version whose game files the build reuses, and whose commit it builds on
-        /// when no mod pins one (default: the one the profile plays, so a rebuild stays on its
-        /// Sunrise)
+        /// Exact installed base to use for server export or assert for a managed profile.
+        /// Use Switch to change a profile's base
         #[arg(long)]
         version: Option<String>,
         // Parse the old flag to direct scripts to Switch; never let it rebase a build.
@@ -738,8 +736,7 @@ enum Cmd {
         /// Allow native code for this install (remembered; revoke in Settings, Storage)
         #[arg(long)]
         trust_native_code: bool,
-        /// Native mods use the pinned SDK's optimized compilation settings.
-        /// The game is never rebuilt by a mod build.
+        /// Override the native build profile for this run. The game is not rebuilt.
         #[arg(long, value_enum)]
         profile: Option<native_mods::Profile>,
         /// Build the horizon-mixins tool from its pinned source instead of downloading the
@@ -1330,53 +1327,24 @@ fn execute(command: Cmd, as_json: bool) -> Result<i32, String> {
                 Some(name) => instances::find(name)?,
                 None => instances::selection()?,
             };
-            let owner = Arc::new(sunrise::txn::Lease::admit(&target.home)?);
-            let active = owner.active_build()?.ok_or_else(|| {
-                tr("Play this profile once before building native mods.").to_owned()
-            })?;
-            if version.as_deref().is_some_and(|tag| tag != active.base()) {
-                return Err(tr("Use Switch to choose another game build for this profile.").into());
+            if folder.is_some() {
+                return Err(tr("Build uses the mods in the selected profile. Use --server-output to build from another folder.").into());
             }
-            active.verify_artifacts()?;
-            let base = active.base().to_owned();
+            let build = sunrise::txn::ManualBuild::admit(&target.home, version.as_deref())?;
+            let base = build.base().to_owned();
             native_permission(trust_native_code)?;
-            let cancellation = native_mods::Cancellation::for_profile(owner);
-            let target = match profile {
-                Some(profile) => {
-                    instances::edit(&target.id, |meta| meta.native_profile = Some(profile))?
+            let built = match build.run(profile.unwrap_or(target.native_profile), steps, &registry_consent) {
+                Err(nothing @ native_mods::Failed::Nothing) => {
+                    println!("{nothing}");
+                    return Ok(0);
                 }
-                None => target,
-            };
-            let explicit = folder.is_some() || profile.is_some();
-            let folder = match folder {
-                Some(folder) => folder,
-                None => native_mods::installed_mods(&target.home)?,
-            };
-            let profile = explicit.then_some(target.native_profile);
-            let built =
-                match native_mods::build(&base, &folder, &target, profile, native_mods::LeaveOut::Nothing, &cancellation, steps, registry_consent, || backend::releases().ok()) {
-                    // A content mod needs no build: the instance stays as it is.
-                    Err(nothing @ native_mods::Failed::Nothing) => {
-                        println!("{nothing}");
-                        return Ok(0);
-                    }
-                    result => result,
-                }
-                .map_err(|error| {
-                    if let native_mods::Failed::Worlds(stake) = &error {
-                        return trf(
-                            "{error}\n{stay}: nothing changed.",
-                            &[
-                                ("error", &stake.text),
-                                ("stay", &native_mods::fit::stay(&stake.stay)),
-                            ],
-                        );
-                    }
-                    let error = String::from(error);
-                    if error.starts_with(native_mods::MISMATCH) {
-                        trf("{error} Run `cargo sunrise-mod update --sunrise {commit}` in each mod's folder to pin it to this game, then build again.", &[("error", &error), ("commit", &base)])
-                    } else { error }
-                })?;
+                result => result,
+            }.map_err(|error| {
+                let error = String::from(error);
+                if error.starts_with(native_mods::MISMATCH) {
+                    trf("{error} Run `cargo sunrise-mod update --sunrise {commit}` in each mod's folder to pin it to this game, then build again.", &[("error", &error), ("commit", &base)])
+                } else { error }
+            })?;
             println!("{built}");
         }
         Cmd::DeveloperInstall(args) => developer_builds::install(args, as_json)?,
