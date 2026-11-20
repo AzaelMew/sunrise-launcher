@@ -844,8 +844,10 @@ fn a_creation_that_fails_leaves_no_instance_and_the_name_free() {
 
 #[test]
 fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() {
-    use crate::managed_play::{Active, FirstBuild};
+    use crate::managed_play::{Active, FirstBuild, Held, HeldReason, HeldSource};
+    use sha2::{Digest as _, Sha256};
     use std::{process::Command, time::Instant};
+    use sunrise_launcher_smod::{manifest, mod_list};
     const TEST: &str = "instances::tests::a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices";
     const ROLE: &str = "SUNRISE_COPY_TEST_ROLE";
     const BUILD: &str = "v0.1.7";
@@ -962,6 +964,26 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
             fs::write(folder.join(backend::CLIENT), "fixture client").unwrap();
             put(&source.home.join(ENABLED), "\n");
             put(&source.home.join("saves/Mine/level.dat"), "copied world");
+            let kept = format!("{}/example.smod", mod_list::NATIVE_DIR);
+            let package = manifest::Package::write_files(
+                &format!("id='example'\nname='Example'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\nsunrise='{}'\ngame='26.3'\n", manifest::API, "a".repeat(40)),
+                &[("Cargo.toml", b"[package]\nname='example'\nversion='1.0.0'"), ("src/lib.rs", b"")],
+            ).unwrap();
+            fs::create_dir_all(source.home.join(mod_list::NATIVE_DIR)).unwrap();
+            fs::write(source.home.join(&kept), &package).unwrap();
+            let held = Held::new(
+                "example".into(),
+                Sha256::digest(&package).into(),
+                kept,
+                HeldSource::Local {
+                    version: "1.0.0".into(),
+                },
+                true,
+                HeldReason::NoFit {
+                    build: BUILD.into(),
+                },
+            )
+            .unwrap();
             let mut managed = ManagedProfile::open_instance(&game, &cache, &source).unwrap();
             let first = managed
                 .begin_first(|| FirstBuild::installed(BUILD), |_| {})
@@ -981,7 +1003,7 @@ fn a_kill_after_copy_visibility_keeps_the_exact_copy_and_recovers_its_choices() 
             let mut exact = serde_json::to_value(active).unwrap();
             let receipt = [7u8; 16];
             exact["receipts"] = serde_json::json!([{
-                "id": receipt, "waiting_for_update": [["example", "Example"]], "removed": [],
+                "id": receipt, "waiting_for_update": [held], "removed": [], "acknowledged": false,
             }]);
             let bytes = serde_json::to_vec(&exact).unwrap();
             Active::parse(&bytes).unwrap();
