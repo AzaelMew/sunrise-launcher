@@ -24,6 +24,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod artifact;
 mod build;
 pub(crate) mod durable;
 mod staged_install;

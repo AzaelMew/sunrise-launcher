@@ -1186,8 +1186,8 @@ pub(crate) fn play_image(
 
 /// Runs a game process in this terminal and reports how it ended.
 fn attached(cmd: Command, profile: Option<&sunrise::txn::Lease>) -> Result<i32, String> {
-    let (mut cmd, _runtime) = backend::prepare_command(cmd)?;
-    let status = backend::spawn_attached(&mut cmd, profile)
+    let (mut cmd, runtime) = backend::prepare_command(cmd)?;
+    let status = backend::spawn_attached(&mut cmd, profile, &runtime)
         .and_then(|mut child| child.wait())
         .map_err(|e| format!("Could not start {:?}: {e}", cmd.get_program()))?;
     #[cfg(unix)]

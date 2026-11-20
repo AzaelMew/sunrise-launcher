@@ -4,7 +4,7 @@ use super::*;
 mod bound;
 pub(crate) use bound::{GameDownload, GameProof};
 
-pub(super) const ARCHIVE_ID: &str = ".sunrise-archive-sha256";
+pub(crate) const ARCHIVE_ID: &str = ".sunrise-archive-sha256";
 
 pub(crate) fn install_as(
     release: &Release,

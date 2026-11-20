@@ -1,5 +1,5 @@
 //! The published Play generation and the binding retained while admitting an old profile.
-use super::{durable, unsettled, Image, Lease};
+use super::{artifact::Artifact, durable, unsettled, Image, Lease};
 use crate::{backend, native_mods, native_status};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -166,11 +166,7 @@ impl Bootstrap {
 
     #[cfg(test)]
     pub(super) fn test_active(&self) -> Active {
-        let base = Artifact {
-            tag: self.target.base.clone(),
-            executable: [1; 32],
-            metadata: [Image::Missing, Image::Missing, Image::Missing],
-        };
+        let base = Artifact::test(self.target.base.clone());
         Active {
             version: 1,
             profile: self.profile,
@@ -195,35 +191,6 @@ impl Bootstrap {
             Vec::new(),
             home,
         )
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Artifact {
-    tag: String,
-    executable: [u8; 32],
-    metadata: [Image; 3],
-}
-
-impl Artifact {
-    fn capture(tag: &str) -> Result<Self, String> {
-        validate_tag(tag)?;
-        let dir = backend::version_dir(tag);
-        require_dir(&dir)?;
-        let path = dir.join(backend::CLIENT);
-        let Image::Sha256(executable) = Image::at(&path)? else {
-            return Err(format!("{}: {}", path.display(), io::ErrorKind::NotFound));
-        };
-        Ok(Self {
-            tag: tag.into(),
-            executable,
-            metadata: [
-                Image::at(&dir.join("sunrise-release.json"))?,
-                Image::at(&dir.join("native-mods.json"))?,
-                Image::at(&dir.join("research-lock.json"))?,
-            ],
-        })
     }
 }
 
@@ -422,6 +389,25 @@ impl Active {
 
     pub fn executable(&self) -> &str {
         &self.executable.tag
+    }
+
+    pub(in crate::browser::sunrise) fn verify_program(&self, path: &Path) -> Result<(), String> {
+        let root = backend::version_dir(self.executable());
+        if path != root.join(backend::CLIENT) {
+            #[cfg(target_os = "macos")]
+            crate::game_app::verify(&root, path).map_err(|e| format!("{}: {e}", path.display()))?;
+            #[cfg(not(target_os = "macos"))]
+            return Err(unsettled());
+        }
+        self.executable.verify_program(path)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn verify_runtime_copy(&self, root: &Path) -> Result<(), String> {
+        if Artifact::capture_at(self.executable(), root)? != self.executable {
+            return Err(unsettled());
+        }
+        Ok(())
     }
 
     pub fn verify_artifacts(&self) -> Result<(), String> {

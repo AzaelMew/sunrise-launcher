@@ -141,7 +141,7 @@ impl GameArchitecture {
     }
 }
 
-const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
+pub(crate) const GAME_BUILD_ARCHITECTURE: &str = ".sunrise-game-architecture.json";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct InstalledGameArchitecture {
@@ -1292,7 +1292,7 @@ pub use developer_play::client_as;
 /// Downloads `release`'s archive for this platform, checks it against `sha256` (its signed
 /// checksum), and unpacks it as the installed version `tag`.
 mod installation;
-pub(crate) use installation::{GameDownload, GameProof};
+pub(crate) use installation::{GameDownload, GameProof, ARCHIVE_ID as BUILD_ARCHIVE_ID};
 
 pub fn remove(tag: &str) -> Result<(), String> {
     // A native build's base keeps its prepared data, so it stays while one is installed.
@@ -4143,18 +4143,28 @@ pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> 
 pub fn spawn_attached(
     cmd: &mut Command,
     profile: Option<&crate::browser::sunrise::txn::Lease>,
+    runtime: &RuntimeGuard,
 ) -> std::io::Result<Child> {
-    let _permission = native_client_handoff(profile).map_err(std::io::Error::other)?;
+    let _permission = native_client_handoff(profile, runtime).map_err(std::io::Error::other)?;
     crate::run_leases::spawn(cmd, false, profile)
 }
 
 fn native_client_handoff(
     profile: Option<&crate::browser::sunrise::txn::Lease>,
+    _runtime: &RuntimeGuard,
 ) -> Result<Option<crate::local_json::LockedJson>, String> {
     let Some(owner) = profile else {
         return Ok(None);
     };
     let active = owner.verify_launch()?;
+    #[cfg(windows)]
+    {
+        let copy = _runtime
+            ._windows
+            .as_ref()
+            .ok_or_else(|| "The profile's runtime copy was not prepared.".to_string())?;
+        active.verify_runtime_copy(copy.game())?;
+    }
     crate::native_status::publication_guard(active.executable(), None)
 }
 
@@ -4216,7 +4226,7 @@ pub fn spawn_holding(
         .stderr(Stdio::piped());
     let mut child = {
         let _permission = if job == Job::Client {
-            native_client_handoff(profile)?
+            native_client_handoff(profile, &runtime)?
         } else {
             None
         };
@@ -4908,6 +4918,30 @@ mod tests {
     /// running from it, removing it must still work.
     #[test]
     fn a_version_without_the_lease_marker_can_be_removed_when_idle() {
+        const ACTOR: &str = "SUNRISE_TEST_PRELEASE_REMOVAL";
+        if std::env::var_os(ACTOR).is_none() {
+            // Deletion scans every managed profile before proceeding. Do not let unrelated
+            // tests' deliberately invalid or changing profiles share this fixture's roots.
+            let temp = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "backend::tests::a_version_without_the_lease_marker_can_be_removed_when_idle",
+                    "--nocapture",
+                ])
+                .env(ACTOR, "1")
+                .env("SUNRISE_LAUNCHER_HOME", temp.path().join("data"))
+                .env("SUNRISE_HOME", temp.path().join("game"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let dir = version_dir("v0.0.1-preleases");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(COMPLETE), b"").unwrap();

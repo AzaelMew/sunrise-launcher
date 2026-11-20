@@ -956,7 +956,7 @@ mod tests {
         // Switch keeps the package and writes the off bit in the same commit. Even an old
         // omission for these exact bytes must not count as an active mod left out.
         std::fs::write(home.join("native-left-out.json"), r#"{"base":"test-waiting-base","left_out":[{"id":"lanternlight","version":"1.0.0","why":"no fit"}]}"#).unwrap();
-        let artifact = serde_json::json!({"tag":"test-waiting-base", "executable":vec![1;32], "metadata":["missing","missing","missing"]});
+        let artifact = serde_json::json!({"tag":"test-waiting-base", "executable":vec![1;32], "runtime":vec![0;32]});
         let digest: [u8; 32] = <sha2::Sha256 as sha2::Digest>::digest(b"placeholder").into();
         let pointer = serde_json::json!({"version":1,"profile":vec![1;16],"generation":2,"base":artifact,"executable":artifact,"inputs":vec![1;32],"receipts":[],"waiting":{
             "lanternlight":{"file":"sunrise-native-mods/lanternlight.smod","digest":digest,"reason":"no fit","was_on":true}

@@ -1677,6 +1677,21 @@ pub fn before_play(
         .into());
     }
     verify_launch_arguments(cmd, owner.home(), &crate::backend::resources(tag))?;
+    let source = cmd
+        .get_envs()
+        .find(|(key, _)| *key == crate::run_leases::SOURCE)
+        .and_then(|(_, value)| value);
+    if source.map(Path::new) != Some(crate::backend::version_dir(tag).as_path())
+        || cmd.get_envs().any(|(key, value)| {
+            key.eq_ignore_ascii_case("SUNRISE_WINDOWS_RUNTIME_SLOT") && value.is_some()
+        })
+    {
+        return Err(tr(
+            "The launch command does not match this profile's saved build and folders.",
+        )
+        .into());
+    }
+    active.verify_program(Path::new(cmd.get_program()))?;
     let included = crate::native_status::included(tag)?;
     check_before_play(owner.home(), &included, || {
         index().ok()?;
