@@ -477,15 +477,18 @@ impl Launcher {
                 .into_any_element(),
             None => div().into_any_element(),
         };
-        let action = cells.action.map(|action| {
-            let model::RowAction::Update = action;
+        let action = (cells.action.is_some() || github).then(|| {
             let b = crate::frame::button(("alt-row-update", n), tr("Update"));
             if busy {
                 return dim(b);
             }
             let row = r.clone();
             b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.update_one(&row);
+                if let Some(origin) = row.origin() {
+                    this.github_update(origin.clone());
+                } else {
+                    this.update_one(&row);
+                }
                 cx.notify();
             }))
         });

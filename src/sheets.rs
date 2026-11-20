@@ -460,7 +460,11 @@ impl Launcher {
 
     /// The sheet on screen, if any: a pending library question, a pending permission, then the
     /// sheet asked for.
-    pub(crate) fn live_sheet(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(crate) fn live_sheet(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
@@ -474,6 +478,7 @@ impl Launcher {
             return Some(self.card_why_sheet(cx));
         }
         match self.ui.sheet {
+            Some(Sheet::GithubAdd) => Some(self.github_add_sheet(window, cx)),
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
             Some(Sheet::Versions) => Some(self.versions_sheet(cx)),
@@ -762,11 +767,13 @@ impl Launcher {
             })),
             None => disabled(install),
         };
+        let github = matches!(self.pending_consent, Some(PendingConsent::Github(_)));
         let body = div()
             .flex()
             .flex_col()
             .gap(px(12.))
             .child(title(tr("Native mods run as part of the game").into()))
+            .children(github.then(|| muted(tr(sunrise_launcher::github_mods::WARNING))))
             .child(muted(format!(
                 "{}{tools}",
                 tr("They can do anything a program on your computer can.")
@@ -950,10 +957,9 @@ impl Launcher {
                         }
                     }
                     PendingConsent::Edit(request) => self.start_mod_edit(*request),
-                    PendingConsent::Install(_) => {
+                    PendingConsent::Install(_) | PendingConsent::Github(_) => {
                         self.resume_install();
                     }
-                    PendingConsent::Github(found, only) => self.github_install(found, only),
                 }
             }
         }

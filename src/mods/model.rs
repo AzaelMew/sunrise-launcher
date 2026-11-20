@@ -585,13 +585,6 @@ impl Row {
     pub(super) fn origin(&self) -> Option<&sunrise_launcher::github_mods::Origin> {
         self.local.as_ref()?.origin.as_ref()
     }
-
-    pub(super) fn removal_checksum(&self) -> Option<String> {
-        self.entry
-            .as_ref()
-            .map(|e| e.checksum.clone())
-            .or_else(|| self.origin().map(|o| format!("SHA-256:{}", o.sha256)))
-    }
 }
 
 /// What `rows` needs to know about the computer, read by the caller.

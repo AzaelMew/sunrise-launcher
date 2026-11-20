@@ -11,7 +11,6 @@
 //! content fence is not run here either: the game runs it when it loads the mod.
 //! Callers show [`WARNING`] and ask first (`--trust-native-code`).
 use crate::backend;
-use crate::browser::mod_list;
 use crate::i18n::{tr, trf};
 use crate::native_mods::{self, Bundle, INSTALLED};
 use serde::{Deserialize, Serialize};
@@ -181,16 +180,19 @@ pub fn source_url(owner: &str, repo: &str, commit: &str) -> String {
 }
 
 /// GitHub's JSON for an API path (`repos/...`); `None` when it answers 404.
-pub type Api<'a> = &'a dyn Fn(&str) -> Result<Option<serde_json::Value>, String>;
+pub type Api<'a> = &'a dyn Fn(&str) -> Result<Option<serde_json::Value>, ResolveError>;
 
 /// The real API, unauthenticated (`SUNRISE_GITHUB_TOKEN` is used when set, for CI).
-pub fn api(path: &str) -> Result<Option<serde_json::Value>, String> {
+pub fn api(path: &str) -> Result<Option<serde_json::Value>, ResolveError> {
     let url = format!("https://api.github.com/{path}");
     match backend::get_unless_missing(&url) {
-        Ok(Some(response)) => response.into_json().map(Some).map_err(|e| e.to_string()),
+        Ok(Some(response)) => response
+            .into_json()
+            .map(Some)
+            .map_err(|e| ResolveError::Lookup(e.to_string())),
         Ok(None) => Ok(None),
-        Err(e) if e.contains("rate limit") => Err(RATE_LIMIT.into()),
-        Err(e) => Err(e),
+        Err(e) if e.contains("rate limit") => Err(ResolveError::Transfer(tr(RATE_LIMIT).into())),
+        Err(e) => Err(ResolveError::Transfer(e)),
     }
 }
 
@@ -209,7 +211,7 @@ fn encode(r: &str) -> String {
         .collect()
 }
 
-fn commit_of(api: Api, link: &Link, reference: &str) -> Result<String, String> {
+fn commit_of(api: Api, link: &Link, reference: &str) -> Result<String, ResolveError> {
     let path = format!(
         "repos/{}/{}/commits/{}",
         link.owner,
@@ -217,24 +219,37 @@ fn commit_of(api: Api, link: &Link, reference: &str) -> Result<String, String> {
         encode(reference)
     );
     let found = api(&path)?.ok_or_else(|| {
-        format!(
-            "{}/{} has no commit, tag or branch {reference}.",
-            link.owner, link.repo
-        )
+        ResolveError::Lookup(trf(
+            "{repo} has no commit, tag or branch {reference}.",
+            &[
+                ("repo", &format!("{}/{}", link.owner, link.repo)),
+                ("reference", reference),
+            ],
+        ))
     })?;
     found["sha"]
         .as_str()
         .filter(|s| sunrise_launcher_smod::manifest::revision(s))
         .map(str::to_owned)
-        .ok_or_else(|| format!("GitHub did not name the commit of {reference}."))
+        .ok_or_else(|| {
+            ResolveError::Lookup(trf(
+                "GitHub did not name the commit of {reference}.",
+                &[("reference", reference)],
+            ))
+        })
 }
 
-fn default_head(api: Api, link: &Link) -> Result<String, String> {
-    let repo = api(&format!("repos/{}/{}", link.owner, link.repo))?
-        .ok_or_else(|| format!("{}/{} doesn't exist, or is private.", link.owner, link.repo))?;
-    let branch = repo["default_branch"]
-        .as_str()
-        .ok_or("GitHub did not name the default branch.")?;
+fn default_head(api: Api, link: &Link) -> Result<String, ResolveError> {
+    let name = format!("{}/{}", link.owner, link.repo);
+    let repo = api(&format!("repos/{name}"))?.ok_or_else(|| {
+        ResolveError::Lookup(trf(
+            "{repo} doesn't exist, or is private.",
+            &[("repo", &name)],
+        ))
+    })?;
+    let branch = repo["default_branch"].as_str().ok_or_else(|| {
+        ResolveError::Lookup(tr("GitHub did not name the default branch.").into())
+    })?;
     commit_of(api, link, branch)
 }
 
@@ -269,10 +284,14 @@ fn assets(release: &serde_json::Value, link: &Link) -> Vec<Asset> {
         .collect()
 }
 
-fn from_release(api: Api, link: &Link, release: &serde_json::Value) -> Result<Resolved, String> {
+fn from_release(
+    api: Api,
+    link: &Link,
+    release: &serde_json::Value,
+) -> Result<Resolved, ResolveError> {
     let tag = release["tag_name"]
         .as_str()
-        .ok_or("GitHub did not name the release's tag.")?
+        .ok_or_else(|| ResolveError::Lookup(tr("GitHub did not name the release’s tag.").into()))?
         .to_owned();
     Ok(Resolved {
         owner: link.owner.clone(),
@@ -296,13 +315,8 @@ fn at_commit(commit: String, link: &Link) -> Resolved {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ResolveError {
     NoRelease(String),
-    Failed(String),
-}
-
-impl From<String> for ResolveError {
-    fn from(why: String) -> Self {
-        Self::Failed(why)
-    }
+    Lookup(String),
+    Transfer(String),
 }
 
 impl From<ResolveError> for String {
@@ -311,7 +325,7 @@ impl From<ResolveError> for String {
             ResolveError::NoRelease(path) => {
                 trf("GitHub returned 404 for {path}.", &[("path", &path)])
             }
-            ResolveError::Failed(why) => why,
+            ResolveError::Lookup(why) | ResolveError::Transfer(why) => why,
         }
     }
 }
@@ -322,11 +336,11 @@ pub fn resolve(link: &Link, api: Api) -> Result<Resolved, ResolveError> {
     let release = |path: String| {
         api(&path)?
             .ok_or(ResolveError::NoRelease(path))
-            .and_then(|release| Ok(from_release(api, link, &release)?))
+            .and_then(|release| from_release(api, link, &release))
     };
     match &link.target {
         Target::Latest => match api(&format!("{base}/releases/latest"))? {
-            Some(release) => Ok(from_release(api, link, &release)?),
+            Some(release) => from_release(api, link, &release),
             None => Ok(at_commit(default_head(api, link)?, link)),
         },
         Target::LatestRelease => release(format!("{base}/releases/latest")),
@@ -444,19 +458,16 @@ impl Prepared {
 #[derive(Debug)]
 pub enum FetchError {
     NoMods { release: bool, detail: String },
-    Failed(String),
-}
-
-impl From<String> for FetchError {
-    fn from(why: String) -> Self {
-        Self::Failed(why)
-    }
+    Package(String),
+    Transfer(String),
 }
 
 impl From<FetchError> for String {
     fn from(error: FetchError) -> Self {
         match error {
-            FetchError::NoMods { detail, .. } | FetchError::Failed(detail) => detail,
+            FetchError::NoMods { detail, .. }
+            | FetchError::Package(detail)
+            | FetchError::Transfer(detail) => detail,
         }
     }
 }
@@ -541,7 +552,12 @@ fn download(url: &str, limit: u64) -> Result<Vec<u8>, String> {
         .into_reader()
         .take(limit + 1)
         .read_to_end(&mut body)
-        .map_err(|e| format!("Download interrupted: {e}"))?;
+        .map_err(|e| {
+            trf(
+                "Download interrupted: {error}",
+                &[("error", &e.to_string())],
+            )
+        })?;
     if body.len() as u64 > limit {
         return Err(tr("The GitHub download is too large.").into());
     }
@@ -561,7 +577,7 @@ fn fetch_with(
     let scratch = tempfile::Builder::new()
         .prefix("sunrise-github-")
         .tempdir()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| FetchError::Transfer(e.to_string()))?;
     let dir = scratch.path();
     let mut mods = if found.assets.is_empty() {
         let url = format!(
@@ -569,11 +585,30 @@ fn fetch_with(
             found.owner, found.repo, found.commit
         );
         let source = dir.join("source");
-        let top = unpack_archive(&url, &source, MAX_ARCHIVE)?;
-        let mods = find_mods(&top)?
+        let mut reader = backend::get(&url)
+            .map_err(FetchError::Transfer)?
+            .into_reader()
+            .take(MAX_ARCHIVE + 1);
+        let archive = dir.join("source.tar.gz");
+        let mut file =
+            fs::File::create(&archive).map_err(|e| FetchError::Transfer(e.to_string()))?;
+        let size = std::io::copy(&mut reader, &mut file)
+            .map_err(|e| FetchError::Transfer(e.to_string()))?;
+        drop(file);
+        if size > MAX_ARCHIVE {
+            return Err(FetchError::Transfer(
+                tr("The GitHub download is too large.").into(),
+            ));
+        }
+        let file = fs::File::open(&archive).map_err(|e| FetchError::Transfer(e.to_string()))?;
+        let top = unpack_archive(file, &source, MAX_ARCHIVE).map_err(FetchError::Package)?;
+        let _ = fs::remove_file(archive);
+        let mods = find_mods(&top)
+            .map_err(FetchError::Package)?
             .into_iter()
             .map(|m| checked(&pack(&m)?, dir, None).map_err(|e| format!("{}: {e}", m.manifest.id)))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(FetchError::Package)?;
         let _ = fs::remove_dir_all(source);
         mods
     } else {
@@ -582,9 +617,11 @@ fn fetch_with(
             .assets
             .iter()
             .map(|asset| {
-                let bytes = download(&asset.url, remaining.min(MAX_ASSET))?;
+                let bytes =
+                    download(&asset.url, remaining.min(MAX_ASSET)).map_err(FetchError::Transfer)?;
                 remaining -= bytes.len() as u64;
-                checked(&bytes, dir, Some(asset)).map_err(|e| format!("{}: {e}", asset.name))
+                checked(&bytes, dir, Some(asset))
+                    .map_err(|e| FetchError::Package(format!("{}: {e}", asset.name)))
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -599,11 +636,10 @@ fn fetch_with(
     }
     mods.sort_by(|a, b| a.id.cmp(&b.id));
     if let Some(pair) = mods.windows(2).find(|pair| pair[0].id == pair[1].id) {
-        return Err(trf(
+        return Err(FetchError::Package(trf(
             "More than one package provides {mod}.",
             &[("mod", &pair[0].id)],
-        )
-        .into());
+        )));
     }
     Ok(Prepared {
         found,
@@ -635,10 +671,10 @@ fn unpack_source(reader: impl std::io::Read, partial: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn unpack_archive(url: &str, partial: &Path, limit: u64) -> Result<PathBuf, String> {
+fn unpack_archive(file: fs::File, partial: &Path, limit: u64) -> Result<PathBuf, String> {
     let _ = fs::remove_dir_all(partial);
     fs::create_dir_all(partial).map_err(|e| e.to_string())?;
-    let reader = flate2::read::GzDecoder::new(backend::get(url)?.into_reader()).take(limit);
+    let reader = flate2::read::GzDecoder::new(file).take(limit);
     unpack_source(reader, partial)?;
     // The archive's one top folder (<repo>-<commit>/) is the source's root.
     fs::read_dir(partial)
@@ -703,49 +739,6 @@ pub fn origins(home: &Path) -> Vec<Origin> {
         .unwrap_or_default();
     found.sort_by(|a: &Origin, b| a.id.cmp(&b.id));
     found
-}
-
-/// Installs `packed` (from `found`) into the game folder `home`, turns it on and records where
-/// it came from. A mod from the registry or the player's own is never replaced; one from GitHub
-/// is (that is how it updates).
-pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin, String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    let target = home.join(INSTALLED).join(format!("{}.smod", packed.id));
-    if target.exists() && origin(home, &packed.id).is_none() {
-        return Err(format!(
-            "{} is already installed and not from GitHub: remove it first.",
-            packed.id
-        ));
-    }
-    fs::create_dir_all(home.join(INSTALLED)).map_err(|e| e.to_string())?;
-    fs::copy(&packed.file, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-    let record = packed.origin(found);
-    let text = serde_json::to_string_pretty(&record).map_err(|e| e.to_string())?;
-    let path = origin_path(home, &packed.id);
-    fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
-    mod_list::set_enabled(home, &packed.id, true)?;
-    Ok(record)
-}
-
-/// Used by the import-format tests. Managed removal stages the origin and package together.
-#[cfg(test)]
-fn remove(home: &Path, id: &str) -> Result<bool, String> {
-    let _lock = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
-    if origin(home, id).is_none() {
-        return Ok(false);
-    }
-    for path in [
-        origin_path(home, id),
-        home.join(INSTALLED).join(format!("{id}.smod")),
-    ] {
-        if let Err(e) = fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                return Err(format!("{}: {e}", path.display()));
-            }
-        }
-    }
-    mod_list::set_enabled(home, id, false)?;
-    Ok(true)
 }
 
 #[cfg(test)]

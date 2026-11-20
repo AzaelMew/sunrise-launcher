@@ -165,7 +165,7 @@ mod tests {
             anchor: Some(1),
             confirm: Some(Confirm::Remove(vec![(
                 "lantern".into(),
-                Entry {
+                sunrise::txn::ModRemoval::registry(&Entry {
                     source: SourceId::Sunrise,
                     project: "lantern".into(),
                     slug: "lantern".into(),
@@ -178,7 +178,8 @@ mod tests {
                     page: String::new(),
                     dependency: false,
                     verdict: None,
-                },
+                })
+                .unwrap(),
                 "Lantern".into(),
             )])),
             reviewed_home: Some("/profiles/a".into()),

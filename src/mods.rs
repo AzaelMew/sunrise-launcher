@@ -69,8 +69,8 @@ enum Catalog {
 
 /// A batch the player asked for and has to confirm: named, counted, nothing started yet.
 enum Confirm {
-    /// (mod id, exact installed row, title)
-    Remove(Vec<(String, Entry, String)>),
+    /// (mod id, exact installed receipt, title)
+    Remove(Vec<(String, sunrise::txn::ModRemoval, String)>),
 }
 
 struct Open {

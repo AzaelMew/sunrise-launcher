@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const SHA2: &str = "fedcba9876543210fedcba9876543210fedcba98";
@@ -54,7 +55,9 @@ fn links_that_are_not_github_repositories_are_refused() {
 }
 
 /// A recorded API: the JSON each path answers, 404 for the rest.
-fn recorded(answers: Vec<(&'static str, Value)>) -> impl Fn(&str) -> Result<Option<Value>, String> {
+fn recorded(
+    answers: Vec<(&'static str, Value)>,
+) -> impl Fn(&str) -> Result<Option<Value>, ResolveError> {
     move |path| {
         Ok(answers
             .iter()
@@ -214,8 +217,28 @@ fn refs_and_short_commits_become_full_commits_and_unknown_ones_say_so() {
 }
 
 #[test]
+fn lookup_errors_and_transfer_errors_are_distinct() {
+    let target = link("https://github.com/acme/zoom/tree/missing");
+    assert!(matches!(
+        resolve(&target, &recorded(vec![])),
+        Err(ResolveError::Lookup(_))
+    ));
+    assert!(matches!(
+        resolve(&target, &|_| Err(ResolveError::Transfer(
+            "connection ended".into()
+        ))),
+        Err(ResolveError::Transfer(_))
+    ));
+    let (found, _) = release_packages(&["zoom"], false);
+    assert!(matches!(
+        fetch_with(found, |_, _| Err("transfer ended".into())),
+        Err(FetchError::Transfer(_))
+    ));
+}
+
+#[test]
 fn a_rate_limit_is_said_plainly() {
-    let limited = |_: &str| Err(RATE_LIMIT.to_string());
+    let limited = |_: &str| Err(ResolveError::Transfer(RATE_LIMIT.to_owned()));
     let err = String::from(resolve(&link("https://github.com/acme/zoom"), &limited).unwrap_err());
     assert!(
         err.contains("rate limit") && err.contains("Try again"),
@@ -396,6 +419,25 @@ pub(crate) fn prepared_release(ids: &[&str], with_content: bool) -> Prepared {
     .unwrap()
 }
 
+pub(crate) fn prepared_update(tag: &str, definition: &str, dependencies: &str) -> Prepared {
+    let root = tempfile::tempdir().unwrap();
+    let id = "zoom";
+    project(root.path(), id, SHA);
+    let manifest = root.path().join("sunrise-mod.toml");
+    let mut toml = fs::read_to_string(&manifest).unwrap();
+    toml.push_str(dependencies);
+    write(&manifest, &toml);
+    write(
+        &root.path().join("data/zoom/sunrise/block/kept.json"),
+        definition,
+    );
+    let bytes = pack(&find_mods(root.path()).unwrap()[0]).unwrap();
+    let (mut found, _) = release_packages(&[id], false);
+    found.tag = Some(tag.into());
+    found.assets[0].sha256 = Some(sha256(&bytes));
+    fetch_with(found, |_, _| Ok(bytes.clone())).unwrap()
+}
+
 #[test]
 fn a_release_checks_every_asset_and_selection_keeps_the_exact_origin() {
     let mut prepared = prepared_release(&["zoom", "keys"], false);
@@ -407,7 +449,12 @@ fn a_release_checks_every_asset_and_selection_keeps_the_exact_origin() {
             .collect::<Vec<_>>(),
         ["keys", "zoom"]
     );
-    prepared.retain(&["keys".to_string()].into_iter().collect());
+    let mut selection: BTreeSet<_> = prepared.mods().iter().map(|m| m.id.clone()).collect();
+    assert!(
+        selection.remove("zoom"),
+        "one checked package was deselected"
+    );
+    prepared.retain(&selection);
     let [package] = prepared.mods() else {
         panic!("only selected mods are kept")
     };
@@ -429,7 +476,9 @@ fn a_mismatched_digest_or_duplicate_id_refuses_the_whole_release() {
     let refused = fetch_with(found, |_, _| Ok(downloads[0].1.clone()))
         .err()
         .unwrap();
-    assert!(String::from(refused).contains("does not match the checksum"));
+    assert!(
+        matches!(&refused, FetchError::Package(detail) if detail.contains("does not match the checksum"))
+    );
     let (found, downloads) = release_packages(&["zoom", "zoom"], false);
     let refused = fetch_with(found, |url, _| {
         Ok(downloads
@@ -481,13 +530,16 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
         assets: Vec::new(),
     };
     let kept = ready.file.clone();
-    let origin = install(&home, &found, &ready).unwrap();
+    let origin = ready.origin(&found);
+    write(
+        &origin_path(&home, &origin.id),
+        &serde_json::to_string(&origin).unwrap(),
+    );
     assert!(kept.exists(), "the prepared set owns its own scratch files");
     assert_eq!(origin.label(), "acme/zoom @ 0123456");
     assert_eq!(origin.sha256, sha256(&bytes));
     assert_eq!(self::origin(&home, "zoom"), Some(origin.clone()));
     assert_eq!(origins(&home), vec![origin.clone()]);
-    assert!(mod_list::is_enabled(&home, "zoom"));
     // A commit's mod follows the default branch's head.
     assert_eq!(origin.follows().target, Target::Head);
     let newer = Resolved {
@@ -516,19 +568,6 @@ fn installing_records_the_origin_and_updates_follow_releases_or_the_head() {
             ..found
         }
     ));
-    // A file that isn't from GitHub is never replaced.
-    write(&home.join(INSTALLED).join("keys.smod"), "x");
-    let other = Packed {
-        id: "keys".into(),
-        ..packed("keys")
-    };
-    assert!(install(&home, &newer, &other)
-        .unwrap_err()
-        .contains("not from GitHub"));
-    assert!(remove(&home, "zoom").unwrap());
-    assert!(!remove(&home, "zoom").unwrap());
-    assert!(!home.join(INSTALLED).join("zoom.smod").exists());
-    assert!(!mod_list::is_enabled(&home, "zoom"));
     let _ = fs::remove_dir_all(home);
     let _ = fs::remove_dir_all(source);
 }

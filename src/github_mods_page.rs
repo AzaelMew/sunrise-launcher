@@ -7,8 +7,16 @@ use crate::paint::palette;
 use crate::sheets::{self, Sheet};
 use gpui::rgb;
 use std::collections::BTreeSet;
-use std::sync::mpsc::Receiver;
-use sunrise_launcher::github_mods::{self, FetchError, Prepared, ResolveError};
+use std::sync::{mpsc::Receiver, Arc};
+use sunrise_launcher::browser::sunrise::txn::GithubInstallError;
+use sunrise_launcher::github_mods::{self, FetchError, Origin, Prepared, ResolveError};
+
+#[derive(Clone)]
+pub(crate) struct GithubInput {
+    link: String,
+    pub(super) prepared: Arc<Prepared>,
+    pub(super) update: Option<Arc<Origin>>,
+}
 
 struct FormError {
     line: String,
@@ -56,7 +64,7 @@ impl Pick {
 enum Stage {
     #[default]
     Link,
-    Resolving(Receiver<Result<Prepared, FormError>>),
+    Resolving(Receiver<Result<Option<Prepared>, FormError>>),
     Pick(Pick),
     Failed(FormError, bool),
 }
@@ -66,6 +74,8 @@ pub(super) struct Github {
     stage: Stage,
     focus: Option<FocusHandle>,
     target: Option<Target>,
+    update: Option<Arc<Origin>>,
+    retry: Option<GithubInput>,
 }
 
 impl Github {
@@ -75,6 +85,8 @@ impl Github {
             stage: Stage::Link,
             focus: None,
             target: None,
+            update: None,
+            retry: None,
         }
     }
 
@@ -87,6 +99,8 @@ impl Github {
         // packages belong to the worker's answer and clean themselves up when it is dropped.
         self.stage = Stage::Link;
         self.target = None;
+        self.update = None;
+        self.retry = None;
         self.text.set(String::new());
     }
 
@@ -100,14 +114,23 @@ impl Github {
     }
 }
 
-fn resolve_link(link: &github_mods::Link) -> Result<Prepared, FormError> {
+fn resolve_link(
+    link: &github_mods::Link,
+    update: Option<&Origin>,
+) -> Result<Option<Prepared>, FormError> {
     let found = github_mods::resolve(link, &github_mods::api).map_err(|error| match error {
         error @ ResolveError::NoRelease(_) => {
             FormError::new(tr("This release wasn’t found."), error.into())
         }
-        ResolveError::Failed(why) => FormError::transport(why),
+        ResolveError::Lookup(why) => {
+            FormError::new(tr("This GitHub link could not be found."), why)
+        }
+        ResolveError::Transfer(why) => FormError::transport(why),
     })?;
-    github_mods::fetch(found).map_err(|error| match error {
+    if update.is_some_and(|old| !github_mods::is_update(old, &found)) {
+        return Ok(None);
+    }
+    let mut ready = github_mods::fetch(found).map_err(|error| match error {
         FetchError::NoMods { release, detail } => FormError::new(
             if release {
                 tr("No Sunrise mods were found in this release.")
@@ -116,8 +139,24 @@ fn resolve_link(link: &github_mods::Link) -> Result<Prepared, FormError> {
             },
             detail,
         ),
-        FetchError::Failed(why) => FormError::transport(why),
-    })
+        FetchError::Package(why) => {
+            FormError::new(tr("The GitHub mod package was not valid."), why)
+        }
+        FetchError::Transfer(why) => FormError::transport(why),
+    })?;
+    if let Some(old) = update {
+        if !ready.mods().iter().any(|package| package.id == old.id) {
+            return Err(FormError::new(
+                tr("The new release does not contain this mod."),
+                trf(
+                    "The new download doesn't contain {mod}. The old mod is unchanged.",
+                    &[("mod", &old.id)],
+                ),
+            ));
+        }
+        ready.retain(&BTreeSet::from([old.id.clone()]));
+    }
+    Ok(Some(ready))
 }
 
 impl Launcher {
@@ -136,47 +175,47 @@ impl Launcher {
         ))
     }
 
-    pub(super) fn github_install_error(
-        &mut self,
-        link: String,
-        target: Target,
-        error: &sunrise_launcher::browser::installed::InstallError,
-    ) {
-        self.github_install_failure(
-            link,
-            target,
-            crate::mods::install_state::failure_line(error),
-            error.to_string(),
-        );
+    pub(super) fn github_update(&mut self, origin: Origin) {
+        self.github.close();
+        self.github.target = Some(self.queue_target());
+        self.github.text.set(origin.source_url());
+        self.github.update = Some(Arc::new(origin));
+        self.open_sheet(Sheet::GithubAdd);
+        self.github_resolve();
     }
 
-    pub(super) fn github_install_failure(
+    pub(super) fn github_install_error(
         &mut self,
-        link: String,
         target: Target,
-        line: String,
-        detail: String,
+        input: GithubInput,
+        error: GithubInstallError,
     ) {
-        // Don't steal the keyboard if the player has switched profiles, pages, or sheets.
+        // A background install never steals the keyboard from another profile or sheet.
         if self.ui.page != Page::Installed
             || self.ui.sheet.is_some()
             || self.blocking_dialog()
             || self.mods.world_ask.is_some()
-            || !self.mods.removal.is_empty()
-            || !self
-                .selected_instance()
-                .is_some_and(|i| i.id == target.instance)
+            || self.queue_target() != target
         {
             return;
         }
-        let error = FormError {
-            line,
-            detail,
-            retry: true,
+        let line = match &error {
+            GithubInstallError::Fit(_) => tr("Not available for your version"),
+            GithubInstallError::Build(_) => tr("Could not build the selected mods."),
+            GithubInstallError::Policy(_) => tr("The selected mods cannot be installed."),
+            GithubInstallError::Admission(_) => tr("Could not prepare the install."),
         };
-        self.github.text.set(link);
+        self.github.text.set(input.link.clone());
         self.github.target = Some(target);
-        self.github.stage = Stage::Failed(error, false);
+        self.github.retry = Some(input);
+        self.github.stage = Stage::Failed(
+            FormError {
+                line: line.into(),
+                detail: error.to_string(),
+                retry: true,
+            },
+            false,
+        );
         self.open_sheet(Sheet::GithubAdd);
         self.mods.message = None;
     }
@@ -185,7 +224,19 @@ impl Launcher {
         if !self.github.can_resolve() {
             return;
         }
-        let link = match github_mods::parse(self.github.text.text()) {
+        if let Some(input) = self.github.retry.take() {
+            if let Some(target) = self.github.target.take() {
+                self.close_github_form();
+                self.mods_install_github(target, input);
+            }
+            return;
+        }
+        let update = self.github.update.clone();
+        let link = match update
+            .as_ref()
+            .map(|old| Ok(old.follows()))
+            .unwrap_or_else(|| github_mods::parse(self.github.text.text()))
+        {
             Ok(link) => link,
             Err(why) => {
                 self.github.stage =
@@ -196,7 +247,7 @@ impl Launcher {
         let (tx, rx) = crate::wake::channel();
         self.github.stage = Stage::Resolving(rx);
         std::thread::spawn(move || {
-            let _ = tx.send(resolve_link(&link));
+            let _ = tx.send(resolve_link(&link, update.as_deref()));
         });
     }
 
@@ -211,8 +262,12 @@ impl Launcher {
             return false;
         };
         match rx.try_recv() {
-            Ok(Ok(prepared)) if prepared.mods().len() == 1 => self.github_submit(prepared),
-            Ok(Ok(prepared)) => self.github.stage = Stage::Pick(Pick::new(prepared)),
+            Ok(Ok(Some(prepared))) if prepared.mods().len() == 1 => self.github_submit(prepared),
+            Ok(Ok(Some(prepared))) => self.github.stage = Stage::Pick(Pick::new(prepared)),
+            Ok(Ok(None)) => {
+                self.close_github_form();
+                self.mods.message = Some(Ok(tr("This GitHub mod is up to date.").into()));
+            }
             Ok(Err(error)) => self.github.stage = Stage::Failed(error, false),
             Err(std::sync::mpsc::TryRecvError::Empty) => return false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -239,10 +294,18 @@ impl Launcher {
         let Some(target) = self.github.target.take() else {
             return;
         };
-        let link = self.github.text.text().to_owned();
+        let input = GithubInput {
+            link: self.github.text.text().to_owned(),
+            prepared: Arc::new(prepared),
+            update: self.github.update.take(),
+        };
+        self.close_github_form();
+        self.mods_install_github(target, input);
+    }
+
+    fn close_github_form(&mut self) {
         self.ui.sheet = None;
         self.github.close();
-        self.mods_install_github(target, link, prepared);
     }
 
     pub(crate) fn github_add_sheet(
@@ -364,7 +427,11 @@ impl Launcher {
                             line_edit::Key::Enter => this.github_resolve(),
                             line_edit::Key::Edited
                             | line_edit::Key::Paste
-                            | line_edit::Key::Cut(_) => this.github.stage = Stage::Link,
+                            | line_edit::Key::Cut(_) => {
+                                this.github.stage = Stage::Link;
+                                this.github.update = None;
+                                this.github.retry = None;
+                            }
                             _ => {}
                         }
                         cx.stop_propagation();
@@ -432,7 +499,14 @@ impl Launcher {
                     );
                 }
             }
-            let next = primary("github-add-continue", tr("Continue"));
+            let next = primary(
+                "github-add-continue",
+                if self.github.retry.is_some() {
+                    tr("Retry")
+                } else {
+                    tr("Continue")
+                },
+            );
             let next = if self.github.can_resolve() {
                 next.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.github_resolve();
