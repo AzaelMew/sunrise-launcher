@@ -1,5 +1,6 @@
 //! What a mod's card says about its install beyond fit and "Installed": typed, so the card
 //! decides how to show it.
+use crate::i18n::{tr, trf};
 use sunrise_launcher::native_mods::BuildFailure;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +31,86 @@ pub(crate) fn of(
     }
 }
 
+/// Where an install of one mod is, in place on its card.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Stage {
+    /// The file is coming, 0 to 1.
+    Downloading(f32),
+    /// The compiler is coming, once: its size in bytes.
+    BuildTools(u64),
+    /// The mod is building, 0 to 1 of the whole build.
+    Building(f32),
+}
+
+impl Stage {
+    pub(crate) fn label(&self) -> String {
+        match self {
+            Stage::Downloading(f) => trf(
+                "Downloading {percent}%",
+                &[("percent", &format!("{:.0}", f * 100.))],
+            ),
+            Stage::BuildTools(bytes) => trf(
+                "Getting build tools (at least {size})",
+                &[("size", &crate::storage::format_bytes(*bytes))],
+            ),
+            Stage::Building(_) => tr("Building").to_string(),
+        }
+    }
+
+    pub(crate) fn fraction(&self) -> f32 {
+        match self {
+            Stage::Downloading(f) | Stage::Building(f) => *f,
+            Stage::BuildTools(_) => 0.,
+        }
+    }
+}
+
+/// The stage of mod `id`: `downloading` is the install on screen (its mod and how far),
+/// `builds` whether the build that takes it up is waiting or running, `tools` the compiler's
+/// size while it downloads, `build` how far the build is.
+pub(crate) fn stage(
+    id: &str,
+    downloading: Option<(&str, f32)>,
+    builds: bool,
+    tools: Option<u64>,
+    build: f32,
+) -> Option<Stage> {
+    match downloading {
+        Some((for_id, f)) if for_id == id => Some(Stage::Downloading(f)),
+        _ if builds => Some(match tools {
+            Some(bytes) => Stage::BuildTools(bytes),
+            None => Stage::Building(build),
+        }),
+        _ => None,
+    }
+}
+
+/// "Also installed: A, B", or "A, B and 12 more" past two names.
+pub(crate) fn also_line(names: &[String]) -> Option<String> {
+    let shown = match names {
+        [] => return None,
+        [a] => a.clone(),
+        [a, b] => format!("{a}, {b}"),
+        [a, b, rest @ ..] => trf(
+            "{a}, {b} and {count} more",
+            &[("a", a), ("b", b), ("count", &rest.len().to_string())],
+        ),
+    };
+    Some(trf("Also installed: {names}", &[("names", &shown)]))
+}
+
+/// One plain line for why an install failed; the whole text stays behind "Details".
+pub(crate) fn plain_failure(why: &str) -> String {
+    let why = why.to_lowercase();
+    if why.contains("offline") || why.contains("connect") || why.contains("dns") {
+        tr("You're offline").to_string()
+    } else if why.contains("no space") || why.contains("disk full") {
+        tr("Not enough space").to_string()
+    } else {
+        tr("Download failed. Try again").to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -57,5 +138,52 @@ mod tests {
     fn a_running_game_says_to_close_it_for_a_mod_with_nothing_else_to_say() {
         assert_eq!(of("a", false, &[], true), Some(InstallState::CloseGame));
         assert_eq!(of("a", true, &[], true), Some(InstallState::Waiting));
+    }
+
+    #[test]
+    fn a_card_reads_where_its_install_is_in_the_words_of_the_mock() {
+        let at = |id, down, builds, tools, f| stage(id, down, builds, tools, f);
+        assert_eq!(
+            at("a", Some(("a", 0.4)), false, None, 0.),
+            Some(Stage::Downloading(0.4))
+        );
+        assert_eq!(Stage::Downloading(0.4).label(), "Downloading 40%");
+        // Another mod's download is not this card's, and a mod nothing builds says nothing.
+        assert_eq!(at("b", Some(("a", 0.4)), false, None, 0.), None);
+        assert_eq!(
+            at("a", None, true, Some(207 << 20), 0.),
+            Some(Stage::BuildTools(207 << 20))
+        );
+        assert!(Stage::BuildTools(207 << 20)
+            .label()
+            .starts_with("Getting build tools (at least 2"));
+        assert_eq!(at("a", None, true, None, 0.3), Some(Stage::Building(0.3)));
+        assert_eq!(Stage::Building(0.3).label(), "Building");
+        assert_eq!(Stage::Building(0.3).fraction(), 0.3);
+    }
+
+    #[test]
+    fn the_also_installed_line_names_two_and_counts_the_rest() {
+        let n = |l: &[&str]| also_line(&l.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(n(&[]), None);
+        assert_eq!(n(&["Flywheel"]).unwrap(), "Also installed: Flywheel");
+        assert_eq!(n(&["A", "B"]).unwrap(), "Also installed: A, B");
+        assert_eq!(
+            n(&["A", "B", "C", "D"]).unwrap(),
+            "Also installed: A, B and 2 more"
+        );
+    }
+
+    #[test]
+    fn a_failed_install_says_one_plain_thing() {
+        assert_eq!(
+            plain_failure("Couldn't connect to the registry"),
+            "You're offline"
+        );
+        assert_eq!(plain_failure("No space left on device"), "Not enough space");
+        assert_eq!(
+            plain_failure("its SHA-256 isn't the one listed"),
+            "Download failed. Try again"
+        );
     }
 }

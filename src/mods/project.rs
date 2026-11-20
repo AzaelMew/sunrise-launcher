@@ -339,9 +339,7 @@ impl Launcher {
         }));
 
         // The right column: the action and what it changes, then the facts.
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
         let busy = self.mods_busy();
-        let native = p.make == Make::Native;
         let requires = p.requires.clone();
         // An update is offered here too: the version Add would install, over the one installed.
         let update = match (&installed_here, &p.will_install) {
@@ -384,9 +382,12 @@ impl Launcher {
                 .child(tr("Installed"))
                 .into_any_element(),
             (None, fit, Some(_)) if fit.fits() => {
-                let label = match (native, native_allowed) {
-                    (true, false) => tr("Install…"),
-                    _ => tr("Install"),
+                let profile = (self.instances.list.len() > 1)
+                    .then(|| self.selected_instance().map(|i| i.name.clone()))
+                    .flatten();
+                let label = match profile {
+                    Some(name) => trf("Install to {profile}", &[("profile", &name)]),
+                    None => tr("Install").to_string(),
                 };
                 let b = primary("alt-project-add", label)
                     .w_full()

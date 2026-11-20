@@ -34,7 +34,7 @@ pub(crate) mod build_run;
 mod collection;
 mod data_packs;
 mod discover;
-mod install_state;
+pub(crate) mod install_state;
 mod installed_view;
 mod model;
 mod pack_discover;

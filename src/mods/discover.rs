@@ -1,6 +1,6 @@
 //! Mods › Discover (mock 03): the registry's mods, filtered, sorted, one click to Add.
 use super::install_state::{self, InstallState};
-use super::model::{self, Make, Sort};
+use super::model::{self, Fit, Make, Sort};
 use super::ui::*;
 use super::*;
 use crate::paint::palette;
@@ -79,8 +79,22 @@ impl Launcher {
             .unwrap_or_default();
         let index = sunrise::known_index();
         let game_running = self.game_running();
-        let adding = self.mods.busy.as_ref().map(|b| b.0.clone());
-        let native_allowed = self.settings.native_mods_allowed_at.is_some();
+        let busy = self.mods.busy.as_ref().map(|b| (b.0.clone(), b.2));
+        let enabled = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .map(|s| s.enabled.clone())
+            .unwrap_or_default();
+        let profile = (self.instances.list.len() > 1)
+            .then(|| self.selected_instance().map(|i| i.name.clone()))
+            .flatten();
+        let run = self.ui.mods.build.as_ref().filter(|run| run.running());
+        let build_fraction = run.map_or(0., |run| run.fraction());
+        let tools = self
+            .first_build
+            .filter(|_| run.is_some_and(|run| run.progress.is_none()));
 
         // The filters: category and kind as dropdowns, fits my game, and the order.
         let fits = div()
@@ -274,60 +288,126 @@ impl Launcher {
                     .is_some_and(|c| model::collection::installed(c, &cards, &added)),
                 None => added.contains(&id),
             };
-            let working = adding.as_deref() == Some(id.as_str());
             let state = install_state::of(
                 &id,
                 self.mods.waiting(&id),
                 self.mods.build_failures(),
                 game_running,
             );
-            let waiting = state == Some(InstallState::Waiting);
+            let stage = install_state::stage(
+                &id,
+                busy.as_ref().map(|(for_id, f)| (for_id.as_str(), *f)),
+                self.mods.builds(&id),
+                tools,
+                build_fraction,
+            );
             let note = card_data.fit.reason().filter(|_| !is_added);
-            let control = if is_added {
+            let install_label = match &profile {
+                Some(name) => trf("Install to {profile}", &[("profile", name)]),
+                None => tr("Install").to_string(),
+            };
+            let control = if card_data.members.is_some() && !is_added {
+                let b = crate::frame::button(("alt-add", n), tr("Choose mods"));
+                let id = id.clone();
+                Some(
+                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.mods_show_project(id.clone());
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+                )
+            } else if let Some(stage) = &stage {
+                // The install in place: the step in words over a thin bar, nothing else opens.
+                let b = crate::frame::button(("alt-add", n), stage.label())
+                    .relative()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .bottom_0()
+                            .child(crate::build::progress_bar(stage.fraction())),
+                    );
+                Some(dim(b).into_any_element())
+            } else if is_added && !enabled.contains(&id) {
+                let id = id.clone();
+                Some(
+                    crate::frame::button(("alt-turn-on", n), tr("Turn on"))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.turn_on_registry_mod(&id);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )
+            } else if is_added {
                 Some(added_mark())
             } else if state == Some(InstallState::BuildFailed) {
                 Some(muted(tr("Couldn't build on your computer")).into_any_element())
+            } else if card_data.fit == Fit::NeedsNewerSunrise && self.updates.sunrise.is_some() {
+                Some(
+                    crate::frame::button(("alt-card-update", n), tr("Update"))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.launch_act(&crate::launch_state::Act::Update);
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                )
             } else if note.is_some() {
                 None
             } else {
-                let needs_ok = card_data.make == Make::Native && !native_allowed;
-                let label = match (
-                    working,
-                    needs_ok || card_data.builds_locally && card_data.make == Make::Native,
-                ) {
-                    _ if card_data.members.is_some() => tr("Choose mods"),
-                    (true, _) => tr("Installing…"),
-                    _ if waiting => tr("Waiting"),
-                    _ if state == Some(InstallState::CloseGame) => tr("Close the game to install"),
-                    (_, true) => tr("Install…"),
-                    _ => tr("Install"),
+                let label = match state {
+                    Some(InstallState::Waiting) => tr("Waiting").to_string(),
+                    Some(InstallState::CloseGame) => tr("Close the game to install").to_string(),
+                    _ => install_label.clone(),
                 };
                 let b = crate::frame::button(("alt-add", n), label);
-                Some(
-                    match working || waiting || state == Some(InstallState::CloseGame) {
-                        true => dim(b).into_any_element(),
-                        // A collection's button only opens its page, where the mods are picked.
-                        false if card_data.members.is_some() => {
-                            let id = id.clone();
-                            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.mods_show_project(id.clone());
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                        }
-                        false => {
-                            let id = id.clone();
-                            let name = card_data.name.clone();
-                            b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                cx.stop_propagation();
-                                this.add(id.clone(), name.clone());
-                                cx.notify();
-                            }))
-                            .into_any_element()
-                        }
-                    },
-                )
+                Some(match state {
+                    Some(InstallState::Waiting | InstallState::CloseGame) => {
+                        dim(b).into_any_element()
+                    }
+                    _ => {
+                        let id = id.clone();
+                        let name = card_data.name.clone();
+                        b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            this.add(id.clone(), name.clone());
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                    }
+                })
+            };
+            let failed_here = self
+                .mods
+                .card_error
+                .as_ref()
+                .filter(|e| e.id == id && stage.is_none());
+            // A failed install keeps Install to try again, and a Details beside it.
+            let control = match failed_here {
+                Some(_) => Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(
+                            crate::frame::button(("alt-card-details", n), tr("Details")).on_click(
+                                cx.listener(|this, _: &ClickEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(error) = &mut this.mods.card_error {
+                                        error.open = !error.open;
+                                    }
+                                    cx.notify();
+                                }),
+                            ),
+                        )
+                        .children(control)
+                        .into_any_element(),
+                ),
+                None => control,
             };
             let mut facts = match card_data.members {
                 Some(count) => vec![
@@ -335,11 +415,30 @@ impl Launcher {
                     muted(trf("{count} mods", &[("count", &count.to_string())])),
                     muted(model::downloads(card_data.downloads)),
                 ],
-                None => vec![
-                    tag(card_data.make.label()),
-                    muted(model::downloads(card_data.downloads)),
-                ],
+                None => {
+                    let mut facts = vec![tag(card_data.make.label())];
+                    if card_data.unsigned {
+                        facts.push(tag(tr("Unsigned")));
+                    }
+                    facts.push(muted(model::downloads(card_data.downloads)));
+                    facts
+                }
             };
+            if let Some(line) = is_added
+                .then(|| self.mods.also.get(&id))
+                .flatten()
+                .and_then(|names| install_state::also_line(names))
+            {
+                facts.push(muted(line).truncate());
+            }
+            if let Some(error) = failed_here {
+                facts.push(
+                    div()
+                        .text_size(px(tokens::SMALL))
+                        .text_color(c(palette().danger))
+                        .child(error.line.clone()),
+                );
+            }
             if card_data.library {
                 facts.insert(1, badge(tr("Library")));
             }
@@ -360,7 +459,7 @@ impl Launcher {
                     &card_data.summary,
                     facts,
                     control,
-                    note,
+                    note.or_else(|| failed_here.filter(|e| e.open).map(|e| e.details.clone())),
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.mods_show_project(open.clone());

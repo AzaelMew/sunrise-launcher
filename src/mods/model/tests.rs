@@ -1007,3 +1007,36 @@ fn an_unreadable_file_is_never_on_and_cannot_switch_a_working_mod_of_its_name() 
     assert_eq!(good.need, None);
     assert!(cells(good, None, true).switch);
 }
+
+#[test]
+fn a_card_that_cannot_install_says_why_in_the_words_of_the_table() {
+    let mut future = project(
+        "future",
+        "mod",
+        &[("1.0.0", GAME, A)],
+        serde_json::json!({}),
+    );
+    future["versions"][0]["capabilities"] = serde_json::json!(["from-a-newer-sunrise"]);
+    let idx = index(
+        vec![
+            project("fine", "mod", &[("1.0.0", GAME, A)], serde_json::json!({})),
+            project("old", "mod", &[("1.0.0", "26.2", B)], serde_json::json!({})),
+            future,
+        ],
+        vec![],
+    );
+    let all = cards(&idx, GAME);
+    let card = |id: &str| all.iter().find(|c| c.id == id).unwrap();
+    assert_eq!(card("fine").fit.reason(), None);
+    assert_eq!(
+        card("old").fit.reason().as_deref(),
+        Some("Not available for your version (made for 26.2)")
+    );
+    assert_eq!(card("future").fit, Fit::NeedsNewerSunrise);
+    assert_eq!(
+        card("future").fit.reason().as_deref(),
+        Some("Needs a newer Sunrise")
+    );
+    // No registry key for the author: the card carries the Unsigned chip.
+    assert!(card("fine").unsigned);
+}

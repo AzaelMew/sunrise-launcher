@@ -39,6 +39,15 @@ fn build_cost(
     }
 }
 
+/// An install that failed, as its card says it.
+pub(crate) struct CardError {
+    pub(crate) id: String,
+    pub(crate) line: String,
+    pub(crate) details: String,
+    /// Details is open.
+    pub(crate) open: bool,
+}
+
 /// What a build that an install started cost it. Nothing stays installed from either.
 pub(crate) enum InstallFailure {
     /// Mods that failed to compile: each with its reason and log. They were removed and the
@@ -56,6 +65,8 @@ pub(super) struct Finished {
     said: Option<String>,
     /// The native mods that went in, by id: a build takes them up, and they go again if it fails.
     native: Vec<String>,
+    /// What came in with the mod (its dependencies), by title, for "Also installed".
+    also: Vec<String>,
 }
 
 impl Finished {
@@ -63,6 +74,7 @@ impl Finished {
         Self {
             said: Some(said),
             native: Vec::new(),
+            also: Vec::new(),
         }
     }
 }
@@ -108,6 +120,10 @@ pub(super) struct Mods {
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
     /// is removed until it is answered, and the answer defaults to Stay.
     pub(crate) world_ask: Option<WorldAsk>,
+    /// What came in with each mod installed this run, by id (the card's "Also installed").
+    pub(crate) also: HashMap<String, Vec<String>>,
+    /// Why the last install failed, on its card: one plain line, the whole text behind Details.
+    pub(crate) card_error: Option<CardError>,
     /// The mods that go once the player continues (`removal`).
     pub(crate) removal: Option<removal::Removal>,
     /// The native mods the running build was started to take up.
@@ -193,6 +209,11 @@ impl Mods {
         }
     }
 
+    /// Whether a build that takes up mod `id` is waiting to start or running.
+    pub(crate) fn builds(&self, id: &str) -> bool {
+        self.building.iter().any(|b| b == id) || self.queue.will_build(id)
+    }
+
     /// Whether the install of mod `id` waits for its turn.
     pub(crate) fn waiting(&self, id: &str) -> bool {
         self.queue.waits(id)
@@ -225,6 +246,8 @@ impl Mods {
             building: Vec::new(),
             world_ask: None,
             removal: None,
+            also: HashMap::new(),
+            card_error: None,
             failed: None,
             native_state: Default::default(),
             unbuilt: None,
@@ -261,9 +284,21 @@ impl Launcher {
                 }
                 Event::Done(result) => {
                     done = true;
-                    m.busy = None;
+                    let id = m.busy.take().map(|(id, ..)| id);
+                    m.card_error = match (&result, &id) {
+                        (Err(why), Some(id)) => Some(CardError {
+                            id: id.clone(),
+                            line: crate::mods::install_state::plain_failure(why),
+                            details: why.clone(),
+                            open: false,
+                        }),
+                        _ => None,
+                    };
                     m.message = match result {
                         Ok(finished) => {
+                            if let Some(id) = id {
+                                m.also.insert(id, finished.also);
+                            }
                             native.extend(finished.native);
                             finished.said.map(|said| {
                                 crate::glass_toast::say(said.clone());
@@ -445,6 +480,7 @@ impl Launcher {
             return;
         }
         self.mods.message = None;
+        self.mods.card_error = None;
         self.mods.busy = Some((id.clone(), format!("Asking {}…", source.label()), 0.));
         self.mods.updates.remove(&(source, id.clone()));
         let everything =
@@ -519,6 +555,11 @@ impl Launcher {
                             .iter()
                             .filter(|e| native_status::is_native_file(&e.file))
                             .map(|e| e.project.clone())
+                            .collect(),
+                        also: done
+                            .iter()
+                            .filter(|e| e.project != p.id)
+                            .map(|e| e.title.clone())
                             .collect(),
                     });
                 }
@@ -723,6 +764,7 @@ impl Launcher {
                 Ok(Finished {
                     said: None,
                     native: native.into_inner(),
+                    also: Vec::new(),
                 })
             })();
             let _ = tx.send(Event::Done(result));

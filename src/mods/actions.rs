@@ -123,6 +123,21 @@ impl Launcher {
         Ok(())
     }
 
+    /// Turn on the registry mod `id` the card says is installed but off: the same switch the
+    /// Installed list's, which asks the one native question first when it must.
+    pub(crate) fn turn_on_registry_mod(&mut self, id: &str) {
+        let entry = self
+            .ui
+            .mods
+            .snapshot
+            .as_ref()
+            .and_then(|s| s.entries.iter().find(|e| e.project == id))
+            .cloned();
+        if let Some(entry) = entry {
+            self.mods_switch(&entry);
+        }
+    }
+
     pub(crate) fn add(&mut self, id: String, shown: String) {
         if let Err(why) = self.install_registry_mod(id, shown) {
             self.ui.mods.notice = Some(Err(why));
