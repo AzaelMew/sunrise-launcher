@@ -1018,4 +1018,11 @@ mod tests {
         let saved = serde_json::to_string(&s).unwrap();
         assert!(!saved.contains("native_mods"), "{saved}");
     }
+
+    #[test]
+    fn settings_saved_with_the_removed_update_switch_still_read_and_drop_it() {
+        let s: backend::Settings = serde_json::from_str(r#"{"mods_auto_update": false}"#).unwrap();
+        let saved = serde_json::to_string(&s).unwrap();
+        assert!(!saved.contains("mods_auto_update"), "{saved}");
+    }
 }
