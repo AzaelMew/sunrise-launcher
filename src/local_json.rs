@@ -1,4 +1,5 @@
 //! Short cross-process transactions on local launcher metadata, never on game work.
+use serde_json::{Map, Value};
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -51,5 +52,44 @@ impl LockedJson {
 impl Drop for LockedJson {
     fn drop(&mut self) {
         let _ = self.gate.unlock();
+    }
+}
+
+/// Replay only the editor's changes, including individual object entries. A field not known
+/// to this launcher is left alone unless its owning record was explicitly deleted.
+pub(crate) fn merge_changes(
+    before: &Map<String, Value>,
+    now: &Map<String, Value>,
+    live: &mut Map<String, Value>,
+) {
+    for key in before
+        .keys()
+        .chain(now.keys().filter(|key| !before.contains_key(*key)))
+    {
+        let old = before.get(key);
+        let new = now.get(key);
+        if old == new {
+            continue;
+        }
+        match (old, new, live.get_mut(key)) {
+            (Some(Value::Object(old)), Some(Value::Object(new)), Some(Value::Object(live))) => {
+                merge_changes(old, new, live)
+            }
+            (None, Some(Value::Object(new)), Some(Value::Object(live))) => {
+                merge_changes(&Map::new(), new, live)
+            }
+            (Some(Value::Object(old)), None, Some(Value::Object(object))) => {
+                merge_changes(old, &Map::new(), object);
+                if object.is_empty() {
+                    live.remove(key);
+                }
+            }
+            (_, Some(value), _) => {
+                live.insert(key.clone(), value.clone());
+            }
+            (_, None, _) => {
+                live.remove(key);
+            }
+        }
     }
 }

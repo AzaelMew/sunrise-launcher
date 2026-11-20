@@ -10,6 +10,7 @@ use crate::backend;
 use crate::browser::sunrise::pack as registry_pack;
 use crate::i18n::tr;
 use crate::launch::Launch;
+use crate::local_json::{merge_changes, LockedJson};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -310,7 +311,7 @@ fn is_zero(n: &u64) -> bool {
 }
 
 /// `instances.json`: each instance's choices, by id.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Store {
     #[serde(default)]
     instances: BTreeMap<String, Meta>,
@@ -323,22 +324,64 @@ impl Store {
             .and_then(|t| serde_json::from_str(&t).ok())
             .unwrap_or_default()
     }
-    fn save(&self, data: &Path) -> Result<(), String> {
-        fs::create_dir_all(data).map_err(|e| format!("{}: {e}", data.display()))?;
-        let write = || -> std::io::Result<()> {
-            use std::io::Write as _;
-            let data = data.canonicalize()?;
-            // Own this file before writing to it. A failed save drops just this attempt's
-            // file; a successful one replaces the store whole.
-            let mut part = tempfile::Builder::new()
-                .prefix(".instances-")
-                .tempfile_in(&data)?;
-            let text = serde_json::to_string_pretty(self).unwrap();
-            part.write_all(text.as_bytes())?;
-            part.persist(data.join(FILE))?;
-            Ok(())
-        };
-        write().map_err(|e| format!("{FILE}: {e}"))
+    fn mutate<T>(
+        data: &Path,
+        change: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        use serde_json::{Map, Value};
+        let file = LockedJson::open(data, FILE)?;
+        let mut raw: Map<String, Value> = file.read()?;
+        if let Some(rows) = raw.get("instances") {
+            if rows
+                .as_object()
+                .is_none_or(|rows| rows.values().any(|row| !row.is_object()))
+            {
+                return Err(format!("{FILE}: invalid instance metadata"));
+            }
+        }
+        let mut store: Self = serde_json::from_value(Value::Object(raw.clone()))
+            .map_err(|e| format!("{FILE}: {e}"))?;
+        let before = store.clone();
+        let result = change(&mut store)?;
+        if before != store {
+            let rows = raw
+                .entry("instances")
+                .or_insert_with(|| Value::Object(Map::new()))
+                .as_object_mut()
+                .expect("the decoded instances map");
+            for (id, old) in &before.instances {
+                match store.instances.get(id) {
+                    None => {
+                        rows.remove(id);
+                    }
+                    Some(next) if next != old => {
+                        let old = serde_json::to_value(old).map_err(|e| format!("{FILE}: {e}"))?;
+                        let next =
+                            serde_json::to_value(next).map_err(|e| format!("{FILE}: {e}"))?;
+                        merge_changes(
+                            old.as_object().expect("Meta object"),
+                            next.as_object().expect("Meta object"),
+                            rows.get_mut(id)
+                                .and_then(Value::as_object_mut)
+                                .expect("the decoded metadata row"),
+                        );
+                    }
+                    Some(_) => {}
+                }
+            }
+            for (id, meta) in store
+                .instances
+                .iter()
+                .filter(|(id, _)| !before.instances.contains_key(*id))
+            {
+                rows.insert(
+                    id.clone(),
+                    serde_json::to_value(meta).map_err(|e| format!("{FILE}: {e}"))?,
+                );
+            }
+            file.write(&raw)?;
+        }
+        Ok(result)
     }
 }
 
@@ -448,24 +491,36 @@ fn pin_packs_in(data: &Path, all: &mut [Instance], build: Option<&str>) {
     let Some(build) = build else {
         return;
     };
-    let mut store = Store::load(data);
-    let mut changed = false;
-    for instance in all
-        .iter_mut()
-        .filter(|i| i.is_pack_profile() && i.version.is_none())
+    if !all
+        .iter()
+        .any(|i| i.is_pack_profile() && i.version.is_none())
     {
-        store
-            .instances
-            .entry(instance.id.clone())
-            .or_default()
-            .version = Some(build.to_owned());
-        instance.version = Some(build.to_owned());
-        changed = true;
+        return;
     }
-    if changed {
-        if let Err(e) = store.save(data) {
-            eprintln!("Sunrise: instances.json is not saved: {e}");
+    let pinned = Store::mutate(data, |store| {
+        Ok(all
+            .iter()
+            .filter(|i| i.is_pack_profile() && i.version.is_none())
+            .map(|instance| {
+                let version = store
+                    .instances
+                    .entry(instance.id.clone())
+                    .or_default()
+                    .version
+                    .get_or_insert_with(|| build.to_owned());
+                (instance.id.clone(), version.clone())
+            })
+            .collect::<BTreeMap<_, _>>())
+    });
+    match pinned {
+        Ok(mut versions) => {
+            for i in all {
+                if let Some(version) = versions.remove(&i.id) {
+                    i.version = Some(version);
+                }
+            }
         }
+        Err(e) => eprintln!("Sunrise: instances.json is not saved: {e}"),
     }
 }
 
@@ -512,17 +567,20 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
         .filter_map(|e| e.file_name().into_string().ok())
         .collect();
     own.sort();
-    // An own instance whose folder is gone (deleted outside the launcher) is forgotten, so a new
-    // one of that name starts clean. Only when the folder of instances itself can be read.
-    if game_home.join(OWN).is_dir() {
-        let before = store.instances.len();
-        store
-            .instances
-            .retain(|id, _| id == DEFAULT || id.contains(':') || own.contains(id));
-        if store.instances.len() != before {
-            if let Err(e) = store.save(data) {
-                eprintln!("Sunrise: instances.json is not saved: {e}");
-            }
+    // An own instance whose folder was removed is forgotten. Recheck the actual path under
+    // the metadata lock, so an old listing cannot drop a concurrently created profile's record.
+    let root = game_home.join(OWN);
+    let missing_from_list = |id: &String| id != DEFAULT && !id.contains(':') && !own.contains(id);
+    if root.is_dir() && store.instances.keys().any(missing_from_list) {
+        match Store::mutate(data, |live| {
+            live.instances.retain(|id, _| {
+                !missing_from_list(id) || crate::browser::safe_name(id) != Some(id.as_str())
+                    || !matches!(fs::symlink_metadata(root.join(id)), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+            });
+            Ok(live.clone())
+        }) {
+            Ok(live) => store = live,
+            Err(e) => eprintln!("Sunrise: instances.json is not saved: {e}"),
         }
     }
     // An instance an earlier launcher made for Minecraft: Java Edition is not listed: its folder
@@ -633,10 +691,13 @@ fn delete_in(
     }
     trash(&instance.work)
         .map_err(|e| format!("{} could not go to the Trash: {e}", instance.name))?;
-    let mut store = Store::load(data);
-    if store.instances.remove(&instance.id).is_some() {
-        store.save(data)?;
-    }
+    Store::mutate(data, |store| {
+        if matches!(fs::symlink_metadata(&instance.work), Err(e) if e.kind() == std::io::ErrorKind::NotFound)
+        {
+            store.instances.remove(&instance.id);
+        }
+        Ok(())
+    })?;
     Ok(instance)
 }
 
@@ -838,16 +899,19 @@ fn create_whole_in(
     let recorded = crate::run_leases::publish(&dir)
         .map_err(crate::native_mods::cache_error)
         .and_then(|()| {
-            let mut store = Store::load(data);
-            // A folder removed outside the launcher may still have metadata. A new folder
-            // never inherits its launch settings. Do not rewrite the old entry just by listing it.
-            store.instances.remove(&slug);
-            let meta = store.instances.entry(slug.clone()).or_default();
-            meta.name = (name != slug).then(|| name.to_string());
-            meta.icon = from.and_then(|f| f.icon.clone());
-            meta.group = from.and_then(|f| f.group.clone());
-            choose(meta);
-            store.save(data)
+            Store::mutate(data, |store| {
+                // A folder removed outside the launcher may still have metadata. A new folder
+                // never inherits its launch settings.
+                let mut meta = Meta {
+                    name: (name != slug).then(|| name.to_string()),
+                    icon: from.and_then(|f| f.icon.clone()),
+                    group: from.and_then(|f| f.group.clone()),
+                    ..Meta::default()
+                };
+                choose(&mut meta);
+                store.instances.insert(slug.clone(), meta);
+                Ok(())
+            })
         });
     if let Err(e) = recorded {
         // A no-replace rename put this attempt's folder here. Don't follow a redirected parent
@@ -984,40 +1048,49 @@ fn edit_in(
 ) -> Result<Instance, String> {
     let all = list_in(game_home, data);
     let instance = find_in(&all, query)?;
-    let mut store = Store::load(data);
-    let meta = store.instances.entry(instance.id.clone()).or_default();
-    let build = (meta.version.clone(), meta.channel);
-    change(meta);
-    // Every way to change a profile ends here, so this is the one place a modpack's build
-    // is kept: the Versions sheet, the Keep button and `instance version` all come through.
-    if instance.is_pack_profile() && build != (meta.version.clone(), meta.channel) {
-        return Err(tr(
-            "A modpack keeps the build it was made for. Make your own profile to change it.",
-        )
-        .to_string());
-    }
-    meta.name = meta.name.take().map(|n| n.trim().to_string());
-    meta.group = meta
-        .group
-        .take()
-        .map(|g| g.trim().to_string())
-        .filter(|g| !g.is_empty());
-    if let Some(name) = &meta.name {
-        if name.is_empty() {
-            return Err("A profile needs a name.".into());
+    Store::mutate(data, |store| {
+        let mut meta = store
+            .instances
+            .get(&instance.id)
+            .cloned()
+            .unwrap_or_default();
+        let build = (meta.version.clone(), meta.channel);
+        let old_name = meta.name.as_ref().unwrap_or(&instance.name).clone();
+        change(&mut meta);
+        if instance.is_pack_profile() && build != (meta.version.clone(), meta.channel) {
+            return Err(tr(
+                "A modpack keeps the build it was made for. Make your own profile to change it.",
+            )
+            .into());
         }
-        // Only a new name is checked: an import can share a name, and changing anything
-        // else about it must still work.
-        let renamed = !name.eq_ignore_ascii_case(&instance.name);
-        if renamed
-            && all
-                .iter()
-                .any(|i| i.id != instance.id && i.name.eq_ignore_ascii_case(name))
-        {
-            return Err(name_taken(name));
+        meta.name = meta.name.take().map(|n| n.trim().to_string());
+        meta.group = meta
+            .group
+            .take()
+            .map(|g| g.trim().to_string())
+            .filter(|g| !g.is_empty());
+        if let Some(name) = &meta.name {
+            if name.is_empty() {
+                return Err("A profile needs a name.".into());
+            }
+            // Check only a new name, but check it against the fresh metadata, not the listing.
+            if !name.eq_ignore_ascii_case(&old_name)
+                && all.iter().any(|i| {
+                    i.id != instance.id
+                        && store
+                            .instances
+                            .get(&i.id)
+                            .and_then(|m| m.name.as_ref())
+                            .unwrap_or(&i.name)
+                            .eq_ignore_ascii_case(name)
+                })
+            {
+                return Err(name_taken(name));
+            }
         }
-    }
-    store.save(data)?;
+        store.instances.insert(instance.id.clone(), meta);
+        Ok(())
+    })?;
     find_in(&list_in(game_home, data), &instance.id)
 }
 
@@ -1033,11 +1106,14 @@ fn record_play_in(
     played: Duration,
     ended: SystemTime,
 ) -> Result<(), String> {
-    let mut store = Store::load(data);
-    let meta = store.instances.entry(id.to_string()).or_default();
-    meta.played_secs = meta.played_secs.saturating_add(played.as_secs());
-    meta.last_played = ended.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs());
-    store.save(data)
+    Store::mutate(data, |store| {
+        let meta = store.instances.entry(id.to_string()).or_default();
+        meta.played_secs = meta.played_secs.saturating_add(played.as_secs());
+        if let Ok(time) = ended.duration_since(UNIX_EPOCH) {
+            meta.last_played = meta.last_played.max(Some(time.as_secs()));
+        }
+        Ok(())
+    })
 }
 
 /// "12 min", "3 h 05 min", "140 h": the play time as players read it.
