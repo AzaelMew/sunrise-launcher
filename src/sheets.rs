@@ -35,6 +35,8 @@ pub(crate) enum Sheet {
     /// Who plays, under the account chip (`account_chip`).
     AccountMenu,
     Search,
+    /// The link form or the package selection it yielded.
+    GithubAdd,
     /// The build window (`mods::build_modal`): closing it leaves the build running.
     ModBuild,
 }
@@ -260,6 +262,9 @@ impl Launcher {
 
     /// Opens `sheet`. Consent and Libraries open by themselves from their pending state.
     pub(crate) fn open_sheet(&mut self, sheet: Sheet) {
+        if self.ui.sheet == Some(Sheet::GithubAdd) && sheet != Sheet::GithubAdd {
+            self.github.close();
+        }
         self.ui.sheets.error = None;
         self.ui.sheet = Some(sheet);
     }
@@ -292,7 +297,9 @@ impl Launcher {
         } else if self.pending_consent.is_some() {
             self.cancel_native_consent();
         }
-        self.ui.sheet = None;
+        if self.ui.sheet.take() == Some(Sheet::GithubAdd) {
+            self.github.close();
+        }
         self.ui.sheets.ticked = (false, false);
         self.ui.sheets.error = None;
     }
@@ -453,7 +460,7 @@ impl Launcher {
 
     /// The sheet on screen, if any: a pending library question, a pending permission, then the
     /// sheet asked for.
-    pub(crate) fn live_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(crate) fn live_sheet(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if self.ui.sheets.registry.is_some() {
             return Some(self.libraries_sheet(cx));
         }
