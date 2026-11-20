@@ -59,16 +59,20 @@ pub fn about(version: &str) -> Option<About> {
     })
 }
 
-/// A supported base: a signed release/Nightly, or an explicitly chosen unsigned developer build.
+/// A local base the player can name. Old game installations are valid here even though their
+/// tags are not offered by the release catalogue or chosen as the automatic default.
 fn eligible_base(version: &str) -> bool {
     backend::is_game_tag(version)
+        || version
+            .strip_prefix('v')
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
         || crate::nightly::date_of(version).is_some()
         || crate::developer_install::is_developer(version)
 }
 
 /// The installed version an import takes its game files from: `requested` (`--version`), else
 /// `selected` when it is an eligible base, else the newest installed release or Nightly.
-/// Developer bases never enter that automatic fallback.
+/// Legacy and developer bases never enter that automatic fallback.
 fn base_for(
     installed: &[String],
     requested: Option<&str>,
@@ -449,6 +453,39 @@ mod tests {
         assert_eq!(again.unwrap(), tag);
         assert_eq!(listed(&versions), 2);
         let _ = fs::remove_dir_all(versions);
+    }
+
+    #[test]
+    fn an_explicit_installed_legacy_game_still_supplies_import_files() {
+        let versions = dir("legacy-base");
+        let legacy = "v2026.10.13";
+        let stable = "26.3-0.1.0";
+        for tag in [stable, legacy] {
+            let root = versions.join(tag);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join(".installed"), b"").unwrap();
+            fs::write(root.join("research-lock.json"), tag).unwrap();
+        }
+        let installed = [stable.to_owned(), legacy.to_owned()];
+        assert!(!backend::is_game_tag(legacy));
+        assert!(base_for(&installed[..1], Some(legacy), None).is_err());
+        assert_eq!(base_for(&installed, None, None).unwrap(), stable);
+        assert_eq!(base_for(&installed, None, Some(legacy)).unwrap(), legacy);
+        assert!(base_for(&installed[1..], None, None).is_err());
+        let base = base_for(&installed, Some(legacy), None).unwrap();
+        let tag = install_in(
+            &versions,
+            &base,
+            &program(b"local client"),
+            CLIENT,
+            "2026-11-20",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(versions.join(tag).join("research-lock.json")).unwrap(),
+            legacy
+        );
+        fs::remove_dir_all(versions).unwrap();
     }
 
     #[test]
