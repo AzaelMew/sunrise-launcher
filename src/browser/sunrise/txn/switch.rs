@@ -233,7 +233,7 @@ impl Switch {
 
     pub fn commit(
         mut self,
-        allowed: impl FnOnce() -> bool,
+        cutoff: impl FnOnce() -> Result<(), String>,
     ) -> Result<Option<super::Receipt>, String> {
         let home = self.owner.home();
         let (_, index) = sunrise::authoritative_index()?;
@@ -247,10 +247,7 @@ impl Switch {
         self.prior.verify_artifacts()?;
         self.next.verify_artifacts()?;
         crate::native_status::check_permission(self.next.executable())?;
-        if !allowed() {
-            return Err(tr("Switch cancelled. Nothing was switched.").into());
-        }
-        self.owner.publish_switch()?;
+        self.owner.publish_switch(cutoff)?;
         self.live = false;
         Ok((!self.removals.is_empty()).then(|| {
             self.next

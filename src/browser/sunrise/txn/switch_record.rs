@@ -333,12 +333,15 @@ impl Lease {
         write(home, &record)
     }
 
-    pub(super) fn publish_switch(&self) -> Result<(), String> {
+    pub(super) fn publish_switch(
+        &self,
+        cutoff: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
         let _lock = super::locked(self.home())?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
         let mut record = read(self.home())?.ok_or_else(unsettled)?;
-        let result = publish(self.home(), &mut record, |_| {});
+        let result = publish(self.home(), &mut record, cutoff, |_| {});
         if let Err(error) = result {
             // The on-disk marker is authority even if writing it reported an error.
             let mut disk = read(self.home())?.ok_or_else(unsettled)?;
@@ -359,6 +362,7 @@ fn operation(record: &mut Record) -> Result<&mut Journal, String> {
 fn publish(
     home: &Path,
     record: &mut Record,
+    cutoff: impl FnOnce() -> Result<(), String>,
     mut boundary: impl FnMut(Phase),
 ) -> Result<(), String> {
     let journal = operation(record)?;
@@ -399,6 +403,7 @@ fn publish(
             return Err(unsettled());
         }
     }
+    cutoff()?;
     journal.phase = Phase::Publishing;
     for step in 0..=count {
         operation(record)?.frontier = step + 1;
@@ -579,17 +584,22 @@ mod tests {
             .unwrap();
         let mut record = read(&home).unwrap().unwrap();
         let mut steps = 0;
-        publish(&home, &mut record, |phase| {
-            steps += 1;
-            if (phase == Phase::Publishing
-                && ((boundary == "root" && steps == 1)
-                    || (boundary == "files" && steps == 3)
-                    || (boundary == "pointer" && steps == 4)))
-                || (phase == Phase::Committed && boundary == "marker")
-            {
-                wait_to_be_killed();
-            }
-        })
+        publish(
+            &home,
+            &mut record,
+            || Ok(()),
+            |phase| {
+                steps += 1;
+                if (phase == Phase::Publishing
+                    && ((boundary == "root" && steps == 1)
+                        || (boundary == "files" && steps == 3)
+                        || (boundary == "pointer" && steps == 4)))
+                    || (phase == Phase::Committed && boundary == "marker")
+                {
+                    wait_to_be_killed();
+                }
+            },
+        )
         .unwrap();
     }
 

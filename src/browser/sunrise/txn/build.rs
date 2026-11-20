@@ -264,6 +264,10 @@ impl Active {
         &self.base.tag
     }
 
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
     pub fn executable(&self) -> &str {
         &self.executable.tag
     }
