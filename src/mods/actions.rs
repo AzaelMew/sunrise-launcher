@@ -14,6 +14,33 @@ pub(super) enum Action {
     Update(Vec<Included>),
 }
 
+/// Why mods can't change now.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Lock {
+    /// The game is running or starting.
+    GameRunning,
+    /// Sunrise is getting ready to play.
+    Preparing,
+    /// A native build is running.
+    Building,
+}
+
+impl Lock {
+    fn why(self) -> &'static str {
+        match self {
+            Lock::GameRunning => {
+                tr("The game is running or starting. Close it before changing mods.")
+            }
+            Lock::Preparing => {
+                tr("Sunrise is getting ready to play. Wait for it to finish before changing mods.")
+            }
+            Lock::Building => {
+                tr("A native build is running. Wait for it to finish before changing mods.")
+            }
+        }
+    }
+}
+
 impl Launcher {
     /// Opens a confirmation, remembering which folder it was reviewed for.
     fn confirm(&mut self, confirm: Confirm) {
@@ -23,26 +50,25 @@ impl Launcher {
     }
 
     /// Why nothing may change now: the game, a launch step or a build is under way.
-    pub(crate) fn mods_locked(&self) -> Option<&'static str> {
+    pub(crate) fn mods_lock(&self) -> Option<Lock> {
         if self.client.is_some() || self.starting_client.is_some() || self.starting_play.is_some() {
-            Some(tr(
-                "The game is running or starting. Close it before changing mods.",
-            ))
+            Some(Lock::GameRunning)
         } else if self.preparing
             || self.installing.is_some()
             || self.play_when_prepared.is_some()
             || self.play_after_build.is_some()
         {
-            Some(tr(
-                "Sunrise is getting ready to play. Wait for it to finish before changing mods.",
-            ))
+            Some(Lock::Preparing)
         } else if self.native_step.is_some() {
-            Some(tr(
-                "A native build is running. Wait for it to finish before changing mods.",
-            ))
+            Some(Lock::Building)
         } else {
             None
         }
+    }
+
+    /// [`Self::mods_lock`] in words.
+    pub(crate) fn mods_locked(&self) -> Option<&'static str> {
+        self.mods_lock().map(Lock::why)
     }
 
     /// The gate every change passes: not locked, nothing else running.
@@ -75,11 +101,12 @@ impl Launcher {
         if let Some(why) = fit.reason() {
             return Err(why);
         }
-        if !self.guard() {
-            return Err(match &self.ui.mods.notice {
-                Some(Err(why)) => why.clone(),
-                _ => tr("Can't change mods right now.").to_string(),
-            });
+        // A build or another install doesn't refuse: this one waits its turn.
+        if let Some(lock) = self.mods_lock().filter(|lock| *lock != Lock::Building) {
+            return Err(lock.why().to_string());
+        }
+        if self.ui.mods.busy.is_some() {
+            return Err(tr("Wait for the current operation to finish.").to_string());
         }
         self.ui.mods.notice = None;
         self.mods.message = None;

@@ -273,6 +273,7 @@ impl Launcher {
                 None => added.contains(&id),
             };
             let working = adding.as_deref() == Some(id.as_str());
+            let waiting = self.mods.waiting(&id);
             let note = card_data.fit.reason().filter(|_| !is_added);
             let control = if is_added {
                 Some(added_mark())
@@ -286,11 +287,12 @@ impl Launcher {
                 ) {
                     _ if card_data.members.is_some() => tr("Choose mods"),
                     (true, _) => tr("Installing…"),
+                    _ if waiting => tr("Waiting"),
                     (_, true) => tr("Install…"),
                     _ => tr("Install"),
                 };
                 let b = crate::frame::button(("alt-add", n), label);
-                Some(match working {
+                Some(match working || waiting {
                     true => dim(b).into_any_element(),
                     // A collection's button only opens its page, where the mods are picked.
                     false if card_data.members.is_some() => {
