@@ -600,6 +600,51 @@ fn journal_actor() {
 }
 
 #[test]
+fn move_recovers_a_killed_file_publication_before_copying() {
+    use crate::data_location::{self, Roots};
+    let root = tempfile::tempdir().unwrap();
+    let source = Roots {
+        launcher: root.path().join("launcher"),
+        game: root.path().join("game"),
+        build: root.path().join("build"),
+    };
+    for dir in [&source.launcher, &source.build, &source.game] {
+        fs::create_dir(dir).unwrap();
+    }
+    initialized(&source.game, true);
+    // This is a first file plan, with no previous committed Active pointer.
+    fs::remove_file(source.game.join(POINTER)).unwrap();
+    let mut actor = pause_actor(&source.game, "install:file-renamed");
+    assert_eq!(fs::read(source.game.join(PACK)).unwrap(), package("2.0.0"));
+    assert!(source.game.join(RECORD).is_file());
+    actor.0.kill().unwrap();
+    assert!(!actor.0.wait().unwrap().success());
+
+    let mut reached_copy = false;
+    let moved = data_location::migrate(
+        &source,
+        &root.path().join("destination"),
+        &root.path().join("location.json"),
+        |progress| {
+            if progress == "Copying and verifying launcher data" {
+                reached_copy = true;
+                assert_eq!(fs::read(source.game.join(PACK)).unwrap(), package("1.0.0"));
+                assert!(!source.game.join(RECORD).exists());
+            }
+        },
+    )
+    .unwrap();
+    assert!(reached_copy);
+    assert_eq!(fs::read(moved.game.join(PACK)).unwrap(), package("1.0.0"));
+    assert_eq!(
+        fs::read(moved.game.join(LIST)).unwrap(),
+        b"mod.lantern:false\n"
+    );
+    assert!(!moved.game.join(RECORD).exists());
+    assert!(!moved.game.join(POINTER).exists());
+}
+
+#[test]
 fn another_process_sees_only_the_exact_old_or_committed_generation_after_kills() {
     let ordinary = [
         "file-before",

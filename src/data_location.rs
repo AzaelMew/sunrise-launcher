@@ -126,26 +126,19 @@ pub fn validate() -> Result<()> {
     configured_roots().map(|_| ())
 }
 
-/// Run before any launcher path is used. A broken location never ends the process: it is
-/// recorded for Settings, and the default folders stand in until the player retries or keeps
-/// them. The returned text is also [`startup_error`].
-pub fn startup() -> Option<String> {
-    let mut problems = Vec::new();
-    if let Err(error) = configured_roots() {
+/// Acquire the shared location lease before reading the pointer or dispatching anything that
+/// can write. A broken pointer can still open Settings on default roots while holding that lease.
+pub fn startup() -> Result<()> {
+    let lease = acquire_lock_at(&bootstrap_path()?)?;
+    *STARTUP_LEASE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(lease);
+    let problem = configured_roots().err().map(|error| {
         FORCE_DEFAULT.store(true, Ordering::Release);
-        problems.push(open_error(&error));
-    }
-    match acquire_startup_lock() {
-        Ok(lease) => {
-            *STARTUP_LEASE
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = lease;
-        }
-        Err(error) => problems.push(error),
-    }
-    let error = (!problems.is_empty()).then(|| problems.join("\n"));
-    remember_startup_error(error.clone());
-    error
+        open_error(&error)
+    });
+    remember_startup_error(problem);
+    Ok(())
 }
 
 pub fn startup_error() -> Option<String> {
@@ -164,17 +157,6 @@ pub fn retry() -> Result<()> {
         FORCE_DEFAULT.store(true, Ordering::Release);
         remember_startup_error(Some(error.clone()));
         return Err(error);
-    }
-    match acquire_startup_lock() {
-        Ok(lease) => {
-            *STARTUP_LEASE
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()) = lease;
-        }
-        Err(error) => {
-            remember_startup_error(Some(error.clone()));
-            return Err(error);
-        }
     }
     remember_startup_error(None);
     Ok(())
@@ -252,16 +234,6 @@ impl Drop for MigrationLease {
         // A concurrent Unix fork can hold the same file description until exec, even
         // with close-on-exec set. Release the lock without waiting for that copy to close.
         let _ = self.0.unlock();
-    }
-}
-
-/// Hold until process exit. Workers must enter before acquiring this shared lease.
-/// Override-based isolated runs do not touch the user's bootstrap lock.
-pub fn acquire_startup_lock() -> Result<Option<MigrationLease>> {
-    if overridden("SUNRISE_LAUNCHER_HOME") && overridden("SUNRISE_HOME") {
-        Ok(None)
-    } else {
-        acquire_lock_at(&bootstrap_path()?).map(Some)
     }
 }
 
