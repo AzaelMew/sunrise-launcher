@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 mod build;
 mod durable;
-pub use build::{Active, Target};
+pub use build::{displayed_image, Active, Target};
 
 const FILE: &str = "mod-browser/install-txn.json";
 const VERSION: u64 = 2;
@@ -311,6 +311,85 @@ impl Lease {
         Ok(target)
     }
 
+    /// Resolve the base and reusable image for Play, before any download or preparation.
+    pub fn play_target(
+        &self,
+        legacy: impl FnOnce() -> Result<Target, String>,
+    ) -> Result<Target, String> {
+        if let Some(active) = self.active_build()? {
+            active.verify_artifacts()?;
+            return Target::legacy(active.executable());
+        }
+        self.bind_bootstrap(legacy)
+    }
+
+    /// Verify the actual set; an old browser checksum is not evidence that the game failed
+    /// to replace a package. If the image differs, build exactly that set on the same base.
+    pub fn play_image(
+        &self,
+        target: &Target,
+        profile: crate::native_mods::Profile,
+        cancellation: &crate::native_mods::Cancellation,
+        progress: impl Fn(crate::native_mods::Step),
+    ) -> Result<String, String> {
+        let prior = self.active_build()?;
+        let inputs = build::inputs(&self.home)?;
+        build::verify_packages(&self.home)?;
+        if let Some(prior) = &prior {
+            prior.verify_artifacts()?;
+            if prior.base() != target.base() || prior.executable() != target.preferred_image() {
+                return Err(unsettled());
+            }
+            if prior.inputs == inputs {
+                build::verify_included(prior.base(), prior.executable(), &self.home)?;
+                return Ok(prior.executable().into());
+            }
+        } else {
+            let record = read(&self.home)?.ok_or_else(unsettled)?;
+            let binding = record.bootstrap().ok_or_else(unsettled)?;
+            if binding.target != *target {
+                return Err(unsettled());
+            }
+            binding.verify(&self.home)?;
+        }
+        let image = if build::verify_included(target.base(), target.preferred_image(), &self.home)
+            .is_ok()
+        {
+            target.preferred_image().to_owned()
+        } else if crate::native_status::enabled(&self.home).is_empty() {
+            target.base().to_owned()
+        } else {
+            crate::native_mods::build_exact_client(
+                target.base(),
+                &self.home,
+                profile,
+                cancellation,
+                progress,
+            )
+            .map_err(|e| e.to_string())?
+        };
+        crate::native_status::check_permission(&image)?;
+        if let Some(prior) = prior {
+            let _lock = locked(&self.home)?;
+            let path = self.home.join(build::FILE);
+            let before = build::optional_bytes(&path)?.ok_or_else(unsettled)?;
+            if build::parse(&before)? != prior || read(&self.home)?.is_some() {
+                return Err(unsettled());
+            }
+            let next = prior.adopt(&image, inputs, &self.home)?;
+            publish_pointer(
+                &self.home,
+                &mut Record::default(),
+                Some(before),
+                &next,
+                |_| {},
+            )?;
+        } else {
+            self.commit_bootstrap(&image)?;
+        }
+        Ok(image)
+    }
+
     /// Commit the matched image, or keep the bootstrap binding if publication is interrupted.
     pub fn commit_bootstrap(&self, image: &str) -> Result<Active, String> {
         let _lock = locked(&self.home)?;
@@ -319,24 +398,28 @@ impl Lease {
             .bootstrap()
             .ok_or_else(unsettled)?
             .active(image, &self.home)?;
-        publish_bootstrap(&self.home, &mut record, &active, |_| {})?;
+        publish_pointer(&self.home, &mut record, None, &active, |_| {})?;
         Ok(active)
     }
 }
 
-fn publish_bootstrap(
+fn publish_pointer(
     home: &Path,
     record: &mut Record,
+    before: Option<Vec<u8>>,
     active: &Active,
     mut after_step: impl FnMut(PointerPhase),
 ) -> Result<(), String> {
-    if record.pointer.is_some() || !record.attempts.is_empty() || build::read(home)?.is_some() {
+    if record.pointer.is_some()
+        || !record.attempts.is_empty()
+        || build::optional_bytes(&home.join(build::FILE))? != before
+    {
         return Err(unsettled());
     }
     let after = serde_json::to_vec(active).map_err(|e| e.to_string())?;
     record.pointer = Some(Pointer {
         phase: PointerPhase::Publishing,
-        before: None,
+        before,
         after,
     });
     write(home, record)?;
@@ -1515,7 +1598,7 @@ mod tests {
         }
         let mut record = read(&home).unwrap().unwrap();
         let active = record.bootstrap().unwrap().test_active();
-        publish_bootstrap(&home, &mut record, &active, |phase| {
+        publish_pointer(&home, &mut record, None, &active, |phase| {
             if (phase == PointerPhase::Publishing && stop == "pointer")
                 || (phase == PointerPhase::Committed && stop == "marker")
             {
@@ -1552,6 +1635,66 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn play_uses_the_committed_image_and_keeps_profiles_independent() {
+        use std::process::Command;
+        const ACTOR: &str = "SUNRISE_TEST_BOOTSTRAP_PLAY";
+        let root = tempfile::tempdir().unwrap();
+        let Some(data) = std::env::var_os(ACTOR) else {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "browser::sunrise::txn::tests::play_uses_the_committed_image_and_keeps_profiles_independent", "--nocapture"])
+                .env(ACTOR, root.path())
+                .env("SUNRISE_LAUNCHER_HOME", root.path())
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        };
+        let data = PathBuf::from(data);
+        let base = crate::backend::version_dir("nightly-original");
+        fs::create_dir_all(&base).unwrap();
+        fs::write(base.join(crate::backend::CLIENT), b"original image").unwrap();
+        let first = data.join("first");
+        let owner = Lease::admit(&first).unwrap();
+        let target = owner
+            .play_target(|| Target::legacy("nightly-original"))
+            .unwrap();
+        let prepare = |owner: &Lease, target: &Target| {
+            owner.play_image(
+                target,
+                crate::native_mods::Profile::Optimized,
+                &Default::default(),
+                |_| {},
+            )
+        };
+        assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
+        assert_eq!(owner.active_build().unwrap().unwrap().generation, 1);
+        drop(owner);
+        let second = Lease::admit(&data.join("second")).unwrap();
+        assert_eq!(
+            second
+                .play_target(|| Target::legacy("nightly-new"))
+                .unwrap()
+                .base(),
+            "nightly-new"
+        );
+        let owner = Lease::admit(&first).unwrap();
+        let target = owner
+            .play_target(|| panic!("the channel does not replace a committed pointer"))
+            .unwrap();
+        fs::write(first.join(sunrise_launcher_smod::mod_list::FILE), b"").unwrap();
+        assert_eq!(prepare(&owner, &target).unwrap(), "nightly-original");
+        assert_eq!(owner.active_build().unwrap().unwrap().generation, 2);
+        fs::write(base.join(crate::backend::CLIENT), b"different executable").unwrap();
+        assert!(owner
+            .play_target(|| panic!("a corrupted artifact is not a fresh profile"))
+            .is_err());
     }
 
     #[test]

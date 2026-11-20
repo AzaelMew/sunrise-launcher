@@ -389,6 +389,32 @@ impl Instance {
     }
 }
 
+/// Pick one tag for both the Home picker and Play. A pin is never replaced by another
+/// build just because it isn't installed yet. Channel release lists are newest first.
+pub fn profile_target<'a>(
+    pin: Option<&'a String>,
+    channel: Channel,
+    releases: &'a [crate::backend::Release],
+    installed: &'a [String],
+    launcher_version: Option<&'a String>,
+) -> Option<&'a String> {
+    pin.or_else(|| match channel.following(releases) {
+        Channel::Stable => {
+            // Keep the existing policy: prefer an installed Stable build.
+            Channel::Stable
+                .builds(releases)
+                .find(|r| installed.contains(&r.tag))
+                .or_else(|| Channel::Stable.builds(releases).next())
+                .map(|r| &r.tag)
+        }
+        Channel::Nightly => Channel::Nightly
+            .builds(releases)
+            .next()
+            .map(|r| &r.tag)
+            .or(launcher_version),
+    })
+}
+
 /// The last second of the year 9999: the latest time a saved file is believed about.
 const LATEST: Duration = Duration::from_secs(253_402_300_799);
 
@@ -488,18 +514,20 @@ fn list_in(game_home: &Path, data: &Path) -> Vec<Instance> {
         .into_iter()
         .map(|(id, name, kind, work, home)| {
             let meta = store.instances.get(&id).cloned().unwrap_or_default();
+            let version = crate::browser::sunrise::txn::displayed_image(&home).or_else(|| {
+                meta.built
+                    .filter(|built| {
+                        crate::native_mods::about(built)
+                            .is_some_and(|about| Some(&about.base) == meta.version.as_ref())
+                    })
+                    .or(meta.version)
+            });
             Instance {
                 name: meta.name.unwrap_or(name),
                 icon: meta.icon,
                 group: meta.group,
                 // A modpack's own native build, while it is made from the version it records.
-                version: meta
-                    .built
-                    .filter(|built| {
-                        crate::native_mods::about(built)
-                            .is_some_and(|about| Some(&about.base) == meta.version.as_ref())
-                    })
-                    .or(meta.version),
+                version,
                 channel: meta.channel.unwrap_or_default(),
                 native_profile: meta
                     .native_profile
