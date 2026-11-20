@@ -2261,8 +2261,8 @@ pub fn preparer(
 ) -> Result<(Command, PathBuf), String> {
     set_prepare_step(PrepareStep::Files);
     // A native build reads the resources of its base, so it is the base that gets prepared.
-    let tag = resources_owner(tag);
-    let tag = tag.as_str();
+    let owner = resources_owner(tag);
+    let tag = owner.as_str();
     let version = game_version(tag);
     let dir = version_dir(tag);
     let binary = crate::preparer::binary(&dir).ok_or_else(|| crate::preparer::too_old(tag))?;
@@ -3907,9 +3907,12 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
     spawn_holding(job, cmd, tx, None)
 }
 
-/// Holds `version`'s preparation lock, so a second preparation of it can't start while one runs; it is released when the guard drops.
+/// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
+/// native build), so a second preparation of the same folder can't start while one runs; it is
+/// released when the guard drops.
 pub fn prepare_lock(version: &str) -> Result<sunrise_launcher_smod::locks::Locked, String> {
-    prepare_lock_at(&version_dir(version), version)
+    let owner = resources_owner(version);
+    prepare_lock_at(&version_dir(&owner), &owner)
 }
 
 fn prepare_lock_at(
@@ -4879,6 +4882,21 @@ pub fn {f}("
         // Preparing a native build prepares the base whose resources it reads.
         assert_eq!(resources_owner(&native), base);
         assert_eq!(resources_owner(&base), base);
+        // Two native builds on one base, and the base itself, share one preparation lock.
+        let sibling = format!("{native}-sibling");
+        fs::create_dir_all(version_dir(&sibling)).unwrap();
+        fs::copy(
+            native_dir.join("native-mods.json"),
+            version_dir(&sibling).join("native-mods.json"),
+        )
+        .unwrap();
+        {
+            let _held = prepare_lock(&native).unwrap();
+            assert!(prepare_lock(&base).is_err());
+            assert!(prepare_lock(&sibling).is_err());
+        }
+        assert!(prepare_lock(&base).is_ok());
+        fs::remove_dir_all(version_dir(&sibling)).unwrap();
         assert!(crate::native_mods::resource_dependents(&base));
         assert!(remove_version(&base).is_err());
         assert!(base_dir.join(COMPLETE).exists());
