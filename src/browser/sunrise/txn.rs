@@ -25,7 +25,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod artifact;
+mod artifact_roots;
 mod build;
+pub(crate) use artifact_roots::{
+    register_relocated as register_relocated_artifact_root, register_root as register_artifact_root,
+};
 pub(crate) mod durable;
 mod legacy;
 mod manual_build;
@@ -376,6 +380,7 @@ impl Lease {
         let target = resolve()?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        artifact_roots::register(&self.home)?;
         target.check_installed()?;
         record.intent = Intent::Install {
             bootstrap: Some(Box::new(build::Bootstrap::bind(
@@ -578,6 +583,7 @@ impl Lease {
         }
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        artifact_roots::register(&self.home)?;
         prior.verify_artifacts()?;
         let next = prior.adopt(image, inputs, &self.home)?;
         let _permission = cancellation.publication_guard(image)?;
@@ -600,6 +606,7 @@ impl Lease {
         let mut record = read(&self.home)?.ok_or_else(unsettled)?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        artifact_roots::register(&self.home)?;
         let active = record
             .bootstrap()
             .ok_or_else(unsettled)?
@@ -751,10 +758,11 @@ pub(crate) fn references(tag: &str) -> Result<bool, String> {
         }
         Ok(build::read(home)?.as_ref().is_some_and(refers))
     }
-    let home = crate::backend::game_home();
-    Ok(in_home(&home, tag)?
-        || scan(&home.join("instances"), None, tag)?
-        || scan(&home.join("sunrise-packs"), Some("home"), tag)?)
+    artifact_roots::any(|home| {
+        Ok(in_home(home, tag)?
+            || scan(&home.join("instances"), None, tag)?
+            || scan(&home.join("sunrise-packs"), Some("home"), tag)?)
+    })
 }
 
 /// Whether a build has sealed this batch; later installs and removals must wait.
@@ -2001,6 +2009,15 @@ mod tests {
         };
         let data = PathBuf::from(data);
         let base = crate::backend::version_dir("nightly-original");
+        const REMOVE_FROM_OTHER_HOME: &str = "SUNRISE_TEST_REMOVE_FROM_OTHER_HOME";
+        if std::env::var_os(REMOVE_FROM_OTHER_HOME).is_some() {
+            assert!(crate::backend::installed()
+                .iter()
+                .any(|tag| tag == "nightly-original"));
+            assert!(crate::backend::remove_version("nightly-original").is_err());
+            assert!(base.join(crate::backend::CLIENT).is_file());
+            return;
+        }
         fs::create_dir_all(&base).unwrap();
         let binary = sunrise_launcher_smod::holder::CAPABILITY;
         fs::write(base.join(crate::backend::CLIENT), binary).unwrap();
@@ -2079,6 +2096,27 @@ mod tests {
             .get_args()
             .any(|arg| Path::new(arg) == exact_resources));
         drop(owner);
+        let other_home = data.join("second-game-root");
+        fs::create_dir(&other_home).unwrap();
+        let remove_from_other_home = || {
+            let output = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "browser::sunrise::txn::tests::play_uses_the_committed_image_and_keeps_profiles_independent", "--nocapture"])
+                .env(REMOVE_FROM_OTHER_HOME, "1")
+                .env("SUNRISE_HOME", &other_home)
+                .output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        remove_from_other_home();
+        let game = crate::backend::game_home();
+        let detached = data.join("temporarily-unavailable-game-root");
+        fs::rename(&game, &detached).unwrap();
+        remove_from_other_home();
+        fs::rename(&detached, &game).unwrap();
         assert!(matches!(
             crate::cache_cleanup::delete_version(&base, true),
             Err(crate::storage::Error::IncompleteUnit)

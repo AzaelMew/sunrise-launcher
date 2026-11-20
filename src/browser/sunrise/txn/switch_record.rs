@@ -271,6 +271,7 @@ impl Lease {
         let _lock = super::locked(home)?;
         let _publication =
             crate::run_leases::installation().map_err(crate::native_mods::cache_error)?;
+        super::artifact_roots::register(home)?;
         let before = build::optional_bytes(&home.join(build::FILE))?;
         let record = read(home)?;
         let previous = record.as_ref().and_then(Record::bootstrap).cloned();

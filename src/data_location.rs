@@ -434,6 +434,10 @@ fn migrate_locked(
         }
         fs::remove_dir(&stage).map_err(|e| problem(&stage, e))?;
         sync_dir(&target)?;
+        crate::browser::sunrise::txn::register_relocated_artifact_root(
+            &destination.launcher,
+            &destination.game,
+        )?;
         progress("Committing data location");
         commit(bootstrap, &destination)?;
         Ok(destination)

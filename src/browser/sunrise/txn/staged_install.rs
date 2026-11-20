@@ -538,6 +538,11 @@ pub(in crate::browser::sunrise) fn expose_private_profile(
     sealed: &SealedProfile,
 ) -> Result<(), String> {
     let _publication = crate::run_leases::installation().map_err(native_mods::cache_error)?;
+    let game_root = destination
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(unsettled)?;
+    super::artifact_roots::register_root(game_root)?;
     sealed.active.verify_artifacts()?;
     sealed.active.verify_resources()?;
     durable::flush_tree(stage).map_err(|e| at(stage, e))?;

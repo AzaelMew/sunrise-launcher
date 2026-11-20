@@ -989,6 +989,7 @@ fn create_whole_in(
         };
         choose(&mut meta);
         if let Some(active) = &active {
+            crate::browser::sunrise::txn::register_artifact_root(&root)?;
             active.verify_artifacts()?;
             meta.version = Some(active.base().to_owned());
             meta.built = None;
