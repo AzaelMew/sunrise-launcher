@@ -18,6 +18,13 @@ fn an_escaped_descendant_is_not_a_proved_compiler_exit() {
         Some(0)
     );
     assert_eq!(worker().arg("exit 1").status().unwrap().code(), Some(1));
+    let missing = Command::new(env!("CARGO_BIN_EXE_sunrise-launcher"))
+        .arg(ARG)
+        .arg(root.join("missing-tool"))
+        .status()
+        .unwrap();
+    assert_eq!(missing.code(), Some(124));
+    assert_eq!(worker().arg("exit 124").status().unwrap().code(), Some(125));
     for name in ["started", "release", "finished"] {
         assert!(Command::new("mkfifo")
             .arg(root.join(name))

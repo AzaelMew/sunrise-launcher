@@ -1637,14 +1637,12 @@ fn pipeline(
         }
         let game = workspace.package(game).map_err(|e| e.to_string())?;
         let work = workspace.path().join("work");
-        workspace.allow_worker();
-        let mut quiescent = false;
         let built = tool::build(
             &rust,
             program,
-            &tool::Plan {
+            tool::Plan {
                 work: &work,
-                workspace: &workspace,
+                workspace: &mut workspace,
                 package: tool::Package {
                     runtime: &game.runtime,
                     api: &game.api,
@@ -1663,16 +1661,8 @@ fn pipeline(
                 })
             },
             cancellation,
-            &mut quiescent,
         );
-        if quiescent {
-            workspace.worker_finished();
-            let log = workspace.import_log().map_err(|e| e.to_string())?;
-            if !log.is_empty() {
-                append_log(&log)?;
-            }
-        }
-        // Don't turn a stopped or unproved tool into an attributed compile failure.
+        // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
         let built = built.map_err(|failure| blame(blamed_text(failure)))?;
         workspace

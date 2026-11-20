@@ -1,4 +1,5 @@
 //! The SDK's native build tool, `cargo sunrise-mod native-build`, run as a process with the launcher's toolchain (docs/modding/src/reference/sdk/08-native-build.md).
+use super::workspace::Workspace;
 use crate::rust_toolchain::Toolchain;
 use crate::{
     backend::{NativeGrant, PermissionFence},
@@ -108,7 +109,7 @@ pub(super) struct Package<'a> {
 /// What a build is for.
 pub(super) struct Plan<'a> {
     pub work: &'a Path,
-    pub workspace: &'a super::workspace::Workspace,
+    pub workspace: &'a mut Workspace,
     pub package: Package<'a>,
     /// A folder of exactly the mods to compile.
     pub mods: &'a Path,
@@ -255,11 +256,10 @@ fn plan_line(rust: &Toolchain, plan: &Plan<'_>) -> String {
 pub(super) fn build(
     rust: &Toolchain,
     program: &Path,
-    plan: &Plan<'_>,
+    plan: Plan<'_>,
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
-    quiescent: &mut bool,
 ) -> Result<Built, Failure> {
     #[cfg(not(target_os = "linux"))]
     let mut command = command(rust, program);
@@ -272,15 +272,15 @@ pub(super) fn build(
         command
     };
     plan.workspace.isolate(&mut command).map_err(unrun)?;
-    let terminal = run(
+    let line = plan_line(rust, &plan);
+    run(
         command,
-        &plan_line(rust, plan),
+        &line,
         consent,
         on_mod,
         cancellation,
-        Some(quiescent),
-    );
-    compiler_handoff(terminal, *quiescent)
+        Some(plan.workspace),
+    )
 }
 
 /// A success or an attributed failure is useful only after the whole compiler tree stops.
@@ -302,29 +302,39 @@ fn run(
     consent: Option<&dyn Fn(&Consent) -> bool>,
     on_mod: &dyn Fn(&str, usize, usize),
     cancellation: &Cancellation,
-    quiescent: Option<&mut bool>,
+    mut workspace: Option<&mut Workspace>,
 ) -> Result<Built, Failure> {
     command
         .arg("native-build")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     let (mut child, errors) = start(command, cancellation, true)?;
+    if let Some(workspace) = workspace.as_deref_mut() {
+        workspace.allow_worker();
+    }
     let result = talk(&mut child, plan, consent, on_mod, cancellation);
+    if result.is_err() && cancellation.state().tool.take().is_some() {
+        // Don't wait on a tool which is still writing after a refused protocol message.
+        let _ = child.child().kill();
+    }
     let status = child.wait();
-    if let Some(proved) = quiescent {
+    #[cfg(target_os = "linux")]
+    let quiescent = status
+        .as_ref()
+        .is_ok_and(crate::process::compiler_worker::proved);
+    #[cfg(windows)]
+    let quiescent = status.is_ok(); // WindowsChild::wait checked the compiler Job.
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let quiescent = false;
+    if let Some(workspace) = workspace.as_deref_mut() {
         #[cfg(target_os = "linux")]
-        {
-            *proved = status
-                .as_ref()
-                .is_ok_and(crate::process::compiler_worker::proved);
-        }
-        #[cfg(windows)]
-        {
-            *proved = status.is_ok();
-        } // WindowsChild::wait checked the compiler Job.
-        #[cfg(not(any(target_os = "linux", windows)))]
-        {
-            *proved = false;
+        let never_started = status
+            .as_ref()
+            .is_ok_and(crate::process::compiler_worker::no_worker);
+        #[cfg(not(target_os = "linux"))]
+        let never_started = false;
+        if quiescent || never_started {
+            workspace.worker_finished();
         }
     }
     if status.is_err() {
@@ -340,6 +350,15 @@ fn run(
     };
     if outcome.is_err() {
         log_errors(&errors);
+    }
+    if let Some(workspace) = workspace {
+        if quiescent {
+            let log = workspace.import_log().map_err(unrun)?;
+            if !log.is_empty() {
+                super::append_log(&log)?;
+            }
+        }
+        return compiler_handoff(outcome, quiescent);
     }
     outcome
 }

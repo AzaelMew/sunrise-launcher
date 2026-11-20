@@ -4,6 +4,7 @@ use std::{ffi::OsString, io, process::Command};
 
 #[doc(hidden)]
 pub const ARG: &str = "--internal-compiler-worker";
+const NO_WORKER: i32 = 124;
 const UNPROVED: i32 = 125;
 
 /// Only the helper may report a proved ordinary tool exit. A signal or an unavailable proof
@@ -12,20 +13,25 @@ pub(crate) fn proved(status: &std::process::ExitStatus) -> bool {
     matches!(status.code(), Some(0..=3))
 }
 
+/// The helper failed before it launched any compiler process.
+pub(crate) fn no_worker(status: &std::process::ExitStatus) -> bool {
+    status.code() == Some(NO_WORKER)
+}
+
 /// Entry point reached before launcher initialization. It passes inherited stdio, process
 /// group and environment to the compiler command it wraps.
 #[doc(hidden)]
 pub fn run(mut args: impl Iterator<Item = OsString>) -> i32 {
     let Some(program) = args.next() else {
-        return UNPROVED;
+        return NO_WORKER;
     };
     // SAFETY: this is a fresh launcher helper, not the GUI or any other worker. Linux
     // reparents orphan descendants here, even if they left the compiler's process group.
     if unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) } != 0 {
-        return UNPROVED;
+        return NO_WORKER;
     }
     let Ok(status) = Command::new(program).args(args).status() else {
-        return UNPROVED;
+        return NO_WORKER;
     };
     // Reap adopted dead children. Only ECHILD proves nothing in the tree can still write.
     loop {

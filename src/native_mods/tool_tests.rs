@@ -176,6 +176,45 @@ fn a_regrant_cannot_admit_a_stale_sdk_check_or_registry_yes() {
 }
 
 #[test]
+#[cfg(unix)]
+#[ignore = "daily"]
+fn not_starting_a_worker_does_not_retain_its_staged_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let _scratch = super::super::tests::scratch_state();
+    let mut settings = crate::backend::Settings::default();
+    settings.allow_native_mods().unwrap();
+    let stale = Cancellation::default();
+    stale.admit_native_work().unwrap();
+    settings.revoke_native_mods().unwrap();
+    let no_consent = Cancellation::default();
+    for (command, cancellation, expected) in [
+        (
+            std::process::Command::new(dir.path().join("missing-program")),
+            &no_consent,
+            "couldn't run",
+        ),
+        (fake(dir.path(), &[]), &stale, "permission changed"),
+    ] {
+        let mut workspace = Workspace::new(dir.path()).unwrap();
+        let path = workspace.path().to_owned();
+        std::fs::write(path.join("staged-sdk"), b"private").unwrap();
+        let failure = run(
+            command,
+            "{}",
+            None,
+            &|_, _, _| unreachable!(),
+            cancellation,
+            Some(&mut workspace),
+        )
+        .unwrap_err();
+        assert!(failure.error.contains(expected), "{}", failure.error);
+        drop(workspace);
+        assert!(!path.exists());
+        assert!(!dir.path().join("plan").exists());
+    }
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn an_sdk_exit_or_stop_finishes_even_while_a_descendant_keeps_both_pipes_open() {
     for case in ["exit", "stop", "check"] {
@@ -197,7 +236,8 @@ case "$2" in
 esac
 exit 125
 "#, "sdk"]).arg(&actor).arg(case);
-            let mut proved = true;
+            let mut workspace = Workspace::new(&actor).unwrap();
+            let workspace_path = workspace.path().to_owned();
             let error = if case == "check" {
                 ask(command, "native-check", &serde_json::json!({}), &active).unwrap_err()
             } else {
@@ -207,12 +247,13 @@ exit 125
                     None,
                     &|_, _, _| unreachable!(),
                     &active,
-                    Some(&mut proved),
+                    Some(&mut workspace),
                 )
                 .unwrap_err()
                 .error
             };
-            done.send((error, proved)).unwrap();
+            drop(workspace);
+            done.send((error, workspace_path.exists())).unwrap();
         });
         let until = Instant::now() + Duration::from_secs(10);
         while !path.join("holding").exists() && Instant::now() < until {
@@ -231,16 +272,16 @@ exit 125
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(inherited && writing && path.join("finished").exists());
-        let (error, proved) = outcome.expect("the runner must finish without its pipe EOF");
+        let (error, retained) = outcome.expect("the runner must finish without its pipe EOF");
         run_fixture.join().unwrap();
         match case {
             "stop" => {
                 assert_eq!(error, super::super::CANCELLED);
-                assert!(!proved);
+                assert!(retained);
             }
             "exit" => {
                 assert!(error.contains("output was still open"), "{error}");
-                assert!(!proved);
+                assert!(retained);
             }
             _ => assert!(error.contains("output was still open"), "{error}"),
         }
@@ -318,19 +359,19 @@ fn leader_success_or_blamed_failure_is_not_a_compiler_handoff() {
 #[test]
 fn build_plan_and_process_use_the_same_private_cargo_home() {
     let dir = tempfile::tempdir().unwrap();
-    let workspace = super::super::workspace::Workspace::new(dir.path()).unwrap();
-    let path = workspace.path();
+    let mut workspace = Workspace::new(dir.path()).unwrap();
+    let path = workspace.path().to_owned();
     let rust = Toolchain {
         dir: path.join("rust"),
         host: crate::rust_toolchain::hosts().first().unwrap(),
     };
     let plan = Plan {
         work: &path.join("work"),
-        workspace: &workspace,
+        workspace: &mut workspace,
         package: Package {
-            runtime: path,
-            api: path,
-            engine: path,
+            runtime: &path,
+            api: &path,
+            engine: &path,
         },
         mods: &path.join("mods"),
         server: false,
