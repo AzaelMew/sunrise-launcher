@@ -52,8 +52,8 @@ pub struct Context<'a> {
 #[derive(Debug, Default, PartialEq)]
 pub struct Report {
     pub updated: Vec<String>,
-    /// Mods taken out of the profile, `Title: why`.
-    pub removed: Vec<String>,
+    /// Mods that can't stay, for the player to confirm: nothing was removed yet.
+    pub remove: Vec<Removal>,
     pub held: Vec<String>,
     pub failed: Vec<String>,
     /// Mods a saved world uses that the switch would remove or an update would drop content
@@ -70,12 +70,6 @@ impl Report {
             out.push(trf(
                 "Updated automatically: {list}.",
                 &[("list", &self.updated.join(", "))],
-            ));
-        }
-        if !self.removed.is_empty() {
-            out.push(trf(
-                "Removed, because they can't work with this version: {list}.",
-                &[("list", &self.removed.join("; "))],
             ));
         }
         out.extend(self.held.iter().cloned());
@@ -416,13 +410,11 @@ pub(super) fn run_with(
                     asked.borrow_mut().push(entry.project.clone());
                     continue;
                 }
-                match installed::remove(home, &entry.project) {
-                    Ok(_) => report.removed.push(format!("{}: {why}", entry.title)),
-                    Err(e) => report.failed.push(trf(
-                        "{title} wasn't removed: {error}",
-                        &[("title", &entry.title), ("error", &e)],
-                    )),
-                }
+                report.remove.push(Removal {
+                    id: entry.project.clone(),
+                    title: entry.title.clone(),
+                    reason: why,
+                });
                 continue;
             }
             Decision::Skip => continue,

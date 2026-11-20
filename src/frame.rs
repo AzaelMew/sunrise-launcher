@@ -365,7 +365,7 @@ impl Launcher {
                 backend::play_step("updating registry mods");
                 let out =
                     mods_page::auto_update(&[target], true, native_allowed, &Default::default());
-                let _ = tx.send(mods_page::Event::PlayUpdated(out.lines, out.asks));
+                let _ = tx.send(mods_page::Event::PlayUpdated(out));
             });
             return;
         }

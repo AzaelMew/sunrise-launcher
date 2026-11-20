@@ -12,20 +12,31 @@ use sunrise_launcher::browser::{
 use sunrise_launcher::native_status;
 
 mod queue;
+pub(crate) mod removal;
 
-/// The mods to remove when a build has ended, and the failures to tell the player about.
-/// `brought` are the mods an install started the build for; `stopped` is whether it stopped
-/// for a reason outside the mods (every one of them goes). Otherwise the build went on without
-/// the mods it listed as `failures`, and they go.
-fn removed_after_build(
+/// What a build that has ended costs the mods an install brought in.
+#[derive(Debug, PartialEq)]
+enum BuildCost {
+    /// Nothing: every mod built.
+    Nothing,
+    /// The build stopped for a reason outside the mods: every mod it was started for goes at
+    /// once, and Install can be tried again.
+    Rollback(Vec<String>),
+    /// The build went on without these mods, which don't compile or don't fit: they are listed
+    /// for the player, and go when they continue.
+    Failures(Vec<native_mods::BuildFailure>),
+}
+
+fn build_cost(
     brought: &[String],
     stopped: bool,
     failures: Vec<native_mods::BuildFailure>,
-) -> (Vec<String>, Vec<native_mods::BuildFailure>) {
-    if stopped {
-        return (brought.to_vec(), Vec::new());
+) -> BuildCost {
+    match (stopped, failures.is_empty()) {
+        (true, _) => BuildCost::Rollback(brought.to_vec()),
+        (false, true) => BuildCost::Nothing,
+        (false, false) => BuildCost::Failures(failures),
     }
-    (failures.iter().map(|f| f.id.clone()).collect(), failures)
 }
 
 /// What a build that an install started cost it. Nothing stays installed from either.
@@ -60,9 +71,9 @@ pub(super) enum Event {
     Progress(String, f32),
     Done(Result<Finished, String>),
     /// What the automatic updates did (`sunrise::auto`).
-    AutoUpdated(Vec<String>, Vec<WorldAsk>),
+    AutoUpdated(AutoOutcome),
     /// The same, for the Play that waited for the mods to be up to date.
-    PlayUpdated(Vec<String>, Vec<WorldAsk>),
+    PlayUpdated(AutoOutcome),
     /// A project page's part, an image or a filter's values (`mods_project`).
     Loaded(super::mods_project::Loaded),
 }
@@ -97,6 +108,8 @@ pub(super) struct Mods {
     /// The question a switch or update asks before it removes mods saved worlds use. Nothing
     /// is removed until it is answered, and the answer defaults to Stay.
     pub(crate) world_ask: Option<WorldAsk>,
+    /// The mods that go once the player continues (`removal`).
+    pub(crate) removal: Option<removal::Removal>,
     /// The native mods the running build was started to take up.
     building: Vec<String>,
     /// How the last build of an install ended, when it cost the install: read by the card and
@@ -211,6 +224,7 @@ impl Mods {
             queue: Default::default(),
             building: Vec::new(),
             world_ask: None,
+            removal: None,
             failed: None,
             native_state: Default::default(),
             unbuilt: None,
@@ -262,8 +276,18 @@ impl Launcher {
                     m.installed_list.reset();
                 }
                 Event::Loaded(l) => loaded.push(l),
-                Event::AutoUpdated(lines, asks) | Event::PlayUpdated(lines, asks) => {
+                Event::AutoUpdated(out) | Event::PlayUpdated(out) => {
                     play_ready |= is_play;
+                    let AutoOutcome {
+                        lines,
+                        asks,
+                        removals,
+                    } = out;
+                    for (instance, items) in removals {
+                        m.removal
+                            .get_or_insert_with(Default::default)
+                            .add(&instance, removal::Removal::of_updates(items));
+                    }
                     // The first question waits for its answer; later ones come with the next run.
                     if m.world_ask.is_none() {
                         m.world_ask = asks.into_iter().next();
@@ -342,8 +366,8 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         std::thread::spawn(move || {
             let out = auto_update(&list, enabled, native_allowed, &Default::default());
-            if !out.lines.is_empty() || !out.asks.is_empty() {
-                let _ = tx.send(Event::AutoUpdated(out.lines, out.asks));
+            if !out.lines.is_empty() || !out.asks.is_empty() || !out.removals.is_empty() {
+                let _ = tx.send(Event::AutoUpdated(out));
             }
         });
     }
@@ -539,13 +563,13 @@ impl Launcher {
         let tx = self.mods.tx.clone();
         std::thread::spawn(move || {
             let out = auto_update(&[target], true, native_allowed, &allow);
-            let _ = tx.send(Event::AutoUpdated(out.lines, out.asks));
+            let _ = tx.send(Event::AutoUpdated(out));
         });
     }
 
     /// A build ended. The mods it left out because they didn't compile or don't fit are
-    /// removed, and the build already went on without them; if it stopped for another reason (`stopped`),
-    /// every mod it was started for is removed. Either way nothing broken stays in the list.
+    /// listed to go (`continue_removal`); the build already went on without them. If it stopped
+    /// for another reason (`stopped`), every mod it was started for is removed at once.
     pub(super) fn install_build_ended(&mut self, stopped: Option<String>) {
         let brought = std::mem::take(&mut self.mods.building);
         if self
@@ -554,23 +578,78 @@ impl Launcher {
         {
             return;
         }
-        let home = self.mods.home();
         let failures = match &stopped {
             Some(_) => Vec::new(),
             None => native_mods::build_failures(&self.native_left_out()),
         };
-        let (gone, failures) = removed_after_build(&brought, stopped.is_some(), failures);
-        for id in &gone {
-            let _ = installed::remove(&home, id);
-        }
-        self.mods.failed = match stopped {
-            Some(why) => {
-                self.mods.message = Some(Err(why));
-                Some(InstallFailure::Interrupted)
+        match build_cost(&brought, stopped.is_some(), failures) {
+            BuildCost::Nothing => {}
+            BuildCost::Rollback(ids) => {
+                let home = self.mods.home();
+                for id in &ids {
+                    let _ = installed::remove(&home, id);
+                }
+                self.mods.message = stopped.map(Err);
+                self.mods.failed = Some(InstallFailure::Interrupted);
+                self.mods.reload_installed();
             }
-            None => (!failures.is_empty()).then_some(InstallFailure::ModsDidNotBuild(failures)),
+            BuildCost::Failures(failures) => {
+                let instance = self
+                    .selected_instance()
+                    .map(|i| i.id.clone())
+                    .unwrap_or_default();
+                let titles: std::collections::HashMap<String, String> = self
+                    .mods
+                    .installed
+                    .iter()
+                    .map(|e| (e.project.clone(), e.title.clone()))
+                    .collect();
+                let items = failures.into_iter().map(|f| removal::Item {
+                    title: titles.get(&f.id).cloned().unwrap_or_else(|| f.id.clone()),
+                    id: f.id,
+                    reason: f.reason,
+                    log: Some(f.log),
+                });
+                self.mods
+                    .removal
+                    .get_or_insert_with(Default::default)
+                    .add(&instance, items);
+            }
+        }
+    }
+
+    /// Continue on the removal sheet: the listed mods go. Those whose build failed are
+    /// remembered for the cards.
+    pub(crate) fn continue_removal(&mut self) {
+        let Some(removal) = self.mods.removal.take() else {
+            return;
         };
+        let Some(home) = self
+            .instances
+            .list
+            .iter()
+            .find(|i| i.id == removal.instance)
+            .map(|i| i.home.clone())
+        else {
+            return;
+        };
+        let mut failed = Vec::new();
+        for item in &removal.items {
+            if let Err(e) = installed::remove(&home, &item.id) {
+                self.mods.message = Some(Err(e));
+            } else if let Some(log) = &item.log {
+                failed.push(native_mods::BuildFailure {
+                    id: item.id.clone(),
+                    reason: item.reason.clone(),
+                    log: log.clone(),
+                });
+            }
+        }
+        if !failed.is_empty() {
+            self.mods.failed = Some(InstallFailure::ModsDidNotBuild(failed));
+        }
         self.mods.reload_installed();
+        self.mods.installed_list.reset();
     }
 
     /// Whether installing the registry mods `ids` would put native code in, by the index
@@ -679,6 +758,9 @@ pub(super) fn auto_update(
         };
         if let Some(report) = sunrise::auto::run(&i.home, &ctx, enabled, allow, &|_, _| {}) {
             out.lines.extend(report.lines());
+            if !report.remove.is_empty() {
+                out.removals.push((i.id.clone(), report.remove));
+            }
             if let Some(question) = report.ask {
                 out.asks.push(WorldAsk {
                     instance: i.id.clone(),
@@ -696,6 +778,9 @@ pub(super) fn auto_update(
 pub(crate) struct AutoOutcome {
     pub(crate) lines: Vec<String>,
     pub(crate) asks: Vec<WorldAsk>,
+    /// The mods that can't stay on the game a profile plays, by instance: listed for the
+    /// player to continue.
+    pub(crate) removals: Vec<(String, Vec<sunrise::auto::Removal>)>,
 }
 
 /// A switch or update that waits for the player's answer: it would remove mods that saved

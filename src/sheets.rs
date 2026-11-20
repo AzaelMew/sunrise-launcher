@@ -457,6 +457,9 @@ impl Launcher {
         if self.mods.world_ask.is_some() {
             return Some(self.world_question_sheet(cx));
         }
+        if self.mods.removal.is_some() {
+            return Some(self.removal_sheet(cx));
+        }
         match self.ui.sheet {
             Some(Sheet::Build) => Some(self.build_sheet(cx)),
             Some(Sheet::Notice) => Some(self.notice_sheet(cx)),
@@ -481,6 +484,122 @@ impl Launcher {
         }
     }
 
+    // ---- Removal ----
+
+    /// Mods that can't stay: which, and why behind "Show why", with the compiler's log to copy
+    /// or save. Continue is the default; it removes them and the rest goes on.
+    fn removal_sheet(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let removal = self
+            .mods
+            .removal
+            .clone()
+            .expect("shown only while mods are listed");
+        let names: Vec<String> = removal.items.iter().map(|i| i.title.clone()).collect();
+        let log = removal.log();
+        let why =
+            removal.why.then(|| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(10.))
+                    .children(removal.items.iter().map(|item| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(item.title.clone()),
+                            )
+                            .child(muted(item.reason.clone()))
+                    }))
+                    .when(!log.is_empty(), |d| {
+                        let (copy, save) = (log.clone(), log.clone());
+                        d.child(
+                            div()
+                                .id("alt-removal-log")
+                                .max_h(px(180.))
+                                .overflow_y_scroll()
+                                .p(px(10.))
+                                .rounded(crate::tokens::r(crate::tokens::R_CONTROL))
+                                .bg(rgb(palette().field))
+                                .font_family(crate::theme::MONO)
+                                .text_size(px(tokens::SMALL))
+                                .text_color(rgb(palette().muted))
+                                .child(crate::selectable::selectable(log.clone())),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap(px(8.))
+                                .child(button("alt-removal-copy", tr("Copy")).on_click(
+                                    cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            copy.clone(),
+                                        ));
+                                    }),
+                                ))
+                                .child(button("alt-removal-save", tr("Save…")).on_click(
+                                    cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                        let pick = cx.prompt_for_new_path(
+                                            &backend::game_home(),
+                                            Some("build-log.txt"),
+                                        );
+                                        let text = save.clone();
+                                        cx.spawn(async move |_, _| {
+                                            if let Ok(Ok(Some(path))) = pick.await {
+                                                let _ = std::fs::write(path, text);
+                                            }
+                                        })
+                                        .detach();
+                                    }),
+                                )),
+                        )
+                    })
+            });
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(title(removal.heading()))
+            .child(muted(names.join(" · ")))
+            .children(why)
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(10.))
+                    .child(
+                        button(
+                            "alt-removal-why",
+                            if removal.why {
+                                tr("Hide why")
+                            } else {
+                                tr("Show why")
+                            },
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _, cx| {
+                                if let Some(removal) = &mut this.mods.removal {
+                                    removal.why = !removal.why;
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        crate::frame::primary("alt-removal-continue", tr("Continue")).on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.continue_removal();
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+            );
+        frame("alt-removal", 580., body, cx)
+    }
+
     // ---- The world question ----
 
     /// A switch or update would remove mods that saved worlds use: the one question. Staying is
@@ -497,19 +616,16 @@ impl Launcher {
             .into_iter()
             .map(|(name, _)| name)
             .collect();
+        let mods = crate::mods::names(&names);
         let text = trf(
-            "{worlds} use {mods}. Switching removes {them}, and what {they} added to those worlds will be lost.",
+            if names.len() == 1 {
+                "{worlds} use {mods}. Its blocks and items in those worlds will be lost."
+            } else {
+                "{worlds} use {mods}. Their blocks and items in those worlds will be lost."
+            },
             &[
                 ("worlds", &crate::mods::names(&question.worlds)),
-                ("mods", &crate::mods::names(&names)),
-                (
-                    "them",
-                    if names.len() == 1 { tr("it") } else { tr("them") },
-                ),
-                (
-                    "they",
-                    if names.len() == 1 { tr("it") } else { tr("they") },
-                ),
+                ("mods", &mods),
             ],
         );
         let body = div()
