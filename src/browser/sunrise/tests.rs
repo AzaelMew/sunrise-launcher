@@ -1583,6 +1583,71 @@ fn a_dependency_is_installed_at_the_version_the_plan_chose() {
 }
 
 #[test]
+fn a_dependency_the_plan_moves_to_a_newer_version_is_updated_and_stays_off_when_it_was_off() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut index = sample();
+    let base = index.project("coords_hud").unwrap().clone();
+    let make = |id: &str, number: &str, extra: &str| {
+        let manifest = format!("id='{id}'\nname='{id}'\nversion='{number}'\napi='0.2'\nside='both'\ncapabilities=['registries']\n{extra}");
+        let bytes = sunrise_launcher_smod::Package::write_files(&manifest, &[]).unwrap();
+        let name = format!("{id}-{number}.smod");
+        let file = dir.path().join(&name);
+        fs::write(&file, &bytes).unwrap();
+        let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
+        let mut version = base.versions[0].clone();
+        version.version = number.into();
+        version.api = facts.api;
+        version.side = facts.side;
+        version.requires.clear();
+        version.file = index::File {
+            name,
+            url: format!("file://{}", file.display()),
+            size: bytes.len() as u64,
+            sha256: index::sha256(&bytes),
+            signature: None,
+        };
+        version
+    };
+    let mut fireflies = make("fireflies", "1.0.0", "[dependencies]\ncreatures = '^2'");
+    fireflies.dependencies = Some(vec![index::Dependency {
+        id: "creatures".into(),
+        version: "^2".into(),
+        optional: false,
+        side: None,
+    }]);
+    // The older one is listed first, so that installing creatures alone picks it.
+    let creatures = vec![
+        make("creatures", "1.0.0", ""),
+        make("creatures", "2.0.0", ""),
+    ];
+    for (id, versions) in [("fireflies", vec![fireflies]), ("creatures", creatures)] {
+        index.projects.push(index::Project {
+            id: id.into(),
+            name: id.into(),
+            key: None,
+            versions,
+            ..base.clone()
+        });
+    }
+    let home = dir.path().join("profile");
+    let first = project_of(&index, index.project("creatures").unwrap(), GAME).unwrap();
+    install_from(&index, true, &first, &home, GAME, false, true, &|_, _| {}).unwrap();
+    mod_list::set_enabled(&home, "creatures", false).unwrap();
+    let project = project_of(&index, index.project("fireflies").unwrap(), GAME).unwrap();
+
+    let done = install_from(&index, true, &project, &home, GAME, false, true, &|_, _| {}).unwrap();
+
+    let creatures = done.iter().find(|e| e.project == "creatures").unwrap();
+    assert_eq!(creatures.version, "2.0.0", "the plan's update is installed");
+    assert!(home.join(&creatures.file).is_file());
+    assert!(
+        !mod_list::is_enabled(&home, "creatures"),
+        "an off dependency stays off"
+    );
+    assert!(mod_list::is_enabled(&home, "fireflies"));
+}
+
+#[test]
 fn a_set_whose_picks_need_conflicting_ranges_is_refused_before_anything_installs() {
     let index = sample();
     let base = index.project("coords_hud").unwrap().clone();

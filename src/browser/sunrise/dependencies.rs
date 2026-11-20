@@ -97,6 +97,12 @@ pub(super) fn install(
     };
     for (entry, file) in plan.selected {
         if let Some(file) = file {
+            // A dependency that was installed and off stays off when it is updated.
+            let was_off = plan
+                .installed
+                .find(SourceId::Sunrise, &entry.project)
+                .is_some()
+                && !mod_list::is_enabled(home, &entry.project);
             if let Some(old) = plan.installed.find(SourceId::Sunrise, &entry.project) {
                 // A file that is gone or no longer parses is replaced wherever the new one goes
                 // (a native mod and a plain one live in different places); a good one is not.
@@ -119,7 +125,7 @@ pub(super) fn install(
                 .entries
                 .retain(|e| e.source != SourceId::Sunrise || e.project != entry.project);
             plan.installed.entries.push(entry.clone());
-            if turn_on && entry.project != project.id {
+            if turn_on && entry.project != project.id && !was_off {
                 enable.push(entry.project.clone());
             }
             done.push(entry);
@@ -257,26 +263,48 @@ impl Plan<'_> {
             .filter(|v| v.game == game && matches(&v.version));
         // Only a mod the plan names is held to the planned version: one it doesn't list (its owner
         // carried no claim, or the plan kept an installed copy) takes the first version in range.
-        let mut candidates = candidates
+        let candidates: Vec<_> = candidates
             .filter(|v| v.capabilities.unknown().is_empty())
             .filter(|v| {
                 self.chosen
                     .get(id)
                     .is_none_or(|chosen| *chosen == v.version)
-            });
+            })
+            .collect();
         let v = if let Some(old) = self.installed.find(SourceId::Sunrise, id) {
-            let v = candidates
-                .find(|v| v.version == old.version)
-                .ok_or_else(|| {
-                    format!("installed {} does not match; change it first", old.version)
-                })?;
-            if self.turn_on && !mod_list::is_enabled(self.install.home, id) {
-                return Err("it is installed but off; turn it on first".into());
+            if let Some(kept) = candidates.iter().find(|v| v.version == old.version) {
+                if self.turn_on && !mod_list::is_enabled(self.install.home, id) {
+                    return Err("it is installed but off; turn it on first".into());
+                }
+                kept
+            } else if self.chosen.contains_key(id) {
+                // The plan moves it: the version it chose replaces the installed one, which
+                // stays on or off as it is (`Plan::kept_off`).
+                let mut taken_down = None;
+                candidates
+                    .iter()
+                    .find(|v| {
+                        if let Some(r) = index.revoked(id, &v.file.sha256) {
+                            taken_down = Some(&r.reason);
+                            false
+                        } else {
+                            true
+                        }
+                    })
+                    .ok_or_else(|| match taken_down {
+                        Some(reason) => format!("taken down: {reason}"),
+                        None => format!("no matching version for Minecraft {game}"),
+                    })?
+            } else {
+                return Err(format!(
+                    "installed {} does not match; change it first",
+                    old.version
+                ));
             }
-            v
         } else {
             let mut taken_down = None;
             let v = candidates
+                .iter()
                 .find(|v| {
                     if let Some(r) = index.revoked(id, &v.file.sha256) {
                         taken_down = Some(&r.reason);

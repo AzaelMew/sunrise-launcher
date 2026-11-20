@@ -96,6 +96,8 @@ impl Finished {
 pub(super) enum Event {
     Progress(String, f32),
     Done(Result<Finished, String>),
+    /// The native mods an install put in before it failed: a build takes them up.
+    Brought(Vec<String>),
     /// What the automatic updates did (`sunrise::auto`).
     AutoUpdated(AutoOutcome),
     /// The same, for the Play that waited for the mods to be up to date.
@@ -345,6 +347,10 @@ impl Launcher {
                     };
                     m.reload_installed();
                     m.installed_list.reset();
+                }
+                Event::Brought(ids) => {
+                    native.extend(ids);
+                    native_in = m.running.as_ref().map(|t| t.instance.clone());
                 }
                 Event::Loaded(l) => loaded.push(l),
                 Event::AutoUpdated(out) | Event::PlayUpdated(out) => {
@@ -909,6 +915,7 @@ impl Launcher {
         let queue::Target { home, game, .. } = target.clone();
         self.mods.running = Some(target);
         std::thread::spawn(move || {
+            let native = std::cell::RefCell::new(Vec::new());
             let result = (|| -> Result<Finished, String> {
                 // The whole set is planned once first: a conflict between picks refuses all of
                 // them before anything downloads. Each is then installed with what it needs.
@@ -920,7 +927,6 @@ impl Launcher {
                 sunrise::check_set(&index, &ids, &held, &game)?;
                 let source = browser::source(SourceId::Sunrise);
                 let total = ids.len() as f32;
-                let native = std::cell::RefCell::new(Vec::new());
                 crate::mods::run_in_order(&ids, |i, id| {
                     let p = source.project(id)?;
                     let progress = |line: &str, f: f32| {
@@ -944,11 +950,16 @@ impl Launcher {
                 })?;
                 Ok(Finished {
                     said: None,
-                    native: native.into_inner(),
+                    native: native.take(),
                     also: Vec::new(),
                     updated: Vec::new(),
                 })
             })();
+            // The members that went in before one failed stay installed: the native ones among
+            // them are still built.
+            if result.is_err() {
+                let _ = tx.send(Event::Brought(native.take()));
+            }
             let _ = tx.send(Event::Done(result));
         });
     }
