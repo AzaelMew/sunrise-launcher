@@ -123,7 +123,7 @@ impl Launcher {
         };
         // The attempt belongs to both the controls and the worker from the start. A stop
         // before the worker is scheduled is already visible when the worker first checks it.
-        let cancellation = native_mods::Cancellation::default();
+        let cancellation = native_mods::Cancellation::for_profile(lease.clone());
         self.native_cancellation = Some(cancellation.clone());
         self.native_step = Some(tr("Starting the build").into());
         self.native_progress = None;

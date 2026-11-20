@@ -126,7 +126,7 @@ impl Launcher {
                         }
                         native_status::check_permission(&tag)?;
                         self.client_home = cmd.get_current_dir().map(|d| d.to_path_buf());
-                        backend::spawn(Job::Client, cmd, self.tx.clone())
+                        backend::spawn(Job::Client, cmd, self.tx.clone(), None)
                     });
                     match started {
                         Ok(r) => {

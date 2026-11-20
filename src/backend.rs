@@ -1,11 +1,12 @@
 //! Everything that is not UI: GitHub, installs, resource preparation, the game's processes and
 //! updates. The GUI, the CLI and the MCP server all go through this module. Functions here
 //! block; the GUI runs them on threads and reads their messages.
+use crate::process::child::Child;
 use crate::{account, mojang, sources};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
@@ -3251,7 +3252,7 @@ pub const LOG_KEEP: usize = 2000;
 impl Logged {
     pub fn start(job: Job, cmd: Command) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::channel();
-        let running = spawn(job, cmd, tx)?;
+        let running = spawn(job, cmd, tx, None)?;
         let log = Arc::new(Mutex::new(std::collections::VecDeque::new()));
         let exit = Arc::new(Mutex::new(None));
         let (l, e) = (log.clone(), exit.clone());
@@ -4118,7 +4119,7 @@ pub enum Job {
 /// A running process; its output arrives as `Msg::Line`, its end as `Msg::Exit`.
 pub struct Running {
     pub child: Arc<Mutex<Child>>,
-    pub stdin: Option<ChildStdin>,
+    pub stdin: Option<Box<dyn std::io::Write + Send>>,
 }
 
 /// Launcher-owned tree-lock primitives and optional Windows runtime state.
@@ -4156,12 +4157,20 @@ pub fn prepare_command(cmd: Command) -> Result<(Command, RuntimeGuard), String> 
 }
 
 /// Spawn a terminal-attached game through the same lifetime protocol as GUI launches.
-pub fn spawn_attached(cmd: &mut Command) -> std::io::Result<std::process::Child> {
-    crate::run_leases::spawn(cmd, false)
+pub fn spawn_attached(
+    cmd: &mut Command,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+) -> std::io::Result<Child> {
+    crate::run_leases::spawn(cmd, false, profile)
 }
 
-pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String> {
-    spawn_holding(job, cmd, tx, None)
+pub fn spawn(
+    job: Job,
+    cmd: Command,
+    tx: Sender<Msg>,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
+) -> Result<Running, String> {
+    spawn_holding(job, cmd, tx, None, profile)
 }
 
 /// Holds the preparation lock of the version that owns `version`'s resources (its base, for a
@@ -4199,6 +4208,7 @@ pub fn spawn_holding(
     cmd: Command,
     tx: Sender<Msg>,
     hold: Option<sunrise_launcher_smod::locks::Locked>,
+    profile: Option<&crate::browser::sunrise::txn::Lease>,
 ) -> Result<Running, String> {
     let (mut cmd, runtime) = prepare_command(cmd)?;
     #[cfg(unix)]
@@ -4210,7 +4220,7 @@ pub fn spawn_holding(
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = play_log::spawn(&mut cmd)?;
+    let mut child = play_log::spawn(&mut cmd, profile)?;
     let pid = child.id();
     let group = matches!(job, Job::Prepare);
     if group {
@@ -4218,14 +4228,8 @@ pub fn spawn_holding(
     }
     let stdin = child.stdin.take();
     let mut readers = Vec::new();
-    let out = child
-        .stdout
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
-    let err = child
-        .stderr
-        .take()
-        .map(|o| Box::new(o) as Box<dyn Read + Send>);
+    let out = child.stdout.take();
+    let err = child.stderr.take();
     for stream in [out, err].into_iter().flatten() {
         let tx = tx.clone();
         readers.push(std::thread::spawn(move || {

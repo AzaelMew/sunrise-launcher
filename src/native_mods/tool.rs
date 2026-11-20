@@ -21,7 +21,10 @@ pub(super) const PROGRAM: &str = if cfg!(windows) {
 
 /// Cancellation shared by the owner and worker of one build attempt. It is never reset.
 #[derive(Clone, Default)]
-pub struct Cancellation(Arc<Mutex<Attempt>>);
+pub struct Cancellation(
+    Arc<Mutex<Attempt>>,
+    Option<Arc<crate::browser::sunrise::txn::Lease>>,
+);
 
 #[derive(Default)]
 struct Attempt {
@@ -39,6 +42,10 @@ impl Attempt {
 }
 
 impl Cancellation {
+    pub fn for_profile(lease: Arc<crate::browser::sunrise::txn::Lease>) -> Self {
+        Self(Arc::default(), Some(lease))
+    }
+
     fn state(&self) -> MutexGuard<'_, Attempt> {
         self.0
             .lock()
@@ -373,7 +380,11 @@ fn start(
     // Stop either prevents the spawn or sees the PID. It cannot fall between them.
     let mut state = cancellation.state();
     state.check()?;
-    let mut child = crate::process::owned::Owned::spawn(&mut command).map_err(unrun)?;
+    let mut child = match &cancellation.1 {
+        Some(lease) => crate::process::owned::Owned::spawn_profile(&mut command, lease),
+        None => crate::process::owned::Owned::spawn(&mut command),
+    }
+    .map_err(unrun)?;
     state.tool = Some(child.child().id());
     drop(state);
     let stderr = child.child().stderr.take().expect("piped");

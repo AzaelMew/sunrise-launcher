@@ -1,4 +1,4 @@
-//! Stable Win32 creation, used only inside the private one-game holder, never the GUI process.
+//! Stable Win32 creation with an explicit stdio and lifetime-handle allowlist.
 use std::{
     ffi::{OsStr, OsString},
     fs::File,
@@ -17,21 +17,44 @@ use windows_sys::Win32::{
 };
 
 /// An owned process object; neither waiting nor termination guesses ownership from a PID.
-pub struct WindowsChild(OwnedHandle);
+pub struct WindowsChild(OwnedHandle, u32);
 impl WindowsChild {
+    pub(crate) fn id(&self) -> u32 {
+        self.1
+    }
+
+    pub(crate) fn kill(&self) -> io::Result<()> {
+        // SAFETY: the process handle is live and identifies the process we created.
+        if unsafe { TerminateProcess(self.0.as_raw_handle(), 1) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn try_wait(&self) -> io::Result<Option<std::process::ExitStatus>> {
+        self.status(0)
+    }
+
     /// Wait for the owned process, retaining its full Windows exit code.
     pub fn wait(&self) -> io::Result<std::process::ExitStatus> {
+        self.status(INFINITE)?
+            .ok_or_else(|| io::ErrorKind::TimedOut.into())
+    }
+
+    fn status(&self, millis: u32) -> io::Result<Option<std::process::ExitStatus>> {
         use std::os::windows::process::ExitStatusExt;
         // SAFETY: this object owns a live process handle; out points to initialized storage.
         unsafe {
-            if WaitForSingleObject(self.0.as_raw_handle(), INFINITE) != WAIT_OBJECT_0 {
-                return Err(io::Error::last_os_error());
+            match WaitForSingleObject(self.0.as_raw_handle(), millis) {
+                WAIT_OBJECT_0 => {}
+                WAIT_TIMEOUT => return Ok(None),
+                _ => return Err(io::Error::last_os_error()),
             }
             let mut code = 0;
             if GetExitCodeProcess(self.0.as_raw_handle(), &mut code) == 0 {
                 return Err(io::Error::last_os_error());
             }
-            Ok(std::process::ExitStatus::from_raw(code))
+            Ok(Some(std::process::ExitStatus::from_raw(code)))
         }
     }
 }
@@ -79,10 +102,47 @@ pub(super) fn spawn(
     environment: &[(OsString, OsString)],
     breakaway: bool,
 ) -> io::Result<WindowsChild> {
+    spawn_exact(
+        files,
+        program,
+        args,
+        environment,
+        Start {
+            runtime_root: Some(data),
+            breakaway,
+            ..Start::default()
+        },
+    )
+}
+
+#[derive(Default)]
+pub(super) struct Start<'a> {
+    pub directory: Option<&'a Path>,
+    pub streams: Option<[HANDLE; 3]>,
+    pub runtime_root: Option<&'a Path>,
+    pub breakaway: bool,
+    pub attached: bool,
+}
+
+pub(super) fn spawn_exact(
+    files: &[&File],
+    program: &Path,
+    args: &[OsString],
+    environment: &[(OsString, OsString)],
+    start: Start<'_>,
+) -> io::Result<WindowsChild> {
     let mut application = wide(program.as_os_str())?;
     let mut line = Vec::new();
     argument(&mut line, &application);
     application.push(0);
+    let directory = start
+        .directory
+        .map(|dir| {
+            let mut path = wide(dir.as_os_str())?;
+            path.push(0);
+            Ok::<_, io::Error>(path)
+        })
+        .transpose()?;
     for arg in args {
         line.push(32);
         argument(&mut line, &wide(arg)?);
@@ -95,11 +155,13 @@ pub(super) fn spawn(
     // SAFETY: Win32 calls borrow valid stdio/file handles; duplicates are owned immediately.
     unsafe {
         let own = GetCurrentProcess();
-        let stdio = [
-            GetStdHandle(STD_INPUT_HANDLE),
-            GetStdHandle(STD_OUTPUT_HANDLE),
-            GetStdHandle(STD_ERROR_HANDLE),
-        ];
+        let stdio = start.streams.unwrap_or_else(|| {
+            [
+                GetStdHandle(STD_INPUT_HANDLE),
+                GetStdHandle(STD_OUTPUT_HANDLE),
+                GetStdHandle(STD_ERROR_HANDLE),
+            ]
+        });
         let mut inherited = Vec::new();
         for source in stdio.into_iter().chain(roots) {
             let source = if source.is_null() || source == INVALID_HANDLE_VALUE {
@@ -133,17 +195,20 @@ pub(super) fn spawn(
             .iter()
             .map(|(k, v)| (k.as_os_str(), v.as_os_str()))
             .filter(|(key, _)| {
-                !["SUNRISE_RUNTIME_LEASE_HANDLES", "SUNRISE_RUNTIME_DATA_ROOT"]
-                    .iter()
-                    .any(|k| key.to_string_lossy().eq_ignore_ascii_case(k))
+                start.runtime_root.is_none()
+                    || !["SUNRISE_RUNTIME_LEASE_HANDLES", "SUNRISE_RUNTIME_DATA_ROOT"]
+                        .iter()
+                        .any(|k| key.to_string_lossy().eq_ignore_ascii_case(k))
             })
-            .chain([
-                (
-                    OsStr::new("SUNRISE_RUNTIME_LEASE_HANDLES"),
-                    OsStr::new(&numbers),
-                ),
-                (OsStr::new("SUNRISE_RUNTIME_DATA_ROOT"), data.as_os_str()),
-            ])
+            .chain(start.runtime_root.into_iter().flat_map(|data| {
+                [
+                    (
+                        OsStr::new("SUNRISE_RUNTIME_LEASE_HANDLES"),
+                        OsStr::new(&numbers),
+                    ),
+                    (OsStr::new("SUNRISE_RUNTIME_DATA_ROOT"), data.as_os_str()),
+                ]
+            }))
         {
             let mut entry = wide(key)?;
             let start = usize::from(entry.first() == Some(&61)); // Preserve Windows =C: entries.
@@ -191,21 +256,27 @@ pub(super) fn spawn(
         let mut information = PROCESS_INFORMATION::default();
         let flags = EXTENDED_STARTUPINFO_PRESENT
             | CREATE_UNICODE_ENVIRONMENT
-            | CREATE_NO_WINDOW
-            | if breakaway {
+            | if start.attached { 0 } else { CREATE_NO_WINDOW }
+            | if start.breakaway {
                 CREATE_BREAKAWAY_FROM_JOB
             } else {
                 0
             };
         if CreateProcessW(
-            application.as_ptr(),
+            // Profile commands may be a bare program name selected by the player. Let
+            // CreateProcess resolve it as usual; the private runtime holder is always exact.
+            if start.runtime_root.is_some() || program.is_absolute() {
+                application.as_ptr()
+            } else {
+                ptr::null()
+            },
             line.as_mut_ptr(),
             ptr::null(),
             ptr::null(),
             1,
             flags,
             environment.as_ptr().cast(),
-            ptr::null(),
+            directory.as_ref().map_or(ptr::null(), |path| path.as_ptr()),
             &startup.StartupInfo,
             &mut information,
         ) == 0
@@ -215,6 +286,6 @@ pub(super) fn spawn(
         let process = OwnedHandle::from_raw_handle(information.hProcess);
         drop(OwnedHandle::from_raw_handle(information.hThread));
         // inherited closes without unlock; the game's file objects retain sharing exclusion.
-        Ok(WindowsChild(process))
+        Ok(WindowsChild(process, information.dwProcessId))
     }
 }
