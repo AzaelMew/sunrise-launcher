@@ -3,7 +3,7 @@
 //!
 //! Only what makes the instance goes in, from a fixed list ([`FILES`], [`FOLDERS`]): never logs,
 //! screenshots, backups, caches, or anything tied to the player's account. A world goes without
-//! its per-player files (`playerdata/`, `stats/`, `advancements/`) and its level.dat without the
+//! its per-player files (`playerdata/`, `players/`, `stats/`, `advancements/`) and its level.dat without the
 //! player's UUID. The player's server list (`servers.dat`) stays out too.
 use std::fs;
 use std::io::{Read, Write};
@@ -22,7 +22,13 @@ pub const FILES: [&str; 6] = [
 /// Its folders of packs, mods and their settings.
 pub const FOLDERS: [&str; 4] = ["resourcepacks", "shaderpacks", "sunrise-mods", "config"];
 /// What a world keeps per player: left out.
-const PER_PLAYER: [&str; 4] = ["playerdata", "stats", "advancements", "session.lock"];
+const PER_PLAYER: [&str; 5] = [
+    "playerdata",
+    "players",
+    "stats",
+    "advancements",
+    "session.lock",
+];
 /// Read when a shared zip is imported, but never written: the servers the player plays on are
 /// theirs, not part of the instance they share.
 const NOT_EXPORTED: [&str; 1] = ["servers.dat"];
@@ -83,7 +89,9 @@ fn write(path: &Path, files: &[(String, PathBuf)]) -> Result<(), String> {
     let options = zip::write::SimpleFileOptions::default();
     for (rel, file) in files {
         let bytes = match rel.as_str() {
-            rel if rel.ends_with("/level.dat") => shareable_level(file)?,
+            rel if rel.ends_with("/level.dat") || rel.ends_with("/level.dat_old") => {
+                shareable_level(file)?
+            }
             "options.txt" => shareable_options(file)?,
             _ => fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?,
         };
@@ -139,7 +147,8 @@ fn shareable_options(file: &Path) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
-/// A world's level.dat without the player's UUID; unreadable, it goes as it is.
+/// A world's level.dat (or its level.dat_old) without the player's UUID, in the player's own
+/// entry and as the world's single-player owner; unreadable, it goes as it is.
 fn shareable_level(file: &Path) -> Result<Vec<u8>, String> {
     let bytes = fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
     let mut raw = Vec::new();
@@ -154,6 +163,7 @@ fn shareable_level(file: &Path) -> Result<Vec<u8>, String> {
         return Ok(bytes);
     };
     if let Some(Tag::Compound(data)) = root.tag.get_mut("Data") {
+        data.remove(&"singleplayer_uuid".into());
         if let Some(Tag::Compound(player)) = data.get_mut(&"Player".into()) {
             player.remove(&"UUID".into());
         }
