@@ -1670,10 +1670,12 @@ pub fn before_play(
     }
     active.verify_program(Path::new(cmd.get_program()))?;
     let included = crate::native_status::included(tag)?;
-    check_before_play(owner.home(), &included, || {
+    let mut notices = check_before_play(owner.home(), &included, || {
         index().ok()?;
         fetched_index()
-    })
+    })?;
+    notices.extend(txn::legacy_backup_notice(owner.home()));
+    Ok(notices)
 }
 
 fn verify_launch_arguments(

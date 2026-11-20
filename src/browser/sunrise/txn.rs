@@ -45,6 +45,7 @@ pub use build::{
 };
 pub(super) use build::{scan_packages, waiting_packages};
 pub(crate) use durable::replace as replace_local_record;
+pub(super) use legacy::notice as legacy_backup_notice;
 pub(super) use staged_install::{
     detach_private_profile, expose_private_profile, seal_private_profile, ReadyInstall,
     SealedProfile, StagedInstall,
@@ -2167,6 +2168,7 @@ mod tests {
         // Cache eviction can select the installed unit now, before either profile has a reference.
         assert!(!references("nightly-original").unwrap());
         passive_play_build_failure_keeps_the_package(&data.join("game/instances/broken-build"));
+        legacy::tests::play_with_replaced_ledger_cases(&data.join("legacy-play"));
         use sunrise_launcher_smod::{index, manifest, mod_list};
         let first = crate::backend::game_home().join("instances/first");
         fs::create_dir_all(first.join(mod_list::DIR)).unwrap();

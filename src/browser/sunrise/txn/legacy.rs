@@ -15,6 +15,7 @@ const JOURNAL: &str = "mod-browser/install-journal.json";
 const UNDO: &str = "mod-browser/build-undo.json";
 const LEDGER: &str = "mod-browser/replaced.json";
 const COPIES: &str = "mod-browser/replaced";
+const QUARANTINE: &str = ".legacy-unverified-";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -132,12 +133,18 @@ fn reconcile_at(home: &Path, boundary: impl FnMut(usize)) -> Result<(), String> 
         return Err(at(&home.join(UNDO), unsettled()));
     }
     let journal = build::optional_bytes(&home.join(JOURNAL))?;
-    let ledger = build::optional_bytes(&home.join(LEDGER))?;
-    if journal.is_none() && ledger.is_none() {
+    let ledger = build::optional_bytes(&home.join(LEDGER));
+    if journal.is_none() && matches!(ledger, Ok(None)) {
         return Ok(());
     }
     if read(home)?.is_some() {
-        return Err(unsettled());
+        // Never layer retirement over a pending v2 binding. The old advisory ledger can
+        // remain for a later admission; it is not permission to touch the committed set.
+        return if journal.is_none() {
+            Ok(())
+        } else {
+            Err(unsettled())
+        };
     }
 
     let mut keeping = Vec::new();
@@ -151,82 +158,31 @@ fn reconcile_at(home: &Path, boundary: impl FnMut(usize)) -> Result<(), String> 
         }
         retiring.push(Evidence::capture(home, JOURNAL.into(), image(&bytes))?);
     }
-    if let Some(bytes) = ledger {
-        let path = home.join(LEDGER);
-        let kept: Vec<Kept> = serde_json::from_slice(&bytes).map_err(|e| at(&path, e))?;
-        let ledger_image = image(&bytes);
-        if !kept.is_empty() {
-            let browser = home.join(installed::MANIFEST);
-            let bytes =
-                build::optional_bytes(&browser)?.ok_or_else(|| at(&browser, unsettled()))?;
-            let document: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(|e| at(&browser, e))?;
-            let rows = document
-                .get("entries")
-                .and_then(serde_json::Value::as_array)
-                .ok_or_else(|| at(&browser, unsettled()))?;
-            build::require_dir(&home.join(COPIES))?;
-            keeping.push(Evidence::capture(
-                home,
-                installed::MANIFEST.into(),
-                image(&bytes),
-            )?);
-            for old in &kept {
-                let id = old.entry.project.as_str();
-                if !index::valid_id(id) || old.copy != Path::new(COPIES).join(id) {
-                    return Err(at(&path, unsettled()));
-                }
-                let owned: Vec<_> = rows
-                    .iter()
-                    .filter(|row| {
-                        row.get("project").and_then(serde_json::Value::as_str) == Some(id)
-                    })
-                    .collect();
-                let [row] = owned.as_slice() else {
-                    return Err(at(&path, unsettled()));
-                };
-                let current: installed::Entry =
-                    serde_json::from_value((*row).clone()).map_err(|e| at(&browser, e))?;
-                let current_key = destination_key(Path::new(&current.file));
-                let old_key = destination_key(Path::new(&old.entry.file));
-                if current.kind != old.entry.kind
-                    || rows.iter().any(|other| {
-                        !std::ptr::eq(*row, other)
-                            && other
-                                .get("file")
-                                .and_then(serde_json::Value::as_str)
-                                .is_some_and(|file| {
-                                    let key = destination_key(Path::new(file));
-                                    key == current_key || key == old_key
-                                })
-                    })
+    if let Ok(Some(bytes)) = ledger {
+        match prove_ledger(home, &bytes) {
+            Ok((proven_live, proven_retirable)) => {
+                keeping.extend(proven_live);
+                retiring.extend(proven_retirable);
+            }
+            Err(_) => {
+                // This is 1.1.2's advisory backup ledger, not a v2 publication record.
+                // Never let guessing about its copies block Play or overwrite the live set.
+                let path = home.join(LEDGER);
+                if let Ok(aside) = tempfile::Builder::new()
+                    .prefix(QUARANTINE)
+                    .tempdir_in(&root)
                 {
-                    return Err(at(&path, unsettled()));
-                }
-                // The old copy and the claimed live winner must both be exactly the files
-                // described by their own typed rows. Same version with different bytes is
-                // ambiguous even when both packages read correctly.
-                let before = checked_package(&home.join(&old.copy), &old.entry)?;
-                let live = checked_package(&home.join(&current.file), &current)?;
-                if (old.entry.version == current.version) != (before == live) {
-                    return Err(at(&path, unsettled()));
-                }
-                if current.file != old.entry.file {
-                    if current.kind == Kind::Mod || old.entry.version == current.version {
-                        return Err(at(&path, unsettled()));
+                    let aside = aside.keep();
+                    if durable::restore_move(&path, &aside.join("replaced.json")).is_err() {
+                        // A failed flush may have left it moved. Remove only an empty folder.
+                        let _ = fs::remove_dir(&aside);
                     }
-                    keeping.push(Evidence::capture(
-                        home,
-                        old.entry.file.clone().into(),
-                        Image::Missing,
-                    )?);
                 }
-                keeping.push(Evidence::capture(home, current.file.into(), live)?);
-                retiring.push(Evidence::capture(home, old.copy.clone(), before)?);
             }
         }
-        // Keep the ledger until all its named redundant copies are durably retired.
-        retiring.push(Evidence::capture(home, LEDGER.into(), ledger_image)?);
+    }
+    if retiring.is_empty() {
+        return Ok(());
     }
     let stage = tempfile::Builder::new()
         .prefix(".legacy-retire-")
@@ -253,6 +209,113 @@ fn reconcile_at(home: &Path, boundary: impl FnMut(usize)) -> Result<(), String> 
     };
     write(home, &record)?;
     recover_at(home, &mut record, boundary)
+}
+
+/// Derive only a no-op retirement proof, without changing any file or trusting the old PID.
+fn prove_ledger(home: &Path, bytes: &[u8]) -> Result<(Vec<Evidence>, Vec<Evidence>), String> {
+    let mut keeping = Vec::new();
+    let mut retiring = Vec::new();
+    let path = home.join(LEDGER);
+    let kept: Vec<Kept> = serde_json::from_slice(bytes).map_err(|e| at(&path, e))?;
+    let ledger_image = image(bytes);
+    if !kept.is_empty() {
+        let browser = home.join(installed::MANIFEST);
+        let bytes = build::optional_bytes(&browser)?.ok_or_else(|| at(&browser, unsettled()))?;
+        let document: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|e| at(&browser, e))?;
+        let rows = document
+            .get("entries")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| at(&browser, unsettled()))?;
+        build::require_dir(&home.join(COPIES))?;
+        keeping.push(Evidence::capture(
+            home,
+            installed::MANIFEST.into(),
+            image(&bytes),
+        )?);
+        for old in &kept {
+            let id = old.entry.project.as_str();
+            if !index::valid_id(id) || old.copy != Path::new(COPIES).join(id) {
+                return Err(at(&path, unsettled()));
+            }
+            let owned: Vec<_> = rows
+                .iter()
+                .filter(|row| row.get("project").and_then(serde_json::Value::as_str) == Some(id))
+                .collect();
+            let [row] = owned.as_slice() else {
+                return Err(at(&path, unsettled()));
+            };
+            let current: installed::Entry =
+                serde_json::from_value((*row).clone()).map_err(|e| at(&browser, e))?;
+            let current_key = destination_key(Path::new(&current.file));
+            let old_key = destination_key(Path::new(&old.entry.file));
+            if current.kind != old.entry.kind
+                || rows.iter().any(|other| {
+                    !std::ptr::eq(*row, other)
+                        && other
+                            .get("file")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|file| {
+                                let key = destination_key(Path::new(file));
+                                key == current_key || key == old_key
+                            })
+                })
+            {
+                return Err(at(&path, unsettled()));
+            }
+            // The old copy and the claimed live winner must both be exactly the files
+            // described by their own typed rows. Same version with different bytes is
+            // ambiguous even when both packages read correctly.
+            let before = checked_package(&home.join(&old.copy), &old.entry)?;
+            let live = checked_package(&home.join(&current.file), &current)?;
+            if (old.entry.version == current.version) != (before == live) {
+                return Err(at(&path, unsettled()));
+            }
+            if current.file != old.entry.file {
+                if current.kind == Kind::Mod || old.entry.version == current.version {
+                    return Err(at(&path, unsettled()));
+                }
+                keeping.push(Evidence::capture(
+                    home,
+                    old.entry.file.clone().into(),
+                    Image::Missing,
+                )?);
+            }
+            keeping.push(Evidence::capture(home, current.file.into(), live)?);
+            retiring.push(Evidence::capture(home, old.copy.clone(), before)?);
+        }
+    }
+    // Keep the ledger until all its named redundant copies are durably retired.
+    retiring.push(Evidence::capture(home, LEDGER.into(), ledger_image)?);
+    let volume = Identity::of(home)?.volume;
+    let mut seen = BTreeSet::new();
+    if keeping
+        .iter()
+        .chain(&retiring)
+        .any(|step| step.parent.volume != volume || !seen.insert(destination_key(&step.name)))
+    {
+        return Err(at(&path, unsettled()));
+    }
+    Ok((keeping, retiring))
+}
+
+/// Report retained evidence at launch, including the untouched original if it couldn't be moved.
+pub(in crate::browser::sunrise) fn notice(home: &Path) -> Option<String> {
+    let retained = !fs::symlink_metadata(home.join(LEDGER))
+        .is_err_and(|e| e.kind() == io::ErrorKind::NotFound)
+        || fs::read_dir(home.join("mod-browser"))
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(QUARANTINE))
+                    && entry.path().join("replaced.json").is_file()
+            });
+    retained.then(|| crate::i18n::tr("An old launcher backup couldn't be verified. It was kept in the profile's mod-browser folder; the installed mods were not changed.").to_owned())
 }
 
 fn destination_key(path: &Path) -> String {
@@ -391,7 +454,7 @@ fn recover_at(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::browser::sunrise::txn::{crash_process, wait_to_be_killed, Lease, FILE};
 
@@ -440,8 +503,72 @@ mod tests {
         (path, live, ledger)
     }
 
+    fn retained(home: &Path) -> Vec<Vec<u8>> {
+        fs::read_dir(home.join("mod-browser"))
+            .unwrap()
+            .flatten()
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with(QUARANTINE))
+            })
+            .map(|entry| fs::read(entry.path().join("replaced.json")).unwrap())
+            .collect()
+    }
+
+    pub(in crate::browser::sunrise::txn) fn play_with_replaced_ledger_cases(root: &Path) {
+        use crate::browser::sunrise::txn::Target;
+        // v1.1.2's `auto.rs::save_kept` writes this shape. Only case-specific evidence differs.
+        for label in ["valid", "damaged", "missing-copy"] {
+            let home = root.join(label);
+            let (path, live, signed_layout) = completed_update(&home, false);
+            let ledger = if label == "damaged" {
+                b"[damaged json".to_vec()
+            } else {
+                signed_layout
+            };
+            fs::write(home.join(LEDGER), &ledger).unwrap();
+            let copy = home.join(COPIES).join("lantern");
+            let original_copy = fs::read(&copy).unwrap();
+            if label == "missing-copy" {
+                fs::remove_file(&copy).unwrap();
+            }
+            let original_rows = fs::read(home.join(installed::MANIFEST)).unwrap();
+            let owner = Lease::admit(&home).unwrap();
+            let target = owner
+                .play_target(|| {
+                    Target::first_play("nightly-original", |_| panic!("installed fixture"))
+                })
+                .unwrap();
+            assert_eq!(
+                owner
+                    .play_image(&target, Default::default(), &Default::default(), |_| {})
+                    .unwrap(),
+                "nightly-original"
+            );
+            assert_eq!(owner.verify_launch().unwrap().base(), "nightly-original");
+            assert_eq!(fs::read(&path).unwrap(), live);
+            assert_eq!(
+                fs::read(home.join(installed::MANIFEST)).unwrap(),
+                original_rows
+            );
+            assert!(!home.join(LEDGER).exists());
+            if label == "valid" {
+                assert!(notice(&home).is_none());
+                assert!(!copy.exists());
+            } else {
+                assert!(notice(&home).unwrap().contains("couldn't be verified"));
+                assert_eq!(retained(&home), [ledger]);
+                if label == "damaged" {
+                    assert_eq!(fs::read(&copy).unwrap(), original_copy);
+                }
+            }
+        }
+    }
+
     #[test]
-    fn malformed_or_conflicting_evidence_never_changes_the_profile() {
+    fn malformed_or_conflicting_evidence_never_changes_the_live_packages() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let (path, live, ledger) = completed_update(home, true);
@@ -450,11 +577,12 @@ mod tests {
         fs::write(&journal, b"[]").unwrap();
         for evidence in [&ledger[..], b"not json"] {
             fs::write(home.join(LEDGER), evidence).unwrap();
-            assert!(Lease::admit(home).is_err());
+            let _owner = Lease::admit(home).unwrap();
             assert_eq!(fs::read(&path).unwrap(), live);
             assert_eq!(fs::read(&copy).unwrap(), b"wrong");
-            assert_eq!(fs::read(&journal).unwrap(), b"[]");
-            assert_eq!(fs::read(home.join(LEDGER)).unwrap(), evidence);
+            assert!(!journal.exists());
+            assert!(!home.join(LEDGER).exists());
+            assert!(retained(home).iter().any(|bytes| bytes == evidence));
             assert!(!home.join(FILE).exists());
         }
     }
@@ -469,9 +597,9 @@ mod tests {
             serde_json::from_slice(&fs::read(&browser).unwrap()).unwrap();
         rows["entries"][1]["file"] = "sunrise-mods//lantern.smod".into();
         fs::write(&browser, serde_json::to_vec(&rows).unwrap()).unwrap();
-        assert!(Lease::admit(home).is_err());
+        let _owner = Lease::admit(home).unwrap();
         assert_eq!(fs::read(&path).unwrap(), live);
-        assert_eq!(fs::read(home.join(LEDGER)).unwrap(), ledger);
+        assert_eq!(retained(home), [ledger]);
         assert!(home.join(COPIES).join("lantern").is_file());
         assert!(!home.join(FILE).exists());
     }
@@ -520,9 +648,11 @@ mod tests {
         let rows =
             serde_json::to_vec(&serde_json::json!({ "entries":[row("2", "new", &new)] })).unwrap();
         fs::write(&browser, &rows).unwrap();
-        assert!(Lease::admit(home).is_err());
+        drop(Lease::admit(home).unwrap());
         assert_eq!(fs::read(&old_path).unwrap(), old);
-        assert!(home.join(LEDGER).is_file());
+        assert!(home.join(COPIES).join("lantern").is_file());
+        let [ledger]: [Vec<u8>; 1] = retained(home).try_into().unwrap();
+        fs::write(home.join(LEDGER), ledger).unwrap();
         fs::remove_file(&old_path).unwrap();
         let _owner = Lease::admit(home).unwrap();
         assert_eq!(fs::read(&new_path).unwrap(), new);
