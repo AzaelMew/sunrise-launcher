@@ -543,6 +543,61 @@ fn native_sample(home: &Path) -> Index {
 }
 
 #[test]
+fn an_install_brings_native_code_in_when_what_it_needs_is_native() {
+    let home = scratch("brings-native");
+    let mut index = native_sample(&home);
+    let native_hash = index.projects[0].versions[0].file.sha256.clone();
+    // A content mod that needs the native one.
+    let manifest = "id='fireflies'\nname='Fireflies'\nversion='1.0.0'\napi='0.2'\nside='both'\ncapabilities=['registries']\n[dependencies]\ncoords_hud = '^0.1'";
+    let bytes = sunrise_launcher_smod::Package::write_files(manifest, &[]).unwrap();
+    let file = home.join("fireflies-1.0.0.smod");
+    fs::write(&file, &bytes).unwrap();
+    let facts = index::inspect(&index::Kind::Mod, &file).unwrap();
+    let mut project = sample().project("coords_hud").unwrap().clone();
+    project.id = "fireflies".into();
+    project.name = "Fireflies".into();
+    let v = &mut project.versions[0];
+    v.version = "1.0.0".into();
+    v.api = facts.api;
+    v.side = facts.side;
+    v.requires.clear();
+    v.dependencies = Some(vec![index::Dependency {
+        id: "coords_hud".into(),
+        version: "^0.1".into(),
+        optional: false,
+        side: None,
+    }]);
+    v.file = index::File {
+        name: "fireflies-1.0.0.smod".into(),
+        url: format!("file://{}", file.display()),
+        size: bytes.len() as u64,
+        sha256: index::sha256(&bytes),
+        signature: None,
+    };
+    index.projects.push(project);
+    let ask = |ids: &[&str], held: &[index::resolve::InstalledMod]| {
+        let ids: Vec<String> = ids.iter().map(|id| id.to_string()).collect();
+        brings_native(&index, &ids, held, GAME)
+    };
+    assert!(ask(&["coords_hud"], &[]), "a native mod itself");
+    assert!(
+        ask(&["fireflies"], &[]),
+        "a content mod with a native dependency"
+    );
+    let held = [index::resolve::InstalledMod {
+        id: "coords_hud".into(),
+        version: "0.1.0".into(),
+        sha256: Some(native_hash),
+    }];
+    assert!(
+        !ask(&["fireflies"], &held),
+        "the native mod is already installed"
+    );
+    assert!(!ask(&["nothing_like_it"], &[]), "no plan, no claim");
+    fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
 fn a_plain_to_native_flip_with_dependencies_replaces_an_unreadable_or_gone_file() {
     for gone in [false, true] {
         let home = scratch(if gone { "flip-gone" } else { "flip-unreadable" });

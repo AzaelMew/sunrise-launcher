@@ -315,10 +315,11 @@ impl Launcher {
         if self.mods.busy.is_some() {
             return;
         }
-        // The first native mod: the trust notice, before anything is installed.
+        // The first native code: the trust notice, before anything is installed. The plan
+        // decides, so a content mod that needs a native one asks too.
         let first_native = source == SourceId::Sunrise
             && self.settings.native_mods_allowed_at.is_none()
-            && sunrise::is_native_mod(&id);
+            && self.brings_native(std::slice::from_ref(&id));
         if first_native {
             self.pending_consent = Some(PendingConsent::Install(source, id, known, shown));
             self.content_scroll
@@ -416,6 +417,14 @@ impl Launcher {
 }
 
 impl Launcher {
+    /// Whether installing the registry mods `ids` would put native code in, by the index
+    /// already read: false when none was.
+    fn brings_native(&self, ids: &[String]) -> bool {
+        let held = sunrise::held_mods(&installed::Installed::load(&self.mods.home()).entries);
+        sunrise::known_index()
+            .is_some_and(|index| sunrise::brings_native(&index, ids, &held, &self.mods_game()))
+    }
+
     /// A collection's one Install: the registry mods `ids` planned together, then installed one
     /// after another, each with what it needs, as the mod page's Install does one. A failure
     /// stops the rest and names the mod; the ones before it stay installed. `shown` is the
@@ -424,11 +433,7 @@ impl Launcher {
         if self.mods.busy.is_some() || ids.is_empty() {
             return;
         }
-        if crate::mods::needs_consent(
-            &ids,
-            self.settings.native_mods_allowed_at.is_some(),
-            sunrise::is_native_mod,
-        ) {
+        if self.settings.native_mods_allowed_at.is_none() && self.brings_native(&ids) {
             self.pending_consent = Some(PendingConsent::Collection(ids, shown));
             self.content_scroll
                 .handle

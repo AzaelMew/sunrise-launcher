@@ -497,15 +497,6 @@ pub(in crate::mods) fn installed(c: &Collection, cards: &[Card], have: &HashSet<
     !wanted.is_empty() && wanted.iter().all(|id| have.contains(*id))
 }
 
-/// Whether installing `ids` first asks for permission to run native code.
-pub(crate) fn needs_consent(
-    ids: &[String],
-    allowed: bool,
-    is_native: impl Fn(&str) -> bool,
-) -> bool {
-    !allowed && ids.iter().any(|id| is_native(id))
-}
-
 /// Runs `one` for each of `ids` in order, with its position, collecting what each says it
 /// installed. The first failure stops the rest and is returned; the ones before it stay done.
 pub(crate) fn run_in_order(
