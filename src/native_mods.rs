@@ -1000,6 +1000,7 @@ struct BuildOptions<'a> {
     worlds: Option<&'a Path>,
     /// The player chose to build without the mods that worlds were saved with.
     leave_out: bool,
+    staging: Option<&'a crate::profile_txn::Staging<'a>>,
 }
 
 /// Mods saved into worlds that a build would switch off ([`Failed::Worlds`]): what the player
@@ -1036,6 +1037,7 @@ fn check_all(
     sdk: &sdk_cache::Sdk,
     base: &sdk_cache::Base,
     cancellation: &Cancellation,
+    staging: Option<&crate::profile_txn::Staging<'_>>,
 ) -> Result<Checks, sdk_cache::Refusal> {
     if ids.is_empty() {
         return Ok(Checks::default());
@@ -1048,7 +1050,13 @@ fn check_all(
     let mut plan = serde_json::json!({"contract": 2, "mods": folder, "build": sdk.commit()});
     let mut supplied = Vec::new();
     loop {
-        let checked = tool::check(&program, &plan, cancellation).map_err(refused)?;
+        let checked = tool::check(
+            &program,
+            &plan,
+            cancellation,
+            staging.map(crate::profile_txn::Staging::handoff),
+        )
+        .map_err(refused)?;
         let (checks, needed) = checks_from(checked, ids, &supplied).map_err(refused)?;
         if needed.is_empty() {
             return Ok(checks);
@@ -1374,8 +1382,15 @@ fn pipeline(
     let mut route = None;
     if let Some(sdk) = &sdk {
         progress(Step::Checking(ids.len()));
-        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
-            .map_err(|r| r.to_string())?;
+        let checks = check_all(
+            check_folder,
+            &ids,
+            sdk,
+            &sdk_base,
+            cancellation,
+            options.staging,
+        )
+        .map_err(|r| r.to_string())?;
         if let Some((id, why)) = checks.refusals.first() {
             return Err(refusal_text(id, why).into());
         }
@@ -1548,8 +1563,15 @@ fn pipeline(
                 let route = match route {
                     Some(route) => route,
                     None => {
-                        let checks = check_all(check_folder, &ids, sdk, &sdk_base, cancellation)
-                            .map_err(refused)?;
+                        let checks = check_all(
+                            check_folder,
+                            &ids,
+                            sdk,
+                            &sdk_base,
+                            cancellation,
+                            options.staging,
+                        )
+                        .map_err(refused)?;
                         if let Some((id, why)) = checks.refusals.first() {
                             return Err(refusal_text(id, why).into());
                         }
@@ -1668,6 +1690,7 @@ fn pipeline(
                 })
             },
             cancellation,
+            options.staging.map(crate::profile_txn::Staging::handoff),
         );
         // Don't turn a stopped tool into an attributed compile failure.
         cancellation.check()?;
@@ -1891,6 +1914,59 @@ pub fn build(
         );
         finish_profile_build(base, instance, cancellation, built, &progress, catalogue)
     })
+}
+
+/// Compile the admitted profile's whole enabled set without changing its pointer or files.
+/// The exact build is only a cache candidate until the profile journal publishes it.
+pub(crate) fn build_exact_client(
+    base: &str,
+    home: &Path,
+    profile: Profile,
+    staging: &crate::profile_txn::Staging<'_>,
+    cancellation: &Cancellation,
+    progress: impl Fn(Step),
+    registry_consent: Option<&dyn Fn(&Consent) -> bool>,
+) -> Result<String, Failed> {
+    cancellation.admit_native_work()?;
+    if let Some(error) = backend::native_mod_architecture_error() {
+        return Err(Failed::Other(error));
+    }
+    logged_then(
+        |cache| {
+            let cache = cache.map_err(|error| Failed::Other(error.into()))?;
+            fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+            let input = tempfile::Builder::new()
+                .prefix(".native-input-")
+                .tempdir_in(root())
+                .map_err(|e| e.to_string())?;
+            let folder = {
+                let _manifest = crate::browser::lock_home(home).map_err(|e| e.to_string())?;
+                stage_installed(home, input.path().join("mods"))?.ok_or(Failed::Nothing)?
+            };
+            let built = pipeline(
+                cache,
+                base,
+                &folder,
+                profile,
+                Target::Client,
+                BuildOptions {
+                    cancellation: cancellation.clone(),
+                    staging: Some(staging),
+                    registry_consent,
+                    ..BuildOptions::default()
+                },
+                &progress,
+            )?;
+            if !built.left_out.is_empty() {
+                return Err(Failed::Other(
+                    tr("The build did not include every enabled mod. Nothing was switched.").into(),
+                ));
+            }
+            cancellation.check()?;
+            Ok(built.version)
+        },
+        |_| {},
+    )
 }
 
 /// Apply either legacy pin or plain fallback only under this attempt's original grant.
@@ -3912,7 +3988,7 @@ printf ']}}\n'
             fs::write(&program, script).unwrap();
             fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
             let plan = serde_json::json!({"mods": input});
-            let checked = tool::check(&program, &plan, &Cancellation::default()).unwrap();
+            let checked = tool::check(&program, &plan, &Cancellation::default(), None).unwrap();
             checks_from(checked, ids, &[]).unwrap().0
         };
         let both = check(&folder, &["broken", "survivor"]);

@@ -96,7 +96,11 @@ fn interrupted_prepare_retains_the_same_build_and_profile_exclusion() {
             attempt
                 .prepare(&|_| panic!("a complete preparation was launched again"))
                 .unwrap();
-            let active = attempt.commit(BUILD, || Ok(())).unwrap();
+            let cancellation = native_mods::Cancellation::default();
+            let image = attempt
+                .exact_image(native_mods::Profile::Optimized, &cancellation, |_| {}, None)
+                .unwrap();
+            let active = attempt.commit(&image, &cancellation).unwrap();
             assert_eq!(profile.active().unwrap(), Some(active.clone()));
             active.verify_artifacts().unwrap();
             assert_eq!(

@@ -278,13 +278,35 @@ impl FirstAttempt<'_> {
         backend::need_prepared(self.base())
     }
 
-    /// The decoder/worker owns the proof of `image` and the caller keeps its final grant
-    /// through publication. No failed or partially compiled output enters a generation.
-    pub fn commit<G>(
+    pub fn exact_image(
+        &self,
+        mode: native_mods::Profile,
+        cancellation: &native_mods::Cancellation,
+        progress: impl Fn(native_mods::Step),
+        consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+    ) -> Result<String, native_mods::Failed> {
+        image_for_stage(
+            self.base(),
+            self.preferred_image(),
+            &self.home,
+            &self.stage,
+            mode,
+            cancellation,
+            progress,
+            consent,
+        )
+    }
+
+    /// No failed or partially compiled output enters a generation. Keep the worker's
+    /// original native permission revision through the last check and publication.
+    pub fn commit(
         self,
         image: &str,
-        grant: impl FnOnce() -> Result<G, String>,
+        cancellation: &native_mods::Cancellation,
     ) -> Result<Active, String> {
+        if native_mods::is_native(image) {
+            cancellation.admit_native_work().map_err(String::from)?;
+        }
         let _manifest = game_lock(&self.home)?;
         let active = Active::capture(
             self.bound.profile,
@@ -302,10 +324,33 @@ impl FirstAttempt<'_> {
             if inputs(&self.home, None)? != self.bound.inputs {
                 return Err(unsettled());
             }
-            grant()
+            cancellation.publication_guard()
         })?;
         Ok(active)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn image_for_stage(
+    base: &str,
+    preferred: &str,
+    home: &Path,
+    stage: &Staging<'_>,
+    mode: native_mods::Profile,
+    cancellation: &native_mods::Cancellation,
+    progress: impl Fn(native_mods::Step),
+    consent: Option<&dyn Fn(&native_mods::Consent) -> bool>,
+) -> Result<String, native_mods::Failed> {
+    if super::verify_included(base, preferred, home).is_ok() {
+        if native_mods::is_native(preferred) {
+            cancellation.admit_native_work()?;
+        }
+        return Ok(preferred.to_owned());
+    }
+    if crate::native_status::enabled(home).is_empty() {
+        return Ok(base.to_owned());
+    }
+    native_mods::build_exact_client(base, home, mode, stage, cancellation, progress, consent)
 }
 
 pub(super) fn game_lock(home: &Path) -> Result<HomeLockGuard, String> {
