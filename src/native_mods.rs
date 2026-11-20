@@ -1194,6 +1194,18 @@ fn guard_worlds(home: &Path, left: &[LeftOut], build: &str, leave_out: bool) -> 
     Ok(())
 }
 
+/// `incoming` also keeps exact omitted sources for the cache key. SDK checks must not
+/// enumerate it on a reduced retry, even when every omitted mod already has a pin.
+fn retry_check_inputs(
+    mods: &[Bundle],
+    pins: &[String],
+    requested: usize,
+) -> Result<Option<tempfile::TempDir>, String> {
+    (mods.len() != requested)
+        .then(|| mixins::check_inputs(mods, pins))
+        .transpose()
+}
+
 /// The pipeline both targets build with ([`build`], [`build_server`]): `folder`'s mods on the
 /// Sunrise revision they pin (else `base`'s, the installed version whose game files the build
 /// reuses: a native build's own revision when it is one, [`base_for`]), compiled as `target`
@@ -1350,17 +1362,7 @@ fn pipeline(
     for (bundle, pin) in mods.iter().zip(&mixins_pins) {
         mixins::materialize(bundle, &bundle.dir, pin)?;
     }
-    let check_inputs = requested
-        .iter()
-        .any(|b| {
-            b.manifest
-                .native
-                .as_ref()
-                .is_some_and(|n| n.mixins.is_none())
-                && left_out.iter().any(|left| left.id == b.manifest.id)
-        })
-        .then(|| mixins::check_inputs(&mods, &mixins_pins))
-        .transpose()?;
+    let check_inputs = retry_check_inputs(&mods, &mixins_pins, requested.len())?;
     let check_folder = check_inputs
         .as_ref()
         .map_or(incoming.as_path(), |dir| dir.path());
@@ -3807,6 +3809,62 @@ mod tests {
             matches!(&all_unfit.verdicts[..], [(id, fit::Verdict::Exact { .. })] if id == "old")
         );
         assert!(refusal_text("scripted", "no").contains("scripted"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_live_sdk_check_on_reduced_retry_never_sees_an_omitted_pinned_mod() {
+        use std::os::unix::fs::PermissionsExt;
+        let _state = scratch_state();
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("incoming");
+        for id in ["broken", "survivor"] {
+            write_native(&folder.join(id), id, A, B);
+        }
+        let requested = scan_bundles(&folder).unwrap();
+        assert_eq!(requested.len(), 2);
+        assert!(requested
+            .iter()
+            .all(|bundle| bundle.native().mixins.as_deref() == Some(B)));
+        let check = |input: &Path, ids: &[&str]| {
+            let program = temp.path().join("fixture-sdk");
+            // Like the real SDK, derive its rows from the manifests in the input directory.
+            let script = format!(
+                r#"#!/bin/sh
+read -r plan
+printf '%s' "$plan" | grep -F '"mods":"{}"' >/dev/null || exit 2
+printf '{{"contract":2,"route":"prebuilt-api","mods":['
+comma=''
+for dir in '{}'/*; do
+  id=$(grep '^id[[:space:]]*=' "$dir/sunrise-mod.toml" | head -1 | cut -d= -f2- | tr -d "\"' ")
+  [ -n "$id" ] || exit 2
+  printf '%s{{"id":"%s","verdict":{{"kind":"made-for"}}}}' "$comma" "$id"
+  comma=,
+done
+printf ']}}\n'
+"#,
+                input.display(),
+                input.display()
+            );
+            fs::write(&program, script).unwrap();
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+            let plan = serde_json::json!({"mods": input});
+            let checked = tool::check(&program, &plan, &Cancellation::default()).unwrap();
+            checks_from(checked, ids, &[]).unwrap().0
+        };
+        let both = check(&folder, &["broken", "survivor"]);
+        assert_eq!(both.verdicts.len(), 2);
+        let survivors: Vec<_> = requested
+            .iter()
+            .filter(|bundle| bundle.manifest.id == "survivor")
+            .cloned()
+            .collect();
+        let staged = retry_check_inputs(&survivors, &[B.into()], requested.len())
+            .unwrap()
+            .unwrap();
+        let retried = check(staged.path(), &["survivor"]);
+        assert_eq!(retried.verdicts.len(), 1);
+        assert_eq!(retried.verdicts[0].0, "survivor");
     }
 
     #[test]
