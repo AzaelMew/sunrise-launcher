@@ -1486,5 +1486,7 @@
   "{mods} is needed and isn't available for your version": "{mods} is needed and isn't available for your version",
   "{mods} are needed and aren't available for your version": "{mods} are needed and aren't available for your version",
   "{mod} couldn't be built": "{mod} couldn't be built",
-  "{native} runs native code: allow native mods first.": "{native} runs native code: allow native mods first."
+  "{native} runs native code: allow native mods first.": "{native} runs native code: allow native mods first.",
+  "Conflicts with {mods}": "Conflicts with {mods}",
+  "Conflicts with a mod you have installed": "Conflicts with a mod you have installed"
 }

@@ -120,8 +120,36 @@ pub(crate) fn updated_line(updated: &[(String, String, String)]) -> Option<Strin
     Some(trf("Also updated: {names}", &[("names", &shown)]))
 }
 
-/// One plain line for why an install failed; the whole text stays behind "Details".
-pub(crate) fn plain_failure(why: &str) -> String {
+/// The mods a dependency conflict names, other than `own`: the planner's reason lists who
+/// needs what, "(a needs ^2; b needs ^1; c needs ^1)". `title` reads a mod's id as people do.
+fn conflict_mods(why: &str, own: &str, title: impl Fn(&str) -> String) -> Vec<String> {
+    let Some((_, listed)) = why.rsplit_once(" (") else {
+        return Vec::new();
+    };
+    let Some((listed, _)) = listed.split_once("): no listed version") else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = listed
+        .split("; ")
+        .filter_map(|part| part.split_once(" needs ").map(|(id, _)| id))
+        .filter(|id| *id != own)
+        .map(title)
+        .collect();
+    names.dedup();
+    names
+}
+
+/// One plain line for why an install failed; the whole text stays behind "Details". `own` is
+/// the mod that was asked for, `title` reads a mod's id as people do.
+pub(crate) fn plain_failure(why: &str, own: &str, title: impl Fn(&str) -> String) -> String {
+    if why.contains("no listed version satisfies all requirements") {
+        let names = conflict_mods(why, own, title);
+        return if names.is_empty() {
+            tr("Conflicts with a mod you have installed").to_string()
+        } else {
+            trf("Conflicts with {mods}", &[("mods", &names.join(", "))])
+        };
+    }
     let why = why.to_lowercase();
     if why.contains("offline") || why.contains("connect") || why.contains("dns") {
         tr("You're offline").to_string()
@@ -222,13 +250,35 @@ mod tests {
     #[test]
     fn a_failed_install_says_one_plain_thing() {
         assert_eq!(
-            plain_failure("Couldn't connect to the registry"),
+            plain_failure("Couldn't connect to the registry", "a", str::to_owned),
             "You're offline"
         );
-        assert_eq!(plain_failure("No space left on device"), "Not enough space");
         assert_eq!(
-            plain_failure("its SHA-256 isn't the one listed"),
+            plain_failure("No space left on device", "a", str::to_owned),
+            "Not enough space"
+        );
+        assert_eq!(
+            plain_failure("its SHA-256 isn't the one listed", "a", str::to_owned),
             "Download failed. Try again"
+        );
+    }
+
+    #[test]
+    fn a_dependency_conflict_says_so_and_names_the_mods_in_the_way() {
+        let why = "Fireflies can't be installed: creatures (fireflies needs ^2; lamps needs ^1; \
+                   owls needs ^1): no listed version satisfies all requirements";
+        let title = |id: &str| id.to_uppercase();
+        assert_eq!(
+            plain_failure(why, "fireflies", title),
+            "Conflicts with LAMPS, OWLS"
+        );
+        assert_eq!(
+            plain_failure(
+                "creatures: no listed version satisfies all requirements",
+                "fireflies",
+                title
+            ),
+            "Conflicts with a mod you have installed"
         );
     }
 }

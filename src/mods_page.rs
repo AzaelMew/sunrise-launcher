@@ -388,11 +388,13 @@ impl Launcher {
                     native_in = m.running.take().map(|t| t.instance);
                     m.card_error = match (&result, &id) {
                         (Err(why), Some(id)) => Some(CardError {
-                            title: sunrise::known_index()
-                                .and_then(|index| index.project(id).map(|p| p.name.clone()))
-                                .unwrap_or_else(|| id.clone()),
+                            title: registry_title(id),
                             id: id.clone(),
-                            line: crate::mods::install_state::plain_failure(why),
+                            line: crate::mods::install_state::plain_failure(
+                                why,
+                                id,
+                                registry_title,
+                            ),
                             details: why.clone(),
                             built: false,
                             open: false,
@@ -1220,6 +1222,13 @@ impl AutoOutcome {
     }
 }
 
+/// A registry mod's name as the cards show it, its id when the index isn't read.
+fn registry_title(id: &str) -> String {
+    sunrise::known_index()
+        .and_then(|index| index.project(id).map(|p| p.name.clone()))
+        .unwrap_or_else(|| id.to_owned())
+}
+
 /// What went wrong for mod `id` in the last install's build, for its card: the reason in one
 /// plain line and the whole text for Details (a compile failure's log).
 pub(crate) fn build_failure_of(
@@ -1232,7 +1241,7 @@ pub(crate) fn build_failure_of(
             .find(|f| f.id == id)
             .map(|f| (f.reason.clone(), f.log.clone())),
         InstallFailure::Interrupted { ids, reason } if ids.iter().any(|i| i == id) => Some((
-            crate::mods::install_state::plain_failure(reason),
+            crate::mods::install_state::plain_failure(reason, id, registry_title),
             reason.clone(),
         )),
         InstallFailure::Interrupted { .. } => None,
