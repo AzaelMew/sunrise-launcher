@@ -109,3 +109,20 @@ fn a_build_ending_removes_the_mods_it_could_not_keep() {
     assert_eq!(gone, ["a", "b"]);
     assert!(told.is_empty());
 }
+
+#[test]
+fn a_builds_stop_for_worlds_becomes_the_world_question_that_builds_on_when_switched() {
+    let stake = native_mods::AtStake {
+        text: "t".into(),
+        worlds: vec!["Home".into()],
+        mods: vec!["greeter".into()],
+        unbuilt: Vec::new(),
+        stay: "Nov 14".into(),
+        base: "nightly-2026-11-17-abcdef0".into(),
+    };
+    let ask = WorldAsk::from_stop("main".into(), &stake);
+    assert_eq!(ask.instance, "main");
+    assert_eq!(ask.question.mods, ["greeter"]);
+    assert_eq!(ask.question.worlds, ["Home"]);
+    assert_eq!(ask.build_on.as_deref(), Some("nightly-2026-11-17-abcdef0"));
+}

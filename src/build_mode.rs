@@ -8,10 +8,14 @@ use native_mods::Profile;
 use native_status::State;
 
 impl Launcher {
-    /// A build stopped for worlds at stake: the choice is shown, and the mods that failed to
-    /// compile stay marked past it.
+    /// A build stopped for worlds at stake: the world question is put to the player (Stay is
+    /// the default; Switch anyway builds again, leaving the mods out), and the mods that
+    /// failed to compile stay marked past it.
     pub(super) fn keep_stop(&mut self, stake: &native_mods::AtStake) {
-        self.native_worlds = Some(stake.clone());
+        self.mods.world_ask = self
+            .native_for
+            .clone()
+            .map(|instance| mods_page::WorldAsk::from_stop(instance, stake));
         self.mods.unbuilt = self
             .native_for
             .clone()

@@ -72,7 +72,7 @@ impl Launcher {
             return;
         }
         self.native_error = None;
-        self.native_worlds = None;
+        self.mods.world_ask = None;
         self.native_failed_mods.clear();
         let task = cx.background_executor().spawn(async move {
             let mut failure = None;

@@ -268,9 +268,6 @@ struct Launcher {
     /// The mods that stopped the last build (`native_mods::Failed::Mods`): their rows say Failed,
     /// the others keep their own state.
     native_failed_mods: Vec<String>,
-    /// Mods the last build would have switched off that worlds were saved with: the choice
-    /// between staying and backing those worlds up first, shown with `native_error`.
-    native_worlds: Option<native_mods::AtStake>,
     pending_consent: Option<PendingConsent>,
     /// Why the last Allow or Cancel failed, shown inside the dialog that the page is behind.
     consent_error: Option<String>,
