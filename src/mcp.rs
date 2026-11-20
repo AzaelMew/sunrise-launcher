@@ -87,6 +87,9 @@ impl Session {
                     Some(name) => instances::find(name)?,
                     None => instances::selection()?,
                 };
+                if instance.kind == instances::Kind::Pack {
+                    return Err(sunrise_launcher::browser::sunrise::pack::play_unavailable());
+                }
                 use sunrise_launcher::managed_play;
                 let requested = arg_str(args, "version");
                 let add_arguments = |cmd: &mut std::process::Command| -> Result<(), String> {
@@ -114,18 +117,7 @@ impl Session {
                     Ok(())
                 };
                 let jar_permission = Permission::headless(allow_jar_downloads);
-                let (client, tag, notices) = if instance.kind == instances::Kind::Pack {
-                    let tag = instance.resolve_version(requested)?;
-                    let mut cmd = backend::client(&tag)?;
-                    instances::apply(&mut cmd, &instance)?;
-                    add_arguments(&mut cmd)?;
-                    let launch = Default::default();
-                    let notices =
-                        sunrise_launcher::browser::sunrise::before_play(&mut cmd, &tag, &launch)?;
-                    jars::prepare_launch(&mut cmd, &launch, jar_permission)
-                        .map_err(|error| error.to_string())?;
-                    (Logged::start(Job::Client, cmd)?, tag, notices)
-                } else {
+                let (client, tag, notices) = {
                     const HOOK_TAIL: usize = 20;
                     const HOOK_LINE_BYTES: usize = 4096;
                     let accounts = Accounts::load();

@@ -186,6 +186,10 @@ pub fn github_stars(id: &str) -> Option<u64> {
 /// The index: the one fetched in the last ten minutes, else fetched again (and kept in the game
 /// folder), else the copy kept last time.
 pub fn index() -> Result<Arc<Index>, String> {
+    read_index(true)
+}
+
+fn read_index(write_cache: bool) -> Result<Arc<Index>, String> {
     let at = location();
     if at.is_empty() {
         return Err("The Sunrise mod registry is not available yet.".into());
@@ -197,9 +201,11 @@ pub fn index() -> Result<Arc<Index>, String> {
     }
     let cache = crate::backend::game_home().join(CACHE);
     let local = !at.starts_with("https://");
-    let loaded = load(fetch_index(&at, local), &cache, local)?;
+    let loaded = load(fetch_index(&at, local), &cache, local, write_cache)?;
     let index = loaded.index.clone();
-    *LOADED.lock().unwrap() = Some(loaded);
+    if write_cache {
+        *LOADED.lock().unwrap() = Some(loaded);
+    }
     Ok(index)
 }
 
@@ -209,13 +215,16 @@ fn load(
     fetched: Result<(Index, String), String>,
     cache: &Path,
     local: bool,
+    write_cache: bool,
 ) -> Result<Loaded, String> {
     let (index, fetched) = match fetched {
         Ok((index, text)) => {
-            if let Some(dir) = cache.parent() {
-                let _ = fs::create_dir_all(dir);
+            if write_cache {
+                if let Some(dir) = cache.parent() {
+                    let _ = fs::create_dir_all(dir);
+                }
+                let _ = fs::write(cache, text);
             }
-            let _ = fs::write(cache, text);
             (index, !local)
         }
         Err(e) => {
@@ -756,6 +765,25 @@ fn gallery_of(p: &index::Project) -> Vec<super::details::Image> {
         .collect()
 }
 
+/// Classify an install before touching the game's files. Old registry modpacks must not
+/// reach the former live publisher (the same command used for initial install and update).
+pub fn install_project(id: &str) -> Result<Project, String> {
+    registry_project(&*read_index(false)?, id)
+}
+
+fn registry_project(catalogue: &Index, id: &str) -> Result<Project, String> {
+    let p = catalogue
+        .project(id)
+        .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
+    project_of(catalogue, p, &super::game()).ok_or_else(|| {
+        format!(
+            "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
+            p.name,
+            p.kind.name()
+        )
+    })
+}
+
 /// The registry as a browser source.
 pub struct Registry;
 
@@ -771,17 +799,7 @@ impl Source for Registry {
     }
 
     fn project(&self, id: &str) -> Result<Project, String> {
-        let index = index()?;
-        let p = index
-            .project(id)
-            .ok_or_else(|| format!("{id} isn't in Sunrise's registry."))?;
-        project_of(&index, p, &super::game()).ok_or_else(|| {
-            format!(
-                "{} is a {} in Sunrise's registry: this launcher can't install those yet.",
-                p.name,
-                p.kind.name()
-            )
-        })
+        registry_project(&*index()?, id)
     }
 
     fn versions(&self, project: &Project) -> Result<Vec<Version>, String> {
@@ -944,7 +962,7 @@ fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
         Kind::Mod => Ok(format!("{}/{id}.smod", mod_list::MODS_DIR)),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
-        Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
+        Kind::Modpack => Err(pack::install_unavailable()),
         Kind::DataPack => Err("A data pack goes into a world (fetch_datapack).".into()),
     }
 }

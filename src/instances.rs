@@ -516,6 +516,9 @@ fn delete_in(
     trash: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<Instance, String> {
     let instance = find_in(&list_in(game_home, data), query)?;
+    if instance.kind == Kind::Pack {
+        return Err(registry_pack::remove_unavailable());
+    }
     if instance.kind == Kind::Default {
         return Err(format!(
             "{} is the game's own folder: it can't be deleted.",
@@ -941,7 +944,7 @@ pub fn apply(cmd: &mut Command, instance: &Instance) -> Result<(), String> {
             cmd.current_dir(&instance.home)
                 .env("SUNRISE_HOME", &instance.home);
         }
-        Kind::Pack => registry_pack::apply(cmd, &instance.work)?,
+        Kind::Pack => return Err(registry_pack::play_unavailable()),
     }
     follow_player(&backend::game_home(), &instance.home);
     Ok(())
