@@ -392,6 +392,8 @@ fn migrate_locked(
     }
     let destination = layout(&source, &target);
     tool_safe(&destination.build)?;
+    // The exclusive migration lease covers both recovery and the snapshot that follows.
+    crate::relocation::admit_idle_profiles(&source)?;
     fs::create_dir_all(&target).map_err(|e| problem(&target, e))?;
     let stage = target.join(".relocation-staging");
     let staged = layout(&source, &stage);
@@ -408,6 +410,12 @@ fn migrate_locked(
             fs::create_dir_all(&staged.build).map_err(|e| problem(&staged.build, e))?;
         }
         prepare(&staged, &destination)?;
+        crate::managed_play::remap_relocated_root(
+            &staged.launcher,
+            &source.game,
+            &staged.game,
+            &destination.game,
+        )?;
         for name in ["launcher", "game", "build"] {
             let from = stage.join(name);
             if from.exists() {

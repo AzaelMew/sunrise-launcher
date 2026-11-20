@@ -164,7 +164,7 @@ impl Launcher {
                 return;
             }
         }
-        let selected = self.selected_instance().map(|i| i.id.clone());
+        let selected = self.selected_instance().cloned();
         let name = self.servers.value(Field::InstanceName).trim().to_string();
         let group = Some(self.servers.value(Field::InstanceGroup).to_string());
         // A Sunrise version picked but not installed downloads once the instance is saved.
@@ -203,10 +203,11 @@ impl Launcher {
                 m.channel = Some(channel);
             };
             let Some(id) = editing else {
-                // A new profile is made whole or not at all: a failure leaves none to retry over.
+                // Carry the selected folder's identity into the worker rather than looking it
+                // up again by slug after another launcher might have replaced it.
                 return instances::create_with(
                     &called,
-                    copy.as_deref(),
+                    copy.as_ref(),
                     picture.as_ref().map(Option::as_deref),
                     choose,
                 );

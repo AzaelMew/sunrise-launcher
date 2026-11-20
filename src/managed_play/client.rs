@@ -94,7 +94,8 @@ impl Client<'_> {
             std::fs::create_dir_all(&self.instance.home)
                 .map_err(|error| super::at(&self.instance.home, error))?;
         }
-        let mut profile = Profile::open_checked(&self.instance.home, None)?;
+        let mut profile =
+            Profile::open_instance(&backend::game_home(), &backend::data_dir(), self.instance)?;
         let cancellation = native_mods::Cancellation::default();
         let check_build = |tag: &str, variant: Option<&BoundVariant>| {
             if self.accepted_account.is_none() && !developer_offline::enabled(tag) {
