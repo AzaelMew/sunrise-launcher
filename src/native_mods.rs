@@ -3352,6 +3352,7 @@ mod tests {
     #[test]
     fn a_native_build_without_a_record_is_refused_before_preparation() {
         let _guard = scratch_state();
+        backend::Settings::default().allow_native_mods().unwrap();
         let lease = crate::native_cache::Cache::acquire(&backend::build_dir()).unwrap();
         let Err(error) = pipeline(
             &lease,
