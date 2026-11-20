@@ -1,0 +1,10 @@
+id = 'lantern_trails'
+name = 'Lantern Trails'
+version = '0.8.1'
+api = '0.2'
+capabilities = ['registries']
+
+[native]
+game = '26.3'
+sunrise = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+mixins = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'

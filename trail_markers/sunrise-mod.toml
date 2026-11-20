@@ -1,0 +1,10 @@
+id = 'trail_markers'
+name = 'Trail Markers'
+version = '2.1.0'
+api = '0.2'
+capabilities = ['registries']
+
+[native]
+game = '26.3'
+sunrise = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+mixins = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'

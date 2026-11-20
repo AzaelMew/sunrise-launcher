@@ -1,0 +1,4 @@
+[package]
+name = 'trail_markers'
+version = '2.1.0'
+edition = '2021'

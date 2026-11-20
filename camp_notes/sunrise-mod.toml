@@ -1,0 +1,10 @@
+id = 'camp_notes'
+name = 'Camp Notes'
+version = '1.2.0'
+api = '0.2'
+capabilities = ['registries']
+
+[native]
+game = '26.3'
+sunrise = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+mixins = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
