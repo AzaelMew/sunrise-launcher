@@ -1303,16 +1303,6 @@ impl Launcher {
             self.ui.sheets.error = Some(tr("Wait for the current operation to finish.").into());
             return;
         }
-        if self
-            .instances
-            .list
-            .iter()
-            .any(|i| i.id == id && i.is_pack_profile())
-        {
-            self.ui.sheets.error =
-                Some(tr("A modpack keeps the build it was made for. Make your own profile to change it.").into());
-            return;
-        }
         match instances::edit(id, |m| {
             m.version = version;
             m.channel = Some(channel);

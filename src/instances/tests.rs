@@ -792,3 +792,39 @@ fn a_modpacks_profile_is_told_by_its_id() {
     assert!(!instance.is_pack_profile());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn a_modpacks_profile_keeps_its_build_whoever_asks() {
+    let root = scratch("pack-keeps-build");
+    let (game, data) = (root.join("home"), root.join("data"));
+    fs::create_dir_all(game.join("sunrise-packs/cozy/home")).unwrap();
+    fs::write(
+        game.join("sunrise-packs/cozy/pack.json"),
+        r#"{"id":"cozy","name":"Cozy","version":"1.0.0","sha256":"00","mods":[]}"#,
+    )
+    .unwrap();
+    let mut store = Store::default();
+    store.instances.insert(
+        "pack:cozy".into(),
+        Meta {
+            name: Some("Cozy".into()),
+            version: Some("1.0".into()),
+            ..Meta::default()
+        },
+    );
+    fs::create_dir_all(&data).unwrap();
+    store.save(&data).unwrap();
+    let refused = edit_in(&game, &data, "pack:cozy", |m| m.version = None);
+    assert!(refused.unwrap_err().contains("keeps the build"));
+    let refused = edit_in(&game, &data, "pack:cozy", |m| {
+        m.channel = Some(Channel::Stable)
+    });
+    assert!(refused.is_err());
+    assert_eq!(
+        Store::load(&data).instances["pack:cozy"].version.as_deref(),
+        Some("1.0")
+    );
+    // Everything else about it is still the player's to change.
+    edit_in(&game, &data, "pack:cozy", |m| m.name = Some("Warm".into())).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
