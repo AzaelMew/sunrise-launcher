@@ -5,8 +5,8 @@
 //! authors, source, mirrored screenshots, what it may do); Add and single Update through the
 //! existing install path (native code asks for permission first, `native_consent`); Installed
 //! from `mod-browser.json` and `sunrise-mods.txt` with on/off, selection, filters, bulk Turn on,
-//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build… and Allow…
-//! hand over to the one native build path.
+//! Turn off, Remove and Update N mods (a reviewed plan, applied by a worker); Build…
+//! hands over to the one native build path.
 //!
 //! **Not here, said on screen or in the handoff:** Featured (the registry carries no editorial
 //! list), a version picker (the registry installs the newest that fits), dependency lists for
