@@ -43,6 +43,7 @@ pub(super) use staged_install::{
     detach_private_profile, expose_private_profile, seal_private_profile, ReadyInstall,
     StagedInstall,
 };
+pub use staged_install::{prepare_mod_edit, ModEdit, ModRemoval, PreparedModEdit};
 pub use switch::Switch;
 
 const FILE: &str = "mod-browser/install-txn.json";

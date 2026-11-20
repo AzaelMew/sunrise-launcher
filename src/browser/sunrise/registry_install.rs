@@ -40,19 +40,9 @@ pub fn prepare_registry_install(
     approvals: &[installed::Approval],
     progress: &dyn Fn(&str, f32),
 ) -> Result<RegistryInstall, installed::InstallError> {
-    if owner.home() != instance.home {
-        return Err(txn::unsettled().into());
-    }
     let (index, evidence) = authoritative_index()?;
     let waiting = txn::waiting_packages(owner.home())?;
-    let plan = match owner.active_build()? {
-        Some(active) => txn::StagedInstall::begin(owner, active)?,
-        None => {
-            let bound = owner.bind_bootstrap(|| txn::Target::for_profile(instance))?;
-            owner.prepare_bound(&bound, |fraction| progress(bound.base(), fraction))?;
-            txn::StagedInstall::first(owner, &bound)?
-        }
-    };
+    let plan = txn::StagedInstall::for_instance(owner, instance, progress)?;
     let game = backend::game_of_build(plan.base()).ok_or_else(backend::no_version_installed)?;
     let asked = registry_candidates(&index, ids.iter().map(String::as_str), &game, &waiting)?;
     let entries = dependencies::stage(
@@ -67,7 +57,7 @@ pub fn prepare_registry_install(
         backend::Settings::native_grant()?.is_some(),
         &waiting,
     )?;
-    let ready = plan.prepare(&[], instance.native_profile, |step| {
+    let ready = plan.prepare(&index, &[], instance.native_profile, |step| {
         progress(&step.label(), 0.99)
     })?;
     Ok(RegistryInstall {

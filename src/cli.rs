@@ -2431,17 +2431,38 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             }
         }
         ModsCmd::Remove { project, .. } => {
-            let _owner = sunrise::txn::Lease::admit(&home)?;
-            if github_mods::origin(&home, &project).is_some() {
-                github_mods::remove(&home, &project)?;
-                println!("Removed {project} (installed from GitHub).");
+            use sunrise::txn::{prepare_mod_edit, Lease, ModEdit, ModRemoval};
+            let owner = Arc::new(Lease::admit(&home)?);
+            let (remove, label) = if let Some(origin) = github_mods::origin(&home, &project) {
+                (
+                    ModRemoval::github(&origin),
+                    format!("{project} (installed from GitHub)"),
+                )
             } else {
-                let e = installed::remove(&home, &project)?;
-                println!("Removed {} ({}).", e.title, e.file);
+                let list = installed::Installed::load(&home);
+                let entry = list
+                    .lookup(&project)
+                    .ok_or_else(|| format!("{project} wasn't installed by the browser."))?;
+                if entry.kind != Kind::Mod {
+                    let e = installed::remove(&home, &project)?;
+                    println!("Removed {} ({}).", e.title, e.file);
+                    return Ok(());
+                }
+                (
+                    ModRemoval::registry(entry)?,
+                    format!("{} ({})", entry.title, entry.file),
+                )
+            };
+            let plan = prepare_mod_edit(owner, &instance, ModEdit::Remove(vec![remove]), &line)?;
+            if !switch::approve_world_change(plan.question(), tr("Remove anyway? [y/N]"))? {
+                return Err(tr("Removal cancelled. Nothing was changed.").into());
             }
+            plan.commit(true)?;
+            println!("Removed {label}.");
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
-            let _owner = sunrise::txn::Lease::admit(&home)?;
+            use sunrise::txn::{prepare_mod_edit, Lease, ModEdit};
+            let owner = Arc::new(Lease::admit(&home)?);
             let e = installed::Installed::load(&home)
                 .lookup(&project)
                 .cloned()
@@ -2449,19 +2470,16 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             let id = sunrise::mod_id(&e)
                 .filter(|_| e.kind == Kind::Mod)
                 .ok_or_else(|| format!("{} isn't a mod: only mods turn on and off.", e.title))?;
-            if on {
-                if let Some(r) = sunrise::index()
-                    .ok()
-                    .filter(|_| e.source == SourceId::Sunrise)
-                    .and_then(|i| {
-                        i.revoked(&e.project, e.checksum.trim_start_matches("SHA-256:"))
-                            .cloned()
-                    })
-                {
-                    return Err(format!("{} was taken down: {}", e.title, r.reason));
-                }
-            }
-            sunrise_launcher::browser::mod_list::set_enabled(&home, id, on)?;
+            prepare_mod_edit(
+                owner,
+                &instance,
+                ModEdit::SetEnabled {
+                    ids: vec![id.into()],
+                    enabled: on,
+                },
+                &line,
+            )?
+            .commit(false)?;
             println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
     }

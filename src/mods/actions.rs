@@ -4,13 +4,7 @@
 use super::model::{self, Row};
 use super::*;
 
-#[derive(Clone)]
-pub(super) enum Action {
-    /// (mod id, title)
-    TurnOff(Vec<(String, String)>),
-    /// (mod id, project id, title)
-    Remove(Vec<(String, String, String)>),
-}
+use sunrise::txn::{ModEdit, ModRemoval};
 
 /// Why mods can't change now.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -143,12 +137,16 @@ impl Launcher {
             .as_ref()
             .and_then(|s| s.entries.iter().find(|e| e.project == id))
             .cloned();
-        if let Some(entry) = entry {
-            self.mods.message = None;
-            self.mods_switch(&entry);
-            if let Some(Err(e)) = self.mods.message.take() {
-                self.ui.mods.notice = Some(Err(e));
-            }
+        if let Some((id, entry)) = entry
+            .as_ref()
+            .and_then(|entry| Some((sunrise::mod_id(entry)?, entry)))
+        {
+            self.toggle_one(
+                id,
+                &entry.title,
+                true,
+                native_status::is_native_file(&entry.file),
+            );
         }
     }
 
@@ -158,52 +156,63 @@ impl Launcher {
         }
     }
 
-    /// Turn one mod on, or check its worlds before turning it off. For files installed
-    /// outside the registry, switching on records the choice; the native consent and build
-    /// gates still decide whether the game can use it.
+    /// Turn the selected bit on or off. A native activation binds this exact action before asking.
     pub(super) fn toggle(&mut self, row: &Row) {
-        if !self.guard() {
-            return;
-        }
-        if row.on {
-            self.run(Action::TurnOff(vec![(row.id.clone(), row.title.clone())]));
-        } else if let Some(entry) = &row.entry {
-            self.mods.message = None;
-            self.mods_switch(entry);
-            if let Some(Err(e)) = self.mods.message.take() {
-                self.ui.mods.notice = Some(Err(e));
-            }
-        } else if row.native() && self.settings.native_mods_allowed_at.is_none() {
-            // A hand-copied native mod asks the same one question a registry one does.
-            self.pending_consent = Some(PendingConsent::TurnOn(row.id.clone(), row.title.clone()));
-        } else {
-            self.turn_on_local(&row.id);
+        if self.guard() {
+            self.toggle_one(&row.id, &row.title, !row.on, row.native());
         }
     }
 
-    /// Turns on a mod that isn't from the registry.
-    pub(crate) fn turn_on_local(&mut self, id: &str) {
-        let Some(snapshot) = &mut self.ui.mods.snapshot else {
+    fn toggle_one(&mut self, id: &str, title: &str, enabled: bool, native: bool) {
+        let success = trf(
+            if enabled {
+                "Turned on {mod}."
+            } else {
+                "Turned off {mod}."
+            },
+            &[("mod", title)],
+        );
+        self.request_mod_edit(
+            ModEdit::SetEnabled {
+                ids: vec![id.into()],
+                enabled,
+            },
+            title.into(),
+            success,
+            enabled && native,
+        );
+    }
+
+    fn request_mod_edit(&mut self, edit: ModEdit, name: String, success: String, native: bool) {
+        let Some(instance) = self
+            .selected_instance()
+            .filter(|i| {
+                self.ui
+                    .mods
+                    .snapshot
+                    .as_ref()
+                    .is_some_and(|snapshot| snapshot.home == i.home)
+            })
+            .cloned()
+        else {
+            self.ui.mods.notice = Some(Err(tr(
+                "The profile changed since you reviewed this. Nothing was changed; choose again.",
+            )
+            .into()));
             return;
         };
-        let _owner = match sunrise::txn::Lease::admit(&snapshot.home) {
-            Ok(owner) => owner,
-            Err(error) => {
-                self.ui.mods.notice = Some(Err(error));
-                return;
-            }
+        self.ui.mods.notice = None;
+        let request = crate::mods_page::ModEditRequest {
+            instance,
+            edit,
+            name,
+            success,
         };
-        let Some(_lock) = sunrise_launcher::browser::try_lock_home(&snapshot.home) else {
-            self.ui.mods.notice = Some(Err(tr("Wait for the current operation to finish.").into()));
-            return;
-        };
-        self.ui.mods.notice = match mod_list::set_enabled(&snapshot.home, id, true) {
-            Ok(()) => {
-                snapshot.key.clear();
-                None
-            }
-            Err(e) => Some(Err(e)),
-        };
+        if native && self.settings.native_mods_allowed_at.is_none() {
+            self.pending_consent = Some(PendingConsent::Edit(Box::new(request)));
+        } else {
+            self.start_mod_edit(request);
+        }
     }
 
     /// Turn the chosen registry mods on in one rewrite of the list. Local and GitHub mods
@@ -225,70 +234,68 @@ impl Launcher {
             .iter()
             .map(|(r, why)| (r.id.clone(), why.clone()))
             .collect();
-        let Some(home) = m.snapshot.as_ref().map(|s| s.home.clone()) else {
-            return;
-        };
         if go.is_empty() {
-            m.notice = Some(Err(tr("Nothing selected can be turned on yet.").to_string()));
+            m.notice = Some(Err(tr("Nothing selected can be turned on yet.").into()));
             return;
         }
-        let _owner = match sunrise::txn::Lease::admit(&home) {
-            Ok(owner) => owner,
-            Err(error) => {
-                m.notice = Some(Err(error));
-                return;
-            }
-        };
-        let Some(_lock) = sunrise_launcher::browser::try_lock_home(&home) else {
-            m.notice = Some(Err(
-                tr("Wait for the current operation to finish.").to_string()
-            ));
-            return;
-        };
-        let ids: Vec<&str> = go.iter().map(|r| r.id.as_str()).collect();
+        let ids: Vec<String> = go.iter().map(|r| r.id.clone()).collect();
         let count = ids.len().to_string();
-        m.notice = Some(match mod_list::set_all_enabled(&home, &ids, true) {
-            Ok(()) if held.is_empty() => Ok(trf(
+        let success = if held.is_empty() {
+            trf(
                 "Turned on {count} mods. The game reads this when it starts.",
                 &[("count", &count)],
-            )),
-            Ok(()) => Err(trf(
+            )
+        } else {
+            trf(
                 "Turned on {done}. {held} stayed off: see their rows.",
                 &[("done", &count), ("held", &held.len().to_string())],
-            )),
-            Err(e) => Err(e),
-        });
+            )
+        };
+        self.request_mod_edit(
+            ModEdit::SetEnabled { ids, enabled: true },
+            tr("Turn on").into(),
+            success,
+            false,
+        );
     }
 
     pub(super) fn bulk_off(&mut self) {
-        let rows = self.rows();
-        let chosen: Vec<(String, String)> = rows
-            .iter()
-            .filter(|r| r.local.is_none() && r.on && self.ui.mods.selection.contains(&r.id))
-            .map(|r| (r.id.clone(), r.title.clone()))
-            .collect();
-        if chosen.is_empty() {
-            self.ui.mods.notice = Some(Err(
-                tr("None of the selected mods is turned on.").to_string()
-            ));
+        if !self.guard() {
             return;
         }
-        self.run(Action::TurnOff(chosen));
+        let ids: Vec<_> = self
+            .rows()
+            .into_iter()
+            .filter(|r| r.local.is_none() && r.on && self.ui.mods.selection.contains(&r.id))
+            .map(|r| r.id)
+            .collect();
+        if ids.is_empty() {
+            self.ui.mods.notice = Some(Err(tr("None of the selected mods is turned on.").into()));
+            return;
+        }
+        let success = counted(
+            ids.len(),
+            "Turned off 1 mod. The game reads this when it starts.",
+            "Turned off {count} mods. The game reads this when it starts.",
+        );
+        self.request_mod_edit(
+            ModEdit::SetEnabled {
+                ids,
+                enabled: false,
+            },
+            tr("Turn off").into(),
+            success,
+            false,
+        );
     }
 
     /// Asks for confirmation before removing the chosen mods.
     pub(super) fn ask_remove(&mut self) {
         let rows = self.rows();
-        let chosen: Vec<(String, String, String)> = rows
+        let chosen: Vec<_> = rows
             .iter()
             .filter(|r| r.local.is_none() && self.ui.mods.selection.contains(&r.id))
-            .filter_map(|r| {
-                Some((
-                    r.id.clone(),
-                    r.entry.as_ref()?.project.clone(),
-                    r.title.clone(),
-                ))
-            })
+            .filter_map(|r| Some((r.id.clone(), r.entry.clone()?, r.title.clone())))
             .collect();
         if !chosen.is_empty() {
             self.confirm(Confirm::Remove(chosen));
@@ -339,47 +346,42 @@ impl Launcher {
         }
     }
 
-    /// Starts `action` on a worker.
-    pub(super) fn run(&mut self, action: Action) {
+    /// Use the exact rows the confirmation displayed, not newer rows with the same IDs.
+    pub(super) fn remove_confirmed(&mut self) {
         if !self.guard() {
             return;
         }
         let m = &mut self.ui.mods;
-        let current = m
-            .snapshot
-            .as_ref()
-            .map(|s| s.home.clone())
-            .unwrap_or_else(backend::game_home);
-        if !reviewed_here(m.confirm.is_some(), &m.reviewed_home, &current) {
-            m.confirm = None;
+        let Some(Confirm::Remove(items)) = m.confirm.take() else {
+            return;
+        };
+        let current = m.snapshot.as_ref().map(|s| s.home.as_path());
+        if current.is_none() || m.reviewed_home.take().as_deref() != current {
             m.selection.clear();
             m.notice = Some(Err(tr(
                 "The profile changed since you reviewed this. Nothing was changed; choose again.",
             )
-            .to_string()));
+            .into()));
             return;
         }
-        m.confirm = None;
-        m.notice = None;
         m.errors.clear();
-        m.busy = Some((tr("Working…").to_string(), 0.));
-        if matches!(action, Action::Remove(_)) {
-            m.selection.clear();
+        let removals = items
+            .iter()
+            .map(|(_, entry, _)| ModRemoval::registry(entry))
+            .collect::<Result<Vec<_>, _>>();
+        match removals {
+            Ok(removals) => {
+                m.selection.clear();
+                self.request_mod_edit(
+                    ModEdit::Remove(removals),
+                    tr("Remove").into(),
+                    counted(items.len(), "Removed 1 mod.", "Removed {count} mods."),
+                    false,
+                );
+            }
+            Err(error) => m.notice = Some(Err(error)),
         }
-        let (tx, home) = (
-            m.tx.clone(),
-            m.snapshot
-                .as_ref()
-                .map(|s| s.home.clone())
-                .unwrap_or_else(backend::game_home),
-        );
-        std::thread::spawn(move || run(action, &home, &tx));
     }
-}
-
-/// Whether a confirmation (if one is open) was made for the folder the change would go into.
-fn reviewed_here(confirming: bool, reviewed: &Option<PathBuf>, current: &std::path::Path) -> bool {
-    !confirming || reviewed.as_deref() == Some(current)
 }
 
 /// `one` for a count of 1, else `many` with its `{count}` filled in.
@@ -390,145 +392,9 @@ fn counted(count: usize, one: &'static str, many: &'static str) -> String {
     }
 }
 
-fn run(action: Action, home: &std::path::Path, tx: &Sender<Event>) {
-    let refuse = |why: String| {
-        let _ = tx.send(Event::Refused(why));
-    };
-    let _owner = match sunrise::txn::Lease::admit(home) {
-        Ok(owner) => owner,
-        Err(error) => return refuse(error),
-    };
-    let _lock = match sunrise_launcher::browser::lock_home(home) {
-        Ok(lock) => lock,
-        Err(e) => return refuse(e.to_string()),
-    };
-    let done = |said: String, failed: Vec<(String, String)>| {
-        let _ = tx.send(Event::Done(said, failed));
-    };
-    match action {
-        Action::TurnOff(items) => {
-            let ids: Vec<&str> = items.iter().map(|(id, _)| id.as_str()).collect();
-            match mod_list::set_all_enabled(home, &ids, false) {
-                Ok(()) => done(
-                    counted(
-                        ids.len(),
-                        "Turned off 1 mod. The game reads this when it starts.",
-                        "Turned off {count} mods. The game reads this when it starts.",
-                    ),
-                    Vec::new(),
-                ),
-                Err(e) => refuse(e),
-            }
-        }
-        Action::Remove(items) => {
-            let (mut removed, mut failed) = (0, Vec::new());
-            for (i, (id, project, title)) in items.iter().enumerate() {
-                let _ = tx.send(Event::Progress(
-                    trf("Removing {name}…", &[("name", title)]),
-                    i as f32 / items.len() as f32,
-                ));
-                match installed::remove(home, project) {
-                    Ok(_) => removed += 1,
-                    Err(e) => failed.push((id.clone(), e)),
-                }
-            }
-            done(
-                counted(removed, "Removed 1 mod.", "Removed {count} mods."),
-                failed,
-            );
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::channel;
-    use sunrise_launcher_nbt::{self as nbt, Limits, Tag};
-
-    fn home_with_world(mod_id: &str) -> PathBuf {
-        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-        let home = std::env::temp_dir().join(format!(
-            "alt-mods-actions-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let _ = std::fs::remove_dir_all(&home);
-        let dir = home.join("saves/Home");
-        std::fs::create_dir_all(dir.join("region")).unwrap();
-        let record = Tag::compound([
-            ("ModId", Tag::String(mod_id.into())),
-            ("ModVersion", Tag::String("1".into())),
-        ]);
-        let root = Tag::compound([
-            (
-                "Data",
-                Tag::compound([("LevelName", Tag::String("Home".into()))]),
-            ),
-            (
-                "sunrise",
-                Tag::compound([("ContentModList", Tag::List(vec![record]))]),
-            ),
-        ]);
-        let bytes = nbt::write_named(
-            &nbt::NamedTag {
-                name: "".into(),
-                tag: root,
-            },
-            Limits::default(),
-        )
-        .unwrap();
-        std::fs::write(dir.join("level.dat"), bytes).unwrap();
-        std::fs::write(dir.join("region/r.0.0.mca"), [7u8; 64]).unwrap();
-        mod_list::set_enabled(&home, mod_id, true).unwrap();
-        mod_list::set_enabled(&home, "unrelated", true).unwrap();
-        home
-    }
-
-    fn off(ids: &[&str]) -> Action {
-        Action::TurnOff(
-            ids.iter()
-                .map(|i| (i.to_string(), i.to_uppercase()))
-                .collect(),
-        )
-    }
-
-    #[test]
-    fn turning_off_a_mod_a_world_was_saved_with_is_just_the_switch() {
-        let home = home_with_world("bricks");
-        let (tx, rx) = channel();
-        run(off(&["bricks"]), &home, &tx);
-        assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
-        assert!(!mod_list::is_enabled(&home, "bricks"));
-        assert!(mod_list::is_enabled(&home, "unrelated"));
-        assert!(!home.join("backups").exists(), "no backup, no prompt");
-        std::fs::remove_dir_all(home).ok();
-    }
-
-    #[test]
-    fn old_backups_are_left_exactly_where_they_are() {
-        let home = home_with_world("bricks");
-        let old = home.join("backups");
-        std::fs::create_dir_all(&old).unwrap();
-        std::fs::write(old.join("2026-01-01_00-00-00_Home.zip"), b"older backup").unwrap();
-        let (tx, rx) = channel();
-        run(off(&["bricks"]), &home, &tx);
-        run(
-            Action::Remove(vec![("bricks".into(), "bricks".into(), "BRICKS".into())]),
-            &home,
-            &tx,
-        );
-        assert!(rx
-            .try_iter()
-            .any(|e| matches!(e, Event::Done(..) | Event::Refused(_))));
-        let kept: Vec<_> = std::fs::read_dir(&old)
-            .unwrap()
-            .map(|e| e.unwrap().file_name())
-            .collect();
-        assert_eq!(kept, ["2026-01-01_00-00-00_Home.zip"]);
-        assert_eq!(std::fs::read(old.join(&kept[0])).unwrap(), b"older backup");
-        std::fs::remove_dir_all(home).ok();
-    }
 
     #[test]
     fn counts_of_mods_say_mod_once_and_mods_otherwise() {
@@ -544,29 +410,6 @@ mod tests {
             counted(0, "Removed 1 mod.", "Removed {count} mods."),
             "Removed 0 mods."
         );
-    }
-
-    #[test]
-    fn a_mod_no_world_uses_changes_at_once() {
-        let home = home_with_world("bricks");
-        let (tx, rx) = channel();
-        run(off(&["unrelated"]), &home, &tx);
-        assert!(matches!(rx.try_iter().last(), Some(Event::Done(..))));
-        assert!(!mod_list::is_enabled(&home, "unrelated"));
-        std::fs::remove_dir_all(home).ok();
-    }
-
-    #[test]
-    fn a_review_made_for_one_setup_cannot_change_another() {
-        let a = PathBuf::from("/a/home");
-        let b = PathBuf::from("/b/home");
-        assert!(
-            reviewed_here(false, &None, &a),
-            "no confirmation open: nothing to match"
-        );
-        assert!(reviewed_here(true, &Some(a.clone()), &a));
-        assert!(!reviewed_here(true, &Some(a.clone()), &b));
-        assert!(!reviewed_here(true, &None, &a));
     }
 }
 

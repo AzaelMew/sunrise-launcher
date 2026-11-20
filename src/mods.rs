@@ -69,8 +69,8 @@ enum Catalog {
 
 /// A batch the player asked for and has to confirm: named, counted, nothing started yet.
 enum Confirm {
-    /// (mod id, project id, title)
-    Remove(Vec<(String, String, String)>),
+    /// (mod id, exact installed row, title)
+    Remove(Vec<(String, Entry, String)>),
 }
 
 struct Open {
@@ -131,10 +131,6 @@ enum Event {
     PackPage((SourceId, String), pack_project::PackPage),
     /// A resource or data pack install ended: what it said.
     PackDone(Result<String, String>),
-    /// The batch was refused before changing anything.
-    Refused(String),
-    /// A batch ended: what it said, and which mods failed and why.
-    Done(String, Vec<(String, String)>),
 }
 
 /// The kinds of pack Packs › Installed lists, one at a time.
@@ -491,33 +487,6 @@ impl Launcher {
                 Event::Packs(seq, result) => self.pack_answer(seq, result),
                 Event::PackPage(key, page) => self.pack_page_answer(key, page),
                 Event::PackDone(result) => self.pack_installed(result),
-                Event::Refused(why) => {
-                    m.busy = None;
-                    m.notice = Some(Err(why));
-                }
-                Event::Done(said, failed) => {
-                    m.busy = None;
-                    m.errors.clear();
-                    m.errors.extend(failed.iter().cloned());
-                    m.notice = Some(match failed.is_empty() {
-                        true => Ok(said),
-                        false => Err(format!(
-                            "{said} {}",
-                            trf(
-                                "Not done: {list}",
-                                &[(
-                                    "list",
-                                    &failed
-                                        .iter()
-                                        .map(|(id, why)| format!("{id}: {why}"))
-                                        .collect::<Vec<_>>()
-                                        .join("; ")
-                                )]
-                            )
-                        )),
-                    });
-                    // The list is read again by the next refresh (the files' times moved).
-                }
             }
         }
         changed
@@ -675,7 +644,7 @@ impl Launcher {
     /// Whether a mod change is in progress (mine or the shared install's), for the shared Play
     /// and setup gates. Reads only the Mods busy flags, never the launch state.
     pub(super) fn mutating(&self) -> bool {
-        self.ui.mods.busy.is_some() || self.mods.busy.is_some()
+        self.ui.mods.busy.is_some() || self.mods.busy.is_some() || self.mods.world_ask.is_some()
     }
 
     /// Build… on a row: the one native build path, which asks for permission first. The player

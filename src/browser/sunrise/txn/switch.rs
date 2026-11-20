@@ -25,7 +25,7 @@ const MAX_TRIALS: usize = 20_000;
 pub(super) struct Package {
     pub(super) manifest: Manifest,
     pub(super) digest: String,
-    relative: PathBuf,
+    pub(super) relative: PathBuf,
     file: PathBuf,
     pub(super) row: Option<installed::Entry>,
     pub(super) on: bool,

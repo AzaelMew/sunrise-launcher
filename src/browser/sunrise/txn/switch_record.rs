@@ -200,7 +200,11 @@ fn valid_destination(path: &Path) -> bool {
             (first == "mod-browser" && matches!(file.to_str(), Some("pack.json" | "pack.spack")))
                 || ((first == DIR || first == NATIVE_DIR)
                     && file.to_str().is_some_and(|name| {
-                        name.ends_with(".smod") && crate::browser::safe_name(name).is_some()
+                        (name.ends_with(".smod") && crate::browser::safe_name(name).is_some())
+                            || (first == NATIVE_DIR
+                                && name
+                                    .strip_suffix(".origin.json")
+                                    .is_some_and(sunrise_launcher_smod::index::valid_id))
                     }))
         }
         _ => false,
@@ -209,7 +213,9 @@ fn valid_destination(path: &Path) -> bool {
 
 pub(super) fn valid_package_destination(path: &Path) -> bool {
     use sunrise_launcher_smod::mod_list::{DIR, NATIVE_DIR};
-    (path.starts_with(DIR) || path.starts_with(NATIVE_DIR)) && valid_destination(path)
+    (path.starts_with(DIR) || path.starts_with(NATIVE_DIR))
+        && path.extension().is_some_and(|ext| ext == "smod")
+        && valid_destination(path)
 }
 
 pub(super) fn destination_key(path: &Path) -> String {

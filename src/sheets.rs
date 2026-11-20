@@ -750,8 +750,10 @@ impl Launcher {
         let question = &ask.question;
         let prepared = match &ask.then {
             crate::mods_page::Then::PreparedRegistry(prepared) => Some(prepared.plan.question()),
+            crate::mods_page::Then::PreparedEdit(prepared) => Some(prepared.plan.question()),
             _ => None,
         };
+        let removing = matches!(ask.then, crate::mods_page::Then::PreparedEdit(_));
         let installing = matches!(ask.then, crate::mods_page::Then::Install(_));
         let entries = self
             .instances
@@ -777,7 +779,9 @@ impl Launcher {
             .flex()
             .flex_col()
             .gap(px(12.))
-            .child(title(if prepared.is_some() {
+            .child(title(if removing {
+                tr("This removal may affect saved worlds").into()
+            } else if prepared.is_some() {
                 tr("This install may affect saved worlds").into()
             } else {
                 trf(
@@ -804,7 +808,9 @@ impl Launcher {
                     .child(
                         button(
                             "alt-world-switch",
-                            tr(if prepared.is_some() {
+                            tr(if removing {
+                                "Remove anyway"
+                            } else if prepared.is_some() {
                                 "Install anyway"
                             } else {
                                 "Switch anyway"
@@ -822,7 +828,9 @@ impl Launcher {
                     .child(
                         crate::frame::primary(
                             "alt-world-stay",
-                            tr(if prepared.is_some() {
+                            tr(if removing {
+                                "Cancel removal"
+                            } else if prepared.is_some() {
                                 "Cancel install"
                             } else {
                                 "Stay on this version"
@@ -1137,8 +1145,7 @@ impl Launcher {
                             self.native_consent_build.take().unwrap_or_default();
                         self.build_native_on(base, leave_out)
                     }
-                    PendingConsent::Toggle(entry) => self.mods_switch(&entry),
-                    PendingConsent::TurnOn(id, _) => self.turn_on_local(&id),
+                    PendingConsent::Edit(request) => self.start_mod_edit(*request),
                     PendingConsent::Install(..) | PendingConsent::Collection(..)
                         if self.mods.consent_request.is_some() =>
                     {

@@ -1529,5 +1529,16 @@
   "This install may affect saved worlds": "This install may affect saved worlds",
   "Install anyway": "Install anyway",
   "Cancel install": "Cancel install",
-  "Installing…": "Installing…"
+  "Installing…": "Installing…",
+  "The mod registry changed while the edit was being prepared. Nothing was changed.": "The mod registry changed while the edit was being prepared. Nothing was changed.",
+  "The selected mod changed before it could be removed. Nothing was changed.": "The selected mod changed before it could be removed. Nothing was changed.",
+  "{name} was taken down: {reason}": "{name} was taken down: {reason}",
+  "Remove anyway? [y/N]": "Remove anyway? [y/N]",
+  "Removal cancelled. Nothing was changed.": "Removal cancelled. Nothing was changed.",
+  "Turned on {mod}.": "Turned on {mod}.",
+  "Turned off {mod}.": "Turned off {mod}.",
+  "Their files are deleted.": "Their files are deleted.",
+  "This removal may affect saved worlds": "This removal may affect saved worlds",
+  "Remove anyway": "Remove anyway",
+  "Cancel removal": "Cancel removal"
 }

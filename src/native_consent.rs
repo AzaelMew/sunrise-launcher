@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use sunrise_launcher::{
     backend::Settings,
-    browser::{installed::Entry, mod_list, Project, SourceId},
+    browser::{mod_list, Project, SourceId},
     github_mods::Resolved,
     native_status::{BuildInput, Registry},
 };
@@ -14,10 +14,8 @@ pub(super) enum PendingConsent {
     ReadingBuild(Arc<PathBuf>),
     /// A build of these packages, named when the question opened from the files it takes in.
     Build(Vec<BuildInput>),
-    Toggle(Entry),
-    /// A mod copied into the folder by hand, to be turned on (its id and title): nothing is
-    /// turned on until the choice is made.
-    TurnOn(String, String),
+    /// One activation bound to the profile and explicit enable bit before asking.
+    Edit(Box<crate::mods_page::ModEditRequest>),
     /// The project to install by id, the project when the page had it, and the name the page or
     /// card that asked was showing for it.
     Install(SourceId, String, Option<Project>, Option<String>),
@@ -43,8 +41,7 @@ impl PendingConsent {
                 1 => crate::i18n::tr("this mod").into(),
                 count => crate::i18n::trf("{count} mods", &[("count", &count.to_string())]),
             },
-            Self::Toggle(entry) => entry.title.clone(),
-            Self::TurnOn(_, title) => title.clone(),
+            Self::Edit(request) => request.name.clone(),
             // The mod as the page that asked names it ("JEI"), not its id ("jei").
             Self::Install(_, id, project, shown) => shown
                 .clone()
@@ -130,13 +127,8 @@ pub(super) fn resolve(
                 let ids: Vec<&str> = inputs.iter().map(|i| i.id.as_str()).collect();
                 mod_list::set_all_enabled(home, &ids, false)?;
             }
-            PendingConsent::Toggle(entry) => {
-                if let Some(id) = sunrise_launcher::browser::sunrise::mod_id(&entry) {
-                    mod_list::set_enabled(home, id, false)?;
-                }
-            }
             PendingConsent::ReadingBuild(_)
-            | PendingConsent::TurnOn(..)
+            | PendingConsent::Edit(_)
             | PendingConsent::Install(..)
             | PendingConsent::Collection(..)
             | PendingConsent::Github(..) => {}
@@ -350,7 +342,35 @@ mod tests {
     fn declining_the_question_for_a_hand_copied_mod_turns_nothing_on() {
         let home = tempfile::tempdir().unwrap();
         let mut settings = sunrise_launcher::backend::Settings::default();
-        let mut pending = Some(PendingConsent::TurnOn("mine".into(), "Mine".into()));
+        use sunrise_launcher::{
+            browser::sunrise::txn::ModEdit,
+            instances::{Instance, Kind},
+        };
+        let mut pending = Some(PendingConsent::Edit(Box::new(
+            crate::mods_page::ModEditRequest {
+                instance: Instance {
+                    id: "mine".into(),
+                    name: "My setup".into(),
+                    kind: Kind::Own,
+                    work: home.path().into(),
+                    home: home.path().into(),
+                    icon: None,
+                    group: None,
+                    version: None,
+                    channel: Default::default(),
+                    native_profile: Default::default(),
+                    played: Default::default(),
+                    last_played: None,
+                    launch: Default::default(),
+                },
+                edit: ModEdit::SetEnabled {
+                    ids: vec!["mine".into()],
+                    enabled: true,
+                },
+                name: "Mine".into(),
+                success: "Turned on Mine.".into(),
+            },
+        )));
         assert_eq!(pending.as_ref().unwrap().name(), "Mine");
         assert!(
             resolve(&mut pending, false, true, &mut settings, home.path())

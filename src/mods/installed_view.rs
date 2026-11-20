@@ -258,43 +258,71 @@ impl Launcher {
 
         // ---- the confirmation, when one is open: names, counts, nothing started yet
         let confirm = self.ui.mods.confirm.as_ref().map(|confirm| {
-            let panel = card().m(px(12.)).p(px(16.)).flex().flex_col().gap(px(10.)).border_color(c(palette().warning));
+            let panel = card()
+                .m(px(12.))
+                .p(px(16.))
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .border_color(c(palette().warning));
             match confirm {
                 Confirm::Remove(chosen) => {
                     let ids: HashSet<String> = chosen.iter().map(|(id, ..)| id.clone()).collect();
                     let index = sunrise::fetched_index();
                     let dependents = model::dependents(&rows, &ids, index.as_deref());
-                    let names = chosen.iter().map(|(_, _, t)| t.as_str()).take(12).collect::<Vec<_>>().join(", ");
+                    let names = chosen
+                        .iter()
+                        .map(|(_, _, t)| t.as_str())
+                        .take(12)
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     let more = chosen.len().saturating_sub(12);
-                    let items = chosen.clone();
+                    let count = chosen.len().to_string();
                     panel
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf("Remove {count} mods?", &[("count", &chosen.len().to_string())])))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(trf(
+                            "Remove {count} mods?",
+                            &[("count", &chosen.len().to_string())],
+                        )))
                         .child(div().text_size(px(tokens::LABEL)).child(match more {
                             0 => names,
-                            n => trf("{names} and {more} more", &[("names", &names), ("more", &n.to_string())]),
+                            n => trf(
+                                "{names} and {more} more",
+                                &[("names", &names), ("more", &n.to_string())],
+                            ),
                         }))
                         .children(dependents.into_iter().map(|(who, needed)| {
-                            div().text_size(px(tokens::LABEL)).text_color(c(palette().warning)).child(crate::selectable::selectable(trf(
-                                "{who} needs {needed}: it may stop working.",
-                                &[("who", &who), ("needed", &needed.join(", "))],
-                            )))
+                            div()
+                                .text_size(px(tokens::LABEL))
+                                .text_color(c(palette().warning))
+                                .child(crate::selectable::selectable(trf(
+                                    "{who} needs {needed}: it may stop working.",
+                                    &[("who", &who), ("needed", &needed.join(", "))],
+                                )))
                         }))
-                        .child(muted(tr("Their files are deleted. Worlds saved with them may lose what they added.")))
+                        .child(muted(tr("Their files are deleted.")))
                         .child(
                             div()
                                 .flex()
                                 .gap(px(10.))
-                                .child(crate::frame::button("alt-confirm-cancel", tr("Cancel")).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.ui.mods.confirm = None;
-                                    cx.notify();
-                                })))
                                 .child(
-                                    crate::frame::button("alt-confirm-remove", trf("Remove {count}", &[("count", &items.len().to_string())]))
-                                        .text_color(c(palette().danger))
-                                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                            this.run(actions::Action::Remove(items.clone()));
+                                    crate::frame::button("alt-confirm-cancel", tr("Cancel"))
+                                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                            this.ui.mods.confirm = None;
                                             cx.notify();
                                         })),
+                                )
+                                .child(
+                                    crate::frame::button(
+                                        "alt-confirm-remove",
+                                        trf("Remove {count}", &[("count", &count)]),
+                                    )
+                                    .text_color(c(palette().danger))
+                                    .on_click(cx.listener(
+                                        move |this, _: &ClickEvent, _, cx| {
+                                            this.remove_confirmed();
+                                            cx.notify();
+                                        },
+                                    )),
                                 ),
                         )
                 }

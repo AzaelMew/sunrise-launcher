@@ -45,22 +45,27 @@ pub fn set_all_enabled(home: &Path, ids: &[&str], on: bool) -> Result<(), String
         super::sunrise::txn::require_current_update(home, ids)?;
     }
     let path = home.join(MODS_LIST);
-    let text = fs::read_to_string(&path).unwrap_or_default();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
     let keys: Vec<String> = ids.iter().map(|id| format!("mod.{id}")).collect();
-    let mut lines: Vec<String> = text
-        .lines()
+    let mut out: String = text
+        .split_inclusive('\n')
         .filter(|l| {
             l.split_once(':')
                 .is_none_or(|(k, _)| !keys.iter().any(|key| k.trim() == key))
         })
-        .map(str::to_owned)
         .collect();
-    if on {
-        lines.extend(keys.iter().map(|key| format!("{key}:true")));
-    }
-    let mut out = lines.join("\n");
-    if !out.is_empty() {
-        out.push('\n');
+    if on && !keys.is_empty() {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        for key in keys {
+            out.push_str(&key);
+            out.push_str(":true\n");
+        }
     }
     fs::write(&path, out).map_err(|e| format!("{}: {e}", path.display()))
 }

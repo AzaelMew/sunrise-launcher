@@ -1,13 +1,19 @@
 //! Exact same-base installs use the same private preparation and durable publication as Switch.
 use super::{build, durable, switch, unsettled, Active, Lease, Target};
-use crate::{browser::installed, i18n::tr, native_mods, worlds};
+use crate::{
+    browser::{installed, sunrise, Kind, SourceId},
+    github_mods,
+    i18n::{tr, trf},
+    instances::Instance,
+    native_mods, worlds,
+};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use sunrise_launcher_smod::mod_list;
+use sunrise_launcher_smod::{index, mod_list};
 
 /// The profile stays admitted while a complete candidate and optional sidecars are prepared.
 pub(in crate::browser::sunrise) struct StagedInstall {
@@ -25,6 +31,24 @@ enum Basis {
 }
 
 impl StagedInstall {
+    pub fn for_instance(
+        owner: Arc<Lease>,
+        instance: &Instance,
+        download: impl Fn(&str, f32),
+    ) -> Result<Self, String> {
+        if owner.home() != instance.home {
+            return Err(unsettled());
+        }
+        match owner.active_build()? {
+            Some(active) => Self::begin(owner, active),
+            None => {
+                let bound = owner.bind_bootstrap(|| Target::for_profile(instance))?;
+                owner.prepare_bound(&bound, |fraction| download(bound.base(), fraction))?;
+                Self::first(owner, &bound)
+            }
+        }
+    }
+
     pub fn begin(owner: Arc<Lease>, prior: Active) -> Result<Self, String> {
         prior.verify_artifacts()?;
         Self::copy_current(owner, |owner| {
@@ -43,8 +67,8 @@ impl StagedInstall {
         owner: Arc<Lease>,
         reserve: impl FnOnce(&Lease) -> Result<(PathBuf, Basis), String>,
     ) -> Result<Self, String> {
-        let before = switch::Inventory::read(owner.home())?;
         let input = build::inputs(owner.home())?;
+        let before = switch::Inventory::read(owner.home())?;
         let (root, basis) = reserve(&owner)?;
         let stage = root.join("candidate");
         let plan = Self {
@@ -69,6 +93,9 @@ impl StagedInstall {
                 write(&plan.stage.join(name), &bytes)?;
             }
         }
+        if build::inputs(&plan.stage)? != input || build::inputs(plan.owner.home())? != input {
+            return Err(unsettled());
+        }
         Ok(plan)
     }
 
@@ -85,11 +112,41 @@ impl StagedInstall {
 
     pub fn prepare(
         self,
+        index: &index::Index,
         sidecars: &[&str],
         profile: native_mods::Profile,
         progress: impl Fn(native_mods::Step),
     ) -> Result<ReadyInstall, String> {
+        let sidecars = sidecars
+            .iter()
+            .map(|name| (PathBuf::from(name), Some(self.stage.join(name))))
+            .collect();
+        let after = self.proposed_inventory(index)?;
+        self.seal(after, sidecars, &[], profile, progress)
+    }
+
+    fn proposed_inventory(&self, index: &index::Index) -> Result<switch::Inventory, String> {
         let after = switch::Inventory::read(&self.stage)?;
+        for (id, pkg) in &after.packages {
+            let origin = pkg.row.as_ref().map_or(id.as_str(), |row| &row.project);
+            if let Some(revoked) = index.revoked(origin, &pkg.digest).filter(|_| pkg.on) {
+                return Err(trf(
+                    "{name} was taken down: {reason}",
+                    &[("name", &pkg.manifest.name), ("reason", &revoked.reason)],
+                ));
+            }
+        }
+        Ok(after)
+    }
+
+    fn seal(
+        self,
+        after: switch::Inventory,
+        sidecars: Vec<(PathBuf, Option<PathBuf>)>,
+        requested_off: &[String],
+        profile: native_mods::Profile,
+        progress: impl Fn(native_mods::Step),
+    ) -> Result<ReadyInstall, String> {
         let waiting = build::waiting_packages(self.owner.home())?;
         let mut verified = chosen(&after);
         for (id, item) in waiting {
@@ -117,11 +174,9 @@ impl StagedInstall {
             .packages
             .iter()
             .filter(|(id, old)| {
-                old.on
-                    && after
-                        .packages
-                        .get(*id)
-                        .is_none_or(|new| !new.on || new.digest != old.digest)
+                after.packages.get(*id).is_none_or(|new| {
+                    old.on && !requested_off.contains(id) && (!new.on || new.digest != old.digest)
+                })
             })
             .map(|(id, old)| worlds::switch::Changed {
                 id,
@@ -172,9 +227,7 @@ impl StagedInstall {
             return Err(unsettled());
         }
         let mut steps = switch::changes(home, &self.stage, &self.before, &chosen(&after))?;
-        for name in sidecars {
-            steps.push((PathBuf::from(name), Some(self.stage.join(name))));
-        }
+        steps.extend(sidecars);
         self.owner.seal_staged_set(&next, &steps)?;
         Ok(ReadyInstall {
             install: self,
@@ -183,6 +236,171 @@ impl StagedInstall {
             fence,
             question,
         })
+    }
+}
+
+/// An explicit player edit, not an instruction to find a new version or omit a dependent.
+pub enum ModEdit {
+    SetEnabled { ids: Vec<String>, enabled: bool },
+    Remove(Vec<ModRemoval>),
+}
+
+pub struct ModRemoval {
+    id: String,
+    sha256: String,
+    origin: RemovalOrigin,
+}
+
+enum RemovalOrigin {
+    Registry(String),
+    Github,
+}
+
+impl ModRemoval {
+    pub fn registry(entry: &installed::Entry) -> Result<Self, String> {
+        let id = sunrise::mod_id(entry)
+            .filter(|_| entry.source == SourceId::Sunrise && entry.kind == Kind::Mod)
+            .ok_or_else(unsettled)?;
+        let sha256 = entry
+            .checksum
+            .strip_prefix("SHA-256:")
+            .ok_or_else(unsettled)?;
+        Ok(Self {
+            id: id.into(),
+            sha256: sha256.into(),
+            origin: RemovalOrigin::Registry(entry.project.clone()),
+        })
+    }
+
+    pub fn github(origin: &github_mods::Origin) -> Self {
+        Self {
+            id: origin.id.clone(),
+            sha256: origin.sha256.clone(),
+            origin: RemovalOrigin::Github,
+        }
+    }
+}
+
+pub struct PreparedModEdit {
+    ready: ReadyInstall,
+    index: String,
+}
+
+impl PreparedModEdit {
+    pub fn question(&self) -> &worlds::SwitchQuestion {
+        self.ready.question()
+    }
+
+    pub fn commit(self, approved: bool) -> Result<(), String> {
+        self.ready.commit(approved, || {
+            let (_, current) = sunrise::authoritative_index()?;
+            if current != self.index {
+                return Err(tr("The mod registry changed while the edit was being prepared. Nothing was changed.").into());
+            }
+            Ok(())
+        })
+    }
+}
+
+pub fn prepare_mod_edit(
+    owner: Arc<Lease>,
+    instance: &Instance,
+    edit: ModEdit,
+    progress: &dyn Fn(&str, f32),
+) -> Result<PreparedModEdit, String> {
+    let (index, evidence) = sunrise::authoritative_index()?;
+    let plan = StagedInstall::for_instance(owner, instance, progress)?;
+    let ready = plan.edit(edit, &index, instance.native_profile, |step| {
+        progress(&step.label(), 0.99)
+    })?;
+    Ok(PreparedModEdit {
+        ready,
+        index: evidence,
+    })
+}
+
+impl StagedInstall {
+    pub(in crate::browser::sunrise) fn edit(
+        self,
+        edit: ModEdit,
+        index: &index::Index,
+        profile: native_mods::Profile,
+        progress: impl Fn(native_mods::Step),
+    ) -> Result<ReadyInstall, String> {
+        let mut sidecars = Vec::new();
+        let mut requested_off = Vec::new();
+        match edit {
+            ModEdit::SetEnabled { ids, enabled } => {
+                if ids.is_empty() || ids.iter().any(|id| !self.before.packages.contains_key(id)) {
+                    return Err(unsettled());
+                }
+                let refs: Vec<_> = ids.iter().map(String::as_str).collect();
+                crate::browser::mod_list::set_all_enabled(&self.stage, &refs, enabled)?;
+                if !enabled {
+                    requested_off = ids;
+                }
+            }
+            ModEdit::Remove(removals) => {
+                if removals.is_empty() {
+                    return Err(unsettled());
+                }
+                let mut removed = BTreeSet::new();
+                let mut browser = self.before.browser.clone();
+                let rows = browser["entries"].as_array_mut().ok_or_else(unsettled)?;
+                let mut changed = false;
+                for removal in &removals {
+                    let pkg = self
+                        .before
+                        .packages
+                        .get(&removal.id)
+                        .ok_or_else(unsettled)?;
+                    if !removed.insert(removal.id.as_str())
+                        || !removal.sha256.eq_ignore_ascii_case(&pkg.digest)
+                    {
+                        return Err(tr("The selected mod changed before it could be removed. Nothing was changed.").into());
+                    }
+                    let file = self.stage.join(&pkg.relative);
+                    match &removal.origin {
+                        RemovalOrigin::Registry(project) => {
+                            let row = pkg
+                                .row
+                                .as_ref()
+                                .filter(|row| &row.project == project)
+                                .ok_or_else(unsettled)?;
+                            rows.retain(|entry| entry["file"].as_str() != Some(row.file.as_str()));
+                            changed = true;
+                        }
+                        RemovalOrigin::Github => {
+                            let origin_path = github_mods::origin_path(Path::new(""), &removal.id);
+                            let path = self.stage.join(&origin_path);
+                            let bytes = build::optional_bytes(&path)?.ok_or_else(unsettled)?;
+                            let origin: github_mods::Origin =
+                                serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                            if origin.id != removal.id
+                                || origin.sha256 != pkg.digest
+                                || pkg.row.is_some()
+                                || file != path.with_file_name(format!("{}.smod", removal.id))
+                            {
+                                return Err(unsettled());
+                            }
+                            fs::remove_file(&path).map_err(|e| at(&path, e))?;
+                            sidecars.push((origin_path, None));
+                        }
+                    }
+                    fs::remove_file(&file).map_err(|e| at(&file, e))?;
+                }
+                let ids: Vec<_> = removed.into_iter().collect();
+                crate::browser::mod_list::set_all_enabled(&self.stage, &ids, false)?;
+                if changed {
+                    write(
+                        &self.stage.join(installed::MANIFEST),
+                        &serde_json::to_vec(&browser).map_err(|e| e.to_string())?,
+                    )?;
+                }
+            }
+        }
+        let after = self.proposed_inventory(index)?;
+        self.seal(after, sidecars, &requested_off, profile, progress)
     }
 }
 

@@ -6,10 +6,7 @@ use super::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use sunrise_launcher::browser::{
-    self, installed, mod_list, sunrise, Kind as PackKind, Project, SourceId,
-};
-use sunrise_launcher::native_status;
+use sunrise_launcher::browser::{self, installed, sunrise, Kind as PackKind, Project, SourceId};
 
 mod queue;
 pub(crate) mod removal;
@@ -155,8 +152,24 @@ pub(crate) struct PreparedRegistry {
     finished: Finished,
 }
 
+pub(super) struct ModEditRequest {
+    pub(super) instance: sunrise_launcher::instances::Instance,
+    pub(super) edit: sunrise::txn::ModEdit,
+    pub(super) name: String,
+    pub(super) success: String,
+}
+
+pub(crate) struct PreparedEdit {
+    instance: String,
+    name: String,
+    success: String,
+    pub(crate) plan: sunrise::txn::PreparedModEdit,
+}
+
 pub(super) enum Event {
     Progress(String, f32),
+    ReadyEdit(Box<PreparedEdit>),
+    EditFinished(Result<Option<String>, String>),
     Done(Result<Finished, installed::InstallError>),
     /// The install found native code the plan didn't know of before the player had allowed
     /// it: the question to ask, whose answer starts the same install again.
@@ -395,6 +408,23 @@ impl Launcher {
                         then: Then::PreparedRegistry(prepared),
                     });
                 }
+                Event::ReadyEdit(prepared) => {
+                    m.busy = None;
+                    m.world_ask = Some(WorldAsk {
+                        instance: prepared.instance.clone(),
+                        question: sunrise_launcher::worlds::Question {
+                            mods: Vec::new(),
+                            worlds: Vec::new(),
+                        },
+                        then: Then::PreparedEdit(prepared),
+                    });
+                }
+                Event::EditFinished(result) => {
+                    m.busy = None;
+                    m.message = result.transpose();
+                    m.reload_installed();
+                    m.installed_list.reset();
+                }
                 Event::InstallCancelled => {
                     m.busy = None;
                     if let Some(target) = m.running.take() {
@@ -516,49 +546,34 @@ impl Launcher {
         });
     }
 
-    /// Turns a Sunrise mod the browser installed on or off, as the game's Options > Mods does.
-    pub(super) fn mods_switch(&mut self, e: &installed::Entry) {
-        let home = self.mods.home();
-        let _owner = match sunrise::txn::Lease::admit(&home) {
-            Ok(owner) => owner,
-            Err(error) => {
-                self.mods.message = Some(Err(error));
-                return;
-            }
-        };
-        // An update holds the folder: the window doesn't wait for it.
-        let Some(_lock) = browser::try_lock_home(&home) else {
-            self.mods.message = Some(Err(tr("Wait for the current operation to finish.").into()));
-            return;
-        };
-        let Some(id) = sunrise::mod_id(e) else {
-            return;
-        };
-        let on = !mod_list::is_enabled(&home, id);
-        if on
-            && native_status::is_native_file(&e.file)
-            && self.settings.native_mods_allowed_at.is_none()
-        {
-            self.pending_consent = Some(PendingConsent::Toggle(e.clone()));
-            return;
-        }
-        let index = sunrise::fetched_index();
-        let title = index
-            .as_ref()
-            .and_then(|index| index.project(&e.project))
-            .map_or(id, |project| &project.name);
-        let revoked = index.as_ref().and_then(|index| {
-            let hash = e.checksum.trim_start_matches("SHA-256:");
-            index.revoked(&e.project, hash)
-        });
-        self.mods.message = Some(match revoked.filter(|_| on) {
-            Some(revoked) => Err(format!("{title} was taken down: {}", revoked.reason)),
-            None => mod_list::set_enabled(&home, id, on).map(|()| {
-                format!(
-                    "{title} is {}. The game reads this when it starts.",
-                    if on { "on" } else { "off" }
-                )
-            }),
+    /// Runs the exact action captured by the Installed row, including after native consent.
+    pub(super) fn start_mod_edit(&mut self, request: ModEditRequest) {
+        let ModEditRequest {
+            instance,
+            edit,
+            name,
+            success,
+        } = request;
+        self.mods.busy = Some((name.clone(), tr("Working…").into(), 0.));
+        self.mods.message = None;
+        let tx = self.mods.tx.clone();
+        std::thread::spawn(move || {
+            let prepared = sunrise::txn::Lease::admit(&instance.home).and_then(|owner| {
+                sunrise::txn::prepare_mod_edit(Arc::new(owner), &instance, edit, &|line, f| {
+                    let _ = tx.send(Event::Progress(line.into(), f));
+                })
+            });
+            let event = match prepared {
+                Ok(plan) if plan.question().needed() => Event::ReadyEdit(Box::new(PreparedEdit {
+                    instance: instance.id,
+                    name,
+                    success,
+                    plan,
+                })),
+                Ok(plan) => Event::EditFinished(plan.commit(false).map(|()| Some(success))),
+                Err(error) => Event::EditFinished(Err(error)),
+            };
+            let _ = tx.send(event);
         });
     }
 
@@ -895,6 +910,26 @@ impl Launcher {
             });
             return;
         }
+        if let Then::PreparedEdit(prepared) = ask.then {
+            let PreparedEdit {
+                name,
+                success,
+                plan,
+                ..
+            } = *prepared;
+            self.mods.busy = Some((name, tr("Working…").into(), 0.99));
+            let tx = self.mods.tx.clone();
+            std::thread::spawn(move || {
+                let result = if answer == sunrise_launcher::worlds::Answer::Stay {
+                    drop(plan);
+                    Ok(None)
+                } else {
+                    plan.commit(true).map(|()| Some(success))
+                };
+                let _ = tx.send(Event::EditFinished(result));
+            });
+            return;
+        }
         if answer == sunrise_launcher::worlds::Answer::Stay {
             if matches!(ask.then, Then::Build(_)) && self.native_attempts.is_some() {
                 self.install_build_ended(BuildEnd::Stopped(native_mods::CANCELLED.into()));
@@ -907,7 +942,7 @@ impl Launcher {
                 self.build_native_on(Some(base), native_mods::LeaveOut::Only(allow))
             }
             Then::Install(ask) => self.install_replacing(*ask, &allow),
-            Then::PreparedRegistry(_) => unreachable!("handled above"),
+            Then::PreparedRegistry(_) | Then::PreparedEdit(_) => unreachable!("handled above"),
         }
     }
 
@@ -1231,6 +1266,7 @@ pub(crate) enum Then {
     Install(Box<BreakAsk>),
     /// The exact prepared set, image and locked world evidence to approve once.
     PreparedRegistry(Box<PreparedRegistry>),
+    PreparedEdit(Box<PreparedEdit>),
 }
 
 /// A switch, update or install that waits for the player's answer: it would remove mods that

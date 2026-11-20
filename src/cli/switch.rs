@@ -98,7 +98,13 @@ pub(super) fn run(instance: &instances::Instance, tag: &str, as_json: bool) -> R
     }
     output.flush().map_err(|e| e.to_string())?;
     if plan.question().needed()
-        && !approve(tty, io::stdin().lock(), &mut output).map_err(|e| e.to_string())?
+        && !approve(
+            tty,
+            io::stdin().lock(),
+            &mut output,
+            tr("Switch anyway? [y/N]"),
+        )
+        .map_err(|e| e.to_string())?
     {
         return Err(tr("Switch cancelled. Nothing was switched.").into());
     }
@@ -137,11 +143,32 @@ fn show_effects(output: &mut impl Write, effects: &sunrise::txn::SwitchEffects) 
     Ok(())
 }
 
-fn approve(tty: bool, mut input: impl BufRead, output: &mut impl Write) -> io::Result<bool> {
+pub(super) fn approve_world_change(
+    question: &sunrise_launcher::worlds::SwitchQuestion,
+    prompt: &str,
+) -> Result<bool, String> {
+    if !question.needed() {
+        return Ok(true);
+    }
+    let tty = io::stdin().is_terminal() && io::stdout().is_terminal();
+    let mut output = io::stdout().lock();
+    for line in question.lines() {
+        terminal_line(&mut output, &line).map_err(|e| e.to_string())?;
+    }
+    output.flush().map_err(|e| e.to_string())?;
+    approve(tty, io::stdin().lock(), &mut output, prompt).map_err(|e| e.to_string())
+}
+
+fn approve(
+    tty: bool,
+    mut input: impl BufRead,
+    output: &mut impl Write,
+    prompt: &str,
+) -> io::Result<bool> {
     if !tty {
         return Ok(false);
     }
-    write!(output, "{} ", tr("Switch anyway? [y/N]"))?;
+    write!(output, "{prompt} ")?;
     output.flush()?;
     let mut line = String::new();
     let count = input.read_line(&mut line)?;
@@ -253,12 +280,12 @@ mod tests {
     #[test]
     fn approval_requires_a_flushed_terminal_and_a_complete_explicit_answer() {
         let mut out = Vec::new();
-        assert!(!approve(false, &b"y\n"[..], &mut out).unwrap());
+        assert!(!approve(false, &b"y\n"[..], &mut out, "confirm").unwrap());
         assert!(out.is_empty());
         for answer in [&b""[..], &b"y"[..], &b"\n"[..], &b"n\n"[..]] {
-            assert!(!approve(true, answer, &mut out).unwrap());
+            assert!(!approve(true, answer, &mut out, "confirm").unwrap());
         }
-        assert!(approve(true, &b"y\n"[..], &mut out).unwrap());
+        assert!(approve(true, &b"y\n"[..], &mut out, "confirm").unwrap());
         struct Broken;
         impl Write for Broken {
             fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -269,7 +296,9 @@ mod tests {
             }
         }
         assert_eq!(
-            approve(true, &b"y\n"[..], &mut Broken).unwrap_err().kind(),
+            approve(true, &b"y\n"[..], &mut Broken, "confirm")
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::BrokenPipe
         );
     }

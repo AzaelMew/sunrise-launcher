@@ -146,8 +146,12 @@ fn install_in(
                 Some(&prior),
                 progress,
             )?;
-            let proposal =
-                plan.prepare(&[RECORD, ARCHIVE], native_mods::Profile::Optimized, steps)?;
+            let proposal = plan.prepare(
+                index,
+                &[RECORD, ARCHIVE],
+                native_mods::Profile::Optimized,
+                steps,
+            )?;
             if proposal.question().needed() {
                 return Err(proposal.question().lines().join("\n"));
             }
@@ -702,7 +706,7 @@ mod tests {
         .unwrap();
         let file = PathBuf::from(&entries[0].file);
         let ready = plan
-            .prepare(&[], native_mods::Profile::Optimized, |_| {})
+            .prepare(&index, &[], native_mods::Profile::Optimized, |_| {})
             .unwrap();
         assert!(owner.active_build().unwrap().is_none());
         assert!(!home.join(&file).exists());
@@ -727,7 +731,8 @@ mod tests {
         use sunrise_launcher_nbt::{write_named, Limits, NamedTag, Tag};
         let dir = scratch("same-base-approval");
         let packs = dir.join("sunrise-packs");
-        let pack = install_fixture(&registry(&dir, true, ""), "cozy", &packs).unwrap();
+        let index = registry(&dir, true, "");
+        let pack = install_fixture(&index, "cozy", &packs).unwrap();
         let home = home(&pack.work);
         let saved = home.join("saves/example/level.dat");
         fs::create_dir_all(saved.parent().unwrap()).unwrap();
@@ -765,11 +770,15 @@ mod tests {
             let owner = Arc::new(txn::Lease::admit(&home).unwrap());
             let active = owner.active_build().unwrap().unwrap();
             let plan = txn::StagedInstall::begin(owner, active).unwrap();
-            fs::remove_file(plan.stage().join(package)).unwrap();
-            installed::Installed::default().save(plan.stage()).unwrap();
-            mod_list::set_enabled(plan.stage(), "coords_hud", false).unwrap();
+            let list = installed::Installed::load(&home);
+            let removal = txn::ModRemoval::registry(list.lookup("coords_hud").unwrap()).unwrap();
             let ready = plan
-                .prepare(&[], native_mods::Profile::Optimized, |_| {})
+                .edit(
+                    txn::ModEdit::Remove(vec![removal]),
+                    &index,
+                    native_mods::Profile::Optimized,
+                    |_| {},
+                )
                 .unwrap();
             assert_eq!(ready.question().affected.len(), 1);
             assert!(txn::Lease::admit(&home).is_err());
@@ -777,6 +786,25 @@ mod tests {
             assert_eq!(fs::read(home.join(package)).unwrap(), original_package);
             ready
         };
+        {
+            let owner = Arc::new(txn::Lease::admit(&home).unwrap());
+            let active = owner.active_build().unwrap().unwrap();
+            let list = installed::Installed::load(&home);
+            let mut entry = list.lookup("coords_hud").unwrap().clone();
+            entry.checksum = format!("SHA-256:{}", "5".repeat(64));
+            let wrong = txn::ModRemoval::registry(&entry).unwrap();
+            assert!(txn::StagedInstall::begin(owner, active)
+                .unwrap()
+                .edit(
+                    txn::ModEdit::Remove(vec![wrong]),
+                    &index,
+                    native_mods::Profile::Optimized,
+                    |_| {},
+                )
+                .is_err());
+            assert_eq!(fs::read(&pointer).unwrap(), original);
+            assert_eq!(fs::read(home.join(package)).unwrap(), original_package);
+        }
         let refused = prepare();
         assert_eq!(refused.question().affected[0].world, "Before");
         assert!(refused
@@ -819,6 +847,111 @@ mod tests {
                 .base(),
             base
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_direct_toggle_preserves_worlds_and_refuses_additional_omissions() {
+        let dir = scratch("direct-toggle");
+        let index = registry(&dir, true, "");
+        let pack = install_fixture(&index, "cozy", &dir.join("sunrise-packs")).unwrap();
+        let home = home(&pack.work);
+        let file = home.join("sunrise-mods/coords_hud.smod");
+        let bytes = fs::read(&file).unwrap();
+        let pointer = home.join("mod-browser/active-build.json");
+        let previous = fs::read(&pointer).unwrap();
+        let saved = home.join("saves/example/level.dat");
+        fs::create_dir_all(saved.parent().unwrap()).unwrap();
+        fs::write(&saved, b"unreadable world").unwrap();
+        let backup = home.join("backups/old.zip");
+        fs::create_dir(backup.parent().unwrap()).unwrap();
+        fs::write(&backup, b"older backup").unwrap();
+        let toggle = |enabled| {
+            let owner = Arc::new(txn::Lease::admit(&home).unwrap());
+            let active = owner.active_build().unwrap().unwrap();
+            txn::StagedInstall::begin(owner, active).unwrap().edit(
+                txn::ModEdit::SetEnabled {
+                    ids: vec!["coords_hud".into()],
+                    enabled,
+                },
+                &index,
+                native_mods::Profile::Optimized,
+                |_| {},
+            )
+        };
+        let dependent = home.join("sunrise-mods/dependent.smod");
+        let package = sunrise_launcher_smod::Package::write_files(&format!(
+            "id='dependent'\nname='Dependent'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[dependencies]\ncoords_hud='*'\n",
+            sunrise_launcher_smod::manifest::API
+        ), &[]).unwrap();
+        fs::write(&dependent, &package).unwrap();
+        mod_list::set_enabled(&home, "dependent", true).unwrap();
+        assert!(toggle(false).is_err());
+        assert_eq!(fs::read(&pointer).unwrap(), previous);
+        assert!(mod_list::is_enabled(&home, "coords_hud"));
+        assert!(mod_list::is_enabled(&home, "dependent"));
+        assert_eq!(fs::read(&dependent).unwrap(), package);
+        fs::remove_file(&dependent).unwrap();
+        mod_list::set_enabled(&home, "dependent", false).unwrap();
+        let selection = home.join(sunrise_launcher_smod::mod_list::FILE);
+        fs::write(&selection, b"opaque\r\nmod.coords_hud:true\r\nlast").unwrap();
+        let ready = toggle(false).unwrap();
+        assert!(!ready.question().needed());
+        assert!(mod_list::is_enabled(&home, "coords_hud"));
+        ready.commit(false, || Ok(())).unwrap();
+        assert!(!mod_list::is_enabled(&home, "coords_hud"));
+        assert_eq!(fs::read(&file).unwrap(), bytes);
+        assert_ne!(fs::read(&pointer).unwrap(), previous);
+        assert_eq!(fs::read(&saved).unwrap(), b"unreadable world");
+        assert_eq!(fs::read(&backup).unwrap(), b"older backup");
+        assert_eq!(fs::read_dir(backup.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(fs::read(&selection).unwrap(), b"opaque\r\nlast");
+        assert!(txn::Lease::admit(&home).unwrap().verify_launch().is_ok());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_github_removal_publishes_the_package_and_origin_together() {
+        let dir = scratch("remove-github");
+        let index = registry(&dir, true, "");
+        let pack = install_fixture(&index, "cozy", &dir.join("sunrise-packs")).unwrap();
+        let home = home(&pack.work);
+        let source = home.join(sunrise_launcher_smod::mod_list::NATIVE_DIR);
+        fs::create_dir(&source).unwrap();
+        let file = source.join("local.smod");
+        let bytes = sunrise_launcher_smod::Package::write_files(&format!(
+            "id='local'\nname='Local'\nversion='1.0.0'\napi='{}'\ncapabilities=['registries']\n[native]\ngame='26.3'\nsunrise='{}'\nmixins='{}'\n",
+            sunrise_launcher_smod::manifest::API, "a".repeat(40), "b".repeat(40),
+        ), &[("src/lib.rs", b""), ("Cargo.toml", b"[package]\nname='local'\nversion='1.0.0'\n")]).unwrap();
+        fs::write(&file, &bytes).unwrap();
+        let origin = crate::github_mods::Origin {
+            id: "local".into(),
+            version: "1.0.0".into(),
+            owner: "mods".into(),
+            repo: "local".into(),
+            tag: None,
+            commit: "c".repeat(40),
+            asset: None,
+            sha256: idx::sha256(&bytes),
+        };
+        let origin_file = crate::github_mods::origin_path(&home, &origin.id);
+        fs::write(&origin_file, serde_json::to_vec(&origin).unwrap()).unwrap();
+        let owner = Arc::new(txn::Lease::admit(&home).unwrap());
+        let prior = owner.active_build().unwrap().unwrap();
+        let plan = txn::StagedInstall::begin(owner.clone(), prior)
+            .unwrap()
+            .edit(
+                txn::ModEdit::Remove(vec![txn::ModRemoval::github(&origin)]),
+                &index,
+                native_mods::Profile::Optimized,
+                |_| {},
+            )
+            .unwrap();
+        assert!(file.is_file() && origin_file.is_file());
+        plan.commit(false, || Ok(())).unwrap();
+        assert!(!file.exists() && !origin_file.exists());
+        assert!(owner.verify_launch().is_ok());
+        drop(owner);
         fs::remove_dir_all(&dir).unwrap();
     }
 
